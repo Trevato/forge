@@ -81,6 +81,14 @@ import {
   type Issue,
   type IssueState,
 } from "../core/issues.ts";
+import {
+  newPullPage,
+  newPullSubmit,
+  pullCommentSubmit,
+  pullMergeSubmit,
+  pullPage,
+  pullsList,
+} from "../web/pages/pulls.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
 import { Router } from "./router.ts";
 
@@ -478,6 +486,14 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/issues/:number/comments",
     issueCommentSubmit,
   );
+
+  // Pull requests. Same /new-before-/:number ordering discipline.
+  router.add("GET", "/:owner/:name/pulls", pullsList);
+  router.add("GET", "/:owner/:name/pulls/new", newPullPage);
+  router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
+  router.add("GET", "/:owner/:name/pulls/:number", pullPage);
+  router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
 
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);

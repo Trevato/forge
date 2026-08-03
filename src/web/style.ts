@@ -19,6 +19,14 @@ export const css = /* css */ `
   --accent: #2563eb;
   --danger: #dc2626;
   --success: #16a34a;
+  --add-bg: #e6ffec;
+  --add-fg: #1a7f37;
+  --add-edge: #2da44e;
+  --del-bg: #ffebe9;
+  --del-fg: #cf222e;
+  --del-edge: #cf222e;
+  --wd-add: #abf2bc;
+  --wd-del: #ffc9c2;
   --radius: 8px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
@@ -35,6 +43,14 @@ export const css = /* css */ `
     --primary: #fafafa;
     --primary-fg: #18181b;
     --accent: #3b82f6;
+    --add-bg: #12261e;
+    --add-fg: #3fb950;
+    --add-edge: #2ea043;
+    --del-bg: #25171c;
+    --del-fg: #f85149;
+    --del-edge: #f85149;
+    --wd-add: #1b4721;
+    --wd-del: #5a1e21;
     color-scheme: dark;
   }
 }
@@ -48,6 +64,14 @@ export const css = /* css */ `
   --primary: #fafafa;
   --primary-fg: #18181b;
   --accent: #3b82f6;
+  --add-bg: #12261e;
+  --add-fg: #3fb950;
+  --add-edge: #2ea043;
+  --del-bg: #25171c;
+  --del-fg: #f85149;
+  --del-edge: #f85149;
+  --wd-add: #1b4721;
+  --wd-del: #5a1e21;
   color-scheme: dark;
 }
 
@@ -232,4 +256,76 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
   .shell { padding: 0 24px 64px; }
   .topbar { padding: 10px 24px; }
 }
+
+/* ---- diff viewer ---- */
+.diff-summary { padding: 12px 16px; }
+.diff-summary .add { color: var(--add-fg); font-weight: 600; }
+.diff-summary .del { color: var(--del-fg); font-weight: 600; }
+
+.diff-file {
+  margin-top: 14px; overflow: hidden;
+  /* Pure-CSS windowing: off-screen files cost nothing until scrolled to. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 480px;
+}
+.diff-head {
+  position: sticky; top: 49px; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; cursor: pointer; list-style: none;
+  background: var(--muted); border-bottom: 1px solid var(--border);
+}
+.diff-head::-webkit-details-marker { display: none; }
+.diff-head::before {
+  content: "▾"; color: var(--muted-fg); font-size: 11px; width: 12px; flex-shrink: 0;
+}
+.diff-file:not([open]) .diff-head::before { content: "▸"; }
+.diff-file:not([open]) .diff-head { border-bottom: none; }
+.diff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.diff-stat { font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.diff-stat .add { color: var(--add-fg); }
+.diff-stat .del { color: var(--del-fg); }
+.diff-note { padding: 24px 16px; text-align: center; color: var(--muted-fg); }
+
+.diff-body { overflow-x: auto; }
+.diff-table { border-collapse: collapse; width: 100%; font-family: var(--mono); font-size: 12.5px; }
+.diff-table td { padding: 0; vertical-align: top; }
+.dn {
+  width: 1%; min-width: 40px; padding: 0 8px; text-align: right;
+  color: var(--muted-fg); user-select: none;
+  white-space: nowrap; border-right: 1px solid var(--border);
+}
+.dc {
+  width: 100%; padding: 0 8px 0 12px; white-space: pre;
+  border-left: 3px solid transparent;
+}
+/* The +/-/space marker lives in ::before so selecting/copying skips it. */
+.dc::before { content: attr(data-mark) " "; color: var(--muted-fg); }
+.dl[data-k="add"] .dc { background: var(--add-bg); border-left-color: var(--add-edge); }
+.dl[data-k="add"] .dn { background: color-mix(in srgb, var(--add-bg) 60%, transparent); }
+.dl[data-k="add"] .dc::before { color: var(--add-fg); }
+.dl[data-k="del"] .dc { background: var(--del-bg); border-left-color: var(--del-edge); }
+.dl[data-k="del"] .dn { background: color-mix(in srgb, var(--del-bg) 60%, transparent); }
+.dl[data-k="del"] .dc::before { color: var(--del-fg); }
+/* Intra-line change: a second layer — saturation plus underline, never hue alone. */
+.dl[data-k="add"] .wd { background: var(--wd-add); text-decoration: underline; text-underline-offset: 2px; border-radius: 2px; }
+.dl[data-k="del"] .wd { background: var(--wd-del); text-decoration: underline; text-underline-offset: 2px; border-radius: 2px; }
+.dh .dc { background: var(--muted); border-left-color: transparent; padding-top: 2px; padding-bottom: 2px; }
+.dh .dc::before { content: ""; }
+.nonl { color: var(--del-fg); opacity: 0.7; padding-left: 8px; }
+
+/* ---- pull requests ---- */
+.badge[data-pr="merged"] { color: #8250df; border-color: color-mix(in srgb, #8250df 40%, var(--border)); }
+.branch-pick { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.branch-pick label { display: inline-flex; align-items: center; gap: 8px; margin: 8px 0; }
+.branch-pick select { min-width: 140px; }
+.merge-box {
+  margin-top: 14px; padding: 14px 16px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.merge-box[data-status="ready"] { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.merge-box[data-status="blocked"] { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.merge-box[data-status="merged"] { border-color: color-mix(in srgb, #8250df 45%, var(--border)); }
+.merge-ready { color: var(--success); font-weight: 600; }
+.merge-form { display: flex; gap: 10px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+.merge-form select { min-width: 160px; }
 `;

@@ -72,6 +72,44 @@ export async function runGit(
   return ok(new TextDecoder().decode(result.value).replace(/\n$/, ""));
 }
 
+export interface GitCapture {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * Run git and capture stdout AND stderr regardless of exit code. Some
+ * plumbing (merge-tree, diff --exit-code) uses a non-zero exit as *data*,
+ * not failure, and puts the payload on stdout — this hands both back.
+ */
+export async function runGitCapture(
+  args: readonly string[],
+  options: RunOptions = {},
+): Promise<GitCapture> {
+  const proc = Bun.spawn(["git", ...args], {
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    env: gitEnv(options.env),
+    stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timer = setTimeout(
+    () => proc.kill("SIGKILL"),
+    options.timeoutMs ?? 30_000,
+  );
+  try {
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
+    return { code, stdout, stderr };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Copy every chunk out of the stream. Bun can hand back views over recycled
  * spawn-pipe buffers, so slices of the original chunks are not safe to hold.
