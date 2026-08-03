@@ -5,7 +5,9 @@
  * is meant to be read. Mobile is the base layer; desktop is the media query.
  */
 
-export const css = /* css */ `
+import { highlightCss } from "./highlight-theme.ts";
+
+const base = /* css */ `
 /* ---- tokens ---- */
 :root {
   --bg: #fafafa;
@@ -214,7 +216,7 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
   color: var(--muted-fg); font-family: var(--mono); font-size: 13px;
 }
 .code .ln a { color: inherit; display: block; }
-.code pre { white-space: pre; line-height: 1.55; }
+.code pre { white-space: pre; line-height: 1.55; min-height: 1.55em; }
 .code tr:target { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* ---- markdown ---- */
@@ -298,6 +300,7 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
   width: 100%; padding: 0 8px 0 12px; white-space: pre;
   border-left: 3px solid transparent;
 }
+.dcx { display: inline-block; min-height: 1.5em; } /* blank lines keep height */
 /* The +/-/space marker lives in ::before so selecting/copying skips it. */
 .dc::before { content: attr(data-mark) " "; color: var(--muted-fg); }
 .dl[data-k="add"] .dc { background: var(--add-bg); border-left-color: var(--add-edge); }
@@ -350,3 +353,5 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .label-new .input { flex: 1; min-width: 140px; }
 .label-new .color { flex: 0 0 110px; font-family: var(--mono); }
 `;
+
+export const css = base + highlightCss;

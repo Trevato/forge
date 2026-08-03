@@ -134,7 +134,7 @@ describe("pull requests end to end", () => {
     expect(pr).toContain('data-k="del"');
     expect(pr).toContain('data-k="add"');
     expect(pr).toContain("BETA");
-    expect(pr).toContain('class="wd"'); // word-diff highlight present
+    expect(pr).toMatch(/class="[^"]*\bwd\b/); // word-diff highlight present (possibly with a token class)
     expect(pr).toContain("Ready to merge");
   });
 

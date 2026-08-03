@@ -207,7 +207,10 @@ describe("web pages end to end", () => {
     const blobPage = await (
       await fetch(`${base}/ada/engine/blob/main/src/gears.ts`)
     ).text();
-    expect(blobPage).toContain("export const teeth = 42;");
+    // Content is present but now syntax-highlighted (broken across spans).
+    expect(blobPage).toContain("teeth");
+    expect(blobPage).toContain("42");
+    expect(blobPage).toContain('class="tok-keyword">export'); // highlighting applied
     expect(blobPage).toContain('id="L2"');
 
     const commitsPage = await (

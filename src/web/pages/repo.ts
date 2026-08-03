@@ -7,6 +7,7 @@
 import type { Repo } from "../../core/repos.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
 import { diffCommit } from "../../git/diff.ts";
+import { diffSyntax } from "../diff-syntax.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import {
   blobForRender,
@@ -17,6 +18,7 @@ import {
 } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import { highlightBlob } from "../code.ts";
 import { renderDiff } from "../diff-view.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -265,19 +267,19 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
       Too large to render · ${formatSize(blob.size)}
     </div>`;
   } else {
-    const all = new TextDecoder()
-      .decode(blob.body)
-      .replace(/\n$/, "")
-      .split("\n");
-    const lines = all.slice(0, MAX_RENDER_LINES);
-    const truncated = all.length > MAX_RENDER_LINES;
+    const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
+    // Highlight the whole file (multi-line constructs need full context),
+    // then take the first N lines for rendering.
+    const highlighted = highlightBlob(text, path);
+    const lines = highlighted.slice(0, MAX_RENDER_LINES);
+    const truncated = highlighted.length > MAX_RENDER_LINES;
     content = html`<div class="card code">
         <table>
           ${lines.map(
             (line, i) =>
               html`<tr id="L${i + 1}">
                 <td class="ln"><a href="#L${i + 1}">${i + 1}</a></td>
-                <td><pre>${line || " "}</pre></td>
+                <td><pre>${line}</pre></td>
               </tr>`,
           )}
         </table>
@@ -287,7 +289,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
         () =>
           html`<div class="card empty mt">
             Showing the first ${MAX_RENDER_LINES.toLocaleString()} of
-            ${all.length.toLocaleString()} lines.
+            ${highlighted.length.toLocaleString()} lines.
           </div>`,
       )}`;
   }
@@ -400,6 +402,10 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   const diff = diffResult.ok
     ? diffResult.value
     : { files: [], additions: 0, deletions: 0 };
+  // Old side is the first parent (or the empty tree for a root commit, where
+  // every file is an addition and no old blob is read).
+  const parent = commit.parents[0] ?? commit.oid;
+  const syntax = await diffSyntax(dir, diff, parent, commit.oid);
 
   const body = html`${repoNav(repo, "commits")}
     <div class="card commit-head">
@@ -419,7 +425,7 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
         )}
       </div>
     </div>
-    <div class="mt">${renderDiff(diff)}</div>`;
+    <div class="mt">${renderDiff(diff, syntax)}</div>`;
   return page({
     title: `${commit.subject} · ${repo.name}`,
     user: ctx.auth.user,

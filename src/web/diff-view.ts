@@ -11,8 +11,17 @@
  */
 
 import type { Diff, DiffLine, FileDiff, Hunk } from "../git/diff.ts";
+import { composeLine } from "./code.ts";
+import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
+
+/** Highlighted tokens per side for a file, keyed by path in a SyntaxMap. */
+export interface FileTokens {
+  old?: Token[][];
+  new?: Token[][];
+}
+export type SyntaxMap = Map<string, FileTokens>;
 
 // Above this many changed lines a single file is not rendered inline — it is
 // a scroll-and-memory hazard and almost never read line by line.
@@ -41,17 +50,22 @@ function fileAnchor(file: FileDiff): string {
   return "d-" + escapeHtml(file.path).replace(/[^a-zA-Z0-9]+/g, "-");
 }
 
-function segments(parts: Segment[]): Html {
-  return html`${parts.map((s) =>
-    s.changed ? html`<span class="wd">${s.text}</span>` : html`${s.text}`,
-  )}`;
+/** Per-character changed mask for a line, from its word-diff segments. */
+function changedMask(parts: Segment[]): boolean[] {
+  const mask: boolean[] = [];
+  for (const s of parts) {
+    for (let k = 0; k < s.text.length; k++) mask.push(s.changed);
+  }
+  return mask;
 }
 
 interface Row {
   kind: DiffLine["kind"];
   oldNumber: number | null;
   newNumber: number | null;
-  content: Html;
+  text: string;
+  /** Per-character diff highlight, for a paired modified line. */
+  changed: boolean[] | undefined;
   noNewline: boolean;
 }
 
@@ -63,7 +77,7 @@ function rowsForHunk(hunk: Hunk): Row[] {
   while (i < lines.length) {
     const line = lines[i]!;
     if (line.kind === "context") {
-      rows.push(plainRow(line));
+      rows.push({ ...base(line), changed: undefined });
       i++;
       continue;
     }
@@ -79,11 +93,8 @@ function rowsForHunk(hunk: Hunk): Row[] {
       const paired =
         k < pairs ? wordDiff(del.content, adds[k]!.content) : undefined;
       rows.push({
-        kind: "del",
-        oldNumber: del.oldNumber,
-        newNumber: null,
-        content: paired ? segments(paired.old) : html`${del.content}`,
-        noNewline: del.noNewline,
+        ...base(del),
+        changed: paired ? changedMask(paired.old) : undefined,
       });
     }
     for (let k = 0; k < adds.length; k++) {
@@ -91,34 +102,41 @@ function rowsForHunk(hunk: Hunk): Row[] {
       const paired =
         k < pairs ? wordDiff(dels[k]!.content, add.content) : undefined;
       rows.push({
-        kind: "add",
-        oldNumber: null,
-        newNumber: add.newNumber,
-        content: paired ? segments(paired.new) : html`${add.content}`,
-        noNewline: add.noNewline,
+        ...base(add),
+        changed: paired ? changedMask(paired.new) : undefined,
       });
     }
   }
   return rows;
 }
 
-function plainRow(line: DiffLine): Row {
+function base(line: DiffLine): Omit<Row, "changed"> {
   return {
     kind: line.kind,
     oldNumber: line.oldNumber,
     newNumber: line.newNumber,
-    content: html`${line.content}`,
+    text: line.content,
     noNewline: line.noNewline,
   };
 }
 
-function renderRow(row: Row): Html {
+function renderRow(row: Row, tokens: FileTokens): Html {
   const mark = row.kind === "add" ? "+" : row.kind === "del" ? "-" : " ";
+  // Del lines are colored from the old blob; add and context from the new.
+  const tokenLine =
+    row.kind === "del"
+      ? row.oldNumber !== null
+        ? tokens.old?.[row.oldNumber - 1]
+        : undefined
+      : row.newNumber !== null
+        ? tokens.new?.[row.newNumber - 1]
+        : undefined;
   return html`<tr class="dl" data-k="${row.kind}">
     <td class="dn">${row.oldNumber ?? ""}</td>
     <td class="dn">${row.newNumber ?? ""}</td>
     <td class="dc" data-mark="${mark}">
-      <span class="dcx">${row.content}</span>${when(
+      <span class="dcx">${composeLine(row.text, tokenLine, row.changed)}</span
+      >${when(
         row.noNewline,
         () =>
           html`<span class="nonl" title="No newline at end of file">↵</span>`,
@@ -141,7 +159,7 @@ function hunkHeader(hunk: Hunk): Html {
   </tr>`;
 }
 
-function fileBody(file: FileDiff): Html {
+function fileBody(file: FileDiff, tokens: FileTokens): Html {
   if (file.binary) {
     return html`<div class="diff-note">Binary file not shown.</div>`;
   }
@@ -158,7 +176,10 @@ function fileBody(file: FileDiff): Html {
   return html`<table class="diff-table">
     <tbody>
       ${file.hunks.map(
-        (hunk) => html`${hunkHeader(hunk)}${rowsForHunk(hunk).map(renderRow)}`,
+        (hunk) =>
+          html`${hunkHeader(hunk)}${rowsForHunk(hunk).map((row) =>
+            renderRow(row, tokens),
+          )}`,
       )}
     </tbody>
   </table>`;
@@ -187,7 +208,7 @@ function fileHeader(file: FileDiff): Html {
   </summary>`;
 }
 
-function fileView(file: FileDiff): Html {
+function fileView(file: FileDiff, tokens: FileTokens): Html {
   // Generated/lockfiles start collapsed; everything else is open.
   const collapsed = GENERATED.test(file.path);
   const openAttr = collapsed ? null : raw("open");
@@ -197,12 +218,16 @@ function fileView(file: FileDiff): Html {
     ${openAttr}
   >
     ${fileHeader(file)}
-    <div class="diff-body">${fileBody(file)}</div>
+    <div class="diff-body">${fileBody(file, tokens)}</div>
   </details>`;
 }
 
-/** The whole diff: a summary line, then one collapsible view per file. */
-export function renderDiff(diff: Diff): Html {
+/**
+ * The whole diff: a summary line, then one collapsible view per file. Pass a
+ * SyntaxMap (path → highlighted tokens) to color the code; omit it and the
+ * diff still renders, just without syntax color.
+ */
+export function renderDiff(diff: Diff, syntax?: SyntaxMap): Html {
   if (diff.files.length === 0) {
     return html`<div class="card empty">No changes.</div>`;
   }
@@ -214,6 +239,6 @@ export function renderDiff(diff: Diff): Html {
       changed <span class="add">+${diff.additions}</span>
       <span class="del">−${diff.deletions}</span>
     </div>
-    ${diff.files.map(fileView)}
+    ${diff.files.map((file) => fileView(file, syntax?.get(file.path) ?? {}))}
   </div>`;
 }

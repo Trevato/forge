@@ -21,6 +21,7 @@ import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { renderDiff } from "../diff-view.ts";
+import { diffSyntax } from "../diff-syntax.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
@@ -252,6 +253,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const diff = diffResult.ok
     ? diffResult.value
     : { files: [], additions: 0, deletions: 0 };
+  const syntax = await diffSyntax(dir, diff, from, status.headOid);
   const comments = listComments(ctx.app.db, pull.id);
   const mayMerge = canWrite(repo, ctx.auth.user);
   const base = `/${repo.ownerName}/${repo.name}`;
@@ -296,7 +298,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     </div>
     ${conversation} ${mergeBox(pull, status, mayMerge, base)}
     <h2 class="mt">Files changed</h2>
-    ${renderDiff(diff)}
+    ${renderDiff(diff, syntax)}
     ${ctx.auth.user
       ? html`<form
           class="card comment-form"
