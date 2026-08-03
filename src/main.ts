@@ -6,6 +6,7 @@
 
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { serve } from "./http/server.ts";
 
@@ -28,6 +29,12 @@ const app = createApp({
 await reconcile(app);
 const servers = await serve(app);
 
+// The webhook delivery worker: poll the outbox for due deliveries. The event
+// row is the source of truth, so a missed tick only delays delivery, never
+// loses it. runDelivery never throws into the timer.
+const deliveryTimer = setInterval(() => runDelivery(app.db, app.log), 5_000);
+runDelivery(app.db, app.log); // sweep anything queued while we were down
+
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
 
 process.on("SIGINT", shutdown);
@@ -35,6 +42,7 @@ process.on("SIGTERM", shutdown);
 
 function shutdown(): void {
   app.log.info("forge shutting down");
+  clearInterval(deliveryTimer);
   servers.stop();
   app.close();
   process.exit(0);

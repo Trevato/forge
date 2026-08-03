@@ -6,9 +6,15 @@
 
 import { createLabel, deleteLabel, listLabels } from "../../core/issues.ts";
 import { canWrite, updateRepoSettings } from "../../core/repos.ts";
+import {
+  createWebhook,
+  deleteWebhook,
+  listWebhooks,
+  recentDeliveries,
+} from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm } from "../form.ts";
-import { html, raw } from "../html.ts";
+import { html, raw, when } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { crumbsFor, loadRepo, repoNav, repoNotFound } from "./repo.ts";
 
@@ -19,6 +25,7 @@ export function settingsPage(ctx: Ctx): Response {
   if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
   const base = `/${repo.ownerName}/${repo.name}`;
   const labels = listLabels(ctx.app.db, repo.id);
+  const webhooks = listWebhooks(ctx.app.db, repo.id);
 
   const body = html`${repoNav(repo, "settings")}
     <div class="narrow-wide">
@@ -100,6 +107,74 @@ export function settingsPage(ctx: Ctx): Response {
           <button class="btn" type="submit">Add label</button>
         </form>
       </div>
+
+      <div class="card settings-card">
+        <h3>Webhooks</h3>
+        <p class="muted small">
+          Every event POSTs to your URL, signed with HMAC-SHA256 in the
+          <span class="mono">X-Forge-Signature-256</span> header.
+        </p>
+        ${webhooks.length === 0
+          ? html`<p class="muted small">No webhooks yet.</p>`
+          : html`<ul class="hook-list">
+              ${webhooks.map((h) => {
+                const deliveries = recentDeliveries(ctx.app.db, h.id, 5);
+                return html`<li>
+                  <div class="grow">
+                    <span class="mono">${h.url}</span>
+                    <br />
+                    <span class="muted small"
+                      >${h.kinds} · ${h.active ? "active" : "paused"}
+                      ${when(
+                        deliveries.length > 0,
+                        () =>
+                          html` · last
+                          ${deliveries[0]!.state}${when(
+                            deliveries[0]!.lastStatus !== null,
+                            () => html` (${deliveries[0]!.lastStatus})`,
+                          )}`,
+                      )}</span
+                    >
+                  </div>
+                  <form
+                    method="post"
+                    action="${base}/settings/hooks/${h.id}/delete"
+                    class="inline"
+                  >
+                    <button
+                      class="btn"
+                      data-size="sm"
+                      data-variant="danger"
+                      type="submit"
+                    >
+                      Delete
+                    </button>
+                  </form>
+                </li>`;
+              })}
+            </ul>`}
+        <form method="post" action="${base}/settings/hooks" class="hook-new">
+          <input
+            class="input"
+            name="url"
+            type="url"
+            placeholder="https://example.com/hook"
+            required
+          />
+          <input
+            class="input"
+            name="kinds"
+            placeholder="* or e.g. push issue.*"
+            value="*"
+          />
+          <input
+            class="input"
+            name="secret"
+            placeholder="Signing secret (optional)"
+          />
+          <button class="btn" type="submit">Add webhook</button>
+        </form>
+      </div>
     </div>`;
   return page({
     title: `Settings · ${repo.name}`,
@@ -161,5 +236,33 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   deleteLabel(ctx.app.db, repo.id, ctx.params.id ?? "");
+  return redirect(`/${repo.ownerName}/${repo.name}/settings`);
+}
+
+// POST /:owner/:name/settings/hooks
+export async function webhookCreate(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const providedSecret = field(form, "secret");
+  createWebhook(ctx.app.db, {
+    repoId: repo.id,
+    url: field(form, "url"),
+    kinds: field(form, "kinds") || "*",
+    ...(providedSecret !== "" ? { secret: providedSecret } : {}),
+  });
+  return redirect(`/${repo.ownerName}/${repo.name}/settings`);
+}
+
+// POST /:owner/:name/settings/hooks/:id/delete
+export async function webhookDelete(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  deleteWebhook(ctx.app.db, repo.id, ctx.params.id ?? "");
   return redirect(`/${repo.ownerName}/${repo.name}/settings`);
 }

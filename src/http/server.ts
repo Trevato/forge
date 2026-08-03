@@ -96,7 +96,14 @@ import {
   labelDelete,
   settingsPage,
   settingsUpdate,
+  webhookCreate,
+  webhookDelete,
 } from "../web/pages/settings.ts";
+import {
+  createWebhook,
+  deleteWebhook,
+  listWebhooks,
+} from "../core/webhooks.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
 import { Router } from "./router.ts";
 
@@ -483,6 +490,44 @@ export function buildRouter(): Router<Handler> {
     },
   );
 
+  // Webhooks API — admin-scoped, since a webhook exfiltrates repo events.
+  router.add("GET", "/api/v1/repos/:owner/:name/hooks", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canWrite(repo, ctx.auth.user)) return notFound();
+    return json(listWebhooks(ctx.app.db, repo.id));
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canWrite(repo, ctx.auth.user)) return notFound();
+    const input = await body(ctx.request);
+    const created = createWebhook(ctx.app.db, {
+      repoId: repo.id,
+      url: str(input.url),
+      kinds: str(input.kinds) || "*",
+      ...(typeof input.secret === "string" ? { secret: input.secret } : {}),
+    });
+    if (!created.ok) return json({ error: created.error }, 422);
+    // The secret is returned exactly once, at creation.
+    return json(
+      { ...created.value.webhook, secret: created.value.secret },
+      201,
+    );
+  });
+
+  router.add("DELETE", "/api/v1/repos/:owner/:name/hooks/:id", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canWrite(repo, ctx.auth.user)) return notFound();
+    const removed = deleteWebhook(ctx.app.db, repo.id, ctx.params.id!);
+    return json({}, removed ? 200 : 404);
+  });
+
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
   router.add("GET", "/:owner/:name/issues", issuesList);
@@ -517,6 +562,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
   router.add("POST", "/:owner/:name/settings/labels/:id/delete", labelDelete);
+  router.add("POST", "/:owner/:name/settings/hooks", webhookCreate);
+  router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
 
   return router;
 }

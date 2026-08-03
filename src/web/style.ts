@@ -364,6 +364,12 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .label-new { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .label-new .input { flex: 1; min-width: 140px; }
 .label-new .color { flex: 0 0 110px; font-family: var(--mono); }
+.hook-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.hook-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.hook-list li:last-child { border-bottom: none; }
+.hook-list .mono { word-break: break-all; }
+.hook-new { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hook-new .input { flex: 1; min-width: 160px; }
 `;
 
 export const css = base + highlightCss;

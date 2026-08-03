@@ -9,6 +9,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { migrations } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
+import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
 import { createLog, type Log } from "./kernel/log.ts";
 
@@ -35,6 +36,11 @@ export function createApp(config: ForgeConfig): App {
 
   const db = openDb(join(config.dataDir, "forge.db"), migrations);
   const bus = new EventBus(db);
+
+  // Every event durably enqueues webhook deliveries; the worker (main.ts)
+  // sends them. Listener throws are swallowed by the bus, so this can never
+  // break the action that produced the event.
+  bus.subscribe((event) => enqueueForEvent(db, event));
 
   return {
     config,
