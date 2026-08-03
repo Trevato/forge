@@ -61,6 +61,8 @@ src/
 ```
 
 Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.
+Contributing (human or agent) starts at `CLAUDE.md` — the invariants and how to
+work here.
 
 ## What works today
 
