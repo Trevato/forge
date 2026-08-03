@@ -1,0 +1,16 @@
+{
+  "name": "forge",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch src/main.ts",
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "bun x tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.9.0"
+  }
+}
