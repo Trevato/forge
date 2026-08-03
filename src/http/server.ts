@@ -15,7 +15,16 @@ import {
   getRepo,
   getRepoById,
   listReposVisibleTo,
+  type Repo,
 } from "../core/repos.ts";
+import {
+  createPull,
+  getPull,
+  listPulls,
+  mergePull,
+  pullStatus,
+  type Pull,
+} from "../core/pulls.ts";
 import { listEvents } from "../core/events.ts";
 import {
   createSession,
@@ -646,6 +655,129 @@ export function buildRouter(): Router<Handler> {
     },
   );
 
+  // Pull requests API — so automation drives the review/merge loop.
+  router.add("POST", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const input = await body(ctx.request);
+    const created = await createPull(
+      ctx.app.db,
+      repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+      {
+        repoId: repo.id,
+        authorId: ctx.auth.user!.id,
+        title: str(input.title),
+        body: str(input.body),
+        baseBranch: str(input.base),
+        headBranch: str(input.head),
+      },
+    );
+    if (!created.ok) return json({ error: created.error }, 422);
+    ctx.app.bus.append({
+      kind: "pull.opened",
+      repoId: repo.id,
+      actorId: ctx.auth.user!.id,
+      payload: { number: created.value.number },
+    });
+    return json(created.value, 201);
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const stateParam = ctx.url.searchParams.get("state");
+    const state =
+      stateParam === "closed" || stateParam === "all" ? stateParam : "open";
+    return json(listPulls(ctx.app.db, repo.id, state));
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls/:number", async (ctx) => {
+    const found = loadPull(ctx);
+    if ("error" in found) return found.error;
+    const dir = repoDir(
+      ctx.app.reposRoot,
+      found.repo.ownerName,
+      found.repo.name,
+    );
+    return json({ ...found.pull, status: await pullStatus(dir, found.pull) });
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/merge",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      if (!canWrite(ctx.app.db, found.repo, ctx.auth.user)) return forbidden();
+      const input = await body(ctx.request);
+      const strategy = str(input.strategy) === "squash" ? "squash" : "merge";
+      const dir = repoDir(
+        ctx.app.reposRoot,
+        found.repo.ownerName,
+        found.repo.name,
+      );
+      const merged = await mergePull(ctx.app.db, dir, found.pull, {
+        strategy,
+        message:
+          strategy === "squash"
+            ? `${found.pull.title} (#${found.pull.number})`
+            : `Merge pull request #${found.pull.number} from ${found.pull.headBranch}\n\n${found.pull.title}`,
+        actorId: ctx.auth.user!.id,
+        author: {
+          name: ctx.auth.user!.displayName || ctx.auth.user!.username,
+          email: ctx.auth.user!.email,
+        },
+      });
+      if (!merged.ok) {
+        return json(
+          {
+            error:
+              typeof merged.error === "string"
+                ? merged.error
+                : merged.error.kind,
+          },
+          409,
+        );
+      }
+      ctx.app.bus.append({
+        kind: "pull.merged",
+        repoId: found.repo.id,
+        actorId: ctx.auth.user!.id,
+        payload: { number: found.pull.number, strategy },
+      });
+      return json({ merged: true, ...merged.value });
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/comments",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const added = addComment(ctx.app.db, {
+        issueId: found.pull.id,
+        authorId: ctx.auth.user!.id,
+        body: str(input.body),
+      });
+      if (!added.ok) return json({ error: added.error }, 422);
+      ctx.app.bus.append({
+        kind: "pull.commented",
+        repoId: found.repo.id,
+        actorId: ctx.auth.user!.id,
+        payload: { number: found.pull.number },
+      });
+      return json(added.value, 201);
+    },
+  );
+
   // Webhooks API — admin-scoped, since a webhook exfiltrates repo events.
   router.add("GET", "/api/v1/repos/:owner/:name/hooks", (ctx) => {
     const denied = requireScope(ctx, "admin");
@@ -772,6 +904,17 @@ function loadIssue(ctx: Ctx): { issue: Issue } | { error: Response } {
   const issue = getIssue(ctx.app.db, repo.id, number);
   if (!issue || issue.kind !== "issue") return { error: notFound() };
   return { issue };
+}
+
+function loadPull(ctx: Ctx): { repo: Repo; pull: Pull } | { error: Response } {
+  const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user))
+    return { error: notFound() };
+  const number = Number(ctx.params.number);
+  if (!Number.isInteger(number) || number < 1) return { error: notFound() };
+  const pull = getPull(ctx.app.db, repo.id, number);
+  if (!pull) return { error: notFound() };
+  return { repo, pull };
 }
 
 async function withGitAccess(
