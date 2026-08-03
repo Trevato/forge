@@ -209,10 +209,12 @@ detection / protected branches, repo settings, personal access tokens, and a
 REST API over repos and issues. Fast on a phone. Deployable as one binary + git.
 
 **Shipped so far:** foundation, diff engine, issues, pull requests + merge, the
-diff viewer with syntax highlighting, review comments anchored to diff lines by
-content hash, commit pages, settings, and webhook delivery from the event
-outbox (HMAC-signed, retried).
+diff viewer with syntax highlighting, review comments anchored by content hash,
+commit pages, settings, webhook delivery from the event outbox (HMAC-signed,
+retried), SSE live updates, forks (alternates-backed, detach-before-delete)
+with cross-repo pull requests, and organizations + teams with membership-based
+permissions.
 
-Not in v1: SSH transport, forks/alternates UX, org teams, CI runners (the
-events + API surface is designed so a runner integrates without core changes),
-SSE live updates, federation, package registry.
+Not in v1: SSH transport, CI runners (the events + API surface is designed so a
+runner integrates without core changes), an AI build crew (the harness — it
+drives the API and events already built), federation, package registry.
