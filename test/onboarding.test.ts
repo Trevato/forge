@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -176,5 +176,69 @@ describe("onboarding: a person with just a login", () => {
       redirect: "manual",
     });
     expect(res.status).toBe(403);
+  });
+});
+
+// The real-world default is `FORGE_DATA=data` — a *relative* path. Git runs the
+// pre-receive hook with its working directory set to the bare repo, so the hook
+// must reach the forge over an *absolute* socket path; a relative one resolves
+// against the repo dir and the relay fails ("typo in the url or port"), failing
+// the push closed. This proves createApp resolves dataDir so the hook connects.
+describe("a forge booted from a relative data dir still accepts pushes", () => {
+  let dataAbs: string;
+  let work: string;
+  let app: App;
+  let servers: Servers;
+  let port = 0;
+  let cookie = "";
+
+  async function git(args: string[], cwd: string): Promise<number> {
+    const p = Bun.spawn(["git", ...args], {
+      cwd,
+      env: gitEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return await p.exited;
+  }
+
+  beforeAll(async () => {
+    // A genuinely relative dataDir, but backed by tmp so nothing pollutes the
+    // repo. `relative(cwd, abs)` yields a "../../…"-style path that createApp
+    // must resolve back to absolute for the socket to be reachable.
+    dataAbs = await mkdtemp(join(tmpdir(), "forge-relative-"));
+    work = await mkdtemp(join(tmpdir(), "forge-relative-work-"));
+    const dataDir = relative(process.cwd(), dataAbs);
+    expect(dataDir.startsWith("/")).toBe(false); // guard: actually relative
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    port = servers.port;
+    const signup = await fetch(`${servers.url}/signup`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "rel",
+        email: "r@f.dev",
+        password: "rel-secret",
+      }),
+      redirect: "manual",
+    });
+    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataAbs, { recursive: true, force: true });
+    await rm(work, { recursive: true, force: true });
+  });
+
+  test("the pre-receive hook relay reaches the forge and the push lands", async () => {
+    const repo = join(work, "app");
+    await git(["init", "-q", "-b", "main", repo], work);
+    await Bun.write(join(repo, "f.txt"), "hi\n");
+    await git(["-C", repo, "add", "."], work);
+    await git(["-C", repo, "commit", "-q", "-m", "x"], work);
+    const remote = `http://rel:rel-secret@localhost:${port}/rel/app.git`;
+    expect(await git(["-C", repo, "push", remote, "main"], work)).toBe(0);
   });
 });

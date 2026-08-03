@@ -6,7 +6,7 @@
 
 import type { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { migrations } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
@@ -31,10 +31,15 @@ export interface App {
 }
 
 export function createApp(config: ForgeConfig): App {
-  const reposRoot = join(config.dataDir, "repos");
+  // Resolve to an absolute path up front. The socket path in particular must
+  // be absolute: git runs hooks with the working directory set to the bare
+  // repo, and the hook relays to this socket — a relative path (the default
+  // FORGE_DATA=data) would resolve against the repo dir and never connect.
+  const dataDir = resolve(config.dataDir);
+  const reposRoot = join(dataDir, "repos");
   mkdirSync(reposRoot, { recursive: true });
 
-  const db = openDb(join(config.dataDir, "forge.db"), migrations);
+  const db = openDb(join(dataDir, "forge.db"), migrations);
   const bus = new EventBus(db);
 
   // Every event durably enqueues webhook deliveries; the worker (main.ts)
@@ -43,12 +48,12 @@ export function createApp(config: ForgeConfig): App {
   bus.subscribe((event) => enqueueForEvent(db, event));
 
   return {
-    config,
+    config: { ...config, dataDir },
     db,
     bus,
     log: createLog("forge"),
     reposRoot,
-    socketPath: join(config.dataDir, "forge.sock"),
+    socketPath: join(dataDir, "forge.sock"),
     close: () => db.close(),
   };
 }
