@@ -190,7 +190,7 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   if (!ctx.auth.user) return redirect("/signin");
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
 
@@ -391,7 +391,7 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
   if (!pull) return repoNotFound(ctx);
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
   const strategy = field(form, "strategy") === "squash" ? "squash" : "merge";
@@ -433,7 +433,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
   if (!pull) return repoNotFound(ctx);
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
   const bodyText = field(form, "body");

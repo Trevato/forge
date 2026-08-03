@@ -192,6 +192,16 @@ function parseFile(
       line.startsWith("GIT binary patch")
     ) {
       binary = true;
+      // Binary files have no ---/+++ markers, so the header split (which
+      // defers on quoted names) may have left the paths null. Recover them
+      // from the "Binary files a/X and b/Y differ" line.
+      const m = line.match(/^Binary files (.+) and (.+) differ$/);
+      if (m) {
+        const a = pathFromMarker(m[1]!);
+        const b = pathFromMarker(m[2]!);
+        if (oldPath === null && a !== null) oldPath = a;
+        if (newPath === null && b !== null) newPath = b;
+      }
     } else if (line.startsWith("--- ")) {
       const p = pathFromMarker(line.slice(4));
       oldPath = p; // /dev/null → null (an addition)
@@ -319,26 +329,56 @@ function splitHeaderPaths(text: string): { a: string; b: string } | null {
   };
 }
 
-/** Decode git's C-style quoting of paths with special characters. */
+/**
+ * Decode git's C-style quoting of paths with special characters. Non-ASCII
+ * bytes are octal-escaped one byte at a time, so we collect the raw bytes and
+ * decode the whole run as UTF-8 once — decoding each escape as its own code
+ * unit turns any multi-byte name into mojibake.
+ */
 function unquotePath(path: string): string {
   if (!path.startsWith('"') || !path.endsWith('"')) return path;
   const inner = path.slice(1, -1);
-  return inner.replace(/\\([\\"abtnvfr]|[0-7]{1,3})/g, (_, esc: string) => {
-    switch (esc) {
-      case "\\":
-        return "\\";
-      case '"':
-        return '"';
-      case "n":
-        return "\n";
-      case "t":
-        return "\t";
-      case "r":
-        return "\r";
-      default:
-        return /^[0-7]+$/.test(esc)
-          ? String.fromCharCode(parseInt(esc, 8))
-          : esc;
+  const bytes: number[] = [];
+  const simple: Record<string, number> = {
+    "\\": 0x5c,
+    '"': 0x22,
+    n: 0x0a,
+    t: 0x09,
+    r: 0x0d,
+    b: 0x08,
+    f: 0x0c,
+    v: 0x0b,
+    a: 0x07,
+  };
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i]!;
+    if (c !== "\\") {
+      // Literal char (ASCII in quoted paths); encode defensively as UTF-8.
+      const code = c.charCodeAt(0);
+      if (code < 0x80) bytes.push(code);
+      else for (const b of new TextEncoder().encode(c)) bytes.push(b);
+      continue;
     }
-  });
+    const next = inner[i + 1];
+    if (next !== undefined && next >= "0" && next <= "7") {
+      let oct = "";
+      let j = i + 1;
+      while (
+        j < inner.length &&
+        oct.length < 3 &&
+        inner[j]! >= "0" &&
+        inner[j]! <= "7"
+      )
+        oct += inner[j++];
+      bytes.push(parseInt(oct, 8) & 0xff);
+      i = j - 1;
+    } else if (next !== undefined && next in simple) {
+      bytes.push(simple[next]!);
+      i++;
+    } else if (next !== undefined) {
+      bytes.push(next.charCodeAt(0));
+      i++;
+    }
+  }
+  return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
 }

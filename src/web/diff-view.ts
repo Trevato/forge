@@ -27,6 +27,11 @@ export type SyntaxMap = Map<string, FileTokens>;
 // a scroll-and-memory hazard and almost never read line by line.
 const MAX_FILE_LINES = 5000;
 
+// Cap files rendered (and highlighted — see diff-syntax.ts) per diff. Beyond
+// this, a page load would spawn thousands of git subprocesses; a 5000-file
+// commit is a DoS, not something anyone reads top to bottom.
+export const MAX_DIFF_FILES = 100;
+
 const GENERATED =
   /(^|\/)(package-lock\.json|bun\.lock|yarn\.lock|pnpm-lock\.yaml|go\.sum|Cargo\.lock)$/;
 
@@ -231,6 +236,8 @@ export function renderDiff(diff: Diff, syntax?: SyntaxMap): Html {
   if (diff.files.length === 0) {
     return html`<div class="card empty">No changes.</div>`;
   }
+  const shown = diff.files.slice(0, MAX_DIFF_FILES);
+  const hidden = diff.files.length - shown.length;
   return html`<div class="diff">
     <div class="diff-summary card">
       <strong>${diff.files.length}</strong> ${diff.files.length === 1
@@ -239,6 +246,14 @@ export function renderDiff(diff: Diff, syntax?: SyntaxMap): Html {
       changed <span class="add">+${diff.additions}</span>
       <span class="del">−${diff.deletions}</span>
     </div>
-    ${diff.files.map((file) => fileView(file, syntax?.get(file.path) ?? {}))}
+    ${shown.map((file) => fileView(file, syntax?.get(file.path) ?? {}))}
+    ${when(
+      hidden > 0,
+      () =>
+        html`<div class="card diff-note">
+          ${hidden.toLocaleString()} more ${hidden === 1 ? "file" : "files"} not
+          shown.
+        </div>`,
+    )}
   </div>`;
 }

@@ -126,7 +126,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
 
   updateRepoSettings(ctx.app.db, repo, {
@@ -142,7 +142,7 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   createLabel(
     ctx.app.db,
@@ -158,7 +158,7 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   deleteLabel(ctx.app.db, repo.id, ctx.params.id ?? "");
   return redirect(`/${repo.ownerName}/${repo.name}/settings`);

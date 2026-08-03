@@ -9,7 +9,11 @@
 import type { Diff } from "../git/diff.ts";
 import { blobForRender } from "../git/read.ts";
 import { detectLanguage, highlightLines } from "./highlight.ts";
-import type { FileTokens, SyntaxMap } from "./diff-view.ts";
+import {
+  MAX_DIFF_FILES,
+  type FileTokens,
+  type SyntaxMap,
+} from "./diff-view.ts";
 
 const CAP_BYTES = 1_000_000;
 const MAX_CHANGED = 5000;
@@ -21,7 +25,10 @@ export async function diffSyntax(
   newRev: string,
 ): Promise<SyntaxMap> {
   const map: SyntaxMap = new Map();
-  for (const file of diff.files) {
+  // Only the files the viewer will actually render are worth highlighting;
+  // this is the bound that keeps a huge diff from spawning thousands of
+  // git subprocesses.
+  for (const file of diff.files.slice(0, MAX_DIFF_FILES)) {
     if (file.binary || file.additions + file.deletions > MAX_CHANGED) continue;
     const entry: FileTokens = {};
     if (file.oldPath) {

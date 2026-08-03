@@ -165,7 +165,7 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   if (!ctx.auth.user) return redirect(`/signin`);
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
   const created = createIssue(ctx.app.db, {
@@ -311,7 +311,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
   if (!issue) return repoNotFound(ctx);
 
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const intent = field(form, "intent");
   const dest = `/${repo.ownerName}/${repo.name}/issues/${issue.number}`;

@@ -249,7 +249,7 @@ export function newRepoPage(ctx: Ctx): Response {
 
 export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return redirect("/signin");
-  const form = await readForm(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
     ownerId: ctx.auth.user.id,
