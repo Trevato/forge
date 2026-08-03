@@ -131,7 +131,8 @@ describe("web pages end to end", () => {
 
     const homePage = await fetch(base, { headers: { cookie } });
     const text = await homePage.text();
-    expect(text).toContain("Sign out ada");
+    expect(text).toContain("Sign out");
+    expect(text).toContain(`href="/ada"`); // the account link in the topbar
     expect(text).toContain("New repository");
   });
 

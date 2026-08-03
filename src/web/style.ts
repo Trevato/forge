@@ -371,6 +371,8 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .hook-new { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .hook-new .input { flex: 1; min-width: 160px; }
 .fork-bar { display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; flex-wrap: wrap; }
+.token-fresh { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
+.token-fresh .clone { margin-top: 8px; user-select: all; }
 
 /* ---- live updates ---- */
 .live-pill {

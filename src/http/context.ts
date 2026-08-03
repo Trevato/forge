@@ -9,9 +9,10 @@ import type { User } from "../core/users.ts";
 
 export interface Auth {
   readonly user: User | undefined;
-  /** Sessions act with full authority; tokens carry their stored scope. */
+  /** Sessions and password (Basic) act with full authority; tokens carry
+   * their stored scope. */
   readonly scope: TokenScope | undefined;
-  readonly via: "session" | "token" | "none";
+  readonly via: "session" | "token" | "password" | "none";
 }
 
 export interface Ctx {

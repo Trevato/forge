@@ -120,6 +120,7 @@ import {
   teamMemberRemove,
   teamPage,
 } from "../web/pages/org.ts";
+import { tokenCreate, tokenDelete, tokensPage } from "../web/pages/account.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
 import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
@@ -139,7 +140,7 @@ function cookieValue(request: Request, name: string): string | undefined {
   return undefined;
 }
 
-function resolveAuth(app: App, request: Request): Auth {
+async function resolveAuth(app: App, request: Request): Promise<Auth> {
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
     const user = sessionUser(app.db, session);
@@ -147,18 +148,33 @@ function resolveAuth(app: App, request: Request): Auth {
   }
 
   const header = request.headers.get("authorization");
-  if (header) {
-    let presented: string | undefined;
-    if (header.startsWith("Bearer ")) {
-      presented = header.slice(7);
-    } else if (header.startsWith("Basic ")) {
-      // Git sends Basic user:pass — the password slot carries a PAT.
-      const decoded = Buffer.from(header.slice(6), "base64").toString();
-      const colon = decoded.indexOf(":");
-      if (colon !== -1) presented = decoded.slice(colon + 1);
+  if (!header) return NO_AUTH;
+
+  // Bearer is always a token.
+  if (header.startsWith("Bearer ")) {
+    const verified = verifyToken(app.db, header.slice(7));
+    if (verified.ok) {
+      return {
+        user: verified.value.user,
+        scope: verified.value.scope,
+        via: "token",
+      };
     }
-    if (presented !== undefined && presented.startsWith("forge_")) {
-      const verified = verifyToken(app.db, presented);
+    return NO_AUTH;
+  }
+
+  // Basic (git, and API convenience): `user:secret`. A forge_ secret is a
+  // token; anything else is treated as the account password — so a plain
+  // `git push` with your login works, the way people expect.
+  if (header.startsWith("Basic ")) {
+    const decoded = Buffer.from(header.slice(6), "base64").toString();
+    const colon = decoded.indexOf(":");
+    if (colon === -1) return NO_AUTH;
+    const username = decoded.slice(0, colon);
+    const secret = decoded.slice(colon + 1);
+
+    if (secret.startsWith("forge_")) {
+      const verified = verifyToken(app.db, secret);
       if (verified.ok) {
         return {
           user: verified.value.user,
@@ -166,6 +182,12 @@ function resolveAuth(app: App, request: Request): Auth {
           via: "token",
         };
       }
+      return NO_AUTH;
+    }
+    if (username !== "" && secret !== "") {
+      const verified = await verifyPassword(app.db, username, secret);
+      if (verified.ok)
+        return { user: verified.value, scope: "admin", via: "password" };
     }
   }
   return NO_AUTH;
@@ -238,6 +260,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/new", newRepoSubmit);
   router.add("GET", "/organizations/new", newOrgPage);
   router.add("POST", "/organizations/new", newOrgSubmit);
+  router.add("GET", "/settings/tokens", tokensPage);
+  router.add("POST", "/settings/tokens", tokenCreate);
+  router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
 
   // git smart HTTP
   router.add("GET", "/:owner/:name.git/info/refs", (ctx) => {
@@ -689,13 +714,51 @@ function loadIssue(ctx: Ctx): { issue: Issue } | { error: Response } {
   return { issue };
 }
 
-function withGitAccess(
+async function withGitAccess(
   ctx: Ctx,
   service: GitService,
   serve: (dir: string, repoId: string) => Response,
-): Response {
-  const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+): Promise<Response> {
+  let repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
   const write = service === "git-receive-pack";
+
+  // Push-to-create: an authed owner (or org writer) pushing to a repo that
+  // doesn't exist yet makes it, so `git push` to a fresh remote just works.
+  if (
+    !repo &&
+    write &&
+    ctx.auth.user &&
+    scopeAllows(ctx.auth.scope ?? "ro", "rw")
+  ) {
+    const ownerName = ctx.params.owner!;
+    let ownerId: string | undefined;
+    if (ownerName.toLowerCase() === ctx.auth.user.username.toLowerCase()) {
+      ownerId = ctx.auth.user.id;
+    } else {
+      const org = getOrg(ctx.app.db, ownerName);
+      if (
+        org &&
+        accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "write")
+      ) {
+        ownerId = org.id;
+      }
+    }
+    if (ownerId !== undefined) {
+      const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
+        ownerId,
+        name: ctx.params.name!,
+        visibility: "private",
+      });
+      if (created.ok) {
+        ctx.app.bus.append({
+          kind: "repo.created",
+          repoId: created.value.id,
+          actorId: ctx.auth.user.id,
+        });
+        repo = created.value;
+      }
+    }
+  }
 
   // Anonymous callers get a challenge wherever credentials could help;
   // authenticated-but-unauthorized callers get a 404 that hides existence.
@@ -817,11 +880,11 @@ export async function serve(app: App): Promise<Servers> {
   const web = Bun.serve({
     port: app.config.port ?? 3000,
     idleTimeout: 120,
-    fetch(request) {
+    async fetch(request) {
       const url = new URL(request.url);
       const matched = router.match(request.method, url.pathname);
       if (!matched) return notFound();
-      const auth = resolveAuth(app, request);
+      const auth = await resolveAuth(app, request);
       return matched.handler({
         app,
         request,

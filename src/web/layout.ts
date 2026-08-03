@@ -64,9 +64,13 @@ export function page(options: PageOptions, status = 200): Response {
           <span class="spacer"></span>
           ${options.user
             ? html`<a class="btn" data-size="sm" href="/new">New</a>
+                <a class="btn" data-size="sm" href="/${options.user.username}"
+                  >${options.user.username}</a
+                >
+                <a class="btn" data-size="sm" href="/settings/tokens">Tokens</a>
                 <form method="post" action="/logout">
                   <button class="btn" data-size="sm" type="submit">
-                    Sign out ${options.user.username}
+                    Sign out
                   </button>
                 </form>`
             : html`<a class="btn" data-size="sm" href="/signin">Sign in</a>`}
