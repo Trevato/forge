@@ -57,6 +57,56 @@ export async function initBareRepo(
   return ok();
 }
 
+/**
+ * Fork a bare repo. `--shared` points the new repo's object store at the
+ * parent's via alternates, so the fork is created instantly and stores only
+ * its own new objects. Refs are copied at fork time. The parent's objects must
+ * outlive the fork until it is detached (see detachFork).
+ */
+export async function forkBareRepo(
+  parentDir: string,
+  forkDir: string,
+): Promise<Result<void, GitFailure>> {
+  const clone = await runGit(
+    ["clone", "--bare", "--shared", parentDir, forkDir],
+    {
+      timeoutMs: 120_000,
+    },
+  );
+  if (!clone.ok) return clone;
+  const reflog = await runGit(["config", "core.logAllRefUpdates", "true"], {
+    cwd: forkDir,
+  });
+  if (!reflog.ok) return reflog;
+  return ok();
+}
+
+/**
+ * Make a fork self-contained: absorb every borrowed object into the fork's own
+ * packs, then drop the alternates link. After this the parent can be deleted
+ * without corrupting the fork — the "detach before delete" invariant.
+ */
+export async function detachFork(
+  forkDir: string,
+): Promise<Result<void, GitFailure>> {
+  // -a repacks everything into one local pack. Crucially we do NOT pass -l
+  // (--local): without it, pack-objects copies the borrowed alternate objects
+  // into this repo, which is exactly the absorption we need before cutting the
+  // alternates link.
+  const repack = await runGit(["repack", "-a", "-d"], {
+    cwd: forkDir,
+    timeoutMs: 300_000,
+  });
+  if (!repack.ok) return repack;
+  await rm(join(forkDir, "objects", "info", "alternates"), { force: true });
+  return ok();
+}
+
+/** Does this bare repo borrow objects from a parent via alternates? */
+export async function hasAlternates(dir: string): Promise<boolean> {
+  return await Bun.file(join(dir, "objects", "info", "alternates")).exists();
+}
+
 export async function setDefaultBranch(
   dir: string,
   branch: string,

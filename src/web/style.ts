@@ -370,6 +370,7 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .hook-list .mono { word-break: break-all; }
 .hook-new { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .hook-new .input { flex: 1; min-width: 160px; }
+.fork-bar { display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; flex-wrap: wrap; }
 
 /* ---- live updates ---- */
 .live-pill {

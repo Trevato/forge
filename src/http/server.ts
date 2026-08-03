@@ -10,6 +10,7 @@ import {
   canWrite,
   createRepo,
   deleteRepo,
+  forkRepo,
   getRepo,
   getRepoById,
   listReposVisibleTo,
@@ -62,6 +63,7 @@ import {
   blobPage,
   commitPage,
   commitsPage,
+  forkSubmit,
   repoHome,
   treePage,
 } from "../web/pages/repo.ts";
@@ -398,6 +400,29 @@ export function buildRouter(): Router<Handler> {
     return json(listEvents(ctx.app.db, { repoId: repo.id }));
   });
 
+  router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const parent = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!parent || !canRead(parent, ctx.auth.user)) return notFound();
+    const input = await body(ctx.request);
+    const forked = await forkRepo(
+      ctx.app.db,
+      ctx.app.reposRoot,
+      parent,
+      ctx.auth.user!.id,
+      str(input.name) || undefined,
+    );
+    if (!forked.ok) return json({ error: forked.error }, 422);
+    ctx.app.bus.append({
+      kind: "repo.forked",
+      repoId: forked.value.id,
+      actorId: ctx.auth.user!.id,
+      payload: { parent: `${parent.ownerName}/${parent.name}` },
+    });
+    return json(forked.value, 201);
+  });
+
   // Issues API — the label-as-queue surface automation drives.
   router.add("GET", "/api/v1/repos/:owner/:name/issues", (ctx) => {
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
@@ -568,6 +593,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
+  router.add("POST", "/:owner/:name/fork", forkSubmit);
 
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);

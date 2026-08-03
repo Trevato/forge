@@ -5,7 +5,13 @@
  */
 
 import type { Repo } from "../../core/repos.ts";
-import { canRead, getRepo } from "../../core/repos.ts";
+import {
+  canRead,
+  forkRepo,
+  getRepo,
+  getRepoById,
+  listForks,
+} from "../../core/repos.ts";
 import { diffCommit } from "../../git/diff.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
@@ -20,8 +26,9 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { highlightBlob } from "../code.ts";
 import { renderDiff } from "../diff-view.ts";
+import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { page } from "../layout.ts";
+import { page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 
 const MAX_RENDER_BYTES = 1_000_000;
@@ -62,6 +69,72 @@ export function crumbsFor(repo: Repo): { label: string; href: string }[] {
 
 export function repoNotFound(ctx: Ctx): Response {
   return notFoundPage(ctx);
+}
+
+/** The "forked from …" lineage line and a Fork button, for the repo home. */
+function forkBar(ctx: Ctx, repo: Repo): Html {
+  const parent =
+    repo.forkParentId !== null
+      ? getRepoById(ctx.app.db, repo.forkParentId)
+      : undefined;
+  const canFork =
+    ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
+  const forkCount = listForks(ctx.app.db, repo.id).length;
+  const base = `/${repo.ownerName}/${repo.name}`;
+  if (!parent && !canFork && forkCount === 0) return html``;
+  return html`<div class="fork-bar">
+    ${when(
+      parent,
+      (p) =>
+        html`<span class="muted small"
+          >forked from
+          <a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a></span
+        >`,
+    )}
+    ${when(
+      forkCount > 0,
+      () =>
+        html`<span class="muted small"
+          >${forkCount} fork${forkCount === 1 ? "" : "s"}</span
+        >`,
+    )}
+    <span class="spacer"></span>
+    ${when(
+      canFork,
+      () =>
+        html`<form method="post" action="${base}/fork">
+          <button class="btn" data-size="sm" type="submit">Fork</button>
+        </form>`,
+    )}
+  </div>`;
+}
+
+// POST /:owner/:name/fork
+export async function forkSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return redirect("/signin");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+
+  const forked = await forkRepo(
+    ctx.app.db,
+    ctx.app.reposRoot,
+    repo,
+    ctx.auth.user.id,
+    field(form, "name") || undefined,
+  );
+  if (!forked.ok) {
+    // Already forked → go to the existing fork (common-case name).
+    return redirect(`/${ctx.auth.user.username}/${repo.name}`);
+  }
+  ctx.app.bus.append({
+    kind: "repo.forked",
+    repoId: forked.value.id,
+    actorId: ctx.auth.user.id,
+    payload: { parent: `${repo.ownerName}/${repo.name}` },
+  });
+  return redirect(`/${forked.value.ownerName}/${forked.value.name}`);
 }
 
 export function timeAgo(iso: string): string {
@@ -182,7 +255,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
 
   const refs = await listRefs(dir, "refs/heads/");
   if (!refs.ok || refs.value.length === 0) {
-    const body = html`${repoNav(repo, "code")}
+    const body = html`${repoNav(repo, "code")} ${forkBar(ctx, repo)}
       <div class="card empty">
         <p>An empty repository, ready for its first push.</p>
       </div>
@@ -203,7 +276,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   const tree = entries.ok ? entries.value : [];
   const readme = await readmeSection(dir, ref, tree);
 
-  const body = html`${repoNav(repo, "code")}
+  const body = html`${repoNav(repo, "code")} ${forkBar(ctx, repo)}
     ${when(
       repo.description !== "",
       () => html`<p class="muted mb">${repo.description}</p>`,
