@@ -177,15 +177,41 @@ Paid-for lessons from open-platform-ts, designed in structurally:
 5. Config reloads fail closed — a bad config degrades to the last good one,
    never a dead process.
 
+## The diff viewer
+
+The centerpiece of code review, built from the distilled state of the art:
+
+- **Highlight the whole file, then map onto the diff.** Syntax highlighting
+  runs over the full old and new blobs independently, and the tokens are mapped
+  onto diff rows by line number — never per-diff-line, which breaks multi-line
+  comments and strings (Forgejo #33358). The tokenizer is a stateful per-line
+  scanner (`web/highlight.ts`) that carries block-comment / multiline-string
+  state across lines; it is lossless and bounded.
+- **Two composed layers.** Syntax owns text color; the diff owns background and
+  underline. `composeLine` merges a line's token classes and its per-character
+  word-diff change mask into one span per run — so a changed number inside a
+  modified line is both `tok-number` and `wd`, without either layer dictating
+  the other's boundaries.
+- **Intra-line word diff** via a bounded token LCS (`web/worddiff.ts`), shown as
+  underline plus a saturated background — change is never signalled by hue alone.
+- **Mobile-first unified view.** No side-by-side; nobody has made it work on a
+  phone. Files collapse natively (`<details>`), windowing is pure CSS
+  (`content-visibility`), the `+`/`-` marker is a `::before` so copy skips it,
+  and files over ~5000 changed lines show a stub instead of rendering.
+
 ## v1 scope
 
 A forge that Just Works for a person and their crew: register/login, create
-repo, push/pull over HTTPS with PATs, browse code (tree/blob/log/diff/blame),
-README/markdown rendering, issues with labels and comments, pull requests with
-diff review / merge (merge-commit + squash) / protected branches, webhooks,
-personal access tokens, a REST API covering everything the UI can do, SSE live
-updates, and an events feed. Fast on a phone. Deployable as one binary + git.
+repo, push/pull over HTTPS with PATs, browse code (tree/blob/log/diff) with
+syntax highlighting, README/markdown rendering, issues with labels and comments,
+pull requests with a diff viewer / merge (merge-commit + squash) / conflict
+detection / protected branches, repo settings, personal access tokens, and a
+REST API over repos and issues. Fast on a phone. Deployable as one binary + git.
 
-Not in v1: SSH transport, forks/alternates UX, org teams, CI runners (the
-events + API surface is designed so a runner integrates without core changes),
-federation, package registry.
+**Shipped so far:** foundation, diff engine, issues, pull requests + merge, the
+diff viewer with syntax highlighting, commit pages, and settings.
+
+Not in v1: SSH transport, review comments anchored to diff lines (the schema and
+content-hash anchoring are in place), forks/alternates UX, org teams, CI runners
+(the events + API surface is designed so a runner integrates without core
+changes), webhook delivery, SSE live updates, federation, package registry.

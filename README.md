@@ -64,13 +64,25 @@ Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.
 
 ## What works today
 
-Register and sign in, personal access tokens with coarse scopes, create public
-and private repositories, push and pull over HTTPS, browse code (tree, blob with
-line anchors, commit history) with README rendering, protected default branches
-(force-push and deletion refused, honest fast-forwards allowed), a durable event
-outbox, and a JSON API covering everything the UI can do. Pages render without a
-line of JavaScript and are designed thumb-first.
+- **Accounts & access** — register/sign in, personal access tokens with coarse
+  scopes (ro/rw/admin), public and private repositories.
+- **Git** — push and pull over HTTPS, browse code (tree, blob with line anchors,
+  commit history) with README rendering and **syntax highlighting**, protected
+  default branches (force-push and deletion refused, honest fast-forwards
+  allowed).
+- **Issues** — labels, threaded comments, close/reopen, markdown.
+- **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
+  highlighting composed with intra-line word highlighting, mobile-first,
+  collapsible files), merge-commit and squash strategies, conflict detection,
+  and merge commits kept reachable forever via `refs/pull/N/merged`.
+- **Commit pages** — every commit's diff through the same viewer.
+- **Settings** — visibility, branch protection, and labels.
+- **Automation** — a JSON API covering repos and issues (the label-as-queue
+  surface), and a durable event outbox.
 
-Not yet: SSH transport, pull requests, issues, forks, webhooks delivery, CI.
-The event outbox and API surface are shaped so these arrive as additions, not
-rewrites.
+Pages render without a line of JavaScript and are designed thumb-first. Still
+**zero runtime dependencies**.
+
+Not yet: SSH transport, review comments on diff lines, forks, webhook delivery,
+CI. The event outbox and API surface are shaped so these arrive as additions,
+not rewrites.
