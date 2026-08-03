@@ -131,6 +131,7 @@ export function pullsList(ctx: Ctx): Response {
   return page({
     title: `Pull requests · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
     scriptJs: liveClientJs,
@@ -238,6 +239,7 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
   return page({
     title: `New pull request · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
   });
@@ -296,6 +298,7 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
     return page({
       title: "New pull request",
       user: ctx.auth.user,
+      theme: ctx.theme,
       crumbs: crumbsFor(repo),
       body: html`${repoNav(repo, "pulls")}
         <div class="narrow-wide">
@@ -425,6 +428,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   return page({
     title: `${pull.title} · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
     scriptJs: liveClientJs,

@@ -179,6 +179,7 @@ export function settingsPage(ctx: Ctx): Response {
   return page({
     title: `Settings · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
     styleCss: labelCssFor(labels),

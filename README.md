@@ -57,7 +57,7 @@ src/
   git/        bare repos, smart HTTP v2, cat-file readers, hooks, guards
   core/       domain: users, sessions, tokens, repos, events, schema
   http/       router, request context, the server
-  web/        SSR: html tag, design tokens, markdown, pages
+  web/        SSR: html tag, theme palettes, design tokens, markdown, pages
 ```
 
 Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.
@@ -91,8 +91,9 @@ work here.
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
   delivery with retry).
 
-Pages render without a line of JavaScript and are designed thumb-first. Still
-**zero runtime dependencies**.
+Pages render without a line of JavaScript and are designed thumb-first. Six
+premade themes (from warm paper to polar night) switch instantly and persist in
+a cookie — even that works script-free. Still **zero runtime dependencies**.
 
 Not yet: SSH transport, CI runners, and an AI build crew. The event outbox and
 API surface are shaped so these arrive as additions, not rewrites.

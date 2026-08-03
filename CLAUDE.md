@@ -60,7 +60,7 @@ undefined` — handle it), `exactOptionalPropertyTypes` (don't pass `undefined`
   where a key should be absent), `verbatimModuleSyntax` (`import type`), and
   `.ts` extensions on relative imports.
 - Commit only when asked; imperative subject; end the message with
-  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+  `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
 ## The map
 
@@ -78,8 +78,9 @@ src/
               repos (access checks), issues (issue|pull), pulls, reviews,
               orgs/teams, webhooks, events (outbox+bus), reconcile, schema
   http/       router, request context (Ctx/auth), server (all routes), sse
-  web/        SSR: html tag, style tokens, layout (CSP+nonce), markdown,
-              highlight, diff-view, pages/*
+  web/        SSR: html tag, themes (token palettes), style (the stylesheet),
+              layout (CSP+nonce, topbar, theme switcher), markdown, highlight,
+              diff-view, pages/*
 ```
 
 ## Recipes

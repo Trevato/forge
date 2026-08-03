@@ -17,6 +17,7 @@ import { countUsers, createUser, verifyPassword } from "../../core/users.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
+import { isThemeName } from "../themes.ts";
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
@@ -88,7 +89,7 @@ export function home(ctx: Ctx): Response {
               </div>`}`,
     )}
   `;
-  return page({ title: "forge", user: ctx.auth.user, body });
+  return page({ title: "forge", user: ctx.auth.user, theme: ctx.theme, body });
 }
 
 function authForm(kind: "signin" | "signup", error?: string): Html {
@@ -150,6 +151,7 @@ export function signinPage(ctx: Ctx): Response {
   return page({
     title: "Sign in",
     user: ctx.auth.user,
+    theme: ctx.theme,
     body: authForm("signin"),
   });
 }
@@ -158,6 +160,7 @@ export function signupPage(ctx: Ctx): Response {
   return page({
     title: "Sign up",
     user: ctx.auth.user,
+    theme: ctx.theme,
     body: authForm("signup"),
   });
 }
@@ -174,6 +177,7 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
     return page({
       title: "Sign in",
       user: undefined,
+      theme: ctx.theme,
       body: authForm("signin", "That username and password don't match."),
     });
   }
@@ -204,6 +208,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
     return page({
       title: "Sign up",
       user: undefined,
+      theme: ctx.theme,
       body: authForm(
         "signup",
         messages[created.error] ?? "Something went wrong.",
@@ -216,6 +221,30 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
     "/",
     sessionCookie(session.token, session.expiresAt, ctx.url),
   );
+}
+
+// POST /theme — persist the theme choice in a cookie. Works as a plain form
+// submit (redirect back to the referring page) and as a background fetch from
+// the switcher script; "system" clears the cookie so the OS decides again.
+export async function themeSubmit(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx);
+  if (form instanceof Response) return form;
+  const choice = field(form, "theme");
+  const secure = ctx.url.protocol === "https:" ? "; Secure" : "";
+  const cookie = isThemeName(choice)
+    ? `forge_theme=${choice}; Path=/; Max-Age=31536000; SameSite=Lax; HttpOnly${secure}`
+    : `forge_theme=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure}`;
+
+  // Return to the page the form was submitted from — same-origin paths only,
+  // so the redirect can never be steered off this forge.
+  const referer = ctx.request.headers.get("referer");
+  let back = "/";
+  if (referer !== null) {
+    const parsed = URL.parse(referer);
+    if (parsed && parsed.origin === ctx.url.origin)
+      back = parsed.pathname + parsed.search;
+  }
+  return redirect(back, cookie);
 }
 
 export function logoutSubmit(ctx: Ctx): Response {
@@ -276,7 +305,12 @@ export function newRepoPage(ctx: Ctx): Response {
       </div>
     </form>
   </div>`;
-  return page({ title: "New repository", user: ctx.auth.user, body });
+  return page({
+    title: "New repository",
+    user: ctx.auth.user,
+    theme: ctx.theme,
+    body,
+  });
 }
 
 /** Resolve the owner id for a new repo: the user, or an org they can write to. */
@@ -305,6 +339,7 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
     return page({
       title: "New repository",
       user: ctx.auth.user,
+      theme: ctx.theme,
       body: html`<div class="narrow">
         <h1>New repository</h1>
         <p class="error-note">

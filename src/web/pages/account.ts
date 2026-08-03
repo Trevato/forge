@@ -103,6 +103,7 @@ export function tokensPage(ctx: Ctx): Response {
   return page({
     title: "Access tokens",
     user: ctx.auth.user,
+    theme: ctx.theme,
     body: tokensView(ctx),
   });
 }
@@ -128,6 +129,7 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   return page({
     title: "Access tokens",
     user: ctx.auth.user,
+    theme: ctx.theme,
     body: tokensView(ctx, minted.token),
   });
 }

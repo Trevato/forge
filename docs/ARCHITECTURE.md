@@ -156,10 +156,13 @@ Two lessons Forgejo is still paying for, designed in up front:
   returning safe strings. No hydration framework — pages are fast HTML with
   surgical vanilla JS: URL-as-state (the nuqs pattern, ~15 lines), SSE for
   live updates, `data-*` attributes as the style/behavior hooks.
-- **Design system**: a flat namespace of CSS custom properties — one `:root`
-  block, one `.dark` override — is the entire theming machinery. shadcn's
-  essence without Tailwind: tokens, radii, spacing scale, semantic colors.
-  Strict CSP on every response.
+- **Design system**: a flat namespace of CSS custom properties is the entire
+  theming machinery — every color (surfaces, semantics, diff tints, syntax
+  tokens) is a variable, so a theme is a data table in `web/themes.ts`, not
+  code. Six premade themes ship (three light, three dark); "system" follows
+  the OS. The switcher is a plain form POST with a cookie — script only makes
+  it instant. shadcn's essence without Tailwind: tokens, radii, spacing scale,
+  semantic colors. Strict CSP on every response.
 - **Mobile-first**: layouts compose from a single column up; touch targets
   ≥44px; the fast paths (open issue, comment, review a diff, merge) are
   designed on a phone frame first and enhanced for desktop.

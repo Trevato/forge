@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
+import { THEME_NAMES } from "../src/web/themes.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {
@@ -247,5 +248,107 @@ describe("web pages end to end", () => {
       const text = await response.text();
       expect(text).toContain("404");
     }
+  });
+});
+
+describe("themes", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-theme-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("stylesheet carries every premade theme", async () => {
+    const css = await (await fetch(`${base}/assets/forge.css`)).text();
+    for (const name of THEME_NAMES) {
+      expect(css).toContain(`:root[data-theme="${name}"]`);
+      expect(css).toContain(`.swatch[data-t="${name}"]`);
+    }
+    // System pair: light in :root, dark behind the media query.
+    expect(css).toContain("prefers-color-scheme: dark");
+    // Syntax colors are tokens, so every theme restyles code for free.
+    expect(css).toContain("--tok-keyword");
+    expect(css).toContain("color: var(--tok-keyword)");
+  });
+
+  test("no cookie means system: no data-theme, switcher present", async () => {
+    const text = await (await fetch(base)).text();
+    expect(text).not.toContain("data-theme=");
+    expect(text).toContain('action="/theme"');
+    for (const name of THEME_NAMES) {
+      expect(text).toContain(`value="${name}"`);
+    }
+  });
+
+  test("choosing a theme sets the cookie and stamps the page", async () => {
+    const post = await fetch(`${base}/theme`, {
+      method: "POST",
+      headers: { referer: `${base}/signin` },
+      body: new URLSearchParams({ theme: "midnight" }),
+      redirect: "manual",
+    });
+    expect(post.status).toBe(303);
+    expect(post.headers.get("location")).toBe("/signin");
+    const setCookie = post.headers.get("set-cookie") ?? "";
+    expect(setCookie).toStartWith("forge_theme=midnight");
+
+    const cookie = setCookie.split(";")[0]!;
+    const text = await (await fetch(base, { headers: { cookie } })).text();
+    expect(text).toContain('data-theme="midnight"');
+    // The switcher shows the active choice.
+    expect(text).toMatch(/value="midnight"\s+checked/);
+  });
+
+  test("system clears the cookie; junk never sticks", async () => {
+    const system = await fetch(`${base}/theme`, {
+      method: "POST",
+      body: new URLSearchParams({ theme: "system" }),
+      redirect: "manual",
+    });
+    expect(system.headers.get("set-cookie")).toContain("Max-Age=0");
+
+    const junk = await fetch(`${base}/theme`, {
+      method: "POST",
+      body: new URLSearchParams({ theme: '"><script>x</script>' }),
+      redirect: "manual",
+    });
+    expect(junk.headers.get("set-cookie")).toContain("forge_theme=;");
+
+    // A hostile cookie value arriving from outside is ignored at render time.
+    const text = await (
+      await fetch(base, { headers: { cookie: "forge_theme=evil" } })
+    ).text();
+    expect(text).not.toContain("data-theme=");
+  });
+
+  test("theme POST refuses cross-origin and foreign referers", async () => {
+    const cross = await fetch(`${base}/theme`, {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+      body: new URLSearchParams({ theme: "dark" }),
+      redirect: "manual",
+    });
+    expect(cross.status).toBe(403);
+
+    const foreign = await fetch(`${base}/theme`, {
+      method: "POST",
+      headers: { referer: "https://evil.example/phish" },
+      body: new URLSearchParams({ theme: "dark" }),
+      redirect: "manual",
+    });
+    expect(foreign.status).toBe(303);
+    expect(foreign.headers.get("location")).toBe("/");
   });
 });

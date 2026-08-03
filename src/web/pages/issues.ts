@@ -126,6 +126,7 @@ export function issuesList(ctx: Ctx): Response {
   return page({
     title: `Issues · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
     styleCss: labelCss(colors),
@@ -158,6 +159,7 @@ export function newIssuePage(ctx: Ctx): Response {
   return page({
     title: `New issue · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
   });
@@ -203,7 +205,8 @@ export function issuePage(ctx: Ctx): Response {
   const labels = labelsFor(ctx.app.db, issue.id);
   const mayModerate =
     ctx.auth.user !== undefined &&
-    (ctx.auth.user.id === issue.authorId || canWrite(ctx.app.db, repo, ctx.auth.user));
+    (ctx.auth.user.id === issue.authorId ||
+      canWrite(ctx.app.db, repo, ctx.auth.user));
   const base = `/${repo.ownerName}/${repo.name}`;
 
   const lastCommentId =
@@ -296,6 +299,7 @@ export function issuePage(ctx: Ctx): Response {
   return page({
     title: `${issue.title} · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
     styleCss: labelCss(labels.map((l) => l.color)),
@@ -366,7 +370,8 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
 
   // Close/reopen only for the author or a repo writer.
   const mayModerate =
-    ctx.auth.user.id === issue.authorId || canWrite(ctx.app.db, repo, ctx.auth.user);
+    ctx.auth.user.id === issue.authorId ||
+    canWrite(ctx.app.db, repo, ctx.auth.user);
   if (mayModerate && (intent === "close" || intent === "reopen")) {
     const target: IssueState = intent === "close" ? "closed" : "open";
     const changed = setIssueState(ctx.app.db, issue.id, target);

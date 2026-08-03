@@ -64,6 +64,7 @@ import { defect } from "../kernel/error.ts";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { css } from "../web/style.ts";
+import { isThemeName } from "../web/themes.ts";
 import {
   home,
   logoutSubmit,
@@ -74,6 +75,7 @@ import {
   signinSubmit,
   signupPage,
   signupSubmit,
+  themeSubmit,
 } from "../web/pages/site.ts";
 import {
   blobPage,
@@ -306,6 +308,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signup", signupPage);
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
+  router.add("POST", "/theme", themeSubmit);
   router.add("GET", "/new", newRepoPage);
   router.add("POST", "/new", newRepoSubmit);
   router.add("GET", "/organizations/new", newOrgPage);
@@ -1254,12 +1257,14 @@ export async function serve(app: App): Promise<Servers> {
       const matched = router.match(request.method, url.pathname);
       if (!matched) return noRoute(request.method, url.pathname);
       const auth = await resolveAuth(app, request);
+      const themeCookie = cookieValue(request, "forge_theme") ?? "";
       return matched.handler({
         app,
         request,
         url,
         params: matched.params,
         auth,
+        theme: isThemeName(themeCookie) ? themeCookie : undefined,
       });
     },
     error(error) {

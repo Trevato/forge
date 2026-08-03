@@ -35,6 +35,7 @@ export function ownerProfile(ctx: Ctx): Response {
       {
         title: "Not found",
         user: ctx.auth.user,
+        theme: ctx.theme,
         body: html`<div class="empty"><h1>404</h1></div>`,
       },
       404,
@@ -78,7 +79,12 @@ export function ownerProfile(ctx: Ctx): Response {
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner.id, owner.username, canManage),
     )}`;
-  return page({ title: owner.username, user: ctx.auth.user, body });
+  return page({
+    title: owner.username,
+    user: ctx.auth.user,
+    theme: ctx.theme,
+    body,
+  });
 }
 
 function teamsSection(
@@ -160,7 +166,12 @@ export function newOrgPage(ctx: Ctx): Response {
       </div>
     </form>
   </div>`;
-  return page({ title: "New organization", user: ctx.auth.user, body });
+  return page({
+    title: "New organization",
+    user: ctx.auth.user,
+    theme: ctx.theme,
+    body,
+  });
 }
 
 // POST /organizations/new
@@ -175,6 +186,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
     return page({
       title: "New organization",
       user: ctx.auth.user,
+      theme: ctx.theme,
       body: html`<div class="narrow">
         <h1>New organization</h1>
         <p class="error-note">${msg}</p>
@@ -210,6 +222,7 @@ export async function teamCreate(ctx: Ctx): Promise<Response> {
       {
         title: "Not found",
         user: ctx.auth.user,
+        theme: ctx.theme,
         body: html`<div class="empty"><h1>404</h1></div>`,
       },
       404,
@@ -231,6 +244,7 @@ export function teamPage(ctx: Ctx): Response {
       {
         title: "Not found",
         user: ctx.auth.user,
+        theme: ctx.theme,
         body: html`<div class="empty"><h1>404</h1></div>`,
       },
       404,
@@ -241,6 +255,7 @@ export function teamPage(ctx: Ctx): Response {
       {
         title: "Not found",
         user: ctx.auth.user,
+        theme: ctx.theme,
         body: html`<div class="empty"><h1>404</h1></div>`,
       },
       404,
@@ -303,6 +318,7 @@ export function teamPage(ctx: Ctx): Response {
   return page({
     title: `${team.name} · ${org.orgName}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     body,
   });
 }

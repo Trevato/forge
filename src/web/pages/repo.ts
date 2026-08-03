@@ -41,6 +41,7 @@ function notFoundPage(ctx: Ctx): Response {
     {
       title: "Not found",
       user: ctx.auth.user,
+      theme: ctx.theme,
       body: html`<div class="empty">
         <h1>404</h1>
         <p class="muted">Nothing here.</p>
@@ -156,22 +157,19 @@ export type RepoTab = "code" | "issues" | "pulls" | "commits" | "settings";
 export function repoNav(repo: Repo, active: RepoTab): Html {
   const base = `/${repo.ownerName}/${repo.name}`;
   const tab = (label: string, href: string, key: RepoTab) =>
-    html`<a
-      class="btn"
-      data-size="sm"
-      href="${href}"
-      ${active === key ? raw('aria-current="page"') : null}
+    html`<a href="${href}" ${active === key ? raw('aria-current="page"') : null}
       >${label}</a
     >`;
-  return html`<div class="page-head">
-    <h1><a href="${base}">${repo.name}</a></h1>
-    <span class="badge">${repo.visibility}</span>
-    <span class="spacer"></span>
-    ${tab("Code", base, "code")} ${tab("Issues", `${base}/issues`, "issues")}
-    ${tab("Pulls", `${base}/pulls`, "pulls")}
-    ${tab("Commits", `${base}/commits`, "commits")}
-    ${tab("Settings", `${base}/settings`, "settings")}
-  </div>`;
+  return html`<div class="repo-head">
+      <h1><a href="${base}">${repo.name}</a></h1>
+      <span class="badge">${repo.visibility}</span>
+    </div>
+    <nav class="repo-tabs">
+      ${tab("Code", base, "code")} ${tab("Issues", `${base}/issues`, "issues")}
+      ${tab("Pulls", `${base}/pulls`, "pulls")}
+      ${tab("Commits", `${base}/commits`, "commits")}
+      ${tab("Settings", `${base}/settings`, "settings")}
+    </nav>`;
 }
 
 function treeListing(
@@ -266,6 +264,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
     return page({
       title: repo.name,
       user: ctx.auth.user,
+      theme: ctx.theme,
       crumbs: crumbsFor(repo),
       body,
     });
@@ -287,6 +286,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   return page({
     title: repo.name,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
   });
@@ -313,6 +313,7 @@ export async function treePage(ctx: Ctx): Promise<Response> {
   return page({
     title: `${path || ref} · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
   });
@@ -374,6 +375,7 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   return page({
     title: `${filename} · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body: body_,
   });
@@ -399,6 +401,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     return page({
       title: `Commits · ${repo.name}`,
       user: ctx.auth.user,
+      theme: ctx.theme,
       crumbs: crumbsFor(repo),
       body: html`${repoNav(repo, "commits")}
         <div class="card empty">No commits yet.</div>`,
@@ -454,6 +457,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
   return page({
     title: `Commits · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
   });
@@ -502,6 +506,7 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   return page({
     title: `${commit.subject} · ${repo.name}`,
     user: ctx.auth.user,
+    theme: ctx.theme,
     crumbs: crumbsFor(repo),
     body,
   });
