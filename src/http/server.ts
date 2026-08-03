@@ -88,6 +88,7 @@ import {
   pullCommentSubmit,
   pullMergeSubmit,
   pullPage,
+  pullReviewSubmit,
   pullsList,
 } from "../web/pages/pulls.ts";
 import {
@@ -500,6 +501,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
 
   // Parameterized repo pages match last, so they can never shadow a literal.

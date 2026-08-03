@@ -6,6 +6,12 @@
  */
 
 import { addComment, listComments } from "../../core/issues.ts";
+import {
+  addReviewComment,
+  byAnchor,
+  listReviewComments,
+  type Side,
+} from "../../core/reviews.ts";
 import { canWrite } from "../../core/repos.ts";
 import {
   createPull,
@@ -20,7 +26,7 @@ import { mergeBase } from "../../git/merge.ts";
 import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { renderDiff } from "../diff-view.ts";
+import { renderDiff, type DiffViewOptions } from "../diff-view.ts";
 import { diffSyntax } from "../diff-syntax.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
@@ -31,6 +37,22 @@ import { crumbsFor, loadRepo, repoNav, repoNotFound, timeAgo } from "./repo.ts";
 function parseNumber(raw: string | undefined): number | undefined {
   if (raw === undefined || !/^[1-9][0-9]{0,8}$/.test(raw)) return undefined;
   return Number(raw);
+}
+
+/** Parse a "path~side~line" review anchor from a link or form field. */
+function parseAnchor(
+  raw: string | null,
+): { path: string; side: Side; line: number } | undefined {
+  if (!raw) return undefined;
+  const at = raw.lastIndexOf("~");
+  const at2 = raw.lastIndexOf("~", at - 1);
+  if (at === -1 || at2 === -1) return undefined;
+  const path = raw.slice(0, at2);
+  const side = raw.slice(at2 + 1, at);
+  const line = Number(raw.slice(at + 1));
+  if ((side !== "old" && side !== "new") || !Number.isInteger(line) || line < 1)
+    return undefined;
+  return { path, side, line };
 }
 
 async function branchNames(dir: string): Promise<string[]> {
@@ -255,8 +277,21 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     : { files: [], additions: 0, deletions: 0 };
   const syntax = await diffSyntax(dir, diff, from, status.headOid);
   const comments = listComments(ctx.app.db, pull.id);
+  const reviewComments = byAnchor(listReviewComments(ctx.app.db, pull.id));
   const mayMerge = canWrite(repo, ctx.auth.user);
   const base = `/${repo.ownerName}/${repo.name}`;
+  const reviewBase = `${base}/pulls/${pull.number}`;
+
+  // A "?rc=path~side~line" link opens an inline comment form at that row.
+  const active = ctx.auth.user
+    ? parseAnchor(ctx.url.searchParams.get("rc"))
+    : undefined;
+  const diffOptions: DiffViewOptions = {
+    syntax,
+    comments: reviewComments,
+    ...(ctx.auth.user ? { reviewBase } : {}),
+    ...(active ? { active } : {}),
+  };
 
   const conversation = html`<div class="card comment">
       <div class="comment-head">
@@ -298,7 +333,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     </div>
     ${conversation} ${mergeBox(pull, status, mayMerge, base)}
     <h2 class="mt">Files changed</h2>
-    ${renderDiff(diff, syntax)}
+    ${renderDiff(diff, diffOptions)}
     ${ctx.auth.user
       ? html`<form
           class="card comment-form"
@@ -453,4 +488,53 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
     }
   }
   return redirect(`/${repo.ownerName}/${repo.name}/pulls/${pull.number}`);
+}
+
+// POST /:owner/:name/pulls/:number/review — a comment anchored to a diff line.
+export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  if (!ctx.auth.user) return redirect("/signin");
+  const number = parseNumber(ctx.params.number);
+  const pull =
+    number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
+  if (!pull) return repoNotFound(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+
+  const anchor = parseAnchor(
+    `${field(form, "path")}~${field(form, "side")}~${field(form, "line")}`,
+  );
+  const bodyText = field(form, "body");
+  const dest = `/${repo.ownerName}/${repo.name}/pulls/${pull.number}`;
+  if (anchor && bodyText.trim() !== "") {
+    // Anchor to the head the reviewer is looking at, plus the line's content
+    // hash so a later force-push re-anchors or marks the comment outdated.
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const status = await pullStatus(dir, pull);
+    const added = addReviewComment(ctx.app.db, {
+      pullId: pull.id,
+      authorId: ctx.auth.user.id,
+      body: bodyText,
+      path: anchor.path,
+      line: anchor.line,
+      side: anchor.side,
+      commitOid: status.headOid,
+      lineHash: field(form, "lineHash"),
+    });
+    if (added.ok) {
+      ctx.app.bus.append({
+        kind: "pull.reviewed",
+        repoId: repo.id,
+        actorId: ctx.auth.user.id,
+        payload: { number: pull.number, path: anchor.path, line: anchor.line },
+      });
+    }
+  }
+  return redirect(`${dest}#${fileHashAnchor(anchor?.path ?? "")}`);
+}
+
+/** Match the diff viewer's per-file anchor id, so the redirect lands there. */
+function fileHashAnchor(path: string): string {
+  return "d-" + path.replace(/[^a-zA-Z0-9]+/g, "-");
 }

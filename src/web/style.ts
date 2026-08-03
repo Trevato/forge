@@ -315,6 +315,18 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .dh .dc { background: var(--muted); border-left-color: transparent; padding-top: 2px; padding-bottom: 2px; }
 .dh .dc::before { content: ""; }
 .nonl { color: var(--del-fg); opacity: 0.7; padding-left: 8px; }
+/* line-number as a comment affordance */
+.dn-comment { color: var(--muted-fg); display: block; position: relative; }
+.dn-comment:hover { color: var(--primary-fg); background: var(--accent); border-radius: 3px; }
+/* review comments ride under their line, full width */
+.dl-review .dc-review { padding: 8px 12px; background: var(--muted); border-left: 3px solid var(--accent); white-space: normal; font-family: var(--font); }
+.rc { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 8px; }
+.rc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.rc-body { font-size: 13.5px; }
+.rc-body p:first-child { margin-top: 0; }
+.rc-outdated { color: var(--del-fg); border-color: color-mix(in srgb, var(--del-fg) 40%, var(--border)); }
+.rc-form { display: block; }
+.rc-form textarea { width: 100%; }
 
 /* ---- pull requests ---- */
 .badge[data-pr="merged"] { color: #8250df; border-color: color-mix(in srgb, #8250df 40%, var(--border)); }

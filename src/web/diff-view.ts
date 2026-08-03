@@ -11,9 +11,16 @@
  */
 
 import type { Diff, DiffLine, FileDiff, Hunk } from "../git/diff.ts";
+import {
+  anchorKey,
+  hashLine,
+  type ReviewComment,
+  type Side,
+} from "../core/reviews.ts";
 import { composeLine } from "./code.ts";
 import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
+import { renderMarkdown } from "./markdown.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
 
 /** Highlighted tokens per side for a file, keyed by path in a SyntaxMap. */
@@ -22,6 +29,25 @@ export interface FileTokens {
   new?: Token[][];
 }
 export type SyntaxMap = Map<string, FileTokens>;
+
+/** Everything the viewer needs beyond the diff itself. */
+export interface DiffViewOptions {
+  syntax?: SyntaxMap;
+  /** Review comments, grouped by `anchorKey(path, side, line)`. */
+  comments?: Map<string, ReviewComment[]>;
+  /** Render an inline comment form at this anchor (from a `?rc=` link). */
+  active?: { path: string; side: Side; line: number };
+  /** Base path for comment forms and "+" links, e.g. `/owner/repo/pulls/3`.
+   * When set, lines become commentable. */
+  reviewBase?: string;
+}
+
+/** Per-file render context, resolved once per file. */
+interface RowCtx {
+  path: string;
+  tokens: FileTokens;
+  opts: DiffViewOptions;
+}
 
 // Above this many changed lines a single file is not rendered inline — it is
 // a scroll-and-memory hazard and almost never read line by line.
@@ -125,8 +151,9 @@ function base(line: DiffLine): Omit<Row, "changed"> {
   };
 }
 
-function renderRow(row: Row, tokens: FileTokens): Html {
+function renderRow(row: Row, ctx: RowCtx): Html {
   const mark = row.kind === "add" ? "+" : row.kind === "del" ? "-" : " ";
+  const { tokens, path, opts } = ctx;
   // Del lines are colored from the old blob; add and context from the new.
   const tokenLine =
     row.kind === "del"
@@ -136,9 +163,26 @@ function renderRow(row: Row, tokens: FileTokens): Html {
       : row.newNumber !== null
         ? tokens.new?.[row.newNumber - 1]
         : undefined;
-  return html`<tr class="dl" data-k="${row.kind}">
-    <td class="dn">${row.oldNumber ?? ""}</td>
-    <td class="dn">${row.newNumber ?? ""}</td>
+
+  // A row is commentable on the side git shows it: del on old, else new.
+  const side: Side = row.kind === "del" ? "old" : "new";
+  const lineNo = side === "old" ? row.oldNumber : row.newNumber;
+
+  const gutter = (n: number | null, isAnchorSide: boolean) => {
+    if (n === null) return html`<td class="dn"></td>`;
+    if (!opts.reviewBase || !isAnchorSide)
+      return html`<td class="dn">${n}</td>`;
+    const href = `${opts.reviewBase}?rc=${encodeURIComponent(path)}~${side}~${n}#rc`;
+    return html`<td class="dn">
+      <a class="dn-comment" href="${href}" title="Comment on this line">${n}</a>
+    </td>`;
+  };
+
+  const rowHtml = html`<tr class="dl" data-k="${row.kind}">
+    ${gutter(row.oldNumber, side === "old")}${gutter(
+      row.newNumber,
+      side === "new",
+    )}
     <td class="dc" data-mark="${mark}">
       <span class="dcx">${composeLine(row.text, tokenLine, row.changed)}</span
       >${when(
@@ -147,6 +191,83 @@ function renderRow(row: Row, tokens: FileTokens): Html {
           html`<span class="nonl" title="No newline at end of file">↵</span>`,
       )}
     </td>
+  </tr>`;
+
+  // Existing comments and a form, if any, ride under the row.
+  const extras =
+    lineNo === null ? html`` : reviewRows(path, side, lineNo, row.text, ctx);
+  return html`${rowHtml}${extras}`;
+}
+
+/** Comment thread and (when active) a compose form, as full-width rows. */
+function reviewRows(
+  path: string,
+  side: Side,
+  line: number,
+  currentText: string,
+  ctx: RowCtx,
+): Html {
+  const { opts } = ctx;
+  const key = anchorKey(path, side, line);
+  const comments = opts.comments?.get(key) ?? [];
+  const isActive =
+    opts.active !== undefined &&
+    opts.active.path === path &&
+    opts.active.side === side &&
+    opts.active.line === line;
+  if (comments.length === 0 && !isActive) return html``;
+
+  const currentHash = hashLine(currentText);
+  const thread = comments.map((c) => {
+    const outdated = c.lineHash !== currentHash;
+    return html`<div class="rc">
+      <div class="rc-head">
+        <strong>${c.authorName}</strong>
+        ${when(
+          outdated,
+          () => html`<span class="badge rc-outdated">outdated</span>`,
+        )}
+      </div>
+      <div class="md rc-body">${renderMarkdown(c.body)}</div>
+    </div>`;
+  });
+
+  const form = isActive
+    ? html`<form
+        class="rc-form"
+        method="post"
+        action="${opts.reviewBase}/review"
+        id="rc"
+      >
+        <input type="hidden" name="path" value="${path}" />
+        <input type="hidden" name="side" value="${side}" />
+        <input type="hidden" name="line" value="${line}" />
+        <input type="hidden" name="lineHash" value="${currentHash}" />
+        <textarea
+          class="input"
+          name="body"
+          rows="3"
+          placeholder="Comment on this line"
+          required
+          autofocus
+        ></textarea>
+        <div class="form-actions">
+          <button
+            class="btn"
+            data-variant="primary"
+            data-size="sm"
+            type="submit"
+          >
+            Add comment
+          </button>
+        </div>
+      </form>`
+    : html``;
+
+  return html`<tr class="dl-review">
+    <td class="dn"></td>
+    <td class="dn"></td>
+    <td class="dc-review">${thread}${form}</td>
   </tr>`;
 }
 
@@ -164,7 +285,7 @@ function hunkHeader(hunk: Hunk): Html {
   </tr>`;
 }
 
-function fileBody(file: FileDiff, tokens: FileTokens): Html {
+function fileBody(file: FileDiff, ctx: RowCtx): Html {
   if (file.binary) {
     return html`<div class="diff-note">Binary file not shown.</div>`;
   }
@@ -183,7 +304,7 @@ function fileBody(file: FileDiff, tokens: FileTokens): Html {
       ${file.hunks.map(
         (hunk) =>
           html`${hunkHeader(hunk)}${rowsForHunk(hunk).map((row) =>
-            renderRow(row, tokens),
+            renderRow(row, ctx),
           )}`,
       )}
     </tbody>
@@ -213,9 +334,15 @@ function fileHeader(file: FileDiff): Html {
   </summary>`;
 }
 
-function fileView(file: FileDiff, tokens: FileTokens): Html {
-  // Generated/lockfiles start collapsed; everything else is open.
-  const collapsed = GENERATED.test(file.path);
+function fileView(file: FileDiff, opts: DiffViewOptions): Html {
+  // Generated/lockfiles start collapsed; everything else is open. A file with
+  // an active comment or existing comments is forced open so it's visible.
+  const ctx: RowCtx = {
+    path: file.path,
+    tokens: opts.syntax?.get(file.path) ?? {},
+    opts,
+  };
+  const collapsed = GENERATED.test(file.path) && !fileHasReview(file, opts);
   const openAttr = collapsed ? null : raw("open");
   return html`<details
     class="diff-file card"
@@ -223,16 +350,30 @@ function fileView(file: FileDiff, tokens: FileTokens): Html {
     ${openAttr}
   >
     ${fileHeader(file)}
-    <div class="diff-body">${fileBody(file, tokens)}</div>
+    <div class="diff-body">${fileBody(file, ctx)}</div>
   </details>`;
 }
 
+function fileHasReview(file: FileDiff, opts: DiffViewOptions): boolean {
+  if (opts.active?.path === file.path) return true;
+  if (!opts.comments) return false;
+  for (const key of opts.comments.keys()) {
+    if (key.startsWith(`${file.path}\0`)) return true;
+  }
+  return false;
+}
+
 /**
- * The whole diff: a summary line, then one collapsible view per file. Pass a
- * SyntaxMap (path → highlighted tokens) to color the code; omit it and the
- * diff still renders, just without syntax color.
+ * The whole diff: a summary line, then one collapsible view per file. Options
+ * add syntax color and inline review comments; omit them and the diff still
+ * renders. Accepts a bare SyntaxMap too, for the read-only (commit) case.
  */
-export function renderDiff(diff: Diff, syntax?: SyntaxMap): Html {
+export function renderDiff(
+  diff: Diff,
+  options?: DiffViewOptions | SyntaxMap,
+): Html {
+  const opts: DiffViewOptions =
+    options instanceof Map ? { syntax: options } : (options ?? {});
   if (diff.files.length === 0) {
     return html`<div class="card empty">No changes.</div>`;
   }
@@ -246,7 +387,7 @@ export function renderDiff(diff: Diff, syntax?: SyntaxMap): Html {
       changed <span class="add">+${diff.additions}</span>
       <span class="del">−${diff.deletions}</span>
     </div>
-    ${shown.map((file) => fileView(file, syntax?.get(file.path) ?? {}))}
+    ${shown.map((file) => fileView(file, opts))}
     ${when(
       hidden > 0,
       () =>
