@@ -87,6 +87,16 @@ describe("id", () => {
     expect(seen.size).toBe(1000);
   });
 
+  test("ids are monotonic even within a millisecond", () => {
+    // The property every id-ordered listing depends on: later id sorts higher.
+    let prev = id(9);
+    for (let i = 0; i < 1000; i++) {
+      const next = id(9);
+      expect(next > prev).toBe(true);
+      prev = next;
+    }
+  });
+
   test("timestamp round-trips through the first 10 chars", () => {
     const now = Date.now();
     const a = id(now);

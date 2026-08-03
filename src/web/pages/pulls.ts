@@ -26,8 +26,10 @@ import { mergeBase } from "../../git/merge.ts";
 import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import { commentCard } from "../comments.ts";
 import { renderDiff, type DiffViewOptions } from "../diff-view.ts";
 import { diffSyntax } from "../diff-syntax.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
@@ -124,12 +126,14 @@ export function pullsList(ctx: Ctx): Response {
                 </li>`,
             )}
           </ul>
-        </div>`}`;
+        </div>`}
+    ${liveMount({ repo: base })}`;
   return page({
     title: `Pull requests · ${repo.name}`,
     user: ctx.auth.user,
     crumbs: crumbsFor(repo),
     body,
+    scriptJs: liveClientJs,
   });
 }
 
@@ -293,30 +297,26 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     ...(active ? { active } : {}),
   };
 
-  const conversation = html`<div class="card comment">
-      <div class="comment-head">
-        <strong>${pull.authorName}</strong>
-        <span class="muted small"
-          >wants to merge ${pull.headBranch} into ${pull.baseBranch} ·
-          ${timeAgo(pull.createdAt)}</span
-        >
-      </div>
-      <div class="md comment-body">
-        ${pull.body.trim() === ""
-          ? html`<p class="muted">No description.</p>`
-          : renderMarkdown(pull.body)}
-      </div>
-    </div>
-    ${comments.map(
-      (c) =>
-        html`<div class="card comment">
-          <div class="comment-head">
-            <strong>${c.authorName}</strong>
-            <span class="muted small">commented ${timeAgo(c.createdAt)}</span>
-          </div>
-          <div class="md comment-body">${renderMarkdown(c.body)}</div>
-        </div>`,
-    )}`;
+  const lastCommentId =
+    comments.length > 0 ? comments[comments.length - 1]!.id : "";
+  const conversation = html`<div id="conversation">
+    ${commentCard({
+      id: "",
+      author: pull.authorName,
+      at: pull.createdAt,
+      body: pull.body,
+      verb: html`wants to merge ${pull.headBranch} into ${pull.baseBranch} ·`,
+    })}
+    ${comments.map((c) =>
+      commentCard({
+        id: c.id,
+        author: c.authorName,
+        at: c.createdAt,
+        body: c.body,
+        verb: "commented",
+      }),
+    )}
+  </div>`;
 
   const body = html`${repoNav(repo, "pulls")}
     <div class="issue-head">
@@ -354,12 +354,47 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
             </button>
           </div>
         </form>`
-      : null}`;
+      : null}
+    ${liveMount({
+      repo: base,
+      thread: "pull",
+      number: pull.number,
+      lastCommentId,
+    })}`;
   return page({
     title: `${pull.title} · ${repo.name}`,
     user: ctx.auth.user,
     crumbs: crumbsFor(repo),
     body,
+    scriptJs: liveClientJs,
+  });
+}
+
+// GET /:owner/:name/pulls/:number/thread?after=<id> — new conversation comments.
+export function pullThreadFragment(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return new Response("", { status: 404 });
+  const number = parseNumber(ctx.params.number);
+  const pull =
+    number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
+  if (!pull) return new Response("", { status: 404 });
+  const after = ctx.url.searchParams.get("after") ?? "";
+  const fresh = listComments(ctx.app.db, pull.id).filter((c) => c.id > after);
+  const fragment = html`${fresh.map((c) =>
+    commentCard({
+      id: c.id,
+      author: c.authorName,
+      at: c.createdAt,
+      body: c.body,
+      verb: "commented",
+    }),
+  )}`;
+  return new Response(fragment.text, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy":
+        "default-src 'none'; style-src 'none'; sandbox",
+    },
   });
 }
 

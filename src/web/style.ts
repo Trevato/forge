@@ -370,6 +370,17 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .hook-list .mono { word-break: break-all; }
 .hook-new { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .hook-new .input { flex: 1; min-width: 160px; }
+
+/* ---- live updates ---- */
+.live-pill {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
+  padding: 8px 16px; min-height: 40px; display: inline-flex; align-items: center;
+  background: var(--accent); color: #fff; border-radius: 999px; font-size: 13px; font-weight: 500;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+}
+.live-pill:hover { color: #fff; opacity: 0.92; }
+#conversation .comment.live-new { animation: live-in 400ms ease; }
+@keyframes live-in { from { background: color-mix(in srgb, var(--accent) 12%, var(--card)); } to {} }
 `;
 
 export const css = base + highlightCss;

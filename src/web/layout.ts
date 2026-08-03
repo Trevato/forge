@@ -21,6 +21,13 @@ export interface PageOptions {
    * never unescaped user text.
    */
   styleCss?: string;
+  /**
+   * Page-specific JavaScript (progressive enhancement — every page works
+   * without it). Emitted in a nonce'd <script>. Must be trusted, static code
+   * the page authored, with runtime data passed via `data-*` attributes,
+   * never interpolated into the script text.
+   */
+  scriptJs?: string;
 }
 
 export function page(options: PageOptions, status = 200): Response {
@@ -65,6 +72,9 @@ export function page(options: PageOptions, status = 200): Response {
             : html`<a class="btn" data-size="sm" href="/signin">Sign in</a>`}
         </header>
         <main class="shell">${options.body}</main>
+        ${options.scriptJs
+          ? raw(`<script nonce="${nonce}">${options.scriptJs}</script>`)
+          : null}
       </body>
     </html>`;
 
@@ -73,8 +83,9 @@ export function page(options: PageOptions, status = 200): Response {
     headers: {
       "content-type": "text/html; charset=utf-8",
       // The external stylesheet plus this page's own nonce'd <style>/<script>
-      // are the only resources allowed; everything else is forbidden.
-      "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+      // are the only resources allowed; connect-src 'self' lets the live
+      // event stream (EventSource) and fragment fetches reach same-origin.
+      "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
       "referrer-policy": "same-origin",
       "x-content-type-options": "nosniff",
     },

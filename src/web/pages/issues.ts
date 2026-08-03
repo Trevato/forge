@@ -18,10 +18,11 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import type { Ctx } from "../../http/context.ts";
+import { commentCard } from "../comments.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { crumbsFor, loadRepo, repoNav, repoNotFound, timeAgo } from "./repo.ts";
 
 function parseNumber(raw: string | undefined): number | undefined {
@@ -120,13 +121,15 @@ export function issuesList(ctx: Ctx): Response {
                 </li>`,
             )}
           </ul>
-        </div>`}`;
+        </div>`}
+    ${liveMount({ repo: base })}`;
   return page({
     title: `Issues · ${repo.name}`,
     user: ctx.auth.user,
     crumbs: crumbsFor(repo),
     body,
     styleCss: labelCss(colors),
+    scriptJs: liveClientJs,
   });
 }
 
@@ -203,13 +206,26 @@ export function issuePage(ctx: Ctx): Response {
     (ctx.auth.user.id === issue.authorId || canWrite(repo, ctx.auth.user));
   const base = `/${repo.ownerName}/${repo.name}`;
 
-  const conversation = html`${comment(
-    issue.authorName,
-    issue.createdAt,
-    issue.body,
-    true,
-  )}
-  ${comments.map((c) => comment(c.authorName, c.createdAt, c.body, false))}`;
+  const lastCommentId =
+    comments.length > 0 ? comments[comments.length - 1]!.id : "";
+  const conversation = html`<div id="conversation">
+    ${commentCard({
+      id: "",
+      author: issue.authorName,
+      at: issue.createdAt,
+      body: issue.body,
+      verb: "opened",
+    })}
+    ${comments.map((c) =>
+      commentCard({
+        id: c.id,
+        author: c.authorName,
+        at: c.createdAt,
+        body: c.body,
+        verb: "commented",
+      }),
+    )}
+  </div>`;
 
   const body = html`${repoNav(repo, "issues")}
     <div class="issue-head">
@@ -223,6 +239,12 @@ export function issuePage(ctx: Ctx): Response {
       </div>
     </div>
     ${conversation}
+    ${liveMount({
+      repo: base,
+      thread: "issue",
+      number: issue.number,
+      lastCommentId,
+    })}
     ${ctx.auth.user
       ? html`<form
           class="card comment-form"
@@ -277,28 +299,37 @@ export function issuePage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     body,
     styleCss: labelCss(labels.map((l) => l.color)),
+    scriptJs: liveClientJs,
   });
 }
 
-function comment(
-  author: string,
-  at: string,
-  bodyText: string,
-  isOpener: boolean,
-): Html {
-  return html`<div class="card comment">
-    <div class="comment-head">
-      <strong>${author}</strong>
-      <span class="muted small"
-        >${isOpener ? "opened" : "commented"} ${timeAgo(at)}</span
-      >
-    </div>
-    <div class="md comment-body">
-      ${bodyText.trim() === ""
-        ? html`<p class="muted">No description.</p>`
-        : renderMarkdown(bodyText)}
-    </div>
-  </div>`;
+// GET /:owner/:name/issues/:number/thread?after=<id> — comment cards after an
+// id, for the live client to append. Returns raw HTML, not a full page.
+export function issueThreadFragment(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return new Response("", { status: 404 });
+  const number = parseNumber(ctx.params.number);
+  const issue =
+    number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
+  if (!issue) return new Response("", { status: 404 });
+  const after = ctx.url.searchParams.get("after") ?? "";
+  const fresh = listComments(ctx.app.db, issue.id).filter((c) => c.id > after);
+  const fragment = html`${fresh.map((c) =>
+    commentCard({
+      id: c.id,
+      author: c.authorName,
+      at: c.createdAt,
+      body: c.body,
+      verb: "commented",
+    }),
+  )}`;
+  return new Response(fragment.text, {
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy":
+        "default-src 'none'; style-src 'none'; sandbox",
+    },
+  });
 }
 
 // POST /:owner/:name/issues/:number/comments

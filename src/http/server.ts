@@ -69,6 +69,7 @@ import {
   issueCommentSubmit,
   issuePage,
   issuesList,
+  issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
@@ -90,6 +91,7 @@ import {
   pullPage,
   pullReviewSubmit,
   pullsList,
+  pullThreadFragment,
 } from "../web/pages/pulls.ts";
 import {
   labelCreate,
@@ -105,6 +107,7 @@ import {
   listWebhooks,
 } from "../core/webhooks.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
+import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
 
 // ---- auth ----
@@ -534,6 +537,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", issuePage);
+  router.add("GET", "/:owner/:name/issues/:number/thread", issueThreadFragment);
   router.add(
     "POST",
     "/:owner/:name/issues/:number/comments",
@@ -545,9 +549,17 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
+  router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
+
+  // Live event stream for a repo the viewer can read.
+  router.add("GET", "/:owner/:name/stream", (ctx) => {
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(repo, ctx.auth.user)) return notFound();
+    return sseStream(ctx.app, repo.id, ctx.request);
+  });
 
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);
