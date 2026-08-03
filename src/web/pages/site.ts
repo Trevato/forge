@@ -8,28 +8,9 @@ import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { createRepo, listReposVisibleTo } from "../../core/repos.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import { countUsers, createUser, verifyPassword } from "../../core/users.ts";
+import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-
-const str = (v: FormDataValue): string => (typeof v === "string" ? v : "");
-type FormDataValue = ReturnType<FormData["get"]>;
-
-/**
- * Read a submitted form, or reject. Every form route is a browser mutation,
- * so it must be same-origin (login/logout CSRF), and a malformed body is an
- * attack, not a 500 — both are answered before any work happens.
- */
-type Form = Awaited<ReturnType<Request["formData"]>>;
-
-async function readForm(ctx: Ctx): Promise<Form | Response> {
-  if (crossOrigin(ctx.request, ctx.url))
-    return new Response("forbidden", { status: 403 });
-  try {
-    return await ctx.request.formData();
-  } catch {
-    return new Response("bad request", { status: 400 });
-  }
-}
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
@@ -173,8 +154,8 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const verified = await verifyPassword(
     ctx.app.db,
-    str(form.get("username")),
-    str(form.get("password")),
+    field(form, "username"),
+    field(form, "password"),
   );
   if (!verified.ok) {
     return page({
@@ -195,9 +176,9 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const isFirst = countUsers(ctx.app.db) === 0;
   const created = await createUser(ctx.app.db, {
-    username: str(form.get("username")),
-    email: str(form.get("email")),
-    password: str(form.get("password")),
+    username: field(form, "username"),
+    email: field(form, "email"),
+    password: field(form, "password"),
     isAdmin: isFirst,
   });
   if (!created.ok) {
@@ -272,9 +253,9 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
     ownerId: ctx.auth.user.id,
-    name: str(form.get("name")),
+    name: field(form, "name"),
     visibility: form.get("visibility") === "public" ? "public" : "private",
-    description: str(form.get("description")),
+    description: field(form, "description"),
   });
   if (!created.ok) {
     return page({

@@ -1,0 +1,354 @@
+/**
+ * Issue pages: the list, one issue with its comment thread, and the compose
+ * form. Prose is markdown-rendered; state changes and comments are plain
+ * form posts. Mobile-first, no JavaScript required.
+ */
+
+import { canWrite } from "../../core/repos.ts";
+import {
+  addComment,
+  createIssue,
+  getIssue,
+  labelsFor,
+  listComments,
+  listIssues,
+  setIssueState,
+  type Issue,
+  type IssueState,
+  type Label,
+} from "../../core/issues.ts";
+import type { Ctx } from "../../http/context.ts";
+import { field, readForm } from "../form.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { page, redirect } from "../layout.ts";
+import { renderMarkdown } from "../markdown.ts";
+import { crumbsFor, loadRepo, repoNav, repoNotFound, timeAgo } from "./repo.ts";
+
+function parseNumber(raw: string | undefined): number | undefined {
+  if (raw === undefined || !/^[1-9][0-9]{0,8}$/.test(raw)) return undefined;
+  return Number(raw);
+}
+
+function stateBadge(state: IssueState): Html {
+  return html`<span class="badge" data-state="${state}"
+    >${state === "open" ? "Open" : "Closed"}</span
+  >`;
+}
+
+function labelChips(labels: Label[]): Html {
+  return html`${labels.map(
+    (l) => html`<span class="label-chip lc-${l.color}">${l.name}</span>`,
+  )}`;
+}
+
+/** CSS binding each label color to its chip class, for the nonce'd style
+ * block. Colors are validated hex at creation and re-checked before embedding. */
+function labelCss(colors: Iterable<string>): string {
+  let css = "";
+  const seen = new Set<string>();
+  for (const color of colors) {
+    if (seen.has(color) || !/^[0-9a-f]{6}$/.test(color)) continue;
+    seen.add(color);
+    css += `.lc-${color}{--label:#${color}}`;
+  }
+  return css;
+}
+
+// GET /:owner/:name/issues
+export function issuesList(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  const state =
+    ctx.url.searchParams.get("state") === "closed" ? "closed" : "open";
+  const issues = listIssues(ctx.app.db, repo.id, { state, kind: "issue" });
+  const base = `/${repo.ownerName}/${repo.name}`;
+  const rows = issues.map((issue) => ({
+    issue,
+    labels: labelsFor(ctx.app.db, issue.id),
+  }));
+  const colors = rows.flatMap((r) => r.labels.map((l) => l.color));
+
+  const body = html`${repoNav(repo, "issues")}
+    <div class="page-head">
+      <div class="tabs">
+        <a
+          class="btn"
+          data-size="sm"
+          href="${base}/issues?state=open"
+          ${state === "open" ? raw('aria-current="page"') : null}
+          >Open</a
+        >
+        <a
+          class="btn"
+          data-size="sm"
+          href="${base}/issues?state=closed"
+          ${state === "closed" ? raw('aria-current="page"') : null}
+          >Closed</a
+        >
+      </div>
+      <span class="spacer"></span>
+      ${when(
+        ctx.auth.user,
+        () =>
+          html`<a
+            class="btn"
+            data-variant="primary"
+            data-size="sm"
+            href="${base}/issues/new"
+            >New issue</a
+          >`,
+      )}
+    </div>
+    ${issues.length === 0
+      ? html`<div class="card empty">No ${state} issues.</div>`
+      : html`<div class="card">
+          <ul class="list">
+            ${rows.map(
+              ({ issue, labels }) =>
+                html`<li>
+                  <a class="row" href="${base}/issues/${issue.number}">
+                    <span class="grow">
+                      <strong>${issue.title}</strong> ${labelChips(labels)}
+                      <br />
+                      <span class="muted small"
+                        >#${issue.number} opened ${timeAgo(issue.createdAt)} by
+                        ${issue.authorName}</span
+                      >
+                    </span>
+                    ${stateBadge(issue.state)}
+                  </a>
+                </li>`,
+            )}
+          </ul>
+        </div>`}`;
+  return page({
+    title: `Issues · ${repo.name}`,
+    user: ctx.auth.user,
+    crumbs: crumbsFor(repo),
+    body,
+    styleCss: labelCss(colors),
+  });
+}
+
+// GET /:owner/:name/issues/new
+export function newIssuePage(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  if (!ctx.auth.user) return redirect(`/signin`);
+  const body = html`${repoNav(repo, "issues")}
+    <div class="narrow-wide">
+      <h2>New issue</h2>
+      <form method="post" action="/${repo.ownerName}/${repo.name}/issues/new">
+        <label for="title">Title</label>
+        <input class="input" id="title" name="title" required autofocus />
+        <label for="body"
+          >Description <span class="muted">(markdown)</span></label
+        >
+        <textarea class="input" id="body" name="body" rows="10"></textarea>
+        <div class="form-actions">
+          <button class="btn" data-variant="primary" type="submit">
+            Create issue
+          </button>
+        </div>
+      </form>
+    </div>`;
+  return page({
+    title: `New issue · ${repo.name}`,
+    user: ctx.auth.user,
+    crumbs: crumbsFor(repo),
+    body,
+  });
+}
+
+// POST /:owner/:name/issues/new
+export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  if (!ctx.auth.user) return redirect(`/signin`);
+  const form = await readForm(ctx);
+  if (form instanceof Response) return form;
+
+  const created = createIssue(ctx.app.db, {
+    repoId: repo.id,
+    authorId: ctx.auth.user.id,
+    title: field(form, "title"),
+    body: field(form, "body"),
+  });
+  if (!created.ok)
+    return redirect(`/${repo.ownerName}/${repo.name}/issues/new`);
+  ctx.app.bus.append({
+    kind: "issue.opened",
+    repoId: repo.id,
+    actorId: ctx.auth.user.id,
+    payload: { number: created.value.number },
+  });
+  return redirect(
+    `/${repo.ownerName}/${repo.name}/issues/${created.value.number}`,
+  );
+}
+
+// GET /:owner/:name/issues/:number
+export function issuePage(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  const number = parseNumber(ctx.params.number);
+  const issue =
+    number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
+  if (!issue || issue.kind !== "issue") return repoNotFound(ctx);
+
+  const comments = listComments(ctx.app.db, issue.id);
+  const labels = labelsFor(ctx.app.db, issue.id);
+  const mayModerate =
+    ctx.auth.user !== undefined &&
+    (ctx.auth.user.id === issue.authorId || canWrite(repo, ctx.auth.user));
+  const base = `/${repo.ownerName}/${repo.name}`;
+
+  const conversation = html`${comment(
+    issue.authorName,
+    issue.createdAt,
+    issue.body,
+    true,
+  )}
+  ${comments.map((c) => comment(c.authorName, c.createdAt, c.body, false))}`;
+
+  const body = html`${repoNav(repo, "issues")}
+    <div class="issue-head">
+      <h1>${issue.title} <span class="muted">#${issue.number}</span></h1>
+      <div class="issue-meta">
+        ${stateBadge(issue.state)}
+        <span class="muted small"
+          >${issue.authorName} opened this ${timeAgo(issue.createdAt)}</span
+        >
+        ${labelChips(labels)}
+      </div>
+    </div>
+    ${conversation}
+    ${ctx.auth.user
+      ? html`<form
+          class="card comment-form"
+          method="post"
+          action="${base}/issues/${issue.number}/comments"
+        >
+          <textarea
+            class="input"
+            name="body"
+            rows="4"
+            placeholder="Leave a comment"
+            required
+          ></textarea>
+          <div class="form-actions">
+            ${when(mayModerate, () =>
+              issue.state === "open"
+                ? html`<button
+                    class="btn"
+                    name="intent"
+                    value="close"
+                    type="submit"
+                  >
+                    Close issue
+                  </button>`
+                : html`<button
+                    class="btn"
+                    name="intent"
+                    value="reopen"
+                    type="submit"
+                  >
+                    Reopen
+                  </button>`,
+            )}
+            <span class="spacer"></span>
+            <button
+              class="btn"
+              data-variant="primary"
+              name="intent"
+              value="comment"
+              type="submit"
+            >
+              Comment
+            </button>
+          </div>
+        </form>`
+      : html`<div class="card empty">
+          <a href="/signin">Sign in</a> to comment.
+        </div>`}`;
+  return page({
+    title: `${issue.title} · ${repo.name}`,
+    user: ctx.auth.user,
+    crumbs: crumbsFor(repo),
+    body,
+    styleCss: labelCss(labels.map((l) => l.color)),
+  });
+}
+
+function comment(
+  author: string,
+  at: string,
+  bodyText: string,
+  isOpener: boolean,
+): Html {
+  return html`<div class="card comment">
+    <div class="comment-head">
+      <strong>${author}</strong>
+      <span class="muted small"
+        >${isOpener ? "opened" : "commented"} ${timeAgo(at)}</span
+      >
+    </div>
+    <div class="md comment-body">
+      ${bodyText.trim() === ""
+        ? html`<p class="muted">No description.</p>`
+        : renderMarkdown(bodyText)}
+    </div>
+  </div>`;
+}
+
+// POST /:owner/:name/issues/:number/comments
+export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  if (!ctx.auth.user) return redirect(`/signin`);
+  const number = parseNumber(ctx.params.number);
+  const issue =
+    number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
+  if (!issue) return repoNotFound(ctx);
+
+  const form = await readForm(ctx);
+  if (form instanceof Response) return form;
+  const intent = field(form, "intent");
+  const dest = `/${repo.ownerName}/${repo.name}/issues/${issue.number}`;
+
+  const body = field(form, "body");
+  if (body.trim() !== "") {
+    const added = addComment(ctx.app.db, {
+      issueId: issue.id,
+      authorId: ctx.auth.user.id,
+      body,
+    });
+    if (added.ok) {
+      ctx.app.bus.append({
+        kind: "issue.commented",
+        repoId: repo.id,
+        actorId: ctx.auth.user.id,
+        payload: { number: issue.number },
+      });
+    }
+  }
+
+  // Close/reopen only for the author or a repo writer.
+  const mayModerate =
+    ctx.auth.user.id === issue.authorId || canWrite(repo, ctx.auth.user);
+  if (mayModerate && (intent === "close" || intent === "reopen")) {
+    const target: IssueState = intent === "close" ? "closed" : "open";
+    const changed = setIssueState(ctx.app.db, issue.id, target);
+    if (changed) {
+      ctx.app.bus.append({
+        kind: intent === "close" ? "issue.closed" : "issue.reopened",
+        repoId: repo.id,
+        actorId: ctx.auth.user.id,
+        payload: { number: issue.number },
+      });
+    }
+  }
+  return redirect(dest);
+}
+
+export type { Issue };

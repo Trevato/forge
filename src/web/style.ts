@@ -122,9 +122,38 @@ label { display: block; font-size: 13px; font-weight: 500; margin: 14px 0 6px; }
   border: 1px solid var(--border); border-radius: 999px;
   font-size: 12px; color: var(--muted-fg);
 }
+.badge[data-state="open"] { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
+.badge[data-state="closed"] { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+
+textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-family: inherit; }
 
 .muted { color: var(--muted-fg); }
 .small { font-size: 13px; }
+
+/* ---- issues & conversations ---- */
+.tabs { display: flex; gap: 6px; }
+.label-chip {
+  display: inline-block; vertical-align: middle;
+  padding: 0 8px; margin: 0 2px;
+  border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 18px;
+  color: var(--label, var(--muted-fg));
+  border: 1px solid color-mix(in srgb, var(--label, var(--border)) 50%, transparent);
+  background: color-mix(in srgb, var(--label, var(--muted)) 12%, transparent);
+}
+.narrow-wide { max-width: 720px; }
+.issue-head { margin: 18px 0 12px; }
+.issue-head h1 { line-height: 1.25; }
+.issue-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.comment { margin-top: 12px; overflow: hidden; }
+.comment-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+  background: var(--muted);
+}
+.comment-body { padding: 4px 16px; }
+.comment-body.md p:first-child { margin-top: 12px; }
+.comment-form { margin-top: 16px; padding: 12px; }
+.comment-form textarea { margin-bottom: 10px; }
 
 /* ---- spacing & layout utilities (so pages need no inline styles) ---- */
 .mt { margin-top: 12px; }

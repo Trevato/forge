@@ -64,6 +64,23 @@ import {
   repoHome,
   treePage,
 } from "../web/pages/repo.ts";
+import {
+  issueCommentSubmit,
+  issuePage,
+  issuesList,
+  newIssuePage,
+  newIssueSubmit,
+} from "../web/pages/issues.ts";
+import {
+  addComment,
+  createIssue,
+  getIssue,
+  listComments,
+  listIssues,
+  setIssueState,
+  type Issue,
+  type IssueState,
+} from "../core/issues.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
 import { Router } from "./router.ts";
 
@@ -355,6 +372,113 @@ export function buildRouter(): Router<Handler> {
     return json(listEvents(ctx.app.db, { repoId: repo.id }));
   });
 
+  // Issues API — the label-as-queue surface automation drives.
+  router.add("GET", "/api/v1/repos/:owner/:name/issues", (ctx) => {
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(repo, ctx.auth.user)) return notFound();
+    const stateParam = ctx.url.searchParams.get("state");
+    const state =
+      stateParam === "closed" || stateParam === "all" ? stateParam : "open";
+    return json(listIssues(ctx.app.db, repo.id, { state, kind: "issue" }));
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/issues", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(repo, ctx.auth.user)) return notFound();
+    const input = await body(ctx.request);
+    const created = createIssue(ctx.app.db, {
+      repoId: repo.id,
+      authorId: ctx.auth.user!.id,
+      title: str(input.title),
+      body: str(input.body),
+    });
+    if (!created.ok) return json({ error: created.error }, 422);
+    ctx.app.bus.append({
+      kind: "issue.opened",
+      repoId: repo.id,
+      actorId: ctx.auth.user!.id,
+      payload: { number: created.value.number },
+    });
+    return json(created.value, 201);
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    return json({
+      ...found.issue,
+      comments: listComments(ctx.app.db, found.issue.id),
+    });
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/issues/:number/comments",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadIssue(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const added = addComment(ctx.app.db, {
+        issueId: found.issue.id,
+        authorId: ctx.auth.user!.id,
+        body: str(input.body),
+      });
+      if (!added.ok) return json({ error: added.error }, 422);
+      ctx.app.bus.append({
+        kind: "issue.commented",
+        repoId: found.issue.repoId,
+        actorId: ctx.auth.user!.id,
+        payload: { number: found.issue.number },
+      });
+      return json(added.value, 201);
+    },
+  );
+
+  router.add(
+    "PATCH",
+    "/api/v1/repos/:owner/:name/issues/:number",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadIssue(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const wanted = str(input.state);
+      if (wanted !== "open" && wanted !== "closed")
+        return json({ error: "invalid_state" }, 422);
+      const changed = setIssueState(
+        ctx.app.db,
+        found.issue.id,
+        wanted as IssueState,
+      );
+      if (changed) {
+        ctx.app.bus.append({
+          kind: wanted === "closed" ? "issue.closed" : "issue.reopened",
+          repoId: found.issue.repoId,
+          actorId: ctx.auth.user!.id,
+          payload: { number: found.issue.number },
+        });
+      }
+      return json(changed ?? found.issue);
+    },
+  );
+
+  // Issues (web). The literal /new is registered before /:number so it can
+  // never be captured as a number.
+  router.add("GET", "/:owner/:name/issues", issuesList);
+  router.add("GET", "/:owner/:name/issues/new", newIssuePage);
+  router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
+  router.add("GET", "/:owner/:name/issues/:number", issuePage);
+  router.add(
+    "POST",
+    "/:owner/:name/issues/:number/comments",
+    issueCommentSubmit,
+  );
+
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);
   router.add("GET", "/:owner/:name/tree/:ref", treePage);
@@ -381,6 +505,17 @@ function requireScope(ctx: Ctx, needed: TokenScope): Response | undefined {
     return forbidden();
   if (!scopeAllows(ctx.auth.scope, needed)) return forbidden();
   return undefined;
+}
+
+/** Resolve a readable repo's issue by number, or a 404 to return as-is. */
+function loadIssue(ctx: Ctx): { issue: Issue } | { error: Response } {
+  const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+  if (!repo || !canRead(repo, ctx.auth.user)) return { error: notFound() };
+  const number = Number(ctx.params.number);
+  if (!Number.isInteger(number) || number < 1) return { error: notFound() };
+  const issue = getIssue(ctx.app.db, repo.id, number);
+  if (!issue || issue.kind !== "issue") return { error: notFound() };
+  return { issue };
 }
 
 function withGitAccess(

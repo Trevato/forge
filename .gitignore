@@ -3,3 +3,6 @@ data/
 dist/
 *.local
 .DS_Store
+
+# agent worktrees are separate checkouts, merged via git
+.claude/worktrees/

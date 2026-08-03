@@ -39,7 +39,7 @@ function notFoundPage(ctx: Ctx): Response {
   );
 }
 
-function loadRepo(ctx: Ctx): Repo | undefined {
+export function loadRepo(ctx: Ctx): Repo | undefined {
   const repo = getRepo(
     ctx.app.db,
     ctx.params.owner ?? "",
@@ -49,11 +49,15 @@ function loadRepo(ctx: Ctx): Repo | undefined {
   return repo;
 }
 
-function crumbsFor(repo: Repo): { label: string; href: string }[] {
+export function crumbsFor(repo: Repo): { label: string; href: string }[] {
   return [
     { label: repo.ownerName, href: `/${repo.ownerName}` },
     { label: repo.name, href: `/${repo.ownerName}/${repo.name}` },
   ];
+}
+
+export function repoNotFound(ctx: Ctx): Response {
+  return notFoundPage(ctx);
 }
 
 export function timeAgo(iso: string): string {
@@ -70,26 +74,25 @@ export function timeAgo(iso: string): string {
   return `${Math.floor(months / 12)}y ago`;
 }
 
-function repoNav(repo: Repo, active: "code" | "commits"): Html {
+export type RepoTab = "code" | "issues" | "pulls" | "commits";
+
+export function repoNav(repo: Repo, active: RepoTab): Html {
   const base = `/${repo.ownerName}/${repo.name}`;
+  const tab = (label: string, href: string, key: RepoTab) =>
+    html`<a
+      class="btn"
+      data-size="sm"
+      href="${href}"
+      ${active === key ? raw('aria-current="page"') : null}
+      >${label}</a
+    >`;
   return html`<div class="page-head">
     <h1><a href="${base}">${repo.name}</a></h1>
     <span class="badge">${repo.visibility}</span>
     <span class="spacer"></span>
-    <a
-      class="btn"
-      data-size="sm"
-      href="${base}"
-      ${active === "code" ? raw('aria-current="page"') : null}
-      >Code</a
-    >
-    <a
-      class="btn"
-      data-size="sm"
-      href="${base}/commits"
-      ${active === "commits" ? raw('aria-current="page"') : null}
-      >Commits</a
-    >
+    ${tab("Code", base, "code")} ${tab("Issues", `${base}/issues`, "issues")}
+    ${tab("Pulls", `${base}/pulls`, "pulls")}
+    ${tab("Commits", `${base}/commits`, "commits")}
   </div>`;
 }
 

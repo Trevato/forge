@@ -6,7 +6,8 @@
  */
 
 import type { User } from "../core/users.ts";
-import { html, when, type Html } from "./html.ts";
+import { secret } from "../kernel/id.ts";
+import { html, raw, when, type Html } from "./html.ts";
 
 export interface PageOptions {
   title: string;
@@ -14,9 +15,18 @@ export interface PageOptions {
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
+  /**
+   * Page-specific CSS (e.g. dynamic label colors). Emitted in a nonce'd
+   * <style> the strict CSP allows. Must be trusted CSS the page generated —
+   * never unescaped user text.
+   */
+  styleCss?: string;
 }
 
 export function page(options: PageOptions, status = 200): Response {
+  // A per-response nonce lets exactly this page's <style> (and, later, a
+  // <script>) run while everything else stays forbidden.
+  const nonce = secret();
   const doc = html`<!doctype html>
     <html lang="en">
       <head>
@@ -24,6 +34,9 @@ export function page(options: PageOptions, status = 200): Response {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${options.title} · forge</title>
         <link rel="stylesheet" href="/assets/forge.css" />
+        ${options.styleCss
+          ? raw(`<style nonce="${nonce}">${options.styleCss}</style>`)
+          : null}
       </head>
       <body>
         <header class="topbar">
@@ -59,10 +72,9 @@ export function page(options: PageOptions, status = 200): Response {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      // No inline styles or scripts anywhere — the stylesheet is the only
-      // resource a page loads, so the policy can forbid everything else.
-      "content-security-policy":
-        "default-src 'none'; style-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+      // The external stylesheet plus this page's own nonce'd <style>/<script>
+      // are the only resources allowed; everything else is forbidden.
+      "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
       "referrer-policy": "same-origin",
       "x-content-type-options": "nosniff",
     },
