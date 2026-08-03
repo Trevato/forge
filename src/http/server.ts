@@ -90,6 +90,12 @@ import {
   pullPage,
   pullsList,
 } from "../web/pages/pulls.ts";
+import {
+  labelCreate,
+  labelDelete,
+  settingsPage,
+  settingsUpdate,
+} from "../web/pages/settings.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
 import { Router } from "./router.ts";
 
@@ -503,6 +509,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
+
+  // Settings (owner-gated inside the handlers).
+  router.add("GET", "/:owner/:name/settings", settingsPage);
+  router.add("POST", "/:owner/:name/settings", settingsUpdate);
+  router.add("POST", "/:owner/:name/settings/labels", labelCreate);
+  router.add("POST", "/:owner/:name/settings/labels/:id/delete", labelDelete);
 
   return router;
 }

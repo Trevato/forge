@@ -76,7 +76,7 @@ export function timeAgo(iso: string): string {
   return `${Math.floor(months / 12)}y ago`;
 }
 
-export type RepoTab = "code" | "issues" | "pulls" | "commits";
+export type RepoTab = "code" | "issues" | "pulls" | "commits" | "settings";
 
 export function repoNav(repo: Repo, active: RepoTab): Html {
   const base = `/${repo.ownerName}/${repo.name}`;
@@ -95,6 +95,7 @@ export function repoNav(repo: Repo, active: RepoTab): Html {
     ${tab("Code", base, "code")} ${tab("Issues", `${base}/issues`, "issues")}
     ${tab("Pulls", `${base}/pulls`, "pulls")}
     ${tab("Commits", `${base}/commits`, "commits")}
+    ${tab("Settings", `${base}/settings`, "settings")}
   </div>`;
 }
 

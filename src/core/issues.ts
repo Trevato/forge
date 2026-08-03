@@ -339,6 +339,18 @@ export function setIssueLabels(
   write();
 }
 
+export function deleteLabel(
+  db: Database,
+  repoId: string,
+  labelId: string,
+): boolean {
+  return (
+    db
+      .query("DELETE FROM label WHERE id = ?1 AND repo_id = ?2")
+      .run(labelId, repoId).changes > 0
+  );
+}
+
 export function labelsFor(db: Database, issueId: string): Label[] {
   return db
     .query<Label, [string]>(

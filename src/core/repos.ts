@@ -181,6 +181,29 @@ export function canRead(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
 }
 
+export interface RepoSettings {
+  visibility?: "public" | "private";
+  description?: string;
+  protectDefault?: boolean;
+}
+
+/** Update the mutable repo fields, leaving unspecified ones untouched. */
+export function updateRepoSettings(
+  db: Database,
+  repo: Repo,
+  settings: RepoSettings,
+): Repo {
+  db.query(
+    "UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3 WHERE id = ?4",
+  ).run(
+    settings.visibility ?? repo.visibility,
+    settings.description ?? repo.description,
+    (settings.protectDefault ?? repo.protectDefault) ? 1 : 0,
+    repo.id,
+  );
+  return getRepoById(db, repo.id)!;
+}
+
 export function canWrite(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
 }

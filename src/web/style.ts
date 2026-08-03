@@ -336,4 +336,17 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
   white-space: pre-wrap; font-family: var(--mono); font-size: 13px;
   color: var(--muted-fg); margin: 8px 0 12px;
 }
+
+/* ---- settings ---- */
+.repo-nav { flex-wrap: wrap; }
+.settings-card { padding: 16px; margin-top: 14px; }
+.settings-card h3 { margin-bottom: 10px; }
+.check { display: flex; align-items: flex-start; gap: 8px; font-weight: 400; }
+.check input { margin-top: 3px; }
+.label-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.label-list li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+.inline { display: inline; }
+.label-new { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.label-new .input { flex: 1; min-width: 140px; }
+.label-new .color { flex: 0 0 110px; font-family: var(--mono); }
 `;
