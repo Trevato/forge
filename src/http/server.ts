@@ -230,9 +230,35 @@ function json(
   });
 }
 
-const notFound = () => json({ error: "not_found" }, 404);
-const unauthorized = () => json({ error: "unauthorized" }, 401);
-const forbidden = () => json({ error: "forbidden" }, 403);
+/**
+ * Every API error is `{ error, message }`. `error` is a stable machine code to
+ * branch on; `message` is a human hint for logs and automation. The codes are
+ * the contract — messages may be reworded.
+ */
+const apiError = (code: string, status: number, message: string): Response =>
+  json({ error: code, message }, status);
+
+// `not_found` deliberately conflates "no such resource" with "not visible to
+// you" so a private repo never leaks its existence — the message keeps that
+// ambiguity intact.
+const notFound = () =>
+  apiError(
+    "not_found",
+    404,
+    "no such resource here, or it is not visible to you",
+  );
+const unauthorized = () =>
+  apiError(
+    "unauthorized",
+    401,
+    "authenticate with a bearer token or account credentials",
+  );
+const forbidden = () =>
+  apiError("forbidden", 403, "your credentials lack the scope for this action");
+// A path matching no route at all — distinct from a missing resource, so a
+// client can tell a typo'd URL from a resource that genuinely isn't there.
+const noRoute = (method: string, path: string) =>
+  apiError("no_route", 404, `no ${method} route for ${path}`);
 
 /** Git clients need a 401 challenge before they will send credentials. */
 const gitChallenge = () =>
@@ -1226,7 +1252,7 @@ export async function serve(app: App): Promise<Servers> {
     async fetch(request) {
       const url = new URL(request.url);
       const matched = router.match(request.method, url.pathname);
-      if (!matched) return notFound();
+      if (!matched) return noRoute(request.method, url.pathname);
       const auth = await resolveAuth(app, request);
       return matched.handler({
         app,
