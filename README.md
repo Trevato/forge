@@ -75,14 +75,16 @@ Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.
   highlighting composed with intra-line word highlighting, mobile-first,
   collapsible files), merge-commit and squash strategies, conflict detection,
   and merge commits kept reachable forever via `refs/pull/N/merged`.
+- **Review comments** — anchored to a diff line by content hash, so a
+  force-push re-anchors them or marks them outdated, never misplaces them.
 - **Commit pages** — every commit's diff through the same viewer.
 - **Settings** — visibility, branch protection, and labels.
 - **Automation** — a JSON API covering repos and issues (the label-as-queue
-  surface), and a durable event outbox.
+  surface), a durable event outbox, and **webhooks** (HMAC-signed delivery
+  with retry).
 
 Pages render without a line of JavaScript and are designed thumb-first. Still
 **zero runtime dependencies**.
 
-Not yet: SSH transport, review comments on diff lines, forks, webhook delivery,
-CI. The event outbox and API surface are shaped so these arrive as additions,
-not rewrites.
+Not yet: SSH transport, forks, SSE live updates, CI runners. The event outbox
+and API surface are shaped so these arrive as additions, not rewrites.
