@@ -40,6 +40,7 @@ import {
 import {
   countUsers,
   createUser,
+  getUserByName,
   verifyPassword,
   type User,
 } from "../core/users.ts";
@@ -119,7 +120,16 @@ import {
   deleteWebhook,
   listWebhooks,
 } from "../core/webhooks.ts";
-import { accessAllows, createOrg, getOrg, orgAccess } from "../core/orgs.ts";
+import {
+  accessAllows,
+  addTeamMember,
+  createOrg,
+  createTeam,
+  getOrg,
+  listTeams,
+  orgAccess,
+  type Permission,
+} from "../core/orgs.ts";
 import {
   newOrgPage,
   newOrgSubmit,
@@ -331,6 +341,45 @@ export function buildRouter(): Router<Handler> {
       { id: created.value.id, username: created.value.username, kind: "org" },
       201,
     );
+  });
+
+  // Team management API (org admins) — the last piece for API-driven orgs.
+  router.add("POST", "/api/v1/orgs/:org/teams", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const org = getOrg(ctx.app.db, ctx.params.org!);
+    if (
+      !org ||
+      !accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "admin")
+    )
+      return notFound();
+    const input = await body(ctx.request);
+    const perm = str(input.permission);
+    const permission: Permission =
+      perm === "write" || perm === "admin" ? perm : "read";
+    const team = createTeam(ctx.app.db, org.id, str(input.name), permission);
+    if (!team.ok) return json({ error: team.error }, 422);
+    return json(team.value, 201);
+  });
+
+  router.add("POST", "/api/v1/orgs/:org/teams/:team/members", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const org = getOrg(ctx.app.db, ctx.params.org!);
+    if (
+      !org ||
+      !accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "admin")
+    )
+      return notFound();
+    const team = listTeams(ctx.app.db, org.id).find(
+      (t) => t.name.toLowerCase() === (ctx.params.team ?? "").toLowerCase(),
+    );
+    if (!team) return notFound();
+    const input = await body(ctx.request);
+    const user = getUserByName(ctx.app.db, str(input.user));
+    if (!user) return json({ error: "no_such_user" }, 422);
+    const added = addTeamMember(ctx.app.db, team, user.id);
+    return json({ added }, added ? 201 : 200);
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
