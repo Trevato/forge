@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { isSafeRef } from "../git/guard.ts";
 import {
   aheadCount,
+  fetchInto,
   merge,
   mergeable,
   resolveOid,
@@ -34,6 +35,10 @@ export interface Pull extends Issue {
   readonly headOid: string;
   readonly mergedAt: string | null;
   readonly mergedOid: string | null;
+  /** The repo the head branch lives in — a fork for a cross-repo PR, else the
+   * base repo (this pull's repoId). */
+  readonly headRepoId: string;
+  readonly crossRepo: boolean;
 }
 
 interface PullRow {
@@ -43,6 +48,7 @@ interface PullRow {
   head_oid: string;
   merged_at: string | null;
   merged_oid: string | null;
+  head_repo_id: string | null;
 }
 
 function join(db: Database, issue: Issue): Pull | undefined {
@@ -50,6 +56,7 @@ function join(db: Database, issue: Issue): Pull | undefined {
     .query<PullRow, [string]>("SELECT * FROM pull WHERE issue_id = ?1")
     .get(issue.id);
   if (!row) return undefined;
+  const headRepoId = row.head_repo_id ?? issue.repoId;
   return {
     ...issue,
     baseBranch: row.base_branch,
@@ -58,6 +65,8 @@ function join(db: Database, issue: Issue): Pull | undefined {
     headOid: row.head_oid,
     mergedAt: row.merged_at,
     mergedOid: row.merged_oid,
+    headRepoId,
+    crossRepo: headRepoId !== issue.repoId,
   };
 }
 
@@ -70,12 +79,18 @@ export type CreatePullError =
   | "nothing_to_merge";
 
 export interface CreatePullInput {
+  /** The base (upstream) repo the PR is created in. */
   repoId: string;
   authorId: string;
   title: string;
   body?: string;
   baseBranch: string;
   headBranch: string;
+  /** For a cross-repo PR: the fork the head branch lives in. Defaults to the
+   * base repo (a same-repo PR). */
+  headRepoId?: string;
+  /** The fork's on-disk dir, required when headRepoId differs from the base. */
+  headDir?: string;
 }
 
 export async function createPull(
@@ -85,11 +100,20 @@ export async function createPull(
 ): Promise<Result<Pull, CreatePullError>> {
   if (!isSafeRef(input.baseBranch) || !isSafeRef(input.headBranch))
     return err("invalid_branch");
-  if (input.baseBranch === input.headBranch) return err("same_branch");
+
+  const crossRepo =
+    input.headRepoId !== undefined && input.headRepoId !== input.repoId;
+  if (!crossRepo && input.baseBranch === input.headBranch)
+    return err("same_branch");
 
   const baseOid = await resolveOid(dir, `refs/heads/${input.baseBranch}`);
   if (!baseOid) return err("unknown_base");
-  const headOid = await resolveOid(dir, `refs/heads/${input.headBranch}`);
+
+  // Same-repo: read the head from this repo. Cross-repo: fetch the fork's head
+  // branch into the base repo (bringing its objects), and diff/merge in-base.
+  const headOid = crossRepo
+    ? await fetchInto(dir, input.headDir!, `refs/heads/${input.headBranch}`)
+    : await resolveOid(dir, `refs/heads/${input.headBranch}`);
   if (!headOid) return err("unknown_head");
   if ((await aheadCount(dir, baseOid, headOid)) === 0)
     return err("nothing_to_merge");
@@ -103,12 +127,21 @@ export async function createPull(
   });
   if (!issue.ok) return err("empty_title");
 
+  const headRepoId = input.headRepoId ?? input.repoId;
   db.query(
-    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid)
-     VALUES (?1, ?2, ?3, ?4, ?5)`,
-  ).run(issue.value.id, input.baseBranch, input.headBranch, baseOid, headOid);
+    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+  ).run(
+    issue.value.id,
+    input.baseBranch,
+    input.headBranch,
+    baseOid,
+    headOid,
+    headRepoId,
+  );
 
-  // A durable, fetchable ref for the PR head — the way tooling addresses it.
+  // A durable, fetchable ref for the PR head — the way tooling addresses it,
+  // and (for cross-repo) the only place the base repo holds the fork's tip.
   await writeRef(dir, `refs/pull/${issue.value.number}/head`, headOid);
 
   return ok(join(db, issue.value)!);
@@ -143,12 +176,16 @@ export interface PullStatus {
   readonly conflicts: string[];
 }
 
-/** Recompute mergeability against the live branches. */
+/** Recompute mergeability against the live base. The head is the live branch
+ * for a same-repo PR, or the snapshot in refs/pull/N/head for a cross-repo one
+ * (the fork's tip lives in another repo; we compare against what we fetched). */
 export async function pullStatus(dir: string, pull: Pull): Promise<PullStatus> {
   const baseOid =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid;
-  const headOid =
-    (await resolveOid(dir, `refs/heads/${pull.headBranch}`)) ?? pull.headOid;
+  const headRef = pull.crossRepo
+    ? `refs/pull/${pull.number}/head`
+    : `refs/heads/${pull.headBranch}`;
+  const headOid = (await resolveOid(dir, headRef)) ?? pull.headOid;
   const ahead = await aheadCount(dir, baseOid, headOid);
   if (ahead === 0) {
     return { baseOid, headOid, ahead, mergeable: false, conflicts: [] };

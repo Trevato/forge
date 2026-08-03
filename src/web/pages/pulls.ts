@@ -12,7 +12,7 @@ import {
   listReviewComments,
   type Side,
 } from "../../core/reviews.ts";
-import { canWrite } from "../../core/repos.ts";
+import { canWrite, getRepoById } from "../../core/repos.ts";
 import {
   createPull,
   getPull,
@@ -151,14 +151,43 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
   if (!repo) return repoNotFound(ctx);
   if (!ctx.auth.user) return redirect("/signin");
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const branches = await branchNames(dir);
-  const baseDefault = repo.defaultBranch;
-  const headDefault = branches.find((b) => b !== baseDefault) ?? "";
+  const headBranches = await branchNames(dir);
+
+  // A fork proposes upstream by default: base = the parent, compare = this
+  // fork. `?self=1` opens a plain within-repo PR instead.
+  const parent =
+    repo.forkParentId !== null && ctx.url.searchParams.get("self") === null
+      ? getRepoById(ctx.app.db, repo.forkParentId)
+      : undefined;
+  const cross = parent !== undefined;
+  const baseBranches = cross
+    ? await branchNames(
+        repoDir(ctx.app.reposRoot, parent.ownerName, parent.name),
+      )
+    : headBranches;
+  const baseDefault = cross ? parent.defaultBranch : repo.defaultBranch;
+  const headDefault =
+    headBranches.find((b) => !cross && b !== baseDefault) ??
+    headBranches[0] ??
+    "";
+
+  const enoughBranches = cross
+    ? baseBranches.length >= 1 && headBranches.length >= 1
+    : headBranches.length >= 2;
 
   const body = html`${repoNav(repo, "pulls")}
     <div class="narrow-wide">
       <h2>New pull request</h2>
-      ${branches.length < 2
+      ${cross
+        ? html`<p class="muted small">
+            Proposing <strong>${repo.ownerName}/${repo.name}</strong> →
+            <strong>${parent.ownerName}/${parent.name}</strong>.
+            <a href="/${repo.ownerName}/${repo.name}/pulls/new?self=1"
+              >Open one within this fork instead.</a
+            >
+          </p>`
+        : null}
+      ${!enoughBranches
         ? html`<div class="card empty">
             Push at least two branches to open a pull request.
           </div>`
@@ -166,18 +195,30 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
             method="post"
             action="/${repo.ownerName}/${repo.name}/pulls/new"
           >
+            <input
+              type="hidden"
+              name="baseRepo"
+              value="${cross ? "parent" : "self"}"
+            />
             <div class="branch-pick">
               <label
                 >base
+                ${when(
+                  parent,
+                  (p) =>
+                    html`<span class="muted mono"
+                      >${p.ownerName}/${p.name}:</span
+                    >`,
+                )}
                 <select class="input" name="base">
-                  ${branchOptions(branches, baseDefault)}
+                  ${branchOptions(baseBranches, baseDefault)}
                 </select></label
               >
               <span class="muted">←</span>
               <label
                 >compare
                 <select class="input" name="head">
-                  ${branchOptions(branches, headDefault)}
+                  ${branchOptions(headBranches, headDefault)}
                 </select></label
               >
             </div>
@@ -218,15 +259,29 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return redirect("/signin");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
 
-  const created = await createPull(ctx.app.db, dir, {
-    repoId: repo.id,
+  // A fork proposing upstream creates the PR in the PARENT repo, with this
+  // fork as the head. Otherwise it's a plain within-repo PR.
+  const parent =
+    field(form, "baseRepo") === "parent" && repo.forkParentId !== null
+      ? getRepoById(ctx.app.db, repo.forkParentId)
+      : undefined;
+  const baseRepo = parent ?? repo;
+  const baseDir = repoDir(ctx.app.reposRoot, baseRepo.ownerName, baseRepo.name);
+
+  const created = await createPull(ctx.app.db, baseDir, {
+    repoId: baseRepo.id,
     authorId: ctx.auth.user.id,
     title: field(form, "title"),
     body: field(form, "body"),
     baseBranch: field(form, "base"),
     headBranch: field(form, "head"),
+    ...(parent
+      ? {
+          headRepoId: repo.id,
+          headDir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+        }
+      : {}),
   });
   if (!created.ok) {
     const messages: Record<string, string> = {
@@ -237,7 +292,7 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
       nothing_to_merge: "The compare branch has no commits beyond base.",
       invalid_branch: "Invalid branch name.",
     };
-    const base = `/${repo.ownerName}/${repo.name}`;
+    const back = `/${repo.ownerName}/${repo.name}`;
     return page({
       title: "New pull request",
       user: ctx.auth.user,
@@ -247,18 +302,18 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
           <p class="error-note">
             ${messages[created.error] ?? "Could not open the pull request."}
           </p>
-          <a class="btn" href="${base}/pulls/new">Back</a>
+          <a class="btn" href="${back}/pulls/new">Back</a>
         </div>`,
     });
   }
   ctx.app.bus.append({
     kind: "pull.opened",
-    repoId: repo.id,
+    repoId: baseRepo.id,
     actorId: ctx.auth.user.id,
     payload: { number: created.value.number },
   });
   return redirect(
-    `/${repo.ownerName}/${repo.name}/pulls/${created.value.number}`,
+    `/${baseRepo.ownerName}/${baseRepo.name}/pulls/${created.value.number}`,
   );
 }
 
@@ -299,13 +354,19 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
 
   const lastCommentId =
     comments.length > 0 ? comments[comments.length - 1]!.id : "";
+  const headRepo = pull.crossRepo
+    ? getRepoById(ctx.app.db, pull.headRepoId)
+    : undefined;
+  const headLabel = headRepo
+    ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
+    : pull.headBranch;
   const conversation = html`<div id="conversation">
     ${commentCard({
       id: "",
       author: pull.authorName,
       at: pull.createdAt,
       body: pull.body,
-      verb: html`wants to merge ${pull.headBranch} into ${pull.baseBranch} ·`,
+      verb: html`wants to merge ${headLabel} into ${pull.baseBranch} ·`,
     })}
     ${comments.map((c) =>
       commentCard({

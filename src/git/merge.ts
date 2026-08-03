@@ -159,6 +159,27 @@ export async function aheadCount(
   return result.ok ? Number(result.value.trim()) || 0 : 0;
 }
 
+/**
+ * Fetch a ref from another local repo (a fork) into this one, bringing its
+ * objects across, and return the fetched tip. Used to pull a fork's head into
+ * the base repo so a cross-repo PR can be diffed and merged entirely in the
+ * base. `sourceDir` is a forge-computed path, never user input.
+ */
+export async function fetchInto(
+  baseDir: string,
+  sourceDir: string,
+  srcRef: string,
+): Promise<string | undefined> {
+  if (!isSafeRef(srcRef)) return undefined;
+  const fetched = await runGit(
+    ["fetch", "--no-tags", "--quiet", sourceDir, srcRef],
+    { cwd: baseDir, timeoutMs: 120_000 },
+  );
+  if (!fetched.ok) return undefined;
+  const tip = await runGit(["rev-parse", "FETCH_HEAD"], { cwd: baseDir });
+  return tip.ok ? tip.value.trim() : undefined;
+}
+
 /** Write a ref to an oid unconditionally (for refs/pull/N/*). */
 export async function writeRef(
   dir: string,
