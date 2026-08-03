@@ -37,6 +37,7 @@ import {
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
+import { commitFiles } from "../git/write.ts";
 import {
   advertiseRefs,
   isGitService,
@@ -422,6 +423,65 @@ export function buildRouter(): Router<Handler> {
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
     if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
     return json(repo);
+  });
+
+  // Commit files to a branch without a git client — the programmatic write
+  // path automation (and an AI harness) uses to build code.
+  router.add("POST", "/api/v1/repos/:owner/:name/contents", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canWrite(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const input = await body(ctx.request);
+    const rawFiles = Array.isArray(input.files) ? input.files : [];
+    const files = rawFiles
+      .filter(
+        (f): f is { path: string; content: string } =>
+          typeof f === "object" &&
+          f !== null &&
+          typeof (f as { path?: unknown }).path === "string" &&
+          typeof (f as { content?: unknown }).content === "string",
+      )
+      .map((f) => ({ path: f.path, content: f.content }));
+    if (files.length === 0) return json({ error: "no_files" }, 422);
+
+    const branch = str(input.branch) || repo.defaultBranch;
+    const author = {
+      name: ctx.auth.user!.displayName || ctx.auth.user!.username,
+      email: ctx.auth.user!.email,
+    };
+    // A new branch forks from `base` (default: the default branch) so it shares
+    // history and stays mergeable; committing to the default branch just
+    // advances it.
+    const startPoint = str(input.base) || repo.defaultBranch;
+    const committed = await commitFiles(
+      repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+      {
+        branch,
+        ...(branch !== startPoint ? { startPoint } : {}),
+        message: str(input.message) || "Update files",
+        files,
+        author,
+      },
+    );
+    if (!committed.ok) {
+      const kind = committed.error.kind;
+      return json({ error: kind }, kind === "branch_moved" ? 409 : 422);
+    }
+    // Fire the push event so webhooks, SSE, and (future) CI see the change —
+    // update-ref doesn't run hooks, so we announce it here.
+    ctx.app.bus.append({
+      kind: "push",
+      repoId: repo.id,
+      actorId: ctx.auth.user!.id,
+      payload: {
+        updates: [
+          { ref: `refs/heads/${branch}`, newOid: committed.value.commitOid },
+        ],
+        viaApi: true,
+      },
+    });
+    return json(committed.value, 201);
   });
 
   router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {
