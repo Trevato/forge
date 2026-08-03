@@ -337,7 +337,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const syntax = await diffSyntax(dir, diff, from, status.headOid);
   const comments = listComments(ctx.app.db, pull.id);
   const reviewComments = byAnchor(listReviewComments(ctx.app.db, pull.id));
-  const mayMerge = canWrite(repo, ctx.auth.user);
+  const mayMerge = canWrite(ctx.app.db, repo, ctx.auth.user);
   const base = `/${repo.ownerName}/${repo.name}`;
   const reviewBase = `${base}/pulls/${pull.number}`;
 
@@ -516,7 +516,7 @@ function mergeBox(
 export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!ctx.auth.user || !canWrite(repo, ctx.auth.user))
+  if (!ctx.auth.user || !canWrite(ctx.app.db, repo, ctx.auth.user))
     return new Response("forbidden", { status: 403 });
   const number = parseNumber(ctx.params.number);
   const pull =

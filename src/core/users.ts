@@ -14,6 +14,8 @@ export interface User {
   readonly email: string;
   readonly displayName: string;
   readonly isAdmin: boolean;
+  /** "org" rows own repos and hold teams but can't authenticate. */
+  readonly kind: "user" | "org";
 }
 
 interface UserRow {
@@ -23,6 +25,7 @@ interface UserRow {
   display_name: string;
   is_admin: number;
   password_hash: string;
+  kind: "user" | "org";
 }
 
 function toUser(row: UserRow): User {
@@ -32,6 +35,7 @@ function toUser(row: UserRow): User {
     email: row.email,
     displayName: row.display_name,
     isAdmin: row.is_admin === 1,
+    kind: row.kind,
   };
 }
 
@@ -91,6 +95,7 @@ export async function createUser(
     email: input.email,
     displayName: input.displayName ?? "",
     isAdmin: input.isAdmin === true,
+    kind: "user",
   });
 }
 
@@ -131,7 +136,8 @@ export async function verifyPassword(
     row?.password_hash ??
     "$argon2id$v=19$m=65536,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const valid = await Bun.password.verify(password, hash).catch(() => false);
-  if (!valid || !row) return err("bad_credentials");
+  // Org rows own repos but never authenticate, whatever their stored hash.
+  if (!valid || !row || row.kind === "org") return err("bad_credentials");
   return ok(toUser(row));
 }
 

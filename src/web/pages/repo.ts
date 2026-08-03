@@ -56,7 +56,7 @@ export function loadRepo(ctx: Ctx): Repo | undefined {
     ctx.params.owner ?? "",
     (ctx.params.name ?? "").replace(/\.git$/, ""),
   );
-  if (!repo || !canRead(repo, ctx.auth.user)) return undefined;
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return undefined;
   return repo;
 }
 

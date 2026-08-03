@@ -18,7 +18,8 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import type { User } from "./users.ts";
+import { accessAllows, orgAccess, type Access } from "./orgs.ts";
+import { getUserById, type User } from "./users.ts";
 
 const log = createLog("repos");
 
@@ -243,6 +244,21 @@ export function listReposVisibleTo(
   return rows.map(toRepo);
 }
 
+/** Repos owned by one user or org, visible to the viewer. */
+export function listReposByOwner(
+  db: Database,
+  ownerName: string,
+  viewer: User | undefined,
+): Repo[] {
+  const rows = db
+    .query<
+      RepoRow,
+      [string]
+    >(`${SELECT} WHERE user.username = ?1 COLLATE NOCASE ORDER BY repo.id DESC`)
+    .all(ownerName);
+  return rows.map(toRepo).filter((repo) => canRead(db, repo, viewer));
+}
+
 /**
  * Delete a repo. Row first, then disk — inverse of creation, same invariant.
  * Before removing the objects, detach every fork that borrows them (repack so
@@ -279,12 +295,51 @@ export async function deleteRepo(
   return ok();
 }
 
-// Permissions, v1: owners own; public is readable. Collaborators come later
-// as rows, not as special cases scattered through handlers.
+// Permissions. A personal repo is governed by ownership; an org's repo by the
+// caller's team access in that org. Site admins see and do everything.
 
-export function canRead(repo: Repo, user: User | undefined): boolean {
-  if (repo.visibility === "public") return true;
+function personalOrDirect(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
+}
+
+/** Resolve org access for an org-owned repo, or "none" for a personal repo. */
+function orgAccessFor(
+  db: Database,
+  repo: Repo,
+  user: User | undefined,
+): Access {
+  const owner = getUserById(db, repo.ownerId);
+  if (owner?.kind !== "org") return "none";
+  return orgAccess(db, repo.ownerId, user);
+}
+
+export function canRead(
+  db: Database,
+  repo: Repo,
+  user: User | undefined,
+): boolean {
+  if (repo.visibility === "public") return true;
+  if (personalOrDirect(repo, user)) return true;
+  return accessAllows(orgAccessFor(db, repo, user), "read");
+}
+
+export function canWrite(
+  db: Database,
+  repo: Repo,
+  user: User | undefined,
+): boolean {
+  if (personalOrDirect(repo, user)) return true;
+  return accessAllows(orgAccessFor(db, repo, user), "write");
+}
+
+/** Admin over a repo (settings, delete, webhooks, protection). */
+export function canAdmin(
+  db: Database,
+  repo: Repo,
+  user: User | undefined,
+): boolean {
+  if (personalOrDirect(repo, user)) return true;
+  return accessAllows(orgAccessFor(db, repo, user), "admin");
 }
 
 export interface RepoSettings {
@@ -308,8 +363,4 @@ export function updateRepoSettings(
     repo.id,
   );
   return getRepoById(db, repo.id)!;
-}
-
-export function canWrite(repo: Repo, user: User | undefined): boolean {
-  return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
 }

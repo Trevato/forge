@@ -203,7 +203,7 @@ export function issuePage(ctx: Ctx): Response {
   const labels = labelsFor(ctx.app.db, issue.id);
   const mayModerate =
     ctx.auth.user !== undefined &&
-    (ctx.auth.user.id === issue.authorId || canWrite(repo, ctx.auth.user));
+    (ctx.auth.user.id === issue.authorId || canWrite(ctx.app.db, repo, ctx.auth.user));
   const base = `/${repo.ownerName}/${repo.name}`;
 
   const lastCommentId =
@@ -366,7 +366,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
 
   // Close/reopen only for the author or a repo writer.
   const mayModerate =
-    ctx.auth.user.id === issue.authorId || canWrite(repo, ctx.auth.user);
+    ctx.auth.user.id === issue.authorId || canWrite(ctx.app.db, repo, ctx.auth.user);
   if (mayModerate && (intent === "close" || intent === "reopen")) {
     const target: IssueState = intent === "close" ? "closed" : "open";
     const changed = setIssueState(ctx.app.db, issue.id, target);

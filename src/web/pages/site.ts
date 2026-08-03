@@ -6,10 +6,16 @@
 
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { createRepo, listReposVisibleTo } from "../../core/repos.ts";
+import {
+  accessAllows,
+  getOrg,
+  listOrgsForUser,
+  orgAccess,
+} from "../../core/orgs.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import { countUsers, createUser, verifyPassword } from "../../core/users.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
@@ -42,9 +48,16 @@ export function home(ctx: Ctx): Response {
             ${when(
               ctx.auth.user,
               () =>
-                html`<a class="btn" data-size="sm" href="/new"
-                  >New repository</a
-                >`,
+                html`<a class="btn" data-size="sm" href="/organizations/new"
+                    >New organization</a
+                  >
+                  <a
+                    class="btn"
+                    data-variant="primary"
+                    data-size="sm"
+                    href="/new"
+                    >New repository</a
+                  >`,
             )}
           </div>
           ${repos.length === 0
@@ -216,9 +229,28 @@ export function logoutSubmit(ctx: Ctx): Response {
 
 export function newRepoPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return redirect("/signin");
+  const user = ctx.auth.user;
+  // Owners the user may create under: themselves, plus orgs they can write to.
+  const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
+    accessAllows(orgAccess(ctx.app.db, org.id, user), "write"),
+  );
+  const owners = [user.username, ...writeOrgs.map((o) => o.username)];
+  const preselect = ctx.url.searchParams.get("owner") ?? user.username;
   const body = html`<div class="narrow">
     <h1>New repository</h1>
     <form method="post" action="/new">
+      <label for="owner">Owner</label>
+      <select class="input" id="owner" name="owner">
+        ${owners.map(
+          (o) =>
+            html`<option
+              value="${o}"
+              ${o === preselect ? raw("selected") : null}
+            >
+              ${o}
+            </option>`,
+        )}
+      </select>
       <label for="name">Name</label>
       <input
         class="input"
@@ -247,12 +279,24 @@ export function newRepoPage(ctx: Ctx): Response {
   return page({ title: "New repository", user: ctx.auth.user, body });
 }
 
+/** Resolve the owner id for a new repo: the user, or an org they can write to. */
+function resolveOwner(ctx: Ctx, ownerName: string): string | undefined {
+  const user = ctx.auth.user!;
+  if (ownerName === "" || ownerName === user.username) return user.id;
+  const org = getOrg(ctx.app.db, ownerName);
+  if (org && accessAllows(orgAccess(ctx.app.db, org.id, user), "write"))
+    return org.id;
+  return undefined;
+}
+
 export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return redirect("/signin");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
+  const ownerId = resolveOwner(ctx, field(form, "owner"));
+  if (ownerId === undefined) return new Response("forbidden", { status: 403 });
   const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
-    ownerId: ctx.auth.user.id,
+    ownerId,
     name: field(form, "name"),
     visibility: form.get("visibility") === "public" ? "public" : "private",
     description: field(form, "description"),

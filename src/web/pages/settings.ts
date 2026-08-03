@@ -5,7 +5,7 @@
  */
 
 import { createLabel, deleteLabel, listLabels } from "../../core/issues.ts";
-import { canWrite, updateRepoSettings } from "../../core/repos.ts";
+import { canAdmin, updateRepoSettings } from "../../core/repos.ts";
 import {
   createWebhook,
   deleteWebhook,
@@ -22,7 +22,7 @@ import { crumbsFor, loadRepo, repoNav, repoNotFound } from "./repo.ts";
 export function settingsPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const base = `/${repo.ownerName}/${repo.name}`;
   const labels = listLabels(ctx.app.db, repo.id);
   const webhooks = listWebhooks(ctx.app.db, repo.id);
@@ -200,7 +200,7 @@ function labelCssFor(labels: { color: string }[]): string {
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
 
@@ -216,7 +216,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
 export async function labelCreate(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   createLabel(
@@ -232,7 +232,7 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
 export async function labelDelete(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   deleteLabel(ctx.app.db, repo.id, ctx.params.id ?? "");
@@ -243,7 +243,7 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
 export async function webhookCreate(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const providedSecret = field(form, "secret");
@@ -260,7 +260,7 @@ export async function webhookCreate(ctx: Ctx): Promise<Response> {
 export async function webhookDelete(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  if (!canWrite(repo, ctx.auth.user)) return repoNotFound(ctx);
+  if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   deleteWebhook(ctx.app.db, repo.id, ctx.params.id ?? "");
