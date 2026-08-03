@@ -45,7 +45,9 @@ import {
   type User,
 } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
+import { diffRange } from "../git/diff.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
+import { mergeBase } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
 import {
@@ -750,7 +752,16 @@ export function buildRouter(): Router<Handler> {
       found.repo.ownerName,
       found.repo.name,
     );
-    return json({ ...found.pull, status: await pullStatus(dir, found.pull) });
+    const status = await pullStatus(dir, found.pull);
+    // Include the diff so a reviewer (human or agent) reads the change without
+    // a second round trip.
+    const from =
+      (await mergeBase(dir, status.baseOid, status.headOid)) ?? status.baseOid;
+    const diffResult = await diffRange(dir, from, status.headOid);
+    const diff = diffResult.ok
+      ? diffResult.value
+      : { files: [], additions: 0, deletions: 0 };
+    return json({ ...found.pull, status, diff });
   });
 
   router.add(
