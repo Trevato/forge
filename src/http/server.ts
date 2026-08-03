@@ -60,6 +60,7 @@ import {
 } from "../web/pages/site.ts";
 import {
   blobPage,
+  commitPage,
   commitsPage,
   repoHome,
   treePage,
@@ -501,6 +502,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
   router.add("GET", "/:owner/:name/commits", commitsPage);
+  router.add("GET", "/:owner/:name/commit/:oid", commitPage);
 
   return router;
 }

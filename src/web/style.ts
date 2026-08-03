@@ -328,4 +328,12 @@ textarea.input { resize: vertical; min-height: 88px; line-height: 1.5; font-fami
 .merge-ready { color: var(--success); font-weight: 600; }
 .merge-form { display: flex; gap: 10px; align-items: center; margin-left: auto; flex-wrap: wrap; }
 .merge-form select { min-width: 160px; }
+
+/* ---- commit detail ---- */
+.commit-head { padding: 16px; margin-bottom: 4px; }
+.commit-head h2 { margin-bottom: 8px; }
+.commit-body {
+  white-space: pre-wrap; font-family: var(--mono); font-size: 13px;
+  color: var(--muted-fg); margin: 8px 0 12px;
+}
 `;

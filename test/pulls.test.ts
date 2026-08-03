@@ -244,6 +244,15 @@ describe("pull requests end to end", () => {
     expect(after).not.toContain("Merged");
   });
 
+  test("the commit page renders a commit's diff", async () => {
+    const page = await (await fetch(`${base}/dev/app/commit/main`)).text();
+    expect(page).toContain("diff-summary");
+    // The most recent main commit touched code.txt or extra.txt.
+    expect(/code\.txt|extra\.txt/.test(page)).toBe(true);
+    const bad = await fetch(`${base}/dev/app/commit/deadbeef`);
+    expect(bad.status).toBe(404);
+  });
+
   test("cross-origin merge is refused", async () => {
     const res = await fetch(`${base}/dev/app/pulls/1/merge`, {
       method: "POST",

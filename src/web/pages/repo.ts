@@ -6,7 +6,8 @@
 
 import type { Repo } from "../../core/repos.ts";
 import { canRead, getRepo } from "../../core/repos.ts";
-import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
+import { diffCommit } from "../../git/diff.ts";
+import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import {
   blobForRender,
   commitLog,
@@ -16,6 +17,7 @@ import {
 } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import { renderDiff } from "../diff-view.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
@@ -337,7 +339,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
         ${commits.map(
           (commit) =>
             html`<li>
-              <div class="row">
+              <a class="row" href="${base}/commit/${commit.oid}">
                 <span class="grow">
                   <strong>${commit.subject}</strong>
                   <br />
@@ -346,7 +348,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
                   >
                 </span>
                 <span class="mono muted small">${commit.oid.slice(0, 8)}</span>
-              </div>
+              </a>
             </li>`,
         )}
       </ul>
@@ -375,6 +377,50 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     </div>`;
   return page({
     title: `Commits · ${repo.name}`,
+    user: ctx.auth.user,
+    crumbs: crumbsFor(repo),
+    body,
+  });
+}
+
+// GET /:owner/:name/commit/:oid — one commit's metadata and its diff.
+export async function commitPage(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  const rev = ctx.params.oid ?? "";
+  if (!isSafeOid(rev) && !isSafeRef(rev)) return notFoundPage(ctx);
+  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+
+  const log = await commitLog(dir, rev, { limit: 1 });
+  if (!log.ok || log.value.length === 0) return notFoundPage(ctx);
+  const commit = log.value[0]!;
+
+  const diffResult = await diffCommit(dir, commit.oid);
+  const diff = diffResult.ok
+    ? diffResult.value
+    : { files: [], additions: 0, deletions: 0 };
+
+  const body = html`${repoNav(repo, "commits")}
+    <div class="card commit-head">
+      <h2>${commit.subject}</h2>
+      ${when(
+        commit.body.trim() !== "",
+        () => html`<pre class="commit-body">${commit.body}</pre>`,
+      )}
+      <div class="issue-meta">
+        <span class="muted small"
+          >${commit.author} committed ${timeAgo(commit.date)}</span
+        >
+        <span class="badge mono">${commit.oid.slice(0, 10)}</span>
+        ${when(
+          commit.parents.length > 1,
+          () => html`<span class="badge">merge</span>`,
+        )}
+      </div>
+    </div>
+    <div class="mt">${renderDiff(diff)}</div>`;
+  return page({
+    title: `${commit.subject} · ${repo.name}`,
     user: ctx.auth.user,
     crumbs: crumbsFor(repo),
     body,
