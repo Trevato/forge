@@ -172,7 +172,11 @@ class BatchProc {
 export type BlobForRender =
   | { readonly kind: "missing" }
   | { readonly kind: "too_large"; readonly size: number }
-  | { readonly kind: "binary"; readonly size: number }
+  | {
+      readonly kind: "binary";
+      readonly body: Uint8Array;
+      readonly size: number;
+    }
   | { readonly kind: "text"; readonly body: Uint8Array; readonly size: number };
 
 /**
@@ -202,7 +206,8 @@ export async function blobForRender(
   const body = await runGitRaw(["cat-file", "blob", spec], { cwd: dir });
   if (!body.ok) return { kind: "missing" };
   // NUL in the first 8KB is git's own binary heuristic.
-  if (body.value.subarray(0, 8000).includes(0)) return { kind: "binary", size };
+  if (body.value.subarray(0, 8000).includes(0))
+    return { kind: "binary", body: body.value, size };
   return { kind: "text", body: body.value, size };
 }
 

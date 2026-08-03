@@ -46,8 +46,10 @@ import {
 } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { diffRange } from "../git/diff.ts";
+import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { mergeBase } from "../git/merge.ts";
+import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { commitFiles } from "../git/write.ts";
 import {
@@ -484,6 +486,84 @@ export function buildRouter(): Router<Handler> {
     if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
     return json(repo);
   });
+
+  // ── Read-back API. The agent arena showed the write path was complete but
+  // the read path was missing, so automation couldn't inspect before acting.
+  // These let a caller list branches, walk history, and read files at any ref.
+
+  router.add("GET", "/api/v1/repos/:owner/:name/branches", async (ctx) => {
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const refs = await listRefs(dir, "refs/heads/");
+    if (!refs.ok) return json([]);
+    return json(
+      refs.value.map((r) => ({
+        name: r.name.replace("refs/heads/", ""),
+        oid: r.oid,
+        isDefault: r.name === `refs/heads/${repo.defaultBranch}`,
+      })),
+    );
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/commits", async (ctx) => {
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const ref = ctx.url.searchParams.get("ref") || repo.defaultBranch;
+    if (!isSafeRef(ref)) return json({ error: "bad_ref" }, 422);
+    const limit = Math.min(
+      Math.max(Number(ctx.url.searchParams.get("limit")) || 30, 1),
+      100,
+    );
+    const log = await commitLog(dir, ref, { limit });
+    if (!log.ok) return json([]);
+    return json(log.value);
+  });
+
+  // The path is optional: no path lists the root tree; a directory lists its
+  // entries; a file returns its content (utf-8, or base64 for binary).
+  const contentsHandler = async (ctx: Ctx): Promise<Response> => {
+    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
+    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+    const ref = ctx.url.searchParams.get("ref") || repo.defaultBranch;
+    const path = ctx.params.path ?? "";
+    if (!isSafeRef(ref) || (path !== "" && !isSafeTreePath(path)))
+      return notFound();
+
+    const spec = path === "" ? ref : `${ref}:${path}`;
+    const type = await runGit(["cat-file", "-t", spec], { cwd: dir });
+    // A ref (no path) or a directory resolves to a tree → list it.
+    if (path === "" || (type.ok && type.value === "tree")) {
+      const tree = await listTree(dir, ref, path);
+      if (!tree.ok) return notFound();
+      return json({ type: "dir", ref, path, entries: tree.value });
+    }
+    const blob = await blobForRender(dir, ref, path, 5_000_000);
+    if (blob.kind === "missing") return notFound();
+    if (blob.kind === "too_large")
+      return json({ type: "file", tooLarge: true, size: blob.size }, 413);
+    const encoding = blob.kind === "binary" ? "base64" : "utf-8";
+    const content =
+      blob.kind === "binary"
+        ? Buffer.from(blob.body).toString("base64")
+        : new TextDecoder().decode(blob.body);
+    return json({
+      type: "file",
+      ref,
+      path,
+      size: blob.size,
+      encoding,
+      content,
+    });
+  };
+  router.add("GET", "/api/v1/repos/:owner/:name/contents", contentsHandler);
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/contents/*path",
+    contentsHandler,
+  );
 
   // Commit files to a branch without a git client — the programmatic write
   // path automation (and an AI harness) uses to build code.
