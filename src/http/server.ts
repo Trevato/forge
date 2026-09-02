@@ -9,41 +9,39 @@ import {
   canAdmin,
   canRead,
   canWrite,
-  createRepo,
-  deleteRepo,
-  forkRepo,
   getRepo,
   getRepoById,
   listReposVisibleTo,
   type Repo,
 } from "../core/repos.ts";
+import { getPull, listPulls, pullStatus, type Pull } from "../core/pulls.ts";
 import {
-  createPull,
-  getPull,
-  listPulls,
-  mergePull,
-  pullStatus,
-  type Pull,
-} from "../core/pulls.ts";
+  addSshKey,
+  createToken,
+  deleteSshKey,
+  signUp,
+} from "../actions/users.ts";
+import {
+  commitToBranch,
+  createRepo,
+  createWebhook,
+  deleteRepo,
+  deleteWebhook,
+  forkRepo,
+  updateRepoSettings,
+} from "../actions/repos.ts";
+import { addComment, openIssue, setIssueState } from "../actions/issues.ts";
+import { mergePull, openPull } from "../actions/pulls.ts";
+import { addTeamMember, createOrg, createTeam } from "../actions/orgs.ts";
+import { listKeys, type UserKey } from "../core/keys.ts";
 import { listEvents } from "../core/events.ts";
 import {
   createSession,
   destroySession,
   sessionUser,
 } from "../core/sessions.ts";
-import {
-  createToken,
-  scopeAllows,
-  verifyToken,
-  type TokenScope,
-} from "../core/tokens.ts";
-import {
-  countUsers,
-  createUser,
-  getUserByName,
-  verifyPassword,
-  type User,
-} from "../core/users.ts";
+import { scopeAllows, verifyToken, type TokenScope } from "../core/tokens.ts";
+import { verifyPassword, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { diffRange } from "../git/diff.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
@@ -51,7 +49,6 @@ import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { mergeBase } from "../git/merge.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
-import { commitFiles } from "../git/write.ts";
 import {
   advertiseRefs,
   isGitService,
@@ -64,7 +61,7 @@ import { defect } from "../kernel/error.ts";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { css } from "../web/style.ts";
-import { isThemeName } from "../web/themes.ts";
+import { isThemeName } from "../design/themes.ts";
 import {
   home,
   logoutSubmit,
@@ -94,14 +91,10 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import {
-  addComment,
-  createIssue,
   getIssue,
   listComments,
   listIssues,
-  setIssueState,
   type Issue,
-  type IssueState,
 } from "../core/issues.ts";
 import {
   newPullPage,
@@ -121,21 +114,8 @@ import {
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
-import {
-  createWebhook,
-  deleteWebhook,
-  listWebhooks,
-} from "../core/webhooks.ts";
-import {
-  accessAllows,
-  addTeamMember,
-  createOrg,
-  createTeam,
-  getOrg,
-  listTeams,
-  orgAccess,
-  type Permission,
-} from "../core/orgs.ts";
+import { listWebhooks } from "../core/webhooks.ts";
+import { getOrg, listTeams, type Permission } from "../core/orgs.ts";
 import {
   newOrgPage,
   newOrgSubmit,
@@ -146,7 +126,14 @@ import {
   teamMemberRemove,
   teamPage,
 } from "../web/pages/org.ts";
-import { tokenCreate, tokenDelete, tokensPage } from "../web/pages/account.ts";
+import {
+  keyCreate,
+  keyDelete,
+  keysPage,
+  tokenCreate,
+  tokenDelete,
+  tokensPage,
+} from "../web/pages/account.ts";
 import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
 import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
@@ -316,6 +303,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  router.add("GET", "/settings/keys", keysPage);
+  router.add("POST", "/settings/keys", keyCreate);
+  router.add("POST", "/settings/keys/:id/delete", keyDelete);
 
   // git smart HTTP
   router.add("GET", "/:owner/:name.git/info/refs", (ctx) => {
@@ -346,16 +336,12 @@ export function buildRouter(): Router<Handler> {
   // users & sessions
   router.add("POST", "/api/v1/users", async (ctx) => {
     const input = await body(ctx.request);
-    // The first account on a fresh forge is the admin — no setup wizard.
-    const isFirst = countUsers(ctx.app.db) === 0;
-    const created = await createUser(ctx.app.db, {
+    const created = await signUp(ctx.app, {
       username: str(input.username),
       email: str(input.email),
       password: str(input.password),
-      isAdmin: isFirst,
     });
     if (!created.ok) return json({ error: created.error }, 422);
-    ctx.app.bus.append({ kind: "user.created", actorId: created.value.id });
     return json(publicUser(created.value), 201);
   });
 
@@ -363,13 +349,8 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const input = await body(ctx.request);
-    const created = createOrg(ctx.app.db, str(input.name), ctx.auth.user!.id);
-    if (!created.ok) return json({ error: created.error }, 422);
-    ctx.app.bus.append({
-      kind: "org.created",
-      actorId: ctx.auth.user!.id,
-      payload: { org: created.value.username },
-    });
+    const created = createOrg(ctx.app, ctx.auth.user, str(input.name));
+    if (!created.ok) return respondAccess(created.error, 422);
     return json(
       { id: created.value.id, username: created.value.username, kind: "org" },
       201,
@@ -381,17 +362,13 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (
-      !org ||
-      !accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "admin")
-    )
-      return notFound();
+    if (!org) return notFound();
     const input = await body(ctx.request);
     const perm = str(input.permission);
     const permission: Permission =
       perm === "write" || perm === "admin" ? perm : "read";
-    const team = createTeam(ctx.app.db, org.id, str(input.name), permission);
-    if (!team.ok) return json({ error: team.error }, 422);
+    const team = createTeam(ctx.app, ctx.auth.user, org, str(input.name), permission);
+    if (!team.ok) return respondAccess(team.error, 422);
     return json(team.value, 201);
   });
 
@@ -399,20 +376,16 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (
-      !org ||
-      !accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "admin")
-    )
-      return notFound();
+    if (!org) return notFound();
+    // Resolving the team is a lookup; the action still gates on org admin.
     const team = listTeams(ctx.app.db, org.id).find(
       (t) => t.name.toLowerCase() === (ctx.params.team ?? "").toLowerCase(),
     );
     if (!team) return notFound();
     const input = await body(ctx.request);
-    const user = getUserByName(ctx.app.db, str(input.user));
-    if (!user) return json({ error: "no_such_user" }, 422);
-    const added = addTeamMember(ctx.app.db, team, user.id);
-    return json({ added }, added ? 201 : 200);
+    const added = addTeamMember(ctx.app, ctx.auth.user, org, team, str(input.user));
+    if (!added.ok) return respondAccess(added.error, 422);
+    return json(added.value, added.value.added ? 201 : 200);
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
@@ -444,6 +417,32 @@ export function buildRouter(): Router<Handler> {
     ctx.auth.user ? json(publicUser(ctx.auth.user)) : unauthorized(),
   );
 
+  // SSH keys — what the SSH listener authenticates against. Public keys are
+  // public, so the list returns them whole.
+  router.add("GET", "/api/v1/user/keys", (ctx) =>
+    ctx.auth.user
+      ? json(listKeys(ctx.app.db, ctx.auth.user.id).map(publicKey))
+      : unauthorized(),
+  );
+  router.add("POST", "/api/v1/user/keys", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const added = addSshKey(ctx.app, ctx.auth.user, {
+      name: str(input.name),
+      key: str(input.key),
+    });
+    if (!added.ok) return respondAccess(added.error, 422);
+    return json(publicKey(added.value), 201);
+  });
+  router.add("DELETE", "/api/v1/user/keys/:id", (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const removed = deleteSshKey(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!removed.ok) return respondAccess(removed.error, 422);
+    return new Response(null, { status: 204 });
+  });
+
   // tokens — minted with a password or a session, never with another token
   router.add("POST", "/api/v1/tokens", async (ctx) => {
     const input = await body(ctx.request);
@@ -465,12 +464,13 @@ export function buildRouter(): Router<Handler> {
       return json({ error: "invalid_scope" }, 422);
     }
     const minted = createToken(
-      ctx.app.db,
-      user.id,
+      ctx.app,
+      user,
       str(input.name) || "unnamed",
       scope,
     );
-    return json(minted, 201);
+    if (!minted.ok) return unauthorized();
+    return json(minted.value, 201);
   });
 
   // repos
@@ -482,31 +482,18 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const input = await body(ctx.request);
-    const visibility = input.visibility === "public" ? "public" : "private";
-    // SAFETY: requireScope guarantees auth.user above.
-    const user = ctx.auth.user!;
     // Create under the user, or an org they can write to (via `owner`).
-    const ownerName = str(input.owner);
-    let ownerId = user.id;
-    if (ownerName !== "" && ownerName !== user.username) {
-      const org = getOrg(ctx.app.db, ownerName);
-      if (!org || !accessAllows(orgAccess(ctx.app.db, org.id, user), "write")) {
-        return json({ error: "forbidden_owner" }, 403);
-      }
-      ownerId = org.id;
-    }
-    const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
-      ownerId,
+    const created = await createRepo(ctx.app, ctx.auth.user, {
+      owner: str(input.owner),
       name: str(input.name),
-      visibility,
+      visibility: input.visibility === "public" ? "public" : "private",
       description: str(input.description),
     });
-    if (!created.ok) return json({ error: created.error }, 422);
-    ctx.app.bus.append({
-      kind: "repo.created",
-      repoId: created.value.id,
-      actorId: ctx.auth.user!.id,
-    });
+    if (!created.ok) {
+      if (created.error === "forbidden_owner")
+        return json({ error: "forbidden_owner" }, 403);
+      return respondAccess(created.error, 422);
+    }
     return json(created.value, 201);
   });
 
@@ -600,7 +587,7 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canWrite(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    if (!repo) return notFound();
     const input = await body(ctx.request);
     const rawFiles = Array.isArray(input.files) ? input.files : [];
     const files = rawFiles
@@ -614,42 +601,18 @@ export function buildRouter(): Router<Handler> {
       .map((f) => ({ path: f.path, content: f.content }));
     if (files.length === 0) return json({ error: "no_files" }, 422);
 
-    const branch = str(input.branch) || repo.defaultBranch;
-    const author = {
-      name: ctx.auth.user!.displayName || ctx.auth.user!.username,
-      email: ctx.auth.user!.email,
-    };
-    // A new branch forks from `base` (default: the default branch) so it shares
-    // history and stays mergeable; committing to the default branch just
-    // advances it.
-    const startPoint = str(input.base) || repo.defaultBranch;
-    const committed = await commitFiles(
-      repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-      {
-        branch,
-        ...(branch !== startPoint ? { startPoint } : {}),
-        message: str(input.message) || "Update files",
-        files,
-        author,
-      },
-    );
+    const committed = await commitToBranch(ctx.app, ctx.auth.user, repo, {
+      branch: str(input.branch),
+      base: str(input.base),
+      message: str(input.message),
+      files,
+    });
     if (!committed.ok) {
+      if (typeof committed.error === "string")
+        return respondAccess(committed.error, 422);
       const kind = committed.error.kind;
       return json({ error: kind }, kind === "branch_moved" ? 409 : 422);
     }
-    // Fire the push event so webhooks, SSE, and (future) CI see the change —
-    // update-ref doesn't run hooks, so we announce it here.
-    ctx.app.bus.append({
-      kind: "push",
-      repoId: repo.id,
-      actorId: ctx.auth.user!.id,
-      payload: {
-        updates: [
-          { ref: `refs/heads/${branch}`, newOid: committed.value.commitOid },
-        ],
-        viaApi: true,
-      },
-    });
     return json(committed.value, 201);
   });
 
@@ -657,36 +620,30 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    if (!repo) return notFound();
     const input = await body(ctx.request);
-    const visibility =
-      input.visibility === "public" || input.visibility === "private"
-        ? input.visibility
-        : repo.visibility;
-    const protect =
-      typeof input.protectDefault === "boolean"
-        ? input.protectDefault
-        : repo.protectDefault;
-    const description =
-      typeof input.description === "string"
-        ? input.description
-        : repo.description;
-    ctx.app.db
-      .query(
-        "UPDATE repo SET visibility = ?1, protect_default = ?2, description = ?3 WHERE id = ?4",
-      )
-      .run(visibility, protect ? 1 : 0, description, repo.id);
-    return json(getRepoById(ctx.app.db, repo.id));
+    const updated = updateRepoSettings(ctx.app, ctx.auth.user, repo, {
+      ...(input.visibility === "public" || input.visibility === "private"
+        ? { visibility: input.visibility }
+        : {}),
+      ...(typeof input.protectDefault === "boolean"
+        ? { protectDefault: input.protectDefault }
+        : {}),
+      ...(typeof input.description === "string"
+        ? { description: input.description }
+        : {}),
+    });
+    if (!updated.ok) return notFound();
+    return json(updated.value);
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const deleted = await deleteRepo(ctx.app.db, ctx.app.reposRoot, repo);
-    if (!deleted.ok) return json({ error: deleted.error }, 500);
-    ctx.app.bus.append({ kind: "repo.deleted", actorId: ctx.auth.user!.id });
+    if (!repo) return notFound();
+    const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
+    if (!deleted.ok) return respondAccess(deleted.error, 500);
     return json({}, 200);
   });
 
@@ -700,23 +657,15 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const parent = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!parent || !canRead(ctx.app.db, parent, ctx.auth.user))
-      return notFound();
+    if (!parent) return notFound();
     const input = await body(ctx.request);
     const forked = await forkRepo(
-      ctx.app.db,
-      ctx.app.reposRoot,
+      ctx.app,
+      ctx.auth.user,
       parent,
-      ctx.auth.user!.id,
       str(input.name) || undefined,
     );
-    if (!forked.ok) return json({ error: forked.error }, 422);
-    ctx.app.bus.append({
-      kind: "repo.forked",
-      repoId: forked.value.id,
-      actorId: ctx.auth.user!.id,
-      payload: { parent: `${parent.ownerName}/${parent.name}` },
-    });
+    if (!forked.ok) return respondAccess(forked.error, 422);
     return json(forked.value, 201);
   });
 
@@ -734,21 +683,13 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    if (!repo) return notFound();
     const input = await body(ctx.request);
-    const created = createIssue(ctx.app.db, {
-      repoId: repo.id,
-      authorId: ctx.auth.user!.id,
+    const created = openIssue(ctx.app, ctx.auth.user, repo, {
       title: str(input.title),
       body: str(input.body),
     });
-    if (!created.ok) return json({ error: created.error }, 422);
-    ctx.app.bus.append({
-      kind: "issue.opened",
-      repoId: repo.id,
-      actorId: ctx.auth.user!.id,
-      payload: { number: created.value.number },
-    });
+    if (!created.ok) return respondAccess(created.error, 422);
     return json(created.value, 201);
   });
 
@@ -770,18 +711,14 @@ export function buildRouter(): Router<Handler> {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const added = addComment(ctx.app.db, {
-        issueId: found.issue.id,
-        authorId: ctx.auth.user!.id,
-        body: str(input.body),
-      });
-      if (!added.ok) return json({ error: added.error }, 422);
-      ctx.app.bus.append({
-        kind: "issue.commented",
-        repoId: found.issue.repoId,
-        actorId: ctx.auth.user!.id,
-        payload: { number: found.issue.number },
-      });
+      const added = addComment(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.issue,
+        str(input.body),
+      );
+      if (!added.ok) return respondAccess(added.error, 422);
       return json(added.value, 201);
     },
   );
@@ -799,19 +736,14 @@ export function buildRouter(): Router<Handler> {
       if (wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
       const changed = setIssueState(
-        ctx.app.db,
-        found.issue.id,
-        wanted as IssueState,
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.issue,
+        wanted,
       );
-      if (changed) {
-        ctx.app.bus.append({
-          kind: wanted === "closed" ? "issue.closed" : "issue.reopened",
-          repoId: found.issue.repoId,
-          actorId: ctx.auth.user!.id,
-          payload: { number: found.issue.number },
-        });
-      }
-      return json(changed ?? found.issue);
+      if (!changed.ok) return respondAccess(changed.error, 422);
+      return json(changed.value);
     },
   );
 
@@ -820,27 +752,15 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    if (!repo) return notFound();
     const input = await body(ctx.request);
-    const created = await createPull(
-      ctx.app.db,
-      repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-      {
-        repoId: repo.id,
-        authorId: ctx.auth.user!.id,
-        title: str(input.title),
-        body: str(input.body),
-        baseBranch: str(input.base),
-        headBranch: str(input.head),
-      },
-    );
-    if (!created.ok) return json({ error: created.error }, 422);
-    ctx.app.bus.append({
-      kind: "pull.opened",
-      repoId: repo.id,
-      actorId: ctx.auth.user!.id,
-      payload: { number: created.value.number },
+    const created = await openPull(ctx.app, ctx.auth.user, repo, {
+      title: str(input.title),
+      body: str(input.body),
+      baseBranch: str(input.base),
+      headBranch: str(input.head),
     });
+    if (!created.ok) return respondAccess(created.error, 422);
     return json(created.value, 201);
   });
 
@@ -881,43 +801,20 @@ export function buildRouter(): Router<Handler> {
       if (denied) return denied;
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      if (!canWrite(ctx.app.db, found.repo, ctx.auth.user)) return forbidden();
       const input = await body(ctx.request);
       const strategy = str(input.strategy) === "squash" ? "squash" : "merge";
-      const dir = repoDir(
-        ctx.app.reposRoot,
-        found.repo.ownerName,
-        found.repo.name,
-      );
-      const merged = await mergePull(ctx.app.db, dir, found.pull, {
+      const merged = await mergePull(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
         strategy,
-        message:
-          strategy === "squash"
-            ? `${found.pull.title} (#${found.pull.number})`
-            : `Merge pull request #${found.pull.number} from ${found.pull.headBranch}\n\n${found.pull.title}`,
-        actorId: ctx.auth.user!.id,
-        author: {
-          name: ctx.auth.user!.displayName || ctx.auth.user!.username,
-          email: ctx.auth.user!.email,
-        },
-      });
+      );
       if (!merged.ok) {
-        return json(
-          {
-            error:
-              typeof merged.error === "string"
-                ? merged.error
-                : merged.error.kind,
-          },
-          409,
-        );
+        if (typeof merged.error !== "string")
+          return json({ error: merged.error.kind }, 409);
+        return respondAccess(merged.error, 409);
       }
-      ctx.app.bus.append({
-        kind: "pull.merged",
-        repoId: found.repo.id,
-        actorId: ctx.auth.user!.id,
-        payload: { number: found.pull.number, strategy },
-      });
       return json({ merged: true, ...merged.value });
     },
   );
@@ -931,18 +828,14 @@ export function buildRouter(): Router<Handler> {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const added = addComment(ctx.app.db, {
-        issueId: found.pull.id,
-        authorId: ctx.auth.user!.id,
-        body: str(input.body),
-      });
-      if (!added.ok) return json({ error: added.error }, 422);
-      ctx.app.bus.append({
-        kind: "pull.commented",
-        repoId: found.repo.id,
-        actorId: ctx.auth.user!.id,
-        payload: { number: found.pull.number },
-      });
+      const added = addComment(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        str(input.body),
+      );
+      if (!added.ok) return respondAccess(added.error, 422);
       return json(added.value, 201);
     },
   );
@@ -960,15 +853,14 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
+    if (!repo) return notFound();
     const input = await body(ctx.request);
-    const created = createWebhook(ctx.app.db, {
-      repoId: repo.id,
+    const created = createWebhook(ctx.app, ctx.auth.user, repo, {
       url: str(input.url),
       kinds: str(input.kinds) || "*",
       ...(typeof input.secret === "string" ? { secret: input.secret } : {}),
     });
-    if (!created.ok) return json({ error: created.error }, 422);
+    if (!created.ok) return respondAccess(created.error, 422);
     // The secret is returned exactly once, at creation.
     return json(
       { ...created.value.webhook, secret: created.value.secret },
@@ -980,9 +872,9 @@ export function buildRouter(): Router<Handler> {
     const denied = requireScope(ctx, "admin");
     if (denied) return denied;
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const removed = deleteWebhook(ctx.app.db, repo.id, ctx.params.id!);
-    return json({}, removed ? 200 : 404);
+    if (!repo) return notFound();
+    const removed = deleteWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!);
+    return json({}, removed.ok ? 200 : 404);
   });
 
   // Issues (web). The literal /new is registered before /:number so it can
@@ -1054,6 +946,29 @@ function publicUser(user: User) {
   };
 }
 
+function publicKey(key: UserKey) {
+  return {
+    id: key.id,
+    name: key.name,
+    algo: key.algo,
+    fingerprint: key.fingerprint,
+    key: key.key,
+    createdAt: key.createdAt,
+    lastUsedAt: key.lastUsedAt,
+  };
+}
+
+/**
+ * Map an action's error to a response: the three access errors have fixed
+ * shapes; anything else is a validation code the caller chose a status for.
+ */
+function respondAccess(error: string, status: number): Response {
+  if (error === "not_found") return notFound();
+  if (error === "unauthorized") return unauthorized();
+  if (error === "forbidden") return forbidden();
+  return json({ error }, status);
+}
+
 /** Session mutations must be same-origin; token mutations must carry scope. */
 function requireScope(ctx: Ctx, needed: TokenScope): Response | undefined {
   if (!ctx.auth.user || ctx.auth.scope === undefined) return unauthorized();
@@ -1064,7 +979,9 @@ function requireScope(ctx: Ctx, needed: TokenScope): Response | undefined {
 }
 
 /** Resolve a readable repo's issue by number, or a 404 to return as-is. */
-function loadIssue(ctx: Ctx): { issue: Issue } | { error: Response } {
+function loadIssue(
+  ctx: Ctx,
+): { repo: Repo; issue: Issue } | { error: Response } {
   const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user))
     return { error: notFound() };
@@ -1072,7 +989,7 @@ function loadIssue(ctx: Ctx): { issue: Issue } | { error: Response } {
   if (!Number.isInteger(number) || number < 1) return { error: notFound() };
   const issue = getIssue(ctx.app.db, repo.id, number);
   if (!issue || issue.kind !== "issue") return { error: notFound() };
-  return { issue };
+  return { repo, issue };
 }
 
 function loadPull(ctx: Ctx): { repo: Repo; pull: Pull } | { error: Response } {
@@ -1102,34 +1019,12 @@ async function withGitAccess(
     ctx.auth.user &&
     scopeAllows(ctx.auth.scope ?? "ro", "rw")
   ) {
-    const ownerName = ctx.params.owner!;
-    let ownerId: string | undefined;
-    if (ownerName.toLowerCase() === ctx.auth.user.username.toLowerCase()) {
-      ownerId = ctx.auth.user.id;
-    } else {
-      const org = getOrg(ctx.app.db, ownerName);
-      if (
-        org &&
-        accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "write")
-      ) {
-        ownerId = org.id;
-      }
-    }
-    if (ownerId !== undefined) {
-      const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
-        ownerId,
-        name: ctx.params.name!,
-        visibility: "private",
-      });
-      if (created.ok) {
-        ctx.app.bus.append({
-          kind: "repo.created",
-          repoId: created.value.id,
-          actorId: ctx.auth.user.id,
-        });
-        repo = created.value;
-      }
-    }
+    const created = await createRepo(ctx.app, ctx.auth.user, {
+      owner: ctx.params.owner!,
+      name: ctx.params.name!,
+      visibility: "private",
+    });
+    if (created.ok) repo = created.value;
   }
 
   // Anonymous callers get a challenge wherever credentials could help;

@@ -5,19 +5,20 @@
  */
 
 import { crossOrigin, type Ctx } from "../../http/context.ts";
-import { createRepo, listReposVisibleTo } from "../../core/repos.ts";
+import { createRepo } from "../../actions/repos.ts";
+import { signUp } from "../../actions/users.ts";
+import { listReposVisibleTo } from "../../core/repos.ts";
 import {
   accessAllows,
-  getOrg,
   listOrgsForUser,
   orgAccess,
 } from "../../core/orgs.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
-import { countUsers, createUser, verifyPassword } from "../../core/users.ts";
+import { verifyPassword } from "../../core/users.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-import { isThemeName } from "../themes.ts";
+import { isThemeName } from "../../design/themes.ts";
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
@@ -191,12 +192,10 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
 export async function signupSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
-  const isFirst = countUsers(ctx.app.db) === 0;
-  const created = await createUser(ctx.app.db, {
+  const created = await signUp(ctx.app, {
     username: field(form, "username"),
     email: field(form, "email"),
     password: field(form, "password"),
-    isAdmin: isFirst,
   });
   if (!created.ok) {
     const messages: Record<string, string> = {
@@ -215,7 +214,6 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       ),
     });
   }
-  ctx.app.bus.append({ kind: "user.created", actorId: created.value.id });
   const session = createSession(ctx.app.db, created.value.id);
   return redirect(
     "/",
@@ -313,29 +311,19 @@ export function newRepoPage(ctx: Ctx): Response {
   });
 }
 
-/** Resolve the owner id for a new repo: the user, or an org they can write to. */
-function resolveOwner(ctx: Ctx, ownerName: string): string | undefined {
-  const user = ctx.auth.user!;
-  if (ownerName === "" || ownerName === user.username) return user.id;
-  const org = getOrg(ctx.app.db, ownerName);
-  if (org && accessAllows(orgAccess(ctx.app.db, org.id, user), "write"))
-    return org.id;
-  return undefined;
-}
-
 export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return redirect("/signin");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const ownerId = resolveOwner(ctx, field(form, "owner"));
-  if (ownerId === undefined) return new Response("forbidden", { status: 403 });
-  const created = await createRepo(ctx.app.db, ctx.app.reposRoot, {
-    ownerId,
+  const created = await createRepo(ctx.app, ctx.auth.user, {
+    owner: field(form, "owner"),
     name: field(form, "name"),
     visibility: form.get("visibility") === "public" ? "public" : "private",
     description: field(form, "description"),
   });
   if (!created.ok) {
+    if (created.error === "forbidden_owner" || created.error === "unauthorized")
+      return new Response("forbidden", { status: 403 });
     return page({
       title: "New repository",
       user: ctx.auth.user,
@@ -351,10 +339,5 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
       </div>`,
     });
   }
-  ctx.app.bus.append({
-    kind: "repo.created",
-    repoId: created.value.id,
-    actorId: ctx.auth.user.id,
-  });
   return redirect(`/${created.value.ownerName}/${created.value.name}`);
 }

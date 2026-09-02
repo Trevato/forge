@@ -4,14 +4,16 @@
  * forms; each action is its own same-origin POST.
  */
 
-import { createLabel, deleteLabel, listLabels } from "../../core/issues.ts";
-import { canAdmin, updateRepoSettings } from "../../core/repos.ts";
 import {
+  createLabel,
   createWebhook,
+  deleteLabel,
   deleteWebhook,
-  listWebhooks,
-  recentDeliveries,
-} from "../../core/webhooks.ts";
+  updateRepoSettings,
+} from "../../actions/repos.ts";
+import { listLabels } from "../../core/issues.ts";
+import { canAdmin } from "../../core/repos.ts";
+import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when } from "../html.ts";
@@ -205,7 +207,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
 
-  updateRepoSettings(ctx.app.db, repo, {
+  updateRepoSettings(ctx.app, ctx.auth.user, repo, {
     description: field(form, "description"),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     protectDefault: form.get("protect") !== null,
@@ -221,8 +223,9 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   createLabel(
-    ctx.app.db,
-    repo.id,
+    ctx.app,
+    ctx.auth.user,
+    repo,
     field(form, "name"),
     field(form, "color") || "6b7280",
   );
@@ -236,7 +239,7 @@ export async function labelDelete(ctx: Ctx): Promise<Response> {
   if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  deleteLabel(ctx.app.db, repo.id, ctx.params.id ?? "");
+  deleteLabel(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   return redirect(`/${repo.ownerName}/${repo.name}/settings`);
 }
 
@@ -248,8 +251,7 @@ export async function webhookCreate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const providedSecret = field(form, "secret");
-  createWebhook(ctx.app.db, {
-    repoId: repo.id,
+  createWebhook(ctx.app, ctx.auth.user, repo, {
     url: field(form, "url"),
     kinds: field(form, "kinds") || "*",
     ...(providedSecret !== "" ? { secret: providedSecret } : {}),
@@ -264,6 +266,6 @@ export async function webhookDelete(ctx: Ctx): Promise<Response> {
   if (!canAdmin(ctx.app.db, repo, ctx.auth.user)) return repoNotFound(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  deleteWebhook(ctx.app.db, repo.id, ctx.params.id ?? "");
+  deleteWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   return redirect(`/${repo.ownerName}/${repo.name}/settings`);
 }

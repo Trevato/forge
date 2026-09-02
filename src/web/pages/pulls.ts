@@ -5,19 +5,18 @@
  * thread; only the diff and merge are new.
  */
 
-import { addComment, listComments } from "../../core/issues.ts";
+import { addComment } from "../../actions/issues.ts";
+import { addReview, mergePull, openPull } from "../../actions/pulls.ts";
+import { listComments } from "../../core/issues.ts";
 import {
-  addReviewComment,
   byAnchor,
   listReviewComments,
   type Side,
 } from "../../core/reviews.ts";
 import { canWrite, getRepoById } from "../../core/repos.ts";
 import {
-  createPull,
   getPull,
   listPulls,
-  mergePull,
   pullStatus,
   type Pull,
 } from "../../core/pulls.ts";
@@ -269,21 +268,13 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
       ? getRepoById(ctx.app.db, repo.forkParentId)
       : undefined;
   const baseRepo = parent ?? repo;
-  const baseDir = repoDir(ctx.app.reposRoot, baseRepo.ownerName, baseRepo.name);
 
-  const created = await createPull(ctx.app.db, baseDir, {
-    repoId: baseRepo.id,
-    authorId: ctx.auth.user.id,
+  const created = await openPull(ctx.app, ctx.auth.user, baseRepo, {
     title: field(form, "title"),
     body: field(form, "body"),
     baseBranch: field(form, "base"),
     headBranch: field(form, "head"),
-    ...(parent
-      ? {
-          headRepoId: repo.id,
-          headDir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-        }
-      : {}),
+    ...(parent ? { headRepo: repo } : {}),
   });
   if (!created.ok) {
     const messages: Record<string, string> = {
@@ -309,12 +300,6 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
         </div>`,
     });
   }
-  ctx.app.bus.append({
-    kind: "pull.opened",
-    repoId: baseRepo.id,
-    actorId: ctx.auth.user.id,
-    payload: { number: created.value.number },
-  });
   return redirect(
     `/${baseRepo.ownerName}/${baseRepo.name}/pulls/${created.value.number}`,
   );
@@ -530,33 +515,8 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const strategy = field(form, "strategy") === "squash" ? "squash" : "merge";
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const merged = await mergePull(ctx.app.db, dir, pull, {
-    strategy,
-    message:
-      strategy === "squash"
-        ? `${pull.title} (#${pull.number})`
-        : `Merge pull request #${pull.number} from ${pull.headBranch}\n\n${pull.title}`,
-    actorId: ctx.auth.user.id,
-    author: {
-      name: ctx.auth.user.displayName || ctx.auth.user.username,
-      email: ctx.auth.user.email,
-    },
-  });
-  const dest = `/${repo.ownerName}/${repo.name}/pulls/${pull.number}`;
-  if (merged.ok) {
-    ctx.app.bus.append({
-      kind: "pull.merged",
-      repoId: repo.id,
-      actorId: ctx.auth.user.id,
-      payload: {
-        number: pull.number,
-        strategy,
-        mergeOid: merged.value.mergeOid,
-      },
-    });
-  }
-  return redirect(dest);
+  await mergePull(ctx.app, ctx.auth.user, repo, pull, strategy);
+  return redirect(`/${repo.ownerName}/${repo.name}/pulls/${pull.number}`);
 }
 
 // POST /:owner/:name/pulls/:number/comments
@@ -572,21 +532,8 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const bodyText = field(form, "body");
-  if (bodyText.trim() !== "") {
-    const added = addComment(ctx.app.db, {
-      issueId: pull.id,
-      authorId: ctx.auth.user.id,
-      body: bodyText,
-    });
-    if (added.ok) {
-      ctx.app.bus.append({
-        kind: "pull.commented",
-        repoId: repo.id,
-        actorId: ctx.auth.user.id,
-        payload: { number: pull.number },
-      });
-    }
-  }
+  if (bodyText.trim() !== "")
+    addComment(ctx.app, ctx.auth.user, repo, pull, bodyText);
   return redirect(`/${repo.ownerName}/${repo.name}/pulls/${pull.number}`);
 }
 
@@ -608,28 +555,15 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
   const bodyText = field(form, "body");
   const dest = `/${repo.ownerName}/${repo.name}/pulls/${pull.number}`;
   if (anchor && bodyText.trim() !== "") {
-    // Anchor to the head the reviewer is looking at, plus the line's content
+    // Anchored to the head the reviewer is looking at, plus the line's content
     // hash so a later force-push re-anchors or marks the comment outdated.
-    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-    const status = await pullStatus(dir, pull);
-    const added = addReviewComment(ctx.app.db, {
-      pullId: pull.id,
-      authorId: ctx.auth.user.id,
+    await addReview(ctx.app, ctx.auth.user, repo, pull, {
       body: bodyText,
       path: anchor.path,
       line: anchor.line,
       side: anchor.side,
-      commitOid: status.headOid,
       lineHash: field(form, "lineHash"),
     });
-    if (added.ok) {
-      ctx.app.bus.append({
-        kind: "pull.reviewed",
-        repoId: repo.id,
-        actorId: ctx.auth.user.id,
-        payload: { number: pull.number, path: anchor.path, line: anchor.line },
-      });
-    }
   }
   return redirect(`${dest}#${fileHashAnchor(anchor?.path ?? "")}`);
 }

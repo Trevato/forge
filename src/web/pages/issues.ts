@@ -4,15 +4,17 @@
  * form posts. Mobile-first, no JavaScript required.
  */
 
-import { canWrite } from "../../core/repos.ts";
 import {
   addComment,
-  createIssue,
+  openIssue,
+  setIssueState,
+} from "../../actions/issues.ts";
+import { canWrite } from "../../core/repos.ts";
+import {
   getIssue,
   labelsFor,
   listComments,
   listIssues,
-  setIssueState,
   type Issue,
   type IssueState,
   type Label,
@@ -173,20 +175,12 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
-  const created = createIssue(ctx.app.db, {
-    repoId: repo.id,
-    authorId: ctx.auth.user.id,
+  const created = openIssue(ctx.app, ctx.auth.user, repo, {
     title: field(form, "title"),
     body: field(form, "body"),
   });
   if (!created.ok)
     return redirect(`/${repo.ownerName}/${repo.name}/issues/new`);
-  ctx.app.bus.append({
-    kind: "issue.opened",
-    repoId: repo.id,
-    actorId: ctx.auth.user.id,
-    payload: { number: created.value.number },
-  });
   return redirect(
     `/${repo.ownerName}/${repo.name}/issues/${created.value.number}`,
   );
@@ -352,38 +346,19 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   const dest = `/${repo.ownerName}/${repo.name}/issues/${issue.number}`;
 
   const body = field(form, "body");
-  if (body.trim() !== "") {
-    const added = addComment(ctx.app.db, {
-      issueId: issue.id,
-      authorId: ctx.auth.user.id,
-      body,
-    });
-    if (added.ok) {
-      ctx.app.bus.append({
-        kind: "issue.commented",
-        repoId: repo.id,
-        actorId: ctx.auth.user.id,
-        payload: { number: issue.number },
-      });
-    }
-  }
+  if (body.trim() !== "")
+    addComment(ctx.app, ctx.auth.user, repo, issue, body);
 
-  // Close/reopen only for the author or a repo writer.
-  const mayModerate =
-    ctx.auth.user.id === issue.authorId ||
-    canWrite(ctx.app.db, repo, ctx.auth.user);
-  if (mayModerate && (intent === "close" || intent === "reopen")) {
-    const target: IssueState = intent === "close" ? "closed" : "open";
-    const changed = setIssueState(ctx.app.db, issue.id, target);
-    if (changed) {
-      ctx.app.bus.append({
-        kind: intent === "close" ? "issue.closed" : "issue.reopened",
-        repoId: repo.id,
-        actorId: ctx.auth.user.id,
-        payload: { number: issue.number },
-      });
-    }
-  }
+  // Close/reopen: the action admits the author or a repo writer; anyone
+  // else's intent is silently ignored, as the buttons aren't shown to them.
+  if (intent === "close" || intent === "reopen")
+    setIssueState(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      issue,
+      intent === "close" ? "closed" : "open",
+    );
   return redirect(dest);
 }
 

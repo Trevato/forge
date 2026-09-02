@@ -56,6 +56,7 @@ src/
   kernel/     zero-dep primitives: result, error, id, log, db, hash
   git/        bare repos, smart HTTP v2, cat-file readers, hooks, guards
   core/       domain: users, sessions, tokens, repos, events, schema
+  actions/    every mutation once: authorize, mutate, record the event
   http/       router, request context, the server
   web/        SSR: html tag, theme palettes, design tokens, markdown, pages
 ```

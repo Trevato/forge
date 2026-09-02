@@ -5,9 +5,9 @@
  */
 
 import type { Repo } from "../../core/repos.ts";
+import { forkRepo } from "../../actions/repos.ts";
 import {
   canRead,
-  forkRepo,
   getRepo,
   getRepoById,
   listForks,
@@ -119,22 +119,15 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const forked = await forkRepo(
-    ctx.app.db,
-    ctx.app.reposRoot,
+    ctx.app,
+    ctx.auth.user,
     repo,
-    ctx.auth.user.id,
     field(form, "name") || undefined,
   );
   if (!forked.ok) {
     // Already forked → go to the existing fork (common-case name).
     return redirect(`/${ctx.auth.user.username}/${repo.name}`);
   }
-  ctx.app.bus.append({
-    kind: "repo.forked",
-    repoId: forked.value.id,
-    actorId: ctx.auth.user.id,
-    payload: { parent: `${repo.ownerName}/${repo.name}` },
-  });
   return redirect(`/${forked.value.ownerName}/${forked.value.name}`);
 }
 

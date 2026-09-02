@@ -14,7 +14,7 @@ import {
   THEME_NAMES,
   THEMES,
   type ThemeName,
-} from "./themes.ts";
+} from "../design/themes.ts";
 
 export interface PageOptions {
   title: string;
@@ -93,6 +93,7 @@ function userMenu(user: User): Html {
       <a class="menu-item" href="/new">New repository</a>
       <a class="menu-item" href="/organizations/new">New organization</a>
       <a class="menu-item" href="/settings/tokens">Tokens</a>
+      <a class="menu-item" href="/settings/keys">SSH keys</a>
       <hr class="menu-sep" />
       <form method="post" action="/logout">
         <button class="menu-item" type="submit">Sign out</button>

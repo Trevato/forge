@@ -6,7 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
-import { THEME_NAMES } from "../src/web/themes.ts";
+import { THEME_NAMES } from "../src/design/themes.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {

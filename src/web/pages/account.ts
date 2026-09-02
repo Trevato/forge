@@ -1,15 +1,18 @@
 /**
- * Account settings: personal access tokens. A person who signed up on the web
- * needs a way to mint a token here — for CI or scoped access — without reaching
- * for curl. The secret is shown once, at creation, and never again.
+ * Account settings: personal access tokens and SSH keys. A person who signed
+ * up on the web needs a way to mint a token here — for CI or scoped access —
+ * without reaching for curl. The secret is shown once, at creation, and never
+ * again. SSH keys are what the SSH listener authenticates against.
  */
 
 import {
+  addSshKey,
   createToken,
+  deleteSshKey,
   deleteToken,
-  listTokens,
-  type TokenScope,
-} from "../../core/tokens.ts";
+} from "../../actions/users.ts";
+import { listKeys } from "../../core/keys.ts";
+import { listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -121,16 +124,17 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   const scope = field(form, "scope");
   const chosen: TokenScope = scope === "ro" || scope === "admin" ? scope : "rw";
   const minted = createToken(
-    ctx.app.db,
-    ctx.auth.user.id,
+    ctx.app,
+    ctx.auth.user,
     field(form, "name") || "token",
     chosen,
   );
+  if (!minted.ok) return redirect("/signin");
   return page({
     title: "Access tokens",
     user: ctx.auth.user,
     theme: ctx.theme,
-    body: tokensView(ctx, minted.token),
+    body: tokensView(ctx, minted.value.token),
   });
 }
 
@@ -139,6 +143,134 @@ export async function tokenDelete(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return redirect("/signin");
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  deleteToken(ctx.app.db, ctx.auth.user.id, ctx.params.id ?? "");
+  deleteToken(ctx.app, ctx.auth.user, ctx.params.id ?? "");
   return redirect("/settings/tokens");
+}
+
+// ---- SSH keys ----
+
+function keysView(ctx: Ctx, error?: string): Html {
+  const keys = listKeys(ctx.app.db, ctx.auth.user!.id);
+  return html`<div class="narrow-wide">
+    <h1>SSH keys</h1>
+    <p class="muted small">
+      Keys that sign you in over SSH. Paste a public key
+      (<span class="mono">~/.ssh/id_ed25519.pub</span>) — ed25519, ecdsa, or
+      rsa (2048 bits or more).
+    </p>
+
+    ${when(error, (msg) => html`<p class="error-note">${msg}</p>`)}
+    ${keys.length === 0
+      ? html`<p class="muted small">No keys yet.</p>`
+      : html`<div class="card">
+          <ul class="list">
+            ${keys.map(
+              (k) =>
+                html`<li>
+                  <div class="row">
+                    <span class="grow">
+                      <strong>${k.name}</strong>
+                      <span class="badge">${k.algo}</span>
+                      <br />
+                      <span class="mono small">${k.fingerprint}</span>
+                      <br />
+                      <span class="muted small"
+                        >added
+                        ${timeAgo(k.createdAt)}${when(
+                          k.lastUsedAt,
+                          (at) => html` · last used ${timeAgo(at)}`,
+                        )}</span
+                      >
+                    </span>
+                    <form
+                      method="post"
+                      action="/settings/keys/${k.id}/delete"
+                      class="inline"
+                    >
+                      <button
+                        class="btn"
+                        data-size="sm"
+                        data-variant="danger"
+                        type="submit"
+                      >
+                        Remove
+                      </button>
+                    </form>
+                  </div>
+                </li>`,
+            )}
+          </ul>
+        </div>`}
+
+    <form class="card settings-card" method="post" action="/settings/keys">
+      <label for="key-name">Name</label>
+      <input
+        class="input"
+        id="key-name"
+        name="name"
+        placeholder="e.g. laptop"
+      />
+      <label for="key">Public key</label>
+      <textarea
+        class="input mono"
+        id="key"
+        name="key"
+        rows="4"
+        placeholder="ssh-ed25519 AAAA…"
+        required
+      ></textarea>
+      <div class="form-actions">
+        <button class="btn" data-variant="primary" type="submit">
+          Add key
+        </button>
+      </div>
+    </form>
+  </div>`;
+}
+
+// GET /settings/keys
+export function keysPage(ctx: Ctx): Response {
+  if (!ctx.auth.user) return redirect("/signin");
+  return page({
+    title: "SSH keys",
+    user: ctx.auth.user,
+    theme: ctx.theme,
+    body: keysView(ctx),
+  });
+}
+
+// POST /settings/keys
+export async function keyCreate(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return redirect("/signin");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const added = addSshKey(ctx.app, ctx.auth.user, {
+    name: field(form, "name"),
+    key: field(form, "key"),
+  });
+  if (!added.ok) {
+    const messages: Record<string, string> = {
+      invalid_key: "That doesn't look like a supported public key.",
+      key_exists: "That key is already registered.",
+    };
+    return page(
+      {
+        title: "SSH keys",
+        user: ctx.auth.user,
+        theme: ctx.theme,
+        body: keysView(ctx, messages[added.error] ?? "Something went wrong."),
+      },
+      422,
+    );
+  }
+  return redirect("/settings/keys");
+}
+
+// POST /settings/keys/:id/delete
+export async function keyDelete(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return redirect("/signin");
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  deleteSshKey(ctx.app, ctx.auth.user, ctx.params.id ?? "");
+  return redirect("/settings/keys");
 }

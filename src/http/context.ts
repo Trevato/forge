@@ -6,7 +6,7 @@
 import type { App } from "../app.ts";
 import type { TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
-import type { ThemeName } from "../web/themes.ts";
+import type { ThemeName } from "../design/themes.ts";
 
 export interface Auth {
   readonly user: User | undefined;

@@ -76,19 +76,30 @@ src/
               (fork via alternates), smart-http, hooks (+ hook-entry, guard)
   core/       domain: users (kind user|org), sessions, tokens (ro/rw/admin),
               repos (access checks), issues (issue|pull), pulls, reviews,
-              orgs/teams, webhooks, events (outbox+bus), reconcile, schema
+              orgs/teams, webhooks, keys (ssh public keys), events
+              (outbox+bus), reconcile, schema — pure data, no authz, no events
+  actions/    one function per platform mutation: authorize (access.ts tiers),
+              call core, `bus.append`. API, web, and TUI are adapters over these
   http/       router, request context (Ctx/auth), server (all routes), sse
-  web/        SSR: html tag, themes (token palettes), style (the stylesheet),
+  design/     shared design tokens: themes (palettes both surfaces render)
+  web/        SSR: html tag, style (the stylesheet),
               layout (CSP+nonce, topbar, theme switcher), markdown, highlight,
               diff-view, pages/*
 ```
 
 ## Recipes
 
-- **Add an API route:** register in `buildRouter` (`http/server.ts`). Gate reads
-  with `canRead`, writes with `canWrite`/`canAdmin`; enforce token scope via the
-  form/body scope floor. On success, `bus.append(...)` an event and return
-  `json(value, 201)`. Miss → `notFound()`; auth → `unauthorized()`/`forbidden()`.
+- **Add a mutation:** write it once as an action in `actions/<concept>.ts` —
+  `(app, actor, …) => Result`. Authorize first with the `access.ts` helpers
+  (`requireParticipant` / `requireWriter` / `requireRepoAdmin` /
+  `requireOrgAdmin`), call the core function, then `bus.append(...)`. Never
+  authorize or append events in an adapter; `grep bus.append` outside
+  `actions/` should find only the post-receive hook.
+- **Add an API route:** register in `buildRouter` (`http/server.ts`). Gate
+  reads with `canRead`; for writes enforce the token scope floor
+  (`requireScope`), resolve the repo, call the action, and map its Result with
+  `respondAccess(error, status)` — access errors have fixed shapes, anything
+  else is a 422 code. Web forms follow the same shape via `readForm(ctx, scope)`.
 - **API error shape:** every error is `{ error, message }` — `error` is a stable
   machine code to branch on, `message` a human hint. Reuse the helpers
   (`notFound`, `noRoute`, `unauthorized`, `forbidden`) or a specific 422 code;

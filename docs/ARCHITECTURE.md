@@ -63,10 +63,22 @@ src/
   kernel/            zero-dep primitives: result, error, id, log, db
   git/               bare repos, smart HTTP, batch readers, hooks, ref guards
   core/              domain: users, sessions, tokens, repos, issues, pulls, events
+  actions/           every mutation as one function: authorize, mutate, record
   http/              router, middleware (auth, csrf, csp), api routes
   web/               SSR: html template tag, design tokens, pages, components
   test/              bun test — protocol-level and adversarial
 ```
+
+`core/` is pure data: functions over the database and the bare repos that
+neither authorize nor announce. `actions/` is where a mutation becomes a
+platform event — each action takes the app and an actor, checks access with
+the same three tiers everywhere (a repo you can't read is `not_found`, one
+you can't write is `forbidden`, an admin surface you don't own is hidden),
+performs the core mutation, and appends the event. The JSON API, the web
+forms, and the terminal UI are adapters over the same actions, so a new
+surface inherits every gate and every event by construction. Adapters keep
+only what is genuinely theirs: token scope floors, cookie CSRF, response
+shapes.
 
 Modules follow the style distilled from better-auth / ai-sdk / better-result:
 one concept per file named after the concept; shallow feature folders; plain
@@ -158,7 +170,7 @@ Two lessons Forgejo is still paying for, designed in up front:
   live updates, `data-*` attributes as the style/behavior hooks.
 - **Design system**: a flat namespace of CSS custom properties is the entire
   theming machinery — every color (surfaces, semantics, diff tints, syntax
-  tokens) is a variable, so a theme is a data table in `web/themes.ts`, not
+  tokens) is a variable, so a theme is a data table in `design/themes.ts`, not
   code. Six premade themes ship (three light, three dark); "system" follows
   the OS. The switcher is a plain form POST with a cookie — script only makes
   it instant. shadcn's essence without Tailwind: tokens, radii, spacing scale,

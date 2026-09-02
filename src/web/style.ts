@@ -1,12 +1,12 @@
 /**
- * The design system: theme-driven CSS custom properties (see themes.ts) and
+ * The design system: theme-driven CSS custom properties (see design/themes.ts) and
  * one readable, composable stylesheet. No preprocessor, no utility framework —
  * the stylesheet is the artifact, served as-is, and it is meant to be read.
  * Mobile is the base layer; desktop is the media query. Every color comes
  * from a token, so all six themes get every refinement for free.
  */
 
-import { swatchCss, themeCss } from "./themes.ts";
+import { swatchCss, themeCss } from "../design/themes.ts";
 
 const base = /* css */ `
 /* ---- constants (theme-independent) ---- */

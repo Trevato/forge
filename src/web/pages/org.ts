@@ -5,22 +5,25 @@
  */
 
 import {
-  OWNERS_TEAM,
-  accessAllows,
   addTeamMember,
   createOrg,
   createTeam,
   deleteTeam,
+  removeTeamMember,
+} from "../../actions/orgs.ts";
+import {
+  OWNERS_TEAM,
+  accessAllows,
   getOrg,
   getTeam,
   listTeamMembers,
   listTeams,
   orgAccess,
-  removeTeamMember,
   type Permission,
+  type Team,
 } from "../../core/orgs.ts";
 import { listReposByOwner } from "../../core/repos.ts";
-import { getUserByName } from "../../core/users.ts";
+import { getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -179,7 +182,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return redirect("/signin");
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const created = createOrg(ctx.app.db, field(form, "name"), ctx.auth.user.id);
+  const created = createOrg(ctx.app, ctx.auth.user, field(form, "name"));
   if (!created.ok) {
     const msg =
       created.error === "name_taken" ? "That name is taken." : "Invalid name.";
@@ -194,24 +197,19 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
       </div>`,
     });
   }
-  ctx.app.bus.append({
-    kind: "org.created",
-    actorId: ctx.auth.user.id,
-    payload: { org: created.value.username },
-  });
   return redirect(`/${created.value.username}`);
 }
 
 // ---- team management (org admins only) ----
 
-function requireOrgAdmin(
-  ctx: Ctx,
-): { orgId: string; orgName: string } | undefined {
+/** The org for admin pages: resolved here, gated by every action (and by the
+ * page itself, so the team pages are invisible to non-admins). */
+function requireOrgAdmin(ctx: Ctx): User | undefined {
   const org = getOrg(ctx.app.db, ctx.params.owner ?? "");
   if (!org) return undefined;
   if (!accessAllows(orgAccess(ctx.app.db, org.id, ctx.auth.user), "admin"))
     return undefined;
-  return { orgId: org.id, orgName: org.username };
+  return org;
 }
 
 // POST /:owner/-/teams
@@ -232,8 +230,8 @@ export async function teamCreate(ctx: Ctx): Promise<Response> {
   const perm = field(form, "permission");
   const permission: Permission =
     perm === "write" || perm === "admin" ? perm : "read";
-  createTeam(ctx.app.db, org.orgId, field(form, "name"), permission);
-  return redirect(`/${org.orgName}`);
+  createTeam(ctx.app, ctx.auth.user, org, field(form, "name"), permission);
+  return redirect(`/${org.username}`);
 }
 
 // GET /:owner/-/teams/:team
@@ -250,7 +248,7 @@ export function teamPage(ctx: Ctx): Response {
       404,
     );
   const team = getTeam(ctx.app.db, ctx.params.team ?? "");
-  if (!team || team.orgId !== org.orgId) {
+  if (!team || team.orgId !== org.id) {
     return page(
       {
         title: "Not found",
@@ -262,9 +260,9 @@ export function teamPage(ctx: Ctx): Response {
     );
   }
   const members = listTeamMembers(ctx.app.db, team.id);
-  const teamBase = `/${org.orgName}/-/teams/${team.id}`;
+  const teamBase = `/${org.username}/-/teams/${team.id}`;
   const body = html`<div class="page-head">
-      <h1>${org.orgName} / ${team.name}</h1>
+      <h1>${org.username} / ${team.name}</h1>
       <span class="badge">${team.permission}</span>
     </div>
     <div class="card">
@@ -316,7 +314,7 @@ export function teamPage(ctx: Ctx): Response {
         </form>`,
     )}`;
   return page({
-    title: `${team.name} · ${org.orgName}`,
+    title: `${team.name} · ${org.username}`,
     user: ctx.auth.user,
     theme: ctx.theme,
     body,
@@ -325,43 +323,43 @@ export function teamPage(ctx: Ctx): Response {
 
 async function teamAction(
   ctx: Ctx,
-): Promise<
-  { orgId: string; orgName: string; teamId: string; form: Form } | Response
-> {
+): Promise<{ org: User; team: Team; form: Form } | Response> {
   const org = requireOrgAdmin(ctx);
   if (!org) return new Response("not found", { status: 404 });
   const team = getTeam(ctx.app.db, ctx.params.team ?? "");
-  if (!team || team.orgId !== org.orgId)
+  if (!team || team.orgId !== org.id)
     return new Response("not found", { status: 404 });
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  return { orgId: org.orgId, orgName: org.orgName, teamId: team.id, form };
+  return { org, team, form };
 }
 
 // POST /:owner/-/teams/:team/add
 export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  const team = getTeam(ctx.app.db, r.teamId)!;
-  const user = getUserByName(ctx.app.db, field(r.form, "user"));
-  if (user) addTeamMember(ctx.app.db, team, user.id);
-  return redirect(`/${r.orgName}/-/teams/${r.teamId}`);
+  addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, field(r.form, "user"));
+  return redirect(`/${r.org.username}/-/teams/${r.team.id}`);
 }
 
 // POST /:owner/-/teams/:team/remove
 export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  const team = getTeam(ctx.app.db, r.teamId)!;
-  const user = getUserByName(ctx.app.db, field(r.form, "user"));
-  if (user) removeTeamMember(ctx.app.db, team, user.id);
-  return redirect(`/${r.orgName}/-/teams/${r.teamId}`);
+  removeTeamMember(
+    ctx.app,
+    ctx.auth.user,
+    r.org,
+    r.team,
+    field(r.form, "user"),
+  );
+  return redirect(`/${r.org.username}/-/teams/${r.team.id}`);
 }
 
 // POST /:owner/-/teams/:team/delete
 export async function teamDelete(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  deleteTeam(ctx.app.db, r.orgId, r.teamId);
-  return redirect(`/${r.orgName}`);
+  deleteTeam(ctx.app, ctx.auth.user, r.org, r.team);
+  return redirect(`/${r.org.username}`);
 }
