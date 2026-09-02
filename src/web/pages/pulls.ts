@@ -69,7 +69,7 @@ export function pullsList(ctx: Ctx): Response {
   if (!repo) return repoNotFound(ctx);
   const state =
     ctx.url.searchParams.get("state") === "closed" ? "closed" : "open";
-  const pulls = listPulls(ctx.app.db, repo.id, state);
+  const pulls = listPulls(ctx.app.db, repo.id, { state });
   const base = `/${repo.ownerName}/${repo.name}`;
 
   const body = html`${repoNav(repo, "pulls")}
@@ -562,7 +562,6 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
       path: anchor.path,
       line: anchor.line,
       side: anchor.side,
-      lineHash: field(form, "lineHash"),
     });
   }
   return redirect(`${dest}#${fileHashAnchor(anchor?.path ?? "")}`);

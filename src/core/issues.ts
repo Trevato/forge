@@ -135,13 +135,34 @@ export function getIssueById(db: Database, issueId: string): Issue | undefined {
   return row ? toIssue(row) : undefined;
 }
 
+export const LIST_LIMIT = 50;
+export const LIST_LIMIT_MAX = 200;
+
+/** Clamp a caller-supplied page size to [1, LIST_LIMIT_MAX]. */
+export function pageLimit(requested: number | undefined): number {
+  if (requested === undefined || !Number.isFinite(requested)) return LIST_LIMIT;
+  return Math.min(Math.max(Math.trunc(requested), 1), LIST_LIMIT_MAX);
+}
+
 export interface ListIssuesOptions {
   /** @default "open" */
   state?: IssueState | "all";
   /** @default "issue" */
   kind?: IssueKind;
+  /** Only issues carrying this label (by name, case-insensitive, or id). */
+  label?: string;
+  /** Only issues opened by this username. */
+  author?: string;
+  /** Page size. @default LIST_LIMIT (max LIST_LIMIT_MAX) */
+  limit?: number;
+  /** Resume after this issue number (exclusive) — lists run newest first. */
+  cursor?: number;
 }
 
+/**
+ * Newest first, paged by issue number: a number is a stable, monotonic key,
+ * so the cursor is simply the last number seen.
+ */
 export function listIssues(
   db: Database,
   repoId: string,
@@ -155,11 +176,28 @@ export function listIssues(
     params.push(state);
     where += ` AND issue.state = ?${params.length}`;
   }
+  if (options.author !== undefined) {
+    params.push(options.author);
+    where += ` AND user.username = ?${params.length} COLLATE NOCASE`;
+  }
+  if (options.label !== undefined) {
+    params.push(options.label);
+    const p = params.length;
+    where += ` AND EXISTS (
+      SELECT 1 FROM issue_label JOIN label ON label.id = issue_label.label_id
+      WHERE issue_label.issue_id = issue.id
+        AND (label.id = ?${p} OR label.name = ?${p} COLLATE NOCASE))`;
+  }
+  if (options.cursor !== undefined) {
+    params.push(options.cursor);
+    where += ` AND issue.number < ?${params.length}`;
+  }
+  params.push(pageLimit(options.limit));
   const rows = db
     .query<
       IssueRow,
       (string | number)[]
-    >(`${SELECT} WHERE ${where} ORDER BY issue.number DESC`)
+    >(`${SELECT} WHERE ${where} ORDER BY issue.number DESC LIMIT ?${params.length}`)
     .all(...params);
   return rows.map(toIssue);
 }
@@ -313,6 +351,20 @@ export function createLabel(
     "INSERT INTO label (id, repo_id, name, color) VALUES (?1, ?2, ?3, ?4)",
   ).run(labelId, repoId, clean, color.toLowerCase());
   return ok({ id: labelId, name: clean, color: color.toLowerCase() });
+}
+
+/** A repo's label by id or by name (case-insensitive). */
+export function getLabel(
+  db: Database,
+  repoId: string,
+  idOrName: string,
+): Label | undefined {
+  return db
+    .query<
+      Label,
+      [string, string]
+    >("SELECT id, name, color FROM label WHERE repo_id = ?1 AND (id = ?2 OR name = ?2 COLLATE NOCASE)")
+    .get(repoId, idOrName) ?? undefined;
 }
 
 export function listLabels(db: Database, repoId: string): Label[] {

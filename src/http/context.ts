@@ -37,3 +37,18 @@ export function crossOrigin(request: Request, url: URL): boolean {
   const origin = request.headers.get("origin");
   return origin !== null && origin !== url.origin;
 }
+
+/** One cookie's value from the request, or undefined when absent. */
+export function cookieValue(
+  request: Request,
+  name: string,
+): string | undefined {
+  const header = request.headers.get("cookie");
+  if (!header) return undefined;
+  for (const pair of header.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq === -1) continue;
+    if (pair.slice(0, eq).trim() === name) return pair.slice(eq + 1).trim();
+  }
+  return undefined;
+}

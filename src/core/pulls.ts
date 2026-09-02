@@ -7,11 +7,13 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { diffRange, type Diff } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
 import {
   aheadCount,
   fetchInto,
   merge,
+  mergeBase,
   mergeable,
   resolveOid,
   writeRef,
@@ -26,6 +28,7 @@ import {
   listIssues,
   setIssueState,
   type Issue,
+  type ListIssuesOptions,
 } from "./issues.ts";
 
 export interface Pull extends Issue {
@@ -157,14 +160,39 @@ export function getPull(
   return join(db, issue);
 }
 
+export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;
+
 export function listPulls(
   db: Database,
   repoId: string,
-  state: "open" | "closed" | "all" = "open",
+  options: ListPullsOptions = {},
 ): Pull[] {
-  return listIssues(db, repoId, { state, kind: "pull" })
+  return listIssues(db, repoId, { ...options, kind: "pull" })
     .map((issue) => join(db, issue))
     .filter((p): p is Pull => p !== undefined);
+}
+
+export interface PullDiff {
+  readonly status: PullStatus;
+  /** The merge base the diff is taken from (the base tip if none). */
+  readonly from: string;
+  readonly diff: Diff;
+}
+
+/**
+ * What the pull changes, as reviewers see it: the head against its merge
+ * base with the live base branch — the same view the web page, the API, and
+ * review anchors all share, so a line means the same thing everywhere.
+ */
+export async function pullDiff(dir: string, pull: Pull): Promise<PullDiff> {
+  const status = await pullStatus(dir, pull);
+  const from =
+    (await mergeBase(dir, status.baseOid, status.headOid)) ?? status.baseOid;
+  const result = await diffRange(dir, from, status.headOid);
+  const diff = result.ok
+    ? result.value
+    : { files: [], additions: 0, deletions: 0 };
+  return { status, from, diff };
 }
 
 export interface PullStatus {

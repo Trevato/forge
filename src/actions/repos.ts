@@ -28,7 +28,9 @@ import {
   type CreateWebhookError,
   type Webhook,
 } from "../core/webhooks.ts";
-import { repoDir } from "../git/repos.ts";
+import { resolveOid } from "../git/merge.ts";
+import { repoDir, setDefaultBranch } from "../git/repos.ts";
+import { isSafeRef } from "../git/guard.ts";
 import {
   commitFiles,
   type CommitFilesError,
@@ -122,15 +124,39 @@ export async function forkRepo(
   return forked;
 }
 
-export function updateRepoSettings(
+export type UpdateSettingsError = "not_found" | "unknown_branch";
+
+/**
+ * Change settings. A new default branch must exist; git HEAD is moved first
+ * and the row follows (git is truth, the index is derived from it).
+ */
+export async function updateRepoSettings(
   app: App,
   actor: User | undefined,
   repo: Repo,
   settings: RepoSettings,
-): Result<Repo, "not_found"> {
+): Promise<Result<Repo, UpdateSettingsError>> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
-  return ok(writeSettings(app.db, repo, settings));
+  const branch = settings.defaultBranch;
+  if (branch !== undefined && branch !== repo.defaultBranch) {
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    if (!isSafeRef(branch) || !(await resolveOid(dir, `refs/heads/${branch}`)))
+      return err("unknown_branch");
+    const moved = await setDefaultBranch(dir, branch);
+    if (!moved.ok) return err("unknown_branch");
+  }
+  const updated = writeSettings(app.db, repo, settings);
+  const changed = (
+    ["visibility", "description", "protectDefault", "defaultBranch"] as const
+  ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
+  app.bus.append({
+    kind: "repo.settings_updated",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { changed },
+  });
+  return ok(updated);
 }
 
 export async function deleteRepo(
@@ -156,7 +182,15 @@ export function createLabel(
 ): Result<Label, "not_found" | "invalid" | "taken"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
-  return insertLabel(app.db, repo.id, name, color);
+  const created = insertLabel(app.db, repo.id, name, color);
+  if (!created.ok) return created;
+  app.bus.append({
+    kind: "label.created",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { labelId: created.value.id, name: created.value.name },
+  });
+  return created;
 }
 
 export function deleteLabel(
@@ -167,7 +201,14 @@ export function deleteLabel(
 ): Result<void, "not_found"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
-  return removeLabel(app.db, repo.id, labelId) ? ok() : err("not_found");
+  if (!removeLabel(app.db, repo.id, labelId)) return err("not_found");
+  app.bus.append({
+    kind: "label.deleted",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { labelId },
+  });
+  return ok();
 }
 
 export interface CreateWebhookInput {
@@ -189,12 +230,24 @@ export function createWebhook(
 > {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
-  return insertWebhook(app.db, {
+  const created = insertWebhook(app.db, {
     repoId: repo.id,
     url: input.url,
     kinds: input.kinds ?? "*",
     ...(input.secret !== undefined ? { secret: input.secret } : {}),
   });
+  if (!created.ok) return created;
+  // The secret never enters the outbox: this event is itself delivered.
+  app.bus.append({
+    kind: "webhook.created",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: {
+      webhookId: created.value.webhook.id,
+      url: created.value.webhook.url,
+    },
+  });
+  return created;
 }
 
 export function deleteWebhook(
@@ -205,7 +258,14 @@ export function deleteWebhook(
 ): Result<void, "not_found"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
-  return removeWebhook(app.db, repo.id, webhookId) ? ok() : err("not_found");
+  if (!removeWebhook(app.db, repo.id, webhookId)) return err("not_found");
+  app.bus.append({
+    kind: "webhook.deleted",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { webhookId },
+  });
+  return ok();
 }
 
 export interface CommitToBranchInput {

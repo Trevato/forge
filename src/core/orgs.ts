@@ -188,6 +188,27 @@ export function removeTeamMember(
   );
 }
 
+/**
+ * The teams of `orgId` that `user` may see: all of them for an org admin,
+ * their own for a member, none for anyone else.
+ */
+export function listTeamsVisibleTo(
+  db: Database,
+  orgId: string,
+  user: User | undefined,
+): Team[] {
+  if (!user) return [];
+  if (accessAllows(orgAccess(db, orgId, user), "admin"))
+    return listTeams(db, orgId);
+  return db
+    .query<TeamRow, [string, string]>(
+      `SELECT team.* FROM team JOIN team_member ON team_member.team_id = team.id
+       WHERE team.org_id = ?1 AND team_member.user_id = ?2 ORDER BY team.name`,
+    )
+    .all(orgId, user.id)
+    .map(toTeam);
+}
+
 export function listTeamMembers(db: Database, teamId: string): User[] {
   const ids = db
     .query<

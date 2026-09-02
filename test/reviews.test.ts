@@ -154,19 +154,26 @@ describe("review comments on diff lines", () => {
   });
 
   test("a comment whose line content changed is marked outdated, not misplaced", async () => {
-    // Anchor a comment with a stale hash (the line content differs now).
-    await post("/rev/app/pulls/1/review", {
+    // Anchor a comment to line 3 ("gamma"), then rewrite that line on the
+    // branch. The server hashed the content it saw, so the comment must now
+    // read as outdated — never silently re-land on the new text.
+    const posted = await post("/rev/app/pulls/1/review", {
       path: "code.txt",
       side: "new",
       line: "3",
-      lineHash: hashLine("this is not what line 3 says"),
       body: "stale anchor",
     });
+    expect(posted.status).toBe(303);
+    const dir = join(work, "app");
+    await Bun.write(join(dir, "code.txt"), "alpha\nBETA\nGAMMA\ndelta\n");
+    await gitOk(["commit", "-am", "rewrite line 3"], dir);
+    await gitOk(["push", "origin", "feature"], dir);
     const pr = await (
       await fetch(`${base}/rev/app/pulls/1`, { headers: { cookie } })
     ).text();
     expect(pr).toContain("stale anchor");
     expect(pr).toContain("outdated"); // content hash no longer matches
+    expect(pr).toContain("why so loud?"); // line 2 is untouched: still current
   });
 
   test("a read-only token cannot post a review comment", async () => {

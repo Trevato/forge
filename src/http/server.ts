@@ -5,49 +5,13 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
-import {
-  canAdmin,
-  canRead,
-  canWrite,
-  getRepo,
-  getRepoById,
-  listReposVisibleTo,
-  type Repo,
-} from "../core/repos.ts";
-import { getPull, listPulls, pullStatus, type Pull } from "../core/pulls.ts";
-import {
-  addSshKey,
-  createToken,
-  deleteSshKey,
-  signUp,
-} from "../actions/users.ts";
-import {
-  commitToBranch,
-  createRepo,
-  createWebhook,
-  deleteRepo,
-  deleteWebhook,
-  forkRepo,
-  updateRepoSettings,
-} from "../actions/repos.ts";
-import { addComment, openIssue, setIssueState } from "../actions/issues.ts";
-import { mergePull, openPull } from "../actions/pulls.ts";
-import { addTeamMember, createOrg, createTeam } from "../actions/orgs.ts";
-import { listKeys, type UserKey } from "../core/keys.ts";
-import { listEvents } from "../core/events.ts";
-import {
-  createSession,
-  destroySession,
-  sessionUser,
-} from "../core/sessions.ts";
-import { scopeAllows, verifyToken, type TokenScope } from "../core/tokens.ts";
-import { verifyPassword, type User } from "../core/users.ts";
+import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
+import { createRepo } from "../actions/repos.ts";
+import { sessionUser } from "../core/sessions.ts";
+import { scopeAllows, verifyToken } from "../core/tokens.ts";
+import { verifyPassword } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
-import { diffRange } from "../git/diff.ts";
-import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
-import { mergeBase } from "../git/merge.ts";
-import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import {
   advertiseRefs,
@@ -56,7 +20,6 @@ import {
   type GitService,
 } from "../git/smart-http.ts";
 import { lstat, rm } from "node:fs/promises";
-import { trapAsync } from "../kernel/result.ts";
 import { defect } from "../kernel/error.ts";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
@@ -67,7 +30,6 @@ import {
   logoutSubmit,
   newRepoPage,
   newRepoSubmit,
-  sessionCookie,
   signinPage,
   signinSubmit,
   signupPage,
@@ -91,12 +53,6 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import {
-  getIssue,
-  listComments,
-  listIssues,
-  type Issue,
-} from "../core/issues.ts";
-import {
   newPullPage,
   newPullSubmit,
   pullCommentSubmit,
@@ -114,8 +70,6 @@ import {
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
-import { listWebhooks } from "../core/webhooks.ts";
-import { getOrg, listTeams, type Permission } from "../core/orgs.ts";
 import {
   newOrgPage,
   newOrgSubmit,
@@ -134,24 +88,15 @@ import {
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
-import { crossOrigin, type Auth, type Ctx, type Handler } from "./context.ts";
+import { apiRoutes } from "./api.ts";
+import { cookieValue, type Auth, type Ctx, type Handler } from "./context.ts";
+import { json, noRoute, notFound } from "./respond.ts";
 import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
 
 // ---- auth ----
 
 const NO_AUTH: Auth = { user: undefined, scope: undefined, via: "none" };
-
-function cookieValue(request: Request, name: string): string | undefined {
-  const header = request.headers.get("cookie");
-  if (!header) return undefined;
-  for (const pair of header.split(";")) {
-    const eq = pair.indexOf("=");
-    if (eq === -1) continue;
-    if (pair.slice(0, eq).trim() === name) return pair.slice(eq + 1).trim();
-  }
-  return undefined;
-}
 
 async function resolveAuth(app: App, request: Request): Promise<Auth> {
   const session = cookieValue(request, "forge_session");
@@ -208,63 +153,12 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
 
 // ---- responses ----
 
-function json(
-  data: unknown,
-  status = 200,
-  headers: Record<string, string> = {},
-): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json", ...headers },
-  });
-}
-
-/**
- * Every API error is `{ error, message }`. `error` is a stable machine code to
- * branch on; `message` is a human hint for logs and automation. The codes are
- * the contract — messages may be reworded.
- */
-const apiError = (code: string, status: number, message: string): Response =>
-  json({ error: code, message }, status);
-
-// `not_found` deliberately conflates "no such resource" with "not visible to
-// you" so a private repo never leaks its existence — the message keeps that
-// ambiguity intact.
-const notFound = () =>
-  apiError(
-    "not_found",
-    404,
-    "no such resource here, or it is not visible to you",
-  );
-const unauthorized = () =>
-  apiError(
-    "unauthorized",
-    401,
-    "authenticate with a bearer token or account credentials",
-  );
-const forbidden = () =>
-  apiError("forbidden", 403, "your credentials lack the scope for this action");
-// A path matching no route at all — distinct from a missing resource, so a
-// client can tell a typo'd URL from a resource that genuinely isn't there.
-const noRoute = (method: string, path: string) =>
-  apiError("no_route", 404, `no ${method} route for ${path}`);
-
 /** Git clients need a 401 challenge before they will send credentials. */
 const gitChallenge = () =>
   new Response("auth required", {
     status: 401,
     headers: { "www-authenticate": 'Basic realm="forge"' },
   });
-
-async function body(request: Request): Promise<Record<string, unknown>> {
-  const parsed = await trapAsync(() => request.json());
-  const value = parsed.ok ? parsed.value : undefined;
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 // ---- the public server ----
 
@@ -333,549 +227,8 @@ export function buildRouter(): Router<Handler> {
     ),
   );
 
-  // users & sessions
-  router.add("POST", "/api/v1/users", async (ctx) => {
-    const input = await body(ctx.request);
-    const created = await signUp(ctx.app, {
-      username: str(input.username),
-      email: str(input.email),
-      password: str(input.password),
-    });
-    if (!created.ok) return json({ error: created.error }, 422);
-    return json(publicUser(created.value), 201);
-  });
-
-  router.add("POST", "/api/v1/orgs", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const created = createOrg(ctx.app, ctx.auth.user, str(input.name));
-    if (!created.ok) return respondAccess(created.error, 422);
-    return json(
-      { id: created.value.id, username: created.value.username, kind: "org" },
-      201,
-    );
-  });
-
-  // Team management API (org admins) — the last piece for API-driven orgs.
-  router.add("POST", "/api/v1/orgs/:org/teams", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (!org) return notFound();
-    const input = await body(ctx.request);
-    const perm = str(input.permission);
-    const permission: Permission =
-      perm === "write" || perm === "admin" ? perm : "read";
-    const team = createTeam(ctx.app, ctx.auth.user, org, str(input.name), permission);
-    if (!team.ok) return respondAccess(team.error, 422);
-    return json(team.value, 201);
-  });
-
-  router.add("POST", "/api/v1/orgs/:org/teams/:team/members", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const org = getOrg(ctx.app.db, ctx.params.org!);
-    if (!org) return notFound();
-    // Resolving the team is a lookup; the action still gates on org admin.
-    const team = listTeams(ctx.app.db, org.id).find(
-      (t) => t.name.toLowerCase() === (ctx.params.team ?? "").toLowerCase(),
-    );
-    if (!team) return notFound();
-    const input = await body(ctx.request);
-    const added = addTeamMember(ctx.app, ctx.auth.user, org, team, str(input.user));
-    if (!added.ok) return respondAccess(added.error, 422);
-    return json(added.value, added.value.added ? 201 : 200);
-  });
-
-  router.add("POST", "/api/v1/sessions", async (ctx) => {
-    const input = await body(ctx.request);
-    const verified = await verifyPassword(
-      ctx.app.db,
-      str(input.username),
-      str(input.password),
-    );
-    if (!verified.ok) return unauthorized();
-    const session = createSession(ctx.app.db, verified.value.id);
-    return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url),
-    });
-  });
-
-  router.add("DELETE", "/api/v1/sessions", (ctx) => {
-    // Cookie-authenticated logout, so it must be same-origin like any other
-    // cookie mutation — otherwise it's a cross-site forced-logout.
-    if (crossOrigin(ctx.request, ctx.url)) return forbidden();
-    const token = cookieValue(ctx.request, "forge_session");
-    if (token !== undefined) destroySession(ctx.app.db, token);
-    return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url),
-    });
-  });
-
-  router.add("GET", "/api/v1/user", (ctx) =>
-    ctx.auth.user ? json(publicUser(ctx.auth.user)) : unauthorized(),
-  );
-
-  // SSH keys — what the SSH listener authenticates against. Public keys are
-  // public, so the list returns them whole.
-  router.add("GET", "/api/v1/user/keys", (ctx) =>
-    ctx.auth.user
-      ? json(listKeys(ctx.app.db, ctx.auth.user.id).map(publicKey))
-      : unauthorized(),
-  );
-  router.add("POST", "/api/v1/user/keys", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    const added = addSshKey(ctx.app, ctx.auth.user, {
-      name: str(input.name),
-      key: str(input.key),
-    });
-    if (!added.ok) return respondAccess(added.error, 422);
-    return json(publicKey(added.value), 201);
-  });
-  router.add("DELETE", "/api/v1/user/keys/:id", (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const removed = deleteSshKey(ctx.app, ctx.auth.user, ctx.params.id!);
-    if (!removed.ok) return respondAccess(removed.error, 422);
-    return new Response(null, { status: 204 });
-  });
-
-  // tokens — minted with a password or a session, never with another token
-  router.add("POST", "/api/v1/tokens", async (ctx) => {
-    const input = await body(ctx.request);
-    let user: User | undefined;
-    if (ctx.auth.via === "session" && ctx.auth.user) {
-      if (crossOrigin(ctx.request, ctx.url)) return forbidden();
-      user = ctx.auth.user;
-    } else {
-      const verified = await verifyPassword(
-        ctx.app.db,
-        str(input.username),
-        str(input.password),
-      );
-      if (verified.ok) user = verified.value;
-    }
-    if (!user) return unauthorized();
-    const scope = str(input.scope);
-    if (scope !== "ro" && scope !== "rw" && scope !== "admin") {
-      return json({ error: "invalid_scope" }, 422);
-    }
-    const minted = createToken(
-      ctx.app,
-      user,
-      str(input.name) || "unnamed",
-      scope,
-    );
-    if (!minted.ok) return unauthorized();
-    return json(minted.value, 201);
-  });
-
-  // repos
-  router.add("GET", "/api/v1/repos", (ctx) =>
-    json(listReposVisibleTo(ctx.app.db, ctx.auth.user)),
-  );
-
-  router.add("POST", "/api/v1/repos", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const input = await body(ctx.request);
-    // Create under the user, or an org they can write to (via `owner`).
-    const created = await createRepo(ctx.app, ctx.auth.user, {
-      owner: str(input.owner),
-      name: str(input.name),
-      visibility: input.visibility === "public" ? "public" : "private",
-      description: str(input.description),
-    });
-    if (!created.ok) {
-      if (created.error === "forbidden_owner")
-        return json({ error: "forbidden_owner" }, 403);
-      return respondAccess(created.error, 422);
-    }
-    return json(created.value, 201);
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    return json(repo);
-  });
-
-  // ── Read-back API. The agent arena showed the write path was complete but
-  // the read path was missing, so automation couldn't inspect before acting.
-  // These let a caller list branches, walk history, and read files at any ref.
-
-  router.add("GET", "/api/v1/repos/:owner/:name/branches", async (ctx) => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-    const refs = await listRefs(dir, "refs/heads/");
-    if (!refs.ok) return json([]);
-    return json(
-      refs.value.map((r) => ({
-        name: r.name.replace("refs/heads/", ""),
-        oid: r.oid,
-        isDefault: r.name === `refs/heads/${repo.defaultBranch}`,
-      })),
-    );
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name/commits", async (ctx) => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-    const ref = ctx.url.searchParams.get("ref") || repo.defaultBranch;
-    if (!isSafeRef(ref)) return json({ error: "bad_ref" }, 422);
-    const limit = Math.min(
-      Math.max(Number(ctx.url.searchParams.get("limit")) || 30, 1),
-      100,
-    );
-    const log = await commitLog(dir, ref, { limit });
-    if (!log.ok) return json([]);
-    return json(log.value);
-  });
-
-  // The path is optional: no path lists the root tree; a directory lists its
-  // entries; a file returns its content (utf-8, or base64 for binary).
-  const contentsHandler = async (ctx: Ctx): Promise<Response> => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-    const ref = ctx.url.searchParams.get("ref") || repo.defaultBranch;
-    const path = ctx.params.path ?? "";
-    if (!isSafeRef(ref) || (path !== "" && !isSafeTreePath(path)))
-      return notFound();
-
-    const spec = path === "" ? ref : `${ref}:${path}`;
-    const type = await runGit(["cat-file", "-t", spec], { cwd: dir });
-    // A ref (no path) or a directory resolves to a tree → list it.
-    if (path === "" || (type.ok && type.value === "tree")) {
-      const tree = await listTree(dir, ref, path);
-      if (!tree.ok) return notFound();
-      return json({ type: "dir", ref, path, entries: tree.value });
-    }
-    const blob = await blobForRender(dir, ref, path, 5_000_000);
-    if (blob.kind === "missing") return notFound();
-    if (blob.kind === "too_large")
-      return json({ type: "file", tooLarge: true, size: blob.size }, 413);
-    const encoding = blob.kind === "binary" ? "base64" : "utf-8";
-    const content =
-      blob.kind === "binary"
-        ? Buffer.from(blob.body).toString("base64")
-        : new TextDecoder().decode(blob.body);
-    return json({
-      type: "file",
-      ref,
-      path,
-      size: blob.size,
-      encoding,
-      content,
-    });
-  };
-  router.add("GET", "/api/v1/repos/:owner/:name/contents", contentsHandler);
-  router.add(
-    "GET",
-    "/api/v1/repos/:owner/:name/contents/*path",
-    contentsHandler,
-  );
-
-  // Commit files to a branch without a git client — the programmatic write
-  // path automation (and an AI harness) uses to build code.
-  router.add("POST", "/api/v1/repos/:owner/:name/contents", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const rawFiles = Array.isArray(input.files) ? input.files : [];
-    const files = rawFiles
-      .filter(
-        (f): f is { path: string; content: string } =>
-          typeof f === "object" &&
-          f !== null &&
-          typeof (f as { path?: unknown }).path === "string" &&
-          typeof (f as { content?: unknown }).content === "string",
-      )
-      .map((f) => ({ path: f.path, content: f.content }));
-    if (files.length === 0) return json({ error: "no_files" }, 422);
-
-    const committed = await commitToBranch(ctx.app, ctx.auth.user, repo, {
-      branch: str(input.branch),
-      base: str(input.base),
-      message: str(input.message),
-      files,
-    });
-    if (!committed.ok) {
-      if (typeof committed.error === "string")
-        return respondAccess(committed.error, 422);
-      const kind = committed.error.kind;
-      return json({ error: kind }, kind === "branch_moved" ? 409 : 422);
-    }
-    return json(committed.value, 201);
-  });
-
-  router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const updated = updateRepoSettings(ctx.app, ctx.auth.user, repo, {
-      ...(input.visibility === "public" || input.visibility === "private"
-        ? { visibility: input.visibility }
-        : {}),
-      ...(typeof input.protectDefault === "boolean"
-        ? { protectDefault: input.protectDefault }
-        : {}),
-      ...(typeof input.description === "string"
-        ? { description: input.description }
-        : {}),
-    });
-    if (!updated.ok) return notFound();
-    return json(updated.value);
-  });
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const deleted = await deleteRepo(ctx.app, ctx.auth.user, repo);
-    if (!deleted.ok) return respondAccess(deleted.error, 500);
-    return json({}, 200);
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    return json(listEvents(ctx.app.db, { repoId: repo.id }));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const parent = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!parent) return notFound();
-    const input = await body(ctx.request);
-    const forked = await forkRepo(
-      ctx.app,
-      ctx.auth.user,
-      parent,
-      str(input.name) || undefined,
-    );
-    if (!forked.ok) return respondAccess(forked.error, 422);
-    return json(forked.value, 201);
-  });
-
-  // Issues API — the label-as-queue surface automation drives.
-  router.add("GET", "/api/v1/repos/:owner/:name/issues", (ctx) => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const stateParam = ctx.url.searchParams.get("state");
-    const state =
-      stateParam === "closed" || stateParam === "all" ? stateParam : "open";
-    return json(listIssues(ctx.app.db, repo.id, { state, kind: "issue" }));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/issues", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const created = openIssue(ctx.app, ctx.auth.user, repo, {
-      title: str(input.title),
-      body: str(input.body),
-    });
-    if (!created.ok) return respondAccess(created.error, 422);
-    return json(created.value, 201);
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
-    const found = loadIssue(ctx);
-    if ("error" in found) return found.error;
-    return json({
-      ...found.issue,
-      comments: listComments(ctx.app.db, found.issue.id),
-    });
-  });
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/issues/:number/comments",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const found = loadIssue(ctx);
-      if ("error" in found) return found.error;
-      const input = await body(ctx.request);
-      const added = addComment(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.issue,
-        str(input.body),
-      );
-      if (!added.ok) return respondAccess(added.error, 422);
-      return json(added.value, 201);
-    },
-  );
-
-  router.add(
-    "PATCH",
-    "/api/v1/repos/:owner/:name/issues/:number",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const found = loadIssue(ctx);
-      if ("error" in found) return found.error;
-      const input = await body(ctx.request);
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
-        return json({ error: "invalid_state" }, 422);
-      const changed = setIssueState(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.issue,
-        wanted,
-      );
-      if (!changed.ok) return respondAccess(changed.error, 422);
-      return json(changed.value);
-    },
-  );
-
-  // Pull requests API — so automation drives the review/merge loop.
-  router.add("POST", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const created = await openPull(ctx.app, ctx.auth.user, repo, {
-      title: str(input.title),
-      body: str(input.body),
-      baseBranch: str(input.base),
-      headBranch: str(input.head),
-    });
-    if (!created.ok) return respondAccess(created.error, 422);
-    return json(created.value, 201);
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    const stateParam = ctx.url.searchParams.get("state");
-    const state =
-      stateParam === "closed" || stateParam === "all" ? stateParam : "open";
-    return json(listPulls(ctx.app.db, repo.id, state));
-  });
-
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls/:number", async (ctx) => {
-    const found = loadPull(ctx);
-    if ("error" in found) return found.error;
-    const dir = repoDir(
-      ctx.app.reposRoot,
-      found.repo.ownerName,
-      found.repo.name,
-    );
-    const status = await pullStatus(dir, found.pull);
-    // Include the diff so a reviewer (human or agent) reads the change without
-    // a second round trip.
-    const from =
-      (await mergeBase(dir, status.baseOid, status.headOid)) ?? status.baseOid;
-    const diffResult = await diffRange(dir, from, status.headOid);
-    const diff = diffResult.ok
-      ? diffResult.value
-      : { files: [], additions: 0, deletions: 0 };
-    return json({ ...found.pull, status, diff });
-  });
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/pulls/:number/merge",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const found = loadPull(ctx);
-      if ("error" in found) return found.error;
-      const input = await body(ctx.request);
-      const strategy = str(input.strategy) === "squash" ? "squash" : "merge";
-      const merged = await mergePull(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.pull,
-        strategy,
-      );
-      if (!merged.ok) {
-        if (typeof merged.error !== "string")
-          return json({ error: merged.error.kind }, 409);
-        return respondAccess(merged.error, 409);
-      }
-      return json({ merged: true, ...merged.value });
-    },
-  );
-
-  router.add(
-    "POST",
-    "/api/v1/repos/:owner/:name/pulls/:number/comments",
-    async (ctx) => {
-      const denied = requireScope(ctx, "rw");
-      if (denied) return denied;
-      const found = loadPull(ctx);
-      if ("error" in found) return found.error;
-      const input = await body(ctx.request);
-      const added = addComment(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.pull,
-        str(input.body),
-      );
-      if (!added.ok) return respondAccess(added.error, 422);
-      return json(added.value, 201);
-    },
-  );
-
-  // Webhooks API — admin-scoped, since a webhook exfiltrates repo events.
-  router.add("GET", "/api/v1/repos/:owner/:name/hooks", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo || !canAdmin(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    return json(listWebhooks(ctx.app.db, repo.id));
-  });
-
-  router.add("POST", "/api/v1/repos/:owner/:name/hooks", async (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const input = await body(ctx.request);
-    const created = createWebhook(ctx.app, ctx.auth.user, repo, {
-      url: str(input.url),
-      kinds: str(input.kinds) || "*",
-      ...(typeof input.secret === "string" ? { secret: input.secret } : {}),
-    });
-    if (!created.ok) return respondAccess(created.error, 422);
-    // The secret is returned exactly once, at creation.
-    return json(
-      { ...created.value.webhook, secret: created.value.secret },
-      201,
-    );
-  });
-
-  router.add("DELETE", "/api/v1/repos/:owner/:name/hooks/:id", (ctx) => {
-    const denied = requireScope(ctx, "admin");
-    if (denied) return denied;
-    const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-    if (!repo) return notFound();
-    const removed = deleteWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!);
-    return json({}, removed.ok ? 200 : 404);
-  });
+  // The JSON API lives in api.ts; its routes all sit under /api/v1.
+  apiRoutes(router);
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
@@ -935,72 +288,6 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
 
   return router;
-}
-
-function publicUser(user: User) {
-  return {
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName,
-    isAdmin: user.isAdmin,
-  };
-}
-
-function publicKey(key: UserKey) {
-  return {
-    id: key.id,
-    name: key.name,
-    algo: key.algo,
-    fingerprint: key.fingerprint,
-    key: key.key,
-    createdAt: key.createdAt,
-    lastUsedAt: key.lastUsedAt,
-  };
-}
-
-/**
- * Map an action's error to a response: the three access errors have fixed
- * shapes; anything else is a validation code the caller chose a status for.
- */
-function respondAccess(error: string, status: number): Response {
-  if (error === "not_found") return notFound();
-  if (error === "unauthorized") return unauthorized();
-  if (error === "forbidden") return forbidden();
-  return json({ error }, status);
-}
-
-/** Session mutations must be same-origin; token mutations must carry scope. */
-function requireScope(ctx: Ctx, needed: TokenScope): Response | undefined {
-  if (!ctx.auth.user || ctx.auth.scope === undefined) return unauthorized();
-  if (ctx.auth.via === "session" && crossOrigin(ctx.request, ctx.url))
-    return forbidden();
-  if (!scopeAllows(ctx.auth.scope, needed)) return forbidden();
-  return undefined;
-}
-
-/** Resolve a readable repo's issue by number, or a 404 to return as-is. */
-function loadIssue(
-  ctx: Ctx,
-): { repo: Repo; issue: Issue } | { error: Response } {
-  const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user))
-    return { error: notFound() };
-  const number = Number(ctx.params.number);
-  if (!Number.isInteger(number) || number < 1) return { error: notFound() };
-  const issue = getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== "issue") return { error: notFound() };
-  return { repo, issue };
-}
-
-function loadPull(ctx: Ctx): { repo: Repo; pull: Pull } | { error: Response } {
-  const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
-  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user))
-    return { error: notFound() };
-  const number = Number(ctx.params.number);
-  if (!Number.isInteger(number) || number < 1) return { error: notFound() };
-  const pull = getPull(ctx.app.db, repo.id, number);
-  if (!pull) return { error: notFound() };
-  return { repo, pull };
 }
 
 async function withGitAccess(

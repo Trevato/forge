@@ -46,7 +46,19 @@ export function createTeam(
 ): Result<Team, "not_found" | CreateTeamError> {
   const admin = requireOrgAdmin(app, actor, org);
   if (!admin.ok) return admin;
-  return insertTeam(app.db, org.id, name, permission);
+  const created = insertTeam(app.db, org.id, name, permission);
+  if (!created.ok) return created;
+  app.bus.append({
+    kind: "team.created",
+    actorId: admin.value.id,
+    payload: {
+      org: org.username,
+      teamId: created.value.id,
+      name: created.value.name,
+      permission,
+    },
+  });
+  return created;
 }
 
 /** The Owners team cannot be deleted — an org must keep its admins. */
@@ -59,7 +71,13 @@ export function deleteTeam(
   const admin = requireOrgAdmin(app, actor, org);
   if (!admin.ok) return admin;
   if (team.orgId !== org.id) return err("not_found");
-  return removeTeam(app.db, org.id, team.id) ? ok() : err("protected");
+  if (!removeTeam(app.db, org.id, team.id)) return err("protected");
+  app.bus.append({
+    kind: "team.deleted",
+    actorId: admin.value.id,
+    payload: { org: org.username, teamId: team.id, name: team.name },
+  });
+  return ok();
 }
 
 export function addTeamMember(
@@ -74,7 +92,14 @@ export function addTeamMember(
   if (team.orgId !== org.id) return err("not_found");
   const user = getUserByName(app.db, username);
   if (!user || user.kind === "org") return err("no_such_user");
-  return ok({ added: insertMember(app.db, team, user.id) });
+  const added = insertMember(app.db, team, user.id);
+  if (added)
+    app.bus.append({
+      kind: "team.member_added",
+      actorId: admin.value.id,
+      payload: { org: org.username, teamId: team.id, user: user.username },
+    });
+  return ok({ added });
 }
 
 /** Removing the last owner is refused — the org would have no admin left. */
@@ -90,5 +115,12 @@ export function removeTeamMember(
   if (team.orgId !== org.id) return err("not_found");
   const user = getUserByName(app.db, username);
   if (!user) return err("no_such_user");
-  return ok({ removed: dropMember(app.db, team, user.id) });
+  const removed = dropMember(app.db, team, user.id);
+  if (removed)
+    app.bus.append({
+      kind: "team.member_removed",
+      actorId: admin.value.id,
+      payload: { org: org.username, teamId: team.id, user: user.username },
+    });
+  return ok({ removed });
 }

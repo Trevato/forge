@@ -6,6 +6,7 @@
 
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { serve } from "./http/server.ts";
@@ -32,8 +33,13 @@ const servers = await serve(app);
 // The webhook delivery worker: poll the outbox for due deliveries. The event
 // row is the source of truth, so a missed tick only delays delivery, never
 // loses it. runDelivery never throws into the timer.
-const deliveryTimer = setInterval(() => runDelivery(app.db, app.log), 5_000);
+// Expired sessions ride the same tick: a cheap DELETE, never worth a worker.
+const deliveryTimer = setInterval(() => {
+  runDelivery(app.db, app.log);
+  pruneSessions(app.db);
+}, 5_000);
 runDelivery(app.db, app.log); // sweep anything queued while we were down
+pruneSessions(app.db);
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
 

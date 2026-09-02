@@ -116,7 +116,9 @@ describe("actions own authorization and events", () => {
         files: [{ path: "a", content: "b" }],
       }),
     ).toEqual({ ok: false, error: "not_found" });
-    expect(updateRepoSettings(app, bob, secret, { description: "x" })).toEqual({
+    expect(
+      await updateRepoSettings(app, bob, secret, { description: "x" }),
+    ).toEqual({
       ok: false,
       error: "not_found",
     });

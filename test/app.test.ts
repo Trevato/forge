@@ -167,10 +167,10 @@ describe("the forge, end to end", () => {
     expect(created.status).toBe(201);
 
     const anon = await fetch(`${base}/api/v1/repos`);
-    expect(((await anon.json()) as unknown[]).length).toBe(0);
+    expect(((await anon.json()) as { items: unknown[] }).items.length).toBe(0);
 
     const mine = await api("/api/v1/repos");
-    expect(((await mine.json()) as unknown[]).length).toBe(1);
+    expect(((await mine.json()) as { items: unknown[] }).items.length).toBe(1);
   });
 
   test("anonymous clone of a private repo is challenged", async () => {

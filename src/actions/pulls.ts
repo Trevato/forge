@@ -8,7 +8,7 @@ import type { App } from "../app.ts";
 import {
   createPull,
   mergePull as landPull,
-  pullStatus,
+  pullDiff,
   type CreatePullError,
   type MergePullError,
   type Pull,
@@ -17,6 +17,8 @@ import type { Repo } from "../core/repos.ts";
 import { canRead } from "../core/repos.ts";
 import {
   addReviewComment,
+  anchorContent,
+  hashLine,
   type ReviewComment,
   type Side,
 } from "../core/reviews.ts";
@@ -86,25 +88,36 @@ export interface ReviewInput {
   path: string;
   line: number;
   side: Side;
-  /** Hash of the line's content, so a force-push re-anchors or outdates it. */
-  lineHash: string;
 }
 
-/** A comment anchored to a diff line at the pull's current head. */
+export type AddReviewError =
+  | "not_found"
+  | "unauthorized"
+  | "empty_body"
+  | "bad_anchor";
+
+/**
+ * A comment anchored to a diff line at the pull's current head. The anchor
+ * must be a row of the current diff; its content hash is taken here, so a
+ * later force-push can re-anchor the comment or mark it outdated.
+ */
 export async function addReview(
   app: App,
   actor: User | undefined,
   repo: Repo,
   pull: Pull,
   input: ReviewInput,
-): Promise<Result<ReviewComment, "not_found" | "unauthorized" | "empty_body">> {
+): Promise<Result<ReviewComment, AddReviewError>> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (pull.repoId !== repo.id) return err("not_found");
-  const status = await pullStatus(
+  if (!Number.isInteger(input.line) || input.line < 1) return err("bad_anchor");
+  const { status, diff } = await pullDiff(
     repoDir(app.reposRoot, repo.ownerName, repo.name),
     pull,
   );
+  const content = anchorContent(diff, input.path, input.side, input.line);
+  if (content === undefined) return err("bad_anchor");
   const added = addReviewComment(app.db, {
     pullId: pull.id,
     authorId: user.value.id,
@@ -113,7 +126,7 @@ export async function addReview(
     line: input.line,
     side: input.side,
     commitOid: status.headOid,
-    lineHash: input.lineHash,
+    lineHash: hashLine(content),
   });
   if (!added.ok) return added;
   app.bus.append({

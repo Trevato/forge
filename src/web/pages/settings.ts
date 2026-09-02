@@ -207,7 +207,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
 
-  updateRepoSettings(ctx.app, ctx.auth.user, repo, {
+  await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
     description: field(form, "description"),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     protectDefault: form.get("protect") !== null,

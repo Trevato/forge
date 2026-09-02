@@ -16,9 +16,14 @@ import {
   type TokenScope,
 } from "../core/tokens.ts";
 import {
+  changePassword as rehash,
   countUsers,
   createUser,
+  updateProfile as writeProfile,
+  verifyPassword,
   type CreateUserError,
+  type ProfilePatch,
+  type UpdateProfileError,
   type User,
 } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -55,7 +60,13 @@ export function createToken(
 ): Result<{ id: string; token: string }, "unauthorized"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  return ok(mintToken(app.db, user.value.id, name, scope));
+  const minted = mintToken(app.db, user.value.id, name, scope);
+  app.bus.append({
+    kind: "token.created",
+    actorId: user.value.id,
+    payload: { tokenId: minted.id, name, scope },
+  });
+  return ok(minted);
 }
 
 export function deleteToken(
@@ -65,7 +76,63 @@ export function deleteToken(
 ): Result<void, "unauthorized" | "not_found"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  return revokeToken(app.db, user.value.id, tokenId) ? ok() : err("not_found");
+  if (!revokeToken(app.db, user.value.id, tokenId)) return err("not_found");
+  app.bus.append({
+    kind: "token.deleted",
+    actorId: user.value.id,
+    payload: { tokenId },
+  });
+  return ok();
+}
+
+/** Change display name and/or email. */
+export function updateProfile(
+  app: App,
+  actor: User | undefined,
+  patch: ProfilePatch,
+): Result<User, "unauthorized" | UpdateProfileError> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const updated = writeProfile(app.db, user.value.id, patch);
+  if (!updated.ok) return updated;
+  const fields = (["displayName", "email"] as const).filter(
+    (k) => patch[k] !== undefined,
+  );
+  app.bus.append({
+    kind: "user.updated",
+    actorId: user.value.id,
+    payload: { fields },
+  });
+  return updated;
+}
+
+export type ChangePasswordError =
+  | "unauthorized"
+  | "bad_credentials"
+  | "weak_password";
+
+/** Replace the password; the current one must be presented and verified. */
+export async function changePassword(
+  app: App,
+  actor: User | undefined,
+  input: { current: string; next: string },
+): Promise<Result<void, ChangePasswordError>> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const verified = await verifyPassword(
+    app.db,
+    user.value.username,
+    input.current,
+  );
+  if (!verified.ok) return err("bad_credentials");
+  const changed = await rehash(app.db, user.value.id, input.next);
+  if (!changed.ok) return err(changed.error === "weak_password" ? "weak_password" : "unauthorized");
+  app.bus.append({
+    kind: "user.updated",
+    actorId: user.value.id,
+    payload: { fields: ["password"] },
+  });
+  return ok();
 }
 
 export type AddSshKeyError = "unauthorized" | "invalid_key" | "key_exists";

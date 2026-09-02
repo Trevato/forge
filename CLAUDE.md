@@ -80,7 +80,9 @@ src/
               (outbox+bus), reconcile, schema — pure data, no authz, no events
   actions/    one function per platform mutation: authorize (access.ts tiers),
               call core, `bus.append`. API, web, and TUI are adapters over these
-  http/       router, request context (Ctx/auth), server (all routes), sse
+  http/       router, request context (Ctx/auth), respond (json/error shapes,
+              scope floors, pagination), api (every /api/v1 route), server
+              (auth resolution, git smart HTTP, web routes, hook socket), sse
   design/     shared design tokens: themes (palettes both surfaces render)
   web/        SSR: html tag, style (the stylesheet),
               layout (CSP+nonce, topbar, theme switcher), markdown, highlight,
@@ -95,11 +97,13 @@ src/
   `requireOrgAdmin`), call the core function, then `bus.append(...)`. Never
   authorize or append events in an adapter; `grep bus.append` outside
   `actions/` should find only the post-receive hook.
-- **Add an API route:** register in `buildRouter` (`http/server.ts`). Gate
-  reads with `canRead`; for writes enforce the token scope floor
-  (`requireScope`), resolve the repo, call the action, and map its Result with
-  `respondAccess(error, status)` — access errors have fixed shapes, anything
-  else is a 422 code. Web forms follow the same shape via `readForm(ctx, scope)`.
+- **Add an API route:** register in `apiRoutes` (`http/api.ts`). Resolve the
+  repo with `loadRepo` (readable or `notFound()`); for writes enforce the token
+  scope floor (`requireScope`, or `requireAccount` for account-level changes),
+  call the action, and map its Result with `respondAccess(error, status)` —
+  access errors have fixed shapes, anything else is a 422 code. Lists are
+  `{ items, next_cursor }` via `paged(...)`. Web forms follow the same shape
+  via `readForm(ctx, scope)`.
 - **API error shape:** every error is `{ error, message }` — `error` is a stable
   machine code to branch on, `message` a human hint. Reuse the helpers
   (`notFound`, `noRoute`, `unauthorized`, `forbidden`) or a specific 422 code;

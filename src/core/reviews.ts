@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { Diff } from "../git/diff.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -137,4 +138,47 @@ export function byAnchor(
 
 export function anchorKey(path: string, side: Side, line: number): string {
   return `${path}\0${side}\0${line}`;
+}
+
+/**
+ * The text at an anchor in a diff, or undefined if the diff has no such row.
+ * A row is anchored on the side git shows it: deletions on the old side,
+ * additions and context on the new — exactly what the diff viewer renders.
+ */
+export function anchorContent(
+  diff: Diff,
+  path: string,
+  side: Side,
+  line: number,
+): string | undefined {
+  const file = diff.files.find((f) => f.path === path);
+  if (!file) return undefined;
+  for (const hunk of file.hunks) {
+    for (const row of hunk.lines) {
+      const rowSide: Side = row.kind === "del" ? "old" : "new";
+      if (rowSide !== side) continue;
+      const number = side === "old" ? row.oldNumber : row.newNumber;
+      if (number === line) return row.content;
+    }
+  }
+  return undefined;
+}
+
+/** A review comment with the viewer-facing verdict on its anchor. */
+export interface AnchoredReview extends ReviewComment {
+  /** True when the line no longer reads as it did when the comment was made. */
+  readonly outdated: boolean;
+}
+
+export function withOutdated(
+  comments: ReviewComment[],
+  diff: Diff,
+): AnchoredReview[] {
+  return comments.map((c) => {
+    const current = anchorContent(diff, c.path, c.side, c.line);
+    return {
+      ...c,
+      outdated: current === undefined || hashLine(current) !== c.lineHash,
+    };
+  });
 }

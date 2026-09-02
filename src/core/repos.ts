@@ -18,6 +18,7 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { pageLimit } from "./issues.ts";
 import { accessAllows, orgAccess, type Access } from "./orgs.ts";
 import { getUserById, type User } from "./users.ts";
 
@@ -224,24 +225,45 @@ export function getRepoById(db: Database, repoId: string): Repo | undefined {
   return row ? toRepo(row) : undefined;
 }
 
+export interface ListReposOptions {
+  /** Page size. @default LIST_LIMIT (max LIST_LIMIT_MAX) */
+  limit?: number;
+  /** Resume after this repo id (exclusive) — lists run newest first. */
+  cursor?: string;
+}
+
+// Visibility in SQL: public, owned, or owned by an org the viewer is on a
+// team of. Site admins see everything. The same rule canRead applies, so a
+// listing never shows a repo whose page would 404.
+const VISIBLE = `(
+  repo.visibility = 'public'
+  OR repo.owner_id = ?1
+  OR repo.owner_id IN (
+    SELECT team.org_id FROM team
+    JOIN team_member ON team_member.team_id = team.id
+    WHERE team_member.user_id = ?1)
+  OR EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
+)`;
+
 export function listReposVisibleTo(
   db: Database,
   viewer: User | undefined,
+  options: ListReposOptions = {},
 ): Repo[] {
-  const rows = viewer
-    ? db
-        .query<
-          RepoRow,
-          [string]
-        >(`${SELECT} WHERE repo.visibility = 'public' OR repo.owner_id = ?1 ORDER BY repo.id DESC`)
-        .all(viewer.id)
-    : db
-        .query<
-          RepoRow,
-          []
-        >(`${SELECT} WHERE repo.visibility = 'public' ORDER BY repo.id DESC`)
-        .all();
-  return rows.map(toRepo);
+  const params: (string | number)[] = [viewer?.id ?? ""];
+  let where = viewer ? VISIBLE : "repo.visibility = 'public'";
+  if (options.cursor !== undefined) {
+    params.push(options.cursor);
+    where += ` AND repo.id < ?${params.length}`;
+  }
+  params.push(pageLimit(options.limit));
+  return db
+    .query<
+      RepoRow,
+      (string | number)[]
+    >(`${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`)
+    .all(...params)
+    .map(toRepo);
 }
 
 /** Repos owned by one user or org, visible to the viewer. */
@@ -249,14 +271,24 @@ export function listReposByOwner(
   db: Database,
   ownerName: string,
   viewer: User | undefined,
+  options: ListReposOptions = {},
 ): Repo[] {
-  const rows = db
+  const params: (string | number)[] = [viewer?.id ?? "", ownerName];
+  let where = `user.username = ?2 COLLATE NOCASE AND ${
+    viewer ? VISIBLE : "repo.visibility = 'public'"
+  }`;
+  if (options.cursor !== undefined) {
+    params.push(options.cursor);
+    where += ` AND repo.id < ?${params.length}`;
+  }
+  params.push(pageLimit(options.limit));
+  return db
     .query<
       RepoRow,
-      [string]
-    >(`${SELECT} WHERE user.username = ?1 COLLATE NOCASE ORDER BY repo.id DESC`)
-    .all(ownerName);
-  return rows.map(toRepo).filter((repo) => canRead(db, repo, viewer));
+      (string | number)[]
+    >(`${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`)
+    .all(...params)
+    .map(toRepo);
 }
 
 /**
@@ -346,6 +378,8 @@ export interface RepoSettings {
   visibility?: "public" | "private";
   description?: string;
   protectDefault?: boolean;
+  /** The caller must have pointed git HEAD at this branch first. */
+  defaultBranch?: string;
 }
 
 /** Update the mutable repo fields, leaving unspecified ones untouched. */
@@ -355,11 +389,12 @@ export function updateRepoSettings(
   settings: RepoSettings,
 ): Repo {
   db.query(
-    "UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3 WHERE id = ?4",
+    "UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3, default_branch = ?4 WHERE id = ?5",
   ).run(
     settings.visibility ?? repo.visibility,
     settings.description ?? repo.description,
     (settings.protectDefault ?? repo.protectDefault) ? 1 : 0,
+    settings.defaultBranch ?? repo.defaultBranch,
     repo.id,
   );
   return getRepoById(db, repo.id)!;

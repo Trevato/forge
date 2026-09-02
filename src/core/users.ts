@@ -16,6 +16,7 @@ export interface User {
   readonly isAdmin: boolean;
   /** "org" rows own repos and hold teams but can't authenticate. */
   readonly kind: "user" | "org";
+  readonly createdAt: string;
 }
 
 interface UserRow {
@@ -26,6 +27,7 @@ interface UserRow {
   is_admin: number;
   password_hash: string;
   kind: "user" | "org";
+  created_at: string;
 }
 
 function toUser(row: UserRow): User {
@@ -36,8 +38,13 @@ function toUser(row: UserRow): User {
     displayName: row.display_name,
     isAdmin: row.is_admin === 1,
     kind: row.kind,
+    createdAt: row.created_at,
   };
 }
+
+const MIN_PASSWORD = 10;
+const MAX_EMAIL = 254;
+const MAX_DISPLAY_NAME = 80;
 
 export type CreateUserError =
   | "invalid_username"
@@ -60,7 +67,7 @@ export async function createUser(
   input: CreateUserInput,
 ): Promise<Result<User, CreateUserError>> {
   if (!isSafeName(input.username)) return err("invalid_username");
-  if (input.password.length < 10) return err("weak_password");
+  if (input.password.length < MIN_PASSWORD) return err("weak_password");
 
   const existing = db
     .query<
@@ -89,14 +96,56 @@ export async function createUser(
     input.displayName ?? "",
     input.isAdmin === true ? 1 : 0,
   );
-  return ok({
-    id: userId,
-    username: input.username,
-    email: input.email,
-    displayName: input.displayName ?? "",
-    isAdmin: input.isAdmin === true,
-    kind: "user",
-  });
+  return ok(getUserById(db, userId)!);
+}
+
+export interface ProfilePatch {
+  displayName?: string;
+  email?: string;
+}
+
+export type UpdateProfileError = "email_taken" | "invalid_email" | "no_such_user";
+
+/** Change the mutable profile fields. Absent keys are left untouched. */
+export function updateProfile(
+  db: Database,
+  userId: string,
+  patch: ProfilePatch,
+): Result<User, UpdateProfileError> {
+  const current = getUserById(db, userId);
+  if (!current || current.kind === "org") return err("no_such_user");
+  const email = patch.email?.trim() ?? current.email;
+  if (email === "" || email.length > MAX_EMAIL || !email.includes("@"))
+    return err("invalid_email");
+  if (email.toLowerCase() !== current.email.toLowerCase()) {
+    const taken = db
+      .query("SELECT 1 FROM user WHERE email = ?1 COLLATE NOCASE AND id != ?2")
+      .get(email, userId);
+    if (taken) return err("email_taken");
+  }
+  const displayName = (patch.displayName ?? current.displayName)
+    .trim()
+    .slice(0, MAX_DISPLAY_NAME);
+  db.query("UPDATE user SET email = ?1, display_name = ?2 WHERE id = ?3").run(
+    email,
+    displayName,
+    userId,
+  );
+  return ok(getUserById(db, userId)!);
+}
+
+/** Replace the password. The caller has already verified the current one. */
+export async function changePassword(
+  db: Database,
+  userId: string,
+  next: string,
+): Promise<Result<void, "weak_password" | "no_such_user">> {
+  if (next.length < MIN_PASSWORD) return err("weak_password");
+  const hash = await Bun.password.hash(next, "argon2id");
+  const changed = db
+    .query("UPDATE user SET password_hash = ?1 WHERE id = ?2 AND kind = 'user'")
+    .run(hash, userId).changes;
+  return changed > 0 ? ok() : err("no_such_user");
 }
 
 export function getUserById(db: Database, userId: string): User | undefined {

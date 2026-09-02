@@ -64,7 +64,7 @@ src/
   git/               bare repos, smart HTTP, batch readers, hooks, ref guards
   core/              domain: users, sessions, tokens, repos, issues, pulls, events
   actions/           every mutation as one function: authorize, mutate, record
-  http/              router, middleware (auth, csrf, csp), api routes
+  http/              router, auth resolution, response shapes, the JSON API
   web/               SSR: html template tag, design tokens, pages, components
   test/              bun test — protocol-level and adversarial
 ```
