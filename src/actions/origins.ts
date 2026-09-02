@@ -362,7 +362,8 @@ export async function startOAuthConnect(
   if (redirectUri === "")
     return err({
       error: "no_app",
-      message: "this forge does not know its own callback URL",
+      message:
+        "this forge does not know its own public URL; set FORGE_URL so it can register a callback",
     });
   const flow = createFlow(app.db, app.config.dataDir, {
     userId: user.value.id,

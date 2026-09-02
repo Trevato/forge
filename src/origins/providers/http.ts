@@ -9,6 +9,7 @@
  * rate-limited says so, with a time to come back, and the sync worker waits.
  */
 
+import { redact } from "../credentials.ts";
 import type {
   ProviderCredential,
   ProviderFailure,
@@ -17,6 +18,8 @@ import type {
 
 const TIMEOUT_MS = 20_000;
 const MAX_BYTES = 16 * 1024 * 1024;
+/** Same-origin redirects followed by hand (a renamed repo answers 301). */
+const MAX_HOPS = 3;
 /** Conditional-request cache size. Enough for a busy origin's hot lists. */
 const ETAG_ENTRIES = 256;
 
@@ -62,14 +65,27 @@ interface CacheEntry {
  * conditional-request state we have accumulated. Providers hold one of these
  * across syncs, which is what makes ETags worth anything.
  */
+export interface ApiClientLimits {
+  /** Per-request deadline, headers and body together. @default 20 s */
+  readonly timeoutMs?: number;
+  /** Largest body read; anything beyond it is refused. @default 16 MiB */
+  readonly maxBytes?: number;
+}
+
 export class ApiClient {
   private readonly etags = new Map<string, CacheEntry>();
+  private readonly timeoutMs: number;
+  private readonly maxBytes: number;
 
   constructor(
     readonly credential: ProviderCredential,
     /** How this forge wants the secret presented, built fresh per call. */
     private readonly authHeaders: (token: string) => Record<string, string>,
-  ) {}
+    limits: ApiClientLimits = {},
+  ) {
+    this.timeoutMs = limits.timeoutMs ?? TIMEOUT_MS;
+    this.maxBytes = limits.maxBytes ?? MAX_BYTES;
+  }
 
   url(request: ApiRequest): string {
     const url = new URL(
@@ -103,20 +119,53 @@ export class ApiClient {
     if (request.body !== undefined)
       headers["content-type"] = "application/json";
 
-    let response: Response;
-    try {
-      response = await fetch(url, {
-        method,
-        headers,
-        ...(request.body === undefined
-          ? {}
-          : { body: JSON.stringify(request.body) }),
-        redirect: "follow",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-    } catch (error) {
-      return fail("unreachable", String(error));
+    // The token must never leave the origin it belongs to, so redirects are
+    // followed by hand: a hop to the same origin (a renamed repo answers
+    // 301) is fine, a hop anywhere else is refused outright. Bun's fetch
+    // drops `authorization` on a cross-origin hop by itself, but a provider
+    // header spelled any other way (GitLab's `PRIVATE-TOKEN`) and the request
+    // body would still travel — and a redirected answer is one the origin
+    // never gave, which is not something to import as truth. One deadline
+    // covers headers and body: a server that answers instantly and then
+    // never finishes the body is the same hang.
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    const body =
+      request.body === undefined ? undefined : JSON.stringify(request.body);
+    let response: Response | undefined;
+    let target = url;
+    for (let hop = 0; hop <= MAX_HOPS; hop++) {
+      if (!sameOrigin(target, url))
+        return fail(
+          "invalid_response",
+          "the origin redirected off-host; refusing to follow",
+        );
+      let answer: Response;
+      try {
+        answer = await fetch(target, {
+          method,
+          headers,
+          ...(body === undefined ? {} : { body }),
+          redirect: "manual",
+          signal,
+        });
+      } catch (error) {
+        return fail("unreachable", redact(String(error), token.value));
+      }
+      if (answer.status < 300 || answer.status >= 400) {
+        response = answer;
+        break;
+      }
+      const location = answer.headers.get("location");
+      if (location === null)
+        return fail("invalid_response", "the origin redirected nowhere");
+      try {
+        target = new URL(location, target).toString();
+      } catch {
+        return fail("invalid_response", "the origin redirected nowhere");
+      }
     }
+    if (response === undefined)
+      return fail("invalid_response", "the origin redirected too many times");
 
     if (response.status === 304 && cached) {
       return succeed({
@@ -138,14 +187,21 @@ export class ApiClient {
     if (response.status >= 500)
       return fail("unreachable", `the origin answered ${response.status}`);
 
-    const text = await readCapped(response);
+    let text: string | undefined;
+    try {
+      text = await readCapped(response, this.maxBytes, signal);
+    } catch (error) {
+      return fail("unreachable", redact(String(error), token.value));
+    }
     if (text === undefined)
       return fail("invalid_response", "the origin's answer was too large");
 
     if (!response.ok) {
+      // The origin's words, minus anything of ours it might be quoting back:
+      // this message lands in `last_error`, an event, a toast, and a log.
       return fail(
         "invalid_response",
-        `${response.status}: ${firstLine(text) || "no detail"}`,
+        `${response.status}: ${redact(firstLine(text), token.value) || "no detail"}`,
       );
     }
 
@@ -223,12 +279,59 @@ function parseRfcRateLimit(
   return { remaining: Number(r[1]), seconds: t ? Number(t[1]) : 0 };
 }
 
-async function readCapped(response: Response): Promise<string | undefined> {
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a body up to the cap and not a byte further: the stream is cancelled
+ * the moment it goes over, so a hostile origin cannot make us buffer its
+ * whole answer before we decline it. `Content-Length` is only a hint — a
+ * chunked body declares nothing. Throws when `signal` fires mid-body.
+ */
+export async function readCapped(
+  response: Response,
+  maxBytes: number,
+  signal?: AbortSignal,
+): Promise<string | undefined> {
   const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > MAX_BYTES) return undefined;
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_BYTES) return undefined;
-  return new TextDecoder().decode(buffer);
+  if (declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined);
+    return undefined;
+  }
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  const abort = new Promise<never>((_, reject) => {
+    if (signal === undefined) return;
+    if (signal.aborted) reject(signal.reason ?? new Error("timed out"));
+    signal.addEventListener(
+      "abort",
+      () => reject(signal.reason ?? new Error("timed out")),
+      { once: true },
+    );
+  });
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), abort]);
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 const firstLine = (text: string): string => text.split("\n")[0]!.slice(0, 200);

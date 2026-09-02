@@ -20,10 +20,11 @@ import {
 } from "../core/origins.ts";
 import { createRepo, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
-import { isSafeName } from "../git/guard.ts";
+import { isSafeName, isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "./credential.ts";
+import { safeRemoteUrl } from "./credentials.ts";
 import { adoptDefaultBranch, configureMirror } from "./git-mirror.ts";
 import { syncOrigin } from "./sync.ts";
 import type { RemoteRepo } from "./types.ts";
@@ -65,7 +66,16 @@ export async function mirrorRepo(
       fetched.error.error === "not_found" ? "not_found" : "unreachable",
     );
   const remote = fetched.value;
-  if (remote.cloneUrl === "") return err("unreachable");
+  // Everything in `remote` is the origin's word, and two of its fields become
+  // git arguments: the clone URL (a remote) and the default branch (an
+  // `--initial-branch`). Both are checked here, before a row or a directory
+  // exists, so a hostile answer is an ordinary refusal — never a half-made
+  // mirror and never a `defect` thrown out of `initBareRepo`.
+  if (remote.cloneUrl === "" || safeRemoteUrl(remote.cloneUrl) === undefined)
+    return err("unreachable");
+  const defaultBranch = isSafeRef(remote.defaultBranch)
+    ? remote.defaultBranch
+    : "main";
 
   // Cache the picker row first: it is where the clone URL lives, and the
   // sync pass reads it back from there.
@@ -82,7 +92,7 @@ export async function mirrorRepo(
     name: chosen,
     visibility: remote.private ? "private" : "public",
     description: remote.description,
-    defaultBranch: remote.defaultBranch,
+    defaultBranch,
   });
   if (!created.ok) return err(created.error);
 
@@ -118,7 +128,7 @@ export async function mirrorRepo(
     onlyRepoId: created.value.id,
   });
 
-  await adoptDefaultBranch(dir, remote.defaultBranch);
+  await adoptDefaultBranch(dir, defaultBranch);
 
   return ok({ repo: getRepoById(app.db, created.value.id)!, remote });
 }

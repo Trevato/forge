@@ -13,6 +13,8 @@
  * Not a test file: `bun test` only collects `*.test.ts`.
  */
 
+import { createHash } from "node:crypto";
+
 export type FakeKind = "github" | "forgejo" | "gitea";
 
 export interface FakeRepo {
@@ -635,6 +637,14 @@ export interface FakeOAuth {
   /** Every token-endpoint request body, parsed. */
   tokenRequests: Record<string, string>[];
   revoked: { clientId: string; authorization: string }[];
+  /**
+   * Code flow, optional strictness: when set, the exchange is refused unless
+   * S256(code_verifier) equals this (what a real PKCE server checks against
+   * the challenge it saw on the authorize leg).
+   */
+  expectedChallenge?: string;
+  /** Code flow, optional strictness: the exchange's redirect_uri must match. */
+  expectedRedirectUri?: string;
 }
 
 export function newFakeOAuth(clientId: string, secret = ""): FakeOAuth {
@@ -714,6 +724,22 @@ export function oauthRoute(
     if (form.grant_type === "authorization_code") {
       if (form.code !== oauth.authCode)
         return jsonResponse({ error: "invalid_grant" });
+      if (
+        oauth.expectedChallenge !== undefined &&
+        s256(form.code_verifier ?? "") !== oauth.expectedChallenge
+      )
+        return jsonResponse({
+          error: "invalid_grant",
+          error_description: "code_verifier does not match the challenge",
+        });
+      if (
+        oauth.expectedRedirectUri !== undefined &&
+        form.redirect_uri !== oauth.expectedRedirectUri
+      )
+        return jsonResponse({
+          error: "invalid_grant",
+          error_description: "redirect_uri mismatch",
+        });
       return jsonResponse({
         access_token: oauth.accessToken,
         refresh_token: oauth.refreshToken,
@@ -751,3 +777,7 @@ export function oauthRoute(
   }
   return undefined;
 }
+
+/** PKCE S256: base64url(sha256(verifier)), the check a real server makes. */
+export const s256 = (verifier: string): string =>
+  createHash("sha256").update(verifier).digest("base64url");

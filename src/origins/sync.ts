@@ -22,6 +22,7 @@
  * thrown rejection in a timer takes the process down.
  */
 
+import { existsSync } from "node:fs";
 import type { App } from "../app.ts";
 import {
   cacheOriginRepos,
@@ -221,7 +222,35 @@ interface MirrorOutcome {
   rateLimited?: ProviderFailure;
 }
 
+/**
+ * One mirror, and nothing it does can escape as a throw. A mirror whose
+ * directory was removed by hand, or any other surprise below, becomes this
+ * repo's `fetch_error`; the next mirror and the next origin still run. A
+ * throw here would otherwise abort the whole tick at this origin, leave its
+ * `next_sync_at` unadvanced, and so repeat the same abort every tick —
+ * starving every origin behind it forever.
+ */
 async function syncMirror(
+  app: App,
+  origin: Origin,
+  provider: Provider,
+  mirror: { repoId: string; fullName: string },
+  options: SyncOptions,
+): Promise<MirrorOutcome> {
+  try {
+    return await syncMirrorUnguarded(app, origin, provider, mirror, options);
+  } catch (error) {
+    const message = `sync failed: ${String(error)}`;
+    log.warn("mirror sync threw", { repo: mirror.repoId, error: message });
+    recordFetch(app.db, mirror.repoId, {
+      at: new Date().toISOString(),
+      error: message,
+    });
+    return { refsMoved: 0, issues: 0, pulls: 0, comments: 0, error: message };
+  }
+}
+
+async function syncMirrorUnguarded(
   app: App,
   origin: Origin,
   provider: Provider,
@@ -237,6 +266,17 @@ async function syncMirror(
   };
   let repo = getRepoById(app.db, mirror.repoId);
   if (!repo) return out;
+  // The git directory is the repo (invariant 4); without it there is
+  // nothing to fetch into and nothing to diff against, and `Bun.spawn` would
+  // throw on the missing cwd before git ever ran.
+  if (!existsSync(repoDir(app.reposRoot, repo.ownerName, repo.name))) {
+    out.error = "the mirror's git directory is missing";
+    recordFetch(app.db, repo.id, {
+      at: new Date().toISOString(),
+      error: out.error,
+    });
+    return out;
+  }
 
   // Re-read the repo from the origin every sweep, for one reason: a repo
   // flipped to private upstream must stop being readable here. Visibility is
@@ -248,10 +288,9 @@ async function syncMirror(
     rememberOriginRepo(app.db, origin.id, described.value);
     const wanted = described.value.private ? "private" : "public";
     if (wanted !== repo.visibility) {
-      app.db.query("UPDATE repo SET visibility = ?1 WHERE id = ?2").run(
-        wanted,
-        repo.id,
-      );
+      app.db
+        .query("UPDATE repo SET visibility = ?1 WHERE id = ?2")
+        .run(wanted, repo.id);
       app.bus.append({
         kind: "repo.settings_updated",
         repoId: repo.id,
@@ -342,6 +381,9 @@ async function syncMirror(
         break;
       }
       for (const remote of listed.value.items) {
+        // The origin's number becomes ours and drags `issue_seq` with it;
+        // a non-positive or non-integer one is a row we will not make.
+        if (!Number.isInteger(remote.number) || remote.number < 1) continue;
         const imported = importIssue(ctx, remote);
         if (kind === "issue") out.issues++;
         else out.pulls++;
@@ -477,7 +519,23 @@ export function requestSyncNow(app: App, originId: string): void {
 
 export async function syncDue(app: App, now = new Date()): Promise<number> {
   const due = dueOrigins(app, now);
-  for (const origin of due) await syncOrigin(app, origin);
+  for (const origin of due) {
+    try {
+      await syncOrigin(app, origin);
+    } catch (error) {
+      // One origin's surprise is that origin's problem. Its next-due time is
+      // pushed out like any failed run, so it cannot monopolise every tick.
+      log.error("origin sync threw", {
+        origin: origin.id,
+        error: String(error),
+      });
+      recordSync(app.db, origin.id, {
+        at: now.toISOString(),
+        error: `sync failed: ${String(error)}`,
+      });
+      schedule(app, origin.id, SYNC_INTERVAL_MS);
+    }
+  }
   return due.length;
 }
 
