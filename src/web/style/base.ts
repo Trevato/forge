@@ -1,0 +1,175 @@
+/**
+ * Layer 1 and 2 of the stylesheet: the cascade layers themselves, the
+ * theme-independent constants, the reset, the type scale, and the page shell
+ * (topbar, main, footer). Everything here is structure and rhythm; no
+ * component owns a rule in this file.
+ *
+ * Typography rule of the house: 14px for chrome and list rows, 15px only for
+ * prose. Hierarchy comes from weight and color, not size.
+ */
+
+/**
+ * The cascade order, declared once and up front, plus the one at-rule that
+ * must sit outside every layer. Cross-document view transitions are pure
+ * enhancement: where the browser honours them the topbar and repo header hold
+ * still across a navigation, and where it does not, nothing changes.
+ */
+export const layers = [
+  `@layer reset, base, components, content, utilities;`,
+  `@view-transition { navigation: auto; }`,
+].join("\n");
+
+export const base = /* css */ `
+@layer base {
+/* ---- theme-independent constants ---- */
+:root {
+  --radius-sm: 6px;   /* controls: buttons, inputs, chips, kbd */
+  --radius: 8px;      /* surfaces: cards, panels, code blocks */
+  --radius-lg: 12px;  /* overlays: dialogs, palette, menus */
+  --topbar-h: 56px;
+  --page: 1120px;
+  --measure: 72ch;
+  --ease: cubic-bezier(.2, 0, 0, 1);
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  background: var(--bg);
+  color: var(--fg);
+  min-height: 100dvh;
+  display: flex; flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a { color: inherit; text-decoration: none; transition: color 120ms var(--ease); }
+a:hover { color: var(--accent); }
+code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
+
+h1 { font-size: 20px; font-weight: 620; letter-spacing: -0.02em; line-height: 1.25; text-wrap: balance; }
+h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; text-wrap: balance; }
+h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
+
+::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* Anything anchorable clears the sticky topbar when it is scrolled to. */
+[id] { scroll-margin-top: calc(var(--topbar-h) + 12px); }
+
+/* Momentary class the theme switcher adds so a theme change sweeps rather
+   than snaps. */
+:root.theme-anim, :root.theme-anim *, :root.theme-anim *::before, :root.theme-anim *::after {
+  transition: background-color 200ms var(--ease), color 200ms var(--ease),
+    border-color 200ms var(--ease) !important;
+}
+
+/* ---- shell ---- */
+.skip {
+  position: absolute; left: 16px; top: -48px; z-index: 40;
+  padding: 8px 14px; border-radius: var(--radius);
+  background: var(--primary); color: var(--primary-fg);
+  font-weight: 500; transition: top 140ms var(--ease);
+}
+.skip:focus-visible { top: 10px; color: var(--primary-fg); }
+
+.shell { width: 100%; max-width: var(--page); margin: 0 auto; padding: 0 16px 96px; flex: 1; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  view-transition-name: topbar;
+  min-height: var(--topbar-h);
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  border-bottom: 1px solid var(--border);
+}
+.wordmark {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  font-weight: 660; letter-spacing: -0.03em; font-size: 15px;
+}
+.wordmark .mark {
+  width: 10px; height: 10px; border-radius: 3px; flex: none;
+  background: linear-gradient(135deg, var(--accent), var(--merged));
+  transition: transform 200ms var(--ease);
+}
+.wordmark:hover { color: var(--fg); }
+.wordmark:hover .mark { transform: rotate(135deg); }
+.topbar .spacer { flex: 1; }
+.topbar-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+
+.foot {
+  width: 100%; max-width: var(--page); margin: 0 auto;
+  padding: 20px 16px 36px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  color: var(--faint); font-size: 12.5px;
+}
+.foot .mark {
+  width: 7px; height: 7px; border-radius: 2px; opacity: .7;
+  background: linear-gradient(135deg, var(--accent), var(--merged));
+}
+.foot a:hover { color: var(--accent); }
+}
+`;
+
+export const utilities = /* css */ `
+@layer utilities {
+.muted { color: var(--muted-fg); }
+.small { font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+.grow { flex: 1; min-width: 0; }
+.spacer { flex: 1; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mt { margin-top: 12px; }
+.mb { margin-bottom: 12px; }
+.narrow { max-width: 400px; margin: 8dvh auto 0; }
+.narrow-wide { max-width: 760px; }
+.hide-sm { display: none; }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+[hidden] { display: none !important; }
+
+@media (min-width: 720px) {
+  .shell { padding: 0 24px 96px; }
+  .topbar { padding: 8px 24px; }
+  .foot { padding: 20px 24px 36px; }
+  .hide-sm { display: inline-flex; }
+  .hide-lg { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+@media print {
+  .topbar, .foot, .live-pill, .sticky-action, .toast { display: none !important; }
+  .card { box-shadow: none; }
+}
+}
+`;
+
+export const reset = /* css */ `
+@layer reset {
+* { box-sizing: border-box; margin: 0; }
+button, input, select, textarea { font: inherit; color: inherit; }
+img, svg, video { max-width: 100%; }
+table { border-collapse: collapse; }
+ul, ol { list-style: none; padding: 0; }
+summary::-webkit-details-marker { display: none; }
+}
+`;

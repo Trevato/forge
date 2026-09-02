@@ -1,365 +1,486 @@
 /**
- * Issue pages: the list, one issue with its comment thread, and the compose
- * form. Prose is markdown-rendered; state changes and comments are plain
- * form posts. Mobile-first, no JavaScript required.
+ * Issue pages: the list with its filters, one issue with its timeline, and
+ * the compose form. Prose is markdown; every state change is a plain form
+ * post to its own endpoint. Mobile-first, no JavaScript required.
  */
 
+import { addComment, openIssue } from "../../actions/issues.ts";
 import {
-  addComment,
-  openIssue,
-  setIssueState,
-} from "../../actions/issues.ts";
-import { canWrite } from "../../core/repos.ts";
-import {
-  getIssue,
+  countIssues,
   labelsFor,
-  listComments,
   listIssues,
+  listLabels,
   type Issue,
   type IssueState,
   type Label,
 } from "../../core/issues.ts";
+import type { Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { commentCard } from "../comments.ts";
+import {
+  crumbsFor,
+  loadRepo,
+  notFoundPage,
+  repoBase,
+  repoHeader,
+  repoPalette,
+  signInFirst,
+  stickyAction,
+} from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, raw, when, type Html } from "../html.ts";
-import { page, redirect } from "../layout.ts";
+import { html, when, type Html } from "../html.ts";
+import { flashTo, page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { crumbsFor, loadRepo, repoNav, repoNotFound, timeAgo } from "./repo.ts";
+import {
+  btn,
+  empty,
+  icon,
+  labelChip,
+  labelCss,
+  listCard,
+  pager,
+  seg,
+  stateBadge,
+  time,
+  userLink,
+  field as formField,
+} from "../ui.ts";
+import {
+  composer,
+  conversation,
+  labelsCard,
+  parseNumber,
+  threadContext,
+  threadFragment,
+} from "./thread.ts";
 
-function parseNumber(raw: string | undefined): number | undefined {
-  if (raw === undefined || !/^[1-9][0-9]{0,8}$/.test(raw)) return undefined;
-  return Number(raw);
+const PER_PAGE = 25;
+
+// ---- the list ----
+
+interface ListQuery {
+  state: IssueState | "all";
+  label: string;
+  author: string;
+  q: string;
+  cursor: number | undefined;
 }
 
-function stateBadge(state: IssueState): Html {
-  return html`<span class="badge" data-state="${state}"
-    >${state === "open" ? "Open" : "Closed"}</span
-  >`;
+function readQuery(ctx: Ctx): ListQuery {
+  const params = ctx.url.searchParams;
+  const raw = params.get("state");
+  const cursor = Number(params.get("cursor"));
+  return {
+    state: raw === "closed" ? "closed" : raw === "all" ? "all" : "open",
+    label: params.get("label") ?? "",
+    author: params.get("author") ?? "",
+    q: params.get("q") ?? "",
+    cursor: Number.isSafeInteger(cursor) && cursor > 0 ? cursor : undefined,
+  };
 }
 
-function labelChips(labels: Label[]): Html {
-  return html`${labels.map(
-    (l) => html`<span class="label-chip lc-${l.color}">${l.name}</span>`,
-  )}`;
+/** Rebuild the current URL with one facet changed — filters compose instead
+ * of replacing each other. */
+function withFacet(
+  base: string,
+  query: ListQuery,
+  patch: Partial<Record<"state" | "label" | "author" | "q", string>>,
+  cursor?: number,
+): string {
+  const params = new URLSearchParams();
+  const state = patch.state ?? query.state;
+  if (state !== "open") params.set("state", state);
+  const label = patch.label ?? query.label;
+  if (label !== "") params.set("label", label);
+  const author = patch.author ?? query.author;
+  if (author !== "") params.set("author", author);
+  const q = patch.q ?? query.q;
+  if (q !== "") params.set("q", q);
+  if (cursor !== undefined) params.set("cursor", String(cursor));
+  const text = params.toString();
+  return text === "" ? base : `${base}?${text}`;
 }
 
-/** CSS binding each label color to its chip class, for the nonce'd style
- * block. Colors are validated hex at creation and re-checked before embedding. */
-function labelCss(colors: Iterable<string>): string {
-  let css = "";
-  const seen = new Set<string>();
-  for (const color of colors) {
-    if (seen.has(color) || !/^[0-9a-f]{6}$/.test(color)) continue;
-    seen.add(color);
-    css += `.lc-${color}{--label:#${color}}`;
-  }
-  return css;
+function filterBar(
+  base: string,
+  query: ListQuery,
+  labels: Label[],
+  counts: { open: number; closed: number },
+): Html {
+  return html`<div class="filters">
+      ${seg([
+        {
+          label: "Open",
+          href: withFacet(base, query, { state: "open" }),
+          current: query.state === "open",
+          count: counts.open,
+        },
+        {
+          label: "Closed",
+          href: withFacet(base, query, { state: "closed" }),
+          current: query.state === "closed",
+          count: counts.closed,
+        },
+        {
+          label: "All",
+          href: withFacet(base, query, { state: "all" }),
+          current: query.state === "all",
+        },
+      ])}
+      <form method="get" action="${base}" role="search">
+        ${when(query.state !== "open", () => hidden("state", query.state))}
+        ${when(query.label !== "", () => hidden("label", query.label))}
+        ${when(query.author !== "", () => hidden("author", query.author))}
+        <input
+          class="input search"
+          type="search"
+          name="q"
+          value="${query.q}"
+          placeholder="Search titles"
+          aria-label="Search titles"
+        />
+        ${btn("Search", { size: "sm", variant: "outline" })}
+      </form>
+      <span class="spacer"></span>
+      ${when(query.author !== "" || query.label !== "" || query.q !== "", () =>
+        btn("Clear filters", {
+          href: withFacet(base, query, { label: "", author: "", q: "" }),
+          size: "sm",
+          variant: "ghost",
+          icon: "x",
+        }),
+      )}
+    </div>
+    ${when(
+      labels.length > 0,
+      () =>
+        html`<div class="bar mb">
+          ${labels.map((l) =>
+            query.label.toLowerCase() === l.name.toLowerCase()
+              ? html`<a
+                  class="label lc-${l.color}"
+                  href="${withFacet(base, query, { label: "" })}"
+                  aria-current="true"
+                  title="Remove this filter"
+                  >${l.name} ✕</a
+                >`
+              : labelChip(l, withFacet(base, query, { label: l.name })),
+          )}
+        </div>`,
+    )}`;
+}
+
+function hidden(name: string, value: string): Html {
+  return html`<input type="hidden" name="${name}" value="${value}" />`;
+}
+
+/** One issue or pull row: title, its labels, and one metadata line. */
+export function threadRow(
+  base: string,
+  segment: "issues" | "pulls",
+  issue: Issue,
+  labels: Label[],
+  state: "open" | "closed" | "merged",
+  meta: Html,
+): Html {
+  return html`<li>
+    <a
+      class="row"
+      data-state="${state === "merged" ? "merged" : state}"
+      data-nav
+      tabindex="-1"
+      href="${base}/${segment}/${issue.number}"
+    >
+      <span class="row-lead"
+        >${icon(
+          state === "merged"
+            ? "merge"
+            : segment === "pulls"
+              ? "pull"
+              : state === "closed"
+                ? "issueClosed"
+                : "issue",
+        )}</span
+      >
+      <span class="row-main">
+        <span class="row-title" title="${issue.title}"
+          >${issue.title}${labels.map((l) => html` ${labelChip(l)}`)}</span
+        >
+        <span class="row-meta">${meta}</span>
+      </span>
+      <span class="row-trail">${stateBadge(state)}</span>
+    </a>
+  </li>`;
 }
 
 // GET /:owner/:name/issues
 export function issuesList(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const state =
-    ctx.url.searchParams.get("state") === "closed" ? "closed" : "open";
-  const issues = listIssues(ctx.app.db, repo.id, { state, kind: "issue" });
-  const base = `/${repo.ownerName}/${repo.name}`;
+  if (!repo) return notFoundPage(ctx);
+  const base = repoBase(repo);
+  const query = readQuery(ctx);
+  const db = ctx.app.db;
+
+  const issues = listIssues(db, repo.id, {
+    state: query.state,
+    kind: "issue",
+    limit: PER_PAGE,
+    ...(query.label !== "" ? { label: query.label } : {}),
+    ...(query.author !== "" ? { author: query.author } : {}),
+    ...(query.q !== "" ? { query: query.q } : {}),
+    ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
+  });
   const rows = issues.map((issue) => ({
     issue,
-    labels: labelsFor(ctx.app.db, issue.id),
+    labels: labelsFor(db, issue.id),
   }));
-  const colors = rows.flatMap((r) => r.labels.map((l) => l.color));
+  const repoLabels = listLabels(db, repo.id);
+  const counts = {
+    open: countIssues(db, repo.id, "issue", "open"),
+    closed: countIssues(db, repo.id, "issue", "closed"),
+  };
 
-  const body = html`${repoNav(repo, "issues")}
-    <div class="page-head">
-      <div class="tabs">
-        <a
-          class="btn"
-          data-size="sm"
-          href="${base}/issues?state=open"
-          ${state === "open" ? raw('aria-current="page"') : null}
-          >Open</a
-        >
-        <a
-          class="btn"
-          data-size="sm"
-          href="${base}/issues?state=closed"
-          ${state === "closed" ? raw('aria-current="page"') : null}
-          >Closed</a
-        >
-      </div>
-      <span class="spacer"></span>
-      ${when(
-        ctx.auth.user,
-        () =>
-          html`<a
-            class="btn"
-            data-variant="primary"
-            data-size="sm"
-            href="${base}/issues/new"
-            >New issue</a
-          >`,
+  const newIssue = ctx.auth.user
+    ? btn("New issue", {
+        href: `${base}/issues/new`,
+        variant: "primary",
+        icon: "plus",
+        shortcut: "c",
+      })
+    : btn("Sign in to open an issue", { href: "/signin" });
+
+  const list =
+    rows.length === 0
+      ? empty({
+          icon: "issue",
+          title:
+            query.q !== "" || query.label !== "" || query.author !== ""
+              ? "No issues match those filters"
+              : query.state === "closed"
+                ? "No closed issues"
+                : query.state === "all"
+                  ? "No issues yet"
+                  : "No open issues",
+          note:
+            query.state === "open" && counts.closed > 0
+              ? "Everything here is closed."
+              : "Issues are how work gets described before it gets done.",
+          action: newIssue,
+        })
+      : listCard(
+          rows.map(({ issue, labels }) =>
+            threadRow(
+              base,
+              "issues",
+              issue,
+              labels,
+              issue.state,
+              html`#${issue.number} opened ${time(issue.createdAt)} by
+              ${userLink(issue.authorName, { avatar: false })}`,
+            ),
+          ),
+        );
+
+  const lastNumber = issues[issues.length - 1]?.number;
+  const body = html`${repoHeader(ctx, repo, "issues")}
+    <div class="mt">
+      ${filterBar(`${base}/issues`, query, repoLabels, counts)} ${list}
+      ${pager(
+        issues.length === PER_PAGE && lastNumber !== undefined
+          ? { next: withFacet(`${base}/issues`, query, {}, lastNumber) }
+          : {},
       )}
     </div>
-    ${issues.length === 0
-      ? html`<div class="card empty">No ${state} issues.</div>`
-      : html`<div class="card">
-          <ul class="list">
-            ${rows.map(
-              ({ issue, labels }) =>
-                html`<li>
-                  <a class="row" href="${base}/issues/${issue.number}">
-                    <span class="grow">
-                      <strong>${issue.title}</strong> ${labelChips(labels)}
-                      <br />
-                      <span class="muted small"
-                        >#${issue.number} opened ${timeAgo(issue.createdAt)} by
-                        ${issue.authorName}</span
-                      >
-                    </span>
-                    ${stateBadge(issue.state)}
-                  </a>
-                </li>`,
-            )}
-          </ul>
-        </div>`}
+    ${when(ctx.auth.user !== undefined, () => stickyAction(newIssue))}
     ${liveMount({ repo: base })}`;
+
   return page({
+    ctx,
     title: `Issues · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
     crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
     body,
-    styleCss: labelCss(colors),
+    styleCss: labelCss([...repoLabels, ...rows.flatMap((r) => r.labels)]),
     scriptJs: liveClientJs,
   });
+}
+
+// ---- compose ----
+
+function newIssueForm(
+  repo: Repo,
+  values: { title: string; body: string },
+  error?: string,
+): Html {
+  return html`<div class="narrow-wide mt">
+    <form method="post" action="${repoBase(repo)}/issues/new">
+      ${when(error, (message) => html`<p class="error-note">${message}</p>`)}
+      ${formField({
+        label: "Title",
+        name: "title",
+        value: values.title,
+        required: true,
+        autofocus: true,
+        ...(error ? { error } : {}),
+      })}
+      ${formField({
+        label: "Description",
+        name: "body",
+        type: "textarea",
+        rows: 10,
+        value: values.body,
+        hint: "Markdown is supported.",
+      })}
+      <div class="form-actions">
+        ${btn("Create issue", { variant: "primary", icon: "issue" })}
+        ${btn("Cancel", {
+          href: `${repoBase(repo)}/issues`,
+          variant: "ghost",
+        })}
+      </div>
+    </form>
+  </div>`;
 }
 
 // GET /:owner/:name/issues/new
 export function newIssuePage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  if (!ctx.auth.user) return redirect(`/signin`);
-  const body = html`${repoNav(repo, "issues")}
-    <div class="narrow-wide">
-      <h2>New issue</h2>
-      <form method="post" action="/${repo.ownerName}/${repo.name}/issues/new">
-        <label for="title">Title</label>
-        <input class="input" id="title" name="title" required autofocus />
-        <label for="body"
-          >Description <span class="muted">(markdown)</span></label
-        >
-        <textarea class="input" id="body" name="body" rows="10"></textarea>
-        <div class="form-actions">
-          <button class="btn" data-variant="primary" type="submit">
-            Create issue
-          </button>
-        </div>
-      </form>
-    </div>`;
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
   return page({
+    ctx,
     title: `New issue · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
     crumbs: crumbsFor(repo),
-    body,
+    palette: repoPalette(repo),
+    body: html`${repoHeader(ctx, repo, "issues", { compact: true, ownTitle: true })}
+      <h1 class="mt">New issue</h1>
+      ${newIssueForm(repo, { title: "", body: "" })}`,
   });
 }
 
 // POST /:owner/:name/issues/new
 export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  if (!ctx.auth.user) return redirect(`/signin`);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
-  const created = openIssue(ctx.app, ctx.auth.user, repo, {
-    title: field(form, "title"),
-    body: field(form, "body"),
+  const values = { title: field(form, "title"), body: field(form, "body") };
+  const created = openIssue(ctx.app, ctx.auth.user, repo, values);
+  if (!created.ok) {
+    // Nothing typed is ever lost: the form comes back exactly as it was sent.
+    const message =
+      created.error === "empty_title"
+        ? "An issue needs a title."
+        : "You cannot open an issue here.";
+    return page(
+      {
+        ctx,
+        title: `New issue · ${repo.name}`,
+        crumbs: crumbsFor(repo),
+        body: html`${repoHeader(ctx, repo, "issues", { compact: true, ownTitle: true })}
+          <h1 class="mt">New issue</h1>
+          ${newIssueForm(repo, values, message)}`,
+      },
+      422,
+    );
+  }
+  return flashTo(ctx, `${repoBase(repo)}/issues/${created.value.number}`, {
+    message: `Issue #${created.value.number} opened.`,
   });
-  if (!created.ok)
-    return redirect(`/${repo.ownerName}/${repo.name}/issues/new`);
-  return redirect(
-    `/${repo.ownerName}/${repo.name}/issues/${created.value.number}`,
-  );
 }
+
+// ---- one issue ----
 
 // GET /:owner/:name/issues/:number
 export function issuePage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  const number = parseNumber(ctx.params.number);
-  const issue =
-    number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== "issue") return repoNotFound(ctx);
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  const { repo, issue } = found;
+  const base = repoBase(repo);
+  const thread = `${base}/issues/${issue.number}`;
 
-  const comments = listComments(ctx.app.db, issue.id);
-  const labels = labelsFor(ctx.app.db, issue.id);
-  const mayModerate =
-    ctx.auth.user !== undefined &&
-    (ctx.auth.user.id === issue.authorId ||
-      canWrite(ctx.app.db, repo, ctx.auth.user));
-  const base = `/${repo.ownerName}/${repo.name}`;
+  const applied = labelsFor(ctx.app.db, issue.id);
+  const all = listLabels(ctx.app.db, repo.id);
+  const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
 
-  const lastCommentId =
-    comments.length > 0 ? comments[comments.length - 1]!.id : "";
-  const conversation = html`<div id="conversation">
-    ${commentCard({
-      id: "",
-      author: issue.authorName,
-      at: issue.createdAt,
-      body: issue.body,
-      verb: "opened",
-    })}
-    ${comments.map((c) =>
-      commentCard({
-        id: c.id,
-        author: c.authorName,
-        at: c.createdAt,
-        body: c.body,
-        verb: "commented",
-      }),
-    )}
-  </div>`;
-
-  const body = html`${repoNav(repo, "issues")}
+  const body = html`${repoHeader(ctx, repo, "issues", { compact: true, ownTitle: true })}
     <div class="issue-head">
-      <h1>${issue.title} <span class="muted">#${issue.number}</span></h1>
+      <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
       <div class="issue-meta">
         ${stateBadge(issue.state)}
-        <span class="muted small"
-          >${issue.authorName} opened this ${timeAgo(issue.createdAt)}</span
+        <span
+          >${userLink(issue.authorName)} opened this
+          ${time(issue.createdAt)}</span
         >
-        ${labelChips(labels)}
       </div>
     </div>
-    ${conversation}
+    <div class="split">
+      <div>
+        ${talk.node}
+        ${composer(ctx, {
+          action: `${thread}/comments`,
+          stateAction: `${thread}/state`,
+          state: issue.state,
+          kind: "issue",
+        })}
+      </div>
+      <aside>
+        ${labelsCard(ctx, repo, issue, applied, all, `${thread}/labels`)}
+      </aside>
+    </div>
     ${liveMount({
       repo: base,
       thread: "issue",
       number: issue.number,
-      lastCommentId,
-    })}
-    ${ctx.auth.user
-      ? html`<form
-          class="card comment-form"
-          method="post"
-          action="${base}/issues/${issue.number}/comments"
-        >
-          <textarea
-            class="input"
-            name="body"
-            rows="4"
-            placeholder="Leave a comment"
-            required
-          ></textarea>
-          <div class="form-actions">
-            ${when(mayModerate, () =>
-              issue.state === "open"
-                ? html`<button
-                    class="btn"
-                    name="intent"
-                    value="close"
-                    type="submit"
-                  >
-                    Close issue
-                  </button>`
-                : html`<button
-                    class="btn"
-                    name="intent"
-                    value="reopen"
-                    type="submit"
-                  >
-                    Reopen
-                  </button>`,
-            )}
-            <span class="spacer"></span>
-            <button
-              class="btn"
-              data-variant="primary"
-              name="intent"
-              value="comment"
-              type="submit"
-            >
-              Comment
-            </button>
-          </div>
-        </form>`
-      : html`<div class="card empty">
-          <a href="/signin">Sign in</a> to comment.
-        </div>`}`;
+      lastCommentId: talk.lastCommentId,
+    })}`;
+
   return page({
+    ctx,
     title: `${issue.title} · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
     crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
     body,
-    styleCss: labelCss(labels.map((l) => l.color)),
+    styleCss: labelCss([...all, ...applied]),
     scriptJs: liveClientJs,
   });
 }
 
-// GET /:owner/:name/issues/:number/thread?after=<id> — comment cards after an
-// id, for the live client to append. Returns raw HTML, not a full page.
+// GET /:owner/:name/issues/:number/thread?after=<id>
 export function issueThreadFragment(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return new Response("", { status: 404 });
-  const number = parseNumber(ctx.params.number);
-  const issue =
-    number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue) return new Response("", { status: 404 });
-  const after = ctx.url.searchParams.get("after") ?? "";
-  const fresh = listComments(ctx.app.db, issue.id).filter((c) => c.id > after);
-  const fragment = html`${fresh.map((c) =>
-    commentCard({
-      id: c.id,
-      author: c.authorName,
-      at: c.createdAt,
-      body: c.body,
-      verb: "commented",
-    }),
-  )}`;
-  return new Response(fragment.text, {
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "content-security-policy":
-        "default-src 'none'; style-src 'none'; sandbox",
-    },
-  });
+  return threadFragment(ctx, "issue");
 }
 
 // POST /:owner/:name/issues/:number/comments
 export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
-  if (!ctx.auth.user) return redirect(`/signin`);
-  const number = parseNumber(ctx.params.number);
-  const issue =
-    number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue) return repoNotFound(ctx);
-
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const intent = field(form, "intent");
-  const dest = `/${repo.ownerName}/${repo.name}/issues/${issue.number}`;
 
+  const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
   const body = field(form, "body");
-  if (body.trim() !== "")
-    addComment(ctx.app, ctx.auth.user, repo, issue, body);
-
-  // Close/reopen: the action admits the author or a repo writer; anyone
-  // else's intent is silently ignored, as the buttons aren't shown to them.
-  if (intent === "close" || intent === "reopen")
-    setIssueState(
-      ctx.app,
-      ctx.auth.user,
-      repo,
-      issue,
-      intent === "close" ? "closed" : "open",
-    );
-  return redirect(dest);
+  if (body.trim() === "")
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: "A comment needs something in it.",
+    });
+  const added = addComment(
+    ctx.app,
+    ctx.auth.user,
+    found.repo,
+    found.issue,
+    body,
+  );
+  if (!added.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: "That comment could not be posted.",
+    });
+  return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
 
+export { parseNumber };
 export type { Issue };

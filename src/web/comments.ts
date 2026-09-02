@@ -2,12 +2,12 @@
  * One comment card, shared by the full page render and the live-append
  * fragment so a comment that arrives over SSE looks identical to one that was
  * on the page at load. The `data-comment-id` is what the client tracks to know
- * what it has already shown.
+ * what it has already shown — it is load-bearing, not decoration.
  */
 
 import { html, type Html } from "./html.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { timeAgo } from "./pages/repo.ts";
+import { time, userLink } from "./ui.ts";
 
 export interface CommentCard {
   /** "" for the opener (the issue/PR body), which has no comment row. */
@@ -20,16 +20,16 @@ export interface CommentCard {
 }
 
 export function commentCard(card: CommentCard): Html {
-  const idAttr = card.id === "" ? html`` : html` data-comment-id="${card.id}"`;
+  const idAttr = card.id === "" ? html`` : html`data-comment-id="${card.id}" `;
   const bodyHtml =
     card.body.trim() === ""
       ? html`<p class="muted">No description.</p>`
       : renderMarkdown(card.body);
-  return html`<div class="card comment" ${idAttr}>
-    <div class="comment-head">
-      <strong>${card.author}</strong>
-      <span class="muted small">${card.verb} ${timeAgo(card.at)}</span>
+  return html`<div ${idAttr}class="card comment">
+    <div class="card-head">
+      ${userLink(card.author)}
+      <span class="muted">${card.verb} ${time(card.at)}</span>
     </div>
-    <div class="md comment-body">${bodyHtml}</div>
+    <div class="prose comment-body">${bodyHtml}</div>
   </div>`;
 }

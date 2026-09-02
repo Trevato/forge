@@ -138,6 +138,10 @@ export function getIssueById(db: Database, issueId: string): Issue | undefined {
 export const LIST_LIMIT = 50;
 export const LIST_LIMIT_MAX = 200;
 
+export function likeEscape(text: string): string {
+  return text.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
 /** Clamp a caller-supplied page size to [1, LIST_LIMIT_MAX]. */
 export function pageLimit(requested: number | undefined): number {
   if (requested === undefined || !Number.isFinite(requested)) return LIST_LIMIT;
@@ -153,6 +157,8 @@ export interface ListIssuesOptions {
   label?: string;
   /** Only issues opened by this username. */
   author?: string;
+  /** Case-insensitive substring of the title — the list page's search box. */
+  query?: string;
   /** Page size. @default LIST_LIMIT (max LIST_LIMIT_MAX) */
   limit?: number;
   /** Resume after this issue number (exclusive) — lists run newest first. */
@@ -187,6 +193,12 @@ export function listIssues(
       SELECT 1 FROM issue_label JOIN label ON label.id = issue_label.label_id
       WHERE issue_label.issue_id = issue.id
         AND (label.id = ?${p} OR label.name = ?${p} COLLATE NOCASE))`;
+  }
+  if (options.query !== undefined && options.query.trim() !== "") {
+    // LIKE with an escaped pattern: % and _ from a search box are literal
+    // characters, not wildcards the user did not ask for.
+    params.push(`%${likeEscape(options.query.trim())}%`);
+    where += ` AND issue.title LIKE ?${params.length} ESCAPE '\\' COLLATE NOCASE`;
   }
   if (options.cursor !== undefined) {
     params.push(options.cursor);
@@ -293,7 +305,26 @@ function getComment(db: Database, commentId: string): Comment | undefined {
   };
 }
 
-export function listComments(db: Database, issueId: string): Comment[] {
+export interface ListCommentsOptions {
+  /**
+   * Which comments to return. A line-anchored review comment lives in the
+   * same table as a conversation comment, so a pull request's conversation
+   * asks for `"comment"` and its diff asks for the review ones — otherwise
+   * the same remark shows up twice on one page. @default "all"
+   */
+  kind?: "comment" | "review" | "all";
+}
+
+export function listComments(
+  db: Database,
+  issueId: string,
+  options: ListCommentsOptions = {},
+): Comment[] {
+  const kind = options.kind ?? "all";
+  const where =
+    kind === "all"
+      ? "comment.issue_id = ?1"
+      : `comment.issue_id = ?1 AND comment.kind = '${kind}'`;
   const rows = db
     .query<
       {
@@ -308,7 +339,7 @@ export function listComments(db: Database, issueId: string): Comment[] {
     >(
       `SELECT comment.*, user.username AS author_name
        FROM comment JOIN user ON user.id = comment.author_id
-       WHERE comment.issue_id = ?1 ORDER BY comment.id`,
+       WHERE ${where} ORDER BY comment.id`,
     )
     .all(issueId);
   return rows.map((row) => ({
@@ -353,18 +384,52 @@ export function createLabel(
   return ok({ id: labelId, name: clean, color: color.toLowerCase() });
 }
 
+/**
+ * Rename or recolor a label. The name stays unique per repo (case-insensitive)
+ * and the color stays a validated hex, exactly as at creation.
+ */
+export function updateLabel(
+  db: Database,
+  repoId: string,
+  labelId: string,
+  name: string,
+  color: string,
+): Result<Label, "invalid" | "taken" | "not_found"> {
+  const clean = name.trim();
+  if (clean === "" || !/^[0-9a-fA-F]{6}$/.test(color)) return err("invalid");
+  const current = db
+    .query<
+      Label,
+      [string, string]
+    >("SELECT id, name, color FROM label WHERE id = ?1 AND repo_id = ?2")
+    .get(labelId, repoId);
+  if (!current) return err("not_found");
+  const clash = db
+    .query(
+      "SELECT 1 FROM label WHERE repo_id = ?1 AND name = ?2 COLLATE NOCASE AND id != ?3",
+    )
+    .get(repoId, clean, labelId);
+  if (clash) return err("taken");
+  db.query(
+    "UPDATE label SET name = ?1, color = ?2 WHERE id = ?3 AND repo_id = ?4",
+  ).run(clean, color.toLowerCase(), labelId, repoId);
+  return ok({ id: labelId, name: clean, color: color.toLowerCase() });
+}
+
 /** A repo's label by id or by name (case-insensitive). */
 export function getLabel(
   db: Database,
   repoId: string,
   idOrName: string,
 ): Label | undefined {
-  return db
-    .query<
-      Label,
-      [string, string]
-    >("SELECT id, name, color FROM label WHERE repo_id = ?1 AND (id = ?2 OR name = ?2 COLLATE NOCASE)")
-    .get(repoId, idOrName) ?? undefined;
+  return (
+    db
+      .query<
+        Label,
+        [string, string]
+      >("SELECT id, name, color FROM label WHERE repo_id = ?1 AND (id = ?2 OR name = ?2 COLLATE NOCASE)")
+      .get(repoId, idOrName) ?? undefined
+  );
 }
 
 export function listLabels(db: Database, repoId: string): Label[] {

@@ -7,6 +7,10 @@
  *   - on any other relevant activity, reveals a "new activity" pill that
  *     reloads on click.
  * Every page works without this; it is pure enhancement.
+ *
+ * Announcements are a count, not the text: the polite live region says "2 new
+ * comments" while the comments themselves land outside it, so a screen reader
+ * is told something arrived without re-reading the thread.
  */
 
 import { html, type Html } from "./html.ts";
@@ -22,7 +26,7 @@ export interface LiveConfig {
   lastCommentId?: string;
 }
 
-/** The config element and the (hidden) activity pill. Place inside <main>. */
+/** The config element, the polite status line, and the (hidden) activity pill. */
 export function liveMount(config: LiveConfig): Html {
   return html`<div
       id="live"
@@ -32,6 +36,12 @@ export function liveMount(config: LiveConfig): Html {
       data-number="${config.number ?? ""}"
       data-last="${config.lastCommentId ?? ""}"
     ></div>
+    <p
+      class="live-status"
+      id="live-status"
+      role="status"
+      aria-live="polite"
+    ></p>
     <a id="live-pill" class="live-pill" href="" hidden
       >↻ New activity — refresh</a
     >`;
@@ -46,6 +56,7 @@ export const liveClientJs = /* js */ `
   var number = cfg.getAttribute('data-number');
   var lastId = cfg.getAttribute('data-last') || '';
   var pill = document.getElementById('live-pill');
+  var status = document.getElementById('live-status');
   var conv = document.getElementById('conversation');
 
   function showPill() { if (pill) { pill.hidden = false; } }
@@ -67,10 +78,13 @@ export const liveClientJs = /* js */ `
         if (!text || !conv) return;
         var holder = document.createElement('div');
         holder.innerHTML = text;
-        var nodes = holder.querySelectorAll('[data-comment-id]');
+        var nodes = holder.querySelectorAll(':scope > [data-comment-id]');
         for (var i = 0; i < nodes.length; i++) {
           conv.appendChild(nodes[i]);
           lastId = nodes[i].getAttribute('data-comment-id') || lastId;
+        }
+        if (status && nodes.length > 0) {
+          status.textContent = nodes.length === 1 ? '1 new comment' : nodes.length + ' new comments';
         }
       })
       .catch(function () {});
@@ -83,14 +97,16 @@ export const liveClientJs = /* js */ `
       appendNew();
     } else if (relevant(data) || !thread) {
       showPill();
+      if (status) status.textContent = 'New activity on this page';
     }
   }
 
   var es = new EventSource(repo + '/stream');
-  es.onmessage = onEvent; // default (unnamed) events
   [
-    'push', 'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented',
-    'pull.opened', 'pull.merged', 'pull.commented', 'pull.reviewed',
+    'push', 'repo.created', 'repo.forked',
+    'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled',
+    'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
+    'label.created', 'label.updated', 'label.deleted',
   ].forEach(function (k) { es.addEventListener(k, onEvent); });
 })();
 `;
