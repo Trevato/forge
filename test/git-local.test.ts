@@ -297,9 +297,11 @@ describe("commits, branches and the log", () => {
     expect(log[0]!.parents.length).toBe(2);
     expect(log[0]!.author).toBe("Ada");
     expect(log[0]!.refs).toContain("HEAD");
-    // Every row draws its own commit, and the merge opens a second lane.
-    expect(log.every((c) => c.graph.includes("*"))).toBe(true);
-    expect(log.some((c) => c.graph.length > 1)).toBe(true);
+    // Every row draws its own commit, and the merge opens a second lane that
+    // the root closes again — a lane left open past the commit it was waiting
+    // for would draw a line of history that does not exist.
+    expect(log.every((c) => c.graph.includes("\u25cf"))).toBe(true);
+    expect(log.map((c) => c.graph)).toEqual(["\u25cf\u256e", "\u2502\u25cf", "\u25cf\u2502", "\u25cf\u256f"]);
   });
 
   test("the log filtered to one path only mentions that path", async () => {

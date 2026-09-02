@@ -1,12 +1,13 @@
 /**
- * What the local screens share: the session (a library root, optionally a
+ * What the local client shares: the session (a library root, optionally a
  * workbench to talk to), the task runner that turns a long git command into
- * a spinner and a status line, and the repo walk that finds your clones.
+ * a spinner and a status line, the repo walk that finds your clones, and the
+ * words and marks it says a branch's position in.
  *
- * The forge's own screens get this from `screens/common.ts`; this file is
- * the same idea for the half of the client that talks to a work tree instead
- * of to a database. Everything drawing-shaped is imported from there rather
- * than repeated — one list cursor, one filter box, one clock.
+ * The forge's own screens get their navigation from `screens/common.ts`; this
+ * file is the same idea for the half of the client that talks to a work tree
+ * instead of to a database. Nothing here draws — which is what lets the CLI
+ * import the vocabulary without importing the terminal UI.
  */
 
 import { readdir } from "node:fs/promises";
@@ -14,7 +15,6 @@ import { join, relative } from "node:path";
 import type { ForgeApi } from "../../cli/api.ts";
 import type { GitFailure, LocalResult } from "../../git/local.ts";
 import type { Ctx } from "../app/app.ts";
-import { G } from "../term/screen.ts";
 
 export interface Local {
   /** Where clones live. Everything below it is scanned for work trees. */
@@ -180,14 +180,54 @@ export function failureText(failure: GitFailure): string {
   return line ?? `git ${failure.args[0] ?? ""} failed (${failure.code})`;
 }
 
+// ── saying where a branch stands ─────────────────────────────────────────
+
 /**
- * "▲2 ▼1", or "" when the branch is level with its upstream. The glyphs come
- * from the safe set in `term/screen.ts`, so the CLI's report and the TUI say
- * ahead and behind with the same two marks.
+ * Ahead and behind, as two marks. BMP, width 1, in every default terminal
+ * font — the same bar the safe set in `term/screen.ts` clears — and the one
+ * definition the CLI's report and every local screen share, so `↑2 ↓1` means
+ * the same thing in `forge status` as it does three keys into the UI.
  */
+export const AHEAD = "↑";
+export const BEHIND = "↓";
+
+/** The separator local headers and footers join their facts with. */
+export const SEP = "·";
+
+/** "↑2 ↓1", or "" when the branch is level with its upstream. */
 export function trackText(ahead: number, behind: number): string {
   const parts: string[] = [];
-  if (ahead > 0) parts.push(`${G.up}${ahead}`);
-  if (behind > 0) parts.push(`${G.down}${behind}`);
+  if (ahead > 0) parts.push(`${AHEAD}${ahead}`);
+  if (behind > 0) parts.push(`${BEHIND}${behind}`);
   return parts.join(" ");
+}
+
+/** "↑2 ↓0" — both counts, for a place that wants a stable width. */
+export function syncText(ahead: number, behind: number): string {
+  return `${AHEAD}${ahead} ${BEHIND}${behind}`;
+}
+
+export interface Tracking {
+  readonly upstream: string | null;
+  readonly ahead: number;
+  readonly behind: number;
+  /** The upstream ref is gone — the branch was merged and pruned. */
+  readonly gone?: boolean;
+}
+
+/**
+ * The same five states in words rather than arithmetic: "in sync", "ahead 2",
+ * "behind 1", "diverged 2/1", "no upstream", "upstream gone".
+ *
+ * A detail card is read once, slowly, by someone deciding what to do — the
+ * glyphs belong in the list, where the reader is scanning, and the sentence
+ * belongs here, where they are not.
+ */
+export function upstreamText(t: Tracking): string {
+  if (t.gone === true) return "upstream gone";
+  if (t.upstream === null) return "no upstream";
+  if (t.ahead > 0 && t.behind > 0) return `diverged ${t.ahead}/${t.behind}`;
+  if (t.ahead > 0) return `ahead ${t.ahead}`;
+  if (t.behind > 0) return `behind ${t.behind}`;
+  return "in sync";
 }

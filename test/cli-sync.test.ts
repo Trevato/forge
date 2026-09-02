@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { hostDir } from "../src/cli/config.ts";
+import { changesBetween, type RepoReport, type SyncReport } from "../src/cli/sync.ts";
 
 const CLI = new URL("../src/cli/main.ts", import.meta.url).pathname;
 
@@ -205,7 +206,9 @@ describe("the local client, against a real forge", () => {
     const result = await forge(["sync"]);
     expect(result.code).toBe(0);
     expect(result.out).not.toContain("cloned");
-    expect(result.out).toContain("clean");
+    // Clean, level and holding nothing back: one tick, no words.
+    expect(result.out).toContain("\u2713");
+    expect(result.out).toMatch(/REPO\s+BRANCH\s+SYNC\s+DIRTY\s+STATE\s+FETCHED/);
   });
 
   test("status does not fetch; sync does; --ff then moves it", async () => {
@@ -219,10 +222,10 @@ describe("the local client, against a real forge", () => {
     // workbench, so a client that fetched would already know about it.
     const offline = await forge(["status"]);
     expect(offline.out).toContain("alice/one");
-    expect(offline.out).not.toContain("▼1");
+    expect(offline.out).not.toContain("\u21931");
 
     const fetched = await forge(["sync"]);
-    expect(fetched.out).toMatch(/alice\/one.*▼1/);
+    expect(fetched.out).toMatch(/alice\/one.*\u21931/);
 
     const dir = join(root, host, "alice", "one");
     expect(await Bun.file(join(dir, "NEXT.md")).exists()).toBe(false);
@@ -247,7 +250,8 @@ describe("the local client, against a real forge", () => {
 
     const result = await forge(["sync", "--ff"]);
     expect(result.code).toBe(0);
-    expect(result.out).toMatch(/alice\/two.*changed/);
+    // Dirty is a count in its own column, not a sentence in the state column.
+    expect(result.out).toMatch(/alice\/two\s+\S+\s+\S*\s*2\s/);
     expect(result.out).not.toMatch(/alice\/two.*fast-forwarded/);
     expect(await Bun.file(join(dir, "README.md")).text()).toBe(
       "# two, edited by hand\n",
@@ -260,8 +264,87 @@ describe("the local client, against a real forge", () => {
     const result = await forge(["ls"]);
     expect(result.code).toBe(0);
     expect(result.out).toContain(join(root, host));
+    expect(result.out).toMatch(/REPO\s+BRANCH\s+SYNC\s+STATE\s+FETCHED/);
     expect(result.out).toContain("alice/one");
     expect(result.out).toContain("alice/two");
+  });
+
+  test("--json says the same thing without a table to parse", async () => {
+    for (const command of ["status", "ls"]) {
+      const result = await forge([command, "--json"]);
+      expect(result.code).toBe(0);
+      const report = JSON.parse(result.out) as {
+        root: string;
+        repos: {
+          owner: string;
+          name: string;
+          dirty: number;
+          behind: number;
+          branch: string | null;
+          lastFetch: string | null;
+        }[];
+      };
+      expect(report.root).toBe(join(root, host));
+      const two = report.repos.find((r) => r.name === "two");
+      expect(two?.owner).toBe("alice");
+      expect(two?.branch).toBe("main");
+      // The repo left dirty by the test above, counted rather than described.
+      expect(two?.dirty).toBe(2);
+      expect(two?.behind).toBeGreaterThan(0);
+      // A table row is text; this is a date a script can compare.
+      expect(Date.parse(two?.lastFetch ?? "")).toBeGreaterThan(0);
+    }
+  });
+
+  test("a watch only speaks when something actually changed", () => {
+    const repo = (over: Partial<RepoReport>): RepoReport => ({
+      owner: "alice",
+      name: "one",
+      dir: "/tmp/one",
+      present: true,
+      cloned: false,
+      pinned: true,
+      branch: "main",
+      upstream: "origin/main",
+      ahead: 0,
+      behind: 0,
+      staged: 0,
+      changed: 0,
+      untracked: 0,
+      conflicted: 0,
+      stashes: 0,
+      unpushed: [],
+      lastFetch: null,
+      fastForwarded: false,
+      error: null,
+      ...over,
+    });
+    const report = (r: RepoReport): SyncReport => ({
+      root: "/tmp",
+      repos: [r],
+      pinsUnavailable: false,
+      failures: r.error === null ? 0 : 1,
+    });
+
+    // The same facts twice is silence — a notifier that fires every pass is
+    // a notifier that gets muted within the hour.
+    const same = report(repo({}));
+    expect(changesBetween(same, report(repo({})))).toEqual([]);
+    // Even a repeated bad state is silent after the first time it is said.
+    const broken = report(repo({ error: "boom" }));
+    expect(changesBetween(broken, report(repo({ error: "boom" })))).toEqual([]);
+    // A transition is not.
+    expect(changesBetween(same, report(repo({ behind: 2 })))).toEqual([
+      "alice/one is 2 behind",
+    ]);
+    expect(changesBetween(same, report(repo({ error: "boom" })))).toEqual([
+      "alice/one failed to fetch",
+    ]);
+    expect(changesBetween(same, report(repo({ present: false })))).toEqual([
+      "alice/one is gone",
+    ]);
+    // And there is nothing to compare against on the first pass.
+    expect(changesBetween(null, same)).toEqual([]);
   });
 
   test("open prints the web URL", async () => {

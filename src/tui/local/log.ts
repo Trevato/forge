@@ -15,17 +15,17 @@ import { binding, type Binding } from "../app/keys.ts";
 import { BOLD, style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { DiffView } from "../screens/commits.ts";
-import {
-  drawFacts,
-  drawList,
-  Filter,
-  ListState,
-  relTime,
-  type ListRow,
-} from "../screens/common.ts";
+import { drawFacts, Filter, ListState, relTime } from "../screens/common.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import type { Tokens } from "../ui/theme.ts";
 import { emptyState } from "../ui/widgets.ts";
-import { failureText, Task, type Local, type LocalRepo } from "./common.ts";
+import {
+  failureText,
+  Task,
+  type Local,
+  type LocalRepo,
+} from "./common.ts";
+import { cell, drawBusy, drawRows, type Cell, type Column } from "./rows.ts";
 
 export function logScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
   const list = new ListState();
@@ -57,6 +57,7 @@ export function logScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
         binding(["v"], "revert", { disabled: !has }),
         binding(["y"], "copy sha", { disabled: !has }),
         binding(["/"], "filter"),
+        binding(["j", "k"], "move"),
       ];
     },
     async load() {
@@ -64,9 +65,14 @@ export function logScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
     },
     render(area, s) {
       const c = ctx.theme.c;
-      const [box, body] = split(area, "v", [len(filter.on ? 1 : 0), fill(1)]);
+      const [box, body, busy] = split(area, "v", [
+        len(filter.on ? 1 : 0),
+        fill(1),
+        len(task.busy ? 1 : 0),
+      ]);
       if (filter.on)
         ctx.setCursor(filter.render(s, box!, c, "subject or author"));
+      if (task.busy) drawBusy(s, busy!, c, task.note, ctx.tick);
       const items = shown();
       if (items.length === 0) {
         emptyState(s, body!, c, {
@@ -76,12 +82,13 @@ export function logScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
         return;
       }
       const width = graphWidth(items);
-      drawList(
+      drawRows(
         s,
         body!,
         c,
         list,
-        items.map((commit) => rowFor(commit, width)),
+        COLUMNS,
+        items.map((commit) => rowFor(c, commit, width)),
       );
     },
     key(e) {
@@ -174,13 +181,32 @@ function graphWidth(commits: readonly git.LocalCommit[]): number {
   return Math.min(max, 10);
 }
 
-function rowFor(commit: git.LocalCommit, width: number): ListRow {
+/** lane . subject . sha . author . age. */
+const COLUMNS: readonly Column[] = [
+  { gap: 0 },
+  { grow: true, min: 16, emphasis: true },
+  {},
+  { align: "right", drop: 2 },
+  { align: "right", drop: 1 },
+];
+
+function rowFor(c: Tokens, commit: git.LocalCommit, width: number): Cell[] {
   const graph = commit.graph.slice(0, width).padEnd(width, " ");
   const head = commit.refs.includes("HEAD");
-  return {
-    title: `${graph} ${commit.subject}`,
-    secondary: commit.short,
-    meta: `${commit.author}  ${relTime(commit.date)}`,
-    ...(head ? { state: "open" as const } : {}),
-  };
+  return [
+    // The lane is the one cell that holds more than one colour: the commit is
+    // the reader's place in the graph and the lanes around it are scenery, so
+    // the two cannot share a tone.
+    {
+      text: graph,
+      spans: [...graph].map((glyph) => ({
+        text: glyph,
+        fg: glyph === "\u25cf" ? (head ? c.success : c.accent) : c.border,
+      })),
+    },
+    cell(commit.subject, c.fg),
+    cell(commit.short, c.mutedFg),
+    cell(commit.author, c.mutedFg),
+    cell(relTime(commit.date), c.faint),
+  ];
 }

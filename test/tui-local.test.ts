@@ -113,9 +113,23 @@ describe("the local terminal UI", () => {
 
   test("the library lists every repo under the root", () => {
     const text = term.toText();
-    expect(text).toContain("forge.test/ada/workshop");
+    // One host, said once above the list, so the rows carry only owner/name.
+    expect(text).toContain("forge.test");
+    expect(text).toContain("ada/workshop");
+    expect(text).not.toContain("forge.test/ada/workshop");
     expect(text).toContain("main");
     expect(text).toContain("Repos");
+  });
+
+  test("the rows line up, and say where the repo stands in words", () => {
+    const text = term.toText();
+    const row = text.split("\n").find((l) => l.includes("ada/workshop")) ?? "";
+    expect(row).toContain("2 changed");
+    expect(row).toContain("1 stashed");
+    expect(row).toContain("never fetched");
+    // The card spells the tracking state out rather than leaving it to glyphs.
+    expect(text).toContain("no upstream");
+    expect(text).not.toContain("tracking       level");
   });
 
   test("enter opens the working tree, in sections", async () => {
@@ -125,8 +139,12 @@ describe("the local terminal UI", () => {
     expect(text).toContain("poem.txt");
     expect(text).toContain("NEW");
     expect(text).toContain("scratch.txt");
-    // The footer says where you are, always.
-    expect(text).toContain("main");
+    // One letter per row, on the side of the index its section names.
+    expect(text).toMatch(/M\s+poem\.txt/);
+    expect(text).toMatch(/\?\s+scratch\.txt/);
+    // The footer says where you are, always — including when there is no
+    // upstream to be ahead of.
+    expect(text).toContain("main \u00b7 no upstream");
   });
 
   test("space stages the file under the cursor", async () => {
@@ -147,7 +165,10 @@ describe("the local terminal UI", () => {
 
   test("enter opens the hunks, and `s` stages one of them", async () => {
     await type(term, app, "\r");
-    expect(term.toText()).toContain("hunk 1/2");
+    // File, position, and which side of the index — in that order.
+    expect(term.toText()).toContain(
+      "poem.txt \u00b7 hunk 1/2 \u00b7 changed",
+    );
 
     await type(term, app, "s");
     const staged = await git.diff(dir, { path: "poem.txt", staged: true });
@@ -163,6 +184,8 @@ describe("the local terminal UI", () => {
   test("`c` writes a commit through the textarea", async () => {
     await type(term, app, "c");
     expect(term.toText()).toContain("Commit");
+    // What is about to be committed, above the box you describe it in.
+    expect(term.toText()).toContain("1 file \u00b7 +1 -1 staged");
 
     await type(term, app, "stage half a poem");
     expect(term.toText()).toContain("stage half a poem");
@@ -182,6 +205,8 @@ describe("the local terminal UI", () => {
     expect(text).toContain("main");
     expect(text).toContain("experiment");
     expect(text).toContain("no upstream");
+    // Name, upstream state and the last subject, in columns.
+    expect(text).toMatch(/\u25cf main\s+no upstream\s+stage half a poem/);
     await type(term, app, "\x1b");
   });
 
@@ -206,7 +231,9 @@ describe("the local terminal UI", () => {
     expect(text).toContain("the first commit");
     expect(text).toContain("stage half a poem");
     expect(text).toContain("Ada");
-    expect(text).toMatch(/\*\s+stage half a poem/);
+    expect(text).toMatch(/\u25cf\s+stage half a poem/);
+    // The sha rides after the subject, not in front of it.
+    expect(text).toMatch(/stage half a poem\s+[0-9a-f]{7}\s+Ada/);
     await type(term, app, "\x1b");
   });
 
@@ -216,6 +243,49 @@ describe("the local terminal UI", () => {
     for (const help of ["stage", "commit", "push", "branches", "stashes"])
       expect(text).toContain(help);
     await type(term, app, "\x1b");
+  });
+
+  test("a conflict gets its own section, its own diff and a way out", async () => {
+    // A repo of its own: a paused rebase is a state the other tests would
+    // have to step around, and stepping around it is how it stops being
+    // tested at all.
+    const other = join(root, "forge.test", "ada", "signals");
+    await mkdir(other, { recursive: true });
+    await sh(["init", "-b", "main", "."], other);
+    await sh(["config", "user.name", "Ada"], other);
+    await sh(["config", "user.email", "ada@forge.local"], other);
+    await writeFile(join(other, "s.txt"), "one\ntwo\nthree\n");
+    await sh(["add", "-A"], other);
+    await sh(["commit", "-m", "the first signal"], other);
+    await sh(["checkout", "-b", "louder"], other);
+    await writeFile(join(other, "s.txt"), "one\nTWO\nthree\n");
+    await sh(["commit", "-am", "louder"], other);
+    await sh(["checkout", "main"], other);
+    await writeFile(join(other, "s.txt"), "one\ntwo!\nthree\n");
+    await sh(["commit", "-am", "revised"], other);
+    await sh(["checkout", "louder"], other);
+    const rebase = await git.rebase(other, "main");
+    expect(rebase.ok).toBe(false); // it stops on the conflict, by design
+
+    const term2 = headlessTerminal(120, 40);
+    const app2 = createLocalApp({ root, terminal: term2, theme: "dark" }).app;
+    app2.start();
+    await settle(app2);
+    // Repos are sorted by label: signals comes first.
+    await type(term2, app2, "\r");
+
+    const text = term2.toText();
+    expect(text).toContain("CONFLICTED");
+    expect(text).toMatch(/U\s+s\.txt/);
+    // The preview shows the markers rather than claiming nothing differs: a
+    // plain `git diff` on an unmerged path is a combined diff, which parses
+    // to nothing, and an empty pane on the one file you must edit is a lie.
+    expect(text).toContain("<<<<<<< HEAD");
+    expect(text).not.toContain("Nothing in this file differs");
+    expect(text).toContain("rebase in progress");
+    await type(term2, app2, "?");
+    expect(term2.toText()).toContain("rebase continue / abort");
+    app2.stop();
   });
 
   test("the emitted bytes really produce the grid we drew", () => {

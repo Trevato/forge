@@ -10,17 +10,13 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import { G } from "../term/screen.ts";
 import { style } from "../term/style.ts";
-import {
-  confirmScreen,
-  drawList,
-  ListState,
-  relTime,
-  type ListRow,
-} from "../screens/common.ts";
-import { fill, split } from "../ui/layout.ts";
+import { confirmScreen, ListState, relTime } from "../screens/common.ts";
+import { fill, len, split } from "../ui/layout.ts";
+import type { Tokens } from "../ui/theme.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { HunkList } from "./hunks.ts";
 import { Task, track, type LocalRepo } from "./common.ts";
+import { cell, drawBusy, drawRows, type Cell, type Column } from "./rows.ts";
 
 export function stashScreen(ctx: Ctx, repo: LocalRepo): Screen {
   const list = new ListState();
@@ -64,6 +60,7 @@ export function stashScreen(ctx: Ctx, repo: LocalRepo): Screen {
         binding(["enter"], "apply", { disabled: !has }),
         binding(["p"], "pop", { disabled: !has }),
         binding(["d"], "drop", { disabled: !has }),
+        binding(["j", "k"], "move"),
         binding(["esc"], "back"),
       ];
     },
@@ -72,19 +69,22 @@ export function stashScreen(ctx: Ctx, repo: LocalRepo): Screen {
     },
     render(area, s) {
       const c = ctx.theme.c;
+      const [body, busy] = split(area, "v", [fill(1), len(task.busy ? 1 : 0)]);
+      if (task.busy) drawBusy(s, busy!, c, task.note, ctx.tick);
       if (stashes.length === 0) {
-        emptyState(s, area, c, {
+        emptyState(s, body!, c, {
           title: "No stashes",
           body: "`S` on the working tree screen puts one here.",
         });
         return;
       }
+      const rows = stashes.map((stash) => rowFor(c, stash));
       if (!ctx.twoPane) {
-        drawList(s, area, c, list, stashes.map(rowFor));
+        drawRows(s, body!, c, list, COLUMNS, rows);
         return;
       }
-      const [left, right] = split(area, "h", [fill(2), fill(3)]);
-      drawList(s, left!, c, list, stashes.map(rowFor));
+      const [left, right] = split(body!, "h", [fill(2), fill(3)]);
+      drawRows(s, left!, c, list, COLUMNS, rows);
       for (let y = right!.y; y < right!.y + right!.h; y++)
         s.set(right!.x, y, G.v, style(c.border, c.bg));
       preview.render(
@@ -137,10 +137,17 @@ export function stashScreen(ctx: Ctx, repo: LocalRepo): Screen {
   return screen;
 }
 
-function rowFor(stash: git.Stash): ListRow {
-  return {
-    title: stash.subject,
-    secondary: stash.ref,
-    meta: relTime(stash.date),
-  };
+/** ref . subject . age. */
+const COLUMNS: readonly Column[] = [
+  { gap: 0 },
+  { grow: true, min: 12, emphasis: true },
+  { align: "right", drop: 1 },
+];
+
+function rowFor(c: Tokens, stash: git.Stash): Cell[] {
+  return [
+    cell(stash.ref, c.mutedFg),
+    cell(stash.subject, c.fg),
+    cell(relTime(stash.date), c.faint),
+  ];
 }

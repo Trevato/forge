@@ -13,25 +13,29 @@ import { err, ok } from "../../kernel/result.ts";
 import * as git from "../../git/local.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
-import {
-  drawFacts,
-  drawList,
-  Filter,
-  ListState,
-  relTime,
-  type ListRow,
-} from "../screens/common.ts";
+import { G } from "../term/screen.ts";
+import { ago, drawFacts, Filter, ListState } from "../screens/common.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { card, emptyState } from "../ui/widgets.ts";
+import type { Tokens } from "../ui/theme.ts";
 import {
   asFailure,
   failureText,
   findRepos,
   Task,
   trackText,
+  upstreamText,
   type Local,
   type LocalRepo,
 } from "./common.ts";
+import {
+  cell,
+  drawBusy,
+  drawHeader,
+  drawRows,
+  type Cell,
+  type Column,
+} from "./rows.ts";
 import { workScreen } from "./work.ts";
 
 interface Entry {
@@ -89,6 +93,7 @@ export function reposScreen(local: Local, ctx: Ctx): Screen {
         }),
         binding(["r"], "refresh"),
         binding(["/"], "filter"),
+        binding(["j", "k"], "move"),
       ];
     },
     async load() {
@@ -96,8 +101,13 @@ export function reposScreen(local: Local, ctx: Ctx): Screen {
     },
     render(area, s) {
       const c = ctx.theme.c;
-      const [box, body] = split(area, "v", [len(filter.on ? 1 : 0), fill(1)]);
+      const [box, body, busy] = split(area, "v", [
+        len(filter.on ? 1 : 0),
+        fill(1),
+        len(task.busy ? 1 : 0),
+      ]);
       if (filter.on) ctx.setCursor(filter.render(s, box!, c, "filter"));
+      if (task.busy) drawBusy(s, busy!, c, task.note, ctx.tick);
       if (entries.length === 0) {
         emptyState(s, body!, c, {
           title: "Nothing here yet",
@@ -107,12 +117,22 @@ export function reposScreen(local: Local, ctx: Ctx): Screen {
         return;
       }
       const items = shown();
+      // One host is the common case — `forge sync` writes them all under the
+      // workbench you signed in to — and repeating it on every row costs the
+      // repo name the width it wants. Say it once, above the list.
+      const shared = sharedHost(items);
+      const [head, rest] = split(body!, "v", [
+        len(shared === null ? 0 : 1),
+        fill(1),
+      ]);
+      if (shared !== null) drawHeader(s, head!, c, shared);
+      const rows = items.map((entry) => rowFor(c, entry, shared !== null));
       if (!ctx.twoPane) {
-        drawList(s, body!, c, list, items.map(rowFor));
+        drawRows(s, rest!, c, list, COLUMNS, rows);
         return;
       }
-      const [left, right] = split(body!, "h", [fill(3), fill(2)]);
-      drawList(s, left!, c, list, items.map(rowFor));
+      const [left, right] = split(rest!, "h", [fill(3), fill(2)]);
+      drawRows(s, left!, c, list, COLUMNS, rows);
       drawDetail(s, right!, c, current());
     },
     key(e) {
@@ -173,32 +193,63 @@ export function reposScreen(local: Local, ctx: Ctx): Screen {
   };
 }
 
-function rowFor(entry: Entry): ListRow {
+/** state · repo · branch · changes · sync · stashes · fetched. */
+const COLUMNS: readonly Column[] = [
+  { gap: 0 },
+  { grow: true, min: 12, gap: 1, emphasis: true },
+  {},
+  {},
+  { align: "right" },
+  { drop: 1 },
+  { align: "right", drop: 2 },
+];
+
+function rowFor(c: Tokens, entry: Entry, short: boolean): Cell[] {
   const s = entry.status;
+  const conflicts = s?.conflicted.length ?? 0;
   const dirty =
     s === null
       ? 0
-      : s.staged.length +
-        s.unstaged.length +
-        s.untracked.length +
-        s.conflicted.length;
-  const bits = [
-    s === null ? "" : trackText(s.ahead, s.behind),
-    dirty > 0 ? `${dirty} changed` : "",
-    entry.stashes > 0 ? `${entry.stashes} stashed` : "",
-  ].filter((p) => p !== "");
-  return {
-    title: entry.repo.label,
-    secondary: s?.head ?? "detached",
-    meta: [bits.join("  "), fetched(entry.lastFetch)]
-      .filter((p) => p !== "")
-      .join("  "),
-    ...(s !== null && s.conflicted.length > 0
-      ? { state: "closed" as const }
+      : s.staged.length + s.unstaged.length + s.untracked.length + conflicts;
+  const tone =
+    conflicts > 0
+      ? c.danger
+      : (s?.behind ?? 0) > 0
+        ? c.attn
+        : dirty > 0
+          ? c.accent
+          : c.faint;
+  return [
+    cell(G.dot, tone),
+    cell(short ? shortLabel(entry.repo) : entry.repo.label, c.fg),
+    cell(s?.head ?? "detached", s === null ? c.faint : c.mutedFg),
+    conflicts > 0
+      ? cell(`${conflicts} conflicted`, c.danger)
       : dirty > 0
-        ? { state: "draft" as const }
-        : {}),
-  };
+        ? cell(`${dirty} changed`, c.accent)
+        : cell(""),
+    cell(s === null ? "" : trackText(s.ahead, s.behind), c.attn),
+    entry.stashes > 0 ? cell(`${entry.stashes} stashed`, c.mutedFg) : cell(""),
+    cell(fetched(entry.lastFetch), c.faint),
+  ];
+}
+
+/** "forge.local", when every repo in view came from the same one. */
+function sharedHost(entries: readonly Entry[]): string | null {
+  if (entries.length === 0) return null;
+  const first = hostOf(entries[0]!.repo);
+  if (first === null) return null;
+  return entries.every((e) => hostOf(e.repo) === first) ? first : null;
+}
+
+/** The `<host>` of `<host>/<owner>/<name>`, or null for a shallower clone. */
+function hostOf(repo: LocalRepo): string | null {
+  const parts = repo.label.split("/");
+  return parts.length >= 3 ? (parts[0] ?? null) : null;
+}
+
+function shortLabel(repo: LocalRepo): string {
+  return repo.label.split("/").slice(-2).join("/");
 }
 
 function drawDetail(
@@ -214,10 +265,7 @@ function drawDetail(
     ["path", entry.repo.dir],
     ["branch", status?.head ?? "detached"],
     ["upstream", status?.upstream ?? "none"],
-    [
-      "tracking",
-      status === null ? "—" : trackText(status.ahead, status.behind) || "level",
-    ],
+    ["tracking", status === null ? "—" : upstreamText(status)],
     [
       "changes",
       status === null
@@ -226,11 +274,12 @@ function drawDetail(
     ],
     ["conflicts", String(status?.conflicted.length ?? 0)],
     ["stashes", String(entry.stashes)],
-    ["fetched", fetched(entry.lastFetch) || "never"],
+    ["last fetch", fetched(entry.lastFetch)],
     ["pinned", entry.pinned ? "yes" : "no"],
   ]);
 }
 
+/** "never fetched" reads as a state; a bare "never" reads as a shrug. */
 function fetched(when: Date | null): string {
-  return when === null ? "never" : relTime(when.toISOString());
+  return when === null ? "never fetched" : ago(when.toISOString());
 }

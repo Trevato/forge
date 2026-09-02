@@ -323,6 +323,17 @@ export interface DiffOpts {
   readonly path?: string;
   /** An untracked file has no index side; diff it against /dev/null. */
   readonly untracked?: boolean;
+  /**
+   * An unmerged path, diffed against HEAD rather than against the index.
+   *
+   * A plain `git diff` on a conflicted file emits a combined diff
+   * (`diff --cc`), whose two-column line prefixes are not the unified format
+   * anything downstream reads — so the preview came up empty on exactly the
+   * file the reader most needed to see. Against HEAD it is an ordinary
+   * unified diff of the work tree, conflict markers and all, which is the
+   * thing a person is about to go and edit.
+   */
+  readonly conflicted?: boolean;
   /** Context lines. Never 0 — a zero-context patch needs --unidiff-zero. */
   readonly context?: number;
 }
@@ -365,6 +376,7 @@ export async function diff(
     ...DIFF_FLAGS,
     context,
     ...(opts.staged === true ? ["--cached"] : []),
+    ...(opts.conflicted === true ? ["HEAD"] : []),
     "--",
     ...(opts.path === undefined ? [] : [opts.path]),
   ];
@@ -639,8 +651,11 @@ export function parseLog(raw: string): LocalCommit[] {
  * A lane is "a commit we are still waiting to see". Walking the log in order:
  * the current commit takes the first lane expecting it (or a new one), its
  * first parent inherits that lane, and any further parents open lanes of
- * their own. The row is then one cell per lane — `*` for this commit, `|` for
- * a lane passing through, a space for an empty one.
+ * their own. The row is then one cell per lane: `●` for this commit, `│` for a
+ * lane passing through, a corner where a lane begins or ends at this row,
+ * and a space for an empty one. The corners point at the commit — `╮` and
+ * `╯` for a lane to its right, `╭` and `╰` for one to its left — so a merge
+ * and a branch point can be told apart at a glance.
  *
  * This is the honest 80% of a graph: it shows how many independent lines of
  * history are in flight and which one you are on, without the diagonal
@@ -655,17 +670,38 @@ export function graphLanes(commits: readonly LocalCommit[]): LocalCommit[] {
       if (mine === -1) mine = lanes.push(null) - 1;
       lanes[mine] = commit.oid;
     }
-    const row = lanes
-      .map((lane, i) => (i === mine ? "*" : lane === null ? " " : "|"))
-      .join("");
+    // Every other lane waiting for this same commit ends here. Without this
+    // they wait forever, and a repo where two branches share a parent grows
+    // a phantom line of history down the rest of the log.
+    const joining = new Set<number>();
+    lanes.forEach((lane, i) => {
+      if (i !== mine && lane === commit.oid) {
+        joining.add(i);
+        lanes[i] = null;
+      }
+    });
+
     const [first, ...others] = commit.parents;
     lanes[mine] = first ?? null;
+    const opening = new Set<number>();
     for (const parent of others) {
       if (lanes.includes(parent)) continue;
       const free = lanes.indexOf(null);
-      if (free === -1) lanes.push(parent);
-      else lanes[free] = parent;
+      if (free === -1) opening.add(lanes.push(parent) - 1);
+      else {
+        lanes[free] = parent;
+        opening.add(free);
+      }
     }
+
+    const row = lanes
+      .map((lane, i) => {
+        if (i === mine) return "●";
+        if (joining.has(i)) return i < mine ? "╰" : "╯";
+        if (opening.has(i)) return i < mine ? "╭" : "╮";
+        return lane === null ? " " : "│";
+      })
+      .join("");
     // Trim trailing empties so a briefly-wide graph does not indent the
     // whole log for the rest of the screen.
     return { ...commit, graph: row.replace(/ +$/, "") };

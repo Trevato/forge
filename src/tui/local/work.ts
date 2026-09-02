@@ -24,9 +24,10 @@ import { branchesScreen } from "./branches.ts";
 import { commitScreen } from "./commit.ts";
 import {
   failureText,
+  SEP,
+  syncText,
   Task,
   track,
-  trackText,
   type Local,
   type LocalRepo,
 } from "./common.ts";
@@ -113,6 +114,7 @@ export function workScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
       path: item.entry.path,
       ...(item.section === "staged" ? { staged: true } : {}),
       ...(item.section === "untracked" ? { untracked: true } : {}),
+      ...(item.section === "conflicted" ? { conflicted: true } : {}),
     });
     if (previewKey !== key) return; // the cursor moved on while we read
     preview.setFile(result.ok ? (result.value.files[0] ?? null) : null);
@@ -154,12 +156,12 @@ export function workScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
         binding(["b"], "branches"),
         binding(["l"], "log"),
         binding(["z"], "stashes"),
+        binding(["j", "k"], "move"),
+        // One line for the pair: they are the only two ways out of a paused
+        // rebase, and the help card has to fit in 24 rows.
         ...(seq === "none"
           ? []
-          : [
-              binding(["C"], `${seq} continue`),
-              binding(["X"], `${seq} abort`),
-            ]),
+          : [binding(["C", "X"], `${seq} continue / abort`)]),
       ];
     },
     async load() {
@@ -168,7 +170,7 @@ export function workScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const [body, foot] = split(area, "v", [fill(1), len(1)]);
-      drawFooter(s, foot!, c, status, seq, task);
+      drawFooter(s, foot!, c, status, seq, task, ctx.tick);
       if (status === null) {
         emptyState(s, body!, c, {
           title: "Not a repository",
@@ -435,11 +437,12 @@ function drawFiles(
       style(c.accent, bg),
       r.x + width,
     );
+    const letter = statusLetter(entry, item.section);
     x = s.text(
       x,
       y,
-      `${git.statusLetters(entry)} `,
-      style(letterTone(c, item.section), bg, BOLD),
+      `${letter}  `,
+      style(letterTone(c, letter), bg, BOLD),
       r.x + width,
     );
     const name =
@@ -460,14 +463,33 @@ function drawFiles(
   });
 }
 
-function letterTone(c: Tokens, section: Section): number {
-  switch (section) {
-    case "conflicted":
-      return c.danger;
-    case "staged":
+/**
+ * The one letter that says what happened to this file, on this side of the
+ * index. git's own two-letter code carries both sides at once ("M." vs ".M"),
+ * which is precise and unreadable — and redundant here, because the section
+ * the row is under already says which side you are looking at.
+ */
+function statusLetter(entry: git.FileEntry, section: Section): string {
+  if (section === "untracked") return "?";
+  if (section === "conflicted") return "U";
+  const side = section === "staged" ? entry.index : entry.work;
+  return side === "." || side === "" ? "M" : side;
+}
+
+/** Coloured by what the letter means, not by the section it sits in. */
+function letterTone(c: Tokens, letter: string): number {
+  switch (letter) {
+    case "A":
       return c.success;
-    case "untracked":
+    case "D":
+      return c.danger;
+    case "U":
+      return c.danger;
+    case "?":
       return c.attn;
+    case "R":
+    case "C":
+      return c.merged;
     default:
       return c.accent;
   }
@@ -481,38 +503,47 @@ function drawFooter(
   status: git.LocalStatus | null,
   seq: git.Sequence,
   task: Task,
+  tick: number,
 ): void {
   s.fill(r, " ", style(c.mutedFg, c.muted));
-  if (status === null) return;
-  let x = r.x + 1;
-  x = s.text(
-    x,
+  const right = r.x + r.w;
+  if (status === null) {
+    if (task.busy) busy(s, r, c, task, tick);
+    return;
+  }
+  let x = s.text(
+    r.x + 1,
     r.y,
     status.head ?? "detached",
     style(c.fg, c.muted, BOLD),
-    r.x + r.w,
+    right,
   );
-  if (status.upstream !== null)
-    x = s.text(
-      x,
-      r.y,
-      ` ${G.chevron} ${status.upstream}`,
-      style(c.mutedFg, c.muted),
-      r.x + r.w,
+  const say = (text: string, fg: number): void => {
+    x = s.text(x, r.y, ` ${SEP} `, style(c.faint, c.muted), right);
+    x = s.text(x, r.y, text, style(fg, c.muted), right);
+  };
+  // Both counts, always, when there is an upstream to count against: "↑2 ↓0"
+  // is a fact, and a missing "↓0" reads as a question.
+  if (status.upstream === null) say("no upstream", c.attn);
+  else {
+    say(
+      syncText(status.ahead, status.behind),
+      status.behind > 0 ? c.attn : status.ahead > 0 ? c.accent : c.mutedFg,
     );
-  const track = trackText(status.ahead, status.behind);
-  if (track !== "")
-    x = s.text(x, r.y, `  ${track}`, style(c.accent, c.muted), r.x + r.w);
-  if (seq !== "none")
-    s.text(x, r.y, `  ${seq} in progress`, style(c.attn, c.muted), r.x + r.w);
-  if (task.busy) {
-    s.line(
-      r,
-      0,
-      `${truncate(task.note, r.w - 4)}  `,
-      style(c.accent, c.muted),
-      "right",
-    );
-    spinner(s, r.x + r.w - 2, r.y, c, Date.now() >> 7);
+    say(status.upstream, c.mutedFg);
   }
+  if (seq !== "none") say(`${seq} in progress`, c.attn);
+  if (task.busy) busy(s, r, c, task, tick);
+}
+
+/** The progress line and its spinner, pinned to the right of a footer. */
+function busy(s: Surface, r: Rect, c: Tokens, task: Task, tick: number): void {
+  s.line(
+    r,
+    0,
+    `${truncate(task.note, Math.max(0, r.w - 4))}  `,
+    style(c.accent, c.muted),
+    "right",
+  );
+  spinner(s, r.x + r.w - 2, r.y, c, tick);
 }

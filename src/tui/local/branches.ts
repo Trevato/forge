@@ -12,18 +12,19 @@ import * as git from "../../git/local.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import { G } from "../term/screen.ts";
+import { BOLD } from "../term/style.ts";
 import {
   confirmScreen,
-  drawList,
   Filter,
   ListState,
   promptScreen,
   relTime,
-  type ListRow,
 } from "../screens/common.ts";
 import { fill, len, split } from "../ui/layout.ts";
+import type { Tokens } from "../ui/theme.ts";
 import { emptyState } from "../ui/widgets.ts";
-import { Task, trackText, type LocalRepo } from "./common.ts";
+import { Task, upstreamText, type LocalRepo } from "./common.ts";
+import { cell, drawBusy, drawRows, type Cell, type Column } from "./rows.ts";
 
 export function branchesScreen(ctx: Ctx, repo: LocalRepo): Screen {
   const list = new ListState();
@@ -56,6 +57,7 @@ export function branchesScreen(ctx: Ctx, repo: LocalRepo): Screen {
         binding(["R"], "rebase onto", { disabled: !other }),
         binding(["m"], "merge into current", { disabled: !other }),
         binding(["/"], "filter"),
+        binding(["j", "k"], "move"),
       ];
     },
     async load() {
@@ -63,8 +65,13 @@ export function branchesScreen(ctx: Ctx, repo: LocalRepo): Screen {
     },
     render(area, s) {
       const c = ctx.theme.c;
-      const [box, body] = split(area, "v", [len(filter.on ? 1 : 0), fill(1)]);
+      const [box, body, busy] = split(area, "v", [
+        len(filter.on ? 1 : 0),
+        fill(1),
+        len(task.busy ? 1 : 0),
+      ]);
       if (filter.on) ctx.setCursor(filter.render(s, box!, c, "filter"));
+      if (task.busy) drawBusy(s, busy!, c, task.note, ctx.tick);
       const items = shown();
       if (items.length === 0) {
         emptyState(s, body!, c, {
@@ -73,7 +80,7 @@ export function branchesScreen(ctx: Ctx, repo: LocalRepo): Screen {
         });
         return;
       }
-      drawList(s, body!, c, list, items.map(rowFor));
+      drawRows(s, body!, c, list, COLUMNS, items.map((b) => rowFor(c, b)));
     },
     key(e) {
       if (task.blocked) return true;
@@ -203,15 +210,21 @@ export function branchesScreen(ctx: Ctx, repo: LocalRepo): Screen {
   return screen;
 }
 
-function rowFor(branch: git.LocalBranch): ListRow {
-  const track = trackText(branch.ahead, branch.behind);
-  const upstream = branch.gone
-    ? "upstream gone"
-    : (branch.upstream ?? "no upstream");
-  return {
-    title: `${branch.current ? `${G.dot} ` : "  "}${branch.name}`,
-    secondary: upstream,
-    meta: [track, relTime(branch.date)].filter((p) => p !== "").join("  "),
-    ...(branch.gone ? { state: "closed" as const } : {}),
-  };
+/** current · name · upstream state · subject · age. */
+const COLUMNS: readonly Column[] = [
+  { gap: 0 },
+  { gap: 1, emphasis: true },
+  {},
+  { grow: true, min: 10 },
+  { align: "right", drop: 1 },
+];
+
+function rowFor(c: Tokens, branch: git.LocalBranch): Cell[] {
+  return [
+    cell(branch.current ? G.dot : " ", c.success),
+    cell(branch.name, branch.gone ? c.mutedFg : c.fg, branch.current ? BOLD : 0),
+    cell(upstreamText(branch), branch.gone ? c.danger : c.mutedFg),
+    cell(branch.subject, c.faint),
+    cell(relTime(branch.date), c.faint),
+  ];
 }

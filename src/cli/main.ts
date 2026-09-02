@@ -25,10 +25,16 @@ import {
   type Config,
 } from "./config.ts";
 import { systemNotifier } from "./notify.ts";
-import { createOut, type Out } from "./out.ts";
-import { printReport, since } from "./report.ts";
-import { changesBetween, syncOnce, type SyncReport } from "./sync.ts";
+import { cell, createOut, type Out } from "./out.ts";
+import { dirtyCount, printReport, settled, since } from "./report.ts";
+import {
+  changesBetween,
+  syncOnce,
+  type RepoReport,
+  type SyncReport,
+} from "./sync.ts";
 import { G } from "../tui/term/screen.ts";
+import { trackText } from "../tui/local/common.ts";
 
 /** Kept in step with package.json by hand; the CLI ships compiled. */
 const VERSION = "0.0.1";
@@ -79,7 +85,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     case "status":
       return sync(out, args, false);
     case "ls":
-      return list(out);
+      return list(out, args);
     case "pin":
       return setPin(out, args, true);
     case "unpin":
@@ -107,8 +113,8 @@ function usage(out: Out): void {
     b("  forge sync") +
       "                   [--watch] [--interval 5m] [--ff] [--root DIR]",
   );
-  out.line(b("  forge status") + "                 [--root DIR]");
-  out.line(b("  forge ls"));
+  out.line(b("  forge status") + "                 [--root DIR] [--json]");
+  out.line(b("  forge ls") + "                     [--json]");
   out.line(b("  forge pin <owner/name>"));
   out.line(b("  forge unpin <owner/name>"));
   out.line(b("  forge open <owner/name>") + "      [--web]");
@@ -189,6 +195,8 @@ async function sync(out: Out, args: Args, network: boolean): Promise<number> {
   const root = rootDir(args.value("root"));
   const ff = args.flag("ff");
 
+  const json = args.flag("json");
+
   const once = async (
     previous: SyncReport | null,
     quiet: boolean,
@@ -199,12 +207,15 @@ async function sync(out: Out, args: Args, network: boolean): Promise<number> {
       root,
       fetch: network,
       ff,
-      ...(quiet || !out.color
+      ...(quiet || json || !out.color
         ? {}
         : { onProgress: (repo, text) => status(out, `${repo}: ${text}`) }),
     });
-    if (!quiet && out.color) status(out, "");
-    if (previous === null || !quiet) printReport(out, report);
+    if (!quiet && !json && out.color) status(out, "");
+    if (previous === null || !quiet) {
+      if (json) out.line(JSON.stringify(asJson(report)));
+      else printReport(out, report);
+    }
     return report;
   };
 
@@ -216,48 +227,109 @@ async function sync(out: Out, args: Args, network: boolean): Promise<number> {
   const interval = parseDuration(args.value("interval")) ?? 300_000;
   const notify = systemNotifier();
   let previous = await once(null, false);
-  out.line();
-  out.line(
-    out.paint(
-      `watching ${previous.repos.length} repos every ${args.value("interval") ?? "5m"} — ctrl+c to stop`,
-      out.c.faint,
-    ),
-  );
+  if (!json) {
+    out.line();
+    out.line(
+      out.paint(
+        `watching ${previous.repos.length} repos every ${args.value("interval") ?? "5m"} — ctrl+c to stop`,
+        out.c.faint,
+      ),
+    );
+  }
   for (;;) {
     await sleep(interval);
     const report = await once(previous, true);
     const changes = changesBetween(previous, report);
     previous = report;
-    if (changes.length === 0) continue;
     // Only a real transition reaches the user; everything else is the
-    // report, which is there when they choose to look at it.
-    out.line();
-    out.line(new Date().toLocaleTimeString());
-    printReport(out, report);
+    // report, which is there when they choose to look at it. A watch that
+    // notified on every pass would be muted within the hour.
+    if (changes.length === 0) continue;
+    if (json) out.line(JSON.stringify({ ...asJson(report), changes }));
+    else {
+      out.line();
+      out.line(new Date().toLocaleTimeString());
+      printReport(out, report);
+    }
     await notify("forge", changes.slice(0, 4).join("\n"));
   }
 }
 
-async function list(out: Out): Promise<number> {
+async function list(out: Out, args: Args): Promise<number> {
   const loaded = await requireConfig(out);
   if (typeof loaded === "number") return loaded;
   // `ls` answers from disk, so it keeps working when the forge does not.
   const report = await syncOnce({
     api: new ForgeApi(loaded.url, loaded.token),
     token: loaded.token,
-    root: rootDir(),
+    root: rootDir(args.value("root")),
     fetch: false,
   });
+  if (args.flag("json")) {
+    out.line(JSON.stringify(asJson(report)));
+    return EXIT.ok;
+  }
   out.line(out.paint(report.root, out.c.faint));
-  for (const repo of report.repos)
-    out.line(
-      `  ${repo.owner}/${repo.name}` +
-        out.paint(
-          repo.present ? `  ${since(repo.lastFetch)}` : "  not cloned",
-          out.c.faint,
-        ),
-    );
+  out.table(
+    [
+      { header: "REPO", max: 44 },
+      { header: "BRANCH", max: 24 },
+      { header: "SYNC", align: "right" },
+      { header: "STATE", max: 28 },
+      { header: "FETCHED", align: "right" },
+    ],
+    report.repos.map((r) => [
+      cell(`${r.owner}/${r.name}`, r.present ? out.c.fg : out.c.mutedFg),
+      cell(r.present ? (r.branch ?? "detached") : "—", out.c.mutedFg),
+      cell(trackText(r.ahead, r.behind), out.c.attn),
+      lsState(out, r),
+      cell(r.present ? since(r.lastFetch) : "", out.c.faint),
+    ]),
+  );
   return EXIT.ok;
+}
+
+function lsState(out: Out, r: RepoReport): ReturnType<typeof cell> {
+  if (!r.present) return cell("not cloned", out.c.attn);
+  const dirty = dirtyCount(r);
+  if (dirty > 0) return cell(`${dirty} dirty`, out.c.accent);
+  if (settled(r)) return cell(G.check, out.c.success);
+  return cell(r.upstream === null ? "no upstream" : "", out.c.faint);
+}
+
+/**
+ * The report as data. `--json` exists so a script can branch on the same
+ * facts the table shows without parsing columns — so every field the table
+ * draws from is here, spelled the way the rest of the client spells it.
+ */
+function asJson(report: SyncReport): Record<string, unknown> {
+  return {
+    root: report.root,
+    pinsUnavailable: report.pinsUnavailable,
+    failures: report.failures,
+    repos: report.repos.map((r: RepoReport) => ({
+      owner: r.owner,
+      name: r.name,
+      path: r.dir,
+      present: r.present,
+      cloned: r.cloned,
+      pinned: r.pinned,
+      branch: r.branch,
+      upstream: r.upstream,
+      ahead: r.ahead,
+      behind: r.behind,
+      staged: r.staged,
+      changed: r.changed,
+      untracked: r.untracked,
+      conflicted: r.conflicted,
+      dirty: dirtyCount(r),
+      stashes: r.stashes,
+      unpushed: r.unpushed,
+      fastForwarded: r.fastForwarded,
+      lastFetch: r.lastFetch === null ? null : r.lastFetch.toISOString(),
+      error: r.error,
+    })),
+  };
 }
 
 // ── pins ─────────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@
  * "save and quit" ceremony because there is no file.
  */
 
+import type { Diff } from "../../git/diff.ts";
 import * as git from "../../git/local.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
@@ -14,8 +15,8 @@ import { style } from "../term/style.ts";
 import { displayWidth, truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { Textarea } from "../ui/textarea.ts";
-import { card, input } from "../ui/widgets.ts";
-import { Task } from "./common.ts";
+import { card, input, spinner } from "../ui/widgets.ts";
+import { SEP, Task } from "./common.ts";
 
 /** Git's own convention, and the width every log viewer assumes. */
 const SUBJECT_LIMIT = 50;
@@ -30,6 +31,7 @@ export function commitScreen(ctx: Ctx, dir: string, o: CommitOpts): Screen {
   const task = new Task(ctx);
   let subject = "";
   let focus: "subject" | "body" = "subject";
+  let staged = "";
 
   const submit = (): void => {
     const text = subject.trim();
@@ -59,14 +61,21 @@ export function commitScreen(ctx: Ctx, dir: string, o: CommitOpts): Screen {
       ];
     },
     async load() {
+      // What is actually about to be committed, in one line. Writing a
+      // message for a diff you cannot see is how "fix tests" gets written
+      // over a thirty-file refactor.
+      const diff = await git.diff(dir, { staged: true, context: 1 });
+      if (diff.ok) staged = statLine(diff.value);
       // An amend starts from the message it is replacing; anything else is
       // an invitation to retype what you already wrote.
-      if (!o.amend) return;
-      const head = await git.headMessage(dir);
-      if (!head.ok) return;
-      const [first = "", ...rest] = head.value.split("\n");
-      subject = first;
-      body.setValue(rest.join("\n").replace(/^\n+/, ""));
+      if (o.amend) {
+        const head = await git.headMessage(dir);
+        if (head.ok) {
+          const [first = "", ...rest] = head.value.split("\n");
+          subject = first;
+          body.setValue(rest.join("\n").replace(/^\n+/, ""));
+        }
+      }
       ctx.invalidate();
     },
     render(area, s) {
@@ -75,7 +84,12 @@ export function commitScreen(ctx: Ctx, dir: string, o: CommitOpts): Screen {
         title: o.amend ? "Amend the last commit" : "Commit",
         focused: true,
       });
-      const [head, gap, text] = split(inner, "v", [len(2), len(1), fill(1)]);
+      const [head, stat, gap, text] = split(inner, "v", [
+        len(2),
+        len(1),
+        len(1),
+        fill(1),
+      ]);
       const cursor = input(s, { ...head!, h: 1 }, c, {
         value: subject,
         placeholder: "a short summary",
@@ -93,6 +107,23 @@ export function commitScreen(ctx: Ctx, dir: string, o: CommitOpts): Screen {
         style(over > 0 ? c.attn : c.faint, c.card),
         head!.x + head!.w,
       );
+      if (task.busy) {
+        const x = spinner(s, stat!.x, stat!.y, c, ctx.tick);
+        s.text(
+          x + 1,
+          stat!.y,
+          truncate(task.note, Math.max(0, stat!.w - 2)),
+          style(c.accent, c.card),
+          stat!.x + stat!.w,
+        );
+      } else
+        s.text(
+          stat!.x,
+          stat!.y,
+          truncate(staged, stat!.w),
+          style(c.mutedFg, c.card),
+          stat!.x + stat!.w,
+        );
       s.text(
         gap!.x,
         gap!.y,
@@ -142,4 +173,12 @@ export function commitScreen(ctx: Ctx, dir: string, o: CommitOpts): Screen {
       return true;
     },
   };
+}
+
+/** "3 files · +42 -7 staged", or what to do about there being none. */
+function statLine(diff: Diff): string {
+  const files = diff.files.length;
+  if (files === 0) return "nothing staged";
+  const noun = files === 1 ? "file" : "files";
+  return `${files} ${noun} ${SEP} +${diff.additions} -${diff.deletions} staged`;
 }

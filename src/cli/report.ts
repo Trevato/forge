@@ -9,6 +9,7 @@
 
 import { G } from "../tui/term/screen.ts";
 import { BOLD, DIM } from "../tui/term/style.ts";
+import { AHEAD, trackText } from "../tui/local/common.ts";
 import { cell, type Cell, type Out } from "./out.ts";
 import { isDirty, type RepoReport, type SyncReport } from "./sync.ts";
 
@@ -35,6 +36,7 @@ export function printReport(out: Out, report: SyncReport): void {
       { header: "REPO", max: 44 },
       { header: "BRANCH", max: 24 },
       { header: "SYNC", align: "right" },
+      { header: "DIRTY", align: "right" },
       { header: "STATE", max: 28 },
       { header: "FETCHED", align: "right" },
     ],
@@ -54,7 +56,7 @@ export function printReport(out: Out, report: SyncReport): void {
       );
     else if (r.unpushed.length > 0)
       out.line(
-        `${out.paint(G.up, out.c.attn)} ${name(r)}: ${r.unpushed.join(", ")} not on the workbench`,
+        `${out.paint(AHEAD, out.c.attn)} ${name(r)}: ${r.unpushed.join(", ")} not on the workbench`,
       );
   }
 }
@@ -67,6 +69,28 @@ function name(r: RepoReport): string {
   return `${r.owner}/${r.name}`;
 }
 
+/** How many files are in the way of a clean pull — one number, not a list. */
+export function dirtyCount(r: RepoReport): number {
+  return r.staged + r.changed + r.untracked + r.conflicted;
+}
+
+/**
+ * Nothing to say about this repo: cloned, clean, level with its upstream and
+ * holding nothing back. That silence is the report's whole point — whatever
+ * is left on the page is a thing to look at — so it gets one tick.
+ */
+export function settled(r: RepoReport): boolean {
+  return (
+    r.present &&
+    r.error === null &&
+    dirtyCount(r) === 0 &&
+    r.ahead === 0 &&
+    r.behind === 0 &&
+    r.stashes === 0 &&
+    r.upstream !== null
+  );
+}
+
 function row(out: Out, r: RepoReport): Cell[] {
   const c = out.c;
   if (!r.present)
@@ -74,40 +98,38 @@ function row(out: Out, r: RepoReport): Cell[] {
       cell(name(r), c.mutedFg),
       cell("—", c.faint),
       cell("", c.faint),
+      cell("", c.faint),
       cell(r.error === null ? "not cloned" : "clone failed", c.attn),
       cell("", c.faint),
     ];
 
-  const sync: string[] = [];
-  if (r.ahead > 0) sync.push(`${G.up}${r.ahead}`);
-  if (r.behind > 0) sync.push(`${G.down}${r.behind}`);
-
   const state: string[] = [];
   if (r.conflicted > 0) state.push(`${r.conflicted} conflicted`);
-  if (r.staged > 0) state.push(`${r.staged} staged`);
-  if (r.changed > 0) state.push(`${r.changed} changed`);
-  if (r.untracked > 0) state.push(`${r.untracked} new`);
   if (r.stashes > 0) state.push(`${r.stashes} stashed`);
   if (r.fastForwarded) state.push("fast-forwarded");
   if (r.cloned) state.push("cloned");
-  if (r.upstream === null && state.length === 0) state.push("no upstream");
+  if (r.upstream === null) state.push("no upstream");
+  if (r.error !== null) state.push("failed");
 
   const tone =
-    r.error !== null
+    r.error !== null || r.conflicted > 0
       ? c.danger
-      : r.conflicted > 0
-        ? c.danger
-        : r.behind > 0
-          ? c.attn
-          : isDirty(r)
-            ? c.accent
-            : c.mutedFg;
+      : r.behind > 0
+        ? c.attn
+        : isDirty(r)
+          ? c.accent
+          : c.mutedFg;
+  const dirty = dirtyCount(r);
+  const sync = trackText(r.ahead, r.behind);
 
   return [
     cell(name(r), r.pinned ? c.fg : c.mutedFg, r.pinned ? 0 : DIM),
     cell(r.branch ?? "detached", c.mutedFg),
-    cell(sync.join(" "), sync.length === 0 ? c.faint : tone, BOLD),
-    cell(state.join(", ") || "clean", state.length === 0 ? c.faint : tone),
+    cell(sync, sync === "" ? c.faint : tone, BOLD),
+    cell(dirty === 0 ? "" : String(dirty), dirty === 0 ? c.faint : c.accent),
+    settled(r) && state.length === 0
+      ? cell(G.check, c.success)
+      : cell(state.join(", "), state.length === 0 ? c.faint : tone),
     cell(since(r.lastFetch), c.faint),
   ];
 }

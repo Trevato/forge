@@ -12,19 +12,14 @@ import type { FileDiff, Hunk } from "../../git/diff.ts";
 import * as git from "../../git/local.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
-import {
-  G,
-  type Rect,
-  type Screen as Surface,
-  type Span,
-} from "../term/screen.ts";
+import type { Rect, Screen as Surface, Span } from "../term/screen.ts";
 import { BOLD, style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { confirmScreen, drawLines, Scroll } from "../screens/common.ts";
 import { numberWidth, renderFileDiff } from "../ui/diff.ts";
-import { emptyState } from "../ui/widgets.ts";
+import { emptyState, spinner } from "../ui/widgets.ts";
 import type { Tokens } from "../ui/theme.ts";
-import { Task } from "./common.ts";
+import { SEP, Task } from "./common.ts";
 
 export type Section = "staged" | "unstaged" | "untracked" | "conflicted";
 
@@ -145,12 +140,18 @@ export function hunkScreen(ctx: Ctx, o: HunkScreenOpts): Screen {
   const task = new Task(ctx);
   const staged = o.section === "staged";
   const untracked = o.section === "untracked";
+  // A conflicted file is staged whole, never by hunk: the hunks here are the
+  // conflict markers, and half-staging those is how a "<<<<<<<" reaches a
+  // commit. Marking it resolved is the only sensible verb.
+  const conflicted = o.section === "conflicted";
+  const whole = untracked || conflicted;
 
   const reload = async (): Promise<void> => {
     const result = await git.diff(o.dir, {
       path: o.path,
       ...(staged ? { staged: true } : {}),
       ...(untracked ? { untracked: true } : {}),
+      ...(conflicted ? { conflicted: true } : {}),
     });
     view.setFile(result.ok ? (result.value.files[0] ?? null) : null);
     o.onChange();
@@ -175,9 +176,11 @@ export function hunkScreen(ctx: Ctx, o: HunkScreenOpts): Screen {
         binding(["j", "k"], "scroll"),
         ...(staged
           ? [binding(["u"], "unstage hunk")]
-          : untracked
-            ? [binding(["s"], "stage file")]
-            : [binding(["s"], "stage hunk"), binding(["d"], "discard hunk")]),
+          : conflicted
+            ? [binding(["s"], "stage resolved")]
+            : untracked
+              ? [binding(["s"], "stage file")]
+              : [binding(["s"], "stage hunk"), binding(["d"], "discard hunk")]),
         binding(["esc"], "back"),
       ];
     },
@@ -189,26 +192,41 @@ export function hunkScreen(ctx: Ctx, o: HunkScreenOpts): Screen {
       const head = { x: area.x, y: area.y, w: area.w, h: 1 };
       const body = { x: area.x, y: area.y + 1, w: area.w, h: area.h - 1 };
       const count = view.hunks.length;
-      const where =
-        count === 0
-          ? o.path
-          : `${o.path}  ${G.chevron} hunk ${view.index + 1}/${count}`;
       s.fill(head, " ", style(c.mutedFg, c.muted));
-      s.text(
+      const right = head.x + head.w;
+      const room = Math.max(
+        0,
+        head.w - 2 - (count === 0 ? 0 : 12) - sectionNote(o.section).length - 6,
+      );
+      let x = s.text(
         head.x + 1,
         head.y,
-        truncate(`${sectionLabel(o.section)}  ${where}`, head.w - 2),
+        truncate(o.path, room),
         style(c.fg, c.muted, BOLD),
-        head.x + head.w,
+        right,
       );
-      if (task.busy)
-        s.line(head, 0, `${task.note} `, style(c.accent, c.muted), "right");
+      const say = (text: string): void => {
+        x = s.text(x, head.y, ` ${SEP} `, style(c.faint, c.muted), right);
+        x = s.text(x, head.y, text, style(c.mutedFg, c.muted), right);
+      };
+      if (count > 0) say(`hunk ${view.index + 1}/${count}`);
+      say(sectionNote(o.section));
+      if (task.busy) {
+        s.line(
+          head,
+          0,
+          `${truncate(task.note, Math.max(0, head.w - 4))}  `,
+          style(c.accent, c.muted),
+          "right",
+        );
+        spinner(s, head.x + head.w - 2, head.y, c, ctx.tick);
+      }
       view.render(s, body, c);
     },
     key(e) {
       if (task.blocked) return true;
       if (e.key === "s" && !staged) {
-        if (untracked)
+        if (whole)
           task.run("stage", () => git.stagePath(o.dir, o.path), reload);
         else
           act("stage hunk", (hunk) =>
@@ -222,7 +240,7 @@ export function hunkScreen(ctx: Ctx, o: HunkScreenOpts): Screen {
         );
         return true;
       }
-      if (e.key === "d" && !staged && !untracked) {
+      if (e.key === "d" && !staged && !whole) {
         const hunk = view.current;
         if (hunk === undefined) return true;
         ctx.push(
@@ -261,6 +279,7 @@ export function hunkScreen(ctx: Ctx, o: HunkScreenOpts): Screen {
   return screen;
 }
 
+/** The section header above a group of files: CHANGED, NEW, STAGED. */
 export function sectionLabel(section: Section): string {
   switch (section) {
     case "staged":
@@ -271,5 +290,19 @@ export function sectionLabel(section: Section): string {
       return "New";
     case "conflicted":
       return "Conflicted";
+  }
+}
+
+/** The same four states as a phrase, for a header read left to right. */
+export function sectionNote(section: Section): string {
+  switch (section) {
+    case "staged":
+      return "staged";
+    case "unstaged":
+      return "changed";
+    case "untracked":
+      return "new file";
+    case "conflicted":
+      return "conflicted";
   }
 }
