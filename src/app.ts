@@ -18,6 +18,15 @@ export interface ForgeConfig {
   dataDir: string;
   /** @default 3000 */
   port?: number;
+  /** The hostname clone URLs are built from. @default "localhost" */
+  host?: string;
+  /**
+   * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
+   * one back here when it was asked for an ephemeral port. Every surface that
+   * shows an `ssh://` clone URL reads it from here, so there is one answer.
+   * Undefined means the forge is running without SSH.
+   */
+  sshPort?: number;
 }
 
 export interface App {

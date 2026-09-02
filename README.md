@@ -15,10 +15,11 @@ feeling on a foundation sized for one person.
 
 ```sh
 bun install          # dev-only: types + tsc, no runtime deps
-bun run src/main.ts  # forge is up on http://localhost:3000
+bun run src/main.ts  # web on :3000, ssh on :2222
 ```
 
-The first account you create becomes the admin. Then:
+The first account you create becomes the admin — from the browser, the API, or
+a terminal (`ssh -p 2222 localhost` on a fresh forge offers to create it). Then:
 
 ```sh
 # mint a token, create a repo, push to it
@@ -35,10 +36,33 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
 
-Configuration is two environment variables: `FORGE_DATA` (default `data/`) and
-`PORT` (default `3000`). Everything a forge instance _is_ lives under the data
-directory — the SQLite index and the bare repos, in plain layout. Tar it up and
-it moves.
+## Live in the terminal
+
+`ssh` into the forge and you get the whole thing — repositories, code, issues,
+pull requests with a real diff viewer, review comments, merges, settings,
+tokens and keys — as a keyboard-driven terminal app. The same port serves git.
+
+```sh
+ssh -p 2222 localhost                        # the terminal UI
+git clone ssh://localhost:2222/you/hello.git # git, same port
+```
+
+Your SSH key is your identity. A key the forge knows signs you straight in; any
+other key browses public repos as a guest and can press `s` to sign in with a
+username and password — which links that key to your account, so the next
+connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
+to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
+
+Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
+stdio against your local data directory. That `--user` flag is a development
+convenience and exists only there: over SSH, the key decides who you are and
+nothing else can.
+
+Configuration is environment variables, all with defaults: `FORGE_DATA`
+(`data/`), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
+`FORGE_HOST` (`localhost`, the hostname in clone URLs). Everything a forge
+instance _is_ lives under the data directory — the SQLite index, the bare
+repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
 ## Develop
 
@@ -58,7 +82,10 @@ src/
   core/       domain: users, sessions, tokens, repos, events, schema
   actions/    every mutation once: authorize, mutate, record the event
   http/       router, request context, the server
-  web/        SSR: html tag, theme palettes, design tokens, markdown, pages
+  design/     the theme registry both surfaces render
+  web/        SSR: html tag, design tokens, markdown, pages
+  ssh/        a zero-dependency SSH server: transport, userauth, channels
+  tui/        the terminal UI: runtime, widgets, screens, the ssh front door
 ```
 
 Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.
@@ -69,7 +96,7 @@ work here.
 
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.
-- **Git** — push and pull over HTTPS, browse code (tree, blob with line anchors,
+- **Git** — push and pull over HTTPS **and SSH**, browse code (tree, blob with line anchors,
   commit history) with README rendering and **syntax highlighting**, protected
   default branches (force-push and deletion refused, honest fast-forwards
   allowed).
@@ -88,6 +115,10 @@ work here.
   flags new activity, no refresh.
 - **Commit pages** — every commit's diff through the same viewer.
 - **Settings** — visibility, branch protection, and labels.
+- **A terminal UI** — `ssh` in for the whole forge: dashboard, code browsing
+  with syntax highlighting, issues and pulls with live-updating threads, the
+  diff viewer with inline review comments, merges, settings, orgs, tokens and
+  keys. Six themes, remembered per account.
 - **Automation** — a JSON API covering repos, issues, forks, and orgs (the
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
   delivery with retry).
@@ -96,5 +127,5 @@ Pages render without a line of JavaScript and are designed thumb-first. Six
 premade themes (from warm paper to polar night) switch instantly and persist in
 a cookie — even that works script-free. Still **zero runtime dependencies**.
 
-Not yet: SSH transport, CI runners, and an AI build crew. The event outbox and
-API surface are shaped so these arrive as additions, not rewrites.
+Not yet: CI runners and an AI build crew. The event outbox and API surface are
+shaped so these arrive as additions, not rewrites.

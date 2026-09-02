@@ -59,13 +59,16 @@ tripling the cognitive cost.
 
 ```
 src/
-  main.ts            boot: open db, ensure dirs, mount server, start workers
+  main.ts            boot: open db, ensure dirs, mount servers, start workers
   kernel/            zero-dep primitives: result, error, id, log, db
-  git/               bare repos, smart HTTP, batch readers, hooks, ref guards
+  git/               bare repos, smart HTTP + SSH, batch readers, hooks, guards
   core/              domain: users, sessions, tokens, repos, issues, pulls, events
   actions/           every mutation as one function: authorize, mutate, record
   http/              router, auth resolution, response shapes, the JSON API
+  design/            the theme registry both surfaces render
   web/               SSR: html template tag, design tokens, pages, components
+  ssh/               the SSH server: transport, userauth, channels
+  tui/               the terminal UI: runtime, widgets, screens, the front door
   test/              bun test — protocol-level and adversarial
 ```
 
@@ -110,8 +113,14 @@ curate, never implement.
   forwards `Git-Protocol: version=2` into `GIT_PROTOCOL`, sets exact
   `application/x-git-*` content types, `Cache-Control: no-cache`, and the
   empty-repo advertisement case. Auth: HTTP Basic with username + personal
-  access token over TLS; 401 + `WWW-Authenticate` challenge. SSH is a later
-  additive (forced-command dispatcher), not a redesign.
+  access token over TLS; 401 + `WWW-Authenticate` challenge.
+- **Serving (SSH)**: the same pipe without the request framing. A client runs
+  `git-upload-pack '/owner/repo.git'` on an exec channel and speaks the
+  *stateful* protocol down it — no `--stateless-rpc`, no round-trip to bound
+  the transfer, so writes back to the peer are paced by `SshSession.drain()`
+  (a clone's pack outruns the channel window otherwise). `git/smart-ssh.ts`
+  parses the command and plumbs bytes; the access decision lives with the
+  caller, exactly as it does for HTTP.
 - **Reads for the UI**: a small pool of long-lived `git cat-file --batch` /
   `--batch-check` processes per hot repo for object access;
   `for-each-ref` / `rev-list` / `diff` / `blame --porcelain` spawned per
@@ -179,6 +188,74 @@ Two lessons Forgejo is still paying for, designed in up front:
   ≥44px; the fast paths (open issue, comment, review a diff, merge) are
   designed on a phone frame first and enhanced for desktop.
 
+## The SSH transport
+
+One port answers two things. `ssh forge.example` opens the terminal UI;
+`git clone ssh://forge.example/owner/repo.git` runs git on an exec channel.
+The server (`ssh/`) is ours — transport, userauth and channels, zero
+dependencies, `session` channels only (no forwarding, no X11, no subsystems:
+every other channel type is attack surface).
+
+**A key is an identity, not a permit.** `authorize` admits every well-formed
+key, and what the key *is* decides what the session can do:
+
+- a key registered to an account (`user_key.fingerprint`) → that user, with
+  `last_used_at` touched;
+- any other key → a **guest**, who browses public repos exactly as an
+  anonymous web visitor does.
+
+A guest becomes someone by signing in: username and password verified with the
+same `verifyPassword` the web uses, then the presenting key is registered to
+that account through the `addSshKey` action. The connection is that user from
+that moment on — no reconnect — and the next connection needs no password. On a
+forge with no accounts at all, the same screen creates the first one (which is
+the admin), so a fresh forge is usable from a terminal alone.
+
+There is no impersonation path. A session acts as the account its key maps to
+and nothing else; the login name in `git@host` is decorative. The local dev
+runner (`tui/main.ts --user alice`) is the one place an account can be chosen
+by name, it runs over stdio, and it is not reachable over SSH.
+
+Git over SSH enforces the HTTP matrix, function for function: `canRead` for
+upload-pack (guests included), a signed-in `canWrite` for receive-pack,
+push-to-create for a writer pushing to a repo that does not exist yet, and
+`hookEnv` carrying the actor so pre-receive protection and post-receive events
+fire identically to a push over HTTPS. A repo you cannot see is "not found" —
+the same conflation as everywhere else.
+
+## The terminal UI
+
+`ssh forge.example` is a full-control client, not a status page: browse,
+review, comment, label, merge, configure, and administer. It is built on the
+runtime in `tui/`, whose one architectural rule is the `Terminal` boundary —
+`write` / `onInput` / `size` / `onResize` / `onClose` / `close` and the `TERM`
+the client announced. Everything above that line is pure, which is what lets
+one runtime serve a local stdio session, an SSH channel, and a headless test
+with no branch anywhere.
+
+- **The loop** is a screen stack with a dirty flag and a 16ms frame tick. Not
+  Elm: each stack entry owns an `AbortController` that `pop()` aborts, so
+  cancellation costs one line and nothing lands on a dead screen. A screen's
+  bus subscription is released by that same signal — popping is what
+  unsubscribes.
+- **Rendering** is a cell buffer diffed against the previous frame, emitting
+  the minimum inside a synchronized-output pair. The theme's background is
+  painted across the whole screen (terminal.shop's rule): a TUI that lets the
+  user's own background show through looks like six half-themes.
+- **The design system is shared, not parallel.** `design/themes.ts` is the one
+  palette, `web/highlight.ts` the one tokenizer, `web/worddiff.ts` the one
+  intra-line diff — so a "danger" badge, a merged pill and a changed
+  substring mean and look the same in both surfaces by construction.
+- **Screens are adapters over actions.** Every mutation a screen performs is
+  an `actions/` call with the resolved user as the actor; `grep bus.append
+src/tui` finds nothing. The access helpers are the web's, so the answer to
+  "can this session see it" is computed in one place for all three surfaces —
+  including the command palette, where resolving `owner/name` runs `canRead`
+  before it opens anything.
+- **Failure is bounded.** A load rejection becomes a toast; a render throw
+  becomes one red line; an input handler throw ends *that session* and leaves
+  the process serving. All three are tested.
+
 ## Concurrency invariants (day one, not hardening)
 
 Paid-for lessons from open-platform-ts, designed in structurally:
@@ -227,9 +304,10 @@ REST API over repos and issues. Fast on a phone. Deployable as one binary + git.
 diff viewer with syntax highlighting, review comments anchored by content hash,
 commit pages, settings, webhook delivery from the event outbox (HMAC-signed,
 retried), SSE live updates, forks (alternates-backed, detach-before-delete)
-with cross-repo pull requests, and organizations + teams with membership-based
-permissions.
+with cross-repo pull requests, organizations + teams with membership-based
+permissions, an SSH transport (git and a terminal UI on one port), and the
+terminal UI itself.
 
-Not in v1: SSH transport, CI runners (the events + API surface is designed so a
-runner integrates without core changes), an AI build crew (the harness — it
-drives the API and events already built), federation, package registry.
+Not in v1: CI runners (the events + API surface is designed so a runner
+integrates without core changes), an AI build crew (the harness — it drives the
+API and events already built), federation, package registry.

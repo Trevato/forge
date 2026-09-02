@@ -66,14 +66,15 @@ undefined` — handle it), `exactOptionalPropertyTypes` (don't pass `undefined`
 
 ```
 src/
-  main.ts     boot: hook dispatch, reconcile, serve, delivery worker
+  main.ts     boot: hook dispatch, reconcile, serve (http + ssh), delivery worker
   app.ts      composition root — one data dir = one forge (dataDir is resolved
               absolute here; the hook socket depends on it)
   kernel/     zero-dep primitives: result, error, id (monotonic ULID), log,
               db (sqlite/WAL), hash
   git/        env (runGit*), read (cat-file batch readers), diff, merge (bare
               plumbing, no work tree), write (commit via plumbing), repos
-              (fork via alternates), smart-http, hooks (+ hook-entry, guard)
+              (fork via alternates), smart-http, smart-ssh (exec-channel git),
+              hooks (+ hook-entry, guard)
   core/       domain: users (kind user|org), sessions, tokens (ro/rw/admin),
               repos (access checks), issues (issue|pull), pulls, reviews,
               orgs/teams, webhooks, keys (ssh public keys), events
@@ -87,7 +88,20 @@ src/
   web/        SSR: html tag, style (the stylesheet),
               layout (CSP+nonce, topbar, theme switcher), markdown, highlight,
               diff-view, pages/*
+  ssh/        the SSH server: transport (kex/ciphers), auth (publickey),
+              channels (session only), keys, wire — zero deps, no forwarding
+  tui/        the terminal UI. term/ is the transport boundary (`Terminal`);
+              app/ is the loop (screen stack, keys, palette); ui/ is the widget
+              vocabulary; screens/* are adapters over actions/; forge.ts is the
+              root + palette; ssh.ts is the front door (identity, git exec,
+              `serveForgeSsh`); main.ts is the stdio dev runner
 ```
+
+Two rules the TUI must keep. `tui/term/` is the transport boundary — no screen,
+widget or loop code reaches past it to `process`, which is what lets one runtime
+serve stdio, an SSH channel and a headless test with no branch anywhere. And a
+session acts as the account its **key** maps to and nothing else; the `--user`
+flag exists only in the stdio dev runner and is never reachable over SSH.
 
 ## Recipes
 
@@ -104,6 +118,15 @@ src/
   access errors have fixed shapes, anything else is a 422 code. Lists are
   `{ items, next_cursor }` via `paged(...)`. Web forms follow the same shape
   via `readForm(ctx, scope)`.
+- **Add a TUI screen:** one file under `tui/screens/`, exporting
+  `(f: Session, ctx: Ctx, …) => Screen`. Compose `ui/widgets`; take navigation
+  from `screens/common.ts` (`ListState`, `Scroll`, `Filter`, `drawList`,
+  `confirmScreen`/`promptScreen`/`pickerScreen`); load in `load(signal)` and
+  register anything long-lived against that signal. Mutations call an action
+  with `f.user` as the actor and surface a failed `Result` through
+  `ctx.toast(errorText(error), "danger")`. Reads go through the same
+  `canRead`/`canWrite`/`canAdmin` helpers the web uses — a screen is a client,
+  never a way around them.
 - **API error shape:** every error is `{ error, message }` — `error` is a stable
   machine code to branch on, `message` a human hint. Reuse the helpers
   (`notFound`, `noRoute`, `unauthorized`, `forbidden`) or a specific 422 code;
@@ -118,8 +141,8 @@ src/
 
 ## Not yet built (deliberately)
 
-SSH transport, CI runners / a checks API on PRs, a self-describing (OpenAPI)
-endpoint, and the AI build crew. The event outbox and API surface are shaped so
-these arrive as additions, not rewrites. `docs/ARCHITECTURE.md` closes with the
+CI runners / a checks API on PRs, a self-describing (OpenAPI) endpoint, and the
+AI build crew. The event outbox and API surface are shaped so these arrive as
+additions, not rewrites. `docs/ARCHITECTURE.md` closes with the
 reasoning. "Forgejo is my harness" is the north star — automation is a
 first-class user, not an afterthought.

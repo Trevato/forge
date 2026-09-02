@@ -10,6 +10,7 @@ import {
   parseAuthorizedKey,
   type UserKey,
 } from "../core/keys.ts";
+import { setUserSetting } from "../core/settings.ts";
 import {
   createToken as mintToken,
   deleteToken as revokeToken,
@@ -172,5 +173,23 @@ export function deleteSshKey(
     actorId: user.value.id,
     payload: { fingerprint: removed.fingerprint, name: removed.name },
   });
+  return ok();
+}
+
+/**
+ * Record an interface preference (the terminal's theme, today). Authorized
+ * like every other mutation, but deliberately eventless: see
+ * `core/settings.ts` — nothing outside the surface that wrote it consumes
+ * these, and a theme keypress must not enter the webhook outbox.
+ */
+export function setPreference(
+  app: App,
+  actor: User | undefined,
+  key: string,
+  value: string,
+): Result<void, "unauthorized"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  setUserSetting(app.db, user.value.id, key, value);
   return ok();
 }

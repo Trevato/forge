@@ -100,6 +100,11 @@ export interface AppOpts extends SessionOpts {
   readonly theme?: ThemeName;
   readonly root: (ctx: Ctx) => Screen;
   readonly commands?: (ctx: Ctx) => Command[];
+  /**
+   * Called whenever the theme settles on a new value — the picker closing or
+   * `ctx.setTheme`. The loop knows nothing about persistence; the host does.
+   */
+  readonly onTheme?: (name: ThemeName) => void;
 }
 
 export class App {
@@ -154,11 +159,7 @@ export class App {
       setCursor: (pos) => {
         app.cursor = pos;
       },
-      setTheme: (name) => {
-        app.themeName = name;
-        app.themeIndex = Math.max(0, THEME_NAMES.indexOf(name));
-        app.invalidate();
-      },
+      setTheme: (name) => app.applyTheme(name),
       quit: () => app.stop(),
       get theme() {
         return theme(app.themeName);
@@ -227,12 +228,23 @@ export class App {
   private top(): Entry {
     const entry = this.stack[this.stack.length - 1];
     // An empty stack is a broken invariant, not an expected outcome.
-    if (entry === undefined) defect("tui.empty_stack", "the screen stack is empty");
+    if (entry === undefined)
+      defect("tui.empty_stack", "the screen stack is empty");
     return entry;
   }
 
   invalidate(): void {
     this.dirty = true;
+  }
+
+  /** The one place the theme changes, so persistence has one hook to sit on. */
+  private applyTheme(name: ThemeName, notify = true): void {
+    if (this.themeName !== name || notify) {
+      this.themeName = name;
+      this.themeIndex = Math.max(0, THEME_NAMES.indexOf(name));
+      if (notify) this.opts.onTheme?.(name);
+    }
+    this.invalidate();
   }
 
   toast(text: string, tone: Tone = "default"): void {
@@ -362,6 +374,7 @@ export class App {
       return;
     }
     if (this.overlay === "theme") {
+      let chosen = false;
       if (e.key === "down" || e.key === "j")
         this.themeIndex = (this.themeIndex + 1) % THEME_NAMES.length;
       else if (e.key === "up" || e.key === "k")
@@ -372,11 +385,14 @@ export class App {
         e.key === "esc" ||
         e.key === "t" ||
         e.key === "q"
-      )
+      ) {
         this.overlay = "none";
+        chosen = true;
+      }
       // Live preview: the whole screen repaints in the highlighted theme, so
-      // choosing is a matter of looking rather than remembering.
-      this.themeName = THEME_NAMES[this.themeIndex] ?? this.themeName;
+      // choosing is a matter of looking rather than remembering. Only the
+      // choice is announced — not every frame of the browse.
+      this.applyTheme(THEME_NAMES[this.themeIndex] ?? this.themeName, chosen);
       return;
     }
     this.overlay = "none";

@@ -1,0 +1,390 @@
+/**
+ * One pull request: the conversation, the merge box, and the files tab where
+ * a review comment is anchored to the diff line the cursor is standing on.
+ *
+ * The merge box states are the whole point of the screen — a reviewer needs
+ * to know in one glance whether this can land, and why not when it cannot.
+ */
+
+import { addComment, setIssueState } from "../../actions/issues.ts";
+import { addReview, mergePull } from "../../actions/pulls.ts";
+import { listComments, type Comment } from "../../core/issues.ts";
+import {
+  getPull,
+  pullDiff,
+  type Pull,
+  type PullStatus,
+} from "../../core/pulls.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
+import {
+  anchorKey,
+  listReviewComments,
+  withOutdated,
+  type AnchoredReview,
+} from "../../core/reviews.ts";
+import type { Diff } from "../../git/diff.ts";
+import type { Ctx, Screen } from "../app/app.ts";
+import { binding } from "../app/keys.ts";
+import { G, type Span } from "../term/screen.ts";
+import { BOLD, ITALIC, style } from "../term/style.ts";
+import { truncate } from "../term/width.ts";
+import { fill, len, split } from "../ui/layout.ts";
+import { badge, card, tabs } from "../ui/widgets.ts";
+import type { Session } from "../session.ts";
+import {
+  Scroll,
+  confirmScreen,
+  drawLines,
+  errorText,
+  relTime,
+  runAsync,
+} from "./common.ts";
+import { DiffView, type DiffAnchor } from "./commits.ts";
+import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
+
+type Tab = 0 | 1;
+
+export function pullScreen(
+  f: Session,
+  ctx: Ctx,
+  repo: Repo,
+  number: number,
+): Screen {
+  let pull: Pull | undefined;
+  let status: PullStatus | undefined;
+  let diff: Diff = { files: [], additions: 0, deletions: 0 };
+  let comments: Comment[] = [];
+  let reviews: AnchoredReview[] = [];
+  let lines: Span[][] = [];
+  let width = 0;
+  let tab: Tab = 0;
+  let anchor: DiffAnchor | null = null;
+  const scroll = new Scroll();
+  const view = new DiffView();
+  const composer = new Composer();
+  const mayWrite = (): boolean => canWrite(f.db, repo, f.user);
+
+  const reload = async (): Promise<void> => {
+    pull = getPull(f.db, repo.id, number);
+    if (!pull) {
+      ctx.toast(errorText("not_found"), "danger");
+      ctx.pop();
+      return;
+    }
+    const read = await pullDiff(f.dir(repo), pull);
+    status = read.status;
+    diff = read.diff;
+    reviews = withOutdated(listReviewComments(f.db, pull.id), diff);
+    const reviewIds = new Set(reviews.map((r) => r.id));
+    comments = listComments(f.db, pull.id).filter((c) => !reviewIds.has(c.id));
+    view.setFiles(diff.files);
+    view.setNotes(reviewNotes(reviews, ctx));
+    width = 0;
+    ctx.invalidate();
+  };
+
+  const entries = (): ThreadEntry[] => [
+    ...(pull === undefined
+      ? []
+      : [
+          {
+            kind: "comment" as const,
+            actor: pull.authorName,
+            at: pull.createdAt,
+            body: pull.body === "" ? "_No description._" : pull.body,
+          },
+        ]),
+    ...comments.map((comment) => ({
+      kind: "comment" as const,
+      actor: comment.authorName,
+      at: comment.createdAt,
+      body: comment.body,
+    })),
+    ...reviews.map((review) => ({
+      kind: "comment" as const,
+      actor: review.authorName,
+      at: review.createdAt,
+      body: review.body,
+      note: `${review.path}:${review.line}${review.outdated ? " · outdated" : ""}`,
+    })),
+  ];
+
+  const submit = (): void => {
+    if (!pull) return;
+    if (anchor !== null) {
+      const at = anchor;
+      const body = composer.value;
+      runAsync(ctx, async () => {
+        const added = await addReview(f.app, f.user, repo, pull!, {
+          body,
+          path: at.path,
+          line: at.line,
+          side: at.side,
+        });
+        if (!added.ok) {
+          ctx.toast(errorText(added.error), "danger");
+          return;
+        }
+        composer.close();
+        anchor = null;
+        await reload();
+        ctx.toast("review comment added", "success");
+      });
+      return;
+    }
+    const added = addComment(f.app, f.user, repo, pull, composer.value);
+    if (!added.ok) {
+      ctx.toast(errorText(added.error), "danger");
+      return;
+    }
+    composer.close();
+    runAsync(ctx, reload);
+    ctx.toast("comment posted", "success");
+  };
+
+  const merge = (strategy: "merge" | "squash"): void => {
+    if (!pull) return;
+    const target = pull;
+    runAsync(ctx, async () => {
+      const landed = await mergePull(f.app, f.user, repo, target, strategy);
+      if (!landed.ok) {
+        ctx.toast(errorText(String(landed.error)), "danger");
+        return;
+      }
+      await reload();
+      ctx.toast(`merged as ${landed.value.mergeOid.slice(0, 8)}`, "success");
+    });
+  };
+
+  const screen: Screen = {
+    title: `#${number}`,
+    get keys() {
+      return [
+        binding(["tab"], "conversation/files"),
+        ...(tab === 1 ? view.keys : [binding(["j", "k"], "scroll")]),
+        binding(["c"], tab === 1 ? "review line" : "comment", {
+          disabled: !f.signedIn,
+        }),
+        binding(["m"], "merge", {
+          disabled: !mayWrite() || mergeState(pull, status) !== "ready",
+        }),
+        binding(["x"], "close", { disabled: !f.signedIn }),
+        binding(["r"], "refresh"),
+      ];
+    },
+    load(signal) {
+      const off = f.app.bus.subscribe((event) => {
+        if (event.repoId === repo.id) runAsync(ctx, reload);
+      });
+      signal.addEventListener("abort", off);
+      return reload();
+    },
+    render(area, s) {
+      const c = ctx.theme.c;
+      if (!pull) return;
+      const foot = composer.height();
+      const [head, boxRow, tabRow, body, comp] = split(area, "v", [
+        len(1),
+        len(3),
+        len(2),
+        fill(1),
+        len(Math.min(foot, Math.max(0, area.h - 10))),
+      ]);
+      s.text(
+        head!.x,
+        head!.y,
+        truncate(`#${pull.number}  ${pull.title}`, head!.w),
+        style(c.fg, c.bg, BOLD),
+        head!.x + head!.w,
+      );
+      drawMergeBox(s, boxRow!, c, pull, status, view.summary());
+      tabs(s, tabRow!, c, {
+        items: [
+          { label: "Conversation", count: comments.length + reviews.length },
+          { label: "Files", count: diff.files.length },
+        ],
+        active: tab,
+      });
+      if (tab === 1) view.render(s, body!, c);
+      else {
+        if (width !== body!.w) {
+          width = body!.w;
+          lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
+        }
+        drawLines(s, body!, c, scroll, lines);
+      }
+      if (foot > 0) composer.render(s, comp!, c, ctx);
+    },
+    paste: (text) => composer.paste(text),
+    key(e) {
+      if (composer.open) {
+        const out = composer.key(e);
+        if (out === "submit") submit();
+        else if (out === "cancel") {
+          composer.close();
+          anchor = null;
+        }
+        return true;
+      }
+      if (e.key === "tab") {
+        tab = tab === 0 ? 1 : 0;
+        return true;
+      }
+      if (e.key === "c" && f.signedIn) {
+        if (tab === 1) {
+          const at = view.anchorAt();
+          if (at === null) {
+            ctx.toast("put the cursor on a diff line first", "attn");
+            return true;
+          }
+          anchor = at;
+          composer.start(`Review ${at.path}:${at.line}`);
+        } else {
+          anchor = null;
+          composer.start("Comment");
+        }
+        return true;
+      }
+      if (e.key === "m" && pull && mergeState(pull, status) === "ready") {
+        ctx.push(
+          confirmScreen(ctx, screen, {
+            title: `Merge #${pull.number}`,
+            body: [
+              `${status?.ahead ?? 0} commits into ${pull.baseBranch}.`,
+              repo.protectDefault && pull.baseBranch === repo.defaultBranch
+                ? `${repo.defaultBranch} is protected; history is preserved.`
+                : "",
+            ],
+            actions: [
+              { label: "Cancel", variant: "ghost" },
+              { label: "Squash", variant: "secondary" },
+              { label: "Merge" },
+            ],
+            selected: 2,
+            onChoose: (choice) => {
+              if (choice === 1) merge("squash");
+              if (choice === 2) merge("merge");
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "x" && pull) {
+        const changed = setIssueState(f.app, f.user, repo, pull, "closed");
+        if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
+        else runAsync(ctx, reload);
+        return true;
+      }
+      if (e.key === "o" && pull) {
+        const changed = setIssueState(f.app, f.user, repo, pull, "open");
+        if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
+        else runAsync(ctx, reload);
+        return true;
+      }
+      if (e.key === "r") {
+        runAsync(ctx, reload);
+        return true;
+      }
+      return tab === 1 ? view.key(e, ctx) : scroll.key(e, lines.length);
+    },
+  };
+  return screen;
+}
+
+export type MergeState =
+  | "merged"
+  | "closed"
+  | "conflicts"
+  | "empty"
+  | "ready"
+  | "unknown";
+
+export function mergeState(
+  pull: Pull | undefined,
+  status: PullStatus | undefined,
+): MergeState {
+  if (!pull) return "unknown";
+  if (pull.mergedAt !== null) return "merged";
+  if (pull.state === "closed") return "closed";
+  if (!status) return "unknown";
+  if (status.ahead === 0) return "empty";
+  return status.mergeable ? "ready" : "conflicts";
+}
+
+function drawMergeBox(
+  s: Parameters<typeof card>[0],
+  r: Parameters<typeof card>[1],
+  c: Parameters<typeof card>[2],
+  pull: Pull,
+  status: PullStatus | undefined,
+  summary: string,
+): void {
+  const state = mergeState(pull, status);
+  const tone =
+    state === "merged"
+      ? "merged"
+      : state === "ready"
+        ? "success"
+        : state === "conflicts" || state === "closed"
+          ? "danger"
+          : "default";
+  const inner = card(s, r, c, { tone: tone as "success", title: "Merge" });
+  const text =
+    state === "merged"
+      ? `Merged ${relTime(pull.mergedAt ?? "")} into ${pull.baseBranch}`
+      : state === "closed"
+        ? "Closed without merging"
+        : state === "conflicts"
+          ? `Conflicts in ${status?.conflicts.length ?? 0} file(s): ${(status?.conflicts ?? []).slice(0, 3).join(", ")}`
+          : state === "empty"
+            ? "Nothing to merge — the base already has these commits"
+            : `Ready to merge · ${status?.ahead ?? 0} commits`;
+  let x = badge(s, inner.x, inner.y, c, {
+    text: state,
+    variant: tone as "success",
+  });
+  s.text(
+    x + 1,
+    inner.y,
+    truncate(text, Math.max(0, inner.w - (x - inner.x) - 1)),
+    style(c.fg, c.card),
+    inner.x + inner.w,
+  );
+  x = s.text(
+    inner.x,
+    inner.y + 1,
+    truncate(
+      `${pull.headBranch} ${G.chevron} ${pull.baseBranch}${pull.crossRepo ? " (fork)" : ""} · ${summary}`,
+      inner.w,
+    ),
+    style(c.mutedFg, c.card),
+    inner.x + inner.w,
+  );
+}
+
+/** Review comments as rows spliced into the diff under the line they mark. */
+function reviewNotes(
+  reviews: readonly AnchoredReview[],
+  ctx: Ctx,
+): Map<string, Span[][]> {
+  const c = ctx.theme.c;
+  const out = new Map<string, Span[][]>();
+  for (const review of reviews) {
+    if (review.outdated) continue;
+    const key = anchorKey(review.path, review.side, review.line);
+    const rows = out.get(key) ?? [];
+    rows.push([
+      { text: "      ", style: style(c.mutedFg, c.bg) },
+      {
+        text: ` ${review.authorName} `,
+        style: style(c.accentFg, c.accent, BOLD),
+      },
+      {
+        text: ` ${review.body.replace(/\s+/g, " ")}`,
+        style: style(c.mutedFg, c.bg, ITALIC),
+      },
+    ]);
+    out.set(key, rows);
+  }
+  return out;
+}

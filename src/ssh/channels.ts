@@ -51,6 +51,16 @@ export interface SshSession {
   onResize(cb: (cols: number, rows: number) => void): void;
   onClose(cb: () => void): void;
   exit(code: number): void;
+  /** Bytes accepted by `write` that the peer's window has not yet allowed out. */
+  readonly pending: number;
+  /**
+   * Resolves once everything written so far has gone to the peer. A producer
+   * that can outrun the channel — git's stdout during a clone — must await
+   * this, or the queue grows to the size of the pack and the window loses its
+   * only job. Resolves immediately when nothing is queued, and on close, so a
+   * caller can never be left waiting on a dead channel.
+   */
+  drain(): Promise<void>;
 }
 
 export interface ChannelHost {
@@ -88,6 +98,7 @@ class Channel implements SshSession {
   private dataCb: ((data: Uint8Array) => void) | undefined;
   private resizeCb: ((cols: number, rows: number) => void) | undefined;
   private closeCb: (() => void) | undefined;
+  private drained: (() => void)[] = [];
 
   constructor(
     private readonly host: ChannelHost,
@@ -125,6 +136,22 @@ class Channel implements SshSession {
   }
   writeStderr(data: Uint8Array | string): void {
     this.enqueue(data, true);
+  }
+
+  get pending(): number {
+    let total = 0;
+    for (const item of this.queue) total += item.data.length - item.offset;
+    return total;
+  }
+
+  drain(): Promise<void> {
+    if (this.queue.length === 0 || this.sentClose) return Promise.resolve();
+    return new Promise<void>((resolve) => this.drained.push(resolve));
+  }
+
+  /** Wake every `drain()` waiter — the queue emptied, or the channel died. */
+  private releaseDrains(): void {
+    for (const resolve of this.drained.splice(0)) resolve();
   }
 
   private enqueue(data: Uint8Array | string, stderr: boolean): void {
@@ -167,6 +194,7 @@ class Channel implements SshSession {
       this.remoteWindow -= n;
       if (head.offset >= head.data.length) this.queue.shift();
     }
+    if (this.queue.length === 0) this.releaseDrains();
     if (
       this.queue.length === 0 &&
       this.exitCode !== undefined &&
@@ -197,6 +225,7 @@ class Channel implements SshSession {
 
   /** Send CLOSE without a status — used when the peer closed on us first. */
   closeNow(): void {
+    this.releaseDrains();
     if (this.sentClose) return;
     this.sentClose = true;
     this.host.send(
@@ -205,6 +234,9 @@ class Channel implements SshSession {
   }
 
   fireClose(): void {
+    // A writer awaiting drain on a channel the peer just closed would wait
+    // forever; the close is the answer.
+    this.releaseDrains();
     if (this.closeFired) return;
     this.closeFired = true;
     const cb = this.closeCb;

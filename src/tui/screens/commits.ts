@@ -1,0 +1,334 @@
+/**
+ * History: the log for any ref, and one commit's diff.
+ *
+ * The log pages with `--skip`, which is what git gives us; the "load more"
+ * row is a real row so the cursor can land on it and the list never lies
+ * about having reached the end.
+ */
+
+import type { Repo } from "../../core/repos.ts";
+import { diffCommit, type FileDiff } from "../../git/diff.ts";
+import { commitLog, type Commit } from "../../git/read.ts";
+import type { Ctx, Screen } from "../app/app.ts";
+import { binding } from "../app/keys.ts";
+import type { Screen as Surface, Rect, Span } from "../term/screen.ts";
+import { style } from "../term/style.ts";
+import { truncate } from "../term/width.ts";
+import { fill, len, split } from "../ui/layout.ts";
+import type { Tokens } from "../ui/theme.ts";
+import { renderFileDiff } from "../ui/diff.ts";
+import type { KeyEvent } from "../term/input.ts";
+import { card, emptyState } from "../ui/widgets.ts";
+import type { Session } from "../session.ts";
+import {
+  ListState,
+  Scroll,
+  drawList,
+  drawLines,
+  relTime,
+  runAsync,
+} from "./common.ts";
+import { refPickerScreen } from "./refs.ts";
+
+const PAGE = 40;
+
+export function commitsScreen(
+  f: Session,
+  ctx: Ctx,
+  repo: Repo,
+  ref: string,
+): Screen {
+  let commits: Commit[] = [];
+  let more = true;
+  const state = new ListState();
+
+  const page = async (): Promise<void> => {
+    const result = await commitLog(f.dir(repo), ref, {
+      limit: PAGE,
+      skip: commits.length,
+    });
+    if (!result.ok) {
+      more = false;
+      if (commits.length === 0) ctx.toast(`no commits on ${ref}`, "danger");
+    } else {
+      commits = [...commits, ...result.value];
+      more = result.value.length === PAGE;
+    }
+    ctx.invalidate();
+  };
+
+  const screen: Screen = {
+    title: "Commits",
+    keys: [
+      binding(["j", "k"], "move"),
+      binding(["enter"], "open"),
+      binding(["b"], "ref"),
+      binding(["r"], "refresh"),
+    ],
+    load: page,
+    render(area, s) {
+      const c = ctx.theme.c;
+      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      s.text(
+        head!.x,
+        head!.y,
+        truncate(`${repo.ownerName}/${repo.name} · ${ref}`, head!.w),
+        style(c.mutedFg, c.bg),
+        head!.x + head!.w,
+      );
+      if (commits.length === 0) {
+        emptyState(s, body!, c, {
+          title: "No commits",
+          body: `Nothing has landed on ${ref} yet.`,
+        });
+        return;
+      }
+      const rows = commits.map((commit) => ({
+        title: commit.subject,
+        secondary: commit.author,
+        meta: `${commit.oid.slice(0, 8)}  ${relTime(commit.date)}`,
+      }));
+      if (more) rows.push({ title: "Load more…", secondary: "", meta: "" });
+      drawList(s, body!, c, state, rows);
+    },
+    key(e) {
+      const total = commits.length + (more ? 1 : 0);
+      if (state.key(e, total)) return true;
+      if (e.key === "enter") {
+        const commit = commits[state.index];
+        if (commit === undefined) runAsync(ctx, page);
+        else ctx.push(commitScreen(f, ctx, repo, commit));
+        return true;
+      }
+      if (e.key === "b") {
+        ctx.push(
+          refPickerScreen(f, ctx, screen, repo, (chosen) =>
+            ctx.replace(commitsScreen(f, ctx, repo, chosen)),
+          ),
+        );
+        return true;
+      }
+      if (e.key === "r") {
+        commits = [];
+        more = true;
+        runAsync(ctx, page);
+        return true;
+      }
+      return false;
+    },
+  };
+  return screen;
+}
+
+export function commitScreen(
+  f: Session,
+  ctx: Ctx,
+  repo: Repo,
+  commit: Commit,
+): Screen {
+  const view = new DiffView();
+  return {
+    title: commit.oid.slice(0, 8),
+    keys: view.keys,
+    async load() {
+      const result = await diffCommit(f.dir(repo), commit.oid);
+      view.setFiles(result.ok ? result.value.files : []);
+      ctx.invalidate();
+    },
+    render(area, s) {
+      const c = ctx.theme.c;
+      const meta = Math.min(6, area.h);
+      const [top, body] = split(area, "v", [len(meta), fill(1)]);
+      const inner = card(s, top!, c, { title: commit.oid.slice(0, 12) });
+      s.text(
+        inner.x,
+        inner.y,
+        truncate(commit.subject, inner.w),
+        style(c.fg, c.card, 1),
+        inner.x + inner.w,
+      );
+      if (inner.h > 1)
+        s.text(
+          inner.x,
+          inner.y + 1,
+          truncate(
+            `${commit.author} <${commit.email}> · ${relTime(commit.date)} · ${view.summary()}`,
+            inner.w,
+          ),
+          style(c.mutedFg, c.card),
+          inner.x + inner.w,
+        );
+      if (inner.h > 2 && commit.body !== "")
+        s.text(
+          inner.x,
+          inner.y + 2,
+          truncate(commit.body.split("\n")[0] ?? "", inner.w),
+          style(c.faint, c.card),
+          inner.x + inner.w,
+        );
+      view.render(s, body!, c);
+    },
+    key: (e) => view.key(e, ctx),
+  };
+}
+
+/**
+ * A diff as a scrolling document with per-file collapsing, hunk jumps, and a
+ * row → (path, side, line) mapping. That mapping is the whole reason this is
+ * a class: a review comment is anchored to a diff row, so the view must be
+ * able to say what the cursor is standing on, and to splice existing comments
+ * back in at the row they belong to.
+ */
+export class DiffView {
+  files: FileDiff[] = [];
+  private collapsed = new Set<number>();
+  private lines: Span[][] = [];
+  /** Parallel to `lines`: the file each row belongs to. */
+  private owner: number[] = [];
+  /** Parallel to `lines`: the diff anchor a row carries, if any. */
+  private anchors: (DiffAnchor | null)[] = [];
+  private hunkRows: number[] = [];
+  private fileRows: number[] = [];
+  private notes = new Map<string, Span[][]>();
+  private width = 0;
+  readonly scroll = new Scroll();
+
+  readonly keys = [
+    binding(["j", "k"], "scroll"),
+    binding(["n", "p"], "hunk"),
+    binding(["]", "["], "file"),
+    binding(["enter"], "collapse"),
+  ];
+
+  setFiles(files: FileDiff[]): void {
+    this.files = files;
+    this.collapsed.clear();
+    this.invalidate();
+  }
+
+  /** Rows to splice in after the diff row at `anchorKey(path, side, line)`. */
+  setNotes(notes: Map<string, Span[][]>): void {
+    this.notes = notes;
+    this.invalidate();
+  }
+
+  invalidate(): void {
+    this.width = 0;
+    this.lines = [];
+  }
+
+  summary(): string {
+    const add = this.files.reduce((n, file) => n + file.additions, 0);
+    const del = this.files.reduce((n, file) => n + file.deletions, 0);
+    return `${this.files.length} files +${add} -${del}`;
+  }
+
+  /**
+   * Rebuild the rendered rows. `renderFileDiff` emits, per file, one header
+   * row and then per hunk one header plus one row per diff line — walking the
+   * same structure here is what keeps `anchors` exactly parallel to `lines`.
+   */
+  private build(width: number, c: Tokens): void {
+    if (width === this.width && this.lines.length > 0) return;
+    this.width = width;
+    this.lines = [];
+    this.owner = [];
+    this.anchors = [];
+    this.hunkRows = [];
+    this.fileRows = [];
+
+    const push = (row: Span[], file: number, anchor: DiffAnchor | null): void => {
+      this.lines.push(row);
+      this.owner.push(file);
+      this.anchors.push(anchor);
+    };
+
+    this.files.forEach((file, i) => {
+      this.fileRows.push(this.lines.length);
+      const collapsed = this.collapsed.has(i);
+      const rendered = renderFileDiff(
+        collapsed ? { ...file, hunks: [] } : file,
+        width,
+        c,
+      );
+      if (collapsed) {
+        for (const row of rendered) push(row, i, null);
+        push([], i, null);
+        return;
+      }
+      let at = 0;
+      push(rendered[at++] ?? [], i, null); // the file header
+      for (const hunk of file.hunks) {
+        this.hunkRows.push(this.lines.length);
+        push(rendered[at++] ?? [], i, null); // the hunk header
+        for (const line of hunk.lines) {
+          const side: DiffAnchor["side"] = line.kind === "del" ? "old" : "new";
+          const number = side === "old" ? line.oldNumber : line.newNumber;
+          const anchor =
+            number === null ? null : { path: file.path, side, line: number };
+          push(rendered[at++] ?? [], i, anchor);
+          const extra =
+            anchor === null
+              ? undefined
+              : this.notes.get(`${anchor.path}\0${anchor.side}\0${anchor.line}`);
+          if (extra) for (const row of extra) push(row, i, null);
+        }
+      }
+      push([], i, null);
+    });
+  }
+
+  render(s: Surface, r: Rect, c: Tokens): void {
+    if (this.files.length === 0) {
+      emptyState(s, r, c, {
+        title: "No changes",
+        body: "This revision touches no files.",
+      });
+      return;
+    }
+    this.build(Math.max(20, r.w - 1), c);
+    drawLines(s, r, c, this.scroll, this.lines);
+  }
+
+  /** The file the viewport is sitting in. */
+  currentFile(): number {
+    return this.owner[this.scroll.top] ?? 0;
+  }
+
+  /** What the top row is anchored to — where a new review comment lands. */
+  anchorAt(row = this.scroll.top): DiffAnchor | null {
+    return this.anchors[row] ?? null;
+  }
+
+  key(e: KeyEvent, ctx: Ctx): boolean {
+    if (e.key === "n") return this.jump(this.hunkRows, 1);
+    if (e.key === "p") return this.jump(this.hunkRows, -1);
+    if (e.key === "]") return this.jump(this.fileRows, 1);
+    if (e.key === "[") return this.jump(this.fileRows, -1);
+    if (e.key === "enter") {
+      const i = this.currentFile();
+      if (this.collapsed.has(i)) this.collapsed.delete(i);
+      else this.collapsed.add(i);
+      this.invalidate();
+      ctx.invalidate();
+      return true;
+    }
+    return this.scroll.key(e, this.lines.length);
+  }
+
+  private jump(stops: readonly number[], dir: 1 | -1): boolean {
+    const at = this.scroll.top;
+    const next =
+      dir === 1
+        ? stops.find((row) => row > at)
+        : [...stops].reverse().find((row) => row < at);
+    if (next !== undefined) this.scroll.to(next, this.lines.length);
+    return true;
+  }
+}
+
+export interface DiffAnchor {
+  readonly path: string;
+  readonly side: "old" | "new";
+  readonly line: number;
+}
