@@ -8,6 +8,7 @@ import type { App } from "../app.ts";
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
+  updateLabel as writeLabel,
   type Label,
 } from "../core/issues.ts";
 import { accessAllows, getOrg, orgAccess } from "../core/orgs.ts";
@@ -191,6 +192,28 @@ export function createLabel(
     payload: { labelId: created.value.id, name: created.value.name },
   });
   return created;
+}
+
+/** Rename or recolor an existing label; the chips follow everywhere it is used. */
+export function updateLabel(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  labelId: string,
+  name: string,
+  color: string,
+): Result<Label, "not_found" | "invalid" | "taken"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  const updated = writeLabel(app.db, repo.id, labelId, name, color);
+  if (!updated.ok) return updated;
+  app.bus.append({
+    kind: "label.updated",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { labelId, name: updated.value.name },
+  });
+  return updated;
 }
 
 export function deleteLabel(

@@ -132,16 +132,27 @@ describe("onboarding: a person with just a login", () => {
     ).text();
     expect(pageHtml).toContain("Personal access tokens");
 
+    // Post-redirect-get: minting redirects, and the secret rides a one-shot
+    // flash cookie so a refresh shows the list instead of minting again.
     const created = await fetch(`${base}/settings/tokens`, {
       method: "POST",
       headers: { cookie },
       body: form({ name: "laptop", scope: "rw" }),
       redirect: "manual",
     });
-    const html = await created.text();
+    expect(created.status).toBe(303);
+    const flash = (created.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(flash).toStartWith("forge_flash=");
+
+    const shown = await fetch(`${base}/settings/tokens`, {
+      headers: { cookie: `${cookie}; ${flash}` },
+    });
+    const html = await shown.text();
     const match = html.match(/forge_[A-Za-z0-9_-]+/);
     expect(match).not.toBeNull();
     const token = match![0];
+    // Shown exactly once: the page that rendered it also cleared the cookie.
+    expect(shown.headers.get("set-cookie") ?? "").toContain("forge_flash=;");
 
     // The minted token authenticates a push.
     const remote = `http://nora:${token}@localhost:${port}/nora/app.git`;

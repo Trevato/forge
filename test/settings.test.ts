@@ -110,9 +110,9 @@ describe("repo settings", () => {
     expect(labels.map((l) => l.name)).toContain("bug");
     const labelId = labels.find((l) => l.name === "bug")!.id;
 
-    // The label shows on the settings page with its color bound via nonce'd CSS.
+    // The label shows on the Labels pane with its color bound via nonce'd CSS.
     const pageHtml = await (
-      await fetch(`${base}/owner/proj/settings`, {
+      await fetch(`${base}/owner/proj/settings/labels`, {
         headers: { cookie: ownerCookie },
       })
     ).text();

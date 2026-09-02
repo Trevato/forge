@@ -1,20 +1,17 @@
 /**
- * Repository pages: code at a ref, a file, the history. Everything is
- * URL-addressable and renders without JavaScript. Reads go straight to git;
- * nothing shown here is stored anywhere else.
+ * Repository pages: the code at a ref, one file, and the raw bytes.
+ * Everything is URL-addressable and renders without JavaScript; reads go
+ * straight to git, so nothing shown here is stored anywhere else.
+ *
+ * Every ref reaching git passes `isSafeRef` first, and every ref *leaving*
+ * here in a URL is percent-encoded, so a branch called `feature/a` stays one
+ * path segment and can never smuggle a path of its own.
  */
 
 import type { Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
-import {
-  canRead,
-  getRepo,
-  getRepoById,
-  listForks,
-} from "../../core/repos.ts";
-import { diffCommit } from "../../git/diff.ts";
-import { diffSyntax } from "../diff-syntax.ts";
-import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
+import { getRepoById, listForks } from "../../core/repos.ts";
+import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import {
   blobForRender,
   commitLog,
@@ -24,87 +21,65 @@ import {
 } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import {
+  crumbsFor,
+  loadRepo,
+  notFoundPage,
+  repoBase,
+  repoHeader,
+  repoPalette,
+  signInFirst,
+} from "../chrome.ts";
 import { highlightBlob } from "../code.ts";
-import { renderDiff } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { page, redirect } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
+import {
+  btn,
+  card,
+  crumbs,
+  empty,
+  fileSize,
+  icon,
+  iconBtn,
+  listCard,
+  menu,
+  row,
+} from "../ui.ts";
 
 const MAX_RENDER_BYTES = 1_000_000;
 // A blob under the byte cap can still be pathological (a megabyte of newlines
 // is ~490k lines). Bounding rendered lines bounds the response independently.
 const MAX_RENDER_LINES = 5_000;
 
-function notFoundPage(ctx: Ctx): Response {
-  return page(
-    {
-      title: "Not found",
-      user: ctx.auth.user,
-      theme: ctx.theme,
-      body: html`<div class="empty">
-        <h1>404</h1>
-        <p class="muted">Nothing here.</p>
-      </div>`,
-    },
-    404,
-  );
-}
+import { pathCrumbs, refMenu, refSet, type RefSet } from "./refs.ts";
 
-export function loadRepo(ctx: Ctx): Repo | undefined {
-  const repo = getRepo(
-    ctx.app.db,
-    ctx.params.owner ?? "",
-    (ctx.params.name ?? "").replace(/\.git$/, ""),
-  );
-  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return undefined;
-  return repo;
-}
+export { crumbsFor, loadRepo, repoBase };
+export { pathCrumbs, refMenu, refSet } from "./refs.ts";
 
-export function crumbsFor(repo: Repo): { label: string; href: string }[] {
-  return [
-    { label: repo.ownerName, href: `/${repo.ownerName}` },
-    { label: repo.name, href: `/${repo.ownerName}/${repo.name}` },
-  ];
-}
-
-export function repoNotFound(ctx: Ctx): Response {
-  return notFoundPage(ctx);
-}
+// ---- fork ----
 
 /** The "forked from …" lineage line and a Fork button, for the repo home. */
 function forkBar(ctx: Ctx, repo: Repo): Html {
-  const parent =
-    repo.forkParentId !== null
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
   const canFork =
     ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
   const forkCount = listForks(ctx.app.db, repo.id).length;
-  const base = `/${repo.ownerName}/${repo.name}`;
-  if (!parent && !canFork && forkCount === 0) return html``;
+  if (!canFork && forkCount === 0) return html``;
   return html`<div class="fork-bar">
-    ${when(
-      parent,
-      (p) =>
-        html`<span class="muted small"
-          >forked from
-          <a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a></span
-        >`,
-    )}
     ${when(
       forkCount > 0,
       () =>
         html`<span class="muted small"
-          >${forkCount} fork${forkCount === 1 ? "" : "s"}</span
+          >${icon("fork")} ${forkCount} fork${forkCount === 1 ? "" : "s"}</span
         >`,
     )}
     <span class="spacer"></span>
     ${when(
       canFork,
       () =>
-        html`<form method="post" action="${base}/fork">
-          <button class="btn" data-size="sm" type="submit">Fork</button>
+        html`<form method="post" action="${repoBase(repo)}/fork">
+          ${btn("Fork", { size: "sm", icon: "fork" })}
         </form>`,
     )}
   </div>`;
@@ -114,7 +89,7 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
 export async function forkSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return redirect("/signin");
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
@@ -125,45 +100,18 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     field(form, "name") || undefined,
   );
   if (!forked.ok) {
-    // Already forked → go to the existing fork (common-case name).
-    return redirect(`/${ctx.auth.user.username}/${repo.name}`);
+    const reason =
+      forked.error === "name_taken"
+        ? "You already have a repository by that name."
+        : "That fork could not be created.";
+    return flashTo(ctx, repoBase(repo), { tone: "danger", message: reason });
   }
-  return redirect(`/${forked.value.ownerName}/${forked.value.name}`);
+  return flashTo(ctx, repoBase(forked.value), {
+    message: `Forked to ${forked.value.ownerName}/${forked.value.name}.`,
+  });
 }
 
-export function timeAgo(iso: string): string {
-  const seconds = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = seconds / 60;
-  if (minutes < 60) return `${Math.floor(minutes)}m ago`;
-  const hours = minutes / 60;
-  if (hours < 24) return `${Math.floor(hours)}h ago`;
-  const days = hours / 24;
-  if (days < 30) return `${Math.floor(days)}d ago`;
-  const months = days / 30;
-  if (months < 12) return `${Math.floor(months)}mo ago`;
-  return `${Math.floor(months / 12)}y ago`;
-}
-
-export type RepoTab = "code" | "issues" | "pulls" | "commits" | "settings";
-
-export function repoNav(repo: Repo, active: RepoTab): Html {
-  const base = `/${repo.ownerName}/${repo.name}`;
-  const tab = (label: string, href: string, key: RepoTab) =>
-    html`<a href="${href}" ${active === key ? raw('aria-current="page"') : null}
-      >${label}</a
-    >`;
-  return html`<div class="repo-head">
-      <h1><a href="${base}">${repo.name}</a></h1>
-      <span class="badge">${repo.visibility}</span>
-    </div>
-    <nav class="repo-tabs">
-      ${tab("Code", base, "code")} ${tab("Issues", `${base}/issues`, "issues")}
-      ${tab("Pulls", `${base}/pulls`, "pulls")}
-      ${tab("Commits", `${base}/commits`, "commits")}
-      ${tab("Settings", `${base}/settings`, "settings")}
-    </nav>`;
-}
+// ---- shared pieces ----
 
 function treeListing(
   repo: Repo,
@@ -171,121 +119,230 @@ function treeListing(
   path: string,
   entries: TreeEntry[],
 ): Html {
-  const base = `/${repo.ownerName}/${repo.name}`;
+  const base = repoBase(repo);
+  const encoded = encodeURIComponent(ref);
   const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
-  return html`<div class="card tree">
-    <ul class="list">
-      ${when(
-        path !== "",
-        () =>
-          html`<li>
-            <a
-              class="row"
-              href="${base}${parent === ""
-                ? `/tree/${ref}`
-                : `/tree/${ref}/${parent}`}"
-            >
-              <span class="icon">←</span><span class="grow muted">..</span>
-            </a>
-          </li>`,
-      )}
-      ${entries.map((entry) => {
-        const target = path === "" ? entry.name : `${path}/${entry.name}`;
-        const href =
-          entry.type === "tree"
-            ? `${base}/tree/${ref}/${target}`
-            : `${base}/blob/${ref}/${target}`;
-        return html`<li>
-          <a class="row" href="${href}">
-            <span class="icon">${entry.type === "tree" ? "▸" : "·"}</span>
-            <span class="grow">${entry.name}</span>
-            ${when(
-              entry.size >= 0,
-              () =>
-                html`<span class="muted small"
-                  >${formatSize(entry.size)}</span
-                >`,
-            )}
-          </a>
-        </li>`;
-      })}
-    </ul>
-  </div>`;
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  const rows: Html[] = [];
+  if (path !== "") {
+    rows.push(
+      row({
+        href: `${base}/tree/${encoded}${parent === "" ? "" : `/${parent}`}`,
+        lead: icon("up"),
+        title: html`<span class="muted">..</span>`,
+        nav: true,
+      }),
+    );
+  }
+  for (const entry of entries) {
+    const target = path === "" ? entry.name : `${path}/${entry.name}`;
+    const isTree = entry.type === "tree";
+    rows.push(
+      html`<li>
+        <a
+          class="row tree-row"
+          data-kind="${entry.type}"
+          data-nav
+          tabindex="-1"
+          href="${base}/${isTree ? "tree" : "blob"}/${encoded}/${target}"
+        >
+          <span class="row-lead">${icon(isTree ? "folder" : "file")}</span>
+          <span class="row-main"
+            ><span class="row-title">${entry.name}</span></span
+          >
+          ${when(
+            entry.size >= 0,
+            () =>
+              html`<span class="row-trail muted small num"
+                >${fileSize(entry.size)}</span
+              >`,
+          )}
+        </a>
+      </li>`,
+    );
+  }
+  return listCard(rows);
 }
 
 async function readmeSection(
   dir: string,
   ref: string,
   entries: TreeEntry[],
+  prefix: string,
 ): Promise<Html> {
   const readme = entries.find(
-    (e) => e.type === "blob" && /^readme(\.md)?$/i.test(e.name),
+    (e) =>
+      e.type === "blob" && /^readme(\.md|\.markdown|\.txt)?$/i.test(e.name),
   );
   if (!readme) return html``;
-  const blob = await blobForRender(dir, ref, readme.name, MAX_RENDER_BYTES);
+  const at = prefix === "" ? readme.name : `${prefix}/${readme.name}`;
+  const blob = await blobForRender(dir, ref, at, MAX_RENDER_BYTES);
   if (blob.kind !== "text") return html``;
   const text = new TextDecoder().decode(blob.body);
-  const rendered = /\.md$/i.test(readme.name)
+  const rendered = /\.(md|markdown)$/i.test(readme.name)
     ? renderMarkdown(text)
     : html`<pre>${text}</pre>`;
-  return html`<div class="card md">${rendered}</div>`;
+  return card(html`<div class="prose">${rendered}</div>`, {
+    pad: false,
+    head: html`${icon("file")}
+      <h2>${readme.name}</h2>`,
+  });
 }
 
-// GET /:owner/:name — the repo home: tree at the default branch + README.
+/** The About rail: what this repo is, in one glance, plus how to clone it. */
+function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
+  const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
+  // An SSH listener is not built yet; when a deployment configures one, the
+  // second clone line appears with no further change here.
+  const sshPort = (ctx.app.config as { sshPort?: number }).sshPort;
+  const parent =
+    repo.forkParentId !== null
+      ? getRepoById(ctx.app.db, repo.forkParentId)
+      : undefined;
+  return html`<aside class="about">
+    ${card(
+      html`${when(
+          repo.description !== "",
+          () => html`<p class="mb">${repo.description}</p>`,
+        )}
+        <dl>
+          <dt>Visibility</dt>
+          <dd>${repo.visibility}</dd>
+          <dt>Default</dt>
+          <dd class="mono">${repo.defaultBranch}</dd>
+          <dt>Protection</dt>
+          <dd>${repo.protectDefault ? "on" : "off"}</dd>
+          <dt>Branches</dt>
+          <dd class="num">${refs.branches.length}</dd>
+          ${when(
+            refs.tags.length > 0,
+            () =>
+              html`<dt>Tags</dt>
+                <dd class="num">${refs.tags.length}</dd>`,
+          )}
+          ${when(
+            parent,
+            (p) =>
+              html`<dt>Fork of</dt>
+                <dd>
+                  <a href="/${p.ownerName}/${p.name}"
+                    >${p.ownerName}/${p.name}</a
+                  >
+                </dd>`,
+          )}
+        </dl>
+        <p class="mt small muted">Clone over HTTPS</p>
+        <span class="clone"
+          ><span class="clone-text" id="clone-https">${cloneUrl}</span>
+          ${iconBtn("copy", "Copy clone URL", {
+            size: "sm",
+            type: "button",
+            copy: "clone-https",
+          })}</span
+        >
+        ${when(
+          sshPort !== undefined,
+          () =>
+            html`<p class="mt small muted">Clone over SSH</p>
+              <span class="clone"
+                ><span class="clone-text" id="clone-ssh"
+                  >ssh://git@${ctx.url
+                    .hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git</span
+                ></span
+              >`,
+        )}`,
+      { head: html`<h2>About</h2>` },
+    )}
+  </aside>`;
+}
+
+// ---- pages ----
+
+// GET /:owner/:name — the repo home: the tree at a ref, README, About rail.
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  const base = repoBase(repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
+  const refs = await refSet(dir);
 
-  const refs = await listRefs(dir, "refs/heads/");
-  if (!refs.ok || refs.value.length === 0) {
-    const body = html`${repoNav(repo, "code")} ${forkBar(ctx, repo)}
-      <div class="card empty">
-        <p>An empty repository, ready for its first push.</p>
-      </div>
-      <div class="card clone mt">
-        git remote add origin ${cloneUrl} && git push -u origin
-        ${repo.defaultBranch}
+  if (refs.branches.length === 0) {
+    const body = html`${repoHeader(ctx, repo, "code")}
+      <div class="mt">
+        ${empty({
+          icon: "repo",
+          title: "An empty repository, ready for its first push",
+          note: "Point a local repository at it and push — the first branch you push becomes the code you see here.",
+        })}
+        ${card(
+          html`<span class="clone"
+            ><span class="clone-text" id="clone-https"
+              >git remote add origin ${cloneUrl} &amp;&amp; git push -u origin
+              ${repo.defaultBranch}</span
+            >
+            ${iconBtn("copy", "Copy", {
+              size: "sm",
+              type: "button",
+              copy: "clone-https",
+            })}</span
+          >`,
+          {
+            head: html`${icon("command")}
+              <h2>Get started</h2>`,
+          },
+        )}
       </div>`;
     return page({
+      ctx,
       title: repo.name,
-      user: ctx.auth.user,
-      theme: ctx.theme,
       crumbs: crumbsFor(repo),
+      palette: repoPalette(repo),
       body,
     });
   }
 
-  const ref = repo.defaultBranch;
+  const wanted = ctx.url.searchParams.get("ref");
+  const ref =
+    wanted !== null && isSafeRef(wanted) && knownRef(refs, wanted)
+      ? wanted
+      : knownRef(refs, repo.defaultBranch)
+        ? repo.defaultBranch
+        : refs.branches[0]!;
   const entries = await listTree(dir, ref, "");
   const tree = entries.ok ? entries.value : [];
-  const readme = await readmeSection(dir, ref, tree);
+  const readme = await readmeSection(dir, ref, tree, "");
 
-  const body = html`${repoNav(repo, "code")} ${forkBar(ctx, repo)}
-    ${when(
-      repo.description !== "",
-      () => html`<p class="muted mb">${repo.description}</p>`,
-    )}
-    <div class="card clone">${cloneUrl}</div>
-    <div class="mt">${treeListing(repo, ref, "", tree)}</div>
-    <div class="mt">${readme}</div>`;
+  const body = html`${repoHeader(ctx, repo, "code")} ${forkBar(ctx, repo)}
+    <div class="repo-layout">
+      <div>
+        <div class="bar mb">
+          ${refMenu(refs, ref, (r) => `${base}?ref=${encodeURIComponent(r)}`)}
+          ${btn("History", {
+            href: `${base}/commits?ref=${encodeURIComponent(ref)}`,
+            size: "sm",
+            variant: "outline",
+            icon: "history",
+          })}
+        </div>
+        ${treeListing(repo, ref, "", tree)}
+        <div class="mt">${readme}</div>
+      </div>
+      ${aboutCard(ctx, repo, refs)}
+    </div>`;
   return page({
+    ctx,
     title: repo.name,
-    user: ctx.auth.user,
-    theme: ctx.theme,
     crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
     body,
   });
 }
 
-// GET /:owner/:name/tree/:ref/*path
+function knownRef(refs: RefSet, name: string): boolean {
+  return refs.branches.includes(name) || refs.tags.includes(name);
+}
+
+// GET /:owner/:name/tree/:ref[/*path]
 export async function treePage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -297,17 +354,36 @@ export async function treePage(ctx: Ctx): Promise<Response> {
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const entries = await listTree(dir, ref, path);
   if (!entries.ok) return notFoundPage(ctx);
-  const readme = await readmeSection(dir, ref, entries.value);
+  const refs = await refSet(dir);
+  const readme = await readmeSection(dir, ref, entries.value, path);
+  const base = repoBase(repo);
 
-  const body = html`${repoNav(repo, "code")}
-    <p class="muted small mono mb">${ref} / ${path}</p>
+  const body = html`${repoHeader(ctx, repo, "code", { compact: true })}
+    <div class="path-head">
+      ${refMenu(
+        refs,
+        ref,
+        (r) =>
+          `${base}/tree/${encodeURIComponent(r)}${path === "" ? "" : `/${path}`}`,
+      )}
+      ${pathCrumbs(repo, ref, path, false)}
+      <span class="spacer"></span>
+      ${btn("History", {
+        href: `${base}/commits?ref=${encodeURIComponent(ref)}${
+          path === "" ? "" : `&path=${encodeURIComponent(path)}`
+        }`,
+        size: "sm",
+        variant: "outline",
+        icon: "history",
+      })}
+    </div>
     ${treeListing(repo, ref, path, entries.value)}
     <div class="mt">${readme}</div>`;
   return page({
+    ctx,
     title: `${path || ref} · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
     crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
     body,
   });
 }
@@ -323,21 +399,40 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const blob = await blobForRender(dir, ref, path, MAX_RENDER_BYTES);
   if (blob.kind === "missing") return notFoundPage(ctx);
+  const refs = await refSet(dir);
+  const base = repoBase(repo);
+  const encoded = encodeURIComponent(ref);
 
   let content: Html;
+  let lineCount = 0;
+  const sizeText = blob.kind === "too_large" ? "" : fileSize(blob.size);
   if (blob.kind === "binary") {
-    content = html`<div class="card empty">
-      Binary file · ${formatSize(blob.size)}
-    </div>`;
+    content = empty({
+      icon: "file",
+      title: "Binary file",
+      note: `${fileSize(blob.size)} — not shown, but you can download it.`,
+      action: btn("Download", {
+        href: `${base}/raw/${encoded}/${path}`,
+        variant: "primary",
+        icon: "download",
+      }),
+    });
   } else if (blob.kind === "too_large") {
-    content = html`<div class="card empty">
-      Too large to render · ${formatSize(blob.size)}
-    </div>`;
+    content = empty({
+      icon: "alert",
+      title: "Too large to render",
+      note: `${fileSize(blob.size)} — over the render cap. Fetch the raw bytes instead.`,
+      action: btn("View raw", {
+        href: `${base}/raw/${encoded}/${path}`,
+        variant: "primary",
+      }),
+    });
   } else {
     const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
     // Highlight the whole file (multi-line constructs need full context),
     // then take the first N lines for rendering.
     const highlighted = highlightBlob(text, path);
+    lineCount = highlighted.length;
     const lines = highlighted.slice(0, MAX_RENDER_LINES);
     const truncated = highlighted.length > MAX_RENDER_LINES;
     content = html`<div class="card code">
@@ -351,156 +446,81 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
           )}
         </table>
       </div>
-      ${when(
-        truncated,
-        () =>
-          html`<div class="card empty mt">
-            Showing the first ${MAX_RENDER_LINES.toLocaleString()} of
-            ${highlighted.length.toLocaleString()} lines.
-          </div>`,
+      ${when(truncated, () =>
+        empty({
+          icon: "alert",
+          title: "Showing the first 5,000 lines",
+          note: `This file has ${highlighted.length.toLocaleString()} lines. Fetch the raw bytes for all of them.`,
+          action: btn("View raw", { href: `${base}/raw/${encoded}/${path}` }),
+        }),
       )}`;
   }
 
   const filename = path.split("/").pop() ?? path;
-  const body_ = html`${repoNav(repo, "code")}
-    <p class="muted small mono mb">${ref} / ${path}</p>
+  const body = html`${repoHeader(ctx, repo, "code", { compact: true })}
+    <div class="path-head">
+      ${refMenu(
+        refs,
+        ref,
+        (r) => `${base}/blob/${encodeURIComponent(r)}/${path}`,
+      )}
+      ${pathCrumbs(repo, ref, path, true)}
+      <span class="spacer"></span>
+      ${when(
+        lineCount > 0,
+        () =>
+          html`<span class="muted small num"
+            >${lineCount.toLocaleString()} lines · ${sizeText}</span
+          >`,
+      )}
+      ${btn("Raw", {
+        href: `${base}/raw/${encoded}/${path}`,
+        size: "sm",
+        variant: "outline",
+      })}
+      ${btn("History", {
+        href: `${base}/commits?ref=${encoded}&path=${encodeURIComponent(path)}`,
+        size: "sm",
+        variant: "outline",
+        icon: "history",
+      })}
+    </div>
     ${content}`;
   return page({
+    ctx,
     title: `${filename} · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
     crumbs: crumbsFor(repo),
-    body: body_,
-  });
-}
-
-// GET /:owner/:name/commits
-export async function commitsPage(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-
-  // Clamp hard: Infinity/1e300/NaN all collapse to page 1, never a bogus skip.
-  const requested = Math.floor(Number(ctx.url.searchParams.get("page")));
-  const pageNum = Number.isFinite(requested)
-    ? Math.min(Math.max(requested, 1), 100_000)
-    : 1;
-  const perPage = 30;
-  const log = await commitLog(dir, repo.defaultBranch, {
-    limit: perPage + 1,
-    skip: (pageNum - 1) * perPage,
-  });
-  if (!log.ok) {
-    return page({
-      title: `Commits · ${repo.name}`,
-      user: ctx.auth.user,
-      theme: ctx.theme,
-      crumbs: crumbsFor(repo),
-      body: html`${repoNav(repo, "commits")}
-        <div class="card empty">No commits yet.</div>`,
-    });
-  }
-
-  const commits = log.value.slice(0, perPage);
-  const hasMore = log.value.length > perPage;
-  const base = `/${repo.ownerName}/${repo.name}`;
-
-  const body = html`${repoNav(repo, "commits")}
-    <div class="card">
-      <ul class="list">
-        ${commits.map(
-          (commit) =>
-            html`<li>
-              <a class="row" href="${base}/commit/${commit.oid}">
-                <span class="grow">
-                  <strong>${commit.subject}</strong>
-                  <br />
-                  <span class="muted small"
-                    >${commit.author} · ${timeAgo(commit.date)}</span
-                  >
-                </span>
-                <span class="mono muted small">${commit.oid.slice(0, 8)}</span>
-              </a>
-            </li>`,
-        )}
-      </ul>
-    </div>
-    <div class="form-actions">
-      ${when(
-        pageNum > 1,
-        () =>
-          html`<a
-            class="btn"
-            data-size="sm"
-            href="${base}/commits?page=${pageNum - 1}"
-            >Newer</a
-          >`,
-      )}
-      ${when(
-        hasMore,
-        () =>
-          html`<a
-            class="btn"
-            data-size="sm"
-            href="${base}/commits?page=${pageNum + 1}"
-            >Older</a
-          >`,
-      )}
-    </div>`;
-  return page({
-    title: `Commits · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
-    crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
     body,
   });
 }
 
-// GET /:owner/:name/commit/:oid — one commit's metadata and its diff.
-export async function commitPage(ctx: Ctx): Promise<Response> {
+/**
+ * GET /:owner/:name/raw/:ref/*path — the bytes, nothing else. Served as plain
+ * text (or an opaque stream for binary) with `nosniff` and a `sandbox` CSP, so
+ * a file in a repository can never execute as a page on this origin.
+ */
+export async function rawBlob(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const rev = ctx.params.oid ?? "";
-  if (!isSafeOid(rev) && !isSafeRef(rev)) return notFoundPage(ctx);
+  const ref = ctx.params.ref ?? "";
+  const path = ctx.params.path ?? "";
+  if (!isSafeRef(ref) || !isSafeTreePath(path)) return notFoundPage(ctx);
+
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  const blob = await blobForRender(dir, ref, path, 25_000_000);
+  if (blob.kind === "missing" || blob.kind === "too_large")
+    return notFoundPage(ctx);
 
-  const log = await commitLog(dir, rev, { limit: 1 });
-  if (!log.ok || log.value.length === 0) return notFoundPage(ctx);
-  const commit = log.value[0]!;
-
-  const diffResult = await diffCommit(dir, commit.oid);
-  const diff = diffResult.ok
-    ? diffResult.value
-    : { files: [], additions: 0, deletions: 0 };
-  // Old side is the first parent (or the empty tree for a root commit, where
-  // every file is an addition and no old blob is read).
-  const parent = commit.parents[0] ?? commit.oid;
-  const syntax = await diffSyntax(dir, diff, parent, commit.oid);
-
-  const body = html`${repoNav(repo, "commits")}
-    <div class="card commit-head">
-      <h2>${commit.subject}</h2>
-      ${when(
-        commit.body.trim() !== "",
-        () => html`<pre class="commit-body">${commit.body}</pre>`,
-      )}
-      <div class="issue-meta">
-        <span class="muted small"
-          >${commit.author} committed ${timeAgo(commit.date)}</span
-        >
-        <span class="badge mono">${commit.oid.slice(0, 10)}</span>
-        ${when(
-          commit.parents.length > 1,
-          () => html`<span class="badge">merge</span>`,
-        )}
-      </div>
-    </div>
-    <div class="mt">${renderDiff(diff, syntax)}</div>`;
-  return page({
-    title: `${commit.subject} · ${repo.name}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
-    crumbs: crumbsFor(repo),
-    body,
+  return new Response(blob.body, {
+    headers: {
+      "content-type":
+        blob.kind === "text"
+          ? "text/plain; charset=utf-8"
+          : "application/octet-stream",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "default-src 'none'; sandbox",
+      "cache-control": "private, max-age=0",
+    },
   });
 }

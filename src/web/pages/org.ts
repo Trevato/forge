@@ -1,7 +1,12 @@
 /**
- * Owner pages: a profile at /:owner that lists repos (works for a person or an
- * org), and — for orgs — team management for admins. Orgs are created here too.
- * An org's access model is teams; this is the surface that edits them.
+ * Owner pages: the profile at `/:owner`, which serves a person and an org
+ * from one template, and — for orgs — the team surfaces an admin runs the
+ * place from. An org's access model *is* its teams, so this is where they are
+ * edited.
+ *
+ * Every mutation here goes through `src/actions/orgs.ts` and comes back as a
+ * redirect carrying a flash, so a silent failure is impossible: adding an
+ * unknown username now says so.
  */
 
 import {
@@ -22,188 +27,290 @@ import {
   type Permission,
   type Team,
 } from "../../core/orgs.ts";
-import { listReposByOwner } from "../../core/repos.ts";
+import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { page, redirect } from "../layout.ts";
+import { icon } from "../icons.ts";
+import { flashTo, page } from "../layout.ts";
+import {
+  avatar,
+  badge,
+  btn,
+  card,
+  confirmAction,
+  empty,
+  listCard,
+  pager,
+  pill,
+  row,
+  selectField,
+  time,
+  field as uiField,
+} from "../ui.ts";
 
-// GET /:owner — a person or org profile with their repos.
+const PER_PAGE = 20;
+
+// ---- profile ----
+
+/** The repo list, filtered by the box above it and paged by repo id. */
+function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
+  const query = (ctx.url.searchParams.get("q") ?? "").slice(0, 100);
+  const cursor = ctx.url.searchParams.get("cursor") ?? "";
+  const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
+    limit: PER_PAGE + 1,
+    ...(query !== "" ? { query } : {}),
+    ...(cursor !== "" ? { cursor } : {}),
+  });
+  const shown = repos.slice(0, PER_PAGE);
+  const last = shown[shown.length - 1];
+  const nextParams = new URLSearchParams();
+  if (query !== "") nextParams.set("q", query);
+  if (last) nextParams.set("cursor", last.id);
+
+  const lead = (repo: Repo) =>
+    icon(repo.forkParentId !== null ? "fork" : "repo");
+
+  return html`<div class="filters">
+      <form method="get" action="/${owner.username}" role="search">
+        <input
+          class="input search"
+          type="search"
+          name="q"
+          value="${query}"
+          placeholder="Find a repository"
+          aria-label="Find a repository"
+          data-search-input
+        />
+        <button class="btn" data-size="sm" type="submit">Filter</button>
+      </form>
+    </div>
+    ${shown.length === 0
+      ? empty({
+          icon: "repo",
+          title: query === "" ? "No repositories yet" : "No matches",
+          note:
+            query === ""
+              ? `${owner.username} has not published anything you can see.`
+              : "Try a different search.",
+          ...(isSelf && query === ""
+            ? {
+                action: btn("New repository", {
+                  href: `/new?owner=${owner.username}`,
+                  variant: "primary",
+                }),
+              }
+            : {}),
+        })
+      : listCard(
+          shown.map((repo) =>
+            row({
+              href: `/${repo.ownerName}/${repo.name}`,
+              lead: lead(repo),
+              title: repo.name,
+              nav: true,
+              ...(repo.description !== ""
+                ? { meta: html`${repo.description}` }
+                : {}),
+              trail:
+                repo.visibility === "private"
+                  ? badge("Private", { icon: "lock", variant: "secondary" })
+                  : badge("Public", { variant: "secondary" }),
+            }),
+          ),
+        )}
+    ${pager(
+      repos.length > PER_PAGE && last
+        ? { next: `/${owner.username}?${nextParams.toString()}` }
+        : {},
+    )}`;
+}
+
+/** Everyone on any of the org's teams, once each. */
+function orgMembers(ctx: Ctx, teams: Team[]): User[] {
+  const seen = new Map<string, User>();
+  for (const team of teams)
+    for (const member of listTeamMembers(ctx.app.db, team.id))
+      if (!seen.has(member.id)) seen.set(member.id, member);
+  return [...seen.values()].sort((a, b) =>
+    a.username.localeCompare(b.username),
+  );
+}
+
+function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
+  const teams = listTeams(ctx.app.db, org.id);
+  const members = orgMembers(ctx, teams);
+  return html`<h2 class="mt">Members</h2>
+    ${members.length === 0
+      ? empty({ icon: "users", title: "No members yet" })
+      : listCard(
+          members.map((m) =>
+            row({
+              href: `/${m.username}`,
+              lead: avatar(m.username),
+              title: m.displayName || m.username,
+              nav: true,
+              ...(m.displayName ? { meta: html`@${m.username}` } : {}),
+            }),
+          ),
+        )}
+
+    <h2 class="mt">Teams</h2>
+    ${listCard(
+      teams.map((t) =>
+        row({
+          lead: icon("users"),
+          title: t.name,
+          meta: html`${pill(listTeamMembers(ctx.app.db, t.id).length)}
+          ${listTeamMembers(ctx.app.db, t.id).length === 1
+            ? "member"
+            : "members"}`,
+          trail: html`${badge(t.permission)}${when(canManage, () =>
+            btn("Manage", {
+              href: `/${org.username}/-/teams/${t.id}`,
+              size: "sm",
+            }),
+          )}`,
+        }),
+      ),
+    )}
+    ${when(canManage, () =>
+      card(
+        html`<form method="post" action="/${org.username}/-/teams">
+          ${uiField({
+            label: "Team name",
+            name: "name",
+            required: true,
+            hint: "Teams grant their permission on every repository the org owns.",
+          })}
+          ${selectField({
+            label: "Permission",
+            name: "permission",
+            options: [
+              { value: "read", label: "read — clone and browse" },
+              { value: "write", label: "write — push, merge, triage" },
+              { value: "admin", label: "admin — settings and teams" },
+            ],
+          })}
+          <div class="form-actions">
+            ${btn("Create team", { variant: "primary" })}
+          </div>
+        </form>`,
+        { head: html`<h3>New team</h3>` },
+      ),
+    )}`;
+}
+
+// GET /:owner — a person or an org, with their repos.
 export function ownerProfile(ctx: Ctx): Response {
-  const name = ctx.params.owner ?? "";
-  const owner = getUserByName(ctx.app.db, name);
-  if (!owner) {
-    return page(
-      {
-        title: "Not found",
-        user: ctx.auth.user,
-        theme: ctx.theme,
-        body: html`<div class="empty"><h1>404</h1></div>`,
-      },
-      404,
-    );
-  }
-  const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user);
+  const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
+  if (!owner) return notFoundPage(ctx);
+
   const isOrg = owner.kind === "org";
   const access = isOrg
     ? orgAccess(ctx.app.db, owner.id, ctx.auth.user)
     : "none";
   const canManage = isOrg && accessAllows(access, "admin");
+  const isSelf =
+    ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
 
   const body = html`<div class="page-head">
-      <h1>${owner.username}</h1>
-      <span class="badge">${isOrg ? "organization" : "user"}</span>
-      <span class="spacer"></span>
-      ${when(
-        ctx.auth.user !== undefined &&
-          (ctx.auth.user.id === owner.id || canManage),
-        () =>
-          html`<a class="btn" data-size="sm" href="/new?owner=${owner.username}"
-            >New repository</a
-          >`,
+      ${avatar(owner.username, "lg")}
+      <div class="grow">
+        <h1>${owner.displayName || owner.username}</h1>
+        <p class="muted small">
+          ${badge(isOrg ? "organization" : "user")} @${owner.username} · joined
+          ${time(owner.createdAt)}
+        </p>
+      </div>
+      ${when(isSelf, () =>
+        btn("New repository", {
+          href: `/new?owner=${owner.username}`,
+          variant: "primary",
+          size: "sm",
+          icon: "plus",
+        }),
       )}
     </div>
-    ${repos.length === 0
-      ? html`<div class="card empty">No repositories.</div>`
-      : html`<div class="card">
-          <ul class="list">
-            ${repos.map(
-              (r) =>
-                html`<li>
-                  <a class="row" href="/${r.ownerName}/${r.name}">
-                    <span class="grow"><strong>${r.name}</strong></span>
-                    <span class="badge">${r.visibility}</span>
-                  </a>
-                </li>`,
-            )}
-          </ul>
-        </div>`}
+    ${repoSection(ctx, owner, isSelf)}
     ${when(isOrg && accessAllows(access, "read"), () =>
-      teamsSection(ctx, owner.id, owner.username, canManage),
+      teamsSection(ctx, owner, canManage),
     )}`;
-  return page({
-    title: owner.username,
-    user: ctx.auth.user,
-    theme: ctx.theme,
-    body,
-  });
+
+  return page({ ctx, title: owner.username, body });
 }
 
-function teamsSection(
-  ctx: Ctx,
-  orgId: string,
-  orgName: string,
-  canManage: boolean,
-): Html {
-  const teams = listTeams(ctx.app.db, orgId);
-  return html`<h2 class="mt">Teams</h2>
-    <div class="card">
-      <ul class="list">
-        ${teams.map((t) => {
-          const members = listTeamMembers(ctx.app.db, t.id);
-          return html`<li>
-            <div class="row">
-              <span class="grow">
-                <strong>${t.name}</strong>
-                <span class="badge">${t.permission}</span>
-                <br />
-                <span class="muted small"
-                  >${members.map((m) => m.username).join(", ") ||
-                  "no members"}</span
-                >
-              </span>
-              ${when(
-                canManage,
-                () =>
-                  html`<a
-                    class="btn"
-                    data-size="sm"
-                    href="/${orgName}/-/teams/${t.id}"
-                    >Manage</a
-                  >`,
-              )}
-            </div>
-          </li>`;
-        })}
-      </ul>
-    </div>
-    ${when(
-      canManage,
-      () =>
-        html`<form
-          class="card settings-card hook-new"
-          method="post"
-          action="/${orgName}/-/teams"
-        >
-          <input class="input" name="name" placeholder="Team name" required />
-          <select class="input" name="permission">
-            <option value="read">read</option>
-            <option value="write">write</option>
-            <option value="admin">admin</option>
-          </select>
-          <button class="btn" type="submit">Create team</button>
-        </form>`,
-    )}`;
+// ---- creating an org ----
+
+function orgForm(ctx: Ctx, value: string, error?: string): Response {
+  return page(
+    {
+      ctx,
+      title: "New organization",
+      body: html`<div class="narrow">
+        ${pageHead("New organization")}
+        <p class="muted small mb">
+          An organization owns repositories and hands out access through teams.
+          You become its first owner.
+        </p>
+        <form method="post" action="/organizations/new">
+          ${uiField({
+            label: "Organization name",
+            name: "name",
+            value,
+            required: true,
+            autofocus: true,
+            pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
+            hint: "Letters, digits, dots, dashes. This becomes the URL.",
+            ...(error ? { error } : {}),
+          })}
+          <div class="form-actions">
+            ${btn("Create organization", { variant: "primary" })}
+            ${btn("Cancel", { href: "/", variant: "ghost" })}
+          </div>
+        </form>
+      </div>`,
+    },
+    error ? 422 : 200,
+  );
 }
 
 // GET /organizations/new
 export function newOrgPage(ctx: Ctx): Response {
-  if (!ctx.auth.user) return redirect("/signin");
-  const body = html`<div class="narrow">
-    <h1>New organization</h1>
-    <form method="post" action="/organizations/new">
-      <label for="name">Organization name</label>
-      <input
-        class="input"
-        id="name"
-        name="name"
-        required
-        autofocus
-        pattern="[A-Za-z0-9][A-Za-z0-9._-]*"
-      />
-      <div class="form-actions">
-        <button class="btn" data-variant="primary" type="submit">
-          Create organization
-        </button>
-      </div>
-    </form>
-  </div>`;
-  return page({
-    title: "New organization",
-    user: ctx.auth.user,
-    theme: ctx.theme,
-    body,
-  });
+  if (!ctx.auth.user) return signInFirst(ctx);
+  return orgForm(ctx, "");
 }
 
 // POST /organizations/new
 export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
-  if (!ctx.auth.user) return redirect("/signin");
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const created = createOrg(ctx.app, ctx.auth.user, field(form, "name"));
+  const name = field(form, "name");
+  const created = createOrg(ctx.app, ctx.auth.user, name);
   if (!created.ok) {
-    const msg =
-      created.error === "name_taken" ? "That name is taken." : "Invalid name.";
-    return page({
-      title: "New organization",
-      user: ctx.auth.user,
-      theme: ctx.theme,
-      body: html`<div class="narrow">
-        <h1>New organization</h1>
-        <p class="error-note">${msg}</p>
-        <a class="btn" href="/organizations/new">Back</a>
-      </div>`,
-    });
+    const messages: Record<string, string> = {
+      name_taken: "That name is already taken.",
+      invalid_name: "Letters, digits, dots and dashes only.",
+      unauthorized: "Sign in to create an organization.",
+    };
+    return orgForm(
+      ctx,
+      name,
+      messages[created.error] ?? "That name won't work.",
+    );
   }
-  return redirect(`/${created.value.username}`);
+  return flashTo(ctx, `/${created.value.username}`, {
+    message: `Created ${created.value.username}. You are its first owner.`,
+  });
 }
 
 // ---- team management (org admins only) ----
 
-/** The org for admin pages: resolved here, gated by every action (and by the
- * page itself, so the team pages are invisible to non-admins). */
+/** The org for admin pages. A non-admin gets nothing back, so the whole
+ * surface is invisible rather than merely refused. */
 function requireOrgAdmin(ctx: Ctx): User | undefined {
   const org = getOrg(ctx.app.db, ctx.params.owner ?? "");
   if (!org) return undefined;
@@ -215,120 +322,114 @@ function requireOrgAdmin(ctx: Ctx): User | undefined {
 // POST /:owner/-/teams
 export async function teamCreate(ctx: Ctx): Promise<Response> {
   const org = requireOrgAdmin(ctx);
-  if (!org)
-    return page(
-      {
-        title: "Not found",
-        user: ctx.auth.user,
-        theme: ctx.theme,
-        body: html`<div class="empty"><h1>404</h1></div>`,
-      },
-      404,
-    );
+  if (!org) return notFoundPage(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const perm = field(form, "permission");
+  const chosen = field(form, "permission");
   const permission: Permission =
-    perm === "write" || perm === "admin" ? perm : "read";
-  createTeam(ctx.app, ctx.auth.user, org, field(form, "name"), permission);
-  return redirect(`/${org.username}`);
+    chosen === "write" || chosen === "admin" ? chosen : "read";
+  const name = field(form, "name");
+  const created = createTeam(ctx.app, ctx.auth.user, org, name, permission);
+  if (!created.ok) {
+    const messages: Record<string, string> = {
+      name_taken: `${org.username} already has a team called ${name}.`,
+      invalid_name: "A team needs a name.",
+    };
+    return flashTo(ctx, `/${org.username}`, {
+      tone: "danger",
+      message: messages[created.error] ?? "Could not create that team.",
+    });
+  }
+  return flashTo(ctx, `/${org.username}/-/teams/${created.value.id}`, {
+    message: `Created ${created.value.name} with ${permission} access.`,
+  });
 }
 
 // GET /:owner/-/teams/:team
 export function teamPage(ctx: Ctx): Response {
   const org = requireOrgAdmin(ctx);
-  if (!org)
-    return page(
-      {
-        title: "Not found",
-        user: ctx.auth.user,
-        theme: ctx.theme,
-        body: html`<div class="empty"><h1>404</h1></div>`,
-      },
-      404,
-    );
+  if (!org) return notFoundPage(ctx);
   const team = getTeam(ctx.app.db, ctx.params.team ?? "");
-  if (!team || team.orgId !== org.id) {
-    return page(
-      {
-        title: "Not found",
-        user: ctx.auth.user,
-        theme: ctx.theme,
-        body: html`<div class="empty"><h1>404</h1></div>`,
-      },
-      404,
-    );
-  }
+  if (!team || team.orgId !== org.id) return notFoundPage(ctx);
+
   const members = listTeamMembers(ctx.app.db, team.id);
   const teamBase = `/${org.username}/-/teams/${team.id}`;
-  const body = html`<div class="page-head">
-      <h1>${org.username} / ${team.name}</h1>
-      <span class="badge">${team.permission}</span>
-    </div>
-    <div class="card">
-      <ul class="list">
-        ${members.map(
-          (m) =>
-            html`<li>
-              <div class="row">
-                <span class="grow">${m.username}</span>
-                ${when(
-                  team.name !== OWNERS_TEAM || members.length > 1,
-                  () =>
-                    html`<form
-                      method="post"
-                      action="${teamBase}/remove"
-                      class="inline"
-                    >
-                      <input type="hidden" name="user" value="${m.username}" />
-                      <button
-                        class="btn"
-                        data-size="sm"
-                        data-variant="danger"
-                        type="submit"
-                      >
-                        Remove
-                      </button>
-                    </form>`,
-                )}
-              </div>
-            </li>`,
-        )}
-      </ul>
-    </div>
-    <form
-      class="card settings-card hook-new"
-      method="post"
-      action="${teamBase}/add"
-    >
-      <input class="input" name="user" placeholder="Username to add" required />
-      <button class="btn" type="submit">Add member</button>
-    </form>
-    ${when(
-      team.name !== OWNERS_TEAM,
-      () =>
-        html`<form method="post" action="${teamBase}/delete" class="mt">
-          <button class="btn" data-variant="danger" type="submit">
-            Delete team
-          </button>
-        </form>`,
-    )}`;
+  // The last owner may not be removed: an org must keep an admin.
+  const protectedTeam = team.name === OWNERS_TEAM;
+
+  const body = html`${pageHead(team.name, {
+    lead: icon("users"),
+    sub: html`${badge(team.permission)} on every repository ${org.username} owns`,
+  })}
+  ${members.length === 0
+    ? empty({ icon: "users", title: "Nobody on this team yet" })
+    : listCard(
+        members.map((m) =>
+          row({
+            lead: avatar(m.username),
+            title: html`<a href="/${m.username}"
+              >${m.displayName || m.username}</a
+            >`,
+            meta: html`@${m.username}`,
+            trail: when(
+              !protectedTeam || members.length > 1,
+              () =>
+                html`<form method="post" action="${teamBase}/remove">
+                  <input type="hidden" name="user" value="${m.username}" />
+                  ${btn("Remove", { variant: "danger", size: "sm" })}
+                </form>`,
+            ),
+          }),
+        ),
+      )}
+  ${card(
+    html`<form method="post" action="${teamBase}/add">
+      ${uiField({
+        label: "Add a member",
+        name: "user",
+        required: true,
+        hint: "Their username on this forge.",
+      })}
+      <div class="form-actions">
+        ${btn("Add member", { variant: "primary" })}
+      </div>
+    </form>`,
+    { head: html`<h3>Membership</h3>` },
+  )}
+  ${when(!protectedTeam, () =>
+    card(
+      html`<p class="muted small mb">
+          Deleting ${team.name} revokes its ${team.permission} access for
+          ${members.length} ${members.length === 1 ? "person" : "people"}.
+          Repositories are untouched.
+        </p>
+        ${confirmAction({
+          action: `${teamBase}/delete`,
+          verb: "Delete team",
+        })}`,
+      { head: html`<h3>Danger zone</h3>`, tone: "danger" },
+    ),
+  )}`;
+
   return page({
+    ctx,
     title: `${team.name} · ${org.username}`,
-    user: ctx.auth.user,
-    theme: ctx.theme,
+    crumbs: [
+      { label: org.username, href: `/${org.username}` },
+      { label: team.name, href: teamBase },
+    ],
     body,
   });
 }
 
+/** The three team POSTs share a resolution: org, team, and a checked form. */
 async function teamAction(
   ctx: Ctx,
 ): Promise<{ org: User; team: Team; form: Form } | Response> {
   const org = requireOrgAdmin(ctx);
-  if (!org) return new Response("not found", { status: 404 });
+  if (!org) return notFoundPage(ctx);
   const team = getTeam(ctx.app.db, ctx.params.team ?? "");
-  if (!team || team.orgId !== org.id)
-    return new Response("not found", { status: 404 });
+  if (!team || team.orgId !== org.id) return notFoundPage(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   return { org, team, form };
@@ -338,28 +439,64 @@ async function teamAction(
 export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, field(r.form, "user"));
-  return redirect(`/${r.org.username}/-/teams/${r.team.id}`);
+  const username = field(r.form, "user").trim();
+  const dest = `/${r.org.username}/-/teams/${r.team.id}`;
+  const added = addTeamMember(ctx.app, ctx.auth.user, r.org, r.team, username);
+  if (!added.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message:
+        added.error === "no_such_user"
+          ? `No account called ${username || "that"}.`
+          : "Could not add that member.",
+    });
+  return flashTo(ctx, dest, {
+    message: added.value.added
+      ? `Added ${username} to ${r.team.name}.`
+      : `${username} was already on ${r.team.name}.`,
+  });
 }
 
 // POST /:owner/-/teams/:team/remove
 export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  removeTeamMember(
+  const username = field(r.form, "user").trim();
+  const dest = `/${r.org.username}/-/teams/${r.team.id}`;
+  const removed = removeTeamMember(
     ctx.app,
     ctx.auth.user,
     r.org,
     r.team,
-    field(r.form, "user"),
+    username,
   );
-  return redirect(`/${r.org.username}/-/teams/${r.team.id}`);
+  if (!removed.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message:
+        removed.error === "no_such_user"
+          ? `No account called ${username || "that"}.`
+          : "Could not remove that member.",
+    });
+  return flashTo(ctx, dest, {
+    message: removed.value.removed
+      ? `Removed ${username} from ${r.team.name}.`
+      : `${r.team.name} must keep at least one owner.`,
+    ...(removed.value.removed ? {} : { tone: "danger" as const }),
+  });
 }
 
 // POST /:owner/-/teams/:team/delete
 export async function teamDelete(ctx: Ctx): Promise<Response> {
   const r = await teamAction(ctx);
   if (r instanceof Response) return r;
-  deleteTeam(ctx.app, ctx.auth.user, r.org, r.team);
-  return redirect(`/${r.org.username}`);
+  const deleted = deleteTeam(ctx.app, ctx.auth.user, r.org, r.team);
+  if (!deleted.ok)
+    return flashTo(ctx, `/${r.org.username}/-/teams/${r.team.id}`, {
+      tone: "danger",
+      message: `${r.team.name} is protected — an organization must keep its owners.`,
+    });
+  return flashTo(ctx, `/${r.org.username}`, {
+    message: `Deleted the ${r.team.name} team.`,
+  });
 }

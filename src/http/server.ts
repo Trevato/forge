@@ -36,14 +36,15 @@ import {
   signupSubmit,
   themeSubmit,
 } from "../web/pages/site.ts";
+import { confirmPage, searchPage } from "../web/pages/search.ts";
 import {
   blobPage,
-  commitPage,
-  commitsPage,
   forkSubmit,
+  rawBlob,
   repoHome,
   treePage,
 } from "../web/pages/repo.ts";
+import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
   issuePage,
@@ -52,19 +53,27 @@ import {
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
+import { labelsSubmit, stateSubmit } from "../web/pages/thread.ts";
 import {
   newPullPage,
   newPullSubmit,
+  pullsList,
+} from "../web/pages/pulls.ts";
+import {
   pullCommentSubmit,
   pullMergeSubmit,
   pullPage,
   pullReviewSubmit,
-  pullsList,
   pullThreadFragment,
-} from "../web/pages/pulls.ts";
+} from "../web/pages/pull.ts";
 import {
+  dangerPage,
+  hooksPage,
   labelCreate,
   labelDelete,
+  labelUpdate,
+  labelsPage,
+  repoDelete,
   settingsPage,
   settingsUpdate,
   webhookCreate,
@@ -81,9 +90,13 @@ import {
   teamPage,
 } from "../web/pages/org.ts";
 import {
+  accountPage,
+  accountUpdate,
   keyCreate,
   keyDelete,
   keysPage,
+  passwordPage,
+  passwordUpdate,
   tokenCreate,
   tokenDelete,
   tokensPage,
@@ -190,10 +203,18 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
+  router.add("GET", "/search", searchPage);
+  // The JS-free half of every destructive action. Two literal segments, so it
+  // is registered before /:owner/:name can claim the shape.
+  router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
   router.add("POST", "/new", newRepoSubmit);
   router.add("GET", "/organizations/new", newOrgPage);
   router.add("POST", "/organizations/new", newOrgSubmit);
+  router.add("GET", "/settings", accountPage);
+  router.add("POST", "/settings", accountUpdate);
+  router.add("GET", "/settings/password", passwordPage);
+  router.add("POST", "/settings/password", passwordUpdate);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
@@ -242,6 +263,13 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/issues/:number/comments",
     issueCommentSubmit,
   );
+  // Close/reopen and labels are their own verbs, not riders on a comment.
+  router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
+    stateSubmit(ctx, "issue"),
+  );
+  router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
+    labelsSubmit(ctx, "issue"),
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   router.add("GET", "/:owner/:name/pulls", pullsList);
@@ -252,6 +280,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
+    stateSubmit(ctx, "pull"),
+  );
+  router.add("POST", "/:owner/:name/pulls/:number/labels", (ctx) =>
+    labelsSubmit(ctx, "pull"),
+  );
 
   // Live event stream for a repo the viewer can read.
   router.add("GET", "/:owner/:name/stream", (ctx) => {
@@ -275,6 +309,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tree/:ref", treePage);
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
+  router.add("GET", "/:owner/:name/raw/:ref/*path", rawBlob);
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
@@ -282,10 +317,15 @@ export function buildRouter(): Router<Handler> {
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
+  router.add("GET", "/:owner/:name/settings/labels", labelsPage);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
+  router.add("POST", "/:owner/:name/settings/labels/:id", labelUpdate);
   router.add("POST", "/:owner/:name/settings/labels/:id/delete", labelDelete);
+  router.add("GET", "/:owner/:name/settings/hooks", hooksPage);
   router.add("POST", "/:owner/:name/settings/hooks", webhookCreate);
   router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
+  router.add("GET", "/:owner/:name/settings/danger", dangerPage);
+  router.add("POST", "/:owner/:name/settings/delete", repoDelete);
 
   return router;
 }

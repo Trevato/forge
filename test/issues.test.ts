@@ -140,11 +140,13 @@ describe("issue pages end to end", () => {
     expect(detail).toContain("I can repro this.");
   });
 
+  // Closing is its own verb now: POST …/state, not an `intent` rider on the
+  // comment endpoint. One endpoint, one thing it does.
   test("close and reopen from the thread", async () => {
-    await fetch(`${base}/mel/proj/issues/1/comments`, {
+    await fetch(`${base}/mel/proj/issues/1/state`, {
       method: "POST",
       headers: { cookie },
-      body: form({ intent: "close", body: "" }),
+      body: form({ state: "closed" }),
       redirect: "manual",
     });
     let detail = await (await fetch(`${base}/mel/proj/issues/1`)).text();
@@ -157,10 +159,10 @@ describe("issue pages end to end", () => {
       await (await fetch(`${base}/mel/proj/issues?state=closed`)).text(),
     ).toContain("First bug");
 
-    await fetch(`${base}/mel/proj/issues/1/comments`, {
+    await fetch(`${base}/mel/proj/issues/1/state`, {
       method: "POST",
       headers: { cookie },
-      body: form({ intent: "reopen", body: "" }),
+      body: form({ state: "open" }),
       redirect: "manual",
     });
     detail = await (await fetch(`${base}/mel/proj/issues/1`)).text();

@@ -18,7 +18,7 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { pageLimit } from "./issues.ts";
+import { likeEscape, pageLimit } from "./issues.ts";
 import { accessAllows, orgAccess, type Access } from "./orgs.ts";
 import { getUserById, type User } from "./users.ts";
 
@@ -226,6 +226,8 @@ export function getRepoById(db: Database, repoId: string): Repo | undefined {
 }
 
 export interface ListReposOptions {
+  /** Case-insensitive substring of `owner/name` — the list page's filter box. */
+  query?: string;
   /** Page size. @default LIST_LIMIT (max LIST_LIMIT_MAX) */
   limit?: number;
   /** Resume after this repo id (exclusive) — lists run newest first. */
@@ -252,6 +254,12 @@ export function listReposVisibleTo(
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? ""];
   let where = viewer ? VISIBLE : "repo.visibility = 'public'";
+  if (options.query !== undefined && options.query.trim() !== "") {
+    params.push(`%${likeEscape(options.query.trim())}%`);
+    const p = params.length;
+    where += ` AND (repo.name LIKE ?${p} ESCAPE '\\' COLLATE NOCASE
+      OR user.username LIKE ?${p} ESCAPE '\\' COLLATE NOCASE)`;
+  }
   if (options.cursor !== undefined) {
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;
@@ -277,6 +285,12 @@ export function listReposByOwner(
   let where = `user.username = ?2 COLLATE NOCASE AND ${
     viewer ? VISIBLE : "repo.visibility = 'public'"
   }`;
+  if (options.query !== undefined && options.query.trim() !== "") {
+    params.push(`%${likeEscape(options.query.trim())}%`);
+    const p = params.length;
+    where += ` AND (repo.name LIKE ?${p} ESCAPE '\\' COLLATE NOCASE
+      OR user.username LIKE ?${p} ESCAPE '\\' COLLATE NOCASE)`;
+  }
   if (options.cursor !== undefined) {
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;

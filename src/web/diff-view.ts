@@ -20,6 +20,7 @@ import {
 import { composeLine } from "./code.ts";
 import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
+import { time, userLink } from "./ui.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
 
@@ -222,13 +223,13 @@ function reviewRows(
     const outdated = c.lineHash !== currentHash;
     return html`<div class="rc">
       <div class="rc-head">
-        <strong>${c.authorName}</strong>
+        ${userLink(c.authorName)} ${time(c.createdAt)}
         ${when(
           outdated,
           () => html`<span class="badge rc-outdated">outdated</span>`,
         )}
       </div>
-      <div class="md rc-body">${renderMarkdown(c.body)}</div>
+      <div class="prose rc-body">${renderMarkdown(c.body)}</div>
     </div>`;
   });
 
@@ -242,11 +243,13 @@ function reviewRows(
         <input type="hidden" name="path" value="${path}" />
         <input type="hidden" name="side" value="${side}" />
         <input type="hidden" name="line" value="${line}" />
-        <input type="hidden" name="lineHash" value="${currentHash}" />
+        <label class="sr-only" for="rc-body">Comment on this line</label>
         <textarea
           class="input"
+          id="rc-body"
           name="body"
           rows="3"
+          data-grow
           placeholder="Comment on this line"
           required
           autofocus
@@ -260,6 +263,9 @@ function reviewRows(
           >
             Add comment
           </button>
+          <a class="btn" data-size="sm" data-variant="ghost" href="${opts.reviewBase}"
+            >Cancel</a
+          >
         </div>
       </form>`
     : html``;
@@ -318,7 +324,7 @@ function fileHeader(file: FileDiff): Html {
       ? html`<span class="muted">${file.oldPath}</span> → ${file.newPath}`
       : html`${file.path}`;
   return html`<summary class="diff-head">
-    <span class="diff-path mono">${name}</span>
+    <span class="diff-path mono" title="${file.path}">${name}</span>
     ${when(label !== "", () => html`<span class="badge">${label}</span>`)}
     <span class="spacer"></span>
     <span class="diff-stat"
@@ -331,6 +337,10 @@ function fileHeader(file: FileDiff): Html {
         () => html`<span class="del">−${file.deletions}</span>`,
       )}</span
     >
+    <label class="diff-viewed" title="Mark this file reviewed">
+      <input type="checkbox" />
+      <span class="hide-sm">Viewed</span>
+    </label>
   </summary>`;
 }
 
