@@ -73,6 +73,12 @@ export interface Ctx {
   toast(text: string, tone?: Tone): void;
   /** Where the terminal caret belongs this frame, if anywhere. */
   setCursor(pos: CursorPos | null): void;
+  /**
+   * Register async work started from a key handler (a sign-in, a commit) so
+   * the app counts as busy until it settles. Loads via `Screen.load` are
+   * tracked automatically; this is for everything else.
+   */
+  track<T>(work: Promise<T>): Promise<T>;
   setTheme(name: ThemeName): void;
   quit(): void;
   readonly theme: Theme;
@@ -127,9 +133,19 @@ export class App {
   readonly ctx: Ctx;
   readonly commands: Command[] = [];
 
-  /** True while any screen on the stack is still loading. Tests settle on it. */
+  private pending = 0;
+
+  /** True while any screen is loading or tracked work is in flight. */
   get busy(): boolean {
-    return this.stack.some((e) => e.loading);
+    return this.pending > 0 || this.stack.some((e) => e.loading);
+  }
+
+  track<T>(work: Promise<T>): Promise<T> {
+    this.pending++;
+    return work.finally(() => {
+      this.pending--;
+      this.invalidate();
+    });
   }
 
   /** Global bindings. Reserved: no screen may steal `?`, `:` or Ctrl+C. */
@@ -161,6 +177,7 @@ export class App {
       replace: (s) => app.replace(s),
       invalidate: () => app.invalidate(),
       toast: (text, tone) => app.toast(text, tone),
+      track: (work) => app.track(work),
       setCursor: (pos) => {
         app.cursor = pos;
       },

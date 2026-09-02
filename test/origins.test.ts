@@ -631,11 +631,13 @@ describe("origins: connecting, mirroring, writing through", () => {
       (await api("/api/v1/user/pins/alice/widgets", { method: "PUT" })).status,
     ).toBe(200);
     const pins = (await (await api("/api/v1/user/pins")).json()) as {
-      ownerName: string;
+      owner: string;
       name: string;
+      cloneUrl: string;
     }[];
     expect(pins).toHaveLength(1);
-    expect(pins[0]).toMatchObject({ ownerName: "alice", name: "widgets" });
+    expect(pins[0]).toMatchObject({ owner: "alice", name: "widgets" });
+    expect(pins[0]!.cloneUrl.endsWith("/alice/widgets.git")).toBe(true);
     expect(
       (await read<{ pinned: boolean }>(await api("/api/v1/repos/alice/widgets")))
         .pinned,

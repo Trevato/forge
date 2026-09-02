@@ -89,6 +89,7 @@ import {
   listReposByOwner,
   listReposVisibleTo,
   type Repo,
+  getRepoById,
 } from "../core/repos.ts";
 import { listReviewComments, withOutdated } from "../core/reviews.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
@@ -1347,9 +1348,35 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pins ─────────────────────────────────────────────────────────────
 
+  // The local client clones from this list, so each pin carries what a
+  // clone needs: both URLs and where the repo came from.
   router.add("GET", "/api/v1/user/pins", (ctx) => {
     if (!ctx.auth.user) return unauthorized();
-    return json(listPinned(ctx.app, ctx.auth.user));
+    const host = ctx.app.config.host ?? ctx.url.hostname;
+    const sshPort = ctx.app.config.sshPort;
+    const items = listPinned(ctx.app, ctx.auth.user).flatMap((pin) => {
+      const repo = getRepoById(ctx.app.db, pin.repoId);
+      if (!repo) return [];
+      const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
+      return [
+        {
+          repoId: repo.id,
+          owner: repo.ownerName,
+          name: repo.name,
+          defaultBranch: repo.defaultBranch,
+          cloneUrl: `${ctx.url.origin}/${path}.git`,
+          sshUrl:
+            sshPort !== undefined && sshPort > 0
+              ? `ssh://git@${host}:${sshPort}/${path}.git`
+              : null,
+          origin: repo.origin
+            ? { fullName: repo.origin.fullName, htmlUrl: repo.origin.htmlUrl }
+            : null,
+          pinnedAt: pin.createdAt,
+        },
+      ];
+    });
+    return json(items);
   });
 
   router.add("PUT", "/api/v1/user/pins/:owner/:name", (ctx) => {

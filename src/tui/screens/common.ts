@@ -554,7 +554,9 @@ export function message(error: unknown): string {
 
 /** Fire an async action; any throw becomes a toast rather than a dead screen. */
 export function runAsync(ctx: Ctx, fn: () => Promise<unknown>): void {
-  void fn().catch((error: unknown) => ctx.toast(message(error), "danger"));
+  void ctx
+    .track(fn())
+    .catch((error: unknown) => ctx.toast(message(error), "danger"));
 }
 
 const UNITS: readonly (readonly [number, string])[] = [

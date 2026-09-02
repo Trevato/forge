@@ -135,6 +135,7 @@ describe("the local client, against a real forge", () => {
       await sh(["git", "add", "-A"], dir);
       await sh(["git", "commit", "-m", "genesis"], dir);
       await sh(["git", "push", "origin", "main"], dir);
+      await api(`/api/v1/user/pins/alice/${name}`, { method: "PUT" });
     }
   });
 
