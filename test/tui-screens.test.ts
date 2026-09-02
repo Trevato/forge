@@ -212,7 +212,11 @@ describe("the terminal UI, against a real forge", () => {
     expect(text).toContain("alice/lighthouse");
     expect(text).toContain("alice/vault");
     expect(text).toContain("Recent activity");
-    expect(text).toMatch(/issue\.opened/);
+    // English, not event kinds: nothing in the feed may read like a payload.
+    expect(text).toContain("alice opened issue #1");
+    expect(text).not.toMatch(/issue\.opened|repo\.created|label\.created/);
+    // Account plumbing is not repo activity.
+    expect(text).not.toContain("user.created");
     h.stop();
   });
 
@@ -221,8 +225,15 @@ describe("the terminal UI, against a real forge", () => {
     await h.settle();
     await h.press("/");
     await h.typeText("vault");
-    expect(h.text()).toContain("alice/vault");
-    expect(h.text()).not.toContain("alice/lighthouse");
+    // The repo pane is the left half; the activity feed on the right still
+    // names lighthouse, so scope the assertion to the list being filtered.
+    const list = h
+      .text()
+      .split("\n")
+      .map((line) => line.slice(0, 70))
+      .join("\n");
+    expect(list).toContain("alice/vault");
+    expect(list).not.toContain("alice/lighthouse");
     h.stop();
   });
 
@@ -612,7 +623,9 @@ function fakeSshSession(): SshSession & {
       data = cb;
     },
     onResize() {},
+    onEof() {},
     onClose() {},
+    ended: false,
     exit(code: number) {
       session.exitCode = code;
     },

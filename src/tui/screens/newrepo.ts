@@ -55,8 +55,8 @@ export function newRepoScreen(f: Session, ctx: Ctx, owner?: string): Screen {
     keys: [
       binding(["tab"], "next field"),
       binding(["space"], "toggle"),
-      binding(["ctrl+d"], "create"),
-      binding(["esc"], "cancel"),
+      binding(["ctrl+d"], "create repo"),
+      binding(["esc"], "discard"),
     ],
     render(area, s) {
       const c = ctx.theme.c;

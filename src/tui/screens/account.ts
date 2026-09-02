@@ -34,7 +34,7 @@ import {
   drawList,
   errorText,
   promptScreen,
-  relTime,
+  ago,
   runAsync,
 } from "./common.ts";
 
@@ -93,7 +93,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           ["display name", f.user.displayName || "(none)"],
           ["email", f.user.email],
           ["role", f.user.isAdmin ? "site admin" : "user"],
-          ["joined", relTime(f.user.createdAt)],
+          ["joined", ago(f.user.createdAt)],
         ]);
         return;
       }
@@ -109,7 +109,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
             meta:
               token.lastUsedAt === null
                 ? "never used"
-                : `used ${relTime(token.lastUsedAt)}`,
+                : `used ${ago(token.lastUsedAt)}`,
           })),
         );
         return;

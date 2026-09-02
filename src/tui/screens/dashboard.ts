@@ -7,14 +7,17 @@
  * telling them how to become someone.
  */
 
+import { getIssue } from "../../core/issues.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { listEvents, type ForgeEvent } from "../../core/events.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { getUserById } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
+import type { Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
-import { truncate } from "../term/width.ts";
+import type { Tokens } from "../ui/theme.ts";
+import { pad, truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { card, emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
@@ -26,6 +29,7 @@ import {
   runAsync,
   type ListRow,
 } from "./common.ts";
+import { describeEvent, type FeedLine } from "./activity.ts";
 import { accountScreen } from "./account.ts";
 import { exploreScreen } from "./explore.ts";
 import { newRepoScreen } from "./newrepo.ts";
@@ -35,7 +39,7 @@ import { signInScreen } from "./signin.ts";
 
 export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
-  let events: ForgeEvent[] = [];
+  let feed: FeedItem[] = [];
   let orgs: string[] = [];
   const state = new ListState();
   const filter = new Filter();
@@ -53,10 +57,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             repo.ownerId === f.user?.id || orgs.includes(repo.ownerName),
         )
       : all;
-    events = listEvents(f.db, { limit: 30 }).filter(
+    const visible = listEvents(f.db, { limit: 60 }).filter(
       (event) =>
         event.repoId === null || all.some((repo) => repo.id === event.repoId),
     );
+    feed = visible.flatMap((event) => item(f, event, all) ?? []);
     ctx.invalidate();
   };
 
@@ -114,9 +119,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         );
       if (right === undefined) return;
 
-      const [feed, side] = split(right, "v", [fill(2), len(6)]);
-      const inner = card(s, feed!, c, { title: "Recent activity" });
-      if (events.length === 0)
+      const [activity, side] = split(right, "v", [fill(2), len(6)]);
+      const inner = card(s, activity!, c, { title: "Recent activity" });
+      if (feed.length === 0)
         s.text(
           inner.x,
           inner.y,
@@ -124,15 +129,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           style(c.faint, c.card),
           inner.x + inner.w,
         );
-      events.slice(0, inner.h).forEach((event, i) => {
-        s.text(
-          inner.x,
-          inner.y + i,
-          truncate(describe(f, event), inner.w),
-          style(c.mutedFg, c.card),
-          inner.x + inner.w,
-        );
-      });
+      else drawFeed(s, inner, c, feed);
       const sideInner = card(s, side!, c, {
         title: f.signedIn ? "Organizations" : "Sign in",
       });
@@ -196,13 +193,102 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   };
 }
 
-/** One event as one line — the feed is a list of sentences, not of JSON. */
-function describe(f: Session, event: ForgeEvent): string {
+interface FeedItem extends FeedLine {
+  /** Relative, and short enough to right-align in its own column. */
+  readonly when: string;
+}
+
+/** Time gets a fixed column so the stamps line up as a rule down the edge. */
+const WHEN = 4;
+/** Below this the second line has nothing left to say after truncation. */
+const TWO_LINE = 40;
+
+/**
+ * Resolve everything `describeEvent` needs — the actor, the repo, and the
+ * title of whatever the event numbered — and hand it the finished nouns.
+ */
+function item(
+  f: Session,
+  event: ForgeEvent,
+  repos: readonly Repo[],
+): FeedItem | null {
   const actor =
     event.actorId === null
       ? "someone"
       : (getUserById(f.db, event.actorId)?.username ?? "someone");
+  const repo = repos.find((r) => r.id === event.repoId);
   const number = event.payload["number"];
-  const suffix = typeof number === "number" ? ` #${number}` : "";
-  return `${relTime(event.createdAt).padEnd(4)} ${actor} ${event.kind}${suffix}`;
+  const title =
+    repo !== undefined && typeof number === "number"
+      ? getIssue(f.db, repo.id, number)?.title
+      : undefined;
+  const line = describeEvent(event, {
+    actor,
+    ...(repo === undefined ? {} : { repo: `${repo.ownerName}/${repo.name}` }),
+    ...(title === undefined ? {} : { title }),
+  });
+  return line === null ? null : { ...line, when: relTime(event.createdAt) };
+}
+
+/**
+ * Two rows an item when there is room for the object of the sentence, one
+ * truncated row when there is not. Either way the time is a right-hand
+ * column, never a prefix that pushes the words around.
+ */
+function drawFeed(
+  s: Parameters<typeof card>[0],
+  r: Rect,
+  c: Tokens,
+  items: readonly FeedItem[],
+): void {
+  const right = r.x + r.w;
+  const wide = r.w >= TWO_LINE;
+  let y = r.y;
+  for (const entry of items) {
+    if (y >= r.y + r.h) return;
+    if (!wide) {
+      const tail = entry.subject === "" ? "" : ` · ${entry.subject}`;
+      s.text(
+        r.x,
+        y,
+        pad(entry.when, WHEN, "right"),
+        style(c.faint, c.card),
+        right,
+      );
+      s.text(
+        r.x + WHEN + 1,
+        y,
+        truncate(`${entry.headline}${tail}`, Math.max(0, r.w - WHEN - 1)),
+        style(c.mutedFg, c.card),
+        right,
+      );
+      y += 1;
+      continue;
+    }
+    s.text(
+      r.x,
+      y,
+      truncate(entry.headline, Math.max(0, r.w - WHEN - 1)),
+      style(c.fg, c.card),
+      right,
+    );
+    s.text(
+      right - WHEN,
+      y,
+      pad(entry.when, WHEN, "right"),
+      style(c.faint, c.card),
+      right,
+    );
+    y += 1;
+    if (entry.detail !== "" && y < r.y + r.h) {
+      s.text(
+        r.x + 2,
+        y,
+        truncate(entry.detail, Math.max(0, r.w - 2)),
+        style(c.faint, c.card),
+        right,
+      );
+      y += 1;
+    }
+  }
 }

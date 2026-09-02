@@ -65,8 +65,8 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
       const rows = shown();
       if (rows.length === 0) {
         emptyState(s, body!, c, {
-          title: "Nothing to show",
-          body: "No repository here is visible to you.",
+          title: "No repositories",
+          body: "Nothing here is visible to you.",
         });
         return;
       }

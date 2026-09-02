@@ -24,13 +24,39 @@ import type { Tokens } from "./theme.ts";
 
 export type Line = Span[];
 
-const GUTTER = 10; // "  123 456 " — two numbers plus the marker column
+/** Never narrower than this: a two-digit column is the floor that reads. */
+const MIN_NUMBER = 2;
+
+/**
+ * The gutter is `old new marker ` — two number columns of equal width, the
+ * add/delete marker in a column of its own, and one space before the code.
+ * Sizing it from the largest line number is what keeps the marker in the same
+ * place on every row, which is the difference between a diff you can scan and
+ * one you have to read.
+ */
+function gutterWidth(numberWidth: number): number {
+  return numberWidth * 2 + 4;
+}
+
+/** Digits needed for the largest line number anywhere in `files`. */
+export function numberWidth(files: readonly FileDiff[]): number {
+  let max = 0;
+  for (const file of files)
+    for (const hunk of file.hunks)
+      for (const line of hunk.lines) {
+        if (line.oldNumber !== null && line.oldNumber > max) max = line.oldNumber;
+        if (line.newNumber !== null && line.newNumber > max) max = line.newNumber;
+      }
+  return Math.max(MIN_NUMBER, String(max).length);
+}
 
 export function renderDiff(diff: Diff, width: number, c: Tokens): Line[] {
   const out: Line[] = [];
+  // One width for the whole diff: the gutter must not step between files.
+  const nw = numberWidth(diff.files);
   diff.files.forEach((file, i) => {
     if (i > 0) out.push([]);
-    for (const line of renderFileDiff(file, width, c)) out.push(line);
+    for (const line of renderFileDiff(file, width, c, nw)) out.push(line);
   });
   return out;
 }
@@ -39,6 +65,7 @@ export function renderFileDiff(
   file: FileDiff,
   width: number,
   c: Tokens,
+  nw = numberWidth([file]),
 ): Line[] {
   const out: Line[] = [fileHeader(file, width, c)];
   if (file.binary) {
@@ -50,7 +77,7 @@ export function renderFileDiff(
   const lang = detectLanguage(file.path);
   for (const hunk of file.hunks) {
     out.push(hunkHeader(file, hunk, width, c));
-    for (const line of renderHunk(hunk, lang, width, c)) out.push(line);
+    for (const line of renderHunk(hunk, lang, width, c, nw)) out.push(line);
   }
   return out;
 }
@@ -111,6 +138,7 @@ function renderHunk(
   lang: ReturnType<typeof detectLanguage>,
   width: number,
   c: Tokens,
+  nw: number,
 ): Line[] {
   // Expand tabs once, here: a literal tab destroys the gutter alignment for
   // every row below it, and no downstream code can recover the intent.
@@ -125,7 +153,7 @@ function renderHunk(
       content: contents[i] ?? "",
       marks: marks[i] ?? new Int32Array(0),
     };
-    return renderLine(line, painted, tokens[i] ?? [], width, c);
+    return renderLine(line, painted, tokens[i] ?? [], width, c, nw);
   });
 }
 
@@ -180,6 +208,7 @@ function renderLine(
   tokens: readonly Token[],
   width: number,
   c: Tokens,
+  nw: number,
 ): Line {
   const base =
     line.kind === "add" ? c.addBg : line.kind === "del" ? c.delBg : c.bg;
@@ -190,13 +219,15 @@ function renderLine(
 
   const gutter: Line = [
     {
-      text: `${num(line.oldNumber)} ${num(line.newNumber)}`,
+      text: `${num(line.oldNumber, nw)} ${num(line.newNumber, nw)} `,
       style: style(c.faint, base, DIM),
     },
-    { text: marker, style: style(edge, base, BOLD) },
+    // The marker owns one cell and the space after it, so code always starts
+    // in the same column whether the row is a context line or a change.
+    { text: `${marker} `, style: style(edge, base, BOLD) },
   ];
 
-  const body = Math.max(0, width - GUTTER);
+  const body = Math.max(0, width - gutterWidth(nw));
   const spans: Line = [...gutter];
   let used = 0;
   let charIndex = 0;
@@ -245,6 +276,6 @@ function push(
   return used + displayWidth(cut);
 }
 
-function num(n: number | null): string {
-  return n === null ? "    " : pad(String(n), 4, "right");
+function num(n: number | null, width: number): string {
+  return n === null ? " ".repeat(width) : pad(String(n), width, "right");
 }

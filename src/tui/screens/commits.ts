@@ -16,7 +16,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
-import { renderFileDiff } from "../ui/diff.ts";
+import { numberWidth, renderFileDiff } from "../ui/diff.ts";
 import type { KeyEvent } from "../term/input.ts";
 import { card, emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
@@ -25,6 +25,7 @@ import {
   Scroll,
   drawList,
   drawLines,
+  plural,
   relTime,
   runAsync,
 } from "./common.ts";
@@ -220,7 +221,7 @@ export class DiffView {
   summary(): string {
     const add = this.files.reduce((n, file) => n + file.additions, 0);
     const del = this.files.reduce((n, file) => n + file.deletions, 0);
-    return `${this.files.length} files +${add} -${del}`;
+    return `${plural(this.files.length, "file")} +${add} -${del}`;
   }
 
   /**
@@ -243,6 +244,9 @@ export class DiffView {
       this.anchors.push(anchor);
     };
 
+    // One gutter width for every file in the view: the numbers must not step
+    // when the reader scrolls from one file into the next.
+    const nw = numberWidth(this.files);
     this.files.forEach((file, i) => {
       this.fileRows.push(this.lines.length);
       const collapsed = this.collapsed.has(i);
@@ -250,6 +254,7 @@ export class DiffView {
         collapsed ? { ...file, hunks: [] } : file,
         width,
         c,
+        nw,
       );
       if (collapsed) {
         for (const row of rendered) push(row, i, null);

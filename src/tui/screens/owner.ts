@@ -33,6 +33,7 @@ import {
   ListState,
   drawList,
   errorText,
+  plural,
   promptScreen,
   runAsync,
 } from "./common.ts";
@@ -117,7 +118,7 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
           head!.x,
           head!.y,
           truncate(
-            `${owner.displayName || owner.username} · ${owner.kind} · ${repos.length} repos`,
+            `${owner.displayName || owner.username} · ${owner.kind} · ${plural(repos.length, "repo")}`,
             head!.w,
           ),
           style(c.mutedFg, c.bg),
@@ -160,7 +161,7 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
       if (rows.length === 0) {
         emptyState(s, list!, c, {
           title: "No repositories",
-          body: "Nothing here that you can see.",
+          body: "Nothing here is visible to you.",
         });
         return;
       }

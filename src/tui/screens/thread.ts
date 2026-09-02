@@ -19,8 +19,8 @@ import { BOLD, ITALIC, style } from "../term/style.ts";
 import { renderMarkdown } from "../ui/markdown.ts";
 import { Textarea } from "../ui/textarea.ts";
 import type { Tokens } from "../ui/theme.ts";
-import { card, initials } from "../ui/widgets.ts";
-import { relTime } from "./common.ts";
+import { avatarStyle, card, initials } from "../ui/widgets.ts";
+import { ago } from "./common.ts";
 
 export interface ThreadEntry {
   readonly kind: "comment" | "event";
@@ -39,10 +39,11 @@ export function threadLines(
 ): Span[][] {
   const out: Span[][] = [];
   for (const entry of entries) {
+    // The same swatch the web draws: one initial on a hue keyed to the name.
     const header: Span[] = [
-      { text: initials(entry.actor), style: style(c.accentFg, c.accent) },
+      { text: ` ${initials(entry.actor)} `, style: avatarStyle(entry.actor) },
       { text: ` ${entry.actor}`, style: style(c.fg, c.bg, BOLD) },
-      { text: `  ${relTime(entry.at)}`, style: style(c.faint, c.bg) },
+      { text: `  ${ago(entry.at)}`, style: style(c.faint, c.bg) },
     ];
     if (entry.note !== undefined)
       header.push({

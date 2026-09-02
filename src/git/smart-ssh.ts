@@ -103,6 +103,9 @@ export interface GitChannel {
   write(data: Uint8Array | string): void;
   writeStderr(data: Uint8Array | string): void;
   onData(cb: (data: Uint8Array) => void): void;
+  /** The peer half-closed: it has sent everything it is going to send. */
+  onEof(cb: () => void): void;
+  /** The channel is gone. Nothing can be delivered to the peer any more. */
   onClose(cb: () => void): void;
   exit(code: number): void;
   drain(): Promise<void>;
@@ -152,12 +155,20 @@ export function runGitService(
   // clone's whole pack arrives *after* the client half-closes. So this ends
   // git's stdin and nothing else — stop reading its stdout here and git dies
   // of SIGPIPE mid-transfer, which is exactly the bug this comment prevents.
-  channel.onClose(() => {
+  channel.onEof(() => {
     try {
       void proc.stdin.end();
     } catch {
       /* already gone */
     }
+  });
+  // A *close* is different: the peer is gone, so every byte git still has to
+  // give has nowhere to go. Without this the child sits in `upload-pack`
+  // writing into a dead channel until the ten-minute timeout reaps it — one
+  // idle git per disconnected clone.
+  channel.onClose(() => {
+    clearTimeout(timer);
+    proc.kill("SIGKILL");
   });
 
   const pump = async (

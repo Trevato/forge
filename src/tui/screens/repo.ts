@@ -98,6 +98,11 @@ export function repoScreen(
         title: `${repo.ownerName}/${repo.name}`,
         footer: ref,
       });
+      // One inset for the whole card. A chip carries its own left pad, so the
+      // badges sit a column earlier and every line of text — badge label,
+      // description, clone URLs, and the card's own title — starts here.
+      const lead = inner.x + 1;
+      const edge = inner.x + inner.w;
       let x = badge(s, inner.x, inner.y, c, {
         text: repo.visibility,
         variant: repo.visibility === "public" ? "success" : "secondary",
@@ -110,18 +115,18 @@ export function repoScreen(
       if (repo.forkParentId !== null)
         badge(s, x + 1, inner.y, c, { text: "fork", variant: "outline" });
       s.text(
-        inner.x,
+        lead,
         inner.y + 1,
         truncate(
           repo.description === "" ? "No description." : repo.description,
-          inner.w,
+          Math.max(0, edge - lead),
         ),
         style(repo.description === "" ? c.faint : c.fg, c.card),
-        inner.x + inner.w,
+        edge,
       );
       drawFacts(
         s,
-        { x: inner.x, y: inner.y + 2, w: inner.w, h: 2 },
+        { x: lead, y: inner.y + 2, w: Math.max(0, edge - lead), h: 2 },
         c,
         cloneFacts(f, repo),
       );
@@ -227,10 +232,12 @@ export function cloneFacts(f: Session, repo: Repo): [string, string][] {
   const facts: [string, string][] = [
     ["clone (http)", `http://${host}:${f.app.config.port ?? 3000}/${path}`],
   ];
+  // Matches what the web hands out, `git@` and all: a URL a reader copies is
+  // wrong the moment the two surfaces disagree about it.
   if (f.app.config.sshPort !== undefined)
     facts.push([
       "clone (ssh)",
-      `ssh://${host}:${f.app.config.sshPort}/${path}`,
+      `ssh://git@${host}:${f.app.config.sshPort}/${path}`,
     ]);
   return facts;
 }

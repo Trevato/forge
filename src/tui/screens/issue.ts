@@ -26,16 +26,18 @@ import { canWrite, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Span } from "../term/screen.ts";
-import { style } from "../term/style.ts";
+import { BOLD, style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import { badge, labelChip } from "../ui/widgets.ts";
+import { dot, labelChip } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   Scroll,
+  ago,
   drawLines,
   errorText,
   pickerScreen,
+  plural,
   runAsync,
 } from "./common.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
@@ -138,28 +140,41 @@ export function issueScreen(
       const c = ctx.theme.c;
       if (!issue) return;
       const foot = composer.height();
+      // Three rows of head: the title, the summary line, and one blank so the
+      // first timeline entry is not glued to the metadata.
       const [head, body, box] = split(area, "v", [
-        len(2),
+        len(3),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 6))),
+        len(Math.min(foot, Math.max(0, area.h - 7))),
       ]);
-      s.text(
+      const right = head!.x + head!.w;
+      let x = s.text(
         head!.x,
         head!.y,
-        truncate(`#${issue.number}  ${issue.title}`, head!.w),
-        style(c.fg, c.bg, 1),
-        head!.x + head!.w,
+        `#${issue.number} `,
+        style(c.mutedFg, c.bg),
+        right,
       );
-      let x = badge(s, head!.x, head!.y + 1, c, {
-        text: issue.state,
-        variant: issue.state === "open" ? "success" : "danger",
+      s.text(
+        x,
+        head!.y,
+        truncate(issue.title, Math.max(0, right - x)),
+        style(c.fg, c.bg, BOLD),
+        right,
+      );
+      const closed = issue.state !== "open";
+      x = dot(s, head!.x, head!.y + 1, c, {
+        tone: closed ? "danger" : "success",
       });
       x = s.text(
-        x + 1,
+        x,
         head!.y + 1,
-        `${issue.authorName} · ${comments.length} comments`,
+        truncate(
+          ` ${issue.state} · opened by ${issue.authorName} ${ago(issue.createdAt)} · ${plural(comments.length, "comment")}`,
+          Math.max(0, right - x),
+        ),
         style(c.mutedFg, c.bg),
-        head!.x + head!.w,
+        right,
       );
       for (const label of marks)
         x = labelChip(
@@ -168,14 +183,27 @@ export function issueScreen(
           head!.y + 1,
           c,
           { text: label.name, color: label.color },
-          head!.x + head!.w,
+          right,
         );
 
       if (width !== body!.w) {
         width = body!.w;
         lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
       }
-      drawLines(s, body!, c, scroll, lines);
+      // An empty conversation says how to start one, where the next entry
+      // would have gone — but not while the composer is already open.
+      const hint =
+        comments.length === 0 && !composer.open
+          ? [
+              [
+                {
+                  text: f.signedIn ? "c  comment" : "sign in to comment",
+                  style: style(c.faint, c.bg),
+                },
+              ],
+            ]
+          : [];
+      drawLines(s, body!, c, scroll, [...lines, ...hint]);
       if (foot > 0) composer.render(s, box!, c, ctx);
     },
     paste: (text) => composer.paste(text),

@@ -49,7 +49,20 @@ export interface SshSession {
   writeStderr(data: Uint8Array | string): void;
   onData(cb: (data: Uint8Array) => void): void;
   onResize(cb: (cols: number, rows: number) => void): void;
+  /**
+   * The peer half-closed: it will send no more input. It is still reading,
+   * and on a clone the whole pack is still to come — so this ends stdin and
+   * nothing else. A real close fires this too, before `onClose`.
+   */
+  onEof(cb: () => void): void;
+  /**
+   * The channel itself is gone — the peer sent CHANNEL_CLOSE or the
+   * connection dropped. Nothing more can be written or read, so whatever is
+   * running for this session should be torn down now.
+   */
   onClose(cb: () => void): void;
+  /** True once `onClose` has fired: the channel is unusable. */
+  readonly ended: boolean;
   exit(code: number): void;
   /** Bytes accepted by `write` that the peer's window has not yet allowed out. */
   readonly pending: number;
@@ -95,8 +108,11 @@ class Channel implements SshSession {
   private closeFired = false;
   private localWindow = LOCAL_WINDOW;
 
+  private eofFired = false;
+
   private dataCb: ((data: Uint8Array) => void) | undefined;
   private resizeCb: ((cols: number, rows: number) => void) | undefined;
+  private eofCb: (() => void) | undefined;
   private closeCb: (() => void) | undefined;
   private drained: (() => void)[] = [];
 
@@ -127,8 +143,15 @@ class Channel implements SshSession {
   onResize(cb: (cols: number, rows: number) => void): void {
     this.resizeCb = cb;
   }
+  onEof(cb: () => void): void {
+    this.eofCb = cb;
+  }
   onClose(cb: () => void): void {
     this.closeCb = cb;
+  }
+
+  get ended(): boolean {
+    return this.closeFired;
   }
 
   write(data: Uint8Array | string): void {
@@ -233,18 +256,32 @@ class Channel implements SshSession {
     );
   }
 
+  /** The peer will send no more data. The channel is still writable. */
+  fireEof(): void {
+    if (this.eofFired) return;
+    this.eofFired = true;
+    this.fire(this.eofCb, "onEof");
+  }
+
   fireClose(): void {
     // A writer awaiting drain on a channel the peer just closed would wait
     // forever; the close is the answer.
     this.releaseDrains();
     if (this.closeFired) return;
     this.closeFired = true;
-    const cb = this.closeCb;
+    // A close implies the EOF that may never have arrived on its own, and it
+    // must arrive first: a handler that ends a child's stdin has to run
+    // before the one that kills the child.
+    this.fireEof();
+    this.fire(this.closeCb, "onClose");
+  }
+
+  private fire(cb: (() => void) | undefined, what: string): void {
     if (!cb) return;
     try {
       cb();
     } catch (cause) {
-      this.host.log.error("ssh session onClose threw", {
+      this.host.log.error(`ssh session ${what} threw`, {
         error: String(cause),
       });
     }
@@ -400,8 +437,10 @@ export class Channels {
       }
       case MSG.CHANNEL_EOF: {
         // "I will send no more data." The channel stays open our way, so the
-        // application gets onClose and decides when to exit.
-        this.lookup(r.u32())?.fireClose();
+        // application gets onEof and decides when to exit. `onClose` waits
+        // for the channel to actually go away — a git transfer is still
+        // sending its pack long after the client has half-closed.
+        this.lookup(r.u32())?.fireEof();
         return;
       }
       case MSG.CHANNEL_CLOSE: {

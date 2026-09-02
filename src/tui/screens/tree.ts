@@ -68,8 +68,11 @@ export function treeScreen(
       const items = shown();
       if (items.length === 0) {
         emptyState(s, body!, c, {
-          title: "Nothing here",
-          body: path === "" ? "This repo has no commits yet." : "Empty tree.",
+          title: path === "" ? "Empty repository" : "Empty directory",
+          body:
+            path === ""
+              ? "Push a branch to get started."
+              : "Nothing has been committed under this path.",
         });
         return;
       }

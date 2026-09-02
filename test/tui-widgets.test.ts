@@ -5,7 +5,7 @@ import { rank, score } from "../src/tui/app/palette.ts";
 import type { KeyEvent } from "../src/tui/term/input.ts";
 import { Screen } from "../src/tui/term/screen.ts";
 import { PLAIN, style, UNDERLINE } from "../src/tui/term/style.ts";
-import { renderFileDiff } from "../src/tui/ui/diff.ts";
+import { renderDiff, renderFileDiff } from "../src/tui/ui/diff.ts";
 import {
   center,
   fill,
@@ -34,7 +34,10 @@ import {
   tabs,
   timelineItem,
 } from "../src/tui/ui/widgets.ts";
+import { describeEvent } from "../src/tui/screens/activity.ts";
+import { ago, plural } from "../src/tui/screens/common.ts";
 import { galleryFrame } from "../src/tui/gallery.ts";
+import type { ForgeEvent } from "../src/core/events.ts";
 
 const c = theme("dark").c;
 
@@ -292,16 +295,19 @@ describe("widget snapshots", () => {
       body: ["looks good", "shipping"],
     });
     expect(s.toText().split("\n")).toEqual([
-      "TR trevato 2m ago",
+      " T  trevato 2m ago",
       " │ looks good",
       " │ shipping",
     ]);
   });
 
   test("avatar initials and readable foregrounds", () => {
-    expect(initials("trevato")).toBe("TR");
+    // One letter for one word: "TR trevato" reads as a word, not a swatch.
+    expect(initials("trevato")).toBe("T");
     expect(initials("forge bot")).toBe("FB");
-    expect(initials("a")).toBe("A ");
+    expect(initials("forge-bot")).toBe("FB");
+    expect(initials("a")).toBe("A");
+    expect(initials("")).toBe("?");
     expect(readableOn(0xffffff)).toBe(0x18181b);
     expect(readableOn(0x000000)).toBe(0xfafafa);
   });
@@ -499,10 +505,10 @@ describe("diff", () => {
     expect(lines).toEqual([
       "▾ a.ts                                  +1 -1",
       " a.ts:1  function f()",
-      "   1    1 const a = 1;",
-      "   2     -const b = 2;",
-      "        2+const b = 3;",
-      "   3    3 const c = 4;",
+      " 1  1   const a = 1;",
+      " 2    - const b = 2;",
+      "    2 + const b = 3;",
+      " 3  3   const c = 4;",
     ]);
   });
 
@@ -535,7 +541,25 @@ describe("diff", () => {
     const tabbed = raw.replace("+const b = 3;", "+\tconst b = 3;");
     const file = parseUnifiedDiff(tabbed).files[0]!;
     const line = lineText(renderFileDiff(file, 46, c)[4]!);
-    expect(line.startsWith("        2+    const b = 3;")).toBe(true);
+    expect(line.startsWith("    2 +     const b = 3;")).toBe(true);
+  });
+
+  test("the gutter widens with the line numbers, never per file", () => {
+    const big = raw
+      .replace("@@ -1,3 +1,3 @@", "@@ -998,3 +998,3 @@")
+      .replace(/a\.ts/g, "b.ts");
+    const files = [parseUnifiedDiff(raw).files[0]!, parseUnifiedDiff(big).files[0]!];
+    const lines = renderDiff(
+      { files, additions: 2, deletions: 2 },
+      60,
+      c,
+    ).map((l) => lineText(l).trimEnd());
+    // Both files sit on the four-wide column the largest number demands, so
+    // the marker never moves as the reader scrolls between them.
+    expect(lines).toContain("   1    1   const a = 1;");
+    expect(lines).toContain(" 998  998   const a = 1;");
+    expect(lines).toContain(" 999      - const b = 2;");
+    expect(lines).toContain("1000 1000   const c = 4;");
   });
 });
 
@@ -570,5 +594,134 @@ describe("the gallery renders at every breakpoint", () => {
       const text = galleryFrame(100, 28, keys);
       expect(text).not.toContain("render error");
     }
+  });
+});
+
+describe("counted nouns", () => {
+  test("plural agrees with its count", () => {
+    expect(plural(0, "comment")).toBe("0 comments");
+    expect(plural(1, "comment")).toBe("1 comment");
+    expect(plural(2, "commit")).toBe("2 commits");
+    expect(plural(1, "file")).toBe("1 file");
+    expect(plural(1, "repository", "repositories")).toBe("1 repository");
+    expect(plural(3, "repository", "repositories")).toBe("3 repositories");
+  });
+
+  test("ago reads as a phrase, not a stamp", () => {
+    const now = new Date().toISOString();
+    expect(ago(now)).toBe("just now");
+    expect(ago(new Date(Date.now() - 125_000).toISOString())).toBe("2m ago");
+    expect(ago(new Date(Date.now() - 4 * 86_400_000).toISOString())).toBe(
+      "4d ago",
+    );
+    expect(ago("not a date")).toBe("");
+  });
+});
+
+describe("the activity feed's sentences", () => {
+  const event = (
+    kind: string,
+    payload: Record<string, unknown> = {},
+  ): ForgeEvent => ({
+    id: "01",
+    kind,
+    repoId: "r1",
+    actorId: "u1",
+    payload,
+    createdAt: new Date().toISOString(),
+  });
+  const at = { actor: "alice", repo: "alice/lighthouse" };
+
+  test("issues and pulls name the verb, the thing and its title", () => {
+    expect(
+      describeEvent(event("pull.opened", { number: 4 }), {
+        ...at,
+        title: "Treat 34 knots as gale",
+      }),
+    ).toEqual({
+      headline: "alice opened pull #4",
+      detail: "alice/lighthouse · #4 Treat 34 knots as gale",
+      subject: "#4 Treat 34 knots as gale",
+    });
+    expect(
+      describeEvent(event("issue.commented", { number: 1 }), {
+        actor: "bob",
+        repo: "alice/lighthouse",
+        title: "The lamp flickers at dusk",
+      })?.headline,
+    ).toBe("bob commented on issue #1");
+    expect(
+      describeEvent(event("issue.closed", { number: 2 }), at)?.headline,
+    ).toBe("alice closed issue #2");
+    expect(
+      describeEvent(event("pull.merged", { number: 4 }), at)?.headline,
+    ).toBe("alice merged pull #4");
+    expect(
+      describeEvent(event("issue.labeled", { number: 2 }), at)?.headline,
+    ).toBe("alice labelled issue #2");
+  });
+
+  test("repo-level events say where, and need no second line", () => {
+    expect(
+      describeEvent(
+        event("push", { updates: [{ ref: "refs/heads/main" }] }),
+        at,
+      ),
+    ).toEqual({
+      headline: "alice pushed to lighthouse main",
+      detail: "",
+      subject: "",
+    });
+    expect(describeEvent(event("repo.created"), at)?.headline).toBe(
+      "alice created lighthouse",
+    );
+    expect(
+      describeEvent(event("label.created", { name: "bug" }), at)?.headline,
+    ).toBe('alice added label "bug" to lighthouse');
+    expect(
+      describeEvent(event("repo.forked", { parent: "bob/lighthouse" }), at)
+        ?.headline,
+    ).toBe("alice forked bob/lighthouse");
+  });
+
+  test("a push of several refs still reads as a sentence", () => {
+    expect(
+      describeEvent(
+        event("push", {
+          updates: [{ ref: "refs/heads/main" }, { ref: "refs/heads/next" }],
+        }),
+        at,
+      )?.headline,
+    ).toBe("alice pushed to lighthouse");
+  });
+
+  test("account plumbing is dropped, not rendered", () => {
+    for (const kind of [
+      "user.created",
+      "user.updated",
+      "user.key_added",
+      "user.key_removed",
+      "token.created",
+      "token.deleted",
+    ])
+      expect(describeEvent(event(kind), at)).toBeNull();
+  });
+
+  test("an unknown kind still gets a line rather than vanishing", () => {
+    const line = describeEvent(event("check.completed", { number: 9 }), at);
+    expect(line?.headline).toBe("alice check completed #9");
+  });
+
+  test("a missing repo or title never leaves a dangling separator", () => {
+    expect(
+      describeEvent(event("issue.opened", { number: 7 }), { actor: "bob" }),
+    ).toEqual({
+      headline: "bob opened issue #7",
+      detail: "#7",
+      subject: "#7",
+    });
+    expect(describeEvent(event("repo.created"), { actor: "bob" })?.headline).toBe(
+      "bob created a repository",
+    );
   });
 });

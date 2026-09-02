@@ -113,7 +113,11 @@ export function labelChip(
   return s.text(x, y, ` ${o.text} `, style(readableOn(bg), bg), right);
 }
 
-/** `avatar` — two initials on a hue derived from the name, so it is stable. */
+/**
+ * `avatar` — the initials on a hue derived from the name, in a padded block
+ * so it reads as a swatch and not as a word. Same rule as the web's fallback
+ * avatar: one letter for a single-word name, two only for a real "First Last".
+ */
 export function avatar(
   s: Screen,
   x: number,
@@ -122,15 +126,26 @@ export function avatar(
   o: { name: string },
   right?: number,
 ): number {
-  const bg = hueFor(o.name);
-  return s.text(x, y, initials(o.name), style(readableOn(bg), bg), right);
+  return s.text(x, y, ` ${initials(o.name)} `, avatarStyle(o.name), right);
 }
 
+/**
+ * One uppercase letter, or two when the display name is genuinely two words.
+ * `initials("bob")` is `B`, not `BO` — a slice of one word reads as a word
+ * ("BO bob") and that is exactly what an avatar must not do.
+ */
 export function initials(name: string): string {
   const parts = name.split(/[\s._/-]+/).filter((p) => p.length > 0);
-  const a = parts[0]?.[0] ?? "?";
-  const b = parts[1]?.[0] ?? parts[0]?.[1] ?? "";
-  return (a + b).toUpperCase().slice(0, 2).padEnd(2, " ");
+  const first = parts[0]?.[0];
+  if (first === undefined) return "?";
+  const second = parts[1]?.[0];
+  return (second === undefined ? first : first + second).toUpperCase();
+}
+
+/** The deterministic swatch a name always gets, in both surfaces. */
+export function avatarStyle(name: string): Style {
+  const bg = hueFor(name);
+  return style(readableOn(bg), bg);
 }
 
 function hueFor(name: string): Color {
@@ -770,8 +785,9 @@ export function timelineItem(
   if (r.w <= 0 || r.h <= 0) return 0;
   const right = r.x + r.w;
   let x = r.x;
-  x = avatar(s, x, r.y, c, { name: o.actor }, right) + 1;
-  x = s.text(x, r.y, o.actor, style(c.fg, c.bg, BOLD), right);
+  // No extra gap: the avatar block carries its own trailing pad.
+  x = avatar(s, x, r.y, c, { name: o.actor }, right);
+  x = s.text(x, r.y, ` ${o.actor}`, style(c.fg, c.bg, BOLD), right);
   s.text(x + 1, r.y, o.when, style(c.faint, c.bg), right);
   const bodyStyle = style(
     o.kind === "event" ? c.mutedFg : c.fg,

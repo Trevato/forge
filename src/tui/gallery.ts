@@ -21,6 +21,7 @@ import { renderFileDiff } from "./ui/diff.ts";
 import { fill, len, split, inset } from "./ui/layout.ts";
 import { renderMarkdown } from "./ui/markdown.ts";
 import { Textarea } from "./ui/textarea.ts";
+import { plural } from "./screens/common.ts";
 import type { Tokens } from "./ui/theme.ts";
 import {
   avatar,
@@ -261,7 +262,7 @@ function drawLists(r: Rect, s: Surface, c: Tokens, g: GalleryState): void {
   const [left, right] = split(r, "h", [fill(1), fill(1)]);
   const lx = card(s, left!, c, {
     title: "row",
-    footer: `${REPOS.length} repos`,
+    footer: plural(REPOS.length, "repo"),
   });
   const listBody = { ...lx, w: Math.max(0, lx.w - 2) };
   REPOS.forEach((repo, i) => {

@@ -36,6 +36,7 @@ import {
   confirmScreen,
   drawLines,
   errorText,
+  plural,
   relTime,
   runAsync,
 } from "./common.ts";
@@ -190,12 +191,21 @@ export function pullScreen(
         fill(1),
         len(Math.min(foot, Math.max(0, area.h - 10))),
       ]);
-      s.text(
+      // Same head as an issue: the number is a locator, the title is the page.
+      const edge = head!.x + head!.w;
+      const after = s.text(
         head!.x,
         head!.y,
-        truncate(`#${pull.number}  ${pull.title}`, head!.w),
+        `#${pull.number} `,
+        style(c.mutedFg, c.bg),
+        edge,
+      );
+      s.text(
+        after,
+        head!.y,
+        truncate(pull.title, Math.max(0, edge - after)),
         style(c.fg, c.bg, BOLD),
-        head!.x + head!.w,
+        edge,
       );
       drawMergeBox(s, boxRow!, c, pull, status, view.summary());
       tabs(s, tabRow!, c, {
@@ -250,7 +260,7 @@ export function pullScreen(
           confirmScreen(ctx, screen, {
             title: `Merge #${pull.number}`,
             body: [
-              `${status?.ahead ?? 0} commits into ${pull.baseBranch}.`,
+              `${plural(status?.ahead ?? 0, "commit")} into ${pull.baseBranch}.`,
               repo.protectDefault && pull.baseBranch === repo.defaultBranch
                 ? `${repo.defaultBranch} is protected; history is preserved.`
                 : "",
@@ -328,18 +338,25 @@ function drawMergeBox(
         : state === "conflicts" || state === "closed"
           ? "danger"
           : "default";
-  const inner = card(s, r, c, { tone: tone as "success", title: "Merge" });
+  // Where it is going belongs on the frame, not on a body row: the box is
+  // three rows tall, so a second body row would paint over the bottom rule.
+  const inner = card(s, r, c, {
+    tone: tone as "success",
+    title: "Merge",
+    footer: `${pull.headBranch} ${G.chevron} ${pull.baseBranch}${pull.crossRepo ? " (fork)" : ""} · ${summary}`,
+  });
+  const conflicts = status?.conflicts ?? [];
   const text =
     state === "merged"
       ? `Merged ${relTime(pull.mergedAt ?? "")} into ${pull.baseBranch}`
       : state === "closed"
         ? "Closed without merging"
         : state === "conflicts"
-          ? `Conflicts in ${status?.conflicts.length ?? 0} file(s): ${(status?.conflicts ?? []).slice(0, 3).join(", ")}`
+          ? `Conflicts in ${plural(conflicts.length, "file")}: ${conflicts.slice(0, 3).join(", ")}`
           : state === "empty"
             ? "Nothing to merge — the base already has these commits"
-            : `Ready to merge · ${status?.ahead ?? 0} commits`;
-  let x = badge(s, inner.x, inner.y, c, {
+            : `Ready to merge · ${plural(status?.ahead ?? 0, "commit")}`;
+  const x = badge(s, inner.x, inner.y, c, {
     text: state,
     variant: tone as "success",
   });
@@ -348,16 +365,6 @@ function drawMergeBox(
     inner.y,
     truncate(text, Math.max(0, inner.w - (x - inner.x) - 1)),
     style(c.fg, c.card),
-    inner.x + inner.w,
-  );
-  x = s.text(
-    inner.x,
-    inner.y + 1,
-    truncate(
-      `${pull.headBranch} ${G.chevron} ${pull.baseBranch}${pull.crossRepo ? " (fork)" : ""} · ${summary}`,
-      inner.w,
-    ),
-    style(c.mutedFg, c.card),
     inner.x + inner.w,
   );
 }

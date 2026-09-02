@@ -28,6 +28,7 @@ import type { User } from "../src/core/users.ts";
 import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
+import { runGitService, type GitChannel } from "../src/git/smart-ssh.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import type { SshServer } from "../src/ssh/server.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -302,4 +303,117 @@ describe("git over ssh", () => {
     expect(code).toBe(1);
     expect(err).toContain("only git is available over ssh");
   });
+});
+
+/**
+ * A hand-driven `GitChannel`. The transport is proven above with real git and
+ * real ssh; what this isolates is the lifetime rule those tests cannot make
+ * visible — whether the child outlives a peer that walked away.
+ */
+describe("a git service outlives neither the channel nor the peer", () => {
+  let dataDir: string;
+  let forge: Forge;
+  let dir: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-gitkill-"));
+    forge = createApp({ dataDir, port: 0 });
+    const alice = await signUp(forge, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: "a-long-passphrase",
+    });
+    if (!alice.ok) throw new Error("signup failed");
+    const repo = await createRepo(forge, alice.value, {
+      name: "lighthouse",
+      visibility: "public",
+    });
+    if (!repo.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice.value, repo.value, {
+      message: "seed",
+      files: [{ path: "README.md", content: "# lighthouse\n" }],
+    });
+    dir = repoDir(forge.reposRoot, "alice", "lighthouse");
+  });
+
+  afterAll(async () => {
+    forge.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  function channel(): GitChannel & {
+    eof(): void;
+    close(): void;
+    stdout(): Uint8Array[];
+  } {
+    let onEof = (): void => {};
+    let onClose = (): void => {};
+    const out: Uint8Array[] = [];
+    return {
+      write: (data) => {
+        out.push(typeof data === "string" ? new TextEncoder().encode(data) : data);
+      },
+      writeStderr: () => {},
+      onData: () => {},
+      onEof: (cb) => {
+        onEof = cb;
+      },
+      onClose: (cb) => {
+        onClose = cb;
+      },
+      exit: () => {},
+      drain: () => Promise.resolve(),
+      eof: () => onEof(),
+      close: () => onClose(),
+      stdout: () => out,
+    };
+  }
+
+  const settled = async (p: Promise<number>): Promise<boolean> => {
+    const marker = Symbol("pending");
+    const race = await Promise.race([
+      p,
+      new Promise((r) => setTimeout(() => r(marker), 400)),
+    ]);
+    return race !== marker;
+  };
+
+  test("a peer that disconnects mid-transfer kills git at once", async () => {
+    const ch = channel();
+    // A ten-minute timeout, so nothing but the close can end this.
+    const running = runGitService(dir, "git-upload-pack", ch, {
+      timeoutMs: 600_000,
+    });
+    // upload-pack advertises its refs and then waits on stdin forever: with
+    // no close, the transfer is still open.
+    expect(await settled(running)).toBe(false);
+    expect(ch.stdout().length).toBeGreaterThan(0);
+
+    ch.close();
+    const code = await Promise.race([
+      running,
+      new Promise<number>((_, reject) =>
+        setTimeout(() => reject(new Error("git outlived the channel")), 5_000),
+      ),
+    ]);
+    expect(typeof code).toBe("number");
+  }, 15_000);
+
+  test("EOF still ends git's stdin, so a half-closed client is not left hanging", async () => {
+    const ch = channel();
+    const running = runGitService(dir, "git-upload-pack", ch, {
+      timeoutMs: 600_000,
+    });
+    expect(await settled(running)).toBe(false);
+    // The peer half-closed without asking for anything; git ends by itself.
+    ch.eof();
+    const code = await Promise.race([
+      running,
+      new Promise<number>((_, reject) =>
+        setTimeout(() => reject(new Error("git ignored the EOF")), 5_000),
+      ),
+    ]);
+    expect(typeof code).toBe("number");
+    expect(ch.stdout().length).toBeGreaterThan(0);
+  }, 15_000);
 });

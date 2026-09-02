@@ -446,7 +446,7 @@ describe("ssh exec sessions", () => {
           dataCalls++;
           throw new Error("boom from onData");
         });
-        session.onClose(() => session.exit(0));
+        session.onEof(() => session.exit(0));
       },
     });
     const client = ssh(server.port, keys.ed25519!, [], ["x"]);
@@ -471,13 +471,13 @@ describe("ssh exec sessions", () => {
 describe("ssh shell sessions", () => {
   test("pty-req, echo, and EOF ending the session", async () => {
     let seen: SshSession | undefined;
-    let closed = false;
+    let ended = false;
     const server = await start({
       onSession(session) {
         seen = session;
         session.onData((data) => session.write(data));
-        session.onClose(() => {
-          closed = true;
+        session.onEof(() => {
+          ended = true;
           session.exit(0);
         });
       },
@@ -492,7 +492,37 @@ describe("ssh shell sessions", () => {
     expect(seen?.kind).toBe("shell");
     expect(seen?.command).toBeUndefined();
     expect(seen?.term).toBeTruthy();
-    expect(closed).toBe(true);
+    expect(ended).toBe(true);
+  });
+
+  test("EOF is not a close: the channel stays writable until the peer goes", async () => {
+    const seen: string[] = [];
+    let live: SshSession | undefined;
+    const gone = Promise.withResolvers<void>();
+    const server = await start({
+      onSession(session) {
+        live = session;
+        session.onEof(() => {
+          // Still writable: a clone's pack is sent entirely after this point.
+          seen.push(`eof:${String(session.ended)}`);
+          session.write("after-eof");
+          session.exit(0);
+        });
+        session.onClose(() => {
+          seen.push(`close:${String(session.ended)}`);
+          gone.resolve();
+        });
+      },
+    });
+    const client = ssh(server.port, keys.ed25519!, [], ["x"]);
+    await client.proc.stdin.end();
+    const out = new TextDecoder().decode(await client.stdout);
+    expect(await client.proc.exited).toBe(0);
+    expect(out).toBe("after-eof");
+    await gone.promise;
+    // EOF first and with the channel still alive; close second, and only once.
+    expect(seen).toEqual(["eof:false", "close:true"]);
+    expect(live?.ended).toBe(true);
   });
 
   test("SetEnv variables arrive on the session", async () => {
@@ -654,7 +684,7 @@ describe("ssh flow control", () => {
       onSession(session) {
         const chunks: Uint8Array[] = [];
         session.onData((chunk) => chunks.push(chunk));
-        session.onClose(() => {
+        session.onEof(() => {
           resolve(sha256(concat(chunks)));
           session.exit(0);
         });
@@ -681,7 +711,7 @@ describe("ssh rekey", () => {
       onSession(session) {
         const chunks: Uint8Array[] = [];
         session.onData((chunk) => chunks.push(chunk));
-        session.onClose(() => {
+        session.onEof(() => {
           resolve(sha256(concat(chunks)));
           session.exit(0);
         });

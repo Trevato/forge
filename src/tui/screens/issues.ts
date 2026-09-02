@@ -112,7 +112,7 @@ export function issuesScreen(
     keys: [
       binding(["j", "k"], "move"),
       binding(["enter"], "open"),
-      binding(["tab"], "state"),
+      binding(["tab"], "open/closed/all"),
       binding(["l"], "label"),
       binding(["a"], mine ? "all authors" : "only mine"),
       binding(["c"], `new ${noun}`, { disabled: !f.signedIn }),
