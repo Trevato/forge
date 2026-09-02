@@ -5,9 +5,9 @@
  * what it has already shown — it is load-bearing, not decoration.
  */
 
-import { html, type Html } from "./html.ts";
+import { html, when, type Html } from "./html.ts";
 import { renderMarkdown } from "./markdown.ts";
-import { time, userLink } from "./ui.ts";
+import { icon, originTag, time, userLink, type IconName } from "./ui.ts";
 
 export interface CommentCard {
   /** "" for the opener (the issue/PR body), which has no comment row. */
@@ -17,6 +17,12 @@ export interface CommentCard {
   body: string;
   /** "opened" | "commented" | "wants to merge …" */
   verb: Html | string;
+  /** Set when this came from an origin: the login there, and that forge's
+   * mark. It replaces the local byline rather than sitting beside it. */
+  originAuthor?: string | null;
+  originKind?: IconName;
+  /** The canonical URL at the origin, for "view on origin". */
+  originUrl?: string | null;
 }
 
 export function commentCard(card: CommentCard): Html {
@@ -25,10 +31,24 @@ export function commentCard(card: CommentCard): Html {
     card.body.trim() === ""
       ? html`<p class="muted">No description.</p>`
       : renderMarkdown(card.body);
+  const byline =
+    card.originAuthor != null && card.originAuthor !== ""
+      ? originTag(card.originAuthor, card.originKind ?? "globe")
+      : userLink(card.author);
   return html`<div ${idAttr}class="card comment">
     <div class="card-head">
-      ${userLink(card.author)}
+      ${byline}
       <span class="muted">${card.verb} ${time(card.at)}</span>
+      ${when(
+        card.originUrl != null && card.originUrl !== "",
+        () => html`<span class="spacer"></span>
+          <a
+            class="origin-link small"
+            href="${card.originUrl ?? ""}"
+            rel="noreferrer noopener"
+            >${icon("external")}view on origin</a
+          >`,
+      )}
     </div>
     <div class="prose comment-body">${bodyHtml}</div>
   </div>`;

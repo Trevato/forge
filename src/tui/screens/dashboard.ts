@@ -7,7 +7,9 @@
  * telling them how to become someone.
  */
 
+import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { getIssue } from "../../core/issues.ts";
+import { listPins, type Pin } from "../../core/pins.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { listEvents, type ForgeEvent } from "../../core/events.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
@@ -24,7 +26,9 @@ import type { Session } from "../session.ts";
 import {
   Filter,
   ListState,
+  PIN_MARK,
   drawList,
+  errorText,
   relTime,
   runAsync,
   type ListRow,
@@ -41,10 +45,16 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
   let feed: FeedItem[] = [];
   let orgs: string[] = [];
+  let pins: Pin[] = [];
+  let pinned = new Set<string>();
   const state = new ListState();
   const filter = new Filter();
 
   const reload = (): void => {
+    // The server remembers the *choice* and nothing about the laptop, so
+    // this is a list of decisions — never a status that would be stale.
+    pins = f.user ? listPins(f.db, f.user.id) : [];
+    pinned = new Set(pins.map((pin) => pin.repoId));
     const all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     // "Yours" is ownership plus the orgs you are on a team of; everything
     // else lives in Explore, one key away.
@@ -78,6 +88,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["enter"], "open"),
         binding(["/"], "filter"),
         binding(["e"], "explore"),
+        binding(["p"], "pin", { disabled: !f.signedIn }),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
@@ -111,7 +122,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           state,
           rows.map(
             (repo): ListRow => ({
-              title: `${repo.ownerName}/${repo.name}`,
+              title: `${pinned.has(repo.id) ? `${PIN_MARK} ` : ""}${repo.ownerName}/${repo.name}`,
               secondary: repo.description,
               meta: repo.visibility === "private" ? "private" : "",
             }),
@@ -119,7 +130,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         );
       if (right === undefined) return;
 
-      const [activity, side] = split(right, "v", [fill(2), len(6)]);
+      const [activity, side] = split(right, "v", [fill(2), len(7)]);
       const inner = card(s, activity!, c, { title: "Recent activity" });
       if (feed.length === 0)
         s.text(
@@ -130,17 +141,31 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           inner.x + inner.w,
         );
       else drawFeed(s, inner, c, feed);
+      // Pins earn the side card when there are any: what is on this machine
+      // is a more useful thing to see at a glance than a list of orgs.
+      const showPins = f.signedIn && pins.length > 0;
       const sideInner = card(s, side!, c, {
-        title: f.signedIn ? "Organizations" : "Sign in",
+        title: showPins
+          ? "On your machine"
+          : f.signedIn
+            ? "Organizations"
+            : "Sign in",
       });
-      const notes = f.signedIn
-        ? orgs.length > 0
-          ? orgs
-          : ["You are not in any organization."]
-        : [
-            "s   sign in with a username and password",
-            "    (your key is linked, so next time is instant)",
-          ];
+      const notes = showPins
+        ? [
+            ...pins
+              .slice(0, 4)
+              .map((pin) => `${PIN_MARK} ${pin.ownerName}/${pin.name}`),
+            "forge sync   clone and refresh them (see \"Origins\" in the README)",
+          ]
+        : f.signedIn
+          ? orgs.length > 0
+            ? orgs
+            : ["You are not in any organization."]
+          : [
+              "s   sign in with a username and password",
+              "    (your key is linked, so next time is instant)",
+            ];
       notes
         .slice(0, sideInner.h)
         .forEach((line, i) =>
@@ -166,6 +191,20 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }
       if (e.key === "e") {
         ctx.push(exploreScreen(f, ctx));
+        return true;
+      }
+      if (e.key === "p" && f.user) {
+        const repo = shown()[state.index];
+        if (!repo) return true;
+        const wanted = !pinned.has(repo.id);
+        const done = wanted
+          ? pinRepo(f.app, f.user, repo)
+          : unpinRepo(f.app, f.user, repo);
+        if (!done.ok && wanted) ctx.toast(errorText(done.error), "danger");
+        else {
+          reload();
+          ctx.toast(wanted ? "pinned" : "unpinned", "success");
+        }
         return true;
       }
       if (e.key === "n" && f.signedIn) {

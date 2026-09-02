@@ -10,6 +10,38 @@
  * behaviour that a page depends on to be usable.
  */
 
+/**
+ * The device-code page's only enhancement: submit the "check again" form on
+ * the interval the provider asked for, and reload when the flow stops being
+ * pending. Everything it does is something the page already offers a button
+ * for, and the poll route answers JSON only because it was asked to — the
+ * same POST from a plain form gets a redirect.
+ *
+ * Shipped per page (`PageOptions.scriptJs`) rather than in the shell: a page
+ * with no connect in flight should carry none of it.
+ */
+export const pollJs = /* js */ `
+(function () {
+  var form = document.querySelector('form[data-poll]');
+  if (!form) return;
+  var every = Number(form.getAttribute('data-poll') || 0);
+  if (!every) return;
+  var tries = 0;
+  function ask() {
+    if (tries++ > 200) return;
+    fetch(form.action, {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      body: new FormData(form),
+    }).then(function (r) { return r.json(); }).then(function (out) {
+      if (out && out.status && out.status !== 'pending') { location.reload(); return; }
+      window.setTimeout(ask, every * 1000);
+    }, function () { window.setTimeout(ask, every * 1000); });
+  }
+  window.setTimeout(ask, every * 1000);
+})();
+`;
+
 export const shellJs = /* js */ `
 (function () {
   var doc = document;

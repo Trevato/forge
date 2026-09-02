@@ -10,7 +10,8 @@
 
 import type { Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
-import { getRepoById, listForks } from "../../core/repos.ts";
+import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
+import { canAdmin, getRepoById, listForks } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import {
   blobForRender,
@@ -46,6 +47,7 @@ import {
   listCard,
   menu,
   row,
+  time,
 } from "../ui.ts";
 
 const MAX_RENDER_BYTES = 1_000_000;
@@ -109,6 +111,73 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, repoBase(forked.value), {
     message: `Forked to ${forked.value.ownerName}/${forked.value.name}.`,
   });
+}
+
+// ---- mirrors and pins ----
+
+// POST /:owner/:name/sync — pull this mirror now. Any writer may ask: it only
+// fetches, so it borrows nobody's identity and grants nobody anything.
+export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+
+  const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
+  if (!synced.ok)
+    return flashTo(ctx, repoBase(repo), {
+      tone: "danger",
+      message:
+        synced.error === "not_found"
+          ? "This repository does not mirror an origin."
+          : "You need write access to sync this mirror.",
+    });
+  return flashTo(ctx, repoBase(repo), {
+    ...(synced.value.error === ""
+      ? { message: "Synced from the origin." }
+      : { tone: "danger" as const, message: synced.value.error }),
+  });
+}
+
+/**
+ * POST /:owner/:name/pin — "keep this on my machine", toggled.
+ *
+ * The state being asked for travels in the form rather than being read back
+ * out of the database, so a double submit is idempotent instead of a
+ * flip-flop.
+ */
+export async function pinSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+
+  const wanted = field(form, "pinned") !== "0";
+  const done = wanted
+    ? pinRepo(ctx.app, ctx.auth.user, repo)
+    : unpinRepo(ctx.app, ctx.auth.user, repo);
+  const back = safeBack(ctx) ?? repoBase(repo);
+  if (!done.ok && wanted)
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message: "That could not be pinned.",
+    });
+  return flashTo(ctx, back, {
+    message: wanted
+      ? "Pinned. The local client keeps it cloned on your machine."
+      : "Unpinned.",
+  });
+}
+
+/** The page the form was submitted from, when it is one of ours. */
+function safeBack(ctx: Ctx): string | undefined {
+  const referer = ctx.request.headers.get("referer");
+  if (referer === null) return undefined;
+  const parsed = URL.parse(referer);
+  if (!parsed || parsed.origin !== ctx.url.origin) return undefined;
+  return parsed.pathname + parsed.search;
 }
 
 // ---- shared pieces ----
@@ -198,6 +267,8 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
     repo.forkParentId !== null
       ? getRepoById(ctx.app.db, repo.forkParentId)
       : undefined;
+  const origin = repo.origin;
+  const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
   return html`<aside class="about">
     ${card(
       html`${when(
@@ -205,6 +276,21 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
           () => html`<p class="mb">${repo.description}</p>`,
         )}
         <dl>
+          ${when(
+            origin,
+            (o) => html`<dt>Origin</dt>
+              <dd>
+                ${o.htmlUrl === ""
+                  ? html`${o.fullName}`
+                  : html`<a href="${o.htmlUrl}" rel="noreferrer noopener"
+                      >${o.fullName}</a
+                    >`}
+              </dd>
+              <dt>Last fetch</dt>
+              <dd>
+                ${o.lastFetchAt === null ? "never" : time(o.lastFetchAt)}
+              </dd>`,
+          )}
           <dt>Visibility</dt>
           <dd>${repo.visibility}</dd>
           <dt>Default</dt>
@@ -230,6 +316,17 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
                 </dd>`,
           )}
         </dl>
+        ${when(
+          origin !== null && origin.fetchError !== "",
+          () => html`<p class="error-note mt">${origin?.fetchError}</p>`,
+        )}
+        ${when(
+          origin !== null && admin,
+          () =>
+            html`<form method="post" action="${repoBase(repo)}/sync" class="mt">
+              ${btn("Sync now", { size: "sm", icon: "sync" })}
+            </form>`,
+        )}
         <p class="mt small muted">Clone over HTTPS</p>
         <span class="clone"
           ><span class="clone-text" id="clone-https">${cloneUrl}</span>
@@ -249,6 +346,15 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
                     .hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git</span
                 ></span
               >`,
+        )}
+        ${when(
+          origin,
+          (o) =>
+            html`<p class="mt small muted">
+              Pushes here go through to
+              <span class="mono">${o.fullName}</span> first — if the origin
+              refuses one, nothing lands locally either.
+            </p>`,
         )}`,
       { head: html`<h2>About</h2>` },
     )}

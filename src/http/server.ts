@@ -40,8 +40,10 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import {
   blobPage,
   forkSubmit,
+  pinSubmit,
   rawBlob,
   repoHome,
+  repoSyncSubmit,
   treePage,
 } from "../web/pages/repo.ts";
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
@@ -102,6 +104,19 @@ import {
   tokensPage,
 } from "../web/pages/account.ts";
 import { completeOAuthCallback } from "../actions/origins.ts";
+import {
+  originAppCreate,
+  originAppDelete,
+  originConnectToken,
+  originDisconnect,
+  originFlowPage,
+  originFlowPoll,
+  originMirrorSubmit,
+  originOAuthStart,
+  originReposPage,
+  originSyncSubmit,
+  originsPage,
+} from "../web/pages/origins.ts";
 import { pushThrough } from "../origins/push-through.ts";
 import { apiRoutes } from "./api.ts";
 import { cookieValue, type Auth, type Ctx, type Handler } from "./context.ts";
@@ -239,6 +254,20 @@ export function buildRouter(): Router<Handler> {
     });
   });
 
+  // Origins. Literal thirds first, so `flows` and `apps` can never be
+  // captured as an origin id by the parameterized routes below them.
+  router.add("GET", "/settings/origins", originsPage);
+  router.add("POST", "/settings/origins/token", originConnectToken);
+  router.add("POST", "/settings/origins/oauth", originOAuthStart);
+  router.add("POST", "/settings/origins/apps", originAppCreate);
+  router.add("POST", "/settings/origins/apps/:id/delete", originAppDelete);
+  router.add("GET", "/settings/origins/flows/:id", originFlowPage);
+  router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
+  router.add("GET", "/settings/origins/:id/repos", originReposPage);
+  router.add("POST", "/settings/origins/:id/mirror", originMirrorSubmit);
+  router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
+  router.add("POST", "/settings/origins/:id/delete", originDisconnect);
+
   router.add("GET", "/settings/keys", keysPage);
   router.add("POST", "/settings/keys", keyCreate);
   router.add("POST", "/settings/keys/:id/delete", keyDelete);
@@ -334,6 +363,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // A mirror pulls on demand; a pin says "keep this on my machine". Both are
+  // ordinary repo-scoped writes, not account-level ones.
+  router.add("POST", "/:owner/:name/sync", repoSyncSubmit);
+  router.add("POST", "/:owner/:name/pin", pinSubmit);
 
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);

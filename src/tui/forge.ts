@@ -21,6 +21,7 @@ import { exploreScreen } from "./screens/explore.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
+import { originsScreen } from "./screens/origins.ts";
 import { ownerScreen } from "./screens/owner.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { settingsScreen } from "./screens/settings.ts";
@@ -124,11 +125,19 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           },
     );
     if (session.signedIn)
-      commands.push({
-        id: "account",
-        title: "Account settings",
-        run: () => ctx.push(accountScreen(session, ctx)),
-      });
+      commands.push(
+        {
+          id: "account",
+          title: "Account settings",
+          run: () => ctx.push(accountScreen(session, ctx)),
+        },
+        {
+          id: "origins",
+          title: "Origins",
+          hint: "connected forges",
+          run: () => ctx.push(originsScreen(session, ctx)),
+        },
+      );
     commands.push({
       id: "quit",
       title: "Quit",

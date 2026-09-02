@@ -6,7 +6,10 @@
  * to know in one glance whether this can land, and why not when it cannot.
  */
 
-import { addComment, setIssueState } from "../../actions/issues.ts";
+import {
+  addCommentThrough,
+  setIssueStateThrough,
+} from "../../actions/issues.ts";
 import { addReview, mergePull } from "../../actions/pulls.ts";
 import { listComments, type Comment } from "../../core/issues.ts";
 import {
@@ -32,6 +35,7 @@ import { fill, len, split } from "../ui/layout.ts";
 import { badge, card, tabs } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
+  ORIGIN_MARK,
   Scroll,
   confirmScreen,
   drawLines,
@@ -84,20 +88,26 @@ export function pullScreen(
     ctx.invalidate();
   };
 
+  // An imported author is the login on the *origin*: shown in its place, and
+  // marked, so it is never mistaken for an account here.
+  const who = (local: string, origin: string | null): string =>
+    origin === null || origin === "" ? local : `${ORIGIN_MARK} ${origin}`;
+
   const entries = (): ThreadEntry[] => [
     ...(pull === undefined
       ? []
       : [
           {
             kind: "comment" as const,
-            actor: pull.authorName,
+            actor: who(pull.authorName, pull.originAuthor),
             at: pull.createdAt,
             body: pull.body === "" ? "_No description._" : pull.body,
+            ...(pull.originUrl === null ? {} : { note: pull.originUrl }),
           },
         ]),
     ...comments.map((comment) => ({
       kind: "comment" as const,
-      actor: comment.authorName,
+      actor: who(comment.authorName, comment.originAuthor),
       at: comment.createdAt,
       body: comment.body,
     })),
@@ -133,11 +143,19 @@ export function pullScreen(
       });
       return;
     }
-    const added = addComment(f.app, f.user, repo, pull, composer.value);
-    if (!added.ok) {
-      ctx.toast(errorText(added.error), "danger");
-      return;
-    }
+    const target = pull;
+    const text = composer.value;
+    runAsync(ctx, async () => {
+      const added = await addCommentThrough(f.app, f.user, repo, target, text);
+      if (!added.ok) {
+        ctx.toast(errorText(added.error), "danger");
+        return;
+      }
+      composer.close();
+      await reload();
+      ctx.toast("comment posted", "success");
+    });
+    return;
     composer.close();
     runAsync(ctx, reload);
     ctx.toast("comment posted", "success");
@@ -167,7 +185,9 @@ export function pullScreen(
           disabled: !f.signedIn,
         }),
         binding(["m"], "merge", {
-          disabled: !mayWrite() || mergeState(pull, status) !== "ready",
+          disabled:
+            !mayWrite() ||
+            mergeState(pull, status, repo.origin !== null) !== "ready",
         }),
         binding(["x"], "close", { disabled: !f.signedIn }),
         binding(["r"], "refresh"),
@@ -207,7 +227,7 @@ export function pullScreen(
         style(c.fg, c.bg, BOLD),
         edge,
       );
-      drawMergeBox(s, boxRow!, c, pull, status, view.summary());
+      drawMergeBox(s, boxRow!, c, pull, status, view.summary(), repo.origin !== null);
       tabs(s, tabRow!, c, {
         items: [
           { label: "Conversation", count: comments.length + reviews.length },
@@ -255,7 +275,11 @@ export function pullScreen(
         }
         return true;
       }
-      if (e.key === "m" && pull && mergeState(pull, status) === "ready") {
+      if (
+        e.key === "m" &&
+        pull &&
+        mergeState(pull, status, repo.origin !== null) === "ready"
+      ) {
         ctx.push(
           confirmScreen(ctx, screen, {
             title: `Merge #${pull.number}`,
@@ -279,16 +303,20 @@ export function pullScreen(
         );
         return true;
       }
-      if (e.key === "x" && pull) {
-        const changed = setIssueState(f.app, f.user, repo, pull, "closed");
-        if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
-        else runAsync(ctx, reload);
-        return true;
-      }
-      if (e.key === "o" && pull) {
-        const changed = setIssueState(f.app, f.user, repo, pull, "open");
-        if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
-        else runAsync(ctx, reload);
+      if ((e.key === "x" || e.key === "o") && pull) {
+        const target = pull;
+        const wanted = e.key === "x" ? "closed" : "open";
+        runAsync(ctx, async () => {
+          const changed = await setIssueStateThrough(
+            f.app,
+            f.user,
+            repo,
+            target,
+            wanted,
+          );
+          if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
+          else await reload();
+        });
         return true;
       }
       if (e.key === "r") {
@@ -304,6 +332,7 @@ export function pullScreen(
 export type MergeState =
   | "merged"
   | "closed"
+  | "mirrored"
   | "conflicts"
   | "empty"
   | "ready"
@@ -312,10 +341,14 @@ export type MergeState =
 export function mergeState(
   pull: Pull | undefined,
   status: PullStatus | undefined,
+  mirrored = false,
 ): MergeState {
   if (!pull) return "unknown";
   if (pull.mergedAt !== null) return "merged";
   if (pull.state === "closed") return "closed";
+  // A mirror's merge belongs to the origin, which is truth for it: merging
+  // here would rewrite the base branch and be overwritten by the next fetch.
+  if (mirrored || pull.originHeadRepo !== null) return "mirrored";
   if (!status) return "unknown";
   if (status.ahead === 0) return "empty";
   return status.mergeable ? "ready" : "conflicts";
@@ -328,8 +361,9 @@ function drawMergeBox(
   pull: Pull,
   status: PullStatus | undefined,
   summary: string,
+  mirrored = false,
 ): void {
-  const state = mergeState(pull, status);
+  const state = mergeState(pull, status, mirrored);
   const tone =
     state === "merged"
       ? "merged"
@@ -337,7 +371,9 @@ function drawMergeBox(
         ? "success"
         : state === "conflicts" || state === "closed"
           ? "danger"
-          : "default";
+          : state === "mirrored"
+            ? "attn"
+            : "default";
   // Where it is going belongs on the frame, not on a body row: the box is
   // three rows tall, so a second body row would paint over the bottom rule.
   const inner = card(s, r, c, {
@@ -351,7 +387,9 @@ function drawMergeBox(
       ? `Merged ${relTime(pull.mergedAt ?? "")} into ${pull.baseBranch}`
       : state === "closed"
         ? "Closed without merging"
-        : state === "conflicts"
+        : state === "mirrored"
+          ? `Merge on the origin${pull.originUrl === null ? "" : ` — ${pull.originUrl}`}`
+          : state === "conflicts"
           ? `Conflicts in ${plural(conflicts.length, "file")}: ${conflicts.slice(0, 3).join(", ")}`
           : state === "empty"
             ? "Nothing to merge — the base already has these commits"

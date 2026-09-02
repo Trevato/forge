@@ -8,11 +8,15 @@
  * is what makes a long thread skimmable.
  */
 
-import { setIssueLabels, setIssueState } from "../../actions/issues.ts";
+import {
+  setIssueLabelsThrough,
+  setIssueStateThrough,
+} from "../../actions/issues.ts";
 import { listEvents } from "../../core/events.ts";
 import type { Issue, Label } from "../../core/issues.ts";
 import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
+import type { IconName as Glyph } from "../icons.ts";
 import { getUserById } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
@@ -32,6 +36,33 @@ import {
   type Tone,
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+
+/**
+ * The four ways a write can fail *because of the origin*, in words.
+ *
+ * They are worth their own sentences: three of them mean nothing changed
+ * anywhere and the fourth means the change belongs on another forge, and a
+ * generic "that could not be saved" would hide which. Returns undefined for
+ * anything that is not an origin outcome, so callers keep their own wording.
+ */
+export function originError(error: string): string | undefined {
+  const words: Record<string, string> = {
+    mirrored:
+      "This repository mirrors an origin — do it there, and the next sync brings it back.",
+    origin_owner_only:
+      "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
+    origin_refused:
+      "The origin refused that. Nothing was changed here either.",
+    origin_unreachable:
+      "The origin could not be reached. Nothing was changed.",
+  };
+  return words[error];
+}
+
+/** The origin's mark, when this repo has one. */
+export function originGlyph(repo: Repo): Glyph {
+  return repo.origin?.kind ?? "globe";
+}
 
 /** An issue number from a URL segment: digits only, and never a leading zero. */
 export function parseNumber(raw: string | undefined): number | undefined {
@@ -134,9 +165,13 @@ export function conversation(
   // Conversation comments only: a line-anchored review comment belongs to the
   // diff, and showing it in both places says the same thing twice.
   const comments = listComments(ctx.app.db, issue.id, { kind: "comment" });
+  const glyph = originGlyph(repo);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
-    node: threadComment(c.id, c.authorName, c.createdAt, c.body),
+    node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
+      originAuthor: c.originAuthor,
+      originKind: glyph,
+    }),
   }));
   entries.push(...stateEvents(ctx, repo, issue));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
@@ -148,6 +183,9 @@ export function conversation(
       at: issue.createdAt,
       body: issue.body,
       verb: options.openVerb,
+      originAuthor: issue.originAuthor,
+      originKind: glyph,
+      originUrl: issue.originUrl,
     }),
   );
 
@@ -166,6 +204,7 @@ export function threadComment(
   author: string,
   at: string,
   body: string,
+  origin: { originAuthor?: string | null; originKind?: Glyph } = {},
 ): Html {
   return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
@@ -174,6 +213,12 @@ export function threadComment(
       at,
       body,
       verb: "commented",
+      ...(origin.originAuthor == null
+        ? {}
+        : { originAuthor: origin.originAuthor }),
+      ...(origin.originKind === undefined
+        ? {}
+        : { originKind: origin.originKind }),
     })}
   </div>`;
 }
@@ -194,8 +239,12 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
   const fresh = listComments(ctx.app.db, issue.id, {
     kind: "comment",
   }).filter((c) => c.id > after);
+  const glyph = originGlyph(repo);
   const fragment = html`${fresh.map((c) =>
-    threadComment(c.id, c.authorName, c.createdAt, c.body),
+    threadComment(c.id, c.authorName, c.createdAt, c.body, {
+      originAuthor: c.originAuthor,
+      originKind: glyph,
+    }),
   )}`;
   return new Response(fragment.text, {
     headers: {
@@ -353,7 +402,9 @@ export async function stateSubmit(
 
   const wanted = field(form, "state") === "closed" ? "closed" : "open";
   const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
-  const changed = setIssueState(
+  // The `…Through` twin: identical on a native repo, and on a mirror it
+  // closes the issue at the origin first and reflects what came back.
+  const changed = await setIssueStateThrough(
     ctx.app,
     ctx.auth.user,
     found.repo,
@@ -362,11 +413,12 @@ export async function stateSubmit(
   );
   if (!changed.ok) {
     const message =
-      changed.error === "already_merged"
+      originError(changed.error) ??
+      (changed.error === "already_merged"
         ? "A merged pull request cannot be reopened."
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
-          : "That could not be changed.";
+          : "That could not be changed.");
     return flashTo(ctx, dest, { tone: "danger", message });
   }
   return flashTo(ctx, dest, {
@@ -389,7 +441,7 @@ export async function labelsSubmit(
     .getAll("labels")
     .filter((v): v is string => typeof v === "string");
   const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
-  const applied = setIssueLabels(
+  const applied = await setIssueLabelsThrough(
     ctx.app,
     ctx.auth.user,
     found.repo,
@@ -400,9 +452,10 @@ export async function labelsSubmit(
     return flashTo(ctx, dest, {
       tone: "danger",
       message:
-        applied.error === "unknown_label"
+        originError(applied.error) ??
+        (applied.error === "unknown_label"
           ? "One of those labels no longer exists."
-          : "You need write access to change labels.",
+          : "You need write access to change labels."),
     });
   }
   return flashTo(ctx, dest, {

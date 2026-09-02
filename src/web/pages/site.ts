@@ -14,6 +14,7 @@ import { signUp } from "../../actions/users.ts";
 import { listEvents, type ForgeEvent } from "../../core/events.ts";
 import { getIssue, listIssues } from "../../core/issues.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
+import { listPins } from "../../core/pins.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import {
@@ -34,6 +35,7 @@ import {
   card,
   empty,
   field as formField,
+  iconBtn,
   listCard,
   pager,
   row,
@@ -58,20 +60,39 @@ function safeNext(raw: string | null): string | undefined {
   return raw;
 }
 
-const repoRow = (repo: Repo): Html =>
+/**
+ * One repository row. The lead glyph carries provenance — a mirror wears its
+ * origin's mark rather than the generic repo book — and a pin shows in the
+ * trail, because "is this on my machine" is a property of the row, not a
+ * separate list to cross-reference.
+ */
+const repoRow = (repo: Repo, pinned?: ReadonlySet<string>): Html =>
   row({
     href: `/${repo.ownerName}/${repo.name}`,
     nav: true,
-    lead: icon(repo.forkParentId !== null ? "fork" : "repo"),
+    lead: icon(
+      repo.origin !== null
+        ? repo.origin.kind
+        : repo.forkParentId !== null
+          ? "fork"
+          : "repo",
+    ),
     title: `${repo.ownerName}/${repo.name}`,
     titleAttr: `${repo.ownerName}/${repo.name}`,
     ...(repo.description !== "" ? { meta: html`${repo.description}` } : {}),
-    trail:
-      repo.visibility === "private"
-        ? html`<span class="badge" data-variant="secondary"
-            >${icon("lock")}Private</span
-          >`
-        : html``,
+    trail: html`${when(
+      pinned?.has(repo.id) === true,
+      () =>
+        html`<span class="badge" data-variant="outline" title="On your machine"
+          >${icon("pin")}Pinned</span
+        >`,
+    )}${when(
+      repo.visibility === "private",
+      () =>
+        html`<span class="badge" data-variant="secondary"
+          >${icon("lock")}Private</span
+        >`,
+    )}`,
   });
 
 // ---- home ----
@@ -167,9 +188,17 @@ function activityRail(ctx: Ctx, visible: Repo[]): Html {
           event.actorId === null ? undefined : getUserById(db, event.actorId);
         const subject = eventSubject(db, event);
         const where = `${repo.ownerName}/${repo.name}`;
+        // `via: "origin"` means the sync worker saw this upstream rather than
+        // someone doing it here. The glyph is the only honest way to say so
+        // without a second line of prose on every row.
+        const viaOrigin = event.payload["via"] === "origin";
         return row({
           href: `/${where}`,
-          lead: icon(eventIcon(event.kind)),
+          lead: icon(
+            viaOrigin && repo.origin !== null
+              ? repo.origin.kind
+              : eventIcon(event.kind),
+          ),
           title: html`<strong>${actor?.username ?? "someone"}</strong>
           ${eventVerb(event.kind)}`,
           meta: html`${where}${subject !== ""
@@ -181,6 +210,61 @@ function activityRail(ctx: Ctx, visible: Repo[]): Html {
       })}
     </ul>`,
     { head: html`<h2>Recent activity</h2>`, pad: false },
+  );
+}
+
+/**
+ * What you keep on your machine. The server stores the *choice* and nothing
+ * about the laptop, so this card is a list of decisions plus the one command
+ * that acts on them — never a status the server would only ever hold a stale
+ * copy of.
+ */
+function downloadsCard(ctx: Ctx, user: User): Html {
+  const pins = listPins(ctx.app.db, user.id);
+  const head = html`${icon("download")}
+    <h2>On your machine</h2>`;
+  if (pins.length === 0) {
+    return card(
+      html`<p class="muted small">
+        Pin a repository (the ${icon("pin")} on its header) and the local
+        client keeps it cloned under
+        <span class="mono">~/src/&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;</span>.
+      </p>`,
+      { head },
+    );
+  }
+  return listCard(
+    [
+      ...pins.map((pin) =>
+        row({
+          href: `/${pin.ownerName}/${pin.name}`,
+          nav: true,
+          lead: icon("pin"),
+          title: `${pin.ownerName}/${pin.name}`,
+          titleAttr: `${pin.ownerName}/${pin.name}`,
+          trail: time(pin.createdAt),
+        }),
+      ),
+      html`<li>
+        <div class="row">
+          <span class="row-main">
+            <span class="clone"
+              ><span class="clone-text" id="forge-sync">forge sync</span>
+              ${iconBtn("copy", "Copy the sync command", {
+                size: "sm",
+                type: "button",
+                copy: "forge-sync",
+              })}</span
+            >
+            <span class="row-meta"
+              >Clones what is missing, fetches the rest, and reports
+              ahead/behind/dirty. See "Origins" in the README.</span
+            >
+          </span>
+        </div>
+      </li>`,
+    ],
+    { head },
   );
 }
 
@@ -248,7 +332,7 @@ function landing(ctx: Ctx): Html {
       () =>
         html`<div class="mt">
           <h2 class="mb">Public repositories</h2>
-          ${listCard(publicRepos.map(repoRow))}
+          ${listCard(publicRepos.map((repo) => repoRow(repo)))}
         </div>`,
     )}`;
 }
@@ -268,6 +352,9 @@ function dashboard(ctx: Ctx, user: User): Html {
   const carry = query !== "" ? `q=${encodeURIComponent(query)}&` : "";
   // Cursor lists only move forward; "Newer" is the way back to the top.
   const visible = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
+  const pinned = new Set(
+    listPins(ctx.app.db, user.id).map((pin) => pin.repoId),
+  );
 
   const filter = html`<form class="filters" method="get" action="/">
     <input
@@ -299,7 +386,7 @@ function dashboard(ctx: Ctx, user: User): Html {
               ? btn("New repository", { href: "/new", variant: "primary" })
               : btn("Clear filter", { href: "/" }),
         })
-      : listCard(shown.map(repoRow));
+      : listCard(shown.map((repo) => repoRow(repo, pinned)));
 
   return html`<div class="dash">
     <div>
@@ -321,7 +408,8 @@ function dashboard(ctx: Ctx, user: User): Html {
       })}
     </div>
     <aside class="stack">
-      ${activityRail(ctx, visible)} ${orgsCard(ctx, user)}
+      ${activityRail(ctx, visible)} ${downloadsCard(ctx, user)}
+      ${orgsCard(ctx, user)}
     </aside>
   </div>`;
 }
