@@ -32,7 +32,7 @@ import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "./credential.ts";
-import { redact } from "./credentials.ts";
+import { redact, secretsIn } from "./credentials.ts";
 import { pushToOrigin } from "./git-mirror.ts";
 
 /** A push-through must not outlive a pusher's patience. */
@@ -53,9 +53,28 @@ export async function pushThrough(
   repo: Repo,
   updates: readonly RefUpdate[],
   hookEnv: Record<string, string>,
+  actorId: string,
 ): Promise<Result<void, PushThroughRefusal>> {
   const link = originForRepo(app.db, repo.id);
-  if (!link) return ok();
+  if (!link) {
+    // A mirror whose origin was disconnected keeps its provenance but has
+    // nowhere to forward to. Accepting the push would let it diverge from
+    // an upstream it still claims to mirror, so it fails closed until the
+    // origin is reconnected (or the repo is re-created as a native one).
+    if (detachedMirror(app, repo))
+      return err({
+        message:
+          "this repository mirrors an origin that was disconnected; reconnect the origin before pushing",
+      });
+    return ok();
+  }
+  // The push travels under the connecting user's credential, so only they
+  // may send it — the same rule write-through applies. Anyone else would
+  // land commits upstream authenticated as someone else.
+  if (actorId !== link.origin.userId)
+    return err({
+      message: `only the account that connected ${link.origin.webUrl} can push through this mirror`,
+    });
   if (link.cloneUrl === "")
     return err({
       message: "this mirror has no upstream clone URL; re-mirror it",
@@ -106,24 +125,6 @@ export async function pushThrough(
 }
 
 /**
- * The secret material a git auth env carries, in every form it could be
- * echoed: the base64 `Basic` blob and the plaintext token inside it.
- */
-function secretsIn(authEnv: Record<string, string>): string[] {
-  const secrets: string[] = [];
-  for (const value of Object.values(authEnv)) {
-    const match = /^Authorization:\s*Basic\s+(\S+)$/i.exec(value);
-    const blob = match?.[1];
-    if (blob === undefined) continue;
-    secrets.push(blob);
-    const decoded = Buffer.from(blob, "base64").toString();
-    const colon = decoded.indexOf(":");
-    if (colon >= 0) secrets.push(decoded.slice(colon + 1));
-  }
-  return secrets;
-}
-
-/**
  * Only the object-store variables git itself set for this push. Copying the
  * hook's whole environment would let a pusher-influenced variable reach a
  * git subprocess, and `gitEnv()` exists precisely to stop that.
@@ -137,4 +138,14 @@ function quarantineEnv(
     if (value !== undefined && value !== "") env[name] = value;
   }
   return env;
+}
+
+/** Provenance without a live origin row: `origin_id` is null, the name remains. */
+function detachedMirror(app: App, repo: Repo): boolean {
+  const row = app.db
+    .query<{ n: string | null }, [string]>(
+      "SELECT origin_full_name AS n FROM repo WHERE id = ?1",
+    )
+    .get(repo.id);
+  return row?.n !== null && row?.n !== undefined && row.n !== "";
 }

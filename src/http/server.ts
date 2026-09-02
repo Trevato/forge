@@ -443,7 +443,13 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     // mirror, so a push it refuses must not land here either. This runs
     // while the objects are still in the push's quarantine — see
     // origins/push-through.ts for why that both works and matters.
-    const forwarded = await pushThrough(app, repo, input.updates, input.gitEnv);
+    const forwarded = await pushThrough(
+      app,
+      repo,
+      input.updates,
+      input.gitEnv,
+      input.actorId,
+    );
     if (!forwarded.ok) {
       return new Response(forwarded.error.message, { status: 403 });
     }

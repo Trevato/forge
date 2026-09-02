@@ -24,7 +24,7 @@ import { runGitCapture, type RunOptions } from "../git/env.ts";
 import { listRefs } from "../git/read.ts";
 import { ZERO_OID } from "../git/hooks.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { redact, safeRemoteUrl } from "./credentials.ts";
+import { redact, safeRemoteUrl, secretsIn } from "./credentials.ts";
 
 /** A mirror fetch can be genuinely slow; Forgejo allows its own 300s. */
 const FETCH_TIMEOUT_MS = 300_000;
@@ -161,7 +161,10 @@ export async function fetchMirror(
     { cwd: dir, env: authEnv, timeoutMs: FETCH_TIMEOUT_MS },
   );
   if (run.code !== 0) {
-    return err({ message: redact(run.stderr.trim()) || "fetch failed" });
+    return err({
+      message:
+        redact(run.stderr.trim(), ...secretsIn(authEnv)) || "fetch failed",
+    });
   }
   const after = await snapshotRefs(dir);
   return ok({ changes: refsChanged(before, after) });
@@ -200,7 +203,9 @@ export async function pushToOrigin(
   if (url === undefined)
     return err({ message: "refusing an unusable clone URL" });
 
-  const args: string[] = ["push", "--porcelain"];
+  // --atomic: an origin that would take one ref and refuse another takes
+  // neither, so a rejected push leaves both sides exactly where they were.
+  const args: string[] = ["push", "--porcelain", "--atomic"];
   const refspecs: string[] = [];
   for (const update of updates) {
     if (!isSafeRef(update.ref))

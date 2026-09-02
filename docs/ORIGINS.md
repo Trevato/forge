@@ -136,7 +136,9 @@ per-repo opt-in and a delegation model; that is deliberately not v1. Merging
 a pull on a mirror is refused (`mirrored`): merge on the origin, and the next
 sync brings back the merge commit it actually made.
 
-**Push-through.** A mirrored repo accepts pushes from writers. In
+**Push-through.** A mirrored repo accepts pushes from the account that
+connected its origin — the push travels under that credential, so nobody
+else may send it (the same `origin_owner_only` rule as write-through). In
 **pre-receive** — before the local refs move — the forge pushes each updated
 ref to the origin with the stored credential; if the origin refuses, the
 local push is refused with the origin's own message. This is possible because
@@ -153,7 +155,15 @@ non-experimental one, and the only one our own background fetcher cannot
 defeat). `refs/pull/*` never travels. `remote.origin.mirror` is pinned false
 and a refspec-less push is refused by the helper, because
 `remote.<x>.mirror=true` silently turns `git push` into `push --mirror`:
-force everything and **delete upstream any ref missing locally**.
+force everything and **delete upstream any ref missing locally**. Multi-ref
+pushes go `--atomic`, so an origin that would take one ref and refuse another
+takes neither. Once an origin is disconnected its mirrors fail closed: they
+stay readable and stop syncing, and a push is refused with the reason until
+the origin is reconnected.
+
+**Visibility narrows only.** A repo that goes private upstream goes private
+here on the next sweep, at once. One that goes public upstream stays as it
+was: widening is the owner's decision to make here, never an origin's.
 
 **Fork-less contributions** (no push rights): v2 — `forkRepo` on the origin,
 push there, open the pull with `owner:branch`. Held back because whether

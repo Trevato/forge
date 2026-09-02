@@ -499,6 +499,7 @@ describe("push-through, adversarially", () => {
     expect(push.args).toEqual([
       "push",
       "--porcelain",
+      "--atomic",
       `--force-with-lease=refs/heads/main:${before}`,
       `${origin.url}/octo/gears.git`,
       `${tip}:refs/heads/main`,
@@ -623,6 +624,7 @@ describe("push-through, adversarially", () => {
     expect(args).toEqual([
       "push",
       "--porcelain",
+      "--atomic",
       "--force-with-lease=refs/heads/--mirror:",
       `${origin.url}/octo/gears.git`,
       `${tip}:refs/heads/--mirror`,
@@ -660,6 +662,7 @@ describe("push-through, adversarially", () => {
     expect(spawned[0]!.args).toEqual([
       "push",
       "--porcelain",
+      "--atomic",
       `--force-with-lease=refs/heads/topic:${tip}`,
       `${origin.url}/octo/gears.git`,
       ":refs/heads/topic",
@@ -821,21 +824,25 @@ describe("push-through, adversarially", () => {
     await git(["reset", "-q", "--hard", "origin/main"], clone);
   });
 
-  test("a writer who did not connect the origin pushes with the owner's credential (documented: writers)", async () => {
-    // The docs say a mirror "accepts pushes from writers". The only writer
-    // on a personal repo besides its owner is a site admin; this pins down
-    // that such a push goes upstream under the OWNER's stored credential.
+  test("a writer who did not connect the origin cannot push through it", async () => {
+    // The push would travel under the OWNER's stored credential, so the same
+    // rule as write-through applies: only the account that connected the
+    // origin may send it. A site admin is a writer everywhere and is still
+    // refused — and the origin never hears from them.
     app.db.query("UPDATE user SET is_admin = 1 WHERE username = 'bob'").run();
     origin.pushes.length = 0;
+    const before = await localMain();
     const tip = await commitFile("k.txt", "eleven\n");
     const asBob = await git(
       ["push", "-q", remoteFor("bob", BOB_PASSWORD), "main"],
       clone,
     );
-    expect(asBob.code).toBe(0);
-    expect(origin.pushes).toHaveLength(1);
-    expect(origin.pushes[0]!.authorization).toBe(ORIGIN_HEADER);
-    expect(await originRef("refs/heads/main")).toBe(tip);
+    expect(asBob.code).not.toBe(0);
+    expect(asBob.err).toContain("only the account that connected");
+    expect(origin.pushes).toHaveLength(0);
+    expect(await localMain()).toBe(before);
+    expect(await localMain()).not.toBe(tip);
+    await git(["reset", "-q", "--hard", "HEAD~1"], clone);
     app.db.query("UPDATE user SET is_admin = 0 WHERE username = 'bob'").run();
   });
 
@@ -882,20 +889,22 @@ describe("push-through, adversarially", () => {
     expect(await localMain()).toBe(before);
   });
 
-  test("a disconnected origin turns the repo native: the push lands locally and goes nowhere else", async () => {
-    // Documented in core/origins.ts: disconnecting keeps the repo and "it
-    // simply stops syncing". So after a disconnect a push is a plain local
-    // push — accepted, forwarded to nobody. This test pins that down so a
-    // change in either direction is deliberate.
+  test("a disconnected origin fails closed: the mirror refuses pushes until reconnected", async () => {
+    // Disconnecting keeps the repo readable and stops syncing, but the repo
+    // still says it mirrors something. Accepting a push would let it drift
+    // from an upstream it claims to track, so the push is refused with a
+    // reason, and nothing is forwarded anywhere.
     const gone = await api(`/api/v1/user/origins/${originId}`, {
       method: "DELETE",
     });
     expect(gone.status).toBe(200);
     await recorder.clear();
-    const tip = (await git(["rev-parse", "HEAD"], clone)).out;
+    const before = await localMain();
+    await commitFile("m.txt", "twelve\n");
     const pushed = await git(["push", "-q", "origin", "main"], clone);
-    expect(pushed.code).toBe(0);
-    expect(await localMain()).toBe(tip);
+    expect(pushed.code).not.toBe(0);
+    expect(pushed.err).toContain("disconnected");
+    expect(await localMain()).toBe(before);
     expect(await recorder.pushes()).toHaveLength(0);
   });
 });

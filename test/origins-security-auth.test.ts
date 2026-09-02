@@ -1132,18 +1132,17 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
       (await api("/api/v1/repos/alice/widgets", { none: true })).status,
     ).toBe(404);
 
-    // Upstream goes public again. The sync widens the mirror back — this is
-    // deliberate ("the origin is truth for visibility") and announced with
-    // a settings event, never silent.
+    // Upstream goes public again. The sync does NOT widen the mirror back:
+    // narrowing is the origin's call to make for us, widening is the owner's
+    // to make here, so a mistaken or hostile origin can never publish a repo.
     const events = listEvents(app.db, { limit: 500 }).length;
     remote.private = false;
     await api(`/api/v1/user/origins/${originId}/sync`, { method: "POST" });
-    expect(getRepo(app.db, "alice", "widgets")!.visibility).toBe("public");
+    expect(getRepo(app.db, "alice", "widgets")!.visibility).toBe("private");
     const announced = listEvents(app.db, { limit: 500 })
       .slice(0, listEvents(app.db, { limit: 500 }).length - events)
       .filter((e) => e.kind === "repo.settings_updated");
-    expect(announced.length).toBeGreaterThan(0);
-    expect(JSON.stringify(announced[0]!.payload)).toContain('"via":"origin"');
+    expect(announced).toHaveLength(0);
   });
 
   test("no origin, app, pin, repo or sync response carries a credential in any form", async () => {

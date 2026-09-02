@@ -1007,7 +1007,12 @@ export function apiRoutes(router: Router<Handler>): void {
       headBranch: str(input.head),
       ...(headRepo ? { headRepo } : {}),
     });
-    if (!created.ok) return respondAccess(created.error, 422);
+    if (!created.ok)
+      return created.error === "origin_owner_only" ||
+        created.error === "origin_refused" ||
+        created.error === "origin_unreachable"
+        ? originAware(created.error)
+        : respondAccess(created.error, 422);
     return json(withLabels(ctx, created.value), 201);
   });
 

@@ -89,3 +89,22 @@ export function safeRemoteUrl(url: string): string | undefined {
     return undefined;
   }
 }
+
+/**
+ * The secret material a git auth env carries, in every form it could be
+ * echoed back by a remote: the base64 `Basic` blob and the plaintext token
+ * inside it. Feed these to `redact` wherever a remote's words reach a user.
+ */
+export function secretsIn(authEnv: Record<string, string>): string[] {
+  const secrets: string[] = [];
+  for (const value of Object.values(authEnv)) {
+    const match = /^Authorization:\s*Basic\s+(\S+)$/i.exec(value);
+    const blob = match?.[1];
+    if (blob === undefined) continue;
+    secrets.push(blob);
+    const decoded = Buffer.from(blob, "base64").toString();
+    const colon = decoded.indexOf(":");
+    if (colon >= 0) secrets.push(decoded.slice(colon + 1));
+  }
+  return secrets;
+}

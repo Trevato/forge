@@ -286,8 +286,12 @@ async function syncMirrorUnguarded(
   const described = await provider.getRepo(mirror.fullName);
   if (described.ok) {
     rememberOriginRepo(app.db, origin.id, described.value);
+    // Narrow only. Going private upstream must close the mirror at once;
+    // going public upstream is a decision the owner confirms here, because
+    // a mirror that widens on its own would publish whatever a compromised
+    // or mistaken origin says is public.
     const wanted = described.value.private ? "private" : "public";
-    if (wanted !== repo.visibility) {
+    if (wanted === "private" && repo.visibility !== "private") {
       app.db
         .query("UPDATE repo SET visibility = ?1 WHERE id = ?2")
         .run(wanted, repo.id);
