@@ -253,6 +253,18 @@ export function userTag(username: string, o: { avatar?: boolean } = {}): Html {
   >`;
 }
 
+/**
+ * An author who is not an account here: the login they use on the origin,
+ * wearing that forge's mark. Deliberately not a link to `/name` — a local
+ * profile of that name would be a different person, and saying otherwise is
+ * the one lie an imported comment could tell.
+ */
+export function originTag(login: string, kind: IconName): Html {
+  return html`<span class="byline origin-by" title="${login} on the origin"
+    >${icon(kind)}<span class="byline-name">${login}</span></span
+  >`;
+}
+
 /** An author: avatar plus a link to their profile. Never bare text. */
 export function userLink(
   username: string,

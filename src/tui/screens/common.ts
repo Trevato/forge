@@ -334,6 +334,12 @@ export function promptScreen(
     placeholder?: string;
     value?: string;
     hint?: string;
+    /**
+     * Show the value as dots. A terminal is the one surface where somebody
+     * is routinely reading over your shoulder, so a secret typed into one
+     * must never be a plain string of cells.
+     */
+    mask?: boolean;
     /** Return an error string to keep the prompt open with a message. */
     onSubmit: (value: string) => string | undefined | Promise<void>;
   },
@@ -358,8 +364,10 @@ export function promptScreen(
       const h = Math.min(9, area.h - 2);
       const y = area.y + ((area.h - h) >> 1) + 1;
       s.text(x, y, truncate(o.label, w - 4), style(c.mutedFg, c.card), x + w);
+      const shown =
+        o.mask === true ? "\u2022".repeat([...value].length) : value;
       const cursor = input(s, { x, y: y + 1, w: w - 4, h: 1 }, c, {
-        value,
+        value: shown,
         cursor: [...value].length,
         focused: true,
         ...(o.placeholder === undefined ? {} : { placeholder: o.placeholder }),
@@ -540,7 +548,30 @@ const MESSAGES: Record<string, string> = {
   bad_anchor: "that line is not part of this diff",
   invalid_url: "that URL is not valid",
   invalid_token: "that token is not valid",
+  // Origins. Three of these mean nothing changed anywhere and the fourth
+  // means the change belongs on another forge — a single "that failed"
+  // would hide which, so each keeps its own sentence.
+  mirrored: "this repo mirrors an origin — do it there",
+  origin_owner_only: "only whoever connected this origin can write through it",
+  origin_refused: "the origin refused that; nothing changed here",
+  origin_unreachable: "the origin could not be reached; nothing changed",
+  already_connected: "that account is already connected",
+  already_mirrored: "that repository is already mirrored here",
+  unknown_host: "that does not look like a forge",
+  unreachable: "that instance could not be reached",
+  bad_token: "the origin refused that token",
+  rate_limited: "too many connect attempts; wait a few minutes",
+  no_app: "register an OAuth application on that instance first",
+  provider_refused: "the origin refused to start that connect",
 };
+
+/**
+ * The glyphs provenance and pinning wear, from the safe set in `term/screen`.
+ * `\u25b2` means "this came from the origin" (upstream); `\u25c6` means "kept on
+ * this machine". Both are documented in `docs/DESIGN.md`.
+ */
+export const ORIGIN_MARK = "\u25b2";
+export const PIN_MARK = "\u25c6";
 
 /** A stable error code, as a sentence. Unknown codes are shown verbatim. */
 export function errorText(code: string): string {

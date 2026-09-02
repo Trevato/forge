@@ -4,13 +4,22 @@
  * of a list the TUI built, it never enters it.
  */
 
+import { pinRepo, unpinRepo } from "../../actions/origins.ts";
+import { listPins } from "../../core/pins.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { Filter, ListState, drawList, runAsync } from "./common.ts";
+import {
+  Filter,
+  ListState,
+  PIN_MARK,
+  drawList,
+  errorText,
+  runAsync,
+} from "./common.ts";
 import { ownerScreen } from "./owner.ts";
 import { repoScreen } from "./repo.ts";
 
@@ -19,10 +28,14 @@ const PAGE = 100;
 export function exploreScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
   let more = false;
+  let pinned = new Set<string>();
   const state = new ListState();
   const filter = new Filter();
 
   const reload = (): void => {
+    pinned = new Set(
+      f.user ? listPins(f.db, f.user.id).map((pin) => pin.repoId) : [],
+    );
     repos = listReposVisibleTo(f.db, f.user, { limit: PAGE });
     more = repos.length === PAGE;
     ctx.invalidate();
@@ -51,6 +64,7 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
       binding(["j", "k"], "move"),
       binding(["enter"], "open"),
       binding(["o"], "owner"),
+      binding(["p"], "pin"),
       binding(["/"], "filter"),
       binding(["r"], "refresh"),
     ],
@@ -71,7 +85,7 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
         return;
       }
       const list = rows.map((repo) => ({
-        title: `${repo.ownerName}/${repo.name}`,
+        title: `${pinned.has(repo.id) ? `${PIN_MARK} ` : ""}${repo.ownerName}/${repo.name}`,
         secondary: repo.description,
         meta: repo.visibility === "private" ? "private" : "",
       }));
@@ -95,6 +109,20 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
       if (e.key === "o") {
         const repo = rows[state.index];
         if (repo) ctx.push(ownerScreen(f, ctx, repo.ownerName));
+        return true;
+      }
+      if (e.key === "p" && f.user) {
+        const repo = rows[state.index];
+        if (!repo) return true;
+        const wanted = !pinned.has(repo.id);
+        const done = wanted
+          ? pinRepo(f.app, f.user, repo)
+          : unpinRepo(f.app, f.user, repo);
+        if (!done.ok && wanted) ctx.toast(errorText(done.error), "danger");
+        else {
+          reload();
+          ctx.toast(wanted ? "pinned" : "unpinned", "success");
+        }
         return true;
       }
       if (e.key === "r") {

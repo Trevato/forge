@@ -163,6 +163,11 @@ specification.
 | **prose**                                     | `.prose`                                                                                   | —                                                                                                        | 15px, 72ch measure                                           | wrapped markdown                             |
 | **settings shell** `settingsLayout()`         | `.settings` (`.settings-nav`, `.settings-main`)                                            | —                                                                                                        | sticky nav ≥860px, scroll strip below                        | a sidebar and a pane                         |
 | **repo header** `repoHeader()`                | `.repo-head`                                                                               | —                                                                                                        | tab counts, Settings only for admins                         | a title line and a tab row                   |
+| **origin chip** (`chrome.ts`)                 | `.repo-origin > .origin-chip`                                                              | the forge's mark: `github` / `forgejo` / `gitea`                                                         | links to the repo at its origin; a plain span when it has no URL | one `mirrored from owner/name @ host` fact line |
+| **origin state badge** `badge()`              | `.badge`                                                                                   | `success` healthy · `danger` needs re-auth · `attn` error                                                | the error message sits under the row, never inside the badge | the same three words beside the row          |
+| **imported author** `originTag()`             | `.byline.origin-by`                                                                        | the origin's mark instead of an avatar                                                                   | never a link to `/name` — that would be a different person   | `▲ login`                                    |
+| **pin toggle** `iconBtn("pin"\|"pinOff")`     | `.repo-origin form > .btn.btn-icon`                                                        | `ghost` unpinned · `secondary` pinned                                                                    | the wanted state rides the form, so a double submit is idempotent | `p` on a row, `P` on a repo home; `◆` marks a pinned row |
+| **device code**                               | `.device-code`                                                                             | —                                                                                                        | the one deliberately large type in the product: monospace, tabular, `user-select: all` | the code spaced out and centred in a card, with a spinner under it |
 | **sticky action** `stickyAction()`            | `.sticky-action`                                                                           | —                                                                                                        | static ≥720px                                                | a footer action bar                          |
 
 Two things are deliberately **not** in the vocabulary: skeleton loaders (the
@@ -213,6 +218,20 @@ never drift from the app.
 
 Inside the code view, shift-clicking a second line number extends `#L3` to
 `#L3-L9` and highlights the range.
+
+**Terminal keys and glyphs for origins.** Account → `o` opens Origins; there
+`c` connects, `s` syncs now, `r` lists the origin's repositories and `D`
+disconnects. In the picker `enter` or `m` mirrors the row. On a repo's home
+`y` syncs the mirror and `P` pins it — `p` has meant *pulls* on that screen
+since before pins existed, so the toggle takes the shifted key there and the
+plain `p` everywhere a repo is a *row* (the dashboard, explore).
+
+Two glyphs carry this, both from the safe set in `term/screen.ts`:
+
+| glyph | means                                                       |
+| ----- | ----------------------------------------------------------- |
+| `▲`   | this came from the origin — an imported author or activity  |
+| `◆`   | kept on your machine (pinned)                               |
 
 ---
 

@@ -42,11 +42,13 @@ import {
   seg,
   time,
 
+  originTag,
   userTag,
   field as formField,
 } from "../ui.ts";
 import { refSet } from "./refs.ts";
 import { threadRow } from "./issues.ts";
+import { originGlyph } from "./thread.ts";
 
 const PER_PAGE = 25;
 
@@ -142,7 +144,9 @@ export function pullsList(ctx: Ctx): Response {
                   >${pull.headBranch} → ${pull.baseBranch}</span
                 >
                 · opened ${time(pull.createdAt)} by
-                ${userTag(pull.authorName)}`,
+                ${pull.originAuthor
+                  ? originTag(pull.originAuthor, originGlyph(repo))
+                  : userTag(pull.authorName)}`,
               comments,
             ),
           ),

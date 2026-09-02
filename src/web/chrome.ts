@@ -9,13 +9,14 @@
  */
 
 import { countIssues } from "../core/issues.ts";
+import { isPinned } from "../core/pins.ts";
 import { canAdmin, canRead, getRepo, getRepoById } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon } from "./icons.ts";
 import { page, redirect, type PaletteItem } from "./layout.ts";
-import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
+import { badge, btn, empty, iconBtn, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
 
@@ -173,8 +174,55 @@ export function repoHeader(
           <a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a>
         </p>`,
     )}
-    ${tabs(items, "Repository")}
+    ${provenance(ctx, repo)} ${tabs(items, "Repository")}
   </header>`;
+}
+
+/**
+ * Where this repo comes from, and whether you keep it on your machine.
+ *
+ * Both live on their own line rather than in the title: a `<form>` is flow
+ * content and an `<h1>` takes phrasing, so a pin button *inside* the heading
+ * would be markup the parser has to repair.
+ */
+function provenance(ctx: Ctx, repo: Repo): Html {
+  const user = ctx.auth.user;
+  if (repo.origin === null && user === undefined) return html``;
+  const pinned = user !== undefined && isPinned(ctx.app.db, user.id, repo.id);
+  return html`<div class="repo-origin">
+    ${when(repo.origin, (origin) =>
+      origin.htmlUrl === ""
+        ? html`<span class="origin-chip"
+            >${icon(origin.kind)}mirrored from ${origin.fullName}</span
+          >`
+        : html`<a
+            class="origin-chip"
+            href="${origin.htmlUrl}"
+            rel="noreferrer noopener"
+            title="Open ${origin.fullName} on ${hostOf(origin.htmlUrl)}"
+            >${icon(origin.kind)}mirrored from ${origin.fullName}
+            <span class="muted">@ ${hostOf(origin.htmlUrl)}</span></a
+          >`,
+    )}
+    <span class="spacer"></span>
+    ${when(
+      user !== undefined,
+      () =>
+        html`<form method="post" action="${repoBase(repo)}/pin">
+          <input type="hidden" name="pinned" value="${pinned ? "0" : "1"}" />
+          ${iconBtn(
+            pinned ? "pinOff" : "pin",
+            pinned ? "Stop keeping this on my machine" : "Keep on my machine",
+            { size: "sm", variant: pinned ? "secondary" : "ghost" },
+          )}
+        </form>`,
+    )}
+  </div>`;
+}
+
+/** The host part of an absolute URL, for a chip that has to stay short. */
+export function hostOf(url: string): string {
+  return URL.parse(url)?.host ?? url;
 }
 
 /** This repo's own rows for the command palette. */

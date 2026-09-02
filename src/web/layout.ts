@@ -113,6 +113,7 @@ function userMenu(user: User): Html {
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
+    { label: "Origins", href: "/settings/origins", icon: "globe" },
     { separator: true, label: "" },
     { label: "Sign out", post: "/logout", icon: "signOut" },
   ];
@@ -173,6 +174,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
   { t: "SSH keys", h: "/settings/keys", c: "Settings" },
+  { t: "Origins", h: "/settings/origins", c: "Settings" },
 ];
 
 /**

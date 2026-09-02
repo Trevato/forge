@@ -6,6 +6,8 @@
  * forge page, and the one thing a terminal can hand over without a mouse.
  */
 
+import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
+import { isPinned } from "../../core/pins.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import { blobForRender, listTree, type TreeEntry } from "../../git/read.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -19,10 +21,13 @@ import { badge, card, emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   ListState,
+  PIN_MARK,
   Scroll,
+  ago,
   drawFacts,
   drawLines,
   drawList,
+  errorText,
   runAsync,
 } from "./common.ts";
 import { commitsScreen } from "./commits.ts";
@@ -47,10 +52,16 @@ export function repoScreen(
   let readmePath = "";
   let readmeSource = "";
   let width = 0;
+  let pinned = false;
   const state = new ListState();
   const scroll = new Scroll();
+  const admin = (): boolean => canAdmin(f.db, repo, f.user);
+  const readPin = (): void => {
+    pinned = f.user !== undefined && isPinned(f.db, f.user.id, repo.id);
+  };
 
   const reload = async (): Promise<void> => {
+    readPin();
     const tree = await listTree(f.dir(repo), ref, "");
     entries = tree.ok ? tree.value : [];
     readmeSource = "";
@@ -83,6 +94,14 @@ export function repoScreen(
         binding(["p"], "pulls"),
         binding(["c"], "commits"),
         binding(["b"], "ref"),
+        // `p` is pulls on this screen and has been since before pins
+        // existed, so the toggle takes the shifted key here. Everywhere a
+        // repo is a *row* — explore, the dashboard — plain `p` is free and
+        // is what pins it.
+        binding(["P"], pinned ? "unpin" : "pin", { disabled: !f.signedIn }),
+        binding(["y"], "sync now", {
+          disabled: repo.origin === null || !admin(),
+        }),
         binding(["F"], "fork", { disabled: !f.signedIn }),
         binding([","], "settings", {
           disabled: !canAdmin(f.db, repo, f.user),
@@ -93,7 +112,8 @@ export function repoScreen(
     load: reload,
     render(area, s) {
       const c = ctx.theme.c;
-      const [about, body] = split(area, "v", [len(6), fill(1)]);
+      const facts = originFacts(repo);
+      const [about, body] = split(area, "v", [len(6 + facts.length), fill(1)]);
       const inner = card(s, about!, c, {
         title: `${repo.ownerName}/${repo.name}`,
         footer: ref,
@@ -113,7 +133,14 @@ export function repoScreen(
           variant: "attn",
         });
       if (repo.forkParentId !== null)
-        badge(s, x + 1, inner.y, c, { text: "fork", variant: "outline" });
+        x = badge(s, x + 1, inner.y, c, { text: "fork", variant: "outline" });
+      if (repo.origin !== null)
+        x = badge(s, x + 1, inner.y, c, { text: "mirror", variant: "attn" });
+      if (pinned)
+        badge(s, x + 1, inner.y, c, {
+          text: `${PIN_MARK} on your machine`,
+          variant: "outline",
+        });
       s.text(
         lead,
         inner.y + 1,
@@ -126,9 +153,14 @@ export function repoScreen(
       );
       drawFacts(
         s,
-        { x: lead, y: inner.y + 2, w: Math.max(0, edge - lead), h: 2 },
+        {
+          x: lead,
+          y: inner.y + 2,
+          w: Math.max(0, edge - lead),
+          h: 2 + facts.length,
+        },
         c,
-        cloneFacts(f, repo),
+        [...facts, ...cloneFacts(f, repo)],
       );
 
       const [left, right] = ctx.twoPane
@@ -207,6 +239,32 @@ export function repoScreen(
         );
         return true;
       }
+      if (e.key === "P" && f.user) {
+        const wanted = !pinned;
+        const done = wanted
+          ? pinRepo(f.app, f.user, repo)
+          : unpinRepo(f.app, f.user, repo);
+        if (!done.ok && wanted) ctx.toast(errorText(done.error), "danger");
+        else {
+          readPin();
+          ctx.invalidate();
+          ctx.toast(wanted ? "pinned" : "unpinned", "success");
+        }
+        return true;
+      }
+      if (e.key === "y" && repo.origin !== null && admin()) {
+        runAsync(ctx, async () => {
+          const synced = await syncRepoNow(f.app, f.user, repo);
+          if (!synced.ok) ctx.toast(errorText(synced.error), "danger");
+          else if (synced.value.error !== "")
+            ctx.toast(synced.value.error, "danger");
+          else {
+            await reload();
+            ctx.toast("synced from the origin", "success");
+          }
+        });
+        return true;
+      }
       if (e.key === "F" && f.signedIn) {
         ctx.push(forkScreen(f, ctx, repo));
         return true;
@@ -223,6 +281,26 @@ export function repoScreen(
     },
   };
   return screen;
+}
+
+/**
+ * Where a mirror came from and when it was last fetched — one line, because
+ * that is the whole of what a reader needs before they trust what is on the
+ * screen. A native repo has no such line rather than an empty one.
+ */
+function originFacts(repo: Repo): [string, string][] {
+  const origin = repo.origin;
+  if (origin === null) return [];
+  const host = URL.parse(origin.htmlUrl)?.host ?? "";
+  const fetched =
+    origin.lastFetchAt === null ? "never fetched" : `fetched ${ago(origin.lastFetchAt)}`;
+  const error = origin.fetchError === "" ? "" : ` · ${origin.fetchError}`;
+  return [
+    [
+      "mirrored from",
+      `${origin.fullName}${host === "" ? "" : ` @ ${host}`} · ${fetched}${error}`,
+    ],
+  ];
 }
 
 /** The two clone URLs, from the ports this forge is actually listening on. */

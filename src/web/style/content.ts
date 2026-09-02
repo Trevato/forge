@@ -28,6 +28,54 @@ export const content = /* css */ `
 .repo-desc { margin-top: 4px; color: var(--muted-fg); font-size: 13.5px; text-wrap: pretty; }
 .repo-lineage { margin-top: 3px; font-size: 12.5px; color: var(--faint); }
 .repo-head .tabs { margin-top: 12px; }
+
+/* Provenance and pinning: one line under the title, so a <form> never has to
+   live inside the <h1>. */
+.repo-origin {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-top: 6px; min-height: 26px;
+}
+.origin-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--muted); color: var(--muted-fg);
+  font-size: 12.5px; text-decoration: none;
+}
+a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
+.origin-chip .ico { color: var(--faint); flex: none; }
+/* An imported author is the origin's login, so it wears the origin's mark
+   where a local avatar would be. */
+.byline.origin-by { display: inline-flex; align-items: center; gap: 5px; }
+.byline.origin-by .ico { color: var(--faint); }
+.origin-link {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12.5px; color: var(--muted-fg); text-decoration: none;
+}
+.origin-link:hover { color: var(--accent); }
+
+/* The origins settings page. */
+.origin-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.origin-row .origin-mark .ico { color: var(--muted-fg); }
+.origin-name { display: block; font-weight: 560; }
+.connect-path + .connect-path { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+.connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.connect-path h3 .ico { color: var(--muted-fg); }
+.steps { margin: 8px 0 12px 18px; padding: 0; color: var(--muted-fg); }
+.steps li + li { margin-top: 6px; }
+.mirror-form { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mirror-form .input { width: 10rem; padding: 4px 8px; font-size: 13px; }
+
+/* A device code is read aloud across a room and typed on a phone: it is the
+   one place in the product where type is deliberately large. */
+.device-code {
+  margin: 12px 0; padding: 12px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--muted);
+  font-family: var(--mono); font-size: clamp(24px, 6vw, 40px);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
+  text-align: center; user-select: all; word-break: break-all;
+}
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
 .repo-layout { display: grid; gap: 16px; margin-top: 16px; align-items: start; }

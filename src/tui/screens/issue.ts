@@ -9,9 +9,9 @@
  */
 
 import {
-  addComment,
-  setIssueLabels,
-  setIssueState,
+  addCommentThrough,
+  setIssueLabelsThrough,
+  setIssueStateThrough,
 } from "../../actions/issues.ts";
 import {
   getIssue,
@@ -32,6 +32,7 @@ import { fill, len, split } from "../ui/layout.ts";
 import { dot, labelChip } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
+  ORIGIN_MARK,
   Scroll,
   ago,
   drawLines,
@@ -70,45 +71,67 @@ export function issueScreen(
     ctx.invalidate();
   };
 
+  // An imported author is the login on the *origin*, so it is shown in place
+  // of the local one and marked with the upstream glyph — a name from another
+  // forge must never be mistaken for an account here.
+  const who = (local: string, origin: string | null): string =>
+    origin === null || origin === "" ? local : `${ORIGIN_MARK} ${origin}`;
+
   const entries = (): ThreadEntry[] => [
     ...(issue === undefined
       ? []
       : [
           {
             kind: "comment" as const,
-            actor: issue.authorName,
+            actor: who(issue.authorName, issue.originAuthor),
             at: issue.createdAt,
             body: issue.body === "" ? "_No description._" : issue.body,
+            ...(issue.originUrl === null ? {} : { note: issue.originUrl }),
           },
         ]),
     ...comments.map((comment) => ({
       kind: "comment" as const,
-      actor: comment.authorName,
+      actor: who(comment.authorName, comment.originAuthor),
       at: comment.createdAt,
       body: comment.body,
     })),
   ];
 
+  // The `…Through` twins: identical on a native repo, and on a mirror they
+  // write to the origin first and reflect what came back.
   const submit = (): void => {
     if (!issue) return;
-    const added = addComment(f.app, f.user, repo, issue, composer.value);
-    if (!added.ok) {
-      ctx.toast(errorText(added.error), "danger");
-      return;
-    }
-    composer.close();
-    reload();
-    ctx.toast("comment posted", "success");
+    const target = issue;
+    const body = composer.value;
+    runAsync(ctx, async () => {
+      const added = await addCommentThrough(f.app, f.user, repo, target, body);
+      if (!added.ok) {
+        ctx.toast(errorText(added.error), "danger");
+        return;
+      }
+      composer.close();
+      reload();
+      ctx.toast("comment posted", "success");
+    });
   };
 
   const setState = (state: "open" | "closed"): void => {
     if (!issue) return;
-    const changed = setIssueState(f.app, f.user, repo, issue, state);
-    if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
-    else {
-      reload();
-      ctx.toast(state === "closed" ? "closed" : "reopened", "success");
-    }
+    const target = issue;
+    runAsync(ctx, async () => {
+      const changed = await setIssueStateThrough(
+        f.app,
+        f.user,
+        repo,
+        target,
+        state,
+      );
+      if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
+      else {
+        reload();
+        ctx.toast(state === "closed" ? "closed" : "reopened", "success");
+      }
+    });
   };
 
   const screen: Screen = {
@@ -170,7 +193,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${issue.authorName} ${ago(issue.createdAt)} · ${plural(comments.length, "comment")}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(comments.length, "comment")}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),
@@ -235,10 +258,19 @@ export function issueScreen(
             items: all.map((l) => ({ id: l.id, label: l.name })),
             chosen: marks.map((l) => l.id),
             onPick: (ids) => {
-              if (!issue) return;
-              const applied = setIssueLabels(f.app, f.user, repo, issue, ids);
-              if (!applied.ok) ctx.toast(errorText(applied.error), "danger");
-              else reload();
+              const target = issue;
+              if (!target) return;
+              runAsync(ctx, async () => {
+                const applied = await setIssueLabelsThrough(
+                  f.app,
+                  f.user,
+                  repo,
+                  target,
+                  ids,
+                );
+                if (!applied.ok) ctx.toast(errorText(applied.error), "danger");
+                else reload();
+              });
             },
           }),
         );

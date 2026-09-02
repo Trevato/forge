@@ -8,7 +8,7 @@
  * never show a set the JSON surface could not.
  */
 
-import { openIssue } from "../../actions/issues.ts";
+import { openIssueThrough } from "../../actions/issues.ts";
 import {
   countIssues,
   labelsFor,
@@ -31,6 +31,7 @@ import type { Session } from "../session.ts";
 import {
   Filter,
   ListState,
+  ORIGIN_MARK,
   drawList,
   errorText,
   pickerScreen,
@@ -169,7 +170,13 @@ export function issuesScreen(
               ? ("open" as const)
               : ("closed" as const),
           secondary: (tags.get(item.id) ?? []).map((l) => l.name).join(" "),
-          meta: `#${item.number} ${item.authorName} ${relTime(item.updatedAt)}`,
+          // An imported row is the origin's author, marked as upstream: a
+          // login from another forge must never read as an account here.
+          meta: `#${item.number} ${
+            item.originAuthor === null || item.originAuthor === ""
+              ? item.authorName
+              : `${ORIGIN_MARK} ${item.originAuthor}`
+          } ${relTime(item.updatedAt)}`,
         };
       });
       if (more) list.push({ title: "Load more…" });
@@ -251,15 +258,20 @@ export function newIssueScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let error: string | undefined;
 
   const submit = (): void => {
-    const created = openIssue(f.app, f.user, repo, { title, body: body.value });
-    if (!created.ok) {
-      // The input is never cleared: a rejected form keeps everything typed.
-      error = errorText(created.error);
-      ctx.toast(error, "danger");
-      return;
-    }
-    ctx.toast(`opened #${created.value.number}`, "success");
-    ctx.replace(issueScreen(f, ctx, repo, created.value.number));
+    const values = { title, body: body.value };
+    // The `…Through` twin: on a mirror the origin creates the issue, so the
+    // number this screen jumps to is the origin's own.
+    runAsync(ctx, async () => {
+      const created = await openIssueThrough(f.app, f.user, repo, values);
+      if (!created.ok) {
+        // The input is never cleared: a rejected form keeps everything typed.
+        error = errorText(created.error);
+        ctx.toast(error, "danger");
+        return;
+      }
+      ctx.toast(`opened #${created.value.number}`, "success");
+      ctx.replace(issueScreen(f, ctx, repo, created.value.number));
+    });
   };
 
   return {

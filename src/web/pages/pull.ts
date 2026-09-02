@@ -6,7 +6,7 @@
  * diff is given the full width it needs.
  */
 
-import { addComment } from "../../actions/issues.ts";
+import { addCommentThrough } from "../../actions/issues.ts";
 import type { AccessError } from "../../actions/access.ts";
 import { addReview, mergePull } from "../../actions/pulls.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
@@ -45,6 +45,7 @@ import {
   icon,
   labelCss,
   listCard,
+  originTag,
   sha,
   stateBadge,
   time,
@@ -54,6 +55,8 @@ import {
   composer,
   conversation,
   labelsCard,
+  originError,
+  originGlyph,
   parseNumber,
   threadFragment,
 } from "./thread.ts";
@@ -137,6 +140,40 @@ function mergeBox(
           () => html`<span class="merge-form">${reopen}</span>`,
         )}`,
       { extra: "merge-box" },
+    );
+  }
+
+  // A mirror's merge belongs to the origin: merging locally would rewrite the
+  // base branch here and be overwritten by the next fetch, and merging through
+  // the API would have to reproduce the origin's strategy, protections and
+  // required checks exactly. So the box says where the button is instead.
+  if (repo.origin !== null || pull.originHeadRepo !== null) {
+    const at = repo.origin;
+    return card(
+      html`${icon(at?.kind ?? "globe")}
+        <div class="grow">
+          <div class="merge-headline">Merge on the origin.</div>
+          <p class="merge-sub">
+            This repository mirrors
+            ${at === null || at.fullName === ""
+              ? html`another forge`
+              : html`<span class="mono">${at.fullName}</span>`}, which is truth
+            for it. Merge there and the next sync brings back the merge commit
+            it actually made.
+          </p>
+        </div>
+        ${when(
+          pull.originUrl,
+          (url) =>
+            html`<span class="merge-form"
+              >${btn("Open on the origin", {
+                href: url,
+                variant: "primary",
+                icon: "external",
+              })}</span
+            >`,
+        )}`,
+      { tone: "attn", extra: "merge-box" },
     );
   }
 
@@ -277,9 +314,18 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
       <div class="issue-meta">
         ${stateBadge(pullState(pull))}
         <span
-          >${userLink(pull.authorName)} opened this
-          ${time(pull.createdAt)}</span
+          >${pull.originAuthor
+            ? originTag(pull.originAuthor, originGlyph(repo))
+            : userLink(pull.authorName)}
+          opened this ${time(pull.createdAt)}</span
         >
+        ${when(
+          pull.originUrl,
+          (url) =>
+            html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
+              >${icon("external")}view on origin</a
+            >`,
+        )}
         <span class="mono">${pull.headBranch} → ${pull.baseBranch}</span>
         ${badge(`${status.ahead} commit${status.ahead === 1 ? "" : "s"}`, {
           variant: "secondary",
@@ -346,7 +392,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message: "A comment needs something in it.",
     });
-  const added = addComment(
+  const added = await addCommentThrough(
     ctx.app,
     ctx.auth.user,
     found.repo,
@@ -356,7 +402,8 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: "That comment could not be posted.",
+      message:
+        originError(added.error) ?? "That comment could not be posted.",
     });
   return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
@@ -433,6 +480,8 @@ function mergeFailure(
     if (error.kind === "unsafe") return "That merge was refused as unsafe.";
     return "Git refused the merge.";
   }
+  const fromOrigin = originError(error);
+  if (fromOrigin !== undefined) return fromOrigin;
   if (error === "already_merged") return "This pull request was already merged.";
   if (error === "closed")
     return "A closed pull request cannot be merged. Reopen it first.";

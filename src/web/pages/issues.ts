@@ -4,7 +4,10 @@
  * post to its own endpoint. Mobile-first, no JavaScript required.
  */
 
-import { addComment, openIssue } from "../../actions/issues.ts";
+import {
+  addCommentThrough,
+  openIssueThrough,
+} from "../../actions/issues.ts";
 import {
   countComments,
   countIssues,
@@ -40,6 +43,7 @@ import {
   listCard,
   pager,
   seg,
+  originTag,
   stateBadge,
   time,
   userLink,
@@ -50,6 +54,8 @@ import {
   composer,
   conversation,
   labelsCard,
+  originError,
+  originGlyph,
   parseNumber,
   threadContext,
   threadFragment,
@@ -251,6 +257,7 @@ export function issuesList(ctx: Ctx): Response {
     comments: countComments(db, issue.id),
   }));
   const repoLabels = listLabels(db, repo.id);
+  const glyph = originGlyph(repo);
   const counts = {
     open: countIssues(db, repo.id, "issue", "open"),
     closed: countIssues(db, repo.id, "issue", "closed"),
@@ -292,7 +299,9 @@ export function issuesList(ctx: Ctx): Response {
               labels,
               issue.state,
               html`#${issue.number} opened ${time(issue.createdAt)} by
-              ${userTag(issue.authorName)}`,
+              ${issue.originAuthor
+                ? originTag(issue.originAuthor, glyph)
+                : userTag(issue.authorName)}`,
               comments,
             ),
           ),
@@ -387,17 +396,20 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const values = { title: field(form, "title"), body: field(form, "body") };
-  const created = openIssue(ctx.app, ctx.auth.user, repo, values);
+  // The `…Through` twin: on a mirror the origin creates the issue, so the
+  // number and the timestamps are the origin's rather than ones we invented.
+  const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, values);
   if (!created.ok) {
     // Nothing typed is ever lost: the form comes back exactly as it was sent.
     const message =
-      created.error === "empty_title"
+      originError(created.error) ??
+      (created.error === "empty_title"
         ? "An issue needs a title."
         : created.error === "title_too_long"
           ? "That title is too long (256 characters at most)."
           : created.error === "body_too_long"
             ? "That description is too long (64 KB at most)."
-            : "You cannot open an issue here.";
+            : "You cannot open an issue here.");
     return page(
       {
         ctx,
@@ -441,9 +453,18 @@ export function issuePage(ctx: Ctx): Response {
       <div class="issue-meta">
         ${stateBadge(issue.state)}
         <span
-          >${userLink(issue.authorName)} opened this
-          ${time(issue.createdAt)}</span
+          >${issue.originAuthor
+            ? originTag(issue.originAuthor, originGlyph(repo))
+            : userLink(issue.authorName)}
+          opened this ${time(issue.createdAt)}</span
         >
+        ${when(
+          issue.originUrl,
+          (url) =>
+            html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
+              >${icon("external")}view on origin</a
+            >`,
+        )}
       </div>
     </div>
     <div class="split">
@@ -498,7 +519,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message: "A comment needs something in it.",
     });
-  const added = addComment(
+  const added = await addCommentThrough(
     ctx.app,
     ctx.auth.user,
     found.repo,
@@ -508,7 +529,8 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message: "That comment could not be posted.",
+      message:
+        originError(added.error) ?? "That comment could not be posted.",
     });
   return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }

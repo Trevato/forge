@@ -25,6 +25,7 @@ import {
   signInFirst,
   type SettingsSection,
 } from "../chrome.ts";
+import { accountSections } from "./origins.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
@@ -41,34 +42,10 @@ import {
 
 type Section = "profile" | "password" | "tokens" | "keys";
 
-function sections(current: Section): SettingsSection[] {
-  return [
-    {
-      label: "Profile",
-      href: "/settings",
-      icon: "user",
-      current: current === "profile",
-    },
-    {
-      label: "Password",
-      href: "/settings/password",
-      icon: "lock",
-      current: current === "password",
-    },
-    {
-      label: "Access tokens",
-      href: "/settings/tokens",
-      icon: "key",
-      current: current === "tokens",
-    },
-    {
-      label: "SSH keys",
-      href: "/settings/keys",
-      icon: "lock",
-      current: current === "keys",
-    },
-  ];
-}
+// The section list lives beside the newest page that joins it, so adding one
+// cannot leave the others pointing at a nav that has forgotten it.
+const sections = (current: Section): SettingsSection[] =>
+  accountSections(current);
 
 /** One account page: the shared shell, the section nav, and this section. */
 function accountShell(
