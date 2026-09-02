@@ -9,10 +9,8 @@ import {
   openIssueThrough,
 } from "../../actions/issues.ts";
 import {
-  countComments,
   countIssues,
   labelsFor,
-  listIssues,
   listLabels,
   type Issue,
   type IssueState,
@@ -20,6 +18,7 @@ import {
 } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import type { IssueQuery, IssueSummary } from "../../view/source.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -27,6 +26,7 @@ import {
   repoBase,
   repoHeader,
   repoPalette,
+  scopeHeader,
   signInFirst,
   stickyAction,
 } from "../chrome.ts";
@@ -34,6 +34,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { localScope, type RepoScope } from "../scope.ts";
 import {
   btn,
   empty,
@@ -49,6 +50,7 @@ import {
   userLink,
   userTag,
   field as formField,
+  type IconName,
 } from "../ui.ts";
 import {
   composer,
@@ -65,7 +67,7 @@ const PER_PAGE = 25;
 
 // ---- the list ----
 
-interface ListQuery {
+export interface ListQuery {
   state: IssueState | "all";
   label: string;
   author: string;
@@ -73,7 +75,7 @@ interface ListQuery {
   cursor: number | undefined;
 }
 
-function readQuery(ctx: Ctx): ListQuery {
+export function readQuery(ctx: Ctx): ListQuery {
   const params = ctx.url.searchParams;
   const raw = params.get("state");
   const cursor = Number(params.get("cursor"));
@@ -88,7 +90,7 @@ function readQuery(ctx: Ctx): ListQuery {
 
 /** Rebuild the current URL with one facet changed — filters compose instead
  * of replacing each other. */
-function withFacet(
+export function withFacet(
   base: string,
   query: ListQuery,
   patch: Partial<Record<"state" | "label" | "author" | "q", string>>,
@@ -108,11 +110,11 @@ function withFacet(
   return text === "" ? base : `${base}?${text}`;
 }
 
-function filterBar(
+export function filterBar(
   base: string,
   query: ListQuery,
   labels: Label[],
-  counts: { open: number; closed: number },
+  counts: { open: number; closed: number } | undefined,
 ): Html {
   return html`<div class="filters">
       ${seg([
@@ -120,13 +122,13 @@ function filterBar(
           label: "Open",
           href: withFacet(base, query, { state: "open" }),
           current: query.state === "open",
-          count: counts.open,
+          ...(counts === undefined ? {} : { count: counts.open }),
         },
         {
           label: "Closed",
           href: withFacet(base, query, { state: "closed" }),
           current: query.state === "closed",
-          count: counts.closed,
+          ...(counts === undefined ? {} : { count: counts.closed }),
         },
         {
           label: "All",
@@ -190,8 +192,8 @@ function hidden(name: string, value: string): Html {
 export function threadRow(
   base: string,
   segment: "issues" | "pulls",
-  issue: Issue,
-  labels: Label[],
+  issue: { number: number; title: string },
+  labels: readonly Label[],
   state: "open" | "closed" | "merged",
   meta: Html,
   comments = 0,
@@ -234,30 +236,71 @@ export function threadRow(
   </li>`;
 }
 
-// GET /:owner/:name/issues
-export function issuesList(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  const base = repoBase(repo);
-  const query = readQuery(ctx);
-  const db = ctx.app.db;
+/**
+ * One row from a `RepoSource` summary — the shape both sides speak. A live
+ * browse and a repository we hold produce byte-identical rows; only the base
+ * of the href differs.
+ */
+export function summaryRow(
+  base: string,
+  segment: "issues" | "pulls",
+  item: IssueSummary,
+  glyph: IconName,
+  state: "open" | "closed" | "merged",
+  extraMeta?: Html,
+): Html {
+  return threadRow(
+    base,
+    segment,
+    item,
+    item.labels,
+    state,
+    html`#${item.number}${extraMeta ?? null} opened ${time(item.createdAt)} by
+    ${item.originAuthor
+      ? originTag(item.originAuthor, glyph)
+      : userTag(item.authorName)}`,
+    item.commentCount,
+  );
+}
 
-  const issues = listIssues(db, repo.id, {
+/** The mark an imported author wears on this scope. */
+export function scopeGlyph(scope: RepoScope): IconName {
+  return scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe";
+}
+
+/** A `ListQuery` as the source's own query shape. */
+export function sourceQuery(
+  query: ListQuery,
+  kind: "issue" | "pull",
+  limit: number,
+): IssueQuery {
+  return {
+    kind,
     state: query.state,
-    kind: "issue",
-    limit: PER_PAGE,
+    limit,
     ...(query.label !== "" ? { label: query.label } : {}),
     ...(query.author !== "" ? { author: query.author } : {}),
     ...(query.q !== "" ? { query: query.q } : {}),
-    ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
-  });
-  const rows = issues.map((issue) => ({
-    issue,
-    labels: labelsFor(db, issue.id),
-    comments: countComments(db, issue.id),
-  }));
+    ...(query.cursor !== undefined ? { cursor: String(query.cursor) } : {}),
+  };
+}
+
+// GET /:owner/:name/issues
+export async function issuesList(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  const scope = localScope(ctx, repo);
+  const base = scope.base;
+  const query = readQuery(ctx);
+  const db = ctx.app.db;
+
+  const listed = await scope.source.issues(
+    sourceQuery(query, "issue", PER_PAGE),
+  );
+  const issues = listed.ok ? listed.value.items : [];
+  const nextCursor = listed.ok ? listed.value.next : null;
   const repoLabels = listLabels(db, repo.id);
-  const glyph = originGlyph(repo);
+  const glyph = scopeGlyph(scope);
   const counts = {
     open: countIssues(db, repo.id, "issue", "open"),
     closed: countIssues(db, repo.id, "issue", "closed"),
@@ -273,7 +316,7 @@ export function issuesList(ctx: Ctx): Response {
     : btn("Sign in to open an issue", { href: "/signin" });
 
   const list =
-    rows.length === 0
+    issues.length === 0
       ? empty({
           icon: "issue",
           title:
@@ -291,30 +334,18 @@ export function issuesList(ctx: Ctx): Response {
           action: newIssue,
         })
       : listCard(
-          rows.map(({ issue, labels, comments }) =>
-            threadRow(
-              base,
-              "issues",
-              issue,
-              labels,
-              issue.state,
-              html`#${issue.number} opened ${time(issue.createdAt)} by
-              ${issue.originAuthor
-                ? originTag(issue.originAuthor, glyph)
-                : userTag(issue.authorName)}`,
-              comments,
-            ),
+          issues.map((issue) =>
+            summaryRow(base, "issues", issue, glyph, issue.state),
           ),
         );
 
-  const lastNumber = issues[issues.length - 1]?.number;
-  const body = html`${repoHeader(ctx, repo, "issues")}
+  const body = html`${scopeHeader(ctx, scope, "issues")}
     <div class="mt">
       ${filterBar(`${base}/issues`, query, repoLabels, counts)} ${list}
       ${pager(
-        issues.length === PER_PAGE && lastNumber !== undefined
-          ? { next: withFacet(`${base}/issues`, query, {}, lastNumber) }
-          : {},
+        nextCursor === null
+          ? {}
+          : { next: withFacet(`${base}/issues`, query, {}, Number(nextCursor)) },
       )}
     </div>
     ${when(ctx.auth.user !== undefined, () => stickyAction(newIssue))}
@@ -323,10 +354,10 @@ export function issuesList(ctx: Ctx): Response {
   return page({
     ctx,
     title: `Issues · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    crumbs: scope.crumbs,
+    palette: scope.palette,
     body,
-    styleCss: labelCss([...repoLabels, ...rows.flatMap((r) => r.labels)]),
+    styleCss: labelCss([...repoLabels, ...issues.flatMap((i) => i.labels)]),
     scriptJs: liveClientJs,
   });
 }

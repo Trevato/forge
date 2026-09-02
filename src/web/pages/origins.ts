@@ -23,14 +23,15 @@ import {
   listOriginApps,
   listRemoteRepos,
   listUserOrigins,
-  mirrorRepo,
   pollOAuthConnect,
   registerOriginApp,
+  startMirrorJob,
   startOAuthConnect,
   syncOriginNow,
 } from "../../actions/origins.ts";
 import { getFlowFor } from "../../origins/oauth.ts";
 import { getOriginFor, type Origin } from "../../core/origins.ts";
+import { isPinned } from "../../core/pins.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
@@ -44,6 +45,7 @@ import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { pollJs } from "../client.ts";
+import { browseBase } from "../scope.ts";
 import {
   badge,
   btn,
@@ -134,7 +136,7 @@ export const callbackUri = (ctx: Ctx): string =>
  * token. A leaked `ro` or `rw` token must not be able to so much as
  * enumerate whose GitHub is connected, let alone spend it.
  */
-function accountOnly(ctx: Ctx): Response | undefined {
+export function accountOnly(ctx: Ctx): Response | undefined {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (ctx.auth.via === "session" || ctx.auth.via === "password")
     return undefined;
@@ -236,11 +238,11 @@ function githubSection(configured: boolean, callback: string): Html {
     const back =
       callback === "" ? "<your forge>/settings/origins/callback" : callback;
     return html`<div class="connect-path">
-      <h3>${icon("github")}GitHub</h3>
+      <h3>${icon("github")}GitHub, one click</h3>
       <p class="muted small">
-        No GitHub application is registered for this forge yet, so the device
-        flow has no client id to use. Three steps, once, for every user of this
-        forge:
+        Needs a one-time OAuth app setup: no GitHub application is registered
+        for this forge yet, so the device flow has no client id to use. Three
+        steps, once, for every user of this forge:
       </p>
       <ol class="steps small">
         <li>
@@ -269,7 +271,7 @@ function githubSection(configured: boolean, callback: string): Html {
     </div>`;
   }
   return html`<div class="connect-path">
-    <h3>${icon("github")}GitHub</h3>
+    <h3>${icon("github")}GitHub, one click</h3>
     <p class="muted small">
       A short code and a URL you type it into — from this machine or from your
       phone. Nothing is typed into this terminal or this page.
@@ -289,7 +291,7 @@ function forgejoSection(
   const back = callbackUri(ctx);
   if (back === "") {
     return html`<div class="connect-path">
-      <h3>${icon("forgejo")}Forgejo or Gitea</h3>
+      <h3>${icon("forgejo")}Forgejo / Gitea, one click</h3>
       <p class="error-note">
         This forge does not know its own public URL, so it cannot register a
         callback for the code flow. Set
@@ -404,10 +406,10 @@ function forgejoSection(
       : null;
 
   return html`<div class="connect-path">
-    <h3>${icon("forgejo")}Forgejo or Gitea</h3>
+    <h3>${icon("forgejo")}Forgejo / Gitea, one click</h3>
     <p class="muted small">
-      Name the instance and this forge works out which it is, then sends you
-      there to authorize.
+      Needs an app registration on the instance. Name it and this forge works
+      out which it is, then sends you there to authorize.
     </p>
     <form method="post" action="/settings/origins/oauth">
       ${uiField({
@@ -427,13 +429,21 @@ function forgejoSection(
   </div>`;
 }
 
+/**
+ * The path that works everywhere and needs nothing registered anywhere, so it
+ * is the one the page opens on. The other two are real, and folded away: a
+ * page whose first control cannot be used until an operator sets an
+ * environment variable is a page that teaches people the product is fiddly.
+ */
 function tokenSection(values: ConnectValues): Html {
   return html`<div class="connect-path">
-    <h3>${icon("key")}Personal access token</h3>
+    <h3>
+      ${icon("key")}Personal access token
+      ${badge("recommended", { tone: "success" })}
+    </h3>
     <p class="muted small">
-      The fallback that needs no application registered anywhere. The token is
-      validated against the forge before it is stored, encrypted at rest, and
-      never shown again.
+      Nothing to register, anywhere. The token is validated against the forge
+      before it is stored, encrypted at rest, and never shown again.
     </p>
     <form method="post" action="/settings/origins/token">
       ${uiField({
@@ -486,19 +496,31 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
         })
       : html`<div class="stack">${origins.map(originCard)}</div>`}
     ${card(
-      html`${githubSection(githubConfigured, callbackUri(ctx))}
-      ${forgejoSection(
-        ctx,
-        values,
-        matched === undefined
-          ? undefined
-          : {
-              webUrl: matched.webUrl,
-              clientId: matched.clientId,
-              id: matched.id,
-            },
-      )}
-      ${tokenSection(values)}`,
+      html`${tokenSection(values)}
+        <details
+          class="connect-more"
+          ${values.mode !== "none" ? raw("open") : null}
+        >
+          <summary>One-click sign-in</summary>
+          <p class="muted small">
+            Both of these are OAuth, and both need somebody to register an
+            application once — for GitHub, per forge; for Forgejo and Gitea, per
+            instance. Worth it if several people use this forge; a token is
+            faster if it is just you.
+          </p>
+          ${githubSection(githubConfigured, callbackUri(ctx))}
+          ${forgejoSection(
+            ctx,
+            values,
+            matched === undefined
+              ? undefined
+              : {
+                  webUrl: matched.webUrl,
+                  clientId: matched.clientId,
+                  id: matched.id,
+                },
+          )}
+        </details>`,
       {
         head: html`${icon("plus")}
           <h2>Connect an origin</h2>`,
@@ -1048,6 +1070,9 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
               remote.mirroredAs === null
                 ? undefined
                 : getRepoById(ctx.app.db, remote.mirroredAs);
+            const pinned =
+              mirror !== undefined &&
+              isPinned(ctx.app.db, ctx.auth.user!.id, mirror.id);
             // Only offer a name box when the obvious one is taken: the
             // mirror action picks a free name by itself otherwise.
             const collides =
@@ -1057,6 +1082,8 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                 ctx.auth.user!.username,
                 remote.fullName.split("/")[1] ?? "",
               ) !== undefined;
+            // Mirroring is no longer what enter does — the row opens the
+            // repository live, and this is the secondary verb beside it.
             const trail =
               mirror !== undefined
                 ? btn("Open mirror", {
@@ -1086,22 +1113,51 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
                           autocomplete="off"
                         />`,
                     )}
-                    ${btn("Mirror", { size: "sm", icon: "download" })}
+                    ${btn("Mirror", {
+                      size: "sm",
+                      variant: "outline",
+                      icon: "download",
+                    })}
                   </form>`;
             return row({
+              nav: true,
               lead: icon(originIcon(origin.kind)),
-              title: html`${remote.fullName}
-              ${remote.private
-                ? badge("Private", { icon: "lock", variant: "secondary" })
-                : badge("Public", { variant: "outline" })}
-              ${when(remote.fork, () =>
-                badge("Fork", { icon: "fork", variant: "outline" }),
-              )}
-              ${when(mirror !== undefined, () =>
-                badge("Mirrored", { tone: "success", icon: "check" }),
-              )}`,
+              // The row is not itself an anchor: it carries a form, and a
+              // form inside an <a> is markup the parser pulls apart. The
+              // title is the link, and `data-nav` opens it.
+              title: html`<a href="${browseBase(origin.id, remote.fullName)}"
+                  >${remote.fullName}</a
+                >
+                ${remote.private
+                  ? badge("Private", { icon: "lock", variant: "secondary" })
+                  : badge("Public", { variant: "outline" })}
+                ${when(remote.fork, () =>
+                  badge("Fork", { icon: "fork", variant: "outline" }),
+                )}`,
               titleAttr: remote.fullName,
-              meta: html`${remote.description !== ""
+              meta: html`${when(
+                mirror,
+                (m) =>
+                  html`<span class="where-place" data-state="present"
+                      ><span class="where-dot" aria-hidden="true">●</span
+                      >mirrored as
+                      <a href="/${m.ownerName}/${m.name}"
+                        >${m.ownerName}/${m.name}</a
+                      ></span
+                    >${when(
+                      pinned,
+                      () =>
+                        html`<span class="where-sep" aria-hidden="true">·</span
+                          ><span
+                            class="where-place"
+                            data-state="present"
+                            title="Kept on your machine"
+                            ><span class="where-dot" aria-hidden="true">◆</span
+                            >this machine</span
+                          >`,
+                    )}
+                    · `,
+              )}${remote.description !== ""
                 ? html`${remote.description} · `
                 : null}${remote.pushedAt === null
                 ? html`never pushed`
@@ -1124,15 +1180,25 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
         })}
       </div>
       <p class="muted small mb">
-        Pick the repositories you want here. Each one is mirrored on its own —
-        there is no "mirror everything", because a mirror is a repository you
-        own and a hundred of them you did not choose is not a feature.
+        Open any of these to read it live, right now — nothing is downloaded.
+        Mirror the ones you actually want: each on its own, because a mirror is
+        a repository you own and a hundred of them you did not choose is not a
+        feature.
       </p>
       ${filter} ${body}`,
   });
 }
 
-// POST /settings/origins/:id/mirror
+/**
+ * POST /settings/origins/:id/mirror — start the mirror, then get out of the
+ * way.
+ *
+ * This used to run the whole import inside the request: a clone, a hook
+ * install, and every label, issue, pull and comment, with a spinner-free
+ * browser holding the connection open for as long as it took. It starts a
+ * job now and redirects to the page that watches it, which is the same answer
+ * the live-browse Mirror button gives.
+ */
 export async function originMirrorSubmit(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
   if (denied) return denied;
@@ -1142,32 +1208,20 @@ export async function originMirrorSubmit(ctx: Ctx): Promise<Response> {
   const fullName = field(form, "fullName").trim();
   const name = field(form, "name").trim();
 
-  const mirrored = await mirrorRepo(
+  const started = startMirrorJob(
     ctx.app,
     ctx.auth.user,
     originId,
     fullName,
     name === "" ? undefined : name,
   );
-  const back = `/settings/origins/${originId}/repos`;
-  if (!mirrored.ok) {
-    const words: Record<string, string> = {
-      not_found: "That repository is not there any more.",
-      invalid_name: "That local name is not allowed.",
-      name_taken:
-        "You already have a repository by every name this could take — give it one.",
-      already_mirrored: "That repository is already mirrored here.",
-      git_init_failed: "The mirror could not be created on disk.",
-      unreachable: "The origin could not be reached. Nothing was changed.",
-      unauthorized: "Sign in first.",
-    };
-    return flashTo(ctx, back, {
+  if (!started.ok)
+    return flashTo(ctx, `/settings/origins/${originId}/repos`, {
       tone: "danger",
       message:
-        words[mirrored.error] ?? "That repository could not be mirrored.",
+        started.error === "unauthorized"
+          ? "Sign in first."
+          : "That repository could not be mirrored.",
     });
-  }
-  return flashTo(ctx, `/${mirrored.value.ownerName}/${mirrored.value.name}`, {
-    message: `Mirrored ${fullName}.`,
-  });
+  return redirect(`/settings/origins/${originId}/mirror/${started.value.id}`);
 }

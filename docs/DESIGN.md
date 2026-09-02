@@ -163,10 +163,14 @@ specification.
 | **prose**                                     | `.prose`                                                                                   | —                                                                                                        | 15px, 72ch measure                                           | wrapped markdown                             |
 | **settings shell** `settingsLayout()`         | `.settings` (`.settings-nav`, `.settings-main`)                                            | —                                                                                                        | sticky nav ≥860px, scroll strip below                        | a sidebar and a pane                         |
 | **repo header** `repoHeader()`                | `.repo-head`                                                                               | —                                                                                                        | tab counts, Settings only for admins                         | a title line and a tab row                   |
-| **origin chip** (`chrome.ts`)                 | `.repo-origin > .origin-chip`                                                              | the forge's mark: `github` / `forgejo` / `gitea`                                                         | links to the repo at its origin; a plain span when it has no URL | one `mirrored from owner/name @ host` fact line |
+| **where strip** `whereStrip()` (`scope.ts`)   | `.where > .where-place`                                                                    | `data-state=reading\|present\|absent` — accent dot, success dot, faint dot                              | three places, always in this order and these words; a place is a link where one exists, and the third is the pin toggle | `● codeberg.org · ● workbench · ◆ this machine` |
+| **live-browse banner** `liveBanner()`         | `.live-note`                                                                               | —                                                                                                        | only on a live browse, above the content, one sentence          | one accent line under the tab row             |
+| **where-it-lives block**                      | `.where-block`                                                                             | —                                                                                                        | origin, last fetch, Sync now and where pushes land, as one block in the About rail | the same four lines under a rule |
+| **mirror stages** `stageList()`               | `.stages > li`                                                                             | `data-state=done\|now\|failed\|todo`                                                                    | the stage order is the markup order; a script updates it in place and a `<meta refresh>` does it without one | a checklist with `●`/`◐`/`○` |
+| **origin chip** (`chrome.ts`)                 | `.repo-origin > .origin-chip`                                                              | the forge's mark: `github` / `forgejo` / `gitea`                                                         | the older one-line form, still used off the repo header          | one `mirrored from owner/name @ host` fact line |
 | **origin state badge** `badge()`              | `.badge`                                                                                   | `success` healthy · `danger` needs re-auth · `attn` error                                                | the error message sits under the row, never inside the badge | the same three words beside the row          |
 | **imported author** `originTag()`             | `.byline.origin-by`                                                                        | the origin's mark instead of an avatar                                                                   | never a link to `/name` — that would be a different person   | `▲ login`                                    |
-| **pin toggle** `iconBtn("pin"\|"pinOff")`     | `.repo-origin form > .btn.btn-icon`                                                        | `ghost` unpinned · `secondary` pinned                                                                    | the wanted state rides the form, so a double submit is idempotent | `p` on a row, `P` on a repo home; `◆` marks a pinned row |
+| **pin toggle** `whereRow()`                   | `.repo-where form.where-pin > .btn`                                                        | `outline` unpinned · `secondary` pinned                                                                  | reads `Keep on my machine` / `On my machine ◆`; the strip's third place submits the same form by id, so a `<button>` can sit in a row of links; the wanted state rides the form, so a double submit is idempotent | `p` on a row, `P` on a repo home; `◆` marks a pinned row |
 | **device code**                               | `.device-code`                                                                             | —                                                                                                        | the one deliberately large type in the product: monospace, tabular, `user-select: all` | the code spaced out and centred in a card, with a spinner under it |
 | **sticky action** `stickyAction()`            | `.sticky-action`                                                                           | —                                                                                                        | static ≥720px                                                | a footer action bar                          |
 
@@ -191,6 +195,35 @@ Three rules the browser enforces whether or not you meant them:
   holding one long unbreakable line pushes the page wider than the phone
   instead of letting its own ellipsis work. Every page grid sets
   `min-width: 0` on its children.
+
+### 5a. Saying where you are reading from
+
+Every repository page in the product carries the **where strip**, and it says
+the same three things in the same order however you got there:
+
+```
+● codeberg.org · ○ workbench · ○ this machine        browsing live, read-only
+● codeberg.org · ● workbench (synced 3m ago) · ◆ this machine    a mirror you keep
+● workbench · ○ this machine                          a repository born here
+```
+
+- **Filled `●` means present, hollow `○` means absent, `◆` means kept on this
+  machine.** The dot carries the colour; the word never does, so a strip reads
+  as one fact rather than three competing badges.
+- **Accent marks the place these bytes came from.** That is the page's own
+  subject, which is the one thing accent is allowed to be besides interaction
+  (§1.2). Exactly one place per strip wears it.
+- **Every place is a link where one exists**: the origin goes to the repository
+  on that forge, the workbench to the mirror here, and "this machine" submits
+  the pin toggle.
+- A live browse also carries `.live-note` above the content, saying it is
+  read-only and what to do about that. There is no second way to find out: a
+  live page renders no composer, no state form, no labels form, no merge box
+  and no settings tab, because `RepoSource` has no mutation on it to submit to.
+
+The strip is the visible half of `RepoScope` (`src/web/scope.ts`); the pages it
+sits on are the same renderers for both sides of the world, and a divergence
+between a live browse and the repository we hold would be a bug you could see.
 
 ---
 
@@ -231,6 +264,8 @@ Two glyphs carry this, both from the safe set in `term/screen.ts`:
 | glyph | means                                                       |
 | ----- | ----------------------------------------------------------- |
 | `▲`   | this came from the origin — an imported author or activity  |
+| `●`   | this place has the repository (accent when it is the one being read) |
+| `○`   | this place does not have it                                 |
 | `◆`   | kept on your machine (pinned)                               |
 
 ---

@@ -31,10 +31,90 @@ export const content = /* css */ `
 
 /* Provenance and pinning: one line under the title, so a <form> never has to
    live inside the <h1>. */
-.repo-origin {
+.repo-origin,
+.repo-where {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-top: 6px; min-height: 26px;
 }
+
+/* The where strip: three places, dots and words. The dot carries the state
+   and the colour; the word is never coloured, so a strip reads as one fact
+   rather than as three competing badges. */
+.where {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  min-width: 0; font-size: 12.5px;
+}
+.where-sep { color: var(--faint); }
+.where-place {
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: 100%; padding: 2px 6px; border-radius: var(--radius-sm);
+  border: 1px solid transparent; background: none;
+  color: var(--muted-fg); font: inherit; text-decoration: none;
+  white-space: nowrap; cursor: default;
+}
+a.where-place, button.where-place { cursor: pointer; }
+a.where-place:hover, button.where-place:hover {
+  border-color: var(--border); background: var(--muted); color: var(--fg);
+}
+.where-place .ico { color: var(--faint); flex: none; }
+.where-dot { font-size: 10px; line-height: 1; }
+.where-note { color: var(--faint); }
+/* Accent is interaction everywhere else in the product; here it is the one
+   place a page is *reading from*, which is the page's own subject. */
+.where-place[data-state="reading"] { color: var(--fg); font-weight: 560; }
+.where-place[data-state="reading"] .where-dot { color: var(--accent); }
+.where-place[data-state="present"] .where-dot { color: var(--success); }
+.where-place[data-state="absent"] { color: var(--faint); }
+.where-place[data-state="absent"] .where-dot { color: var(--faint); }
+.where-pin { margin-left: auto; }
+/* Inside a list row the strip is text, not a layout: the row promises one
+   honest line with an ellipsis, and only inline children can keep it. */
+.row-meta .where { display: inline; }
+.row-meta .where-place { display: inline; padding: 0; }
+.row-meta .where-place .ico { display: none; }
+.row-meta .where-dot { margin-right: 3px; }
+.row-meta .where-sep { margin: 0 3px; }
+.row-title a { color: inherit; text-decoration: none; }
+.row-title a:hover { color: var(--accent); }
+.row-trail form { display: inline-flex; }
+
+/* "Where it lives": the origin, when it was last fetched, the button that
+   fetches it now, and where a push actually lands — one block, because they
+   are one fact about the repository. */
+.where-block {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.where-block h3 { margin-bottom: 6px; }
+
+/* A live browse: quiet, above the content, and never in the way of it. */
+.live-note {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-top: 12px; padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--muted-fg); font-size: 13px;
+}
+.live-note .ico { color: var(--accent); flex: none; margin-top: 1px; }
+.live-note p { text-wrap: pretty; }
+.live-note strong { color: var(--fg); }
+
+/* A mirror in flight. One row per stage, in the order they happen; the row
+   says which of the three states it is in and nothing else moves. */
+.stages { list-style: none; margin: 0; padding: 0; }
+.stages li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; font-size: 13.5px; color: var(--faint);
+}
+.stages li + li { border-top: 1px solid var(--border); }
+.stages li[data-state="done"] { color: var(--muted-fg); }
+.stages li[data-state="done"] .stage-dot { color: var(--success); }
+.stages li[data-state="now"] { color: var(--fg); font-weight: 560; }
+.stages li[data-state="now"] .stage-dot { color: var(--accent); }
+.stages li[data-state="failed"] { color: var(--danger); }
+.stages li[data-state="failed"] .stage-dot { color: var(--danger); }
+.stage-dot { flex: none; width: 16px; text-align: center; }
+.stage-detail { margin-left: auto; color: var(--faint); font-size: 12.5px; font-weight: 400; }
 .origin-chip {
   display: inline-flex; align-items: center; gap: 6px;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -59,6 +139,24 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .origin-row .origin-mark .ico { color: var(--muted-fg); }
 .origin-name { display: block; font-weight: 560; }
 .connect-path + .connect-path { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+/* The two OAuth paths, folded away. Both need somebody to register an
+   application once, and a page whose first control cannot be used until an
+   operator sets an environment variable teaches people the product is
+   fiddly — so the path that always works is open and these are one click. */
+.connect-more { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.connect-more > summary {
+  cursor: pointer; font-weight: 560; list-style: none;
+  display: flex; align-items: center; gap: 6px;
+}
+.connect-more > summary::-webkit-details-marker { display: none; }
+.connect-more > summary::before {
+  content: "›"; display: inline-block; color: var(--faint);
+  transition: transform 120ms var(--ease);
+}
+.connect-more[open] > summary::before { transform: rotate(90deg); }
+.connect-more > summary:hover { color: var(--accent); }
+.connect-more > p { margin: 6px 0 4px; }
+.connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .connect-path h3 .ico { color: var(--muted-fg); }
 .steps { margin: 8px 0 12px 18px; padding: 0; color: var(--muted-fg); }

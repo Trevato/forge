@@ -57,6 +57,13 @@ export interface PageOptions {
   scriptJs?: string;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
+  /**
+   * The JavaScript-free half of a page that changes on its own: a
+   * `<meta http-equiv="refresh">`, optionally to somewhere else. Only a page
+   * whose content is genuinely still moving should set it — a refresh a
+   * reader did not ask for steals their scroll position and their selection.
+   */
+  refresh?: { seconds: number; url?: string };
 }
 
 // ---- topbar pieces ----
@@ -278,6 +285,16 @@ export function page(options: PageOptions, status = 200): Response {
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${options.title} · forge</title>
+        ${when(
+          options.refresh,
+          (r) =>
+            html`<meta
+              http-equiv="refresh"
+              content="${r.url === undefined
+                ? String(r.seconds)
+                : `${r.seconds}; url=${r.url}`}"
+            />`,
+        )}
         ${theme
           ? html`<meta name="theme-color" content="${metaThemeColor(theme)}" />`
           : html`<meta

@@ -101,6 +101,20 @@ import {
 } from "../web/pages/account.ts";
 import { completeOAuthCallback } from "../actions/origins.ts";
 import {
+  browseBlob,
+  browseCommitPage,
+  browseCommitsPage,
+  browseHome,
+  browseIssue,
+  browseIssues,
+  browseMirrorSubmit,
+  browsePull,
+  browsePulls,
+  browseRaw,
+  browseTree,
+  mirrorJobPage,
+} from "../web/pages/browse.ts";
+import {
   originAppCreate,
   originAppDelete,
   originConnectToken,
@@ -288,8 +302,39 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/origins/flows/:id/poll", originFlowPoll);
   router.add("GET", "/settings/origins/:id/repos", originReposPage);
   router.add("POST", "/settings/origins/:id/mirror", originMirrorSubmit);
+  // A mirror is a job with stages, so it has a page of its own to watch it
+  // on. The literal "mirror" third segment is registered above the :id/:job
+  // shape for the same reason `flows` and `apps` are.
+  router.add("GET", "/settings/origins/:id/mirror/:job", mirrorJobPage);
   router.add("POST", "/settings/origins/:id/sync", originSyncSubmit);
   router.add("POST", "/settings/origins/:id/delete", originDisconnect);
+
+  // Browsing a repository on an origin, live and read-only. Registered here,
+  // above every parameterized repo route, so `/origins` can never be captured
+  // as an owner — the same reservation `/new` and `/go` already make. Each
+  // route renders the *same* template as its local twin; the handler differs
+  // only in which `RepoSource` it hands it.
+  router.add("GET", "/origins/:id/r/:owner/:name", browseHome);
+  router.add("GET", "/origins/:id/r/:owner/:name/tree/:ref", browseTree);
+  router.add("GET", "/origins/:id/r/:owner/:name/tree/:ref/*path", browseTree);
+  router.add("GET", "/origins/:id/r/:owner/:name/blob/:ref/*path", browseBlob);
+  router.add("GET", "/origins/:id/r/:owner/:name/raw/:ref/*path", browseRaw);
+  router.add("GET", "/origins/:id/r/:owner/:name/commits", browseCommitsPage);
+  router.add(
+    "GET",
+    "/origins/:id/r/:owner/:name/commit/:oid",
+    browseCommitPage,
+  );
+  router.add("GET", "/origins/:id/r/:owner/:name/issues", browseIssues);
+  router.add(
+    "GET",
+    "/origins/:id/r/:owner/:name/issues/:number",
+    browseIssue,
+  );
+  router.add("GET", "/origins/:id/r/:owner/:name/pulls", browsePulls);
+  router.add("GET", "/origins/:id/r/:owner/:name/pulls/:number", browsePull);
+  // The one mutation a live browse offers.
+  router.add("POST", "/origins/:id/r/:owner/:name/mirror", browseMirrorSubmit);
 
   router.add("GET", "/settings/keys", keysPage);
   router.add("POST", "/settings/keys", keyCreate);

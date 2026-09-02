@@ -8,9 +8,8 @@
  * `feature/a` stays one path segment and can never smuggle a path of its own.
  */
 
-import type { Repo } from "../../core/repos.ts";
 import { listRefs } from "../../git/read.ts";
-import { repoBase } from "../chrome.ts";
+import type { RepoSource } from "../../view/source.ts";
 import { html, raw, type Html } from "../html.ts";
 import { crumbs, icon, menu } from "../ui.ts";
 
@@ -32,6 +31,19 @@ export async function refSet(dir: string): Promise<RefSet> {
   return {
     branches: strip("refs/heads/", heads.ok, heads.ok ? heads.value : []),
     tags: strip("refs/tags/", tags.ok, tags.ok ? tags.value : []),
+  };
+}
+
+/**
+ * The same set, from whichever source is answering. A live browse pays two
+ * (cached) API calls for it; a local repo two `for-each-ref` reads. Either
+ * way the switcher below cannot tell which it got.
+ */
+export async function refSetFrom(source: RepoSource): Promise<RefSet> {
+  const [heads, tags] = await Promise.all([source.branches(), source.tags()]);
+  return {
+    branches: heads.ok ? heads.value.map((b) => b.name).sort() : [],
+    tags: tags.ok ? tags.value.map((t) => t.name).sort() : [],
   };
 }
 
@@ -75,16 +87,16 @@ export function refMenu(
 
 /** Clickable path breadcrumbs — every segment above you is one click away. */
 export function pathCrumbs(
-  repo: Repo,
+  base: string,
+  name: string,
   ref: string,
   path: string,
   leafIsFile: boolean,
 ): Html {
-  const base = repoBase(repo);
   const encoded = encodeURIComponent(ref);
   const parts = path === "" ? [] : path.split("/");
   const items: { label: string; href?: string }[] = [
-    { label: repo.name, href: `${base}/tree/${encoded}` },
+    { label: name, href: `${base}/tree/${encoded}` },
   ];
   parts.forEach((part, i) => {
     const walked = parts.slice(0, i + 1).join("/");
@@ -97,4 +109,3 @@ export function pathCrumbs(
   });
   return crumbs(items, { mono: true, ariaLabel: "File path" });
 }
-

@@ -23,6 +23,7 @@ import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
+import { settled } from "../src/origins/jobs.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
 import {
   newFakeOAuth,
@@ -197,8 +198,13 @@ describe("origins on the web", () => {
   test("the origins page starts empty and offers the three ways in", async () => {
     const html = await (await asUser(alice, "/settings/origins")).text();
     expect(html).toContain("No origins connected");
-    expect(html).toContain("Forgejo or Gitea");
+    expect(html).toContain("Forgejo / Gitea, one click");
     expect(html).toContain("Personal access token");
+    // The token path comes first and is open; the OAuth pair is folded away.
+    expect(html.indexOf("Personal access token")).toBeLessThan(
+      html.indexOf("One-click sign-in"),
+    );
+    expect(html).toContain("recommended");
     // No GitHub client id is configured yet, so the button is replaced by a
     // hint rather than left there to fail.
     expect(html).toContain("FORGE_GITHUB_CLIENT_ID");
@@ -249,7 +255,7 @@ describe("origins on the web", () => {
 
   // ---- the picker and mirroring ----
 
-  test("the picker lists the origin's repos and Mirror creates one", async () => {
+  test("the picker lists the origin's repos and every row opens live", async () => {
     const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const html = await (
       await asUser(alice, `/settings/origins/${id}/repos`)
@@ -257,24 +263,53 @@ describe("origins on the web", () => {
     expect(html).toContain("octo/widgets");
     expect(html).toContain("gears and things");
     expect(html).toContain("Mirror");
+    // Enter on a row browses it; mirroring is the secondary verb beside it.
+    expect(html).toContain(`href="/origins/${id}/r/octo/widgets"`);
+    expect(html).toContain("read it live");
     // No "mirror everything" anywhere on the page.
     expect(html).not.toContain("Mirror all");
+  });
 
+  test("Mirror starts a job, shows its stages, and lands on the mirror", async () => {
+    const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
     const mirrored = await asUser(alice, `/settings/origins/${id}/mirror`, {
       form: { fullName: "octo/widgets" },
     });
     expect(mirrored.status).toBe(303);
-    expect(mirrored.headers.get("location")).toBe("/alice/widgets");
+    const jobPath = mirrored.headers.get("location") ?? "";
+    expect(jobPath).toStartWith(`/settings/origins/${id}/mirror/`);
+
+    // The job page renders the checklist, and works with no JavaScript: a
+    // meta refresh keeps it current while the mirror is still running.
+    const running = await (await asUser(alice, jobPath)).text();
+    expect(running).toContain("Creating the repository");
+    expect(running).toContain("Importing issues");
+    expect(running).toContain('id="stages"');
+
+    const jobId = jobPath.split("/").pop()!;
+    const done = await settled(jobId);
+    expect(done?.stage).toBe("done");
     expect(getRepo(app.db, "alice", "widgets")).toBeDefined();
+
+    // Finished: no self-refresh loop, a redirect to the mirror instead.
+    const after = await (await asUser(alice, jobPath)).text();
+    expect(after).toContain("url=/alice/widgets");
+    expect(after).not.toContain('content="2"');
+    expect(after).toContain("Open the mirror");
   });
 
-  test("the repo header wears the origin chip and the About rail its fetch", async () => {
+  test("the repo header wears the where strip and the About rail one block", async () => {
     const html = await (await asUser(alice, "/alice/widgets")).text();
+    // Three places, in order, with the workbench as the one being read.
+    expect(html).toContain('class="where"');
     expect(html).toContain("mirrored from octo/widgets");
+    expect(html).toContain("workbench");
+    expect(html).toContain("this machine");
     expect(html).toContain(`${originServers.url}/octo/widgets`);
+    // Origin, last fetch, sync and where pushes go are one block now.
+    expect(html).toContain("Where it lives");
     expect(html).toContain("Last fetch");
     expect(html).toContain("Sync now");
-    // Push instructions say where a push actually goes.
     expect(html).toContain("Pushes here go through to");
   });
 
@@ -352,6 +387,8 @@ describe("origins on the web", () => {
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
     expect(dash).toContain("Pinned");
+    // The pin card says where each repo lives, and offers the way back out.
+    expect(dash).toContain("Unpin");
 
     const off = await asUser(alice, "/alice/widgets/pin", {
       form: { pinned: "0" },

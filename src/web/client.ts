@@ -42,6 +42,66 @@ export const pollJs = /* js */ `
 })();
 `;
 
+/**
+ * A mirror in flight, live. The page already renders the checklist and
+ * already refreshes itself every two seconds without a script; this replaces
+ * that poll with the job's own event stream, so a stage lands the instant it
+ * happens and the page never reloads under a reader.
+ *
+ * The stream URL and the stage order come out of the DOM — this string never
+ * carries runtime data, which is what lets it ship under a strict CSP as a
+ * static, nonce'd script.
+ */
+export const mirrorJs = /* js */ `
+(function () {
+  var list = document.getElementById('stages');
+  if (!list || typeof EventSource === 'undefined') return;
+  var url = list.getAttribute('data-stream');
+  if (!url) return;
+  // The no-JS fallback and this cannot both be running: a meta refresh two
+  // seconds from now would throw away everything the stream has painted.
+  var meta = document.querySelector('meta[http-equiv="refresh"]');
+  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
+
+  var rows = Array.prototype.slice.call(list.querySelectorAll('li[data-stage-name]'));
+  var order = rows.map(function (li) { return li.getAttribute('data-stage-name'); });
+  var glyph = { done: '\\u25CF', now: '\\u25D0', failed: '\\u2715', todo: '\\u25CB' };
+
+  function paint(stage, detail) {
+    list.setAttribute('data-stage', stage);
+    var there = order.indexOf(stage);
+    rows.forEach(function (li, i) {
+      var state = stage === 'failed' ? 'todo'
+        : i < there ? 'done'
+        : i === there ? (stage === 'done' ? 'done' : 'now')
+        : 'todo';
+      li.setAttribute('data-state', state);
+      var dot = li.querySelector('.stage-dot');
+      if (dot) dot.textContent = glyph[state];
+      var note = li.querySelector('.stage-detail');
+      if (note) note.textContent = state === 'now' ? (detail || '') : '';
+    });
+  }
+
+  var source = new EventSource(url);
+  source.addEventListener('error', function () { /* the meta refresh, or the next event */ });
+  ['creating', 'fetching', 'labels', 'issues', 'pulls', 'comments', 'done', 'failed'].forEach(function (stage) {
+    source.addEventListener('mirror.' + stage, function (event) {
+      var job;
+      try { job = JSON.parse(event.data); } catch (err) { return; }
+      paint(job.stage, job.detail);
+      if (job.stage === 'done' && job.repo) {
+        source.close();
+        location.href = '/' + job.repo.ownerName + '/' + job.repo.name;
+      } else if (job.stage === 'failed') {
+        source.close();
+        location.reload();
+      }
+    });
+  });
+})();
+`;
+
 export const shellJs = /* js */ `
 (function () {
   var doc = document;

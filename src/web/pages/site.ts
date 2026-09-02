@@ -15,7 +15,11 @@ import { listEvents, type ForgeEvent } from "../../core/events.ts";
 import { getIssue, listIssues } from "../../core/issues.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import {
+  getRepoById,
+  listReposVisibleTo,
+  type Repo,
+} from "../../core/repos.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import {
   countUsers,
@@ -25,7 +29,7 @@ import {
 } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
-import { notFoundPage, pageHead } from "../chrome.ts";
+import { hostOf, notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
@@ -208,10 +212,8 @@ function activityRail(ctx: Ctx, visible: Repo[]): Html {
               : eventIcon(event.kind),
           ),
           title: html`<strong>${actor?.username ?? "someone"}</strong>
-          ${eventVerb(event.kind)}`,
-          meta: html`${where}${subject !== ""
-            ? html` · ${subject}`
-            : null}`,
+            ${eventVerb(event.kind)}`,
+          meta: html`${where}${subject !== "" ? html` · ${subject}` : null}`,
           titleAttr: `${actor?.username ?? "someone"} ${eventVerb(event.kind)}`,
           trail: time(event.createdAt),
         });
@@ -234,8 +236,8 @@ function downloadsCard(ctx: Ctx, user: User): Html {
   if (pins.length === 0) {
     return card(
       html`<p class="muted small">
-        Pin a repository (the ${icon("pin")} on its header) and the local
-        client keeps it cloned under
+        Pin a repository (the ${icon("pin")} on its header) and the local client
+        keeps it cloned under
         <span class="mono">~/src/&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;</span>.
       </p>`,
       { head },
@@ -243,16 +245,53 @@ function downloadsCard(ctx: Ctx, user: User): Html {
   }
   return listCard(
     [
-      ...pins.map((pin) =>
-        row({
-          href: `/${pin.ownerName}/${pin.name}`,
+      ...pins.map((pin) => {
+        const repo = getRepoById(ctx.app.db, pin.repoId);
+        const at = repo?.origin ?? null;
+        return row({
           nav: true,
           lead: icon("pin"),
-          title: `${pin.ownerName}/${pin.name}`,
+          // The row carries an unpin form, and a form inside an <a> is markup
+          // the parser pulls apart — so the title is the link.
+          title: html`<a href="/${pin.ownerName}/${pin.name}"
+            >${pin.ownerName}/${pin.name}</a
+          >`,
           titleAttr: `${pin.ownerName}/${pin.name}`,
-          trail: time(pin.createdAt),
-        }),
-      ),
+          // The same three places the repo header states, in the same words.
+          meta: html`<span class="where">
+            ${when(
+              at,
+              (o) =>
+                html`<span class="where-place" data-state="present"
+                    ><span class="where-dot" aria-hidden="true">●</span
+                    >${hostOf(o.htmlUrl) || o.fullName}</span
+                  ><span class="where-sep" aria-hidden="true">·</span>`,
+            )}
+            <span class="where-place" data-state="present"
+              ><span class="where-dot" aria-hidden="true">●</span
+              >workbench</span
+            ><span class="where-sep" aria-hidden="true">·</span
+            ><span class="where-place" data-state="present"
+              ><span class="where-dot" aria-hidden="true">◆</span>this
+              machine</span
+            >
+          </span>`,
+          // No timestamp: when you pinned something is the least useful fact
+          // about it, and this rail is narrow enough that the strip needs the
+          // room more than the clock does.
+          trail: html`<form
+            class="row-actions"
+            method="post"
+            action="/${pin.ownerName}/${pin.name}/pin"
+          >
+            <input type="hidden" name="pinned" value="0" />
+            ${iconBtn("pinOff", "Unpin", {
+              size: "sm",
+              title: `Unpin — stop keeping ${pin.ownerName}/${pin.name} on my machine`,
+            })}
+          </form>`,
+        });
+      }),
       html`<li>
         <div class="row">
           <span class="row-main">

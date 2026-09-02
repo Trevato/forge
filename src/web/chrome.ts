@@ -8,14 +8,19 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
-import { countIssues } from "../core/issues.ts";
-import { isPinned } from "../core/pins.ts";
 import { canAdmin, canRead, getRepo, getRepoById } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon } from "./icons.ts";
 import { page, redirect, type PaletteItem } from "./layout.ts";
+import {
+  browseActions,
+  hostOf,
+  localScope,
+  whereRow,
+  type RepoScope,
+} from "./scope.ts";
 import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
@@ -96,12 +101,27 @@ export function repoHeader(
   active: RepoTab,
   options: RepoHeaderOptions = {},
 ): Html {
-  const base = repoBase(repo);
-  const openIssues = countIssues(ctx.app.db, repo.id, "issue", "open");
-  const openPulls = countIssues(ctx.app.db, repo.id, "pull", "open");
-  const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
+  return scopeHeader(ctx, localScope(ctx, repo), active, options);
+}
+
+/**
+ * The one repo header, for either side of the world. Identity, the where
+ * strip, and the tab strip with live counts. Settings appears only for an
+ * admin of a repository we actually hold — a tab that 404s is a lie about
+ * what you can do, and on a live browse there is nothing here to configure.
+ */
+export function scopeHeader(
+  ctx: Ctx,
+  scope: RepoScope,
+  active: RepoTab,
+  options: RepoHeaderOptions = {},
+): Html {
+  const base = scope.base;
+  const repo = scope.repo;
+  const facts = scope.facts;
+  const admin = repo !== undefined && canAdmin(ctx.app.db, repo, ctx.auth.user);
   const parent =
-    repo.forkParentId !== null
+    repo?.forkParentId != null
       ? getRepoById(ctx.app.db, repo.forkParentId)
       : undefined;
 
@@ -117,7 +137,7 @@ export function repoHeader(
       label: "Issues",
       href: `${base}/issues`,
       icon: "issue",
-      count: openIssues,
+      ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
       current: active === "issues",
       shortcut: "g i",
     },
@@ -125,7 +145,7 @@ export function repoHeader(
       label: "Pulls",
       href: `${base}/pulls`,
       icon: "pull",
-      count: openPulls,
+      ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
       shortcut: "g p",
     },
@@ -146,16 +166,27 @@ export function repoHeader(
       shortcut: "g s",
     });
 
-  const title = html`${icon(repo.forkParentId !== null ? "fork" : "repo")}
+  const owner = facts.owner;
+  const actions = options.actions ?? browseActions(scope);
+  const title = html`${icon(
+      repo?.forkParentId != null
+        ? "fork"
+        : scope.kind === "origin"
+          ? "globe"
+          : "repo",
+    )}
     <span
-      ><a class="owner" href="/${repo.ownerName}">${repo.ownerName}</a
-      ><span class="slash">/</span><a href="${base}">${repo.name}</a></span
+      >${scope.kind === "local"
+        ? html`<a class="owner" href="/${owner}">${owner}</a>`
+        : html`<span class="owner">${owner}</span>`}<span class="slash"
+        >/</span
+      ><a href="${base}">${facts.name}</a></span
     >
-    ${repo.visibility === "private"
+    ${facts.visibility === "private"
       ? badge("Private", { icon: "lock", variant: "secondary" })
       : badge("Public", { variant: "secondary" })}
-    ${options.actions
-      ? html`<span class="repo-actions">${options.actions}</span>`
+    ${actions.text.trim() !== ""
+      ? html`<span class="repo-actions">${actions}</span>`
       : null}`;
 
   return html`<header class="repo-head">
@@ -163,8 +194,8 @@ export function repoHeader(
       ? html`<div class="repo-title">${title}</div>`
       : html`<h1 class="repo-title">${title}</h1>`}
     ${when(
-      !options.compact && repo.description !== "",
-      () => html`<p class="repo-desc">${repo.description}</p>`,
+      !options.compact && facts.description !== "",
+      () => html`<p class="repo-desc">${facts.description}</p>`,
     )}
     ${when(
       parent,
@@ -174,59 +205,11 @@ export function repoHeader(
           <a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a>
         </p>`,
     )}
-    ${provenance(ctx, repo)} ${tabs(items, "Repository")}
+    ${whereRow(ctx, scope)} ${tabs(items, "Repository")}
   </header>`;
 }
 
-/**
- * Where this repo comes from, and whether you keep it on your machine.
- *
- * Both live on their own line rather than in the title: a `<form>` is flow
- * content and an `<h1>` takes phrasing, so a pin button *inside* the heading
- * would be markup the parser has to repair.
- */
-function provenance(ctx: Ctx, repo: Repo): Html {
-  const user = ctx.auth.user;
-  if (repo.origin === null && user === undefined) return html``;
-  const pinned = user !== undefined && isPinned(ctx.app.db, user.id, repo.id);
-  return html`<div class="repo-origin">
-    ${when(repo.origin, (origin) =>
-      origin.htmlUrl === ""
-        ? html`<span class="origin-chip"
-            >${icon(origin.kind)}mirrored from ${origin.fullName}</span
-          >`
-        : html`<a
-            class="origin-chip"
-            href="${origin.htmlUrl}"
-            rel="noreferrer noopener"
-            title="Open ${origin.fullName} on ${hostOf(origin.htmlUrl)}"
-            >${icon(origin.kind)}mirrored from ${origin.fullName}
-            <span class="muted">@ ${hostOf(origin.htmlUrl)}</span></a
-          >`,
-    )}
-    <span class="spacer"></span>
-    ${when(
-      user !== undefined,
-      () =>
-        html`<form method="post" action="${repoBase(repo)}/pin">
-          <input type="hidden" name="pinned" value="${pinned ? "0" : "1"}" />
-          ${btn(pinned ? "On my machine" : "Keep on my machine", {
-            icon: pinned ? "pinOff" : "pin",
-            size: "sm",
-            variant: pinned ? "secondary" : "outline",
-            title: pinned
-              ? "Stop keeping this repository on my machine"
-              : "The local client will clone and keep this fresh",
-          })}
-        </form>`,
-    )}
-  </div>`;
-}
-
-/** The host part of an absolute URL, for a chip that has to stay short. */
-export function hostOf(url: string): string {
-  return URL.parse(url)?.host ?? url;
-}
+export { hostOf };
 
 /** This repo's own rows for the command palette. */
 export function repoPalette(repo: Repo): PaletteItem[] {
