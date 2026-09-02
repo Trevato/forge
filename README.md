@@ -64,6 +64,55 @@ Configuration is environment variables, all with defaults: `FORGE_DATA`
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+## On your machine
+
+The forge holds the truth; `forge` keeps a copy of the parts you work on, the
+way a music player keeps the albums you listen to — downloaded, fresh, and
+yours when the network is not.
+
+```sh
+forge login forge.example.com    # a URL and a token, stored 0600 (macOS: keychain)
+forge sync                       # clone what is missing, fetch the rest, report
+forge status                     # the same report, without touching the network
+forge                            # the local UI over your clones
+```
+
+Repos land under `~/src/<host>/<owner>/<name>` — the path is the identity, so
+two forges with a `docs` repo never collide, and the filesystem is the index
+(there is no local database of "your repos"; the walk finds them). `--root`
+or `FORGE_ROOT` moves the library; `FORGE_URL` and `FORGE_TOKEN` override the
+stored config for a script or a CI job.
+
+```sh
+forge sync --watch --interval 5m   # notify only when something CHANGED
+forge sync --ff                    # fast-forward clean repos, and only those
+forge pin owner/name               # ask the workbench to keep this one here
+forge ls                           # what is here, and how stale
+forge open owner/name --web        # the page, in a browser
+```
+
+`sync` never merges, rebases, resets or checks anything out. `--ff` is the one
+exception and it fast-forwards a repo only when the tree is clean, nothing is
+ahead, no rebase or merge is half-finished, and `merge-base --is-ancestor` has
+proved that moving the branch cannot lose a commit. A dirty repo is reported
+and left exactly as you left it.
+
+`forge` with no arguments opens the local UI on the same runtime as the SSH
+one: the library of clones, then a lazygit-shaped working-tree screen —
+`space` stages, `enter` opens the hunks, `s` stages one, `c` commits, `P`
+pushes, `b` branches, `l` log, `z` stashes, `?` shows every binding.
+
+Build it once and put it on your PATH:
+
+```sh
+bun build --compile src/cli/main.ts --outfile dist/forge
+```
+
+That produces a self-contained binary (it embeds the Bun runtime, so expect
+something in the 60–110 MB range; `dist/` is gitignored and binaries are never
+committed). Until you build it, `bun run src/cli/main.ts …` is the same
+program.
+
 ## Develop
 
 ```sh
@@ -85,7 +134,9 @@ src/
   design/     the theme registry both surfaces render
   web/        SSR: html tag, design tokens, markdown, pages
   ssh/        a zero-dependency SSH server: transport, userauth, channels
-  tui/        the terminal UI: runtime, widgets, screens, the ssh front door
+  tui/        the terminal UI: runtime, widgets, screens, the ssh front door,
+              and local/ — the same runtime over your own working trees
+  cli/        `forge` on your machine: login, sync, status, pins
 ```
 
 Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.

@@ -117,7 +117,7 @@ curate, never implement.
   access token over TLS; 401 + `WWW-Authenticate` challenge.
 - **Serving (SSH)**: the same pipe without the request framing. A client runs
   `git-upload-pack '/owner/repo.git'` on an exec channel and speaks the
-  *stateful* protocol down it — no `--stateless-rpc`, no round-trip to bound
+  _stateful_ protocol down it — no `--stateless-rpc`, no round-trip to bound
   the transfer, so writes back to the peer are paced by `SshSession.drain()`
   (a clone's pack outruns the channel window otherwise). `git/smart-ssh.ts`
   parses the command and plumbs bytes; the access decision lives with the
@@ -198,7 +198,7 @@ dependencies, `session` channels only (no forwarding, no X11, no subsystems:
 every other channel type is attack surface).
 
 **A key is an identity, not a permit.** `authorize` admits every well-formed
-key, and what the key *is* decides what the session can do:
+key, and what the key _is_ decides what the session can do:
 
 - a key registered to an account (`user_key.fingerprint`) → that user, with
   `last_used_at` touched;
@@ -254,8 +254,61 @@ src/tui` finds nothing. The access helpers are the web's, so the answer to
   including the command palette, where resolving `owner/name` runs `canRead`
   before it opens anything.
 - **Failure is bounded.** A load rejection becomes a toast; a render throw
-  becomes one red line; an input handler throw ends *that session* and leaves
+  becomes one red line; an input handler throw ends _that session_ and leaves
   the process serving. All three are tested.
+
+## The local client
+
+`src/cli/` and `src/tui/local/` are the half of the forge that runs on a
+laptop. The workbench says which repositories you want (pins); the client
+keeps them cloned under `<root>/<host>/<owner>/<name>`, keeps them fetched,
+and reports. The server never learns anything about local state, which is why
+the client can be wrong about the network and still be useful.
+
+Four decisions carry it.
+
+- **The filesystem is the index**, exactly as git is the index on the server.
+  There is no local database of "your repos": a depth-limited walk finds them,
+  stopping at the first work tree it meets. A registry would be a second
+  source of truth that goes stale the first time someone moves a directory —
+  the same instinct as `core/reconcile.ts`, applied to a disk we do not own.
+  The path is the primary key, so two forges with a `docs` repo coexist.
+- **The client's git is not the server's git.** `git/env.ts` scrubs `HOME` and
+  the global config because a forge process must never inherit an operator's
+  settings; `git/local.ts` does the opposite, because this is the user's own
+  checkout and their `user.email`, credential helper, SSH agent and signing
+  key all have to apply. It pins exactly three variables:
+  `GIT_TERMINAL_PROMPT=0` (a TUI cannot answer a prompt), `GIT_OPTIONAL_LOCKS=0`
+  (status is polled), and `LC_ALL=C` (the output we parse is the output git
+  documents). Diff flags additionally override `diff.external` and
+  `diff.noprefix`, both of which would silently corrupt a patch we are about
+  to hand back to `git apply`.
+- **Nothing is destructive by default.** `sync` fetches and reports; it never
+  merges, rebases, resets or checks out. `--ff` is the single exception, and
+  it acts only when the tree is clean, nothing is ahead, no sequencer
+  operation is in flight, and `merge-base --is-ancestor` has proved the move
+  cannot lose a commit. `--watch` notifies only on a _transition_ — new
+  commits behind, a repo newly pinned, a fetch that started failing — because
+  a notifier that fires every tick is a notifier that gets muted.
+- **The secret never enters argv or a remote URL.** HTTPS clones carry the
+  token through `GIT_CONFIG_COUNT`/`KEY`/`VALUE` as an `http.extraHeader`, the
+  same channel the server uses for origin credentials; SSH is preferred when
+  the user has a key, so their agent does the work and no token exists to
+  leak. `git remote -v` on a synced repo prints a plain URL.
+
+The local screens are the forge's own runtime, not a second one: the same
+`App`, `Screen`, widgets, themes and key conventions, with a work tree
+underneath instead of a database. Hunk staging follows lazygit and tig — parse
+the `-U3` diff, rebuild the one hunk as text with a recomputed `@@` header,
+pipe it to `git apply [--cached] [-R]`, and _re-read the diff afterwards_,
+because the line numbers have genuinely moved. `-U0` with `--unidiff-zero` is
+the road not taken: it works, but it removes the placement check that makes a
+wrong header fail loudly instead of silently corrupting a file.
+
+The log graph is computed here rather than taken from `git log --graph`, whose
+art is interleaved with the format output by contract — unparseable, and
+impossible to re-lay-out for a narrow pane. `--parents` plus forty lines of
+lane assignment renders correctly at any width, in the theme's own colours.
 
 ## Concurrency invariants (day one, not hardening)
 
