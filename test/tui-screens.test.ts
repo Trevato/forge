@@ -242,6 +242,39 @@ describe("the terminal UI, against a real forge", () => {
     h.stop();
   });
 
+  /**
+   * A repository we made here has no origin, so its where-strip has two
+   * places rather than three, no live banner, and every write key present.
+   */
+  test("a native repo says it is read from the workbench, and nowhere else", async () => {
+    const h = boot(forge, asAlice());
+    await h.settle();
+    await openRepo(h, "lighthouse");
+    const text = h.text();
+    expect(text).toContain("● workbench");
+    expect(text).toContain("○ this machine");
+    expect(text).not.toContain("reading live from");
+    expect(text).not.toContain("read-only");
+
+    await h.press("?");
+    const help = h.text();
+    expect(help).toContain("settings");
+    expect(help).toContain("fork");
+    expect(help).not.toMatch(/m\s+mirror\b/);
+    expect(help).not.toContain("open on origin");
+    await h.press("esc");
+
+    // Pinning is the third place arriving, and it is the same glyph the
+    // dashboard uses.
+    await h.press("P");
+    await h.settle();
+    expect(h.text()).toContain("◆ this machine");
+    await h.press("P");
+    await h.settle();
+    expect(h.text()).toContain("○ this machine");
+    h.stop();
+  });
+
   test("the issue list shows seeded issues, filters, and counts", async () => {
     const h = boot(forge, asAlice());
     await h.settle();

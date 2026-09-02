@@ -1,14 +1,16 @@
 /**
  * Browsing a repository's files: one level of a tree, and one blob.
  *
- * Both are bounded by construction — `listTree` reads a single level and
- * `blobForRender` stats a blob before it reads a byte — so opening a
- * directory of ten thousand files, or a 2GB object, costs the same as
- * opening a small one.
+ * Both are bounded by construction — a source reads a single directory level
+ * and stats a blob before it hands over a byte — so opening a directory of
+ * ten thousand files, or a 2GB object, costs the same as opening a small one.
+ * Neither screen knows whether the bytes came out of a bare git directory
+ * here or off another forge's API: it asks the `RepoSource` and draws the
+ * answer, and the where-strip at the top says which it was.
  */
 
-import { blobForRender, listTree, type TreeEntry } from "../../git/read.ts";
-import type { Repo } from "../../core/repos.ts";
+import type { RepoSource } from "../../view/source.ts";
+import type { TreeEntry } from "../../git/read.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -18,29 +20,40 @@ import { expandTabs, pad, truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState, scrollbar } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { Filter, ListState, Scroll, drawList, runAsync } from "./common.ts";
+import {
+  Filter,
+  ListState,
+  Scroll,
+  drawList,
+  errorText,
+  runAsync,
+} from "./common.ts";
 import { refPickerScreen } from "./refs.ts";
-
-/** A blob larger than this is described, never rendered. */
-const MAX_BLOB = 1024 * 1024;
+import { sourceName, whereRows, whereStrip } from "./where.ts";
 
 export function treeScreen(
   f: Session,
   ctx: Ctx,
-  repo: Repo,
+  src: RepoSource,
   ref: string,
   path = "",
 ): Screen {
   let entries: TreeEntry[] = [];
+  let loaded = false;
   const state = new ListState();
   const filter = new Filter();
   const shown = (): TreeEntry[] =>
     entries.filter((e) => filter.matches(e.name));
 
   const reload = async (): Promise<void> => {
-    const result = await listTree(f.dir(repo), ref, path);
+    const result = await src.tree(ref, path);
     entries = result.ok ? result.value : [];
-    if (!result.ok) ctx.toast(`cannot read ${path || "/"}`, "danger");
+    loaded = true;
+    if (!result.ok)
+      ctx.toast(
+        `cannot read ${path || "/"}: ${errorText(result.error)}`,
+        "danger",
+      );
     ctx.invalidate();
   };
 
@@ -56,11 +69,17 @@ export function treeScreen(
     load: reload,
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, box, body] = split(area, "v", [len(1), len(1), fill(1)]);
+      const [strip, head, box, body] = split(area, "v", [
+        len(whereRows(src)),
+        len(1),
+        len(1),
+        fill(1),
+      ]);
+      whereStrip(s, strip!, c, f, src);
       s.text(
         head!.x,
         head!.y,
-        truncate(`${repo.ownerName}/${repo.name} · ${ref}`, head!.w),
+        truncate(`${sourceName(src)} · ${ref}`, head!.w),
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
@@ -68,9 +87,14 @@ export function treeScreen(
       const items = shown();
       if (items.length === 0) {
         emptyState(s, body!, c, {
-          title: path === "" ? "Empty repository" : "Empty directory",
-          body:
-            path === ""
+          title: !loaded
+            ? "Reading…"
+            : path === ""
+              ? "Empty repository"
+              : "Empty directory",
+          body: !loaded
+            ? `Listing ${path === "" ? "the root" : path}`
+            : path === ""
               ? "Push a branch to get started."
               : "Nothing has been committed under this path.",
         });
@@ -101,15 +125,15 @@ export function treeScreen(
         const next = path === "" ? entry.name : `${path}/${entry.name}`;
         ctx.push(
           entry.type === "tree"
-            ? treeScreen(f, ctx, repo, ref, next)
-            : blobScreen(f, ctx, repo, ref, next),
+            ? treeScreen(f, ctx, src, ref, next)
+            : blobScreen(f, ctx, src, ref, next),
         );
         return true;
       }
       if (e.key === "b") {
         ctx.push(
-          refPickerScreen(f, ctx, screen, repo, (chosen) =>
-            ctx.replace(treeScreen(f, ctx, repo, chosen, path)),
+          refPickerScreen(f, ctx, screen, src, (chosen) =>
+            ctx.replace(treeScreen(f, ctx, src, chosen, path)),
           ),
         );
         return true;
@@ -134,7 +158,7 @@ function formatSize(bytes: number): string {
 export function blobScreen(
   f: Session,
   ctx: Ctx,
-  repo: Repo,
+  src: RepoSource,
   ref: string,
   path: string,
 ): Screen {
@@ -157,16 +181,20 @@ export function blobScreen(
   };
 
   const reload = async (): Promise<void> => {
-    const blob = await blobForRender(f.dir(repo), ref, path, MAX_BLOB);
+    const read = await src.blob(ref, path);
     const c = ctx.theme.c;
-    if (blob.kind === "missing") {
-      note = "No such file at this revision.";
-    } else if (blob.kind === "too_large") {
-      note = `${formatSize(blob.size)} — too large to display.`;
-    } else if (blob.kind === "binary") {
-      note = `Binary file, ${formatSize(blob.size)}.`;
+    if (!read.ok) {
+      note =
+        read.error === "not_found"
+          ? "No such file at this revision."
+          : errorText(read.error);
+    } else if (read.value.kind === "too_large") {
+      note = `${formatSize(read.value.size)} — too large to display.`;
+    } else if (read.value.kind === "binary") {
+      note = `Binary file, ${formatSize(read.value.size)}.`;
     } else {
-      const text = new TextDecoder().decode(blob.body).replace(/\n$/, "");
+      note = "";
+      const text = new TextDecoder().decode(read.value.body).replace(/\n$/, "");
       plain = text.split("\n").map((l) => expandTabs(l));
       const width = String(plain.length).length;
       lines = highlightLines(plain.join("\n"), detectLanguage(path)).map(
@@ -197,7 +225,13 @@ export function blobScreen(
     load: reload,
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, box, body] = split(area, "v", [len(1), len(1), fill(1)]);
+      const [strip, head, box, body] = split(area, "v", [
+        len(whereRows(src)),
+        len(1),
+        len(1),
+        fill(1),
+      ]);
+      whereStrip(s, strip!, c, f, src);
       s.text(
         head!.x,
         head!.y,

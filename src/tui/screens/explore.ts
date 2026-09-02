@@ -22,6 +22,7 @@ import {
 } from "./common.ts";
 import { ownerScreen } from "./owner.ts";
 import { repoScreen } from "./repo.ts";
+import { local } from "./where.ts";
 
 const PAGE = 100;
 
@@ -102,7 +103,7 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
       if (state.key(e, rows.length + (more ? 1 : 0))) return true;
       if (e.key === "enter") {
         const repo = rows[state.index];
-        if (repo) ctx.push(repoScreen(f, ctx, repo));
+        if (repo) ctx.push(repoScreen(f, ctx, local(f, repo)));
         else loadMore();
         return true;
       }

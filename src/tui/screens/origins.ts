@@ -15,13 +15,15 @@ import {
   disconnectOrigin,
   listRemoteRepos,
   listUserOrigins,
-  mirrorRepo,
   pollOAuthConnect,
   registerOriginApp,
   startOAuthConnect,
   syncOriginNow,
 } from "../../actions/origins.ts";
 import type { OriginRepoRow } from "../../core/origins.ts";
+import { isPinned } from "../../core/pins.ts";
+import { getRepoById, type Repo } from "../../core/repos.ts";
+import { sourceFor } from "../../view/source.ts";
 import type { Origin } from "../../origins/types.ts";
 import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -36,15 +38,16 @@ import type { Session } from "../session.ts";
 import {
   Filter,
   ListState,
+  PIN_MARK,
   ago,
   confirmScreen,
   drawList,
   errorText,
-  pickerScreen,
   promptScreen,
   runAsync,
   type ListRow,
 } from "./common.ts";
+import { startMirror } from "./mirror.ts";
 import { repoScreen } from "./repo.ts";
 
 /**
@@ -124,9 +127,9 @@ export function originsScreen(f: Session, ctx: Ctx): Screen {
     title: "Origins",
     keys: [
       binding(["j", "k"], "move"),
-      binding(["c"], "connect"),
+      binding(["c"], "connect — a token needs no setup"),
       binding(["s"], "sync now"),
-      binding(["r"], "repositories"),
+      binding(["r"], "browse its repositories"),
       binding(["D"], "disconnect"),
     ],
     load() {
@@ -138,7 +141,7 @@ export function originsScreen(f: Session, ctx: Ctx): Screen {
       if (origins.length === 0) {
         emptyState(s, area, c, {
           title: "No origins connected",
-          body: "Connect GitHub, Forgejo or Gitea and mirror repositories in.",
+          body: "Paste a personal access token — or set up one-click GitHub or Forgejo.",
           action: "c  connect an origin",
         });
         return;
@@ -232,8 +235,15 @@ export function originsScreen(f: Session, ctx: Ctx): Screen {
 
 /**
  * The chooser. Which flow works is a property of the forge, not a
- * preference, so the three rows say what each one *is* rather than offering
- * them as equals.
+ * preference, so the rows say what each one *is* rather than offering them
+ * as equals — and they are in the order that gets a person connected.
+ *
+ * The token is first because it is the only route with no setup at all: you
+ * paste a string and you are connected, on any forge, from any terminal. The
+ * two one-click flows are genuinely nicer *once they exist*, and each needs
+ * somebody to register an application first — so each says so on its own
+ * line rather than failing later with an error about an environment
+ * variable.
  */
 function connectScreen(
   f: Session,
@@ -241,28 +251,94 @@ function connectScreen(
   parent: Screen,
   done: () => void,
 ): Screen {
-  return pickerScreen(ctx, parent, {
-    title: "Connect an origin",
-    items: [
-      {
-        id: "github",
-        label: "GitHub",
-        hint: "device code — no browser needed here",
-      },
-      {
-        id: "forgejo",
-        label: "Forgejo or Gitea",
-        hint: "register an app once, then authorize",
-      },
-      { id: "token", label: "Paste a token", hint: "works anywhere" },
-    ],
-    onPick: (ids) => {
-      const choice = ids[0];
-      if (choice === "github") askGithubHost(f, ctx, parent, done);
-      else if (choice === "forgejo") startCodeFlow(f, ctx, parent, done);
-      else if (choice === "token") startToken(f, ctx, parent, done);
+  const ways = [
+    {
+      id: "token",
+      label: "Personal access token — recommended",
+      note: "No setup at all. Works with any forge, any terminal.",
+      note2: "Paste one from the forge and you are connected.",
     },
-  });
+    {
+      id: "github",
+      label: "GitHub, one click",
+      note: "Needs a one-time OAuth app setup.",
+      note2: "Then a short code you type on your phone.",
+    },
+    {
+      id: "forgejo",
+      label: "Forgejo / Gitea, one click",
+      note: "Needs an app registration on the instance.",
+      note2: "Then a browser to authorize it.",
+    },
+  ] as const;
+  let at = 0;
+
+  return {
+    title: "Connect an origin",
+    keys: [
+      binding(["j", "k"], "move"),
+      binding(["enter"], "choose"),
+      binding(["esc"], "cancel"),
+    ],
+    render(area, s) {
+      parent.render(area, s);
+      const c = ctx.theme.c;
+      const w = Math.min(62, Math.max(24, area.w - 4));
+      const h = Math.min(area.h, ways.length * 4 + 1);
+      const inner = card(
+        s,
+        {
+          x: area.x + ((area.w - w) >> 1),
+          y: area.y + ((area.h - h) >> 1),
+          w,
+          h,
+        },
+        c,
+        { title: "Connect an origin", focused: true },
+      );
+      const right = inner.x + inner.w;
+      ways.forEach((way, i) => {
+        const y = inner.y + i * 4;
+        if (y + 2 >= inner.y + inner.h) return;
+        const chosen = i === at;
+        s.text(
+          inner.x,
+          y,
+          chosen ? G.caretRight : " ",
+          style(c.accent, c.card),
+          right,
+        );
+        s.text(
+          inner.x + 2,
+          y,
+          truncate(way.label, Math.max(0, inner.w - 2)),
+          style(chosen ? c.fg : c.mutedFg, c.card, chosen ? BOLD : 0),
+          right,
+        );
+        for (const [n, line] of [way.note, way.note2].entries())
+          s.text(
+            inner.x + 2,
+            y + 1 + n,
+            truncate(line, Math.max(0, inner.w - 2)),
+            style(c.faint, c.card),
+            right,
+          );
+      });
+    },
+    key(e) {
+      if (e.key === "j" || e.key === "down") at = (at + 1) % ways.length;
+      else if (e.key === "k" || e.key === "up")
+        at = (at - 1 + ways.length) % ways.length;
+      else if (e.key === "enter") {
+        const choice = ways[at]?.id;
+        ctx.pop();
+        if (choice === "github") askGithubHost(f, ctx, parent, done);
+        else if (choice === "forgejo") startCodeFlow(f, ctx, parent, done);
+        else if (choice === "token") startToken(f, ctx, parent, done);
+      } else if (e.key === "esc" || e.key === "q") ctx.pop();
+      return true;
+    },
+  };
 }
 
 function startToken(
@@ -354,7 +430,8 @@ function startDevice(
       // "Not configured" is a task, not a status: the one error a person can
       // actually fix from here gets the instructions instead of a toast that
       // names an environment variable and leaves them to it.
-      if (started.error.error === "no_app") ctx.push(githubSetup(f, ctx, parent));
+      if (started.error.error === "no_app")
+        ctx.push(githubSetup(f, ctx, parent));
       else ctx.toast(started.error.message, "danger");
       return;
     }
@@ -524,7 +601,7 @@ function githubSetup(f: Session, ctx: Ctx, parent: Screen): Screen {
       "   for revoke-on-disconnect, the client secret).",
       "3. Come back here — GitHub connects.",
       "",
-      "Until then, 'Paste a token' needs no registration.",
+      "Until then, a pasted token needs no setup at all.",
     ],
     actions: [{ label: "OK", variant: "default" }],
     onChoose: () => undefined,
@@ -734,9 +811,14 @@ function wrap(text: string, width: number): string[] {
 // ---- the picker ----
 
 /**
- * One origin's repositories. `enter` and `m` both mirror, because the only
- * thing you do to a row here is take it — and the ones already taken say so
- * rather than silently doing nothing.
+ * One origin's repositories.
+ *
+ * `enter` *opens* the repository — live, read-only, through the origin's own
+ * API — and nothing is downloaded. This is the whole point of the picker:
+ * pressing enter used to mean "clone this, import every issue, and take
+ * several seconds doing it with nothing on screen", which taught people to
+ * press it twice. Taking a copy is now a separate, deliberate key with a
+ * progress card behind it, and a row that has already been taken says so.
  */
 export function originReposScreen(
   f: Session,
@@ -759,28 +841,32 @@ export function originReposScreen(
   const shown = (): OriginRepoRow[] =>
     repos.filter((r) => filter.matches(`${r.fullName} ${r.description}`));
 
-  const mirror = (remote: OriginRepoRow): void => {
-    if (remote.mirroredAs !== null) {
-      ctx.toast("already mirrored", "attn");
+  /** The local repository a row was mirrored into, if it still exists. */
+  const mirrorOf = (remote: OriginRepoRow): Repo | undefined =>
+    remote.mirroredAs === null
+      ? undefined
+      : getRepoById(f.db, remote.mirroredAs);
+
+  const browse = (remote: OriginRepoRow): void => {
+    const src = sourceFor(f.app, f.user, {
+      originId: origin.id,
+      fullName: remote.fullName,
+    });
+    if (!src.ok) {
+      ctx.toast(errorText(src.error), "danger");
       return;
     }
-    runAsync(ctx, async () => {
-      const made = await mirrorRepo(f.app, f.user, origin.id, remote.fullName);
-      if (!made.ok) {
-        ctx.toast(errorText(made.error), "danger");
-        return;
-      }
-      await load();
-      ctx.toast(`mirrored as ${made.value.name}`, "success");
-      ctx.push(repoScreen(f, ctx, made.value));
-    });
+    // Pushed with nothing loaded: the screen paints its own frame with a
+    // spinner and fills in as the origin answers.
+    ctx.push(repoScreen(f, ctx, src.value));
   };
 
-  return {
+  const screen: Screen = {
     title: `${origin.login} @ ${hostLabel(origin.webUrl)}`,
     keys: [
       binding(["j", "k"], "move"),
-      binding(["enter", "m"], "mirror"),
+      binding(["enter"], "browse — nothing is downloaded"),
+      binding(["m"], "mirror into your workbench"),
       binding(["/"], "filter"),
       binding(["r"], "refresh from origin"),
     ],
@@ -805,10 +891,18 @@ export function originReposScreen(
         c,
         state,
         rows.map((remote): ListRow => {
+          const held = mirrorOf(remote);
+          const pinned =
+            held !== undefined &&
+            f.user !== undefined &&
+            isPinned(f.db, f.user.id, held.id);
           const marks = [
             remote.private ? "private" : "public",
             remote.fork ? "fork" : "",
-            remote.mirroredAs !== null ? `${G.check} mirrored` : "",
+            held === undefined
+              ? ""
+              : `${G.dot} mirrored as ${held.ownerName}/${held.name}`,
+            pinned ? `${PIN_MARK} on your machine` : "",
           ].filter((m) => m !== "");
           return {
             title: remote.fullName,
@@ -828,9 +922,26 @@ export function originReposScreen(
       }
       const rows = shown();
       if (state.key(e, rows.length)) return true;
-      if (e.key === "enter" || e.key === "m") {
+      if (e.key === "enter") {
         const remote = rows[state.index];
-        if (remote) mirror(remote);
+        if (remote) browse(remote);
+        return true;
+      }
+      if (e.key === "m") {
+        const remote = rows[state.index];
+        if (remote === undefined) return true;
+        if (remote.mirroredAs !== null) {
+          ctx.toast("already mirrored — enter opens it", "attn");
+          return true;
+        }
+        startMirror(f, ctx, {
+          parent: screen,
+          originId: origin.id,
+          fullName: remote.fullName,
+          onLanded: () => {
+            runAsync(ctx, () => load());
+          },
+        });
         return true;
       }
       if (e.key === "r") {
@@ -840,4 +951,5 @@ export function originReposScreen(
       return false;
     },
   };
+  return screen;
 }

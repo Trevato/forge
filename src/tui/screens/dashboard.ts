@@ -39,6 +39,7 @@ import { exploreScreen } from "./explore.ts";
 import { newRepoScreen } from "./newrepo.ts";
 import { ownerScreen } from "./owner.ts";
 import { repoScreen } from "./repo.ts";
+import { local } from "./where.ts";
 import { signInScreen } from "./signin.ts";
 
 export function dashboardScreen(f: Session, ctx: Ctx): Screen {
@@ -186,7 +187,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (state.key(e, shown().length)) return true;
       if (e.key === "enter") {
         const repo = shown()[state.index];
-        if (repo) ctx.push(repoScreen(f, ctx, repo));
+        if (repo) ctx.push(repoScreen(f, ctx, local(f, repo)));
         return true;
       }
       if (e.key === "e") {

@@ -26,6 +26,7 @@ import { ownerScreen } from "./screens/owner.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { settingsScreen } from "./screens/settings.ts";
 import { signInScreen } from "./screens/signin.ts";
+import { local } from "./screens/where.ts";
 
 export { Session, type TuiIdentity };
 
@@ -39,16 +40,20 @@ const REPO_VERBS: readonly {
   title: string;
   open: (f: Session, ctx: Ctx, repo: Repo) => Screen;
 }[] = [
-  { id: "repo", title: "Open a repository", open: repoScreen },
+  {
+    id: "repo",
+    title: "Open a repository",
+    open: (f, ctx, repo) => repoScreen(f, ctx, local(f, repo)),
+  },
   {
     id: "issues",
     title: "Issues in a repository",
-    open: (f, ctx, repo) => issuesScreen(f, ctx, repo, "issue"),
+    open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "issue"),
   },
   {
     id: "pulls",
     title: "Pull requests in a repository",
-    open: (f, ctx, repo) => issuesScreen(f, ctx, repo, "pull"),
+    open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "pull"),
   },
   { id: "new-issue", title: "New issue", open: newIssueScreen },
   { id: "new-pull", title: "New pull request", open: newPullScreen },

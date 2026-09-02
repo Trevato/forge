@@ -4,6 +4,9 @@
  *
  * The merge box states are the whole point of the screen — a reviewer needs
  * to know in one glance whether this can land, and why not when it cannot.
+ * It reads a `RepoSource`, so a pull on another forge renders in the same
+ * shape; what it cannot do there is merge it, comment on it, or review a
+ * line of it, and those keys are absent rather than present-and-failing.
  */
 
 import {
@@ -11,14 +14,9 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { addReview, mergePull } from "../../actions/pulls.ts";
-import { listComments, type Comment } from "../../core/issues.ts";
-import {
-  getPull,
-  pullDiff,
-  type Pull,
-  type PullStatus,
-} from "../../core/pulls.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { getIssue } from "../../core/issues.ts";
+import { getPull } from "../../core/pulls.ts";
+import type { Repo } from "../../core/repos.ts";
 import {
   anchorKey,
   listReviewComments,
@@ -26,6 +24,12 @@ import {
   type AnchoredReview,
 } from "../../core/reviews.ts";
 import type { Diff } from "../../git/diff.ts";
+import type {
+  IssueDetail,
+  IssueSummary,
+  PullFacts,
+  RepoSource,
+} from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { G, type Span } from "../term/screen.ts";
@@ -45,43 +49,51 @@ import {
   runAsync,
 } from "./common.ts";
 import { DiffView, type DiffAnchor } from "./commits.ts";
+import { liveBindings, liveKey } from "./mirror.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
+import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 
 type Tab = 0 | 1;
 
 export function pullScreen(
   f: Session,
   ctx: Ctx,
-  repo: Repo,
+  src: RepoSource,
   number: number,
+  keep: { tab?: Tab; top?: number } = {},
 ): Screen {
-  let pull: Pull | undefined;
-  let status: PullStatus | undefined;
+  let detail: IssueDetail | undefined;
+  let facts: PullFacts | null = null;
   let diff: Diff = { files: [], additions: 0, deletions: 0 };
-  let comments: Comment[] = [];
   let reviews: AnchoredReview[] = [];
   let lines: Span[][] = [];
   let width = 0;
-  let tab: Tab = 0;
+  let tab: Tab = keep.tab ?? 0;
   let anchor: DiffAnchor | null = null;
   const scroll = new Scroll();
   const view = new DiffView();
   const composer = new Composer();
-  const mayWrite = (): boolean => canWrite(f.db, repo, f.user);
+  const repo = localRepo(src);
+  const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
+  scroll.top = keep.top ?? 0;
 
   const reload = async (): Promise<void> => {
-    pull = getPull(f.db, repo.id, number);
-    if (!pull) {
-      ctx.toast(errorText("not_found"), "danger");
+    const read = await src.issue(number);
+    if (!read.ok) {
+      ctx.toast(errorText(read.error), "danger");
       ctx.pop();
       return;
     }
-    const read = await pullDiff(f.dir(repo), pull);
-    status = read.status;
-    diff = read.diff;
-    reviews = withOutdated(listReviewComments(f.db, pull.id), diff);
-    const reviewIds = new Set(reviews.map((r) => r.id));
-    comments = listComments(f.db, pull.id).filter((c) => !reviewIds.has(c.id));
+    detail = read.value;
+    facts = read.value.pull;
+    diff = facts?.diff ?? { files: [], additions: 0, deletions: 0 };
+    // Review comments are anchored rows in *our* database; a live browse has
+    // none of them, and neither forge exposes an equivalent we could read.
+    const row = repo === undefined ? undefined : getPull(f.db, repo.id, number);
+    reviews =
+      row === undefined
+        ? []
+        : withOutdated(listReviewComments(f.db, row.id), diff);
     view.setFiles(diff.files);
     view.setNotes(reviewNotes(reviews, ctx));
     width = 0;
@@ -90,22 +102,34 @@ export function pullScreen(
 
   // An imported author is the login on the *origin*: shown in its place, and
   // marked, so it is never mistaken for an account here.
-  const who = (local: string, origin: string | null): string =>
-    origin === null || origin === "" ? local : `${ORIGIN_MARK} ${origin}`;
+  const who = (name: string, origin: string | null): string =>
+    origin === null || origin === "" ? name : `${ORIGIN_MARK} ${origin}`;
+
+  const reviewIds = (): Set<string> => new Set(reviews.map((r) => r.id));
+
+  const conversation = (): {
+    id: string;
+    authorName: string;
+    originAuthor: string | null;
+    body: string;
+    createdAt: string;
+  }[] => (detail?.comments ?? []).filter((c) => !reviewIds().has(c.id));
 
   const entries = (): ThreadEntry[] => [
-    ...(pull === undefined
+    ...(detail === undefined
       ? []
       : [
           {
             kind: "comment" as const,
-            actor: who(pull.authorName, pull.originAuthor),
-            at: pull.createdAt,
-            body: pull.body === "" ? "_No description._" : pull.body,
-            ...(pull.originUrl === null ? {} : { note: pull.originUrl }),
+            actor: who(detail.issue.authorName, detail.issue.originAuthor),
+            at: detail.issue.createdAt,
+            body: detail.body === "" ? "_No description._" : detail.body,
+            ...(detail.issue.originUrl === null
+              ? {}
+              : { note: detail.issue.originUrl }),
           },
         ]),
-    ...comments.map((comment) => ({
+    ...conversation().map((comment) => ({
       kind: "comment" as const,
       actor: who(comment.authorName, comment.originAuthor),
       at: comment.createdAt,
@@ -121,12 +145,15 @@ export function pullScreen(
   ];
 
   const submit = (): void => {
-    if (!pull) return;
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
     if (anchor !== null) {
       const at = anchor;
       const body = composer.value;
       runAsync(ctx, async () => {
-        const added = await addReview(f.app, f.user, repo, pull!, {
+        const added = await addReview(f.app, f.user, target, row, {
           body,
           path: at.path,
           line: at.line,
@@ -143,10 +170,11 @@ export function pullScreen(
       });
       return;
     }
-    const target = pull;
+    const issue = getIssue(f.db, target.id, number);
+    if (issue === undefined) return;
     const text = composer.value;
     runAsync(ctx, async () => {
-      const added = await addCommentThrough(f.app, f.user, repo, target, text);
+      const added = await addCommentThrough(f.app, f.user, target, issue, text);
       if (!added.ok) {
         ctx.toast(errorText(added.error), "danger");
         return;
@@ -155,17 +183,15 @@ export function pullScreen(
       await reload();
       ctx.toast("comment posted", "success");
     });
-    return;
-    composer.close();
-    runAsync(ctx, reload);
-    ctx.toast("comment posted", "success");
   };
 
   const merge = (strategy: "merge" | "squash"): void => {
-    if (!pull) return;
-    const target = pull;
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
     runAsync(ctx, async () => {
-      const landed = await mergePull(f.app, f.user, repo, target, strategy);
+      const landed = await mergePull(f.app, f.user, target, row, strategy);
       if (!landed.ok) {
         ctx.toast(errorText(String(landed.error)), "danger");
         return;
@@ -175,62 +201,71 @@ export function pullScreen(
     });
   };
 
+  const mirrored = (): boolean => repo === undefined || repo.origin !== null;
+  const state = (): MergeState => mergeState(detail?.issue, facts, mirrored());
+
   const screen: Screen = {
     title: `#${number}`,
     get keys() {
       return [
         binding(["tab"], "conversation/files"),
         ...(tab === 1 ? view.keys : [binding(["j", "k"], "scroll")]),
-        binding(["c"], tab === 1 ? "review line" : "comment", {
-          disabled: !f.signedIn,
-        }),
-        binding(["m"], "merge", {
-          disabled:
-            !mayWrite() ||
-            mergeState(pull, status, repo.origin !== null) !== "ready",
-        }),
-        binding(["x"], "close", { disabled: !f.signedIn }),
+        ...(mayWrite()
+          ? [
+              binding(["c"], tab === 1 ? "review line" : "comment"),
+              binding(["m"], "merge", { disabled: state() !== "ready" }),
+              binding(["x"], "close"),
+            ]
+          : liveBindings(src)),
         binding(["r"], "refresh"),
       ];
     },
     load(signal) {
-      const off = f.app.bus.subscribe((event) => {
-        if (event.repoId === repo.id) runAsync(ctx, reload);
-      });
-      signal.addEventListener("abort", off);
+      if (repo !== undefined) {
+        const off = f.app.bus.subscribe((event) => {
+          if (event.repoId === repo.id) runAsync(ctx, reload);
+        });
+        signal.addEventListener("abort", off);
+      }
       return reload();
     },
     render(area, s) {
       const c = ctx.theme.c;
-      if (!pull) return;
+      if (!detail) return;
+      const issue = detail.issue;
       const foot = composer.height();
-      const [head, boxRow, tabRow, body, comp] = split(area, "v", [
+      const [strip, head, boxRow, tabRow, body, comp] = split(area, "v", [
+        len(whereRows(src)),
         len(1),
         len(3),
         len(2),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 10))),
+        len(Math.min(foot, Math.max(0, area.h - 10 - whereRows(src)))),
       ]);
+      whereStrip(s, strip!, c, f, src);
       // Same head as an issue: the number is a locator, the title is the page.
       const edge = head!.x + head!.w;
       const after = s.text(
         head!.x,
         head!.y,
-        `#${pull.number} `,
+        `#${issue.number} `,
         style(c.mutedFg, c.bg),
         edge,
       );
       s.text(
         after,
         head!.y,
-        truncate(pull.title, Math.max(0, edge - after)),
+        truncate(issue.title, Math.max(0, edge - after)),
         style(c.fg, c.bg, BOLD),
         edge,
       );
-      drawMergeBox(s, boxRow!, c, pull, status, view.summary(), repo.origin !== null);
+      drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored());
       tabs(s, tabRow!, c, {
         items: [
-          { label: "Conversation", count: comments.length + reviews.length },
+          {
+            label: "Conversation",
+            count: conversation().length + reviews.length,
+          },
           { label: "Files", count: diff.files.length },
         ],
         active: tab,
@@ -260,7 +295,7 @@ export function pullScreen(
         tab = tab === 0 ? 1 : 0;
         return true;
       }
-      if (e.key === "c" && f.signedIn) {
+      if (e.key === "c" && mayWrite()) {
         if (tab === 1) {
           const at = view.anchorAt();
           if (at === null) {
@@ -277,16 +312,18 @@ export function pullScreen(
       }
       if (
         e.key === "m" &&
-        pull &&
-        mergeState(pull, status, repo.origin !== null) === "ready"
+        mayWrite() &&
+        facts !== null &&
+        state() === "ready"
       ) {
+        const base = facts.baseBranch;
         ctx.push(
           confirmScreen(ctx, screen, {
-            title: `Merge #${pull.number}`,
+            title: `Merge #${number}`,
             body: [
-              `${plural(status?.ahead ?? 0, "commit")} into ${pull.baseBranch}.`,
-              repo.protectDefault && pull.baseBranch === repo.defaultBranch
-                ? `${repo.defaultBranch} is protected; history is preserved.`
+              `${view.summary()} into ${base}.`,
+              repo?.protectDefault === true && base === repo.defaultBranch
+                ? `${base} is protected; history is preserved.`
                 : "",
             ],
             actions: [
@@ -303,15 +340,21 @@ export function pullScreen(
         );
         return true;
       }
-      if ((e.key === "x" || e.key === "o") && pull) {
-        const target = pull;
+      if (
+        (e.key === "x" || e.key === "o") &&
+        mayWrite() &&
+        repo !== undefined
+      ) {
+        const issue = getIssue(f.db, repo.id, number);
+        if (issue === undefined) return true;
+        const target = repo;
         const wanted = e.key === "x" ? "closed" : "open";
         runAsync(ctx, async () => {
           const changed = await setIssueStateThrough(
             f.app,
             f.user,
-            repo,
             target,
+            issue,
             wanted,
           );
           if (!changed.ok) ctx.toast(errorText(changed.error), "danger");
@@ -323,6 +366,19 @@ export function pullScreen(
         runAsync(ctx, reload);
         return true;
       }
+      if (
+        liveKey(f, ctx, e, src, {
+          parent: screen,
+          onDone: (next: Repo) =>
+            ctx.replace(
+              pullScreen(f, ctx, local(f, next), number, {
+                tab,
+                top: scroll.top,
+              }),
+            ),
+        })
+      )
+        return true;
       return tab === 1 ? view.key(e, ctx) : scroll.key(e, lines.length);
     },
   };
@@ -338,32 +394,39 @@ export type MergeState =
   | "ready"
   | "unknown";
 
+/**
+ * What the merge box says, from what the source could tell us.
+ *
+ * `PullFacts` carries no commit count, so "nothing to merge" is read off the
+ * diff instead: a pull whose base already has its commits has no files in it.
+ */
 export function mergeState(
-  pull: Pull | undefined,
-  status: PullStatus | undefined,
+  issue: IssueSummary | undefined,
+  pull: PullFacts | null | undefined,
   mirrored = false,
 ): MergeState {
-  if (!pull) return "unknown";
+  if (issue === undefined || pull === null || pull === undefined)
+    return "unknown";
   if (pull.mergedAt !== null) return "merged";
-  if (pull.state === "closed") return "closed";
+  if (issue.state === "closed") return "closed";
   // A mirror's merge belongs to the origin, which is truth for it: merging
   // here would rewrite the base branch and be overwritten by the next fetch.
-  if (mirrored || pull.originHeadRepo !== null) return "mirrored";
-  if (!status) return "unknown";
-  if (status.ahead === 0) return "empty";
-  return status.mergeable ? "ready" : "conflicts";
+  if (mirrored) return "mirrored";
+  if (pull.mergeable === null) return "unknown";
+  if (pull.diff !== null && pull.diff.files.length === 0) return "empty";
+  return pull.mergeable ? "ready" : "conflicts";
 }
 
 function drawMergeBox(
   s: Parameters<typeof card>[0],
   r: Parameters<typeof card>[1],
   c: Parameters<typeof card>[2],
-  pull: Pull,
-  status: PullStatus | undefined,
+  issue: IssueSummary,
+  pull: PullFacts | null,
   summary: string,
-  mirrored = false,
+  mirrored: boolean,
 ): void {
-  const state = mergeState(pull, status, mirrored);
+  const state = mergeState(issue, pull, mirrored);
   const tone =
     state === "merged"
       ? "merged"
@@ -379,21 +442,24 @@ function drawMergeBox(
   const inner = card(s, r, c, {
     tone: tone as "success",
     title: "Merge",
-    footer: `${pull.headBranch} ${G.chevron} ${pull.baseBranch}${pull.crossRepo ? " (fork)" : ""} · ${summary}`,
+    footer:
+      pull === null
+        ? summary
+        : `${pull.headBranch} ${G.chevron} ${pull.baseBranch} · ${summary}`,
   });
-  const conflicts = status?.conflicts ?? [];
+  const conflicts = pull?.conflicts ?? [];
   const text =
     state === "merged"
-      ? `Merged ${relTime(pull.mergedAt ?? "")} into ${pull.baseBranch}`
+      ? `Merged ${relTime(pull?.mergedAt ?? "")} into ${pull?.baseBranch ?? ""}`
       : state === "closed"
         ? "Closed without merging"
         : state === "mirrored"
-          ? `Merge on the origin${pull.originUrl === null ? "" : ` — ${pull.originUrl}`}`
+          ? `Merge on the origin${issue.originUrl === null ? "" : ` — ${issue.originUrl}`}`
           : state === "conflicts"
-          ? `Conflicts in ${plural(conflicts.length, "file")}: ${conflicts.slice(0, 3).join(", ")}`
-          : state === "empty"
-            ? "Nothing to merge — the base already has these commits"
-            : `Ready to merge · ${plural(status?.ahead ?? 0, "commit")}`;
+            ? `Conflicts in ${plural(conflicts.length, "file")}: ${conflicts.slice(0, 3).join(", ")}`
+            : state === "empty"
+              ? "Nothing to merge — the base already has these commits"
+              : `Ready to merge · ${summary}`;
   const x = badge(s, inner.x, inner.y, c, {
     text: state,
     variant: tone as "success",

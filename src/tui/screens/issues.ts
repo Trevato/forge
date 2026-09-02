@@ -4,22 +4,16 @@
  * state badge can say.
  *
  * Filters compose the way the API's do: state segment, label, author, and a
- * text search, all folded into the same `listIssues` call so the TUI can
- * never show a set the JSON surface could not.
+ * text search, all folded into the one `issues()` question the `RepoSource`
+ * answers — so the same screen lists what we hold and what another forge
+ * holds, and the TUI can never show a set the JSON surface could not.
  */
 
 import { openIssueThrough } from "../../actions/issues.ts";
-import {
-  countIssues,
-  labelsFor,
-  listIssues,
-  listLabels,
-  type Issue,
-  type IssueKind,
-  type Label,
-} from "../../core/issues.ts";
-import { listPulls, type Pull } from "../../core/pulls.ts";
+import type { IssueKind, Label } from "../../core/issues.ts";
+import { getPull } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
+import type { IssueSummary, RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -42,6 +36,13 @@ import {
 import { issueScreen } from "./issue.ts";
 import { newPullScreen } from "./newpull.ts";
 import { pullScreen } from "./pull.ts";
+import {
+  local,
+  localRepo,
+  sourceName,
+  whereRows,
+  whereStrip,
+} from "./where.ts";
 
 const STATES = ["open", "closed", "all"] as const;
 const PAGE = 40;
@@ -49,86 +50,140 @@ const PAGE = 40;
 export function issuesScreen(
   f: Session,
   ctx: Ctx,
-  repo: Repo,
+  src: RepoSource,
   kind: IssueKind,
 ): Screen {
-  let items: (Issue | Pull)[] = [];
+  let items: IssueSummary[] = [];
   let labels: Label[] = [];
-  let tags = new Map<string, Label[]>();
-  let counts = { open: 0, closed: 0 };
+  let facts: RepoFacts | undefined;
+  let cursor: string | undefined;
   let more = false;
+  /** Nothing says "no issues" before the first page has actually answered. */
+  let loaded = false;
   let segment = 0;
   let label: string | undefined;
   let mine = false;
   const state = new ListState();
   const search = new Filter();
+  const repo = localRepo(src);
+  // A count is shown only once it is known for certain: a segment whose page
+  // ended is exactly as long as what is on screen, and nothing else here is
+  // allowed to guess.
+  const counted = new Map<string, number>();
+  /**
+   * Which of these pulls landed. `IssueSummary` cannot say — the shape has no
+   * `mergedAt` — so on a repository we hold the row is asked directly. A live
+   * browse shows "closed", which is all the origin's list endpoint says too.
+   */
+  const merged = new Set<number>();
+  const markMerged = (rows: readonly IssueSummary[]): void => {
+    if (repo === undefined || kind !== "pull") return;
+    for (const row of rows) {
+      const pull = getPull(f.db, repo.id, row.number);
+      if (pull !== undefined && pull.mergedAt !== null) merged.add(row.number);
+    }
+  };
 
-  const query = (cursor?: number): Parameters<typeof listIssues>[2] => ({
-    state: STATES[segment]!,
+  const query = (at?: string): Parameters<RepoSource["issues"]>[0] => ({
     kind,
+    state: STATES[segment]!,
     ...(label === undefined ? {} : { label }),
     ...(mine && f.user ? { author: f.user.username } : {}),
-    ...(cursor === undefined ? {} : { cursor }),
+    ...(at === undefined ? {} : { cursor: at }),
     limit: PAGE,
   });
 
-  const fetch = (cursor?: number): (Issue | Pull)[] =>
-    kind === "pull"
-      ? listPulls(f.db, repo.id, query(cursor))
-      : listIssues(f.db, repo.id, query(cursor));
+  const take = async (at?: string): Promise<IssueSummary[]> => {
+    const page = await src.issues(query(at));
+    if (!page.ok) {
+      ctx.toast(errorText(page.error), "danger");
+      more = false;
+      return [];
+    }
+    cursor = page.value.next ?? undefined;
+    more = page.value.next !== null;
+    return [...page.value.items];
+  };
 
   const reload = async (): Promise<void> => {
-    items = fetch();
-    more = items.length === PAGE;
-    labels = listLabels(f.db, repo.id);
-    tags = new Map(items.map((i) => [i.id, labelsFor(f.db, i.id)]));
-    counts = {
-      open: countIssues(f.db, repo.id, kind, "open"),
-      closed: countIssues(f.db, repo.id, kind, "closed"),
-    };
+    merged.clear();
+    items = await take();
+    loaded = true;
+    markMerged(items);
+    if (!more) counted.set(STATES[segment]!, items.length);
     state.clamp(items.length);
     ctx.invalidate();
-    return Promise.resolve();
+    const [described, listed] = await Promise.all([
+      src.describe(),
+      src.labels(),
+    ]);
+    if (described.ok) {
+      facts = described.value;
+      const open = kind === "pull" ? facts.openPulls : facts.openIssues;
+      if (open !== null) counted.set("open", open);
+    }
+    labels = listed.ok ? listed.value : [];
+    ctx.invalidate();
   };
 
   const loadMore = (): void => {
-    const last = items[items.length - 1];
-    if (!last) return;
-    const next = fetch(last.number);
-    for (const item of next) tags.set(item.id, labelsFor(f.db, item.id));
-    items = [...items, ...next];
-    more = next.length === PAGE;
-    ctx.invalidate();
+    const at = cursor;
+    if (at === undefined) return;
+    runAsync(ctx, async () => {
+      const page = await take(at);
+      markMerged(page);
+      items = [...items, ...page];
+      if (!more) counted.set(STATES[segment]!, items.length);
+      ctx.invalidate();
+    });
   };
 
-  const shown = (): (Issue | Pull)[] =>
+  const shown = (): IssueSummary[] =>
     items.filter(
       (i) => search.matches(i.title) || search.matches(`#${i.number}`),
     );
 
   const noun = kind === "pull" ? "pull request" : "issue";
+  const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
+  /** "Open 2" once we know, "Open" until then — never "Open 0" on a guess. */
+  const tally = (which: (typeof STATES)[number], text: string): string => {
+    const n = counted.get(which);
+    return n === undefined ? text : `${text} ${n}`;
+  };
 
   const screen: Screen = {
     title: kind === "pull" ? "Pulls" : "Issues",
-    keys: [
-      binding(["j", "k"], "move"),
-      binding(["enter"], "open"),
-      binding(["tab"], "open/closed/all"),
-      binding(["l"], "label"),
-      binding(["a"], mine ? "all authors" : "only mine"),
-      binding(["c"], `new ${noun}`, { disabled: !f.signedIn }),
-      binding(["/"], "search"),
-      binding(["r"], "refresh"),
-    ],
+    get keys() {
+      return [
+        binding(["j", "k"], "move"),
+        binding(["enter"], "open"),
+        binding(["tab"], "open/closed/all"),
+        binding(["l"], "label"),
+        binding(["a"], mine ? "all authors" : "only mine"),
+        ...(mayWrite() ? [binding(["c"], `new ${noun}`)] : []),
+        binding(["/"], "search"),
+        binding(["r"], "refresh"),
+      ];
+    },
     load: reload,
     render(area, s) {
       const c = ctx.theme.c;
-      const [seg, box, body] = split(area, "v", [len(1), len(1), fill(1)]);
+      const [strip, seg, box, body] = split(area, "v", [
+        len(whereRows(src)),
+        len(1),
+        len(1),
+        fill(1),
+      ]);
+      whereStrip(s, strip!, c, f, src);
+      const open = counted.get("open");
+      const closed = counted.get("closed");
       segmented(s, seg!, c, {
         items: [
-          `Open ${counts.open}`,
-          `Closed ${counts.closed}`,
-          `All ${counts.open + counts.closed}`,
+          tally("open", "Open"),
+          tally("closed", "Closed"),
+          open !== undefined && closed !== undefined
+            ? `All ${open + closed}`
+            : tally("all", "All"),
         ],
         active: segment,
       });
@@ -151,25 +206,25 @@ export function issuesScreen(
       const rows = shown();
       if (rows.length === 0) {
         emptyState(s, body!, c, {
-          title: `No ${noun}s`,
-          body:
-            segment === 0
-              ? `Nothing open in ${repo.name}.`
+          title: loaded ? `No ${noun}s` : "Reading…",
+          body: !loaded
+            ? `Asking ${sourceName(src)}`
+            : segment === 0
+              ? `Nothing open in ${sourceName(src)}.`
               : "Nothing matches these filters.",
-          ...(f.signedIn ? { action: `c  new ${noun}` } : {}),
+          ...(loaded && mayWrite() ? { action: `c  new ${noun}` } : {}),
         });
         return;
       }
       const list: ListRow[] = rows.map((item) => {
-        const merged = "mergedAt" in item && item.mergedAt !== null;
         return {
           title: item.title,
-          state: merged
+          state: merged.has(item.number)
             ? ("merged" as const)
             : item.state === "open"
               ? ("open" as const)
               : ("closed" as const),
-          secondary: (tags.get(item.id) ?? []).map((l) => l.name).join(" "),
+          secondary: item.labels.map((l) => l.name).join(" "),
           // An imported row is the origin's author, marked as upstream: a
           // login from another forge must never read as an account here.
           meta: `#${item.number} ${
@@ -196,11 +251,14 @@ export function issuesScreen(
       }
       if (e.key === "tab") {
         segment = (segment + 1) % STATES.length;
+        cursor = undefined;
         runAsync(ctx, reload);
         return true;
       }
       if (e.key === "a") {
         mine = !mine;
+        counted.clear();
+        cursor = undefined;
         runAsync(ctx, reload);
         return true;
       }
@@ -214,6 +272,8 @@ export function issuesScreen(
             ],
             onPick: (ids) => {
               label = ids[0] === "" ? undefined : ids[0];
+              counted.clear();
+              cursor = undefined;
               runAsync(ctx, reload);
             },
           }),
@@ -228,12 +288,12 @@ export function issuesScreen(
         }
         ctx.push(
           kind === "pull"
-            ? pullScreen(f, ctx, repo, item.number)
-            : issueScreen(f, ctx, repo, item.number),
+            ? pullScreen(f, ctx, src, item.number)
+            : issueScreen(f, ctx, src, item.number),
         );
         return true;
       }
-      if (e.key === "c" && f.signedIn) {
+      if (e.key === "c" && mayWrite() && repo !== undefined) {
         ctx.push(
           kind === "pull"
             ? newPullScreen(f, ctx, repo)
@@ -242,6 +302,8 @@ export function issuesScreen(
         return true;
       }
       if (e.key === "r") {
+        cursor = undefined;
+        counted.clear();
         runAsync(ctx, reload);
         return true;
       }
@@ -270,7 +332,7 @@ export function newIssueScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         return;
       }
       ctx.toast(`opened #${created.value.number}`, "success");
-      ctx.replace(issueScreen(f, ctx, repo, created.value.number));
+      ctx.replace(issueScreen(f, ctx, local(f, repo), created.value.number));
     });
   };
 

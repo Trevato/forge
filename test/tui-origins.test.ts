@@ -54,12 +54,20 @@ interface Harness {
   terminal: HeadlessTerminal;
   text(): string;
   press(...keys: string[]): Promise<void>;
+  /** Keys with no settle between them — for "what does a double press do?". */
+  burst(...keys: string[]): void;
   typeText(text: string): Promise<void>;
   settle(): Promise<void>;
   /** Pump frames until the screen says something, or give up loudly. */
   until(what: string, ms?: number): Promise<void>;
   stop(): void;
 }
+
+/** The crumb trail the loop paints: one entry per screen on the stack. */
+const crumbLine = (h: Harness): string => h.text().split("\n")[1] ?? "";
+
+const occurrences = (haystack: string, needle: string): number =>
+  haystack.split(needle).length - 1;
 
 function boot(
   forge: Forge,
@@ -97,6 +105,17 @@ function boot(
     text: () => app.screen.toText(),
     async press(...keys) {
       for (const key of keys) await one(key);
+    },
+    burst(...keys) {
+      for (const key of keys)
+        app.dispatch({
+          type: "key",
+          key,
+          ctrl: false,
+          alt: false,
+          shift: false,
+        });
+      app.frame();
     },
     async typeText(text) {
       for (const ch of text)
@@ -152,7 +171,8 @@ describe("origins in the terminal", () => {
     await h.until("Origins");
     await h.press("c");
     await h.until("Connect an origin");
-    await h.press("enter");
+    // The token is the first row now, so GitHub is one down.
+    await h.press("j", "enter");
     await h.until("Connect GitHub");
     await h.typeText(github.url);
     await h.press("enter");
@@ -195,15 +215,76 @@ describe("origins in the terminal", () => {
       }),
     });
 
-    const state = newFakeState("forgejo", ORIGIN_LOGIN, ORIGIN_TOKEN);
-    state.repos.push({
-      id: 41,
-      fullName: "octo/widgets",
-      description: "gears and things",
-      cloneUrl: `${originServers.url}/octo/widgets.git`,
-      htmlUrl: `${originServers.url}/octo/widgets`,
-      defaultBranch: "main",
+    await fetch(`${originServers.url}/api/v1/repos`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: basic(ORIGIN_LOGIN, ORIGIN_TOKEN),
+      },
+      body: JSON.stringify({ name: "gadgets", visibility: "public" }),
     });
+    await fetch(`${originServers.url}/api/v1/repos/octo/gadgets/contents`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: basic(ORIGIN_LOGIN, ORIGIN_TOKEN),
+      },
+      body: JSON.stringify({
+        branch: "main",
+        message: "first",
+        files: [{ path: "README.md", content: "# gadgets\nhello\n" }],
+      }),
+    });
+
+    const state = newFakeState("forgejo", ORIGIN_LOGIN, ORIGIN_TOKEN);
+    state.repos.push(
+      {
+        id: 41,
+        fullName: "octo/widgets",
+        description: "gears and things",
+        cloneUrl: `${originServers.url}/octo/widgets.git`,
+        htmlUrl: `${originServers.url}/octo/widgets`,
+        defaultBranch: "main",
+      },
+      // A second remote, so there is still something un-mirrored to press
+      // `m` on after the first one has been taken.
+      {
+        id: 42,
+        fullName: "octo/gadgets",
+        description: "bits and bobs",
+        cloneUrl: `${originServers.url}/octo/gadgets.git`,
+        htmlUrl: `${originServers.url}/octo/gadgets`,
+        defaultBranch: "main",
+      },
+    );
+    state.files.set(
+      "octo/gadgets",
+      new Map([["README.md", "# gadgets\n\nbits and bobs, read live\n"]]),
+    );
+    state.branches.set("octo/gadgets", [
+      { name: "main", sha: "2".repeat(40), protected: false },
+    ]);
+    // The git side of the same repository, as the API would describe it —
+    // this is what a *live* browse reads, with nothing cloned anywhere.
+    state.files.set(
+      "octo/widgets",
+      new Map([
+        ["README.md", "# widgets\n\ngears and things, read live\n"],
+        ["src/index.ts", "export const one = 1;\n"],
+      ]),
+    );
+    state.branches.set("octo/widgets", [
+      { name: "main", sha: "1".repeat(40), protected: false },
+    ]);
+    state.commits.set("octo/widgets", [
+      {
+        sha: "1".repeat(40),
+        message: "first",
+        authorName: "Mona Lisa",
+        login: "mona",
+        date: "2026-01-01T00:00:00.000Z",
+      },
+    ]);
     state.labels.set("octo/widgets", [{ id: 1, name: "bug", color: "d73a4a" }]);
     state.issues.set("octo/widgets", [
       {
@@ -259,11 +340,22 @@ describe("origins in the terminal", () => {
       await h.until("No origins connected");
       expect(h.text()).toContain("connect an origin");
 
-      // c → the chooser; the token path is the third row.
+      // c → the chooser. A token needs no setup anywhere, so it is the first
+      // row and the one `enter` lands on; the two one-click flows come after
+      // it, each saying what it needs first.
       await h.press("c");
       await h.until("Connect an origin");
-      expect(h.text()).toContain("device code");
-      await h.press("j", "j", "enter");
+      const chooser = h.text();
+      expect(chooser).toContain("Personal access token — recommended");
+      expect(chooser).toContain("GitHub, one click");
+      expect(chooser).toContain("Forgejo / Gitea, one click");
+      expect(chooser).toContain("Needs a one-time OAuth app setup");
+      expect(chooser).toContain("Needs an app registration on the instance");
+      expect(chooser).toContain("No setup at all");
+      expect(chooser.indexOf("Personal access token")).toBeLessThan(
+        chooser.indexOf("GitHub, one click"),
+      );
+      await h.press("enter");
       await h.until("Connect with a token");
 
       await h.typeText(fake.url);
@@ -295,7 +387,7 @@ describe("origins in the terminal", () => {
       await h.until(`${ORIGIN_LOGIN} @`);
       await h.press("c");
       await h.until("Connect an origin");
-      await h.press("enter");
+      await h.press("j", "enter");
       await h.until("Connect GitHub");
       await h.typeText(github.url);
       await h.press("enter");
@@ -328,14 +420,17 @@ describe("origins in the terminal", () => {
       await openDeviceScreen(h);
 
       const text = h.text();
-      const found = /https:\/\/forge\.example\.test\/go\/[0-9a-z]{10}/.exec(text);
+      const found = /https:\/\/forge\.example\.test\/go\/[0-9a-z]{10}/.exec(
+        text,
+      );
       expect(found).not.toBeNull();
       const short = found![0];
       // The code in it belongs to a live flow row, and to nothing else.
       const row = forge.db
-        .query<{ short_code: string }, []>(
-          "SELECT short_code FROM oauth_flow WHERE status = 'pending' ORDER BY id DESC LIMIT 1",
-        )
+        .query<
+          { short_code: string },
+          []
+        >("SELECT short_code FROM oauth_flow WHERE status = 'pending' ORDER BY id DESC LIMIT 1")
         .get();
       expect(short.endsWith(row!.short_code)).toBe(true);
 
@@ -410,7 +505,7 @@ describe("origins in the terminal", () => {
       await h.until("Origins");
       await h.press("c");
       await h.until("Connect an origin");
-      await h.press("enter");
+      await h.press("j", "enter");
       await h.until("Connect GitHub");
       await h.typeText(github.url);
       await h.press("enter");
@@ -421,30 +516,225 @@ describe("origins in the terminal", () => {
       expect(text).toContain("Enable Device Flow");
       expect(text).toContain("FORGE_GITHUB_CLIENT_ID");
       expect(text).toContain("/settings/origins/callback");
-      expect(text).toContain("'Paste a token' needs no registration");
+      expect(text).toContain("a pasted token needs no setup");
       await h.press("esc");
     } finally {
       h.stop();
     }
   }, 60_000);
 
-  test("the picker mirrors a repository, and the repo says where it came from", async () => {
+  /**
+   * Origins → the picker, filtered down to one row, which is where every
+   * browse and every mirror starts. The filter is what makes `enter` mean a
+   * named repository rather than "whatever sorted first".
+   */
+  const openPicker = async (h: Harness, name = "widgets"): Promise<void> => {
+    await h.press("A");
+    await h.until("Account");
+    await h.press("o");
+    await h.until(`${ORIGIN_LOGIN} @`);
+    await h.press("r");
+    await h.until(`octo/${name}`);
+    await h.press("/");
+    await h.typeText(name);
+    await h.press("enter");
+  };
+
+  /** The `?` overlay: every binding this screen has, untruncated. */
+  const helpText = async (h: Harness): Promise<string> => {
+    await h.press("?");
+    const text = h.text();
+    await h.press("esc");
+    return text;
+  };
+
+  test("enter opens the repository live and downloads nothing", async () => {
+    const host = new URL(fake.url).host;
     const h = boot(forge, asAlice());
     try {
-      await h.press("A");
-      await h.until("Account");
-      await h.press("o");
-      await h.until(`${ORIGIN_LOGIN} @`);
-      await h.press("r");
-      await h.until("octo/widgets");
+      await openPicker(h);
       expect(h.text()).toContain("public");
+      // The row is not mirrored yet, and enter is not going to change that.
+      expect(h.text()).not.toContain("mirrored as");
+      expect(h.text()).toContain("browse — nothing is downloaded");
 
-      await h.press("m");
-      // Mirroring clones from the second forge and imports the issues.
-      await h.until("octo/widgets @");
+      await h.press("enter");
+      // One settle: the README is on screen, read through the origin's API.
+      await h.until("gears and things, read live");
+      const text = h.text();
+
+      // The where strip: three places, and only the first one has it.
+      expect(text).toContain(`● ${host}`);
+      expect(text).toContain("○ workbench");
+      expect(text).toContain("○ this machine");
+      expect(text).toContain(
+        `reading live from ${host} — read-only · m mirror into your workbench`,
+      );
+      expect(text).toContain("read-only");
+      // The tree came from the same place.
+      expect(text).toContain("src/");
+
+      // No write key exists here — not disabled, absent — and the two keys
+      // that do make sense on somebody else's repository are offered.
+      const help = await helpText(h);
+      expect(help).toMatch(/m\s+mirror/);
+      expect(help).toContain("open on origin");
+      expect(help).not.toContain("settings");
+      expect(help).not.toContain("fork");
+      expect(help).not.toContain("sync now");
+
+      // And nothing at all was created here.
+      expect(getRepo(forge.db, "alice", "widgets")).toBeUndefined();
+    } finally {
+      h.stop();
+    }
+  }, 60_000);
+
+  test("going back and re-entering costs the origin nothing", async () => {
+    const h = boot(forge, asAlice());
+    try {
+      await openPicker(h);
+      await h.press("enter");
+      await h.until("gears and things, read live");
+      // Into the tree, which is one more read...
+      await h.press("f");
+      await h.until("src");
+      await h.press("esc");
+      await h.until("gears and things, read live");
+
+      // ...and from here on, everything is a cache hit. Back to the picker,
+      // in again, into the tree again: the origin hears nothing.
+      const mark = fake.state.requests.length;
+      await h.press("esc");
+      await h.until("octo/widgets");
+      await h.press("enter");
+      await h.until("gears and things, read live");
+      await h.press("f");
+      await h.until("src");
+      expect(fake.state.requests.length).toBe(mark);
+    } finally {
+      h.stop();
+    }
+  }, 60_000);
+
+  test("m mirrors with a visible checklist, and the screen becomes the local one", async () => {
+    const h = boot(forge, asAlice());
+    try {
+      await openPicker(h);
+      await h.press("enter");
+      await h.until("gears and things, read live");
+
+      // Two presses with no frame between them: the job layer dedupes the
+      // work and the card dedupes itself, so there is exactly one card.
+      h.burst("m", "m");
+      const card = h.text();
+      expect(card).toContain("Mirroring octo/widgets");
+      for (const stage of [
+        "creating",
+        "fetching",
+        "labels",
+        "issues",
+        "pulls",
+        "comments",
+      ])
+        expect(card).toContain(stage);
+      expect(card).toContain("esc hides this");
+      expect(occurrences(crumbLine(h), "Mirroring")).toBe(1);
+
+      // Done: the card goes, and the live screen underneath is replaced in
+      // place by the same screen over the repository we now hold.
+      await h.until("workbench (synced");
+      // The file list is the local one now: these bytes came out of our own
+      // bare repository rather than off the origin's API.
+      await h.until("README.md");
+      const after = h.text();
+      const strip = after.split("\n")[2] ?? "";
+      expect(strip).toMatch(
+        /^● \S+ {2}·  ● workbench \(synced .+\) {2}·  ○ this machine/,
+      );
+      expect(after).not.toContain("reading live from");
+      expect(after).toContain("mirrored from");
       expect(getRepo(forge.db, "alice", "widgets")).toBeDefined();
-      expect(h.text()).toContain("mirrored from");
-      expect(h.text()).toContain("fetched");
+
+      // The write keys are here now, and the mirror key is gone.
+      const help = await helpText(h);
+      expect(help).toContain("settings");
+      expect(help).toContain("fork");
+      expect(help).toContain("sync now");
+      expect(help).not.toMatch(/m\s+mirror\b/);
+
+      // Including the one that matters most: you can say something.
+      await h.press("i");
+      await h.until("The gear slips");
+      await h.press("enter");
+      await h.until("The gear slips");
+      expect(await helpText(h)).toContain("comment");
+    } finally {
+      h.stop();
+    }
+  }, 120_000);
+
+  /**
+   * Esc is not cancel. The job is detached from the card that started it, so
+   * hiding the card leaves the mirror running and the outcome still arrives —
+   * and the screen you are on is *not* yanked out from under you, because by
+   * then it may not be the screen the mirror was started from.
+   */
+  test("esc hides the card and the mirror lands anyway", async () => {
+    const h = boot(forge, asAlice());
+    try {
+      await openPicker(h, "gadgets");
+      await h.press("enter");
+      await h.until("○ workbench");
+
+      h.burst("m");
+      expect(h.text()).toContain("Mirroring octo/gadgets");
+      await h.press("esc");
+      expect(crumbLine(h)).not.toContain("Mirroring");
+      expect(h.text()).toContain("mirroring in the background");
+      // Still the live browse: a hidden card never replaces a screen.
+      expect(h.text()).toContain("reading live from");
+
+      await h.until("mirrored as alice/gadgets");
+      expect(getRepo(forge.db, "alice", "gadgets")).toBeDefined();
+      expect(h.text()).toContain("reading live from");
+    } finally {
+      h.stop();
+    }
+  }, 120_000);
+
+  test("the strip marks the third place when the repo is pinned", async () => {
+    const h = boot(forge, asAlice());
+    try {
+      await h.until("alice/widgets");
+      await h.press("/");
+      await h.typeText("widgets");
+      await h.press("enter");
+      await h.press("enter");
+      await h.until("mirrored from");
+      expect(h.text()).toContain("○ this machine");
+
+      await h.press("P");
+      await h.until("◆ this machine");
+      expect(listPins(forge.db, alice.id)).toHaveLength(1);
+
+      // Put it back, so the pin test below still starts from nothing.
+      await h.press("P");
+      await h.until("○ this machine");
+      expect(listPins(forge.db, alice.id)).toHaveLength(0);
+    } finally {
+      h.stop();
+    }
+  }, 60_000);
+
+  test("the picker says which rows it already holds", async () => {
+    const h = boot(forge, asAlice());
+    try {
+      await openPicker(h);
+      expect(h.text()).toContain("● mirrored as alice/widgets");
+      // A row already held is not mirrored twice.
+      await h.press("m");
+      expect(h.text()).toContain("already mirrored");
     } finally {
       h.stop();
     }
@@ -454,6 +744,9 @@ describe("origins in the terminal", () => {
     const h = boot(forge, asAlice());
     try {
       await h.until("alice/widgets");
+      await h.press("/");
+      await h.typeText("widgets");
+      await h.press("enter");
       await h.press("enter");
       await h.until("octo/widgets @");
       await h.press("i");
@@ -490,6 +783,10 @@ describe("origins in the terminal", () => {
     const h = boot(forge, asAlice());
     try {
       await h.until("alice/widgets");
+      // More than one repo is mirrored by now, so name the one being pinned.
+      await h.press("/");
+      await h.typeText("widgets");
+      await h.press("enter");
       expect(listPins(forge.db, alice.id)).toHaveLength(0);
       await h.press("p");
       await h.until("On your machine");
