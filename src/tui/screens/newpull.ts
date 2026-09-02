@@ -17,6 +17,7 @@ import type { Session } from "../session.ts";
 import { errorText, runAsync } from "./common.ts";
 import { pullScreen } from "./pull.ts";
 import { refPickerScreen } from "./refs.ts";
+import { local } from "./where.ts";
 
 type Focus = 0 | 1 | 2 | 3 | 4;
 
@@ -48,7 +49,7 @@ export function newPullScreen(f: Session, ctx: Ctx, head: Repo): Screen {
         return;
       }
       ctx.toast(`opened #${created.value.number}`, "success");
-      ctx.replace(pullScreen(f, ctx, base, created.value.number));
+      ctx.replace(pullScreen(f, ctx, local(f, base), created.value.number));
     });
   };
 
@@ -158,7 +159,7 @@ export function newPullScreen(f: Session, ctx: Ctx, head: Repo): Screen {
               f,
               ctx,
               screen,
-              base,
+              local(f, base),
               (chosen) => {
                 baseBranch = chosen;
               },
@@ -171,7 +172,7 @@ export function newPullScreen(f: Session, ctx: Ctx, head: Repo): Screen {
               f,
               ctx,
               screen,
-              head,
+              local(f, head),
               (chosen) => {
                 headBranch = chosen;
               },

@@ -6,9 +6,8 @@
  * about having reached the end.
  */
 
-import type { Repo } from "../../core/repos.ts";
-import { diffCommit, type FileDiff } from "../../git/diff.ts";
-import { commitLog, type Commit } from "../../git/read.ts";
+import type { FileDiff } from "../../git/diff.ts";
+import type { Commit, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Screen as Surface, Rect, Span } from "../term/screen.ts";
@@ -25,36 +24,39 @@ import {
   Scroll,
   drawList,
   drawLines,
+  errorText,
   plural,
   relTime,
   runAsync,
 } from "./common.ts";
 import { refPickerScreen } from "./refs.ts";
-
-const PAGE = 40;
+import { sourceName, whereRows, whereStrip } from "./where.ts";
 
 export function commitsScreen(
   f: Session,
   ctx: Ctx,
-  repo: Repo,
+  src: RepoSource,
   ref: string,
 ): Screen {
   let commits: Commit[] = [];
+  let cursor: string | undefined;
   let more = true;
+  /** "No commits" is a claim, and it waits for the first page to answer. */
+  let loaded = false;
   const state = new ListState();
 
   const page = async (): Promise<void> => {
-    const result = await commitLog(f.dir(repo), ref, {
-      limit: PAGE,
-      skip: commits.length,
-    });
+    const result = await src.commits(ref, cursor);
     if (!result.ok) {
       more = false;
-      if (commits.length === 0) ctx.toast(`no commits on ${ref}`, "danger");
+      if (commits.length === 0)
+        ctx.toast(`no commits on ${ref}: ${errorText(result.error)}`, "danger");
     } else {
-      commits = [...commits, ...result.value];
-      more = result.value.length === PAGE;
+      commits = [...commits, ...result.value.items];
+      cursor = result.value.next ?? undefined;
+      more = result.value.next !== null;
     }
+    loaded = true;
     ctx.invalidate();
   };
 
@@ -69,24 +71,31 @@ export function commitsScreen(
     load: page,
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      const [strip, head, body] = split(area, "v", [
+        len(whereRows(src)),
+        len(1),
+        fill(1),
+      ]);
+      whereStrip(s, strip!, c, f, src);
       s.text(
         head!.x,
         head!.y,
-        truncate(`${repo.ownerName}/${repo.name} · ${ref}`, head!.w),
+        truncate(`${sourceName(src)} · ${ref}`, head!.w),
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
       if (commits.length === 0) {
         emptyState(s, body!, c, {
-          title: "No commits",
-          body: `Nothing has landed on ${ref} yet.`,
+          title: loaded ? "No commits" : "Reading…",
+          body: loaded
+            ? `Nothing has landed on ${ref} yet.`
+            : `Reading the log of ${ref}`,
         });
         return;
       }
       const rows = commits.map((commit) => ({
         title: commit.subject,
-        secondary: commit.author,
+        secondary: commit.login ?? commit.author,
         meta: `${commit.oid.slice(0, 8)}  ${relTime(commit.date)}`,
       }));
       if (more) rows.push({ title: "Load more…", secondary: "", meta: "" });
@@ -98,20 +107,22 @@ export function commitsScreen(
       if (e.key === "enter") {
         const commit = commits[state.index];
         if (commit === undefined) runAsync(ctx, page);
-        else ctx.push(commitScreen(f, ctx, repo, commit));
+        else ctx.push(commitScreen(f, ctx, src, commit));
         return true;
       }
       if (e.key === "b") {
         ctx.push(
-          refPickerScreen(f, ctx, screen, repo, (chosen) =>
-            ctx.replace(commitsScreen(f, ctx, repo, chosen)),
+          refPickerScreen(f, ctx, screen, src, (chosen) =>
+            ctx.replace(commitsScreen(f, ctx, src, chosen)),
           ),
         );
         return true;
       }
       if (e.key === "r") {
         commits = [];
+        cursor = undefined;
         more = true;
+        loaded = false;
         runAsync(ctx, page);
         return true;
       }
@@ -124,7 +135,7 @@ export function commitsScreen(
 export function commitScreen(
   f: Session,
   ctx: Ctx,
-  repo: Repo,
+  src: RepoSource,
   commit: Commit,
 ): Screen {
   const view = new DiffView();
@@ -132,14 +143,19 @@ export function commitScreen(
     title: commit.oid.slice(0, 8),
     keys: view.keys,
     async load() {
-      const result = await diffCommit(f.dir(repo), commit.oid);
-      view.setFiles(result.ok ? result.value.files : []);
+      const result = await src.commit(commit.oid);
+      view.setFiles(result.ok ? result.value.diff.files : []);
       ctx.invalidate();
     },
     render(area, s) {
       const c = ctx.theme.c;
-      const meta = Math.min(6, area.h);
-      const [top, body] = split(area, "v", [len(meta), fill(1)]);
+      const meta = Math.min(6, Math.max(0, area.h - whereRows(src)));
+      const [strip, top, body] = split(area, "v", [
+        len(whereRows(src)),
+        len(meta),
+        fill(1),
+      ]);
+      whereStrip(s, strip!, c, f, src);
       const inner = card(s, top!, c, { title: commit.oid.slice(0, 12) });
       s.text(
         inner.x,

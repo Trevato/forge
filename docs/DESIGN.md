@@ -253,20 +253,63 @@ Inside the code view, shift-clicking a second line number extends `#L3` to
 `#L3-L9` and highlights the range.
 
 **Terminal keys and glyphs for origins.** Account → `o` opens Origins; there
-`c` connects, `s` syncs now, `r` lists the origin's repositories and `D`
-disconnects. In the picker `enter` or `m` mirrors the row. On a repo's home
-`y` syncs the mirror and `P` pins it — `p` has meant *pulls* on that screen
-since before pins existed, so the toggle takes the shifted key there and the
-plain `p` everywhere a repo is a *row* (the dashboard, explore).
+`c` connects, `s` syncs now, `r` browses the origin's repositories and `D`
+disconnects. In the picker `enter` **browses** the row — live, read-only,
+nothing downloaded — and `m` mirrors it into the workbench; a second `m` on a
+running mirror joins the job rather than starting a second one. On a repo's
+home `y` syncs the mirror and `P` pins it — `p` has meant _pulls_ on that
+screen since before pins existed, so the toggle takes the shifted key there
+and the plain `p` everywhere a repo is a _row_ (the dashboard, explore).
 
-Two glyphs carry this, both from the safe set in `term/screen.ts`:
+The connect chooser is ordered by what actually gets somebody connected:
+**Personal access token — recommended** first (paste a string, no setup at
+all), then **GitHub, one click** (needs a one-time OAuth app setup) and
+**Forgejo / Gitea, one click** (needs an app registration on the instance).
+Each row carries that condition on its own line rather than failing later
+with an error about an environment variable.
 
-| glyph | means                                                       |
-| ----- | ----------------------------------------------------------- |
-| `▲`   | this came from the origin — an imported author or activity  |
-| `●`   | this place has the repository (accent when it is the one being read) |
-| `○`   | this place does not have it                                 |
-| `◆`   | kept on your machine (pinned)                               |
+**The where strip.** Every repository screen carries one line directly under
+its title, naming the three places a repository can be and marking which one
+the bytes on screen came from:
+
+```
+● codeberg.org  ·  ○ workbench  ·  ○ this machine
+reading live from codeberg.org — read-only · m mirror into your workbench
+
+● codeberg.org  ·  ● workbench (synced 3m ago)  ·  ◆ this machine
+
+● workbench  ·  ○ this machine
+```
+
+The first is a live browse (and only a live browse gets the second, muted
+banner line); the second is a mirror that is also pinned; the third is a
+native repository, which has no origin and therefore no first place. The dot
+is the grammar — **accent** is the place being read from, **success** is a
+place that has this repository, **muted** is a place that does not:
+
+| glyph | means                                                      |
+| ----- | ---------------------------------------------------------- |
+| `●`   | this place has the repository (accent = reading from here) |
+| `○`   | this place does not have it                                |
+| `◆`   | kept on your machine (pinned)                              |
+| `▲`   | this came from the origin — an imported author or activity |
+
+**Read-only means read-only.** A screen over a live source has no write keys
+at all — no `c` comment, no `x`/`o` state, no `l` labels, no `m` merge, no
+`,` settings, no `F` fork — because `capabilities.write` is false and the
+source has no method that could write. In their place the help bar shows
+`m mirror` and `O open on origin` — first, ahead of the navigation keys,
+because at 80 columns the bar has room for about six bindings and those two
+are the only things you can actually do here. The banner carries the long
+wording; `w` opens the workbench copy when one already exists.
+
+**The mirror card.** `m` opens a checklist over whatever screen you were on:
+`creating → fetching → labels → issues → pulls → comments`, a spinner on the
+stage in progress with the job's own words beside it ("42 issues"), and the
+elapsed time. `esc` hides it and the mirror keeps running, toasting when it
+lands; on `done` the live screen underneath is replaced in place by the same
+screen over the local source, and the strip flips to `● workbench`; on
+`failed` the card shows the scrubbed reason and `r` retries.
 
 ---
 

@@ -38,6 +38,7 @@ import {
   runAsync,
 } from "./common.ts";
 import { repoScreen } from "./repo.ts";
+import { local } from "./where.ts";
 
 export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
   let owner: User | undefined;
@@ -198,7 +199,7 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
       if (state.key(e, shown().length)) return true;
       if (e.key === "enter") {
         const repo = shown()[state.index];
-        if (repo) ctx.push(repoScreen(f, ctx, repo));
+        if (repo) ctx.push(repoScreen(f, ctx, local(f, repo)));
         return true;
       }
       if (e.key === "r") {

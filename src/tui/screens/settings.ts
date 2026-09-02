@@ -41,6 +41,7 @@ import {
   runAsync,
 } from "./common.ts";
 import { refPickerScreen } from "./refs.ts";
+import { local } from "./where.ts";
 
 const TABS = ["General", "Labels", "Webhooks", "Danger"] as const;
 
@@ -240,7 +241,7 @@ export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           f,
           ctx,
           screen,
-          current,
+          local(f, current),
           (chosen) => save({ defaultBranch: chosen }),
           { branchesOnly: true, title: "Default branch" },
         ),

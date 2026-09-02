@@ -15,6 +15,7 @@ import { field } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { errorText, runAsync } from "./common.ts";
 import { repoScreen } from "./repo.ts";
+import { local } from "./where.ts";
 
 type Focus = 0 | 1 | 2 | 3;
 
@@ -46,7 +47,7 @@ export function newRepoScreen(f: Session, ctx: Ctx, owner?: string): Screen {
         return;
       }
       ctx.toast(`created ${created.value.name}`, "success");
-      ctx.replace(repoScreen(f, ctx, created.value));
+      ctx.replace(repoScreen(f, ctx, local(f, created.value)));
     });
   };
 
@@ -158,7 +159,7 @@ export function forkScreen(f: Session, ctx: Ctx, parent: Repo): Screen {
         return;
       }
       ctx.toast(`forked to ${forked.value.ownerName}/${name}`, "success");
-      ctx.replace(repoScreen(f, ctx, forked.value));
+      ctx.replace(repoScreen(f, ctx, local(f, forked.value)));
     });
   };
   return {
