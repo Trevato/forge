@@ -42,6 +42,11 @@ export interface Pull extends Issue {
    * base repo (this pull's repoId). */
   readonly headRepoId: string;
   readonly crossRepo: boolean;
+  /**
+   * For a mirrored pull whose head lives on the origin (often a fork we do
+   * not hold): `owner/name` there. Null for a native pull.
+   */
+  readonly originHeadRepo: string | null;
 }
 
 interface PullRow {
@@ -52,6 +57,7 @@ interface PullRow {
   merged_at: string | null;
   merged_oid: string | null;
   head_repo_id: string | null;
+  origin_head_repo: string | null;
 }
 
 function join(db: Database, issue: Issue): Pull | undefined {
@@ -70,6 +76,7 @@ function join(db: Database, issue: Issue): Pull | undefined {
     mergedOid: row.merged_oid,
     headRepoId,
     crossRepo: headRepoId !== issue.repoId,
+    originHeadRepo: row.origin_head_repo,
   };
 }
 
@@ -227,7 +234,17 @@ export async function pullStatus(dir: string, pull: Pull): Promise<PullStatus> {
   return { baseOid, headOid, ahead, mergeable: false, conflicts };
 }
 
-export type MergePullError = MergeError | "already_merged" | "closed";
+/**
+ * `mirrored` is a refusal, not a failure: on a mirrored repo the origin owns
+ * the merge — its strategy, its protected branches, its required checks —
+ * and a local merge would be overwritten by the next fetch. Merge there; the
+ * next sync brings back the merge commit the origin actually made.
+ */
+export type MergePullError =
+  | MergeError
+  | "already_merged"
+  | "closed"
+  | "mirrored";
 
 export async function mergePull(
   db: Database,

@@ -1,0 +1,477 @@
+/**
+ * GitHub (and GitHub Enterprise, which is the same API under `/api/v3`).
+ *
+ * Two facts shape this whole file. First, `/issues` returns pull requests
+ * too — they are issues with a `pull_request` key — so every issue list is
+ * filtered by that key, in both directions, or a mirror grows phantom
+ * issues. Second, only `/issues` takes `since`, so incremental sync for
+ * pulls runs through the issue list as well and hydrates each hit from
+ * `/pulls/{n}`, where base, head and `merged_at` actually live.
+ */
+
+import type {
+  ListIssuesQuery,
+  Page,
+  Provider,
+  ProviderCredential,
+  ProviderResult,
+  RemoteComment,
+  RemoteIdentity,
+  RemoteIssue,
+  RemoteLabel,
+  RemoteRepo,
+  RemoteReview,
+} from "../types.ts";
+import { basicHeader, gitAuthEnv } from "../credentials.ts";
+import {
+  ApiClient,
+  anchorFromHunk,
+  asArray,
+  asBool,
+  asColor,
+  asId,
+  asNumber,
+  asState,
+  asString,
+  asTime,
+  dig,
+  fail,
+  field,
+  labelNames,
+  linkNext,
+  seg,
+  splitFullName,
+  succeed,
+} from "./http.ts";
+
+const PER_PAGE = 100;
+/** A page walk we drive ourselves (labels, reviews) stops here regardless. */
+const MAX_INTERNAL_PAGES = 10;
+
+export class GitHubProvider implements Provider {
+  readonly kind = "github" as const;
+  readonly apiUrl: string;
+  readonly webUrl: string;
+  private readonly api: ApiClient;
+
+  constructor(private readonly credential: ProviderCredential) {
+    this.apiUrl = credential.apiUrl;
+    this.webUrl = credential.webUrl;
+    this.api = new ApiClient(credential, (token) => ({
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      // Pinned: omitting it floats onto whatever the current default is.
+      "x-github-api-version": "2022-11-28",
+    }));
+  }
+
+  async whoami(): Promise<ProviderResult<RemoteIdentity>> {
+    const result = await this.api.call({ path: "/user" });
+    if (!result.ok) return result;
+    const login = asString(field(result.value.data, "login"));
+    if (login === "")
+      return fail("invalid_response", "the origin named no account");
+    return succeed({
+      login,
+      displayName: asString(field(result.value.data, "name")) || login,
+      htmlUrl:
+        asString(field(result.value.data, "html_url")) ||
+        `${this.webUrl}/${login}`,
+    });
+  }
+
+  async listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const page = pageOf(cursor);
+    const result = await this.api.call({
+      path: "/user/repos",
+      query: {
+        per_page: PER_PAGE,
+        page,
+        sort: "pushed",
+        affiliation: "owner,collaborator,organization_member",
+      },
+      conditional: page === 1,
+    });
+    if (!result.ok) return result;
+    return succeed({
+      items: asArray(result.value.data).map((r) => toRepo(r)),
+      next: linkNext(result.value.headers) ? String(page + 1) : null,
+    });
+  }
+
+  async getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}`,
+    });
+    if (!result.ok) return result;
+    return succeed(toRepo(result.value.data));
+  }
+
+  async listLabels(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteLabel[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const labels: RemoteLabel[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/labels`,
+        query: { per_page: PER_PAGE, page },
+        conditional: page === 1,
+      });
+      if (!result.ok) return result;
+      const batch = asArray(result.value.data);
+      for (const raw of batch) {
+        labels.push({
+          remoteId: asId(field(raw, "id")),
+          name: asString(field(raw, "name")),
+          color: asColor(field(raw, "color")),
+        });
+      }
+      if (batch.length < PER_PAGE) break;
+    }
+    return succeed(labels.filter((l) => l.name !== ""));
+  }
+
+  /**
+   * One list endpoint serves both kinds. Issues come back whole; pulls are
+   * recognised by the `pull_request` key and hydrated one call each, because
+   * the issue payload knows nothing about branches.
+   */
+  async listIssues(
+    fullName: string,
+    query: ListIssuesQuery,
+  ): Promise<ProviderResult<Page<RemoteIssue>>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const page = pageOf(query.cursor);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues`,
+      query: {
+        state: query.state,
+        per_page: PER_PAGE,
+        page,
+        sort: "updated",
+        direction: "asc",
+        ...(query.since === undefined ? {} : { since: query.since }),
+      },
+    });
+    if (!result.ok) return result;
+
+    const items: RemoteIssue[] = [];
+    for (const raw of asArray(result.value.data)) {
+      const isPull = field(raw, "pull_request") !== undefined;
+      if (isPull !== (query.kind === "pull")) continue;
+      if (!isPull) {
+        items.push(toIssue(raw));
+        continue;
+      }
+      const number = asNumber(field(raw, "number"));
+      const hydrated = await this.getPull(named.owner, named.name, number);
+      // A pull that vanished between the two calls is simply skipped; the
+      // next sync will see it (or not) with a consistent view.
+      if (hydrated.ok) items.push(hydrated.value);
+      else if (hydrated.error.error === "rate_limited") return hydrated;
+    }
+    return succeed({
+      items,
+      next: linkNext(result.value.headers) ? String(page + 1) : null,
+    });
+  }
+
+  async getIssue(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}`,
+    });
+    if (!result.ok) return result;
+    if (field(result.value.data, "pull_request") !== undefined)
+      return this.getPull(named.owner, named.name, number);
+    return succeed(toIssue(result.value.data));
+  }
+
+  private async getPull(
+    owner: string,
+    name: string,
+    number: number,
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const result = await this.api.call({
+      path: `/repos/${seg(owner)}/${seg(name)}/pulls/${number}`,
+    });
+    if (!result.ok) return result;
+    return succeed(toPull(result.value.data));
+  }
+
+  async listComments(
+    fullName: string,
+    number: number,
+    since?: string,
+  ): Promise<ProviderResult<readonly RemoteComment[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const comments: RemoteComment[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}/comments`,
+        query: {
+          per_page: PER_PAGE,
+          page,
+          ...(since === undefined ? {} : { since }),
+        },
+      });
+      if (!result.ok) return result;
+      const batch = asArray(result.value.data);
+      for (const raw of batch) comments.push(toComment(raw));
+      if (batch.length < PER_PAGE) break;
+    }
+    return succeed(comments);
+  }
+
+  async listReviews(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<readonly RemoteReview[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const reviews: RemoteReview[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}/comments`,
+        query: { per_page: PER_PAGE, page },
+      });
+      if (!result.ok) return result;
+      const batch = asArray(result.value.data);
+      for (const raw of batch) reviews.push(toReview(raw));
+      if (batch.length < PER_PAGE) break;
+    }
+    return succeed(reviews);
+  }
+
+  async createIssue(
+    fullName: string,
+    input: { title: string; body: string; labels?: readonly string[] },
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues`,
+      method: "POST",
+      body: {
+        title: input.title,
+        body: input.body,
+        ...(input.labels === undefined ? {} : { labels: [...input.labels] }),
+      },
+    });
+    if (!result.ok) return result;
+    return succeed(toIssue(result.value.data));
+  }
+
+  async createComment(
+    fullName: string,
+    number: number,
+    body: string,
+  ): Promise<ProviderResult<RemoteComment>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}/comments`,
+      method: "POST",
+      body: { body },
+    });
+    if (!result.ok) return result;
+    return succeed(toComment(result.value.data));
+  }
+
+  async setState(
+    fullName: string,
+    number: number,
+    state: "open" | "closed",
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}`,
+      method: "PATCH",
+      body: { state },
+    });
+    if (!result.ok) return result;
+    if (field(result.value.data, "pull_request") !== undefined)
+      return this.getPull(named.owner, named.name, number);
+    return succeed(toIssue(result.value.data));
+  }
+
+  async setLabels(
+    fullName: string,
+    number: number,
+    labels: readonly string[],
+  ): Promise<ProviderResult<readonly RemoteLabel[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}/labels`,
+      method: "PUT",
+      body: { labels: [...labels] },
+    });
+    if (!result.ok) return result;
+    return succeed(
+      asArray(result.value.data).map((raw) => ({
+        remoteId: asId(field(raw, "id")),
+        name: asString(field(raw, "name")),
+        color: asColor(field(raw, "color")),
+      })),
+    );
+  }
+
+  async createPull(
+    fullName: string,
+    input: { title: string; body: string; base: string; head: string },
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls`,
+      method: "POST",
+      body: {
+        title: input.title,
+        body: input.body,
+        base: input.base,
+        head: input.head,
+      },
+    });
+    if (!result.ok) return result;
+    return succeed(toPull(result.value.data));
+  }
+
+  async forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/forks`,
+      method: "POST",
+      body: {},
+    });
+    if (!result.ok) return result;
+    return succeed(toRepo(result.value.data));
+  }
+
+  /**
+   * GitHub ignores the username when the password is a valid token;
+   * `x-access-token` is the convention its own docs use, and it works for
+   * classic PATs, fine-grained PATs and App installation tokens alike.
+   */
+  async gitAuthEnv(remoteUrl: string): Promise<Record<string, string>> {
+    const token = await this.credential.token();
+    if (!token.ok) return {};
+    return gitAuthEnv(remoteUrl, basicHeader("x-access-token", token.value));
+  }
+}
+
+// ---- mapping ----
+
+const pageOf = (cursor: string | undefined): number => {
+  const n = Number(cursor);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+};
+
+function toRepo(raw: unknown): RemoteRepo {
+  const fullName = asString(field(raw, "full_name"));
+  const named = splitFullName(fullName);
+  return {
+    remoteId: asId(field(raw, "id")),
+    fullName,
+    owner: named?.owner ?? asString(dig(raw, "owner", "login")),
+    name: named?.name ?? asString(field(raw, "name")),
+    description: asString(field(raw, "description")),
+    private: asBool(field(raw, "private")),
+    fork: asBool(field(raw, "fork")),
+    defaultBranch: asString(field(raw, "default_branch")) || "main",
+    cloneUrl: asString(field(raw, "clone_url")),
+    sshUrl: asString(field(raw, "ssh_url")),
+    htmlUrl: asString(field(raw, "html_url")),
+    pushedAt: asTime(field(raw, "pushed_at")),
+    permissions: {
+      push: asBool(dig(raw, "permissions", "push")),
+      admin: asBool(dig(raw, "permissions", "admin")),
+    },
+  };
+}
+
+function toIssue(raw: unknown): RemoteIssue {
+  return {
+    remoteId: asId(field(raw, "id")),
+    number: asNumber(field(raw, "number")),
+    title: asString(field(raw, "title")),
+    body: asString(field(raw, "body")),
+    author: asString(dig(raw, "user", "login")),
+    state: asState(field(raw, "state")),
+    labels: labelNames(field(raw, "labels")),
+    createdAt: asTime(field(raw, "created_at")) ?? new Date().toISOString(),
+    updatedAt:
+      asTime(field(raw, "updated_at")) ??
+      asTime(field(raw, "created_at")) ??
+      new Date().toISOString(),
+    closedAt: asTime(field(raw, "closed_at")),
+    htmlUrl: asString(field(raw, "html_url")),
+    comments: asNumber(field(raw, "comments")),
+  };
+}
+
+function toPull(raw: unknown): RemoteIssue {
+  const base = asString(dig(raw, "base", "ref"));
+  const head = asString(dig(raw, "head", "ref"));
+  const headRepo =
+    asString(dig(raw, "head", "repo", "full_name")) ||
+    asString(dig(raw, "base", "repo", "full_name"));
+  return {
+    ...toIssue(raw),
+    pull: {
+      baseBranch: base,
+      headBranch: head,
+      headRepo,
+      baseOid: asString(dig(raw, "base", "sha")),
+      headOid: asString(dig(raw, "head", "sha")),
+      mergedAt: asTime(field(raw, "merged_at")),
+      draft: asBool(field(raw, "draft")),
+    },
+  };
+}
+
+function toComment(raw: unknown): RemoteComment {
+  const created = asTime(field(raw, "created_at")) ?? new Date().toISOString();
+  return {
+    remoteId: asId(field(raw, "id")),
+    author: asString(dig(raw, "user", "login")),
+    body: asString(field(raw, "body")),
+    createdAt: created,
+    updatedAt: asTime(field(raw, "updated_at")) ?? created,
+    htmlUrl: asString(field(raw, "html_url")),
+  };
+}
+
+function toReview(raw: unknown): RemoteReview {
+  // GitHub states the anchor outright; `original_line` is where it was made
+  // when the line has since moved, and the hunk is the last resort.
+  const stated =
+    asNumber(field(raw, "line")) || asNumber(field(raw, "original_line"));
+  const side =
+    asString(field(raw, "side")).toUpperCase() === "LEFT"
+      ? ("old" as const)
+      : ("new" as const);
+  const fromHunk = anchorFromHunk(asString(field(raw, "diff_hunk")));
+  return {
+    remoteId: asId(field(raw, "id")),
+    author: asString(dig(raw, "user", "login")),
+    body: asString(field(raw, "body")),
+    path: asString(field(raw, "path")),
+    line: stated > 0 ? stated : fromHunk.line,
+    side: stated > 0 ? side : fromHunk.side,
+    createdAt: asTime(field(raw, "created_at")) ?? new Date().toISOString(),
+    htmlUrl: asString(field(raw, "html_url")),
+  };
+}

@@ -24,6 +24,22 @@ import { getUserById, type User } from "./users.ts";
 
 const log = createLog("repos");
 
+/**
+ * Where a mirrored repo came from. Present only while the origin is still
+ * connected: disconnecting sets `repo.origin_id` to NULL, and the repo goes
+ * on being readable as an ordinary local one that simply stopped syncing.
+ */
+export interface RepoOrigin {
+  readonly originId: string;
+  readonly kind: "github" | "forgejo" | "gitea";
+  /** `owner/name` on the origin. */
+  readonly fullName: string;
+  readonly htmlUrl: string;
+  readonly lastFetchAt: string | null;
+  /** The last fetch's failure, or empty when healthy. */
+  readonly fetchError: string;
+}
+
 export interface Repo {
   readonly id: string;
   readonly ownerId: string;
@@ -35,6 +51,8 @@ export interface Repo {
   readonly protectDefault: boolean;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
+  /** The origin this mirrors, or null for a native repo. */
+  readonly origin: RepoOrigin | null;
 }
 
 interface RepoRow {
@@ -47,11 +65,20 @@ interface RepoRow {
   default_branch: string;
   protect_default: number;
   fork_parent_id: string | null;
+  origin_id: string | null;
+  origin_kind: "github" | "forgejo" | "gitea" | null;
+  origin_full_name: string | null;
+  origin_html_url: string | null;
+  last_fetch_at: string | null;
+  fetch_error: string;
 }
 
+// LEFT JOIN, because the origin may have been disconnected out from under a
+// mirror — the repo survives, the link does not.
 const SELECT = `
-  SELECT repo.*, user.username AS owner_name
-  FROM repo JOIN user ON user.id = repo.owner_id`;
+  SELECT repo.*, user.username AS owner_name, origin.kind AS origin_kind
+  FROM repo JOIN user ON user.id = repo.owner_id
+  LEFT JOIN origin ON origin.id = repo.origin_id`;
 
 function toRepo(row: RepoRow): Repo {
   return {
@@ -64,6 +91,17 @@ function toRepo(row: RepoRow): Repo {
     defaultBranch: row.default_branch,
     protectDefault: row.protect_default === 1,
     forkParentId: row.fork_parent_id,
+    origin:
+      row.origin_id !== null && row.origin_kind !== null
+        ? {
+            originId: row.origin_id,
+            kind: row.origin_kind,
+            fullName: row.origin_full_name ?? "",
+            htmlUrl: row.origin_html_url ?? "",
+            lastFetchAt: row.last_fetch_at,
+            fetchError: row.fetch_error,
+          }
+        : null,
   };
 }
 

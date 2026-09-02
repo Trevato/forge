@@ -85,6 +85,11 @@ src/
               scope floors, pagination), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
   design/     shared design tokens: themes (palettes both surfaces render)
+  origins/    other forges as one Provider interface: discover (version-endpoint
+              probe), providers/{github,forgejo} (+ http: paging, ETags, rate
+              limits), oauth (device grant + PKCE code flow), credential (lazy
+              token, serialised refresh), credentials (git auth env, redaction),
+              git-mirror (refspecs, leases), import, sync, mirror, push-through
   web/        SSR. html (the tag), icons (Lucide SVG), ui (the component
               vocabulary — docs/DESIGN.md is its contract), chrome (repo
               header, settings shell, the one 404), flash, layout (CSP+nonce,
@@ -143,6 +148,11 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   `assertBatchSafe`.
 - **New event type:** add it where you append it; make sure a reconcile sweep or
   consumer can tolerate a missed or duplicated delivery (outbox semantics).
+- **Touching a mirrored repo:** the origin is truth (`docs/ORIGINS.md`). A
+  local-only write on a mirror is a bug, so the sync actions refuse one
+  (`"mirrored"`) and the `…Through` twins write to the origin first. Never
+  put a credential in argv or a URL — `origins/credentials.ts` is the only
+  way one reaches git.
 
 ## Not yet built (deliberately)
 

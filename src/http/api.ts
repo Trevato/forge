@@ -9,10 +9,10 @@
  */
 
 import {
-  addComment,
-  openIssue,
-  setIssueLabels,
-  setIssueState,
+  addCommentThrough,
+  openIssueThrough,
+  setIssueLabelsThrough,
+  setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
   addTeamMember,
@@ -21,6 +21,23 @@ import {
   deleteTeam,
   removeTeamMember,
 } from "../actions/orgs.ts";
+import {
+  connectOrigin,
+  deleteOriginApp,
+  disconnectOrigin,
+  listOriginApps,
+  listPinned,
+  listRemoteRepos,
+  listUserOrigins,
+  mirrorRepo,
+  pinRepo,
+  pollOAuthConnect,
+  registerOriginApp,
+  startOAuthConnect,
+  syncOriginNow,
+  syncRepoNow,
+  unpinRepo,
+} from "../actions/origins.ts";
 import { addReview, mergePull, openPull } from "../actions/pulls.ts";
 import {
   commitToBranch,
@@ -77,15 +94,18 @@ import { listReviewComments, withOutdated } from "../core/reviews.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
 import { getUserByName, verifyPassword, type User } from "../core/users.ts";
+import { isPinned } from "../core/pins.ts";
 import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import type { Origin } from "../origins/types.ts";
 import { sessionCookie } from "../web/pages/site.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
+  apiError,
   body,
   forbidden,
   json,
@@ -117,6 +137,70 @@ function publicKey(key: UserKey) {
 
 function withLabels(ctx: Ctx, issue: Issue) {
   return { ...issue, labels: labelsFor(ctx.app.db, issue.id) };
+}
+
+/**
+ * A repo, plus the two viewer-relative facts a client needs: where it is
+ * mirrored from, and whether this viewer wants it on their machine.
+ */
+function repoJson(ctx: Ctx, repo: Repo) {
+  return {
+    ...repo,
+    pinned:
+      ctx.auth.user !== undefined &&
+      isPinned(ctx.app.db, ctx.auth.user.id, repo.id),
+  };
+}
+
+/** An origin as the API returns it: everything except the credential. */
+function originJson(origin: Origin) {
+  return {
+    id: origin.id,
+    kind: origin.kind,
+    apiUrl: origin.apiUrl,
+    webUrl: origin.webUrl,
+    login: origin.login,
+    authKind: origin.authKind,
+    createdAt: origin.createdAt,
+    lastSyncAt: origin.lastSyncAt,
+    lastError: origin.lastError,
+    needsReauth: origin.needsReauth,
+    expiresAt: origin.expiresAt,
+  };
+}
+
+/**
+ * An action error from a path that may have crossed an origin. The three
+ * origin outcomes get codes of their own so a client can tell "the forge
+ * said no" from "the origin said no" — and the status says which side is
+ * worth retrying against.
+ */
+function originAware(error: string, status = 422): Response {
+  if (error === "mirrored")
+    return apiError(
+      "mirrored",
+      409,
+      "this repository mirrors an origin; do this there and the next sync will reflect it",
+    );
+  if (error === "origin_owner_only")
+    return apiError(
+      "origin_owner_only",
+      403,
+      "only the person who connected this origin can write through it",
+    );
+  if (error === "origin_unreachable")
+    return apiError(
+      "origin_unreachable",
+      502,
+      "the origin could not be reached; nothing was changed",
+    );
+  if (error === "origin_refused")
+    return apiError(
+      "origin_refused",
+      409,
+      "the origin refused this change; nothing was changed here either",
+    );
+  return respondAccess(error, status);
 }
 
 // ---- query parsing ----
@@ -528,7 +612,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
     const repo = loadRepo(ctx);
-    return repo ? json(repo) : notFound();
+    return repo ? json(repoJson(ctx, repo)) : notFound();
   });
 
   router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {
@@ -552,7 +636,7 @@ export function apiRoutes(router: Router<Handler>): void {
         : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
-    return json(updated.value);
+    return json(repoJson(ctx, updated.value));
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name", async (ctx) => {
@@ -784,14 +868,14 @@ export function apiRoutes(router: Router<Handler>): void {
     const labels = Array.isArray(input.labels)
       ? input.labels.filter((l): l is string => typeof l === "string")
       : [];
-    const set = setIssueLabels(
+    const set = await setIssueLabelsThrough(
       ctx.app,
       ctx.auth.user,
       found.repo,
       found.issue,
       labels,
     );
-    if (!set.ok) return respondAccess(set.error, 422);
+    if (!set.ok) return originAware(set.error);
     return json(set.value);
   };
   router.add(
@@ -824,11 +908,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const input = await body(ctx.request);
-    const created = openIssue(ctx.app, ctx.auth.user, repo, {
+    const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, {
       title: str(input.title),
       body: str(input.body),
     });
-    if (!created.ok) return respondAccess(created.error, 422);
+    if (!created.ok) return originAware(created.error);
     return json(withLabels(ctx, created.value), 201);
   });
 
@@ -853,14 +937,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = str(input.state);
       if (wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const changed = setIssueState(
+      const changed = await setIssueStateThrough(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.issue,
         wanted,
       );
-      if (!changed.ok) return respondAccess(changed.error, 409);
+      if (!changed.ok) return originAware(changed.error, 409);
       return json(withLabels(ctx, changed.value));
     },
   );
@@ -874,14 +958,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const added = addComment(
+      const added = await addCommentThrough(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.issue,
         str(input.body),
       );
-      if (!added.ok) return respondAccess(added.error, 422);
+      if (!added.ok) return originAware(added.error);
       return json(added.value, 201);
     },
   );
@@ -947,14 +1031,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = str(input.state);
       if (wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const changed = setIssueState(
+      const changed = await setIssueStateThrough(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
         wanted,
       );
-      if (!changed.ok) return respondAccess(changed.error, 409);
+      if (!changed.ok) return originAware(changed.error, 409);
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
       );
@@ -981,7 +1065,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (!merged.ok) {
         if (typeof merged.error !== "string")
           return json({ error: merged.error.kind }, 409);
-        return respondAccess(merged.error, 409);
+        return originAware(merged.error, 409);
       }
       return json({ merged: true, ...merged.value });
     },
@@ -996,14 +1080,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const added = addComment(
+      const added = await addCommentThrough(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
         str(input.body),
       );
-      if (!added.ok) return respondAccess(added.error, 422);
+      if (!added.ok) return originAware(added.error);
       return json(added.value, 201);
     },
   );
@@ -1088,4 +1172,214 @@ export function apiRoutes(router: Router<Handler>): void {
     const removed = deleteWebhook(ctx.app, ctx.auth.user, repo, ctx.params.id!);
     return json({}, removed.ok ? 200 : 404);
   });
+
+  // ── origins ──────────────────────────────────────────────────────────
+  //
+  // An origin holds a credential for another forge, so every route here is
+  // gated on the *account* — a same-origin session, the password, or an
+  // explicit `admin` token. A leaked `rw` token must never be able to
+  // enumerate, connect, or spend somebody's GitHub access.
+
+  /** The callback URL this forge tells an OAuth app to come back to. */
+  const callbackUri = (ctx: Ctx): string =>
+    `${ctx.url.origin}/settings/origins/callback`;
+
+  router.add("GET", "/api/v1/user/origins", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    return json(listUserOrigins(ctx.app, ctx.auth.user!).map(originJson));
+  });
+
+  router.add("POST", "/api/v1/user/origins", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const kind = str(input.kind);
+    const connected = await connectOrigin(ctx.app, ctx.auth.user, {
+      host: str(input.host) || kind,
+      ...(kind === "github" || kind === "forgejo" || kind === "gitea"
+        ? { kind }
+        : {}),
+      token: str(input.token),
+    });
+    if (!connected.ok)
+      return apiError(
+        connected.error,
+        connected.error === "rate_limited" ? 429 : 422,
+        connectMessage(connected.error),
+      );
+    return json(originJson(connected.value), 201);
+  });
+
+  // OAuth: one start route for both flows, because which flow you get is a
+  // property of the forge (device on GitHub, code+PKCE on Forgejo) and not
+  // something a client should have to know.
+  router.add("POST", "/api/v1/user/origins/oauth", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const kind = str(input.kind);
+    const started = await startOAuthConnect(ctx.app, ctx.auth.user, {
+      host: str(input.host) || kind,
+      ...(kind === "github" || kind === "forgejo" || kind === "gitea"
+        ? { kind }
+        : {}),
+      redirectUri: callbackUri(ctx),
+    });
+    if (!started.ok)
+      return apiError(
+        started.error.error,
+        started.error.error === "rate_limited" ? 429 : 422,
+        started.error.message,
+      );
+    return json(started.value, 201);
+  });
+
+  router.add("GET", "/api/v1/user/origins/oauth/:id", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const status = await pollOAuthConnect(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.id!,
+    );
+    if (!status.ok) return respondAccess(status.error, 404);
+    return json(status.value);
+  });
+
+  // Registered OAuth applications. Every Forgejo instance needs its own, so
+  // this is a per-user, per-host registration; GitHub can fall back to one
+  // the operator configured for the whole forge.
+  router.add("GET", "/api/v1/user/origin-apps", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    return json(listOriginApps(ctx.app, ctx.auth.user!));
+  });
+
+  router.add("POST", "/api/v1/user/origin-apps", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const kind = str(input.kind);
+    const saved = await registerOriginApp(ctx.app, ctx.auth.user, {
+      host: str(input.host) || kind,
+      ...(kind === "github" || kind === "forgejo" || kind === "gitea"
+        ? { kind }
+        : {}),
+      clientId: str(input.clientId),
+      ...(typeof input.clientSecret === "string"
+        ? { clientSecret: input.clientSecret }
+        : {}),
+    });
+    if (!saved.ok) return apiError(saved.error, 422, connectMessage(saved.error));
+    return json(saved.value, 201);
+  });
+
+  router.add("DELETE", "/api/v1/user/origin-apps/:id", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const removed = deleteOriginApp(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!removed.ok) return respondAccess(removed.error, 404);
+    return new Response(null, { status: 204 });
+  });
+
+  router.add("DELETE", "/api/v1/user/origins/:id", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const gone = await disconnectOrigin(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!gone.ok) return respondAccess(gone.error, 404);
+    return json(gone.value);
+  });
+
+  router.add("POST", "/api/v1/user/origins/:id/sync", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const synced = await syncOriginNow(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!synced.ok) return respondAccess(synced.error, 404);
+    return json(synced.value);
+  });
+
+  router.add("GET", "/api/v1/user/origins/:id/repos", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const listed = await listRemoteRepos(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.id!,
+      ctx.url.searchParams.get("refresh") === "1",
+    );
+    if (!listed.ok)
+      return listed.error === "unreachable"
+        ? apiError("origin_unreachable", 502, "the origin could not be reached")
+        : respondAccess(listed.error, 404);
+    return json(listed.value);
+  });
+
+  router.add("POST", "/api/v1/user/origins/:id/mirror", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const mirrored = await mirrorRepo(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.id!,
+      str(input.fullName),
+      str(input.name) || undefined,
+    );
+    if (!mirrored.ok)
+      return mirrored.error === "unreachable"
+        ? apiError("origin_unreachable", 502, "the origin could not be reached")
+        : respondAccess(mirrored.error, 422);
+    return json(repoJson(ctx, mirrored.value), 201);
+  });
+
+  // Sync one mirror. This only pulls, so an ordinary repo writer may ask —
+  // it borrows nobody's identity and grants nobody anything.
+  router.add("POST", "/api/v1/repos/:owner/:name/sync", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
+    if (!synced.ok) return respondAccess(synced.error, 404);
+    return json(synced.value);
+  });
+
+  // ── pins ─────────────────────────────────────────────────────────────
+
+  router.add("GET", "/api/v1/user/pins", (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    return json(listPinned(ctx.app, ctx.auth.user));
+  });
+
+  router.add("PUT", "/api/v1/user/pins/:owner/:name", (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const pinned = pinRepo(ctx.app, ctx.auth.user, repo);
+    if (!pinned.ok) return respondAccess(pinned.error, 404);
+    return json({ pinned: true });
+  });
+
+  router.add("DELETE", "/api/v1/user/pins/:owner/:name", (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const removed = unpinRepo(ctx.app, ctx.auth.user, repo);
+    if (!removed.ok) return respondAccess(removed.error, 404);
+    return new Response(null, { status: 204 });
+  });
+}
+
+function connectMessage(code: string): string {
+  if (code === "unknown_host") return "that does not look like a forge host";
+  if (code === "unreachable") return "that host could not be reached";
+  if (code === "bad_token") return "the origin rejected that token";
+  if (code === "already_connected")
+    return "that account is already connected here";
+  if (code === "rate_limited")
+    return "too many connect attempts; wait a minute";
+  return "that origin could not be connected";
 }

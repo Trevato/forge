@@ -5,6 +5,20 @@
 
 export type LogFields = Record<string, string | number | boolean | undefined>;
 
+/**
+ * Shapes that are credentials wherever they appear. A log line is the most
+ * common way a secret escapes a program — it survives rotation, ships to a
+ * collector, and nobody reads it until it is too late. Cheap insurance, and
+ * a test asserts a full connect-and-refresh cycle logs nothing matching it.
+ */
+const SECRETS =
+  /(gh[pousr]_[A-Za-z0-9]{16,}|gto_[A-Za-z0-9_-]{16,}|forge_[A-Za-z0-9_-]{20,}|(?:access_token|refresh_token|client_secret|code_verifier|device_code|private_token)["'\s:=]+[A-Za-z0-9._~+/-]{8,}|(?:Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{16,})/gi;
+
+/** Replace anything credential-shaped with a marker. Exported for tests. */
+export function redactSecrets(text: string): string {
+  return text.replace(SECRETS, "[redacted]");
+}
+
 export interface Log {
   debug(message: string, fields?: LogFields): void;
   info(message: string, fields?: LogFields): void;
@@ -39,6 +53,7 @@ export function createLog(scope: string): Log {
         line += ` ${key}=${/[\s"=]/.test(text) ? JSON.stringify(text) : text}`;
       }
     }
+    line = redactSecrets(line);
     console[level === "debug" ? "log" : level](line);
   };
   return {

@@ -101,6 +101,8 @@ import {
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
+import { completeOAuthCallback } from "../actions/origins.ts";
+import { pushThrough } from "../origins/push-through.ts";
 import { apiRoutes } from "./api.ts";
 import { cookieValue, type Auth, type Ctx, type Handler } from "./context.ts";
 import { json, noRoute, notFound } from "./respond.ts";
@@ -218,6 +220,25 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  // Where an OAuth authorization comes back to. Deliberately a plain route
+  // and not an API one: it is a browser redirect, possibly from a phone, and
+  // the only thing it carries is a `state` this forge issued minutes ago.
+  router.add("GET", "/settings/origins/callback", async (ctx) => {
+    const done = await completeOAuthCallback(ctx.app, ctx.auth.user, {
+      state: ctx.url.searchParams.get("state") ?? "",
+      code: ctx.url.searchParams.get("code") ?? "",
+    });
+    const query = !done.ok
+      ? "error=state"
+      : done.value.status === "done"
+        ? "connected=1"
+        : `error=${encodeURIComponent(done.value.detail.slice(0, 120))}`;
+    return new Response(null, {
+      status: 303,
+      headers: { location: `/settings/origins?${query}` },
+    });
+  });
+
   router.add("GET", "/settings/keys", keysPage);
   router.add("POST", "/settings/keys", keyCreate);
   router.add("POST", "/settings/keys/:id/delete", keyDelete);
@@ -416,6 +437,15 @@ async function handleHook(app: App, request: Request): Promise<Response> {
           }
         }
       }
+    }
+    // Everything the forge itself would refuse has passed. If this repo
+    // mirrors an origin, the origin gets the last word: it is truth for a
+    // mirror, so a push it refuses must not land here either. This runs
+    // while the objects are still in the push's quarantine — see
+    // origins/push-through.ts for why that both works and matters.
+    const forwarded = await pushThrough(app, repo, input.updates, input.gitEnv);
+    if (!forwarded.ok) {
+      return new Response(forwarded.error.message, { status: 403 });
     }
     return new Response("");
   }

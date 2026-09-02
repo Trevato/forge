@@ -1,0 +1,613 @@
+/**
+ * Forgejo and Gitea. One adapter: their `Issue`, `PullRequest`, `Label`,
+ * `Comment` and `Repository` shapes match field for field, and the places
+ * they diverge (the version string, a `/api/forgejo/v1` endpoint, webhook
+ * header names) are all in discovery, not in the data. `kind` carries which
+ * one we are talking to so the surfaces can say so.
+ *
+ * Three facts here cost real design, and each is the opposite of GitHub's:
+ *
+ * - **`limit` is clamped, silently.** `max_response_items` is per instance
+ *   (40 upstream, 50 on Codeberg) and asking for more just gets you fewer
+ *   rows with no error — so a short page is NOT the end of a list. We read
+ *   the instance's own `/settings/api` and terminate on `Link` instead.
+ * - **`/pulls` has no `since`.** The only incremental path for pull requests
+ *   is `/issues?type=pulls&since=`, hydrating each hit from `/pulls/{index}`
+ *   for its branches and tips.
+ * - **Labels are addressed by numeric id on write**, and `CreateIssueOption`
+ *   accepts ids only. Rather than keep a name→id map in step with the
+ *   origin, we create the issue and then `PUT` the labels by name — one more
+ *   request, and no cache that can go stale under us.
+ */
+
+import { basicHeader, gitAuthEnv } from "../credentials.ts";
+import type {
+  ListIssuesQuery,
+  OriginKind,
+  Page,
+  Provider,
+  ProviderCredential,
+  ProviderResult,
+  RemoteComment,
+  RemoteIdentity,
+  RemoteIssue,
+  RemoteLabel,
+  RemoteRepo,
+  RemoteReview,
+} from "../types.ts";
+import {
+  ApiClient,
+  anchorFromHunk,
+  asArray,
+  asBool,
+  asColor,
+  asId,
+  asNumber,
+  asState,
+  asString,
+  asTime,
+  dig,
+  fail,
+  field,
+  labelNames,
+  linkNext,
+  seg,
+  splitFullName,
+  succeed,
+} from "./http.ts";
+
+/** What we ask for before the instance tells us its own ceiling. */
+const DEFAULT_LIMIT = 50;
+const MAX_INTERNAL_PAGES = 10;
+/** Reviews to walk when importing a pull's inline comments. */
+const MAX_REVIEWS = 20;
+
+export class ForgejoProvider implements Provider {
+  readonly kind: OriginKind;
+  readonly apiUrl: string;
+  readonly webUrl: string;
+  private readonly api: ApiClient;
+  /** The instance's `max_response_items`, learned once. */
+  private limit: number | undefined;
+  /** Our own numeric id, needed for the repo search that sees org repos. */
+  private uid: string | undefined;
+
+  constructor(private readonly credential: ProviderCredential) {
+    this.kind = credential.kind === "gitea" ? "gitea" : "forgejo";
+    this.apiUrl = credential.apiUrl;
+    this.webUrl = credential.webUrl;
+    this.api = new ApiClient(credential, (token) => ({
+      // The OpenAPI document is explicit: "API tokens must be prepended with
+      // 'token' followed by a space." Bearer works on new builds and is what
+      // an OAuth access token wants; `token` is what a PAT wants everywhere.
+      authorization:
+        credential.authKind === "oauth" ? `Bearer ${token}` : `token ${token}`,
+    }));
+  }
+
+  /**
+   * The page size this instance will actually honour. Asking for more is not
+   * an error here, it is a silent truncation — the one pagination bug that
+   * looks like a correct empty result.
+   */
+  private async pageSize(): Promise<number> {
+    if (this.limit !== undefined) return this.limit;
+    const result = await this.api.call({ path: "/settings/api" });
+    const reported = result.ok
+      ? asNumber(field(result.value.data, "max_response_items"))
+      : 0;
+    this.limit =
+      reported > 0 ? Math.min(reported, DEFAULT_LIMIT) : DEFAULT_LIMIT;
+    return this.limit;
+  }
+
+  async whoami(): Promise<ProviderResult<RemoteIdentity>> {
+    const result = await this.api.call({ path: "/user" });
+    if (!result.ok) return result;
+    const login = asString(field(result.value.data, "login"));
+    if (login === "")
+      return fail("invalid_response", "the origin named no account");
+    this.uid = asId(field(result.value.data, "id")) || undefined;
+    return succeed({
+      login,
+      displayName: asString(field(result.value.data, "full_name")) || login,
+      htmlUrl:
+        asString(field(result.value.data, "html_url")) ||
+        `${this.webUrl}/${login}`,
+    });
+  }
+
+  /**
+   * `/user/repos` takes no filters at all here — only page and limit — so it
+   * shows what you own and nothing you merely collaborate on. `/repos/search`
+   * with our own uid is the endpoint that sees org and collaborator repos,
+   * and it wraps its rows in `{ok, data}`. We prefer it and fall back.
+   */
+  async listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>> {
+    const page = pageOf(cursor);
+    const limit = await this.pageSize();
+    if (this.uid === undefined) await this.whoami();
+
+    if (this.uid !== undefined) {
+      const search = await this.api.call({
+        path: "/repos/search",
+        query: { uid: this.uid, limit, page, order_by: "recentupdate" },
+        conditional: page === 1,
+      });
+      if (search.ok) {
+        const rows = asArray(field(search.value.data, "data"));
+        return succeed({
+          items: rows.map(toRepo),
+          next: nextPage(search.value.headers, rows.length, limit, page),
+        });
+      }
+      if (search.error.error === "rate_limited") return search;
+    }
+
+    const result = await this.api.call({
+      path: "/user/repos",
+      query: { limit, page },
+      conditional: page === 1,
+    });
+    if (!result.ok) return result;
+    const rows = asArray(result.value.data);
+    return succeed({
+      items: rows.map(toRepo),
+      next: nextPage(result.value.headers, rows.length, limit, page),
+    });
+  }
+
+  async getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}`,
+    });
+    if (!result.ok) return result;
+    return succeed(toRepo(result.value.data));
+  }
+
+  async listLabels(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteLabel[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const limit = await this.pageSize();
+    const labels: RemoteLabel[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/labels`,
+        query: { limit, page },
+      });
+      if (!result.ok) return result;
+      const rows = asArray(result.value.data);
+      for (const raw of rows) {
+        labels.push({
+          remoteId: asId(field(raw, "id")),
+          name: asString(field(raw, "name")),
+          color: asColor(field(raw, "color")),
+        });
+      }
+      if (nextPage(result.value.headers, rows.length, limit, page) === null)
+        break;
+    }
+    return succeed(labels.filter((l) => l.name !== ""));
+  }
+
+  async listIssues(
+    fullName: string,
+    query: ListIssuesQuery,
+  ): Promise<ProviderResult<Page<RemoteIssue>>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const page = pageOf(query.cursor);
+    const limit = await this.pageSize();
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues`,
+      query: {
+        type: query.kind === "pull" ? "pulls" : "issues",
+        state: query.state,
+        limit,
+        page,
+        sort: "recentupdate",
+        ...(query.since === undefined ? {} : { since: query.since }),
+      },
+    });
+    if (!result.ok) return result;
+
+    const rows = asArray(result.value.data);
+    const items: RemoteIssue[] = [];
+    for (const raw of rows) {
+      // `/pulls` can hand back null entries when a row fails to load; the
+      // issue list can too. A gap is skipped, never dereferenced.
+      if (raw === null || typeof raw !== "object") continue;
+      if (query.kind !== "pull") {
+        items.push(toIssue(raw));
+        continue;
+      }
+      const number = asNumber(field(raw, "number"));
+      const hydrated = await this.getPull(named.owner, named.name, number, raw);
+      if (hydrated.ok) items.push(hydrated.value);
+      else if (hydrated.error.error === "rate_limited") return hydrated;
+    }
+    return succeed({
+      items,
+      next: nextPage(result.value.headers, rows.length, limit, page),
+    });
+  }
+
+  async getIssue(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}`,
+    });
+    if (!result.ok) return result;
+    if (field(result.value.data, "pull_request") !== undefined) {
+      return this.getPull(named.owner, named.name, number, result.value.data);
+    }
+    return succeed(toIssue(result.value.data));
+  }
+
+  /**
+   * The issue payload already carries merge state inline (a real advantage
+   * over GitHub), but not the branches or their tips, so a pull still costs
+   * one hydration call. `issueRaw` supplies the labels and body the pull
+   * endpoint reports identically, and the merge state if hydration fails.
+   */
+  private async getPull(
+    owner: string,
+    name: string,
+    number: number,
+    issueRaw?: unknown,
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const result = await this.api.call({
+      path: `/repos/${seg(owner)}/${seg(name)}/pulls/${number}`,
+    });
+    if (!result.ok) {
+      if (issueRaw === undefined) return result;
+      if (result.error.error === "rate_limited") return result;
+      // Better a pull with no branches than no pull at all: the conversation
+      // is real either way, and the next sync can fill in the rest.
+      return succeed(toPullFromIssue(issueRaw));
+    }
+    return succeed(toPull(result.value.data));
+  }
+
+  async listComments(
+    fullName: string,
+    number: number,
+    since?: string,
+  ): Promise<ProviderResult<readonly RemoteComment[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}/comments`,
+      query: since === undefined ? {} : { since },
+    });
+    if (!result.ok) return result;
+    return succeed(asArray(result.value.data).map(toComment));
+  }
+
+  /**
+   * There is no standalone inline-comment endpoint here: comments hang off
+   * reviews, so the walk is reviews-then-their-comments. This is the least
+   * portable operation in the adapter, and the reason forge's own model
+   * stores loose anchored comments rather than review objects.
+   */
+  async listReviews(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<readonly RemoteReview[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const base = `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}`;
+    const list = await this.api.call({ path: `${base}/reviews` });
+    if (!list.ok) return list;
+
+    const reviews: RemoteReview[] = [];
+    for (const review of asArray(list.value.data).slice(0, MAX_REVIEWS)) {
+      const reviewId = asId(field(review, "id"));
+      if (reviewId === "") continue;
+      const author = asString(dig(review, "user", "login"));
+      const comments = await this.api.call({
+        path: `${base}/reviews/${seg(reviewId)}/comments`,
+      });
+      if (!comments.ok) {
+        if (comments.error.error === "rate_limited") return comments;
+        continue;
+      }
+      for (const raw of asArray(comments.value.data)) {
+        reviews.push(toReview(raw, author));
+      }
+    }
+    return succeed(reviews);
+  }
+
+  async createIssue(
+    fullName: string,
+    input: { title: string; body: string; labels?: readonly string[] },
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues`,
+      method: "POST",
+      body: { title: input.title, body: input.body },
+    });
+    if (!result.ok) return result;
+    const created = toIssue(result.value.data);
+    if (input.labels === undefined || input.labels.length === 0)
+      return succeed(created);
+    // Creation takes label ids only; setting them by name afterwards needs no
+    // id map, and therefore has no cache to go stale.
+    const labelled = await this.setLabels(
+      fullName,
+      created.number,
+      input.labels,
+    );
+    if (!labelled.ok) return succeed(created);
+    return succeed({ ...created, labels: labelled.value.map((l) => l.name) });
+  }
+
+  async createComment(
+    fullName: string,
+    number: number,
+    body: string,
+  ): Promise<ProviderResult<RemoteComment>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}/comments`,
+      method: "POST",
+      body: { body },
+    });
+    if (!result.ok) return result;
+    return succeed(toComment(result.value.data));
+  }
+
+  async setState(
+    fullName: string,
+    number: number,
+    state: "open" | "closed",
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    // This answers 201, not 200, on a successful edit — any 2xx is a success.
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}`,
+      method: "PATCH",
+      body: { state },
+    });
+    if (!result.ok) return result;
+    if (field(result.value.data, "pull_request") !== undefined)
+      return this.getPull(named.owner, named.name, number, result.value.data);
+    return succeed(toIssue(result.value.data));
+  }
+
+  async setLabels(
+    fullName: string,
+    number: number,
+    labels: readonly string[],
+  ): Promise<ProviderResult<readonly RemoteLabel[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    // PUT replaces, POST adds. "Set the labels to exactly this" is always PUT.
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/issues/${number}/labels`,
+      method: "PUT",
+      body: { labels: [...labels] },
+    });
+    if (!result.ok) return result;
+    return succeed(
+      asArray(result.value.data).map((raw) => ({
+        remoteId: asId(field(raw, "id")),
+        name: asString(field(raw, "name")),
+        color: asColor(field(raw, "color")),
+      })),
+    );
+  }
+
+  async createPull(
+    fullName: string,
+    input: { title: string; body: string; base: string; head: string },
+  ): Promise<ProviderResult<RemoteIssue>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    // `head` is an undocumented plain string here. `branch` is certain;
+    // whether `owner:branch` works for a cross-repo pull is unverified, which
+    // is why the fork-and-contribute flow is not offered yet (docs/ORIGINS.md).
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls`,
+      method: "POST",
+      body: {
+        title: input.title,
+        body: input.body,
+        base: input.base,
+        head: input.head,
+      },
+    });
+    if (!result.ok) return result;
+    return succeed(toPull(result.value.data));
+  }
+
+  async forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/forks`,
+      method: "POST",
+      body: {},
+    });
+    if (!result.ok) return result;
+    return succeed(toRepo(result.value.data));
+  }
+
+  /**
+   * Git over HTTPS takes the token as a Basic password, with the username
+   * ignored — so a personal access token pairs with the login it belongs to,
+   * and an OAuth access token pairs with the conventional `oauth2` user.
+   * (Recent builds accept a bearer token here too; Basic works on every
+   * version, and a 2FA account cannot use a real password at all.)
+   */
+  async gitAuthEnv(remoteUrl: string): Promise<Record<string, string>> {
+    const token = await this.credential.token();
+    if (!token.ok) return {};
+    const user =
+      this.credential.authKind === "oauth"
+        ? "oauth2"
+        : (this.credential.login ?? "forge");
+    return gitAuthEnv(remoteUrl, basicHeader(user, token.value));
+  }
+}
+
+// ---- pagination ----
+
+const pageOf = (cursor: string | undefined): number => {
+  const n = Number(cursor);
+  return Number.isInteger(n) && n > 0 ? n : 1;
+};
+
+/**
+ * `Link: rel="next"` is authoritative and both forges emit it. The size
+ * comparison is only the fallback for an instance that does not — and it is
+ * deliberately conservative, because a page shorter than `limit` here means
+ * "the server clamped you", not "the list ended".
+ */
+function nextPage(
+  headers: Headers,
+  received: number,
+  limit: number,
+  page: number,
+): string | null {
+  if (linkNext(headers)) return String(page + 1);
+  if (received > 0 && received >= limit) return String(page + 1);
+  return null;
+}
+
+// ---- mapping ----
+
+function toRepo(raw: unknown): RemoteRepo {
+  const fullName = asString(field(raw, "full_name"));
+  const named = splitFullName(fullName);
+  return {
+    remoteId: asId(field(raw, "id")),
+    fullName,
+    owner: named?.owner ?? asString(dig(raw, "owner", "login")),
+    name: named?.name ?? asString(field(raw, "name")),
+    description: asString(field(raw, "description")),
+    // `internal` has no GitHub analogue and no local one; it is not public,
+    // so it becomes private. Never silently widen a visibility on import.
+    private: asBool(field(raw, "private")) || asBool(field(raw, "internal")),
+    fork: asBool(field(raw, "fork")),
+    defaultBranch: asString(field(raw, "default_branch")) || "main",
+    cloneUrl: asString(field(raw, "clone_url")),
+    sshUrl: asString(field(raw, "ssh_url")),
+    htmlUrl: asString(field(raw, "html_url")),
+    // No `pushed_at` here — `updated_at` is the only change signal offered.
+    pushedAt: asTime(field(raw, "updated_at")),
+    permissions: {
+      push: asBool(dig(raw, "permissions", "push")),
+      admin: asBool(dig(raw, "permissions", "admin")),
+    },
+  };
+}
+
+/** The author, preferring the real account and falling back to provenance:
+ * content migrated into this forge carries the login it came from. */
+function authorOf(raw: unknown): string {
+  return (
+    asString(dig(raw, "user", "login")) ||
+    asString(field(raw, "original_author"))
+  );
+}
+
+function toIssue(raw: unknown): RemoteIssue {
+  const created = asTime(field(raw, "created_at")) ?? new Date().toISOString();
+  return {
+    remoteId: asId(field(raw, "id")),
+    number: asNumber(field(raw, "number")),
+    title: asString(field(raw, "title")),
+    body: asString(field(raw, "body")),
+    author: authorOf(raw),
+    state: asState(field(raw, "state")),
+    labels: labelNames(field(raw, "labels")),
+    createdAt: created,
+    updatedAt: asTime(field(raw, "updated_at")) ?? created,
+    closedAt: asTime(field(raw, "closed_at")),
+    htmlUrl: asString(field(raw, "html_url")),
+    comments: asNumber(field(raw, "comments")),
+  };
+}
+
+function toPull(raw: unknown): RemoteIssue {
+  const headRepo =
+    asString(dig(raw, "head", "repo", "full_name")) ||
+    asString(dig(raw, "base", "repo", "full_name"));
+  return {
+    ...toIssue(raw),
+    pull: {
+      baseBranch: asString(dig(raw, "base", "ref")),
+      headBranch: asString(dig(raw, "head", "ref")),
+      headRepo,
+      baseOid: asString(dig(raw, "base", "sha")),
+      headOid: asString(dig(raw, "head", "sha")),
+      // Never infer a merge from `state: closed` — closed-unmerged and
+      // closed-merged are different outcomes.
+      mergedAt: asTime(field(raw, "merged_at")),
+      draft: asBool(field(raw, "draft")),
+    },
+  };
+}
+
+/** A pull described only by its issue row: merge state is inline here. */
+function toPullFromIssue(raw: unknown): RemoteIssue {
+  const inline = field(raw, "pull_request");
+  return {
+    ...toIssue(raw),
+    pull: {
+      baseBranch: "",
+      headBranch: "",
+      headRepo: "",
+      baseOid: "",
+      headOid: "",
+      mergedAt: asTime(field(inline, "merged_at")),
+      draft: asBool(field(inline, "draft")),
+    },
+  };
+}
+
+function toComment(raw: unknown): RemoteComment {
+  const created = asTime(field(raw, "created_at")) ?? new Date().toISOString();
+  return {
+    remoteId: asId(field(raw, "id")),
+    author: authorOf(raw),
+    body: asString(field(raw, "body")),
+    createdAt: created,
+    updatedAt: asTime(field(raw, "updated_at")) ?? created,
+    htmlUrl: asString(field(raw, "html_url")),
+  };
+}
+
+/**
+ * Anchoring, from the only signal on offer. There is no `line` or `side`
+ * here — just `position` (an offset into the diff hunk) and the hunk itself,
+ * which is truncated at the commented row. So the last row of the hunk IS
+ * the anchor, and reading it back out is exact.
+ */
+function toReview(raw: unknown, reviewAuthor: string): RemoteReview {
+  const anchor = anchorFromHunk(asString(field(raw, "diff_hunk")));
+  return {
+    remoteId: asId(field(raw, "id")),
+    author: authorOf(raw) || reviewAuthor,
+    body: asString(field(raw, "body")),
+    path: asString(field(raw, "path")),
+    line: anchor.line,
+    side: anchor.side,
+    createdAt: asTime(field(raw, "created_at")) ?? new Date().toISOString(),
+    htmlUrl: asString(field(raw, "html_url")),
+  };
+}

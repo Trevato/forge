@@ -66,6 +66,8 @@ src/
   actions/           every mutation as one function: authorize, mutate, record
   http/              router, auth resolution, response shapes, the JSON API
   design/            the theme registry both surfaces render
+  origins/           other forges behind one Provider: discovery, adapters,
+                     OAuth, mirroring, incremental sync, push-through
   web/               SSR: html tag, icons, ui (components), chrome, layout,
                      client, style/ (base + components + content), pages/
   ssh/               the SSH server: transport, userauth, channels
@@ -155,11 +157,25 @@ in `user_version`. The schema is deliberately small — tables earn their place:
   the diff itself is never stored — git holds it)
 - `event` (append-only outbox: pushes, state transitions, deliveries)
 - `webhook` (subscriptions + delivery state with retry bookkeeping)
+- `origin` / `origin_repo` / `origin_cursor` / `origin_app` / `oauth_flow`
+  (connected accounts on other forges, and the connects in flight)
 
 State transitions use compare-and-swap (`UPDATE … WHERE state = ?`), and every
 transition writes its event row in the same transaction. On boot, a
 reconciliation sweep repairs the index from git (a merged branch whose pull row
 says "open" gets healed from the ref state, not trusted).
+
+**The one exception to "the database is derived."** A connected origin's
+access token is third-party state: it cannot be rebuilt from the bare repos,
+from the event log, or from anything else this forge holds. It is rebuildable
+only by the human re-authorizing with the other forge. That is precisely why
+it is the only thing here encrypted at rest — AES-256-GCM under
+`<data>/secret.key`, bound to its own row id — why no API route returns it in
+any form, and why disconnecting destroys it rather than tombstoning it. Lose
+the key file and you lose the tokens; you lose nothing else, and reconnecting
+costs a click. Every other row in the database is still reconstructible from
+git or from the origin, which is the same rule one level out: for a mirrored
+repo, *the origin* is truth and our rows are its index.
 
 Two lessons Forgejo is still paying for, designed in up front:
 
@@ -306,8 +322,10 @@ diff viewer with syntax highlighting, review comments anchored by content hash,
 commit pages, settings, webhook delivery from the event outbox (HMAC-signed,
 retried), SSE live updates, forks (alternates-backed, detach-before-delete)
 with cross-repo pull requests, organizations + teams with membership-based
-permissions, an SSH transport (git and a terminal UI on one port), and the
-terminal UI itself.
+permissions, an SSH transport (git and a terminal UI on one port), the
+terminal UI itself, and origins — connected GitHub/Forgejo/Gitea accounts,
+mirrored repositories with imported issues and pulls, incremental sync,
+write-through of contributions, and push-through of branches.
 
 Not in v1: CI runners (the events + API surface is designed so a runner
 integrates without core changes), an AI build crew (the harness — it drives the
