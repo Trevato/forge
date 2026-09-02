@@ -84,12 +84,21 @@ export interface CreateIssueInput {
   kind?: IssueKind;
 }
 
+/** Caps on free text. Generous for humans, bounded for the index and the wire. */
+export const MAX_TITLE = 256;
+export const MAX_BODY = 65_536;
+
+export type TitleError = "empty_title" | "title_too_long";
+export type BodyError = "empty_body" | "body_too_long";
+
 export function createIssue(
   db: Database,
   input: CreateIssueInput,
-): Result<Issue, "empty_title"> {
+): Result<Issue, TitleError | "body_too_long"> {
   const title = input.title.trim();
   if (title === "") return err("empty_title");
+  if (title.length > MAX_TITLE) return err("title_too_long");
+  if ((input.body ?? "").length > MAX_BODY) return err("body_too_long");
 
   // Number allocation and insert in one transaction: a visible row always
   // has a number, and a number is never handed out without a row.
@@ -259,9 +268,10 @@ export interface Comment {
 export function addComment(
   db: Database,
   input: { issueId: string; authorId: string; body: string },
-): Result<Comment, "empty_body"> {
+): Result<Comment, BodyError> {
   const body = input.body.trim();
   if (body === "") return err("empty_body");
+  if (body.length > MAX_BODY) return err("body_too_long");
   const commentId = id();
   const now = new Date().toISOString();
   const write = db.transaction(() => {

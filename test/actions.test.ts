@@ -348,3 +348,25 @@ describe("sign-up races", () => {
     }
   });
 });
+
+describe("free-text caps", () => {
+  test("titles and bodies over the caps are refused with a specific code", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-caps-"));
+    const fresh = createApp({ dataDir: dir });
+    try {
+      const u = await signUp(fresh, { username: "cap", email: "cap@x.io", password: "a-good-passphrase" });
+      if (!u.ok) throw new Error("sign-up failed");
+      const r = await createRepo(fresh, u.value, { name: "caps", visibility: "public" });
+      if (!r.ok) throw new Error("repo failed");
+      expect(openIssue(fresh, u.value, r.value, { title: "x".repeat(257) })).toEqual({ ok: false, error: "title_too_long" });
+      expect(openIssue(fresh, u.value, r.value, { title: "ok", body: "y".repeat(65_537) })).toEqual({ ok: false, error: "body_too_long" });
+      const issue = openIssue(fresh, u.value, r.value, { title: "x".repeat(256), body: "y".repeat(65_536) });
+      expect(issue.ok).toBe(true);
+      if (!issue.ok) return;
+      expect(addComment(fresh, u.value, r.value, issue.value, "z".repeat(65_537))).toEqual({ ok: false, error: "body_too_long" });
+    } finally {
+      fresh.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

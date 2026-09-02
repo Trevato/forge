@@ -79,6 +79,8 @@ export type CreatePullError =
   | "same_branch"
   | "unknown_base"
   | "unknown_head"
+  | "title_too_long"
+  | "body_too_long"
   | "nothing_to_merge";
 
 export interface CreatePullInput {
@@ -128,7 +130,7 @@ export async function createPull(
     body: input.body ?? "",
     kind: "pull",
   });
-  if (!issue.ok) return err("empty_title");
+  if (!issue.ok) return err(issue.error);
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(

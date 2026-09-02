@@ -6,6 +6,7 @@
  * gap Forgejo left open (#21113).
  */
 
+import { MAX_BODY, type BodyError } from "./issues.ts";
 import type { Database } from "bun:sqlite";
 import type { Diff } from "../git/diff.ts";
 import { sha256 } from "../kernel/hash.ts";
@@ -45,9 +46,10 @@ export interface AddReviewInput {
 export function addReviewComment(
   db: Database,
   input: AddReviewInput,
-): Result<ReviewComment, "empty_body"> {
+): Result<ReviewComment, BodyError> {
   const body = input.body.trim();
   if (body === "") return err("empty_body");
+  if (body.length > MAX_BODY) return err("body_too_long");
   const commentId = id();
   const now = new Date().toISOString();
   const write = db.transaction(() => {

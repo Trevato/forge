@@ -393,7 +393,11 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
     const message =
       created.error === "empty_title"
         ? "An issue needs a title."
-        : "You cannot open an issue here.";
+        : created.error === "title_too_long"
+          ? "That title is too long (256 characters at most)."
+          : created.error === "body_too_long"
+            ? "That description is too long (64 KB at most)."
+            : "You cannot open an issue here.";
     return page(
       {
         ctx,

@@ -364,6 +364,8 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
 
 const COMPOSE_ERRORS: Record<string, string> = {
   empty_title: "A title is required.",
+  title_too_long: "That title is too long (256 characters at most).",
+  body_too_long: "That description is too long (64 KB at most).",
   same_branch: "Base and compare branches must differ.",
   unknown_base: "That base branch does not exist.",
   unknown_head: "That compare branch does not exist.",

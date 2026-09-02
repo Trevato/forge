@@ -507,6 +507,8 @@ const MESSAGES: Record<string, string> = {
   forbidden_owner: "you cannot create repos for that owner",
   empty_title: "a title is required",
   empty_body: "write something first",
+  title_too_long: "that title is too long (256 characters at most)",
+  body_too_long: "that text is too long (64 KB at most)",
   invalid_name: "that name is not allowed",
   invalid_username: "that username is not allowed",
   invalid_email: "that email address is not valid",

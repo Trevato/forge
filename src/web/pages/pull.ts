@@ -407,7 +407,9 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
           ? "That line is no longer part of this diff."
           : added.error === "empty_body"
             ? "A review comment needs some text."
-            : "That review comment could not be saved.",
+            : added.error === "body_too_long"
+              ? "That review comment is too long (64 KB at most)."
+              : "That review comment could not be saved.",
     });
   }
   return flashTo(ctx, `${dest}#${fileHashAnchor(anchor.path)}`, {

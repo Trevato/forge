@@ -16,6 +16,8 @@ import {
   type Issue,
   type IssueState,
   type Label,
+  type BodyError,
+  type TitleError,
 } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
@@ -32,7 +34,7 @@ export function openIssue(
   actor: User | undefined,
   repo: Repo,
   input: { title: string; body?: string },
-): Result<Issue, "not_found" | "unauthorized" | "empty_title"> {
+): Result<Issue, "not_found" | "unauthorized" | TitleError | "body_too_long"> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   const created = createIssue(app.db, {
@@ -58,7 +60,7 @@ export function addComment(
   repo: Repo,
   issue: Issue,
   body: string,
-): Result<Comment, "not_found" | "unauthorized" | "empty_body"> {
+): Result<Comment, "not_found" | "unauthorized" | BodyError> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");

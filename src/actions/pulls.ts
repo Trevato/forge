@@ -5,6 +5,7 @@
  */
 
 import type { App } from "../app.ts";
+import type { BodyError } from "../core/issues.ts";
 import {
   createPull,
   mergePull as landPull,
@@ -93,7 +94,7 @@ export interface ReviewInput {
 export type AddReviewError =
   | "not_found"
   | "unauthorized"
-  | "empty_body"
+  | BodyError
   | "bad_anchor";
 
 /**
