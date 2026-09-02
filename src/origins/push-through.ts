@@ -32,6 +32,7 @@ import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "./credential.ts";
+import { redact } from "./credentials.ts";
 import { pushToOrigin } from "./git-mirror.ts";
 
 /** A push-through must not outlive a pusher's patience. */
@@ -89,11 +90,37 @@ export async function pushThrough(
     { env: quarantineEnv(hookEnv), timeoutMs: TIMEOUT_MS },
   );
   if (!pushed.ok) {
+    // The pusher is a local writer; the credential is the owner's. The
+    // origin's message is shown verbatim, so an origin that quotes the
+    // token back (a hostile one, or a hook that prints its environment)
+    // must not turn a refusal into a disclosure. The generic scrub in
+    // git-mirror.ts cannot know the token; this one does.
     return err({
-      message: `${link.fullName} on ${link.origin.webUrl} refused this push: ${pushed.error.message}`,
+      message: redact(
+        `${link.fullName} on ${link.origin.webUrl} refused this push: ${pushed.error.message}`,
+        ...secretsIn(authEnv),
+      ),
     });
   }
   return ok();
+}
+
+/**
+ * The secret material a git auth env carries, in every form it could be
+ * echoed: the base64 `Basic` blob and the plaintext token inside it.
+ */
+function secretsIn(authEnv: Record<string, string>): string[] {
+  const secrets: string[] = [];
+  for (const value of Object.values(authEnv)) {
+    const match = /^Authorization:\s*Basic\s+(\S+)$/i.exec(value);
+    const blob = match?.[1];
+    if (blob === undefined) continue;
+    secrets.push(blob);
+    const decoded = Buffer.from(blob, "base64").toString();
+    const colon = decoded.indexOf(":");
+    if (colon >= 0) secrets.push(decoded.slice(colon + 1));
+  }
+  return secrets;
 }
 
 /**

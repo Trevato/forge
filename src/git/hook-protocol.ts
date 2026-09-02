@@ -34,9 +34,20 @@ export function parseHookStdin(text: string): RefUpdate[] {
   const updates: RefUpdate[] = [];
   for (const line of text.split("\n")) {
     if (line === "") continue;
-    const [oldOid, newOid, ref] = line.split(" ");
-    if (!oldOid || !newOid || !ref) continue;
-    updates.push({ oldOid, newOid, ref });
+    // Exactly two splits: git hands the hook a ref name it has not yet
+    // validated, and one carrying a space must arrive whole so the safety
+    // checks refuse it as itself — split on every space and "refs/heads/sp
+    // ace" would become the perfectly legal, entirely different
+    // "refs/heads/sp" and travel upstream under that name.
+    const first = line.indexOf(" ");
+    const second = first < 0 ? -1 : line.indexOf(" ", first + 1);
+    if (first <= 0 || second <= first + 1 || second === line.length - 1)
+      continue;
+    updates.push({
+      oldOid: line.slice(0, first),
+      newOid: line.slice(first + 1, second),
+      ref: line.slice(second + 1),
+    });
   }
   return updates;
 }

@@ -1183,7 +1183,7 @@ export function apiRoutes(router: Router<Handler>): void {
 
   /** The callback URL this forge tells an OAuth app to come back to. */
   const callbackUri = (ctx: Ctx): string =>
-    `${ctx.url.origin}/settings/origins/callback`;
+    oauthCallbackUri(ctx.url, ctx.app.config.host);
 
   router.add("GET", "/api/v1/user/origins", (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });
@@ -1398,6 +1398,46 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!removed.ok) return respondAccess(removed.error, 404);
     return new Response(null, { status: 204 });
   });
+}
+
+/**
+ * Where an OAuth provider sends the browser back. This is registered with
+ * the provider and sent on both legs of the code flow, so it must be the
+ * forge's *own* idea of its public URL — never the request's Host header,
+ * which any client (or a misconfigured proxy) can write. In order:
+ *
+ * - `FORGE_URL`, the operator's canonical base URL, wins outright;
+ * - a request whose hostname is the configured `FORGE_HOST` is vouched for
+ *   by the operator, so its origin is trusted (this keeps a plain-http
+ *   deployment behind no proxy working without a second variable);
+ * - loopback is trusted for development.
+ *
+ * Anything else yields "", and `startOAuthConnect` refuses to begin a flow
+ * rather than register a redirect URI a stranger chose.
+ */
+export function oauthCallbackUri(
+  requestUrl: URL,
+  configuredHost: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  const path = "/settings/origins/callback";
+  const configured = (env.FORGE_URL ?? "").trim();
+  if (configured !== "") {
+    try {
+      const url = new URL(configured);
+      if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+      return `${url.origin}${path}`;
+    } catch {
+      return "";
+    }
+  }
+  const host = requestUrl.hostname;
+  const vouched =
+    (configuredHost !== undefined && host === configuredHost) ||
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "[::1]";
+  return vouched ? `${requestUrl.origin}${path}` : "";
 }
 
 function connectMessage(code: string): string {

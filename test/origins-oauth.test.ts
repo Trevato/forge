@@ -598,6 +598,13 @@ describe("discovery will not dial anything it is asked to", () => {
       "https://169.254.169.254",
       "https://100.100.1.1",
       "https://[fd00::1]",
+      // IPv4-mapped IPv6 literals: the WHATWG URL parser folds these down to
+      // a bare `::ffff:<hex>:<hex>` hostname, so the private-range check must
+      // decode that back to octets rather than only pattern-matching the
+      // dotted-quad form.
+      "https://[::ffff:169.254.169.254]",
+      "https://[::ffff:10.0.0.1]",
+      "https://[::ffff:127.0.0.1]",
       "file:///etc/passwd",
       "ssh://git@example.com",
       "gopher://example.com",

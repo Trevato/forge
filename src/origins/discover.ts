@@ -17,6 +17,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { readCapped } from "./providers/http.ts";
 import type { Discovered, OriginKind } from "./types.ts";
 
 const TIMEOUT_MS = 5_000;
@@ -37,9 +38,7 @@ export interface DiscoverInput {
  * one way to reach a LAN forge or a plaintext one — an operator decision,
  * never a per-user toggle, because the risk it accepts is the server's.
  */
-function allowedHosts(
-  env: Record<string, string | undefined>,
-): Set<string> {
+function allowedHosts(env: Record<string, string | undefined>): Set<string> {
   return new Set(
     (env.FORGE_ORIGIN_ALLOW ?? "")
       .split(",")
@@ -68,20 +67,43 @@ function isLoopback(hostname: string): boolean {
  * Bun's fetch gives us no hook for. That residual DNS-rebinding risk is
  * stated rather than papered over; the allow-list is the mitigation.
  */
+function isPrivateV4(a: number, b: number): boolean {
+  if (a === 10 || a === 0) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 127) return true; // loopback, reached via a mapped form
+  return false;
+}
+
 function isPrivateLiteral(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    if (a === 10 || a === 0) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    return false;
-  }
-  if (host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd"))
+  if (v4) return isPrivateV4(Number(v4[1]), Number(v4[2]));
+  if (
+    host.startsWith("fe80:") ||
+    host.startsWith("fc") ||
+    host.startsWith("fd")
+  )
     return true;
+  // WHATWG URL parsing folds an IPv4-mapped/compatible IPv6 literal — and the
+  // IPv4 shorthands that feed one (`127.1`, hex, octal, decimal) — down to a
+  // bare IPv6 address whose last two hextets are the IPv4 octet pairs:
+  // `[::ffff:169.254.169.254]` becomes hostname `::ffff:a9fe:a9fe`. Left
+  // unchecked that is a live bypass onto the cloud metadata address (and
+  // every other private range above) through a form neither `isLoopback` nor
+  // the dotted-quad branch above ever sees. Decode it back to octets and
+  // check those.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (mapped) {
+    const hi = Number.parseInt(mapped[1]!, 16);
+    const lo = Number.parseInt(mapped[2]!, 16);
+    return (
+      isPrivateV4((hi >> 8) & 0xff, hi & 0xff) ||
+      isPrivateV4((lo >> 8) & 0xff, lo & 0xff)
+    );
+  }
   return false;
 }
 
@@ -114,7 +136,8 @@ export function allowedOrigin(
   if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
 
   const allowed = allowedHosts(env);
-  const named = allowed.has(url.host.toLowerCase()) ||
+  const named =
+    allowed.has(url.host.toLowerCase()) ||
     allowed.has(url.hostname.toLowerCase());
   if (named) return url.origin;
   if (isLoopback(url.hostname)) return url.origin;
@@ -273,7 +296,14 @@ async function getJson(
       continue;
     }
     if (!response.ok) return err("failed");
-    const text = await readCapped(response);
+    let text: string | undefined;
+    try {
+      // Streamed and cut at the cap, so an oversized answer is dropped at
+      // the cap rather than buffered whole and then declined.
+      text = await readCapped(response, MAX_BYTES);
+    } catch {
+      return err("failed");
+    }
     if (text === undefined) return err("failed");
     try {
       return ok(JSON.parse(text));
@@ -282,15 +312,6 @@ async function getJson(
     }
   }
   return err("failed");
-}
-
-/** Read a response body, refusing anything over the cap. */
-async function readCapped(response: Response): Promise<string | undefined> {
-  const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > MAX_BYTES) return undefined;
-  const buffer = await response.arrayBuffer();
-  if (buffer.byteLength > MAX_BYTES) return undefined;
-  return new TextDecoder().decode(buffer);
 }
 
 // ---- tiny JSON readers (remote JSON is never trusted to have a shape) ----

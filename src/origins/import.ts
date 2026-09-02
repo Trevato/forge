@@ -21,6 +21,7 @@ import type { Database } from "bun:sqlite";
 import type { Label } from "../core/issues.ts";
 import { hashLine } from "../core/reviews.ts";
 import type { Diff } from "../git/diff.ts";
+import { isSafeOid, isSafeRef } from "../git/guard.ts";
 import { id } from "../kernel/id.ts";
 import type {
   RemoteComment,
@@ -33,8 +34,27 @@ import type {
 const MAX_TITLE = 256;
 const MAX_BODY = 65_536;
 
-const clamp = (text: string, limit: number): string =>
-  text.length > limit ? text.slice(0, limit) : text;
+/**
+ * Clamp, and drop the control bytes an origin has no business sending.
+ * Newline, carriage return and tab survive (a body needs them); NUL,
+ * escape and the rest do not — those are what turn a label name into a
+ * terminal escape sequence in the TUI or a log line into two.
+ */
+const clamp = (text: string, limit: number): string => {
+  // eslint-disable-next-line no-control-regex
+  const clean = text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
+  return clean.length > limit ? clean.slice(0, limit) : clean;
+};
+
+/** A short field — a title, a login, a label — on one line. */
+const oneLine = (text: string, limit: number): string =>
+  clamp(text.replace(/[\r\n\t]+/g, " "), limit).trim();
+
+/** Branch and object ids an origin reports for a pull. They are stored for
+ * `pullDiff` to resolve later, and every git call there re-checks them; an
+ * unsafe one is stored as "" now so nothing downstream ever meets it. */
+const safeBranch = (ref: string): string => (isSafeRef(ref) ? ref : "");
+const safeOid = (oid: string): string => (isSafeOid(oid) ? oid : "");
 
 export interface ImportedIssue {
   readonly issueId: string;
@@ -62,7 +82,7 @@ export function importLabels(
   const byName = new Map<string, Label>();
   const write = db.transaction(() => {
     for (const label of labels) {
-      const name = label.name.trim();
+      const name = oneLine(label.name, MAX_TITLE);
       if (name === "") continue;
       const existing = db
         .query<
@@ -128,8 +148,12 @@ export function importIssue(
 ): ImportedIssue {
   const { db, repoId, actorId } = ctx;
   const kind: "issue" | "pull" = remote.pull === undefined ? "issue" : "pull";
-  const title = clamp(remote.title.trim() || `#${remote.number}`, MAX_TITLE);
+  const title = oneLine(remote.title, MAX_TITLE) || `#${remote.number}`;
   const body = clamp(remote.body, MAX_BODY);
+  const author = oneLine(remote.author, MAX_TITLE);
+  const labelNames = remote.labels
+    .map((name) => oneLine(name, MAX_TITLE))
+    .filter((name) => name !== "");
   let created = false;
   let changed = false;
   let newlyMerged = false;
@@ -169,7 +193,7 @@ export function importIssue(
         remote.updatedAt,
         remote.closedAt,
         remote.remoteId,
-        remote.author,
+        author,
         remote.htmlUrl,
         new Date().toISOString(),
         issueId,
@@ -196,7 +220,7 @@ export function importIssue(
         remote.updatedAt,
         remote.closedAt,
         remote.remoteId,
-        remote.author,
+        author,
         remote.htmlUrl,
         new Date().toISOString(),
       );
@@ -206,9 +230,7 @@ export function importIssue(
     }
 
     // Labels: the origin's set, exactly, every time.
-    const labelIds = remote.labels.map((name) =>
-      labelIdFor(db, repoId, name.trim()),
-    );
+    const labelIds = labelNames.map((name) => labelIdFor(db, repoId, name));
     db.query("DELETE FROM issue_label WHERE issue_id = ?1").run(issueId);
     const link = db.query(
       "INSERT OR IGNORE INTO issue_label (issue_id, label_id) VALUES (?1, ?2)",
@@ -237,12 +259,12 @@ export function importIssue(
            origin_head_repo = excluded.origin_head_repo`,
       ).run(
         issueId,
-        remote.pull.baseBranch,
-        remote.pull.headBranch,
-        remote.pull.baseOid,
-        remote.pull.headOid,
+        safeBranch(remote.pull.baseBranch),
+        safeBranch(remote.pull.headBranch),
+        safeOid(remote.pull.baseOid),
+        safeOid(remote.pull.headOid),
         remote.pull.mergedAt,
-        remote.pull.headRepo,
+        oneLine(remote.pull.headRepo, MAX_TITLE),
       );
     }
   });
@@ -272,6 +294,7 @@ export function importComments(
     for (const remote of comments) {
       if (remote.remoteId === "") continue;
       const body = clamp(remote.body, MAX_BODY);
+      const author = oneLine(remote.author, MAX_TITLE);
       const existing = ctx.db
         .query<
           { id: string },
@@ -283,7 +306,7 @@ export function importComments(
           .query(
             "UPDATE comment SET body = ?1, updated_at = ?2, origin_author = ?3 WHERE id = ?4",
           )
-          .run(body, remote.updatedAt, remote.author, existing.id);
+          .run(body, remote.updatedAt, author, existing.id);
         continue;
       }
       ctx.db
@@ -300,7 +323,7 @@ export function importComments(
           remote.createdAt,
           remote.updatedAt,
           remote.remoteId,
-          remote.author,
+          author,
         );
       added++;
     }
@@ -369,7 +392,7 @@ export function importReviews(
           lineHash === "" ? 1 : 0,
           remote.createdAt,
           remote.remoteId,
-          remote.author,
+          oneLine(remote.author, MAX_TITLE),
         );
       added++;
     }

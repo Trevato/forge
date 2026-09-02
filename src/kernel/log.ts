@@ -12,7 +12,7 @@ export type LogFields = Record<string, string | number | boolean | undefined>;
  * a test asserts a full connect-and-refresh cycle logs nothing matching it.
  */
 const SECRETS =
-  /(gh[pousr]_[A-Za-z0-9]{16,}|gto_[A-Za-z0-9_-]{16,}|forge_[A-Za-z0-9_-]{20,}|(?:access_token|refresh_token|client_secret|code_verifier|device_code|private_token)["'\s:=]+[A-Za-z0-9._~+/-]{8,}|(?:Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{16,})/gi;
+  /(gh[pousr]_[A-Za-z0-9]{16,}|gto_[A-Za-z0-9_-]{16,}|forge_[A-Za-z0-9_-]{20,}|(?:access_token|refresh_token|client_secret|code_verifier|device_code|private_token)["'\s:=]+[A-Za-z0-9._~+/-]{8,}|(?:Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{16,}|(?:authorization|token|secret|password|passwd|api_?key)["'\\\s:=]+[A-Za-z0-9._~+/=-]{16,})/gi;
 
 /** Replace anything credential-shaped with a marker. Exported for tests. */
 export function redactSecrets(text: string): string {
