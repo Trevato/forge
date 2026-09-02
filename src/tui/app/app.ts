@@ -127,6 +127,11 @@ export class App {
   readonly ctx: Ctx;
   readonly commands: Command[] = [];
 
+  /** True while any screen on the stack is still loading. Tests settle on it. */
+  get busy(): boolean {
+    return this.stack.some((e) => e.loading);
+  }
+
   /** Global bindings. Reserved: no screen may steal `?`, `:` or Ctrl+C. */
   readonly globals: Binding[] = [
     binding(["?"], "help"),

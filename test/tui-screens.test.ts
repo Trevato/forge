@@ -69,9 +69,14 @@ function boot(
   });
   app.start();
   const settle = async (): Promise<void> => {
-    // Screens load asynchronously (git reads spawn processes); a handful of
-    // macrotask turns is enough for every load in these fixtures.
-    for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 2));
+    // Screens load asynchronously (git reads spawn processes). Wait until no
+    // screen reports itself loading, then a few more turns for the
+    // invalidations a finished load schedules.
+    const deadline = Date.now() + 5_000;
+    do {
+      for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 2));
+    } while (app.busy && Date.now() < deadline);
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 2));
     app.frame();
   };
   const press = async (...keys: string[]): Promise<void> => {
