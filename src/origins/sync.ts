@@ -40,6 +40,7 @@ import { getRepoById } from "../core/repos.ts";
 import { pullDiff, type Pull, getPull } from "../core/pulls.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import { bustOrigin } from "../view/cache.ts";
 import { providerForOrigin } from "./credential.ts";
 import { fetchMirror } from "./git-mirror.ts";
 import {
@@ -92,11 +93,23 @@ const empty = (originId: string): SyncReport => ({
   error: "",
 });
 
+/**
+ * Where a run has got to, for anyone watching. The mirror job renders this;
+ * the worker passes nothing and pays nothing. Never awaited and never
+ * trusted: a reporter that throws must not derail a sync.
+ */
+export type SyncProgress = (
+  stage: "fetching" | "labels" | "issues" | "pulls" | "comments",
+  detail: string,
+) => void;
+
 export interface SyncOptions {
   /** First import of a repo: one summary event instead of an event storm. */
   readonly initial?: boolean;
   /** Sync only this repo (the "sync this mirror now" path). */
   readonly onlyRepoId?: string;
+  /** Live stage reports, for a mirror job with a UI attached. */
+  readonly onProgress?: SyncProgress;
 }
 
 /**
@@ -308,6 +321,16 @@ async function syncMirrorUnguarded(
     return out;
   }
 
+  // A watcher's throw is never this loop's problem (the same rule the event
+  // bus keeps for its listeners).
+  const report: SyncProgress = (stage, detail) => {
+    try {
+      options.onProgress?.(stage, detail);
+    } catch {
+      // a UI that cannot receive a stage is not a reason to stop syncing
+    }
+  };
+
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const cloneUrl = originForRepo(app.db, repo.id)?.cloneUrl ?? "";
   // Captured before the first request: anything changed mid-run is caught by
@@ -316,6 +339,7 @@ async function syncMirrorUnguarded(
 
   // ---- git ----
   if (cloneUrl !== "") {
+    report("fetching", "fetching git objects");
     const authEnv = await provider.gitAuthEnv(cloneUrl);
     const fetched = await fetchMirror(dir, cloneUrl, authEnv);
     if (!fetched.ok) {
@@ -349,9 +373,12 @@ async function syncMirrorUnguarded(
   }
 
   // ---- labels, then items ----
+  report("labels", "importing labels");
   const labels = await provider.listLabels(mirror.fullName);
-  if (labels.ok) importLabels(app.db, repo.id, labels.value);
-  else if (labels.error.error === "rate_limited") {
+  if (labels.ok) {
+    importLabels(app.db, repo.id, labels.value);
+    report("labels", plural(labels.value.length, "label"));
+  } else if (labels.error.error === "rate_limited") {
     out.rateLimited = labels.error;
     return out;
   } else out.error = labels.error.message;
@@ -389,12 +416,18 @@ async function syncMirrorUnguarded(
         // a non-positive or non-integer one is a row we will not make.
         if (!Number.isInteger(remote.number) || remote.number < 1) continue;
         const imported = importIssue(ctx, remote);
-        if (kind === "issue") out.issues++;
-        else out.pulls++;
+        if (kind === "issue") {
+          out.issues++;
+          report("issues", plural(out.issues, "issue"));
+        } else {
+          out.pulls++;
+          report("pulls", plural(out.pulls, "pull"));
+        }
 
         // Comments and reviews only for items that actually moved — this is
         // what keeps a sweep O(changed) rather than O(everything).
         if (imported.changed) {
+          const before = out.comments;
           out.comments += await importThread(
             provider,
             ctx,
@@ -404,6 +437,8 @@ async function syncMirrorUnguarded(
             dir,
             since,
           );
+          if (out.comments !== before)
+            report("comments", plural(out.comments, "comment"));
         }
 
         if (!options.initial && imported.created) {
@@ -435,6 +470,11 @@ async function syncMirrorUnguarded(
       setCursor(app.db, origin.id, key, runStarted);
   }
 
+  // Whatever the browse cache holds for this remote was true before this
+  // sweep and is a guess after it. Dropping it costs one request; keeping it
+  // means a page that shows a stale answer with a fresh timestamp.
+  bustOrigin(origin.id, mirror.fullName);
+
   if (options.initial) {
     // One event for a first import, not one per row: a repo with 900 issues
     // would otherwise deliver 900 webhooks the moment it is connected.
@@ -455,6 +495,10 @@ async function syncMirrorUnguarded(
   }
   return out;
 }
+
+/** "1 issue" / "42 issues" — a job's detail line, not a sentence. */
+const plural = (n: number, noun: string): string =>
+  `${n} ${noun}${n === 1 ? "" : "s"}`;
 
 /** Comments, and for a pull its inline review comments. */
 async function importThread(

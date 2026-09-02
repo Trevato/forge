@@ -14,6 +14,7 @@ import { dueOrigins } from "../src/origins/sync.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { seal } from "../src/kernel/secret.ts";
 import {
+  mirrorAndWait,
   newFakeOAuth,
   newFakeState,
   s256,
@@ -577,7 +578,13 @@ describe("refresh serialisation and needs_reauth", () => {
       method: "POST",
       body: JSON.stringify({ fullName: "octo/widgets" }),
     });
-    expect(mirrored.status).toBe(201);
+    expect(mirrored.status).toBe(202);
+    // The git side is deliberately unreachable here, so the job ends
+    // `failed` on the fetch — the repository and its imported rows exist
+    // either way, which is what these tests go on to count.
+    const job = await mirrorAndWait(mirrored);
+    expect(job?.stage).toBe("failed");
+    expect(job?.repo?.name).toBe("widgets");
   });
   afterAll(async () => {
     fake.stop();
@@ -791,7 +798,8 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
           body: JSON.stringify({ fullName }),
         }),
       );
-      expect(mirrored.status).toBe(201);
+      expect(mirrored.status).toBe(202);
+      expect((await mirrorAndWait(mirrored))?.stage).toBe("done");
     }
     // The ciphertexts are secrets too: an API that echoed one would hand a
     // key-holder the credential.

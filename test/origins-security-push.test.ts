@@ -19,7 +19,12 @@ import {
 } from "../src/git/smart-http.ts";
 import { parseHookStdin } from "../src/git/hook-protocol.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import {
+  mirrorAndWait,
+  newFakeState,
+  serveFakeForge,
+  type FakeForge,
+} from "./fake-origin.ts";
 
 /**
  * Adversarial push-through. The pusher is the attacker: a local writer on a
@@ -456,7 +461,8 @@ describe("push-through, adversarially", () => {
       method: "POST",
       body: JSON.stringify({ fullName: "octo/gears" }),
     });
-    expect(mirrored.status).toBe(201);
+    expect(mirrored.status).toBe(202);
+    expect((await mirrorAndWait(mirrored))?.stage).toBe("done");
     mirrorDir = join(dataDir, "repos", "alice", "gears.git");
 
     clone = join(root, "clone");

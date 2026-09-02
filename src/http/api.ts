@@ -29,10 +29,11 @@ import {
   listPinned,
   listRemoteRepos,
   listUserOrigins,
-  mirrorRepo,
+  mirrorJobFor,
   pinRepo,
   pollOAuthConnect,
   registerOriginApp,
+  startMirrorJob,
   startOAuthConnect,
   syncOriginNow,
   syncRepoNow,
@@ -102,7 +103,16 @@ import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
+import type { Result } from "../kernel/result.ts";
+import type { OriginRepoRow } from "../core/origins.ts";
+import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
+import {
+  sourceFor,
+  type RepoSource,
+  type SourceError,
+} from "../view/source.ts";
+import { eventStream } from "./sse.ts";
 import { sessionCookie } from "../web/pages/site.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
@@ -168,6 +178,101 @@ function originJson(origin: Origin) {
     needsReauth: origin.needsReauth,
     expiresAt: origin.expiresAt,
   };
+}
+
+/**
+ * Where a live browse is reading from — the banner's facts. The origin's
+ * credential and its id are ours; what a client gets is the forge, the name
+ * there, the page there, and whether we already hold a mirror of it.
+ */
+function whereJson(source: RepoSource) {
+  const where = source.where;
+  if (where.kind === "local")
+    return {
+      source: "local" as const,
+      repo: { owner: where.repo.ownerName, name: where.repo.name },
+    };
+  return {
+    source: "origin" as const,
+    origin: {
+      id: where.origin.id,
+      kind: where.origin.kind,
+      webUrl: where.origin.webUrl,
+      login: where.origin.login,
+    },
+    fullName: where.fullName,
+    htmlUrl: where.htmlUrl,
+    mirroredAs:
+      where.mirroredAs === undefined
+        ? null
+        : { owner: where.mirroredAs.ownerName, name: where.mirroredAs.name },
+  };
+}
+
+/** A mirror job, with the repo shaped like every other repo we return. */
+function jobJson(ctx: Ctx, job: MirrorJob) {
+  return {
+    id: job.id,
+    originId: job.originId,
+    fullName: job.fullName,
+    stage: job.stage,
+    detail: job.detail,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt ?? null,
+    repo: job.repo === undefined ? null : repoJson(ctx, job.repo),
+    error: job.error ?? null,
+  };
+}
+
+/**
+ * A picker row. `mirroredAs` is a repo id in the database and a name a
+ * client can navigate to out here — the picker's whole job is to say
+ * "already here" or "not yet".
+ */
+function remoteRepoJson(ctx: Ctx, row: OriginRepoRow) {
+  const mirror =
+    row.mirroredAs === null
+      ? undefined
+      : getRepoById(ctx.app.db, row.mirroredAs);
+  return {
+    ...row,
+    mirroredAs:
+      mirror === undefined
+        ? null
+        : { owner: mirror.ownerName, name: mirror.name },
+  };
+}
+
+/**
+ * A live read that did not happen. `not_found` keeps its ambiguity; the rest
+ * name which side said no, so a client can tell "come back later" from
+ * "reconnect this origin".
+ */
+function sourceFailure(error: SourceError): Response {
+  switch (error) {
+    case "not_found":
+      return notFound();
+    case "rate_limited":
+      return apiError(
+        "rate_limited",
+        429,
+        "the origin is rate-limiting us; try again shortly",
+      );
+    case "unauthorized":
+      return apiError(
+        "origin_unauthorized",
+        502,
+        "the origin refused this forge's credential; reconnect it",
+      );
+    case "too_large":
+      return apiError("too_large", 413, "that is too large to read here");
+    case "unreachable":
+      return apiError(
+        "origin_unreachable",
+        502,
+        "the origin could not be reached",
+      );
+  }
 }
 
 /**
@@ -1319,25 +1424,228 @@ export function apiRoutes(router: Router<Handler>): void {
       return listed.error === "unreachable"
         ? apiError("origin_unreachable", 502, "the origin could not be reached")
         : respondAccess(listed.error, 404);
-    return json(listed.value);
+    return json(listed.value.map((row) => remoteRepoJson(ctx, row)));
   });
+
+  // ── browsing an origin, live ─────────────────────────────────────────
+  //
+  // Reading a repository the origin holds and we do not: the same shapes the
+  // local read routes return, so a client renders one screen either way.
+  // Everything runs through `sourceFor`, which is where the rule lives that
+  // only the person who connected an origin may browse through it — the
+  // request spends their credential on another forge.
+
+  const browse = (ctx: Ctx): RepoSource | Response => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const source = sourceFor(ctx.app, ctx.auth.user, {
+      originId: ctx.params.id!,
+      fullName: `${ctx.params.owner!}/${ctx.params.name!}`,
+    });
+    return source.ok ? source.value : sourceFailure(source.error);
+  };
+
+  /** Run one read against a live source and shape whatever comes back. */
+  const read = async <T>(
+    ctx: Ctx,
+    run: (source: RepoSource) => Promise<Result<T, SourceError>>,
+    shape: (value: T) => Response,
+  ): Promise<Response> => {
+    const source = browse(ctx);
+    if (source instanceof Response) return source;
+    const result = await run(source);
+    return result.ok ? shape(result.value) : sourceFailure(result.error);
+  };
+
+  const BROWSE = "/api/v1/user/origins/:id/browse/:owner/:name";
+
+  // The landing read: what a repo page needs before it needs anything else.
+  router.add("GET", BROWSE, async (ctx) => {
+    const source = browse(ctx);
+    if (source instanceof Response) return source;
+    const facts = await source.describe();
+    if (!facts.ok) return sourceFailure(facts.error);
+    const [branches, readme] = await Promise.all([
+      source.branches(),
+      source.readme(facts.value.defaultBranch),
+    ]);
+    return json({
+      ...whereJson(source),
+      capabilities: source.capabilities,
+      facts: facts.value,
+      branches: branches.ok ? branches.value : [],
+      readme: readme.ok ? readme.value : null,
+    });
+  });
+
+  router.add("GET", `${BROWSE}/branches`, (ctx) =>
+    read(ctx, (s) => s.branches(), json),
+  );
+  router.add("GET", `${BROWSE}/tags`, (ctx) =>
+    read(ctx, (s) => s.tags(), json),
+  );
+  router.add("GET", `${BROWSE}/labels`, (ctx) =>
+    read(ctx, (s) => s.labels(), json),
+  );
+
+  const treeHandler = (ctx: Ctx): Promise<Response> => {
+    const ref = ctx.params.ref!;
+    const path = ctx.params.path ?? "";
+    return read(
+      ctx,
+      (s) => s.tree(ref, path),
+      (entries) => json({ type: "dir", ref, path, entries }),
+    );
+  };
+  router.add("GET", `${BROWSE}/tree/:ref`, treeHandler);
+  router.add("GET", `${BROWSE}/tree/:ref/*path`, treeHandler);
+
+  // Shaped exactly like the local contents endpoint, down to the 413.
+  router.add("GET", `${BROWSE}/blob/:ref/*path`, (ctx) => {
+    const ref = ctx.params.ref!;
+    const path = ctx.params.path ?? "";
+    return read(
+      ctx,
+      (s) => s.blob(ref, path),
+      (blob) => {
+        if (blob.kind === "too_large")
+          return json({ type: "file", tooLarge: true, size: blob.size }, 413);
+        const binary = blob.kind === "binary";
+        return json({
+          type: "file",
+          ref,
+          path,
+          size: blob.size,
+          encoding: binary ? "base64" : "utf-8",
+          content: binary
+            ? Buffer.from(blob.body).toString("base64")
+            : new TextDecoder().decode(blob.body),
+        });
+      },
+    );
+  });
+
+  router.add("GET", `${BROWSE}/commits`, async (ctx) => {
+    const source = browse(ctx);
+    if (source instanceof Response) return source;
+    // Only ask what the default branch is when the caller did not say — on
+    // a live source that question is a request to another forge.
+    let ref = ctx.url.searchParams.get("ref") ?? "";
+    if (ref === "") {
+      const facts = await source.describe();
+      if (!facts.ok) return sourceFailure(facts.error);
+      ref = facts.value.defaultBranch || "HEAD";
+    }
+    const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
+    const page = await source.commits(ref, cursor);
+    if (!page.ok) return sourceFailure(page.error);
+    return json({ items: page.value.items, next_cursor: page.value.next });
+  });
+
+  router.add("GET", `${BROWSE}/commits/:oid`, (ctx) => {
+    const oid = ctx.params.oid!;
+    return read(
+      ctx,
+      (s) => s.commit(oid),
+      ({ commit, diff }) => json({ ...commit, diff }),
+    );
+  });
+
+  const conversations = (kind: "issue" | "pull") => async (ctx: Ctx) => {
+    const q = ctx.url.searchParams;
+    const stateParam = q.get("state");
+    const label = q.get("label");
+    const author = q.get("author");
+    const search = q.get("q");
+    const cursor = q.get("cursor");
+    return read(
+      ctx,
+      (s) =>
+        s.issues({
+          kind,
+          state:
+            stateParam === "closed" || stateParam === "all"
+              ? stateParam
+              : "open",
+          ...(label ? { label } : {}),
+          ...(author ? { author } : {}),
+          ...(search ? { query: search } : {}),
+          ...(cursor ? { cursor } : {}),
+        }),
+      (page) => json({ items: page.items, next_cursor: page.next }),
+    );
+  };
+  router.add("GET", `${BROWSE}/issues`, conversations("issue"));
+  router.add("GET", `${BROWSE}/pulls`, conversations("pull"));
+
+  const conversation = (ctx: Ctx): Promise<Response> => {
+    const number = Number(ctx.params.number);
+    return read(
+      ctx,
+      (s) => s.issue(number),
+      (detail) =>
+        json({
+          ...detail.issue,
+          body: detail.body,
+          comments: detail.comments,
+          pull: detail.pull,
+        }),
+    );
+  };
+  router.add("GET", `${BROWSE}/issues/:number`, conversation);
+  router.add("GET", `${BROWSE}/pulls/:number`, conversation);
+
+  // ── mirroring, as a job ──────────────────────────────────────────────
+  //
+  // 202, not 201: the repository does not exist yet. What comes back is
+  // something to watch — poll it, or take the stream and render the stages.
 
   router.add("POST", "/api/v1/user/origins/:id/mirror", async (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
     const input = await body(ctx.request);
-    const mirrored = await mirrorRepo(
+    const started = startMirrorJob(
       ctx.app,
       ctx.auth.user,
       ctx.params.id!,
       str(input.fullName),
       str(input.name) || undefined,
     );
-    if (!mirrored.ok)
-      return mirrored.error === "unreachable"
-        ? apiError("origin_unreachable", 502, "the origin could not be reached")
-        : respondAccess(mirrored.error, 422);
-    return json(repoJson(ctx, mirrored.value), 201);
+    if (!started.ok) return respondAccess(started.error, 404);
+    return json({ job: jobJson(ctx, started.value) }, 202);
+  });
+
+  router.add("GET", "/api/v1/user/origins/:id/mirror/:job", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const job = mirrorJobFor(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.id!,
+      ctx.params.job!,
+    );
+    if (!job.ok) return respondAccess(job.error, 404);
+    return json({ job: jobJson(ctx, job.value) });
+  });
+
+  // The same job as a live stream, so a mirror can be watched rather than
+  // polled. It ends itself the moment the job reaches a terminal stage.
+  router.add("GET", "/api/v1/user/origins/:id/mirror/:job/stream", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const found = mirrorJobFor(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.id!,
+      ctx.params.job!,
+    );
+    if (!found.ok) return respondAccess(found.error, 404);
+    return eventStream(ctx.request, (emit, close) =>
+      subscribeJob(found.value.id, (job) => {
+        emit(`mirror.${job.stage}`, jobJson(ctx, job), job.id);
+        if (job.stage === "done" || job.stage === "failed") close();
+      }),
+    );
   });
 
   // Sync one mirror. This only pulls, so an ordinary repo writer may ask —

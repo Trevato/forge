@@ -8,7 +8,12 @@ import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents, type ForgeEvent } from "../src/core/events.ts";
 import { getCursor, getOriginById } from "../src/core/origins.ts";
 import { dueOrigins, syncOrigin } from "../src/origins/sync.ts";
-import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import {
+  mirrorAndWait,
+  newFakeState,
+  serveFakeForge,
+  type FakeForge,
+} from "./fake-origin.ts";
 
 /**
  * The sync loop, against a fake that speaks GitHub's dialect — because the
@@ -146,10 +151,12 @@ describe("origin sync: incremental, event-shaped, and polite", () => {
     );
     originId = connected.id;
     expect(connected.kind).toBe("github");
-    await api(`/api/v1/user/origins/${originId}/mirror`, {
-      method: "POST",
-      body: JSON.stringify({ fullName: "octo/sprockets" }),
-    });
+    await mirrorAndWait(
+      await api(`/api/v1/user/origins/${originId}/mirror`, {
+        method: "POST",
+        body: JSON.stringify({ fullName: "octo/sprockets" }),
+      }),
+    );
   });
 
   afterAll(async () => {
@@ -404,16 +411,21 @@ describe("a mirror follows the origin's visibility", () => {
         body: JSON.stringify({ host: fakeForge.url, token: TOKEN }),
       }),
     );
-    await fetch(`${servers2.url}/api/v1/user/origins/${connected.id}/mirror`, {
-      method: "POST",
-      headers: { ...auth, "content-type": "application/json" },
-      body: JSON.stringify({ fullName: "octo/cogs" }),
-    });
+    await mirrorAndWait(
+      await fetch(
+        `${servers2.url}/api/v1/user/origins/${connected.id}/mirror`,
+        {
+          method: "POST",
+          headers: { ...auth, "content-type": "application/json" },
+          body: JSON.stringify({ fullName: "octo/cogs" }),
+        },
+      ),
+    );
 
     // Public upstream, public here — and anonymously readable.
-    expect((await fetch(`${servers2.url}/api/v1/repos/alice/cogs`)).status).toBe(
-      200,
-    );
+    expect(
+      (await fetch(`${servers2.url}/api/v1/repos/alice/cogs`)).status,
+    ).toBe(200);
 
     // Closed upstream. The next sweep must follow it: a mirror that keeps
     // serving a repo the origin has closed is a leak we caused.
@@ -422,13 +434,16 @@ describe("a mirror follows the origin's visibility", () => {
       method: "POST",
       headers: auth,
     });
-    expect((await fetch(`${servers2.url}/api/v1/repos/alice/cogs`)).status).toBe(
-      404,
-    );
+    expect(
+      (await fetch(`${servers2.url}/api/v1/repos/alice/cogs`)).status,
+    ).toBe(404);
     // Its owner still sees it, of course.
     expect(
-      (await fetch(`${servers2.url}/api/v1/repos/alice/cogs`, { headers: auth }))
-        .status,
+      (
+        await fetch(`${servers2.url}/api/v1/repos/alice/cogs`, {
+          headers: auth,
+        })
+      ).status,
     ).toBe(200);
 
     fakeForge.stop();

@@ -42,8 +42,10 @@ import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { discover } from "../origins/discover.ts";
 import { providerForOrigin } from "../origins/credential.ts";
+import { getJob, type MirrorJob } from "../origins/jobs.ts";
 import {
   mirrorRepo as runMirror,
+  startMirror,
   type MirrorError,
 } from "../origins/mirror.ts";
 import {
@@ -683,6 +685,11 @@ export async function listRemoteRepos(
   return ok(listOriginRepos(app.db, origin.id));
 }
 
+/**
+ * Mirror and wait. The surfaces that have nowhere to render progress (and
+ * every caller that just wants the repo) keep this; anything with a screen
+ * should start the job instead and watch it.
+ */
 export async function mirrorRepo(
   app: App,
   actor: User | undefined,
@@ -697,6 +704,48 @@ export async function mirrorRepo(
   const mirrored = await runMirror(app, user.value, origin, fullName, name);
   if (!mirrored.ok) return mirrored;
   return ok(mirrored.value.repo);
+}
+
+/**
+ * Start a mirror and hand back the job at once. The work runs detached; the
+ * caller renders `job.stage` and subscribes (`origins/jobs.ts`) or polls.
+ *
+ * Only the origin's owner may ask — this spends their credential against
+ * another forge, exactly like every other route on an origin — and anyone
+ * else's origin is `not_found`.
+ */
+export function startMirrorJob(
+  app: App,
+  actor: User | undefined,
+  originId: string,
+  fullName: string,
+  name?: string,
+): Result<MirrorJob, "unauthorized" | "not_found"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const origin = getOriginFor(app.db, user.value.id, originId);
+  if (!origin) return err("not_found");
+  return ok(startMirror(app, user.value, origin, fullName, name));
+}
+
+/**
+ * A job as its owner may see it. Jobs live in memory and are keyed by id
+ * alone, so the origin check is what stops one account watching another's
+ * import — the id is unguessable, but "unguessable" is not an access check.
+ */
+export function mirrorJobFor(
+  app: App,
+  actor: User | undefined,
+  originId: string,
+  jobId: string,
+): Result<MirrorJob, "unauthorized" | "not_found"> {
+  const user = requireUser(actor);
+  if (!user.ok) return user;
+  const origin = getOriginFor(app.db, user.value.id, originId);
+  if (!origin) return err("not_found");
+  const job = getJob(jobId);
+  if (job === undefined || job.originId !== origin.id) return err("not_found");
+  return ok(job);
 }
 
 export async function syncOriginNow(

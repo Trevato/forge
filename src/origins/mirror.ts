@@ -23,9 +23,11 @@ import type { User } from "../core/users.ts";
 import { isSafeName, isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { bustOrigin } from "../view/cache.ts";
 import { providerForOrigin } from "./credential.ts";
-import { safeRemoteUrl } from "./credentials.ts";
+import { redact, safeRemoteUrl } from "./credentials.ts";
 import { adoptDefaultBranch, configureMirror } from "./git-mirror.ts";
+import { advance, createJob, runningJob, type MirrorJob } from "./jobs.ts";
 import { syncOrigin } from "./sync.ts";
 import type { RemoteRepo } from "./types.ts";
 
@@ -40,6 +42,13 @@ export type MirrorError =
 export interface MirrorResult {
   readonly repo: Repo;
   readonly remote: RemoteRepo;
+  /**
+   * What went wrong during the first import, or "" when it was clean. The
+   * repo exists either way — a mirror whose fetch failed is one you can
+   * retry, not a half-created nothing — but a caller with a screen has to
+   * be able to say so.
+   */
+  readonly error: string;
 }
 
 /**
@@ -56,7 +65,11 @@ export async function mirrorRepo(
   origin: Origin,
   fullName: string,
   name?: string,
+  job?: string,
 ): Promise<Result<MirrorResult, MirrorError>> {
+  const stage = (patch: Parameters<typeof advance>[1]): void => {
+    if (job !== undefined) advance(job, patch);
+  };
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return err("not_found");
 
@@ -122,15 +135,119 @@ export async function mirrorRepo(
     },
   });
 
-  // The first pass is the import: one summary event, not one per row.
-  await syncOrigin(app, origin, {
+  // The first pass is the import: one summary event, not one per row. Its
+  // stages are the job's stages — there is only one place that knows how far
+  // an import has got, and it is the import.
+  const report = await syncOrigin(app, origin, {
     initial: true,
     onlyRepoId: created.value.id,
+    ...(job === undefined
+      ? {}
+      : {
+          onProgress: (stageName, detail) =>
+            stage({ stage: stageName, detail }),
+        }),
   });
 
   await adoptDefaultBranch(dir, defaultBranch);
 
-  return ok({ repo: getRepoById(app.db, created.value.id)!, remote });
+  return ok({
+    repo: getRepoById(app.db, created.value.id)!,
+    remote,
+    error: report.error,
+  });
+}
+
+/**
+ * Mirror in the background, and say where it has got to.
+ *
+ * The result is the job, immediately: the caller has something to render
+ * before a single object has moved. A second start for the same remote joins
+ * the running job rather than beginning a second clone into the same
+ * namespace — a double-click must not produce `widgets` and `widgets-2`.
+ *
+ * Nothing here throws. A failure lands in the job (and, once the repo row
+ * exists, in `fetch_error`) because this runs detached from any request and
+ * a rejected floating promise would take the process with it.
+ */
+export function startMirror(
+  app: App,
+  actor: User,
+  origin: Origin,
+  fullName: string,
+  name?: string,
+): MirrorJob {
+  const running = runningJob(origin.id, fullName);
+  if (running !== undefined) return running;
+
+  const job = createJob(origin.id, fullName);
+  void (async () => {
+    try {
+      const result = await mirrorRepo(
+        app,
+        actor,
+        origin,
+        fullName,
+        name,
+        job.id,
+      );
+      if (!result.ok) {
+        advance(job.id, {
+          stage: "failed",
+          detail: "",
+          error: mirrorMessage(result.error),
+        });
+        return;
+      }
+      // The mirror is now the truth for this remote, and anything the browse
+      // cache holds for it predates the import.
+      bustOrigin(origin.id, fullName);
+      if (result.value.error !== "") {
+        // The repository exists and the next sync will retry; what failed is
+        // still a failure, and it belongs where somebody will see it (it is
+        // in `fetch_error` too).
+        advance(job.id, {
+          stage: "failed",
+          detail: "",
+          repo: result.value.repo,
+          error: redact(result.value.error),
+        });
+        return;
+      }
+      advance(job.id, {
+        stage: "done",
+        detail: `mirrored as ${result.value.repo.ownerName}/${result.value.repo.name}`,
+        repo: result.value.repo,
+      });
+    } catch (error) {
+      // A surprise below (a vanished directory, a killed git) is this job's
+      // failure and nobody else's.
+      advance(job.id, {
+        stage: "failed",
+        detail: "",
+        error: redact(String(error)),
+      });
+    }
+  })();
+  return job;
+}
+
+/** A mirror refusal in words a person can act on. */
+export function mirrorMessage(error: MirrorError): string {
+  switch (error) {
+    case "not_found":
+      return "the origin has no such repository, or this account cannot see it";
+    case "invalid_name":
+      return "that name is not one this forge can use";
+    case "name_taken":
+      return "you already have a repository by every name we tried";
+    case "already_mirrored":
+      return "this repository is already mirrored here";
+    case "git_init_failed":
+      return "the local repository could not be created";
+    case "unreachable":
+      return "the origin could not be reached";
+  }
 }
 
 /**

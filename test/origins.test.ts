@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
+import { settled } from "../src/origins/jobs.ts";
 import { open, seal } from "../src/kernel/secret.ts";
 import { discover } from "../src/origins/discover.ts";
 import { redact, safeRemoteUrl } from "../src/origins/credentials.ts";
@@ -383,8 +384,17 @@ describe("origins: connecting, mirroring, writing through", () => {
       method: "POST",
       body: JSON.stringify({ fullName: "octo/widgets" }),
     });
-    expect(response.status).toBe(201);
-    const repo = (await response.json()) as {
+    // 202: the repository does not exist yet, and what comes back is the job
+    // to watch. The stages themselves are covered in view-source.test.ts.
+    expect(response.status).toBe(202);
+    const started = await read<{ job: { id: string; stage: string } }>(
+      response,
+    );
+    expect(started.job.stage).toBe("creating");
+    const finished = await settled(started.job.id);
+    expect(finished?.stage).toBe("done");
+
+    const repo = (await (await api("/api/v1/repos/alice/widgets")).json()) as {
       name: string;
       visibility: string;
       origin: { kind: string; fullName: string; fetchError: string } | null;
@@ -465,10 +475,14 @@ describe("origins: connecting, mirroring, writing through", () => {
       method: "POST",
       body: JSON.stringify({ fullName: "octo/widgets" }),
     });
-    expect(again.status).toBe(422);
-    expect((await read<{ error: string }>(again)).error).toBe(
-      "already_mirrored",
+    // The job starts; the refusal arrives on it, because by the time we know
+    // it is a repeat we are already inside the mirror.
+    expect(again.status).toBe(202);
+    const job = await settled(
+      (await read<{ job: { id: string } }>(again)).job.id,
     );
+    expect(job?.stage).toBe("failed");
+    expect(job?.error).toContain("already mirrored");
   });
 
   // ---- write-through ----
@@ -639,8 +653,11 @@ describe("origins: connecting, mirroring, writing through", () => {
     expect(pins[0]).toMatchObject({ owner: "alice", name: "widgets" });
     expect(pins[0]!.cloneUrl.endsWith("/alice/widgets.git")).toBe(true);
     expect(
-      (await read<{ pinned: boolean }>(await api("/api/v1/repos/alice/widgets")))
-        .pinned,
+      (
+        await read<{ pinned: boolean }>(
+          await api("/api/v1/repos/alice/widgets"),
+        )
+      ).pinned,
     ).toBe(true);
 
     // A pin is one viewer's choice, never a property of the repo.
@@ -649,8 +666,7 @@ describe("origins: connecting, mirroring, writing through", () => {
         await read<{ pinned: boolean }>(
           await api("/api/v1/repos/alice/widgets", { as: "bob" }),
         )
-      )
-        .pinned,
+      ).pinned,
     ).toBe(false);
 
     expect(
@@ -722,5 +738,189 @@ describe("review anchors imported from a diff hunk", () => {
       side: "old",
     });
     expect(anchorFromHunk("no hunk here")).toEqual({ line: 0, side: "new" });
+  });
+});
+
+/**
+ * The browse reads, in GitHub's dialect. `view-source.test.ts` exercises the
+ * whole feature against a Forgejo origin; this is the other adapter, driven
+ * directly, because the two forges disagree about almost every one of these
+ * endpoints — a readme endpoint that exists on one and not the other, a diff
+ * behind a media type rather than a `.diff` suffix, `commit.sha` versus
+ * `commit.id` — and an adapter that reads the wrong field returns something
+ * plausible and empty rather than an error.
+ */
+describe("browsing a GitHub origin", () => {
+  let fake: FakeForge;
+  let provider: ReturnType<typeof providerFor>;
+
+  beforeAll(() => {
+    const state = newFakeState("github", "octo", "gh-token-secret-1234");
+    state.repos.push({
+      id: 7,
+      fullName: "octo/tools",
+      description: "sharp ones",
+      cloneUrl: "https://example.invalid/octo/tools.git",
+      defaultBranch: "trunk",
+    });
+    state.files.set(
+      "octo/tools",
+      new Map([
+        ["README.md", "# tools\n"],
+        ["src/main.ts", "export const x = 1;\n"],
+        ["src/deep/inner.ts", "export const y = 2;\n"],
+      ]),
+    );
+    state.branches.set("octo/tools", [
+      { name: "trunk", sha: "a".repeat(40), protected: true },
+      { name: "topic", sha: "b".repeat(40) },
+    ]);
+    state.tags.set("octo/tools", [{ name: "v2", sha: "a".repeat(40) }]);
+    state.commits.set("octo/tools", [
+      {
+        sha: "a".repeat(40),
+        message: "sharpen\n\nand polish",
+        authorName: "Mona",
+        login: "mona",
+        date: "2026-02-02T00:00:00.000Z",
+        parents: ["c".repeat(40)],
+        diff: [
+          "diff --git a/README.md b/README.md",
+          "--- a/README.md",
+          "+++ b/README.md",
+          "@@ -1 +1 @@",
+          "-# old",
+          "+# tools",
+          "",
+        ].join("\n"),
+      },
+    ]);
+    state.issues.set("octo/tools", [
+      {
+        id: 3,
+        number: 3,
+        title: "a pull",
+        user: "mona",
+        pull: { base: "trunk", head: "topic", headRepo: "octo/tools" },
+      },
+    ]);
+    state.pullDiffs.set(
+      "octo/tools#3",
+      [
+        "diff --git a/src/main.ts b/src/main.ts",
+        "--- a/src/main.ts",
+        "+++ b/src/main.ts",
+        "@@ -1 +1 @@",
+        "-export const x = 1;",
+        "+export const x = 2;",
+        "",
+      ].join("\n"),
+    );
+    fake = serveFakeForge(state);
+    provider = providerFor(
+      staticCredential({
+        kind: "github",
+        apiUrl: fake.apiUrl,
+        webUrl: fake.url,
+        token: "gh-token-secret-1234",
+      }),
+    );
+  });
+
+  afterAll(() => fake.stop());
+
+  test("branches and tags come back with their object ids", async () => {
+    const branches = await provider.listBranches("octo/tools");
+    expect(branches.ok && branches.value).toEqual([
+      { name: "trunk", oid: "a".repeat(40), protected: true },
+      { name: "topic", oid: "b".repeat(40), protected: false },
+    ]);
+    const tags = await provider.listTags("octo/tools");
+    expect(tags.ok && tags.value.map((t) => t.name)).toEqual(["v2"]);
+  });
+
+  test("a tree is one level, directories first, with paths from the root", async () => {
+    const root = await provider.listTree("octo/tools", "trunk", "");
+    expect(root.ok && root.value.map((e) => [e.name, e.kind])).toEqual([
+      ["src", "tree"],
+      ["README.md", "blob"],
+    ]);
+    const nested = await provider.listTree("octo/tools", "trunk", "src");
+    expect(nested.ok && nested.value.map((e) => e.path)).toEqual([
+      "src/deep",
+      "src/main.ts",
+    ]);
+    // A file is not a directory, and the answer says so rather than
+    // returning its single row as a listing.
+    const file = await provider.listTree("octo/tools", "trunk", "README.md");
+    expect(file.ok).toBe(false);
+  });
+
+  test("a blob arrives as bytes; a readme knows its own path", async () => {
+    const blob = await provider.getBlob("octo/tools", "trunk", "README.md");
+    expect(blob.ok).toBe(true);
+    if (!blob.ok) return;
+    expect(new TextDecoder().decode(blob.value.content)).toBe("# tools\n");
+    expect(blob.value.truncated).toBe(false);
+    expect(blob.value.size).toBe(8);
+
+    const readme = await provider.getReadme("octo/tools", "trunk");
+    expect(readme.ok && readme.value?.path).toBe("README.md");
+  });
+
+  test("a path that climbs out of the repository is never requested", async () => {
+    const before = fake.state.requests.length;
+    for (const path of ["../etc/passwd", "a/../../b", "/etc/passwd", "a/"]) {
+      expect((await provider.getBlob("octo/tools", "trunk", path)).ok).toBe(
+        false,
+      );
+      expect((await provider.listTree("octo/tools", "trunk", path)).ok).toBe(
+        false,
+      );
+    }
+    // A ref that git would read as a flag, or that carries a range, likewise.
+    for (const ref of ["-oops", "a..b", "with space"]) {
+      expect((await provider.listTree("octo/tools", ref, "")).ok).toBe(false);
+      expect((await provider.listCommits("octo/tools", ref)).ok).toBe(false);
+    }
+    expect(fake.state.requests.length).toBe(before);
+  });
+
+  test("commits carry the login beside the name, and their parents", async () => {
+    const page = await provider.listCommits("octo/tools", "trunk");
+    expect(page.ok).toBe(true);
+    if (!page.ok) return;
+    const commit = page.value.items[0]!;
+    expect(commit.oid).toBe("a".repeat(40));
+    expect(commit.message).toBe("sharpen\n\nand polish");
+    expect(commit.author.name).toBe("Mona");
+    expect(commit.author.login).toBe("mona");
+    expect(commit.parents).toEqual(["c".repeat(40)]);
+  });
+
+  test("a diff comes back parsed — from the media type, not a suffix", async () => {
+    const commit = await provider.getCommitDiff("octo/tools", "a".repeat(40));
+    expect(commit.ok && commit.value.files.map((f) => f.path)).toEqual([
+      "README.md",
+    ]);
+    const pull = await provider.getPullDiff("octo/tools", 3);
+    expect(pull.ok && pull.value.files.map((f) => f.path)).toEqual([
+      "src/main.ts",
+    ]);
+    expect(pull.ok && pull.value.additions).toBe(1);
+    // The request that fetched it asked for the diff media type, which is
+    // the only thing that makes GitHub answer with one.
+    const asked = fake.state.requests.filter((r) =>
+      r.path.endsWith("/pulls/3"),
+    );
+    expect(asked.length).toBeGreaterThan(0);
+  });
+
+  test("a missing thing is not_found, and a missing readme is simply null", async () => {
+    expect(
+      (await provider.getBlob("octo/tools", "trunk", "nope.txt")).ok,
+    ).toBe(false);
+    const readme = await provider.getReadme("octo/nothing", "trunk");
+    expect(readme.ok && readme.value).toBeNull();
   });
 });

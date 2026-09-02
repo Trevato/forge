@@ -12,7 +12,12 @@ import { redactSecrets } from "../src/kernel/log.ts";
 import { ApiClient, readCapped } from "../src/origins/providers/http.ts";
 import { syncDue, syncOrigin } from "../src/origins/sync.ts";
 import type { ProviderCredential } from "../src/origins/types.ts";
-import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import {
+  mirrorAndWait,
+  newFakeState,
+  serveFakeForge,
+  type FakeForge,
+} from "./fake-origin.ts";
 
 /**
  * The provider boundary, attacked. An origin is a host the user named and
@@ -351,11 +356,25 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
     return fetch(`${base}${path}`, { ...init, headers });
   };
 
-  const mirror = (fullName: string) =>
-    api(`/api/v1/user/origins/${originId}/mirror`, {
+  /**
+   * Mirroring is a job now, so a refusal lands on the job rather than in the
+   * response: the request is accepted (202) the moment the origin is ours,
+   * and every check the origin's own answer fails is inside the work.
+   */
+  const mirror = async (
+    fullName: string,
+  ): Promise<{ status: number; stage: string; error: string }> => {
+    const response = await api(`/api/v1/user/origins/${originId}/mirror`, {
       method: "POST",
       body: JSON.stringify({ fullName }),
     });
+    const job = await mirrorAndWait(response);
+    return {
+      status: response.status,
+      stage: job?.stage ?? "failed",
+      error: job?.error ?? "",
+    };
+  };
 
   const localRepos = (): string[] => {
     const owner = join(app.reposRoot, "alice");
@@ -512,7 +531,7 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
   test("a clone URL that is not http(s) never becomes a git argument", async () => {
     for (const name of ["ext", "file", "flag", "ssh", "userinfo"]) {
       const response = await mirror(`octo/${name}`);
-      expect(response.status).toBe(502);
+      expect(response.stage).toBe("failed");
       // Refused before a row or a directory exists.
       expect(repoRow(name)).toBeFalsy();
       expect(localRepos()).not.toContain(`${name}.git`);
@@ -523,30 +542,30 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
   test("a full name that is not owner/name is refused before any path", async () => {
     for (const fullName of ["../../x", "owner/../x", "a/b/c", "octo/-flag"]) {
       const response = await mirror(fullName);
-      expect(response.status).not.toBe(201);
+      expect(response.stage).toBe("failed");
       expect(response.status).toBeLessThan(500);
     }
     // A name git would read as a flag cannot become a local repo name.
     expect(localRepos().some((d) => d.startsWith("-"))).toBe(false);
     // A name carrying a NUL is not a name.
     const ctl = await mirror("octo/ctl\x00name");
-    expect(ctl.status).not.toBe(201);
+    expect(ctl.stage).toBe("failed");
     expect(localRepos().some((d) => d.includes("\x00"))).toBe(false);
   });
 
   test("a hostile default branch is an ordinary refusal, not a thrown defect", async () => {
     for (const name of ["branch", "branch2"]) {
       const response = await mirror(`octo/${name}`);
-      // Never a 500: the origin's word for a branch name is checked before
+      // Never a crash: the origin's word for a branch name is checked before
       // it reaches `--initial-branch`, and falls back to `main`.
-      expect(response.status).toBe(201);
+      expect(response.stage).toBe("done");
       expect(repoRow(name)?.default_branch).toBe("main");
     }
   });
 
   test("imported text loses its control bytes; pull refs lose unsafe values", async () => {
     const response = await mirror("octo/good");
-    expect(response.status).toBe(201);
+    expect(response.stage).toBe("done");
     const rows = app.db
       .query<
         { number: number; title: string; body: string; origin_author: string },

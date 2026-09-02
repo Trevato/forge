@@ -14,6 +14,22 @@
  */
 
 import { createHash } from "node:crypto";
+import { settled, type MirrorJob } from "../src/origins/jobs.ts";
+
+/**
+ * `POST …/mirror` answers 202 with a job, because mirroring is a clone and
+ * an import and neither fits in a request. A test that needs the repository
+ * rather than the progress hands the response here and waits for the job to
+ * stop moving.
+ */
+export async function mirrorAndWait(
+  response: Response,
+): Promise<MirrorJob | undefined> {
+  if (response.status !== 202) return undefined;
+  const body = (await response.json()) as { job?: { id?: string } };
+  const jobId = body.job?.id;
+  return jobId === undefined ? undefined : settled(jobId);
+}
 
 export type FakeKind = "github" | "forgejo" | "gitea";
 
@@ -81,6 +97,25 @@ export interface FakeLabel {
   color: string;
 }
 
+export interface FakeBranch {
+  name: string;
+  sha: string;
+  protected?: boolean;
+}
+
+export interface FakeCommit {
+  sha: string;
+  message: string;
+  authorName: string;
+  authorEmail?: string;
+  /** The account on the origin, when the commit is attributed to one. */
+  login?: string;
+  date: string;
+  parents?: string[];
+  /** The unified diff `…/commits/{sha}` serves behind the diff media type. */
+  diff?: string;
+}
+
 export interface RecordedRequest {
   method: string;
   path: string;
@@ -99,6 +134,14 @@ export interface FakeState {
   issues: Map<string, FakeIssue[]>;
   comments: Map<string, FakeComment[]>;
   reviews: Map<string, FakeReview[]>;
+  /** The git side of a repo, for the browse endpoints: refs, files, log. */
+  branches: Map<string, FakeBranch[]>;
+  tags: Map<string, FakeBranch[]>;
+  /** path → contents. One flat map per repo; directories are derived. */
+  files: Map<string, Map<string, string>>;
+  commits: Map<string, FakeCommit[]>;
+  /** A pull's diff, keyed `owner/name#number`. */
+  pullDiffs: Map<string, string>;
   requests: RecordedRequest[];
   /** Answer the next N requests with a rate-limit refusal. */
   rateLimitFor: number;
@@ -136,6 +179,11 @@ export function newFakeState(
     issues: new Map(),
     comments: new Map(),
     reviews: new Map(),
+    branches: new Map(),
+    tags: new Map(),
+    files: new Map(),
+    commits: new Map(),
+    pullDiffs: new Map(),
     requests: [],
     rateLimitFor: 0,
     maxResponseItems: 50,
@@ -292,6 +340,102 @@ function route(
 
   if (tail === "") return jsonResponse(repoJson(state, repo));
 
+  // ---- browsing: refs, files, log, diffs ----
+
+  if (tail === "/branches" && method === "GET") {
+    return jsonResponse(
+      (state.branches.get(fullName) ?? []).map((b) => ({
+        name: b.name,
+        // GitHub says `commit.sha`; Forgejo says `commit.id`. Each fake
+        // speaks only its own dialect, so an adapter reading the wrong one
+        // gets nothing rather than something that happens to work.
+        commit: state.kind === "github" ? { sha: b.sha } : { id: b.sha },
+        protected: b.protected ?? false,
+      })),
+    );
+  }
+
+  if (tail === "/tags" && method === "GET") {
+    return jsonResponse(
+      (state.tags.get(fullName) ?? []).map((t) => ({
+        name: t.name,
+        commit: state.kind === "github" ? { sha: t.sha } : { id: t.sha },
+      })),
+    );
+  }
+
+  if (tail === "/readme" && method === "GET") {
+    // Only GitHub has one; Forgejo's adapter has to find it in the tree.
+    if (state.kind !== "github")
+      return new Response("no route", { status: 404 });
+    const files = state.files.get(fullName) ?? new Map<string, string>();
+    const path = [...files.keys()].find((p) =>
+      p.toLowerCase().startsWith("readme"),
+    );
+    if (path === undefined) return jsonResponse({ message: "Not Found" }, 404);
+    return jsonResponse(fileJson(path, files.get(path)!));
+  }
+
+  if (tail === "/contents" || tail.startsWith("/contents/")) {
+    if (method !== "GET") return new Response("no route", { status: 404 });
+    const path = decodeURIComponent(tail.slice("/contents".length)).replace(
+      /^\//,
+      "",
+    );
+    const files = state.files.get(fullName) ?? new Map<string, string>();
+    const content = files.get(path);
+    if (content !== undefined) return jsonResponse(fileJson(path, content));
+    const entries = listDir(files, path);
+    if (entries.length === 0 && path !== "")
+      return jsonResponse({ message: "Not Found" }, 404);
+    return jsonResponse(entries);
+  }
+
+  if (tail === "/commits" && method === "GET") {
+    const all = state.commits.get(fullName) ?? [];
+    const from = q.get("sha");
+    const start =
+      from === null
+        ? 0
+        : Math.max(
+            all.findIndex((c) => c.sha === from),
+            0,
+          );
+    const limit = Number(q.get("per_page") ?? q.get("limit") ?? 30) || 30;
+    const page = Math.max(Number(q.get("page") ?? 1) || 1, 1);
+    const offset = start + (page - 1) * limit;
+    return jsonResponse(all.slice(offset, offset + limit).map(commitJson));
+  }
+
+  // The diff: a media type on GitHub, a `.diff` path on Forgejo.
+  const commitDiff = /^\/(?:git\/)?commits\/([^/]+?)(\.diff)?$/.exec(tail);
+  if (commitDiff && method === "GET") {
+    const sha = decodeURIComponent(commitDiff[1]!);
+    const commit = (state.commits.get(fullName) ?? []).find(
+      (c) => c.sha === sha,
+    );
+    if (!commit) return jsonResponse({ message: "Not Found" }, 404);
+    const wantsDiff =
+      commitDiff[2] === ".diff" ||
+      (request.headers.get("accept") ?? "").includes("diff");
+    if (!wantsDiff) return jsonResponse(commitJson(commit));
+    return new Response(commit.diff ?? "", {
+      status: 200,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+
+  const pullDiff = /^\/pulls\/(\d+)\.diff$/.exec(tail);
+  if (pullDiff && method === "GET") {
+    const key = `${fullName}#${pullDiff[1]}`;
+    const text = state.pullDiffs.get(key);
+    if (text === undefined) return jsonResponse({ message: "Not Found" }, 404);
+    return new Response(text, {
+      status: 200,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+
   // ---- labels ----
   if (tail === "/labels" && method === "GET") {
     const labels = state.labels.get(fullName) ?? [];
@@ -387,9 +531,25 @@ function route(
     const issue = issues.find((i) => i.number === number);
     if (!issue) return jsonResponse({ message: "Not Found" }, 404);
 
+    // GitHub serves a pull's diff from the pull itself, behind a media type.
+    if (
+      suffix === "" &&
+      method === "GET" &&
+      kind === "pulls" &&
+      (request.headers.get("accept") ?? "").includes("diff")
+    ) {
+      return new Response(state.pullDiffs.get(`${fullName}#${number}`) ?? "", {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
     if (suffix === "" && method === "GET") {
+      // `/issues/{n}` on a pull returns the *issue* — carrying the
+      // `pull_request` key that says it is one, and nothing about branches.
+      // That is what both forges do, and it is why an adapter has to
+      // hydrate from `/pulls/{n}` rather than trust the issue payload.
       return jsonResponse(
-        kind === "pulls" || issue.pull !== undefined
+        kind === "pulls"
           ? pullJson(state, url, issue)
           : issueJson(state, url, issue),
       );
@@ -506,6 +666,87 @@ const parse = (text: string): Record<string, unknown> => {
 
 const nextNumber = (issues: FakeIssue[]): number =>
   issues.reduce((max, i) => Math.max(max, i.number), 0) + 1;
+
+// ---- the browse shapes ----
+
+/** git's own blob id, so a fake `sha` is a real one. */
+const blobSha = (content: string): string => {
+  const bytes = Buffer.from(content, "utf8");
+  return createHash("sha1")
+    .update(`blob ${bytes.length}\0`)
+    .update(bytes)
+    .digest("hex");
+};
+
+/** A file, as both forges' `contents` endpoint returns one. */
+function fileJson(path: string, content: string): Record<string, unknown> {
+  const bytes = Buffer.from(content, "utf8");
+  const name = path.split("/").pop() ?? path;
+  // Over a megabyte both forges stop sending the body and say so, which is
+  // the answer a browse has to handle without holding the file.
+  const tooBig = bytes.length > 1024 * 1024;
+  return {
+    name,
+    path,
+    type: "file",
+    size: bytes.length,
+    sha: blobSha(content),
+    encoding: tooBig ? "none" : "base64",
+    content: tooBig ? "" : bytes.toString("base64"),
+  };
+}
+
+/** One directory level, derived from the flat path map. */
+function listDir(
+  files: Map<string, string>,
+  path: string,
+): Record<string, unknown>[] {
+  const prefix = path === "" ? "" : `${path}/`;
+  const rows = new Map<string, Record<string, unknown>>();
+  for (const [full, content] of files) {
+    if (!full.startsWith(prefix)) continue;
+    const rest = full.slice(prefix.length);
+    if (rest === "") continue;
+    const slash = rest.indexOf("/");
+    if (slash === -1) {
+      rows.set(rest, {
+        name: rest,
+        path: full,
+        type: "file",
+        size: Buffer.byteLength(content, "utf8"),
+        sha: blobSha(content),
+      });
+      continue;
+    }
+    const dir = rest.slice(0, slash);
+    if (!rows.has(dir))
+      rows.set(dir, {
+        name: dir,
+        path: `${prefix}${dir}`,
+        type: "dir",
+        size: 0,
+        sha: blobSha(`${prefix}${dir}/`),
+      });
+  }
+  return [...rows.values()];
+}
+
+/** A commit row — the one shape GitHub and Forgejo genuinely agree on. */
+function commitJson(commit: FakeCommit): Record<string, unknown> {
+  return {
+    sha: commit.sha,
+    commit: {
+      message: commit.message,
+      author: {
+        name: commit.authorName,
+        email: commit.authorEmail ?? `${commit.authorName}@example.invalid`,
+        date: commit.date,
+      },
+    },
+    author: commit.login === undefined ? null : { login: commit.login },
+    parents: (commit.parents ?? []).map((sha) => ({ sha })),
+  };
+}
 
 function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
   const [owner, name] = repo.fullName.split("/");

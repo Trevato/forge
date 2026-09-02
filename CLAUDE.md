@@ -89,7 +89,11 @@ src/
               probe), providers/{github,forgejo} (+ http: paging, ETags, rate
               limits), oauth (device grant + PKCE code flow), credential (lazy
               token, serialised refresh), credentials (git auth env, redaction),
-              git-mirror (refspecs, leases), import, sync, mirror, push-through
+              git-mirror (refspecs, leases), import, sync, mirror (+ jobs: the
+              staged, watchable mirror), push-through
+  view/       one repository, read from either side: source (the RepoSource
+              interface both surfaces render), local (git + core), origin
+              (a Provider, live), cache (per-process, TTL + LRU)
   web/        SSR. html (the tag), icons (Lucide SVG), ui (the component
               vocabulary — docs/DESIGN.md is its contract), chrome (repo
               header, settings shell, the one 404), flash, layout (CSP+nonce,

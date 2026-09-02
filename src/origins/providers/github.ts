@@ -9,22 +9,32 @@
  * `/pulls/{n}`, where base, head and `merged_at` actually live.
  */
 
+import type { Diff } from "../../git/diff.ts";
+import { parseUnifiedDiff } from "../../git/diff.ts";
 import type {
   ListIssuesQuery,
   Page,
   Provider,
   ProviderCredential,
   ProviderResult,
+  RemoteBlob,
+  RemoteBranch,
   RemoteComment,
+  RemoteCommit,
   RemoteIdentity,
   RemoteIssue,
   RemoteLabel,
+  RemoteReadme,
   RemoteRepo,
   RemoteReview,
+  RemoteTreeEntry,
 } from "../types.ts";
 import { basicHeader, gitAuthEnv } from "../credentials.ts";
 import {
   ApiClient,
+  COMMIT_PAGE,
+  MAX_BLOB_BYTES,
+  MAX_DIFF_BYTES,
   anchorFromHunk,
   asArray,
   asBool,
@@ -34,14 +44,23 @@ import {
   asState,
   asString,
   asTime,
+  decodeContent,
   dig,
   fail,
   field,
+  isSafeRemotePath,
+  isSafeRemoteRef,
   labelNames,
   linkNext,
+  pathSegments,
   seg,
+  sortEntries,
   splitFullName,
   succeed,
+  toBlob,
+  toBranch,
+  toCommit,
+  toTreeEntry,
 } from "./http.ts";
 
 const PER_PAGE = 100;
@@ -107,6 +126,175 @@ export class GitHubProvider implements Provider {
     });
     if (!result.ok) return result;
     return succeed(toRepo(result.value.data));
+  }
+
+  // ---- browsing ----
+
+  async listBranches(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteBranch[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const branches: RemoteBranch[] = [];
+    for (let page = 1; page <= MAX_INTERNAL_PAGES; page++) {
+      const result = await this.api.call({
+        path: `/repos/${seg(named.owner)}/${seg(named.name)}/branches`,
+        query: { per_page: PER_PAGE, page },
+        conditional: page === 1,
+      });
+      if (!result.ok) return result;
+      const batch = asArray(result.value.data);
+      for (const raw of batch) branches.push(toBranch(raw));
+      if (batch.length < PER_PAGE) break;
+    }
+    return succeed(branches.filter((b) => b.name !== ""));
+  }
+
+  async listTags(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteBranch[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/tags`,
+      query: { per_page: PER_PAGE },
+      conditional: true,
+    });
+    if (!result.ok) return result;
+    return succeed(
+      asArray(result.value.data)
+        .map(toBranch)
+        .filter((t) => t.name !== ""),
+    );
+  }
+
+  /**
+   * One directory level. The contents endpoint answers an array for a
+   * directory and an object for a file, which is the whole trap: a caller
+   * asking for a tree and getting a file must be told, not handed one row.
+   */
+  async listTree(
+    fullName: string,
+    ref: string,
+    path: string,
+  ): Promise<ProviderResult<readonly RemoteTreeEntry[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    if (!isSafeRemoteRef(ref) || !isSafeRemotePath(path))
+      return fail("not_found", "not a path in a repository");
+    const result = await this.api.call({
+      path:
+        `/repos/${seg(named.owner)}/${seg(named.name)}/contents` +
+        (path === "" ? "" : `/${pathSegments(path)}`),
+      query: { ref },
+      conditional: true,
+    });
+    if (!result.ok) return result;
+    if (!Array.isArray(result.value.data))
+      return fail("not_found", "that path is a file, not a directory");
+    return succeed(
+      sortEntries(result.value.data.map((r) => toTreeEntry(r, path))),
+    );
+  }
+
+  async getBlob(
+    fullName: string,
+    ref: string,
+    path: string,
+  ): Promise<ProviderResult<RemoteBlob>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    if (!isSafeRemoteRef(ref) || path === "" || !isSafeRemotePath(path))
+      return fail("not_found", "not a path in a repository");
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/contents/${pathSegments(path)}`,
+      query: { ref },
+    });
+    if (!result.ok) return result;
+    if (Array.isArray(result.value.data))
+      return fail("not_found", "that path is a directory, not a file");
+    return succeed(toBlob(result.value.data));
+  }
+
+  /** GitHub has a readme endpoint of its own, and it honours `ref`. */
+  async getReadme(
+    fullName: string,
+    ref: string,
+  ): Promise<ProviderResult<RemoteReadme | null>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    if (!isSafeRemoteRef(ref)) return fail("not_found", "not a ref");
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/readme`,
+      query: { ref },
+      conditional: true,
+    });
+    // No readme is an ordinary answer, not a failure of the browse.
+    if (!result.ok)
+      return result.error.error === "not_found" ? succeed(null) : result;
+    const path = asString(field(result.value.data, "path"));
+    if (path === "") return succeed(null);
+    return succeed({ ...toBlob(result.value.data), path });
+  }
+
+  async listCommits(
+    fullName: string,
+    ref: string,
+    cursor?: string,
+  ): Promise<ProviderResult<Page<RemoteCommit>>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    if (!isSafeRemoteRef(ref)) return fail("not_found", "not a ref");
+    const page = pageOf(cursor);
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/commits`,
+      query: { sha: ref, per_page: COMMIT_PAGE, page },
+    });
+    if (!result.ok) return result;
+    const rows = asArray(result.value.data);
+    return succeed({
+      items: rows.map(toCommit),
+      next:
+        linkNext(result.value.headers) || rows.length >= COMMIT_PAGE
+          ? String(page + 1)
+          : null,
+    });
+  }
+
+  async getCommitDiff(
+    fullName: string,
+    oid: string,
+  ): Promise<ProviderResult<Diff>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    if (!isSafeRemoteRef(oid)) return fail("not_found", "not a commit");
+    return this.diff(
+      `/repos/${seg(named.owner)}/${seg(named.name)}/commits/${seg(oid)}`,
+    );
+  }
+
+  async getPullDiff(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<Diff>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    if (!Number.isInteger(number) || number < 1)
+      return fail("not_found", "not a pull request");
+    return this.diff(
+      `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}`,
+    );
+  }
+
+  /** The diff media type turns either endpoint into unified diff text. */
+  private async diff(path: string): Promise<ProviderResult<Diff>> {
+    const result = await this.api.text({
+      path,
+      accept: "application/vnd.github.diff",
+      maxBytes: MAX_DIFF_BYTES,
+    });
+    if (!result.ok) return result;
+    return succeed(parseUnifiedDiff(result.value.text));
   }
 
   async listLabels(

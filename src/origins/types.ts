@@ -10,6 +10,8 @@
  * first and are reflected locally after they succeed.
  */
 
+import type { Diff } from "../git/diff.ts";
+
 export type OriginKind = "github" | "forgejo" | "gitea";
 
 /** How an origin's credential was obtained. */
@@ -115,6 +117,59 @@ export interface RemoteReview {
   readonly htmlUrl: string;
 }
 
+/** A branch on the origin, as the browse surface lists them. */
+export interface RemoteBranch {
+  readonly name: string;
+  readonly oid: string;
+  readonly protected?: boolean;
+}
+
+/**
+ * One entry of one directory level. `kind` is the vocabulary both forges
+ * already use: a symlink and a submodule are neither a blob nor a tree, and
+ * flattening them into one would render a lie.
+ */
+export interface RemoteTreeEntry {
+  readonly name: string;
+  /** Full path from the repo root — the origin states it; we do not join. */
+  readonly path: string;
+  readonly kind: "blob" | "tree" | "submodule" | "symlink";
+  /** Absent for trees, and for a forge that declines to say. */
+  readonly size?: number;
+  readonly oid: string;
+}
+
+/**
+ * A file's bytes, bounded. Over the cap the content is simply not fetched:
+ * `truncated` with an empty body is the honest answer, and it costs one
+ * metadata request rather than the memory to hold a stranger's binary.
+ */
+export interface RemoteBlob {
+  readonly content: Uint8Array;
+  readonly size: number;
+  readonly oid: string;
+  readonly truncated: boolean;
+}
+
+/** A readme: a blob that knows which path it came from. */
+export interface RemoteReadme extends RemoteBlob {
+  readonly path: string;
+}
+
+export interface RemoteCommit {
+  readonly oid: string;
+  /** Subject and body together, exactly as the origin returns it. */
+  readonly message: string;
+  readonly author: {
+    readonly name: string;
+    readonly email: string;
+    /** The account on the origin, when the commit is attributed to one. */
+    readonly login?: string;
+    readonly date: string;
+  };
+  readonly parents: readonly string[];
+}
+
 export interface RemoteIdentity {
   readonly login: string;
   readonly displayName: string;
@@ -167,6 +222,45 @@ export interface Provider {
   whoami(): Promise<ProviderResult<RemoteIdentity>>;
   listRepos(cursor?: string): Promise<ProviderResult<Page<RemoteRepo>>>;
   getRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
+
+  // ---- reads for browsing a repository we have not mirrored ----
+  //
+  // Everything here is bounded before it is fetched: one directory level,
+  // one page of commits, one blob under a cap. Browsing a stranger's
+  // repository has to cost a bounded amount of memory and one request per
+  // screen, or "look before you mirror" becomes its own denial of service —
+  // against us, and against the origin.
+
+  listBranches(
+    fullName: string,
+  ): Promise<ProviderResult<readonly RemoteBranch[]>>;
+  /** Tags, in the same shape as branches — both forges serve them alike. */
+  listTags(fullName: string): Promise<ProviderResult<readonly RemoteBranch[]>>;
+  /** One level of the tree at `ref`; `path` is "" for the root. */
+  listTree(
+    fullName: string,
+    ref: string,
+    path: string,
+  ): Promise<ProviderResult<readonly RemoteTreeEntry[]>>;
+  getBlob(
+    fullName: string,
+    ref: string,
+    path: string,
+  ): Promise<ProviderResult<RemoteBlob>>;
+  /** The repo's readme, or null when it has none. */
+  getReadme(
+    fullName: string,
+    ref: string,
+  ): Promise<ProviderResult<RemoteReadme | null>>;
+  listCommits(
+    fullName: string,
+    ref: string,
+    cursor?: string,
+  ): Promise<ProviderResult<Page<RemoteCommit>>>;
+  /** One commit's diff against its first parent, parsed and capped. */
+  getCommitDiff(fullName: string, oid: string): Promise<ProviderResult<Diff>>;
+  /** A pull's diff against its base, parsed and capped. */
+  getPullDiff(fullName: string, number: number): Promise<ProviderResult<Diff>>;
 
   listLabels(fullName: string): Promise<ProviderResult<readonly RemoteLabel[]>>;
   listIssues(

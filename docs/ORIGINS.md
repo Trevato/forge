@@ -118,12 +118,71 @@ and `unauthorized_client` (Forgejo's answer to a replayed refresh token) are
 both terminal: the origin is marked `needs_reauth`, an `origin.needs_reauth`
 event is appended, and sync skips it until a human reconnects.
 
-**Pick.** `listRepos` fills `origin_repo`; the picker shows every remote repo
-with a toggle. Mirroring one creates a local repo under the user's namespace
-(name collisions get a `-<host>` suffix), configures a bare repo with
-explicit refspecs, fetches, installs hooks, imports labels, then issues and
-pulls (with comments and reviews). Visibility follows the origin's — a
-private or Forgejo-`internal` repo becomes private here.
+**Pick, then look, then decide.** `listRepos` fills `origin_repo`; the picker
+shows every remote repo, and each row says whether we already mirror it
+(`mirroredAs`). Opening one does **not** mirror it: it **browses** it live,
+read-only, through the origin's own API — README, tree, files, branches,
+tags, commits with diffs, issues, pulls, comments, labels — with a banner
+saying where you are. Mirroring is then a deliberate second act with visible
+progress. Enter used to mean "clone this and import all of it", which took
+seconds with nothing on screen and made looking at a repository cost the
+same as adopting one.
+
+**Browse.** One interface, `RepoSource` (`src/view/source.ts`), answers every
+repo screen's questions; two implementations answer them. `localSource` reads
+`git/read.ts` and the core tables exactly as the pages do today.
+`originSource` reads a `Provider` and shapes the answers into the same values
+— a remote tree entry becomes the `TreeEntry` `ls-tree` yields, a remote blob
+becomes the three states `blobForRender` yields, a remote commit becomes
+git's `Commit` with the origin login beside the name. So a screen renders a
+`RepoSource` and never asks which one it holds. `sourceFor(app, actor, ref)`
+picks the implementation and enforces access in one place: `canRead` for a
+local repo, and **the origin's owner and nobody else** for a live browse,
+because the browse spends their credential on another forge. Both refusals
+are `not_found` (invariant 9).
+
+Nothing on `RepoSource` writes, in either implementation — `capabilities`
+tells a surface which buttons to draw, and the absence of methods is what
+makes read-only mechanical rather than promised. What the origin does not
+offer, the source does not invent: a live browse reports no issue counts
+(neither forge gives both cheaply) and no mergeability, as `null` rather than
+a guess, and a label or author filter narrows the page in hand rather than
+pretending the origin searched.
+
+Live reads are cached per process (`src/view/cache.ts`), keyed by origin,
+repo, method and arguments: 60 seconds for a moving target (branches, lists,
+a ref's log), 10 minutes for anything addressed by an object id, which cannot
+change. Bounded by entry count and by the bytes of the blobs among them —
+an LRU without a byte budget is a memory leak with good manners. Conditional
+requests live a layer below, in `ApiClient`'s ETag cache, so a miss here is
+often still a 304 there. The mirror job and the sync worker `bust` a repo's
+keys the moment the truth upstream moves.
+
+Blobs are capped at 1 MB and diffs at 2 MB before the request is made, not
+after: browsing a stranger's repository must cost a bounded amount of memory
+whatever it holds. Over the cap a blob is `too_large` with no body, which is
+also what the API returns (413), exactly like the local contents route.
+
+**Mirror.** Mirroring creates a local repo under the user's namespace (name
+collisions get a `-<host>` suffix), configures a bare repo with explicit
+refspecs, fetches, installs hooks, imports labels, then issues and pulls
+(with comments and reviews). Visibility follows the origin's — a private or
+Forgejo-`internal` repo becomes private here.
+
+It runs as a **job** (`src/origins/jobs.ts`): `startMirror` returns
+immediately with `{ id, originId, fullName, stage, detail, startedAt,
+finishedAt?, repo?, error? }`, and the work reports its way through
+`creating → fetching → labels → issues → pulls → comments → done`, with a
+detail line ("42 issues") from the import itself — there is one place that
+knows how far an import has got, and it is the import. `subscribe(jobId, cb)`
+feeds a live UI (and the SSE route); `settled(jobId)` is what a caller that
+just wants the repository waits on. A second start for the same remote joins
+the running job rather than beginning a second clone. Failures land on the
+job (scrubbed) and in `fetch_error`, never thrown — the work is detached from
+any request, so a rejected promise would take the process with it. The
+registry is in memory on purpose: progress is not state worth persisting, and
+a job row that outlived its process would be a lie about it. What is durable
+is what always was — the repo row, `repo.mirrored`, `push`, and `repo.imported`.
 
 **Sync.** A worker tick (beside the delivery worker) picks origins due for a
 sync (default every 10 minutes, or on demand). Per mirrored repo:
@@ -202,7 +261,21 @@ GET    /api/v1/user/origins/oauth/:id          poll a flow (the forge does the p
 DELETE /api/v1/user/origins/:id                → { revokedUpstream }
 POST   /api/v1/user/origins/:id/sync           sync now
 GET    /api/v1/user/origins/:id/repos          the picker (cached, ?refresh=1)
-POST   /api/v1/user/origins/:id/mirror         {fullName, name?}   → local repo
+                                               each row: mirroredAs {owner,name}|null
+
+  browsing a remote repo live — B = …/origins/:id/browse/:owner/:name
+GET    B                                       facts + branches + readme
+GET    B/branches   B/tags   B/labels
+GET    B/tree/:ref[/*path]                     one level: {type:"dir",ref,path,entries}
+GET    B/blob/:ref/*path                       {type:"file",…,encoding,content} | 413
+GET    B/commits?ref=&cursor=                  {items, next_cursor}
+GET    B/commits/:oid                          commit + parsed diff
+GET    B/issues  B/pulls  ?state=&label=&author=&q=&cursor=
+GET    B/issues/:number   B/pulls/:number      + body, comments, pull facts
+
+POST   /api/v1/user/origins/:id/mirror         {fullName, name?} → 202 {job}
+GET    /api/v1/user/origins/:id/mirror/:job    poll one job
+GET    /api/v1/user/origins/:id/mirror/:job/stream   SSE: mirror.<stage>, ends on done
 GET    /api/v1/user/origin-apps                registered OAuth apps (no secrets)
 POST   /api/v1/user/origin-apps                {host, clientId, clientSecret?}
 DELETE /api/v1/user/origin-apps/:id
@@ -213,15 +286,19 @@ GET    /api/v1/user/pins  PUT/DELETE /api/v1/user/pins/:owner/:name
 Everything under `/api/v1/user/origins` and `/api/v1/user/origin-apps` needs
 the **account**: a same-origin session, the password, or an explicit `admin`
 token. A `ro` or `rw` token is refused — otherwise a leaked repo-write token
-escalates into "read this person's GitHub credentials by proxy". Repo-level
-sync and pins take the ordinary `rw` floor.
+escalates into "read this person's GitHub credentials by proxy". That covers
+the browse routes too: they read another forge with this account's
+credential, which is the same authority as spending it. Repo-level sync and
+pins take the ordinary `rw` floor.
 
 Repo JSON gains `origin: { kind, fullName, htmlUrl, lastFetchAt, fetchError } | null`
 and `pinned: boolean`; issue/comment JSON gain `originAuthor`, `originUrl`;
 pull JSON gains `originHeadRepo`. Errors specific to this surface:
 `mirrored` (409), `origin_owner_only` (403), `origin_refused` (409),
-`origin_unreachable` (502) — so a client can tell "the forge said no" from
-"the origin said no".
+`origin_unreachable` (502), `origin_unauthorized` (502, the origin refused
+our credential — reconnect it), `rate_limited` (429) and `too_large` (413) —
+so a client can tell "the forge said no" from "the origin said no", and
+"come back later" from "this will never work".
 
 Events added: `origin.connected`, `origin.refreshed`, `origin.needs_reauth`,
 `origin.disconnected`, `origin.app_registered`, `repo.mirrored`,
@@ -241,6 +318,13 @@ carries token material, a `state`, or a `code`.
   `/issues/comments?since=` sweep both forges offer. Correct, and O(changed)
   rather than O(all) — but the repo-wide sweep is one request instead of N
   and is the obvious next optimisation.
+- **A live browse cannot search.** Neither forge offers a label/author/title
+  filter both spell the same way on a list endpoint, so those narrow the page
+  we fetched. Fine for a look; the mirror is what makes a repo searchable.
+- **Fetch progress is stage-level, not percentages.** `git fetch --progress`
+  writes them to stderr, but `runGitCapture` buffers stderr whole; streaming
+  it wants a spawn path of its own, and "fetching git objects" was worth more
+  than that today.
 - **No LFS.** A mirror of an LFS repo has the pointers, not the objects.
 - **Key rotation is not built.** The sealed blob carries a `v1` version tag
   so it can be, but losing `secret.key` today means reconnecting the origins.

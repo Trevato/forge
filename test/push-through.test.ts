@@ -6,7 +6,12 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { pushToOrigin } from "../src/origins/git-mirror.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
-import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import {
+  mirrorAndWait,
+  newFakeState,
+  serveFakeForge,
+  type FakeForge,
+} from "./fake-origin.ts";
 
 /**
  * Push-through: a `git push` to a mirror lands upstream, or it does not land
@@ -140,10 +145,12 @@ describe("push-through: the origin gets the last word", () => {
         body: JSON.stringify({ host: fake.url, token: ORIGIN_TOKEN }),
       }),
     );
-    await api(`/api/v1/user/origins/${connected.id}/mirror`, {
-      method: "POST",
-      body: JSON.stringify({ fullName: "octo/gears" }),
-    });
+    await mirrorAndWait(
+      await api(`/api/v1/user/origins/${connected.id}/mirror`, {
+        method: "POST",
+        body: JSON.stringify({ fullName: "octo/gears" }),
+      }),
+    );
 
     clone = join(work, "gears");
     const remote = `http://alice:${ALICE_PASSWORD}@localhost:${servers.port}/alice/gears.git`;

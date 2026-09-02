@@ -14,6 +14,10 @@ import type {
   ProviderCredential,
   ProviderFailure,
   ProviderResult,
+  RemoteBlob,
+  RemoteBranch,
+  RemoteCommit,
+  RemoteTreeEntry,
 } from "../types.ts";
 
 const TIMEOUT_MS = 20_000;
@@ -98,11 +102,78 @@ export class ApiClient {
     return url.toString();
   }
 
+  /**
+   * A JSON call: the network exchange, plus the conditional-request cache
+   * that only makes sense for a parsed body.
+   */
   async call(request: ApiRequest): Promise<ProviderResult<ApiResponse>> {
     const url = this.url(request);
     const method = request.method ?? "GET";
     const cached =
       request.conditional && method === "GET" ? this.etags.get(url) : undefined;
+
+    const raw = await this.send(request, {
+      ...(cached === undefined ? {} : { ifNoneMatch: cached.etag }),
+    });
+    if (!raw.ok) return raw;
+    if (raw.value.status === 304) {
+      // Only a conditional request can be answered 304, and one is only sent
+      // when we hold the entry it would revalidate.
+      if (cached === undefined)
+        return fail("invalid_response", "the origin answered 304 unasked");
+      return succeed({
+        status: 200,
+        data: cached.data,
+        headers: cached.headers,
+      });
+    }
+
+    let data: unknown = null;
+    if (raw.value.text.trim() !== "") {
+      try {
+        data = JSON.parse(raw.value.text);
+      } catch {
+        return fail("invalid_response", "the origin's answer was not JSON");
+      }
+    }
+
+    const etag = raw.value.headers.get("etag");
+    if (etag !== null && method === "GET" && request.conditional) {
+      this.remember(url, { etag, data, headers: raw.value.headers });
+    }
+    return succeed({
+      status: raw.value.status,
+      data,
+      headers: raw.value.headers,
+    });
+  }
+
+  /**
+   * The same exchange, delivered as text. Both forges serve a diff as
+   * `text/plain` behind a media type rather than as JSON, and a diff is the
+   * one answer we want whole and unparsed — so it gets its own door with its
+   * own, smaller cap rather than a flag on the JSON path.
+   */
+  async text(
+    request: ApiRequest & { accept: string; maxBytes?: number },
+  ): Promise<ProviderResult<{ text: string; headers: Headers }>> {
+    const raw = await this.send(request, {
+      accept: request.accept,
+      ...(request.maxBytes === undefined ? {} : { maxBytes: request.maxBytes }),
+    });
+    if (!raw.ok) return raw;
+    return succeed({ text: raw.value.text, headers: raw.value.headers });
+  }
+
+  private async send(
+    request: ApiRequest,
+    options: { accept?: string; ifNoneMatch?: string; maxBytes?: number },
+  ): Promise<
+    ProviderResult<{ status: number; text: string; headers: Headers }>
+  > {
+    const url = this.url(request);
+    const method = request.method ?? "GET";
+    const maxBytes = options.maxBytes ?? this.maxBytes;
 
     // Resolved per call: an OAuth token may have been refreshed since the
     // last one, and a token that cannot be resolved must not become a
@@ -110,12 +181,18 @@ export class ApiClient {
     const token = await this.credential.token();
     if (!token.ok) return token;
 
+    // An explicit accept wins over the provider's own — GitHub's auth
+    // headers pin `application/vnd.github+json`, and a diff request that let
+    // that stand would be answered with JSON about the commit instead of the
+    // diff, silently and plausibly.
     const headers: Record<string, string> = {
       accept: "application/json",
       "user-agent": "forge",
       ...this.authHeaders(token.value),
+      ...(options.accept === undefined ? {} : { accept: options.accept }),
     };
-    if (cached) headers["if-none-match"] = cached.etag;
+    if (options.ifNoneMatch !== undefined)
+      headers["if-none-match"] = options.ifNoneMatch;
     if (request.body !== undefined)
       headers["content-type"] = "application/json";
 
@@ -167,13 +244,8 @@ export class ApiClient {
     if (response === undefined)
       return fail("invalid_response", "the origin redirected too many times");
 
-    if (response.status === 304 && cached) {
-      return succeed({
-        status: 200,
-        data: cached.data,
-        headers: cached.headers,
-      });
-    }
+    if (response.status === 304)
+      return succeed({ status: 304, text: "", headers: response.headers });
 
     const limited = rateLimited(response);
     if (limited) return limited;
@@ -189,7 +261,7 @@ export class ApiClient {
 
     let text: string | undefined;
     try {
-      text = await readCapped(response, this.maxBytes, signal);
+      text = await readCapped(response, maxBytes, signal);
     } catch (error) {
       return fail("unreachable", redact(String(error), token.value));
     }
@@ -205,22 +277,9 @@ export class ApiClient {
       );
     }
 
-    let data: unknown = null;
-    if (text.trim() !== "") {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        return fail("invalid_response", "the origin's answer was not JSON");
-      }
-    }
-
-    const etag = response.headers.get("etag");
-    if (etag !== null && method === "GET" && request.conditional) {
-      this.remember(url, { etag, data, headers: response.headers });
-    }
     return succeed({
       status: response.status,
-      data,
+      text,
       headers: response.headers,
     });
   }
@@ -471,3 +530,192 @@ export function splitFullName(
 
 /** Percent-encode a path segment for a remote API URL. */
 export const seg = (value: string): string => encodeURIComponent(value);
+
+// ---- browsing a remote repository ----
+
+/**
+ * The largest blob we will pull across the wire to render. A repository we
+ * have not mirrored is a stranger's; browsing one must cost a bounded amount
+ * of memory whatever it holds.
+ */
+export const MAX_BLOB_BYTES = 1024 * 1024;
+/** A diff is text we parse whole, so it gets a cap of its own. */
+export const MAX_DIFF_BYTES = 2 * 1024 * 1024;
+/** Commits per page; both forges cap their own page size below this. */
+export const COMMIT_PAGE = 50;
+
+/**
+ * A repo-relative path we are willing to put in a remote URL. The same
+ * hygiene git arguments get (`git/guard.ts`), for the same reason: a path
+ * from a URL must not climb out of the repository or smuggle a control byte
+ * into a request line.
+ */
+export function isSafeRemotePath(path: string): boolean {
+  if (path === "") return true;
+  if (path.length > 4096) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(path)) return false;
+  if (path.startsWith("/") || path.endsWith("/")) return false;
+  return path
+    .split("/")
+    .every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+/** A ref a remote URL may carry: a branch, a tag, or an object id. */
+export function isSafeRemoteRef(ref: string): boolean {
+  if (ref === "" || ref.length > 255) return false;
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f\s~^:?*[\\]/.test(ref)) return false;
+  return !ref.startsWith("-") && !ref.includes("..");
+}
+
+/** Percent-encode a path for a remote URL, one segment at a time. */
+export const pathSegments = (path: string): string =>
+  path.split("/").map(seg).join("/");
+
+/**
+ * Decode a `contents` payload's body. Both forges answer base64 under the
+ * cap and an empty body with `encoding: "none"` over it — the second is the
+ * forge telling us to go and fetch the object another way, which for a
+ * browse is exactly the moment to stop.
+ */
+export function decodeContent(
+  raw: unknown,
+  maxBytes: number,
+): { content: Uint8Array; truncated: boolean } {
+  const size = asNumber(field(raw, "size"));
+  const encoding = asString(field(raw, "encoding"));
+  const text = asString(field(raw, "content"));
+  if (size > maxBytes || encoding === "none" || (text === "" && size > 0))
+    return { content: new Uint8Array(0), truncated: true };
+  if (encoding === "base64" || encoding === "") {
+    const bytes = new Uint8Array(
+      Buffer.from(text.replace(/\s+/g, ""), "base64"),
+    );
+    if (bytes.byteLength > maxBytes)
+      return { content: new Uint8Array(0), truncated: true };
+    return { content: bytes, truncated: false };
+  }
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.byteLength > maxBytes)
+    return { content: new Uint8Array(0), truncated: true };
+  return { content: bytes, truncated: false };
+}
+
+/** `type` as both forges spell it on a contents entry. */
+export function entryKind(value: unknown): RemoteTreeEntry["kind"] {
+  switch (asString(value)) {
+    case "dir":
+      return "tree";
+    case "symlink":
+      return "symlink";
+    case "submodule":
+      return "submodule";
+    default:
+      return "blob";
+  }
+}
+
+/** One row of a `contents` listing, in either dialect. */
+export function toTreeEntry(raw: unknown, parent: string): RemoteTreeEntry {
+  const name = asString(field(raw, "name"));
+  const kind = entryKind(field(raw, "type"));
+  const size = asNumber(field(raw, "size"));
+  return {
+    name,
+    // The path is ours, not the origin's. Both forges state one, and both
+    // agree with this join — but a `path` an origin invented is a string we
+    // would put straight into the next request and into a rendered link, so
+    // it is built from the directory we asked for and the name in the row.
+    path: safeJoin(parent, name),
+    kind,
+    ...(kind === "tree" ? {} : { size }),
+    oid: asString(field(raw, "sha")),
+  };
+}
+
+/** A `contents` file payload, as bytes we are willing to hold. */
+export function toBlob(raw: unknown, maxBytes = MAX_BLOB_BYTES): RemoteBlob {
+  const { content, truncated } = decodeContent(raw, maxBytes);
+  const stated = asNumber(field(raw, "size"));
+  return {
+    content,
+    size: stated > 0 ? stated : content.byteLength,
+    oid: asString(field(raw, "sha")),
+    truncated,
+  };
+}
+
+/** Directories first, then files, both alphabetical — `listTree`'s order,
+ * so a remote listing and a local one read the same way. */
+export function sortEntries(
+  entries: readonly RemoteTreeEntry[],
+): RemoteTreeEntry[] {
+  return [...entries].sort((a, b) =>
+    a.kind === b.kind
+      ? a.name.localeCompare(b.name)
+      : a.kind === "tree"
+        ? -1
+        : b.kind === "tree"
+          ? 1
+          : a.name.localeCompare(b.name),
+  );
+}
+
+const safeJoin = (parent: string, name: string): string =>
+  parent === "" ? name : `${parent}/${name}`;
+
+/** A commit row: GitHub's and Forgejo's shapes agree field for field here. */
+export function toCommit(raw: unknown): RemoteCommit {
+  const login = asString(dig(raw, "author", "login"));
+  return {
+    oid: asId(field(raw, "sha")) || asString(field(raw, "sha")),
+    message: asString(dig(raw, "commit", "message")),
+    author: {
+      name:
+        asString(dig(raw, "commit", "author", "name")) || login || "unknown",
+      email: asString(dig(raw, "commit", "author", "email")),
+      ...(login === "" ? {} : { login }),
+      date:
+        asTime(dig(raw, "commit", "author", "date")) ??
+        new Date(0).toISOString(),
+    },
+    parents: asArray(field(raw, "parents"))
+      .map((p) => asString(field(p, "sha")))
+      .filter((sha) => sha !== ""),
+  };
+}
+
+/** A branch row, in either dialect (`commit.sha` / `commit.id`). */
+export function toBranch(raw: unknown): RemoteBranch {
+  const guarded = field(raw, "protected");
+  return {
+    name: asString(field(raw, "name")),
+    oid:
+      asString(dig(raw, "commit", "sha")) || asString(dig(raw, "commit", "id")),
+    ...(typeof guarded === "boolean" ? { protected: guarded } : {}),
+  };
+}
+
+/** README names, in the order both forges themselves prefer them. */
+export const README_NAMES = [
+  "README.md",
+  "README.markdown",
+  "README.rst",
+  "README.txt",
+  "README",
+] as const;
+
+/** Pick the readme out of a root listing, case-insensitively. */
+export function readmeEntry(
+  entries: readonly RemoteTreeEntry[],
+): RemoteTreeEntry | undefined {
+  const files = entries.filter(
+    (e) => e.kind === "blob" || e.kind === "symlink",
+  );
+  for (const name of README_NAMES) {
+    const hit = files.find((e) => e.name.toLowerCase() === name.toLowerCase());
+    if (hit) return hit;
+  }
+  return files.find((e) => e.name.toLowerCase().startsWith("readme."));
+}
