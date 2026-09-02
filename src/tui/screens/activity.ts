@@ -141,6 +141,30 @@ export function describeEvent(
         detail: "",
         subject: "",
       };
+    case "repo.mirrored":
+      return { headline: `${who} mirrored ${where}`, detail: "", subject: "" };
+    case "repo.imported":
+      return {
+        headline: `${who} imported issues and pulls into ${where}`,
+        detail: "",
+        subject: "",
+      };
+    case "repo.pinned":
+      return { headline: `${who} pinned ${where}`, detail: "", subject: "" };
+    case "repo.unpinned":
+      return { headline: `${who} unpinned ${where}`, detail: "", subject: "" };
+    case "origin.connected":
+      return {
+        headline: `${who} connected an origin`,
+        detail: "",
+        subject: "",
+      };
+    case "origin.disconnected":
+      return {
+        headline: `${who} disconnected an origin`,
+        detail: "",
+        subject: "",
+      };
     case "label.created":
       return {
         headline: `${who} added label ${quote(text(payload, "name"))} to ${where}`,

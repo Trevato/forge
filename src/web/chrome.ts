@@ -16,7 +16,7 @@ import type { Ctx } from "../http/context.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon } from "./icons.ts";
 import { page, redirect, type PaletteItem } from "./layout.ts";
-import { badge, btn, empty, iconBtn, tabs, type TabItem } from "./ui.ts";
+import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
 
@@ -210,11 +210,14 @@ function provenance(ctx: Ctx, repo: Repo): Html {
       () =>
         html`<form method="post" action="${repoBase(repo)}/pin">
           <input type="hidden" name="pinned" value="${pinned ? "0" : "1"}" />
-          ${iconBtn(
-            pinned ? "pinOff" : "pin",
-            pinned ? "Stop keeping this on my machine" : "Keep on my machine",
-            { size: "sm", variant: pinned ? "secondary" : "ghost" },
-          )}
+          ${btn(pinned ? "On my machine" : "Keep on my machine", {
+            icon: pinned ? "pinOff" : "pin",
+            size: "sm",
+            variant: pinned ? "secondary" : "outline",
+            title: pinned
+              ? "Stop keeping this repository on my machine"
+              : "The local client will clone and keep this fresh",
+          })}
         </form>`,
     )}
   </div>`;

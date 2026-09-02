@@ -142,6 +142,14 @@ function eventVerb(kind: string): string {
     "label.deleted": "removed a label",
     "webhook.created": "added a webhook",
     "webhook.deleted": "removed a webhook",
+    "repo.mirrored": "mirrored a repository",
+    "repo.imported": "imported issues and pulls",
+    "repo.pinned": "pinned a repository",
+    "repo.unpinned": "unpinned a repository",
+    "pull.labeled": "labelled a pull request",
+    "origin.connected": "connected an origin",
+    "origin.disconnected": "disconnected an origin",
+    "origin.needs_reauth": "needs to reconnect an origin",
   };
   return words[kind] ?? "acted on this repository";
 }
