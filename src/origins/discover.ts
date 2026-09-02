@@ -1,0 +1,310 @@
+/**
+ * "What forge is this?" — asked cheapest-first, and answered honestly.
+ *
+ * The tidy answer would be NodeInfo (`/.well-known/nodeinfo`), the one thing
+ * in this space resembling a standard. It does not work: Forgejo specifies
+ * `/api/v1/nodeinfo` and no live instance serves it — codeberg.org,
+ * code.forgejo.org and git.disroot.org all 404 the well-known path. So the
+ * primary probe is `GET /api/v1/version`, which every Forgejo and Gitea
+ * answers, and the discriminator is its version string: Forgejo appends the
+ * Gitea API generation it implements (`16.0.1+gitea-1.22.0`), Gitea's never
+ * contains `+gitea-`. NodeInfo stays as an opportunistic first look, because
+ * it costs one request and would be the right answer if anyone shipped it.
+ *
+ * Everything here talks to a host the user just named, so it is written like
+ * a fetch of hostile input: short timeouts, a byte cap, and a hard rule that
+ * a redirect may never leave the host we asked.
+ */
+
+import { err, ok, type Result } from "../kernel/result.ts";
+import type { Discovered, OriginKind } from "./types.ts";
+
+const TIMEOUT_MS = 5_000;
+const MAX_BYTES = 64 * 1024;
+const MAX_HOPS = 3;
+
+export type DiscoverError = "unknown_host" | "unreachable";
+
+export interface DiscoverInput {
+  /** What the user typed: `github`, `github.com`, `https://codeberg.org`. */
+  host: string;
+  /** Set when the user picked a forge explicitly (GitHub Enterprise needs it). */
+  kind?: OriginKind;
+}
+
+/**
+ * Hosts an operator has explicitly vouched for, comma-separated. This is the
+ * one way to reach a LAN forge or a plaintext one — an operator decision,
+ * never a per-user toggle, because the risk it accepts is the server's.
+ */
+function allowedHosts(
+  env: Record<string, string | undefined>,
+): Set<string> {
+  return new Set(
+    (env.FORGE_ORIGIN_ALLOW ?? "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter((h) => h !== ""),
+  );
+}
+
+/** Loopback is always reachable: it is this machine, and it is where a
+ * development instance and the test suite live. */
+function isLoopback(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return (
+    host === "localhost" ||
+    host === "::1" ||
+    host === "0:0:0:0:0:0:0:1" ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+  );
+}
+
+/**
+ * A literal address inside a range a server has no business dialling on a
+ * user's say-so. Only literals are checked here: a name that *resolves* into
+ * one of these ranges still gets through, and closing that would mean
+ * resolving the host ourselves and connecting to the pinned address, which
+ * Bun's fetch gives us no hook for. That residual DNS-rebinding risk is
+ * stated rather than papered over; the allow-list is the mitigation.
+ */
+function isPrivateLiteral(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 10 || a === 0) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  if (host.startsWith("fe80:") || host.startsWith("fc") || host.startsWith("fd"))
+    return true;
+  return false;
+}
+
+/**
+ * A user-typed host, normalised to an origin (scheme + host + port) — and
+ * refused unless the forge is willing to make requests to it.
+ *
+ * The user names a host and the server fetches it, which is textbook SSRF.
+ * The policy: https only; plaintext http only for loopback or an
+ * operator-allowed host; and no private address literal unless allowed.
+ */
+export function allowedOrigin(
+  input: string,
+  env: Record<string, string | undefined> = process.env,
+): string | undefined {
+  const text = input.trim().replace(/\/+$/, "");
+  if (text === "") return undefined;
+  // A scheme that is not http(s) is refused outright rather than treated as
+  // a hostname: `file:///etc/passwd` must never become `https://file/…`.
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(text);
+  if (scheme && !/^https?$/i.test(scheme[1]!)) return undefined;
+  const withScheme = /^https?:\/\//i.test(text) ? text : `https://${text}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    return undefined;
+  }
+  if (url.hostname === "") return undefined;
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+
+  const allowed = allowedHosts(env);
+  const named = allowed.has(url.host.toLowerCase()) ||
+    allowed.has(url.hostname.toLowerCase());
+  if (named) return url.origin;
+  if (isLoopback(url.hostname)) return url.origin;
+  if (url.protocol !== "https:") return undefined;
+  if (isPrivateLiteral(url.hostname)) return undefined;
+  return url.origin;
+}
+
+export async function discover(
+  input: string | DiscoverInput,
+  env: Record<string, string | undefined> = process.env,
+): Promise<Result<Discovered, DiscoverError>> {
+  const wanted: DiscoverInput =
+    typeof input === "string" ? { host: input } : input;
+  const typed = wanted.host.trim().toLowerCase().replace(/\/+$/, "");
+
+  // github.com is known — there is nothing to probe and no NodeInfo to find.
+  if (
+    typed === "github" ||
+    typed === "github.com" ||
+    typed === "https://github.com" ||
+    typed === "api.github.com" ||
+    (wanted.kind === "github" && typed === "")
+  ) {
+    return ok({
+      kind: "github",
+      apiUrl: "https://api.github.com",
+      webUrl: "https://github.com",
+      via: "known",
+      software: "github",
+    });
+  }
+
+  const web = allowedOrigin(wanted.host, env);
+  if (web === undefined) return err("unknown_host");
+
+  // GitHub Enterprise publishes neither NodeInfo nor a version endpoint we
+  // can read unauthenticated; the user says so, and we believe them.
+  if (wanted.kind === "github") {
+    return ok({
+      kind: "github",
+      apiUrl: `${web}/api/v3`,
+      webUrl: web,
+      via: "known",
+      software: "github-enterprise",
+    });
+  }
+
+  // One cheap look at the standard, then the probe that actually answers.
+  const node = await viaNodeInfo(web);
+  if (node) return ok(node);
+
+  const version = await viaVersionEndpoint(web);
+  if (version) return ok(version);
+
+  return err("unreachable");
+}
+
+// ---- probes ----
+
+/**
+ * The version endpoint, and the undocumented fact that makes it a
+ * discriminator: `+gitea-<semver>` in the string means Forgejo declaring
+ * which Gitea API generation it implements. Gitea's own string never has it.
+ */
+async function viaVersionEndpoint(
+  web: string,
+): Promise<Discovered | undefined> {
+  const doc = await getJson(`${web}/api/v1/version`, web);
+  if (!doc.ok) return undefined;
+  const version = asString(field(doc.value, "version"));
+  if (version === "") return undefined;
+  const kind: OriginKind = version.includes("+gitea-") ? "forgejo" : "gitea";
+  return {
+    kind,
+    apiUrl: `${web}/api/v1`,
+    webUrl: web,
+    via: "version-endpoint",
+    software: version,
+  };
+}
+
+async function viaNodeInfo(web: string): Promise<Discovered | undefined> {
+  const index = await getJson(`${web}/.well-known/nodeinfo`, web);
+  if (!index.ok) return undefined;
+  const links = asArray(field(index.value, "links"));
+  // Prefer the newest schema the host offers; any of them carries `software`.
+  const hrefs = links
+    .map((link) => asString(field(link, "href")))
+    .filter((href) => href !== "")
+    .sort()
+    .reverse();
+
+  for (const href of hrefs.slice(0, 3)) {
+    // A NodeInfo document on another host is a redirect we did not consent to.
+    if (!sameOrigin(href, web)) continue;
+    const doc = await getJson(href, web);
+    if (!doc.ok) continue;
+    const name = asString(field(field(doc.value, "software"), "name"))
+      .trim()
+      .toLowerCase();
+    const kind =
+      name === "forgejo" ? "forgejo" : name === "gitea" ? "gitea" : undefined;
+    if (kind === undefined) continue;
+    return {
+      kind,
+      apiUrl: `${web}/api/v1`,
+      webUrl: web,
+      via: "nodeinfo",
+      software: name,
+    };
+  }
+  return undefined;
+}
+
+// ---- careful fetching ----
+
+function sameOrigin(href: string, web: string): boolean {
+  try {
+    return new URL(href).origin === web;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * GET a small JSON document, following redirects by hand so every hop can be
+ * checked against the host the user named. Any failure is just `undefined`
+ * to the caller: discovery is a guess, and a wrong guess is not an error.
+ */
+async function getJson(
+  url: string,
+  web: string,
+): Promise<Result<unknown, "failed">> {
+  let target = url;
+  for (let hop = 0; hop < MAX_HOPS; hop++) {
+    if (!sameOrigin(target, web)) return err("failed");
+    let response: Response;
+    try {
+      response = await fetch(target, {
+        headers: { accept: "application/json", "user-agent": "forge" },
+        redirect: "manual",
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+    } catch {
+      return err("failed");
+    }
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (location === null) return err("failed");
+      try {
+        target = new URL(location, target).toString();
+      } catch {
+        return err("failed");
+      }
+      continue;
+    }
+    if (!response.ok) return err("failed");
+    const text = await readCapped(response);
+    if (text === undefined) return err("failed");
+    try {
+      return ok(JSON.parse(text));
+    } catch {
+      return err("failed");
+    }
+  }
+  return err("failed");
+}
+
+/** Read a response body, refusing anything over the cap. */
+async function readCapped(response: Response): Promise<string | undefined> {
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_BYTES) return undefined;
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength > MAX_BYTES) return undefined;
+  return new TextDecoder().decode(buffer);
+}
+
+// ---- tiny JSON readers (remote JSON is never trusted to have a shape) ----
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}

@@ -5,9 +5,10 @@
  */
 
 import type { App } from "../app.ts";
-import type { BodyError } from "../core/issues.ts";
+import { getIssueById, type BodyError } from "../core/issues.ts";
 import {
   createPull,
+  getPull,
   mergePull as landPull,
   pullDiff,
   type CreatePullError,
@@ -26,7 +27,13 @@ import {
 import type { User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { err, type Result } from "../kernel/result.ts";
+import { importIssue } from "../origins/import.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import {
+  refusal,
+  writeThroughFor,
+  type WriteThroughError,
+} from "../origins/write-through.ts";
 import {
   requireParticipant,
   requireWriter,
@@ -47,9 +54,50 @@ export async function openPull(
   actor: User | undefined,
   baseRepo: Repo,
   input: OpenPullInput,
-): Promise<Result<Pull, CreatePullError | "not_found" | "unauthorized">> {
+): Promise<
+  Result<
+    Pull,
+    CreatePullError | "not_found" | "unauthorized" | WriteThroughError
+  >
+> {
   const user = requireParticipant(app, actor, baseRepo);
   if (!user.ok) return user;
+
+  // A mirror's pull requests are the origin's. Push the branch (which the
+  // pre-receive hook has already forwarded upstream), then ask the origin to
+  // open the pull; what comes back is what we store, numbers and all.
+  const through = writeThroughFor(app, user.value, baseRepo);
+  if (!through.ok) return through;
+  if (through.value !== undefined) {
+    const title = input.title.trim();
+    if (title === "") return err("empty_title");
+    const created = await through.value.provider.createPull(
+      through.value.fullName,
+      {
+        title,
+        body: input.body ?? "",
+        base: input.baseBranch,
+        head: input.headBranch,
+      },
+    );
+    if (!created.ok) return err(refusal(created.error.error));
+    const imported = importIssue(
+      { db: app.db, repoId: baseRepo.id, actorId: user.value.id },
+      created.value,
+    );
+    app.bus.append({
+      kind: "pull.opened",
+      repoId: baseRepo.id,
+      actorId: user.value.id,
+      payload: { number: created.value.number, via: "origin" },
+    });
+    const stored = getIssueById(app.db, imported.issueId);
+    const pull = stored
+      ? getPullByNumber(app, baseRepo, created.value.number)
+      : undefined;
+    return pull ? ok(pull) : err("origin_refused");
+  }
+
   const head = input.headRepo;
   if (head && head.id !== baseRepo.id) {
     // The fork must be readable and actually descend from this base.
@@ -149,6 +197,13 @@ export async function mergePull(
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   if (pull.repoId !== repo.id) return err("not_found");
+  // Merging on a mirror is not offered. A local merge would rewrite the base
+  // branch here and then be overwritten by the next fetch; a merge through
+  // the API would have to reproduce the origin's merge strategy, protected
+  // branches and required checks exactly. Merge on the origin; the next sync
+  // reflects it, with the merge commit the origin actually made.
+  if (pull.originHeadRepo !== null || repo.origin !== null)
+    return err("mirrored");
   const merged = await landPull(
     app.db,
     repoDir(app.reposRoot, repo.ownerName, repo.name),
@@ -178,4 +233,13 @@ export async function mergePull(
     },
   });
   return merged;
+}
+
+/** The stored pull for a number, after an import wrote it. */
+function getPullByNumber(
+  app: App,
+  repo: Repo,
+  number: number,
+): Pull | undefined {
+  return getPull(app.db, repo.id, number);
 }

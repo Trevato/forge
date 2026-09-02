@@ -12,6 +12,9 @@
 
 export type OriginKind = "github" | "forgejo" | "gitea";
 
+/** How an origin's credential was obtained. */
+export type AuthKind = "pat" | "oauth";
+
 /** A connected account. The token is stored encrypted and never returned. */
 export interface Origin {
   readonly id: string;
@@ -27,6 +30,16 @@ export interface Origin {
   readonly lastSyncAt: string | null;
   /** Last sync outcome; empty when healthy. */
   readonly lastError: string;
+  /** How the credential was obtained. */
+  readonly authKind: AuthKind;
+  /** OAuth only: when the access token stops working, if the origin said. */
+  readonly expiresAt: string | null;
+  /**
+   * The credential is spent and cannot be refreshed. Sync skips this origin
+   * entirely until a human reconnects — retrying an `invalid_grant` forever
+   * is how one expired token becomes a permanent error loop.
+   */
+  readonly needsReauth: boolean;
 }
 
 /** A repository as the origin describes it — the import picker's rows. */
@@ -140,8 +153,11 @@ export interface ListIssuesQuery {
 /**
  * What every provider implements. Results are `Result<T, ProviderFailure>`
  * (see kernel/result.ts) — network and remote refusals are expected outcomes.
- * Implementations must be pure adapters: no database, no git, no state
- * beyond the credential they were constructed with.
+ * Implementations must be pure adapters: no database, no git, and no state
+ * beyond the credential they were constructed with and a conditional-request
+ * cache (ETags, and whatever the instance says its own page-size ceiling is).
+ * That cache is why `providerFor` keeps one instance per credential rather
+ * than building a fresh adapter per call.
  */
 export interface Provider {
   readonly kind: OriginKind;
@@ -205,26 +221,67 @@ export interface Provider {
   /**
    * What git needs to talk to this origin over HTTPS with the credential,
    * passed as `GIT_CONFIG_COUNT/KEY/VALUE` so the token never reaches argv.
+   *
+   * `remoteUrl` is the URL git will actually contact — the clone URL, not
+   * the web root. The header is scoped to exactly that host, so a redirect
+   * cannot carry our credential anywhere else, and an origin whose git host
+   * differs from its web host still authenticates.
+   *
+   * Async because resolving the secret may refresh an expiring OAuth token;
+   * an empty record means the credential could not be resolved, and the
+   * caller must not attempt the fetch or push at all.
    */
-  gitAuthEnv(): Record<string, string>;
+  gitAuthEnv(remoteUrl: string): Promise<Record<string, string>>;
 }
 
 export type ProviderResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: ProviderFailure };
 
-/** What a provider is constructed from. */
+/**
+ * What a provider is constructed from. The secret is a *function*, not a
+ * field: an OAuth access token on Forgejo lives about an hour, so the value
+ * that is correct when a sync starts may be stale three requests later. The
+ * accessor refreshes when it must and hands back the current secret; a
+ * provider therefore never holds a token, and never holds a stale one.
+ */
 export interface ProviderCredential {
   readonly kind: OriginKind;
   readonly apiUrl: string;
   readonly webUrl: string;
-  readonly token: string;
+  /**
+   * The account the token belongs to. Forgejo and Gitea authenticate git over
+   * HTTPS with `login:token` Basic, so the adapter needs the login as well as
+   * the secret; GitHub ignores the username and does not.
+   */
+  readonly login?: string;
+  /**
+   * How the secret was obtained. Forgejo wants `token <pat>` for a personal
+   * access token and `Bearer <at>` for an OAuth access token; GitHub takes
+   * Bearer for both. @default "pat"
+   */
+  readonly authKind?: AuthKind;
+  /**
+   * The bearer secret for one call. A failure here is `unauthorized` — the
+   * credential is gone or unrefreshable, and the origin needs reconnecting.
+   */
+  token(): Promise<ProviderResult<string>>;
+}
+
+/** A credential that is just a stored secret — the PAT path, and tests. */
+export function staticCredential(
+  input: Omit<ProviderCredential, "token"> & { token: string },
+): ProviderCredential {
+  const { token, ...rest } = input;
+  return { ...rest, token: async () => ({ ok: true, value: token }) };
 }
 
 /**
- * Discovery: given a host the user typed, which forge is it? NodeInfo is the
- * standard; the Forgejo/Gitea version endpoint is the fallback heuristic;
- * github.com is known.
+ * Discovery: given a host the user typed, which forge is it? Every answer
+ * here is a heuristic, which is why the evidence travels with it. github.com
+ * is known by name; `/api/v1/version` is what Forgejo and Gitea both answer
+ * (and its `+gitea-` suffix is what tells them apart); NodeInfo is the one
+ * thing resembling a standard, and no live instance serves it.
  */
 export interface Discovered {
   readonly kind: OriginKind;

@@ -1,6 +1,21 @@
 /**
  * Issue actions. Pulls are issues too (`kind: "pull"`), so commenting and
  * state changes here serve both — the event kind follows the record's kind.
+ *
+ * Every mutation comes in two shapes, and the pairing is deliberate.
+ *
+ * The plain function is the **native** path: synchronous, unchanged, and it
+ * refuses a mirrored repo with `"mirrored"`. That refusal is mechanical, not
+ * advisory — for a mirror the origin is truth, and a local-only write would
+ * be a row that diverges from it the moment it is made. No surface can
+ * bypass it by forgetting to check.
+ *
+ * The `…Through` function is the **general** path: it writes to the origin
+ * first, reflects the origin's own answer into the local rows, and then
+ * appends the event; for a native repo it simply delegates to its sync twin,
+ * so one call site serves both kinds of repo. The API uses these. A surface
+ * that has not adopted them yet keeps working on native repos and says
+ * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
 import type { App } from "../app.ts";
@@ -10,6 +25,7 @@ import {
   getIssueById,
   getLabel,
   labelsFor,
+  listComments,
   setIssueLabels as writeLabels,
   setIssueState as writeState,
   type Comment,
@@ -22,21 +38,40 @@ import {
 import { getPull } from "../core/pulls.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import {
+  applyLabelNames,
+  commentByRemoteId,
+  importComments,
+  importIssue,
+} from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   requireParticipant,
   requireWriter,
   type AccessError,
 } from "./access.ts";
+import {
+  isMirror,
+  refusal,
+  writeThroughFor,
+  type WriteThroughError,
+} from "../origins/write-through.ts";
+
+/** A repo whose truth lives on an origin cannot take a local-only write. */
+export type MirrorError = "mirrored";
 
 export function openIssue(
   app: App,
   actor: User | undefined,
   repo: Repo,
   input: { title: string; body?: string },
-): Result<Issue, "not_found" | "unauthorized" | TitleError | "body_too_long"> {
+): Result<
+  Issue,
+  "not_found" | "unauthorized" | TitleError | "body_too_long" | MirrorError
+> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
+  if (isMirror(app, repo)) return err("mirrored");
   const created = createIssue(app.db, {
     repoId: repo.id,
     authorId: user.value.id,
@@ -60,10 +95,11 @@ export function addComment(
   repo: Repo,
   issue: Issue,
   body: string,
-): Result<Comment, "not_found" | "unauthorized" | BodyError> {
+): Result<Comment, "not_found" | "unauthorized" | BodyError | MirrorError> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
+  if (isMirror(app, repo)) return err("mirrored");
   const added = insertComment(app.db, {
     issueId: issue.id,
     authorId: user.value.id,
@@ -90,10 +126,11 @@ export function setIssueState(
   repo: Repo,
   issue: Issue,
   state: IssueState,
-): Result<Issue, AccessError | "already_merged"> {
+): Result<Issue, AccessError | "already_merged" | MirrorError> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
+  if (isMirror(app, repo)) return err("mirrored");
   const mayModerate =
     user.value.id === issue.authorId || canWrite(app.db, repo, user.value);
   if (!mayModerate) return err("forbidden");
@@ -125,10 +162,11 @@ export function setIssueLabels(
   repo: Repo,
   issue: Issue,
   labels: string[],
-): Result<Label[], AccessError | "unknown_label"> {
+): Result<Label[], AccessError | "unknown_label" | MirrorError> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   if (issue.repoId !== repo.id) return err("not_found");
+  if (isMirror(app, repo)) return err("mirrored");
   const resolved: Label[] = [];
   for (const ref of labels) {
     const label = getLabel(app.db, repo.id, ref);
@@ -148,3 +186,177 @@ export function setIssueLabels(
   });
   return ok(labelsFor(app.db, issue.id));
 }
+
+// ---- write-through: the same four mutations, for any repo ----
+
+export type ThroughError<E> = E | MirrorError | WriteThroughError;
+
+/**
+ * Open an issue. On a mirror the origin creates it — so the number, the
+ * timestamps and the id are all the origin's, and the local row is a
+ * reflection of what came back rather than something we invented and hope
+ * matches.
+ */
+export async function openIssueThrough(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  input: { title: string; body?: string; labels?: readonly string[] },
+): Promise<
+  Result<
+    Issue,
+    ThroughError<"not_found" | "unauthorized" | TitleError | "body_too_long">
+  >
+> {
+  const user = requireParticipant(app, actor, repo);
+  if (!user.ok) return user;
+  const through = writeThroughFor(app, user.value, repo);
+  if (!through.ok) return through;
+  if (through.value === undefined)
+    return openIssue(app, actor, repo, input);
+
+  const title = input.title.trim();
+  if (title === "") return err("empty_title");
+  const created = await through.value.provider.createIssue(
+    through.value.fullName,
+    {
+      title,
+      body: input.body ?? "",
+      ...(input.labels === undefined ? {} : { labels: input.labels }),
+    },
+  );
+  if (!created.ok) return err(refusal(created.error.error));
+
+  const imported = importIssue(
+    { db: app.db, repoId: repo.id, actorId: user.value.id },
+    created.value,
+  );
+  app.bus.append({
+    kind: "issue.opened",
+    repoId: repo.id,
+    actorId: user.value.id,
+    payload: { number: created.value.number, via: "origin" },
+  });
+  return ok(getIssueById(app.db, imported.issueId)!);
+}
+
+export async function addCommentThrough(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  body: string,
+): Promise<
+  Result<Comment, ThroughError<"not_found" | "unauthorized" | BodyError>>
+> {
+  const user = requireParticipant(app, actor, repo);
+  if (!user.ok) return user;
+  if (issue.repoId !== repo.id) return err("not_found");
+  const through = writeThroughFor(app, user.value, repo);
+  if (!through.ok) return through;
+  if (through.value === undefined)
+    return addComment(app, actor, repo, issue, body);
+
+  const trimmed = body.trim();
+  if (trimmed === "") return err("empty_body");
+  const posted = await through.value.provider.createComment(
+    through.value.fullName,
+    issue.number,
+    trimmed,
+  );
+  if (!posted.ok) return err(refusal(posted.error.error));
+
+  const ctx = { db: app.db, repoId: repo.id, actorId: user.value.id };
+  importComments(ctx, issue.id, [posted.value]);
+  const localId = commentByRemoteId(app.db, issue.id, posted.value.remoteId);
+  if (localId === undefined) return err("origin_unreachable");
+  app.bus.append({
+    kind: `${issue.kind}.commented`,
+    repoId: repo.id,
+    actorId: user.value.id,
+    payload: { number: issue.number, via: "origin" },
+  });
+  return ok(
+    listComments(app.db, issue.id).find((c) => c.id === localId) ??
+      (() => {
+        throw new Error("unreachable");
+      })(),
+  );
+}
+
+export async function setIssueStateThrough(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  state: IssueState,
+): Promise<Result<Issue, ThroughError<AccessError | "already_merged">>> {
+  const user = requireParticipant(app, actor, repo);
+  if (!user.ok) return user;
+  if (issue.repoId !== repo.id) return err("not_found");
+  const through = writeThroughFor(app, user.value, repo);
+  if (!through.ok) return through;
+  if (through.value === undefined)
+    return setIssueState(app, actor, repo, issue, state);
+
+  // Same "author or writer" rule as a native issue: mirroring is not a
+  // permission bypass, and the origin will have its own opinion too.
+  if (!(user.value.id === issue.authorId || canWrite(app.db, repo, user.value)))
+    return err("forbidden");
+
+  const changed = await through.value.provider.setState(
+    through.value.fullName,
+    issue.number,
+    state,
+  );
+  if (!changed.ok) return err(refusal(changed.error.error));
+  const imported = importIssue(
+    { db: app.db, repoId: repo.id, actorId: user.value.id },
+    changed.value,
+  );
+  if (imported.changed) {
+    app.bus.append({
+      kind: `${issue.kind}.${state === "closed" ? "closed" : "reopened"}`,
+      repoId: repo.id,
+      actorId: user.value.id,
+      payload: { number: issue.number, via: "origin" },
+    });
+  }
+  return ok(getIssueById(app.db, imported.issueId)!);
+}
+
+export async function setIssueLabelsThrough(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  labels: string[],
+): Promise<Result<Label[], ThroughError<AccessError | "unknown_label">>> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  if (issue.repoId !== repo.id) return err("not_found");
+  const through = writeThroughFor(app, writer.value, repo);
+  if (!through.ok) return through;
+  if (through.value === undefined)
+    return setIssueLabels(app, actor, repo, issue, labels);
+
+  // On a mirror the origin owns the label vocabulary, so names go up as the
+  // user typed them and whatever comes back is what the issue now carries.
+  const applied = await through.value.provider.setLabels(
+    through.value.fullName,
+    issue.number,
+    labels,
+  );
+  if (!applied.ok) return err(refusal(applied.error.error));
+  const names = applied.value.map((l) => l.name);
+  applyLabelNames(app.db, repo.id, issue.id, names);
+  app.bus.append({
+    kind: `${issue.kind}.labeled`,
+    repoId: repo.id,
+    actorId: writer.value.id,
+    payload: { number: issue.number, labels: names, via: "origin" },
+  });
+  return ok(labelsFor(app.db, issue.id));
+}
+
+export { refusal };

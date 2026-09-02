@@ -24,6 +24,16 @@ export interface Issue {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly closedAt: string | null;
+  /**
+   * For an imported conversation: the login of whoever actually wrote it on
+   * the origin. `authorId` stays the connecting user so every join and
+   * permission check keeps working; this is what a surface renders instead,
+   * with the origin's mark — an imported name must never be mistaken for a
+   * local account.
+   */
+  readonly originAuthor: string | null;
+  /** The canonical URL at the origin, for "view at source". */
+  readonly originUrl: string | null;
 }
 
 interface IssueRow {
@@ -39,6 +49,8 @@ interface IssueRow {
   created_at: string;
   updated_at: string;
   closed_at: string | null;
+  origin_author: string | null;
+  origin_html_url: string | null;
 }
 
 const SELECT = `
@@ -59,6 +71,8 @@ function toIssue(row: IssueRow): Issue {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
+    originAuthor: row.origin_author,
+    originUrl: row.origin_html_url,
   };
 }
 
@@ -263,6 +277,8 @@ export interface Comment {
   readonly authorName: string;
   readonly body: string;
   readonly createdAt: string;
+  /** The login on the origin, for an imported comment; null for a local one. */
+  readonly originAuthor: string | null;
 }
 
 export function addComment(
@@ -297,6 +313,7 @@ function getComment(db: Database, commentId: string): Comment | undefined {
         author_name: string;
         body: string;
         created_at: string;
+        origin_author: string | null;
       },
       [string]
     >(
@@ -312,6 +329,7 @@ function getComment(db: Database, commentId: string): Comment | undefined {
     authorName: row.author_name,
     body: row.body,
     createdAt: row.created_at,
+    originAuthor: row.origin_author,
   };
 }
 
@@ -344,6 +362,7 @@ export function listComments(
         author_name: string;
         body: string;
         created_at: string;
+        origin_author: string | null;
       },
       [string]
     >(
@@ -359,6 +378,7 @@ export function listComments(
     authorName: row.author_name,
     body: row.body,
     createdAt: row.created_at,
+    originAuthor: row.origin_author,
   }));
 }
 

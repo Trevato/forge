@@ -10,6 +10,7 @@ import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { serve } from "./http/server.ts";
+import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
@@ -51,6 +52,13 @@ const deliveryTimer = setInterval(() => {
 runDelivery(app.db, app.log); // sweep anything queued while we were down
 pruneSessions(app.db);
 
+// The origin sync worker, on its own slower tick. Mirrors are polled, not
+// pushed to: an origin is due every ten minutes by default, and the tick only
+// asks who is due — so this costs one indexed read a minute when nothing is
+// connected. Like runDelivery, runSync never throws into the timer.
+const syncTimer = setInterval(() => runSync(app), 60_000);
+runSync(app); // one pass on boot: a forge that was down has fetching to do
+
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
 if (ssh)
   // The host key fingerprint on boot is what an operator compares against the
@@ -66,6 +74,7 @@ process.on("SIGTERM", shutdown);
 function shutdown(): void {
   app.log.info("forge shutting down");
   clearInterval(deliveryTimer);
+  clearInterval(syncTimer);
   ssh?.stop();
   servers.stop();
   app.close();
