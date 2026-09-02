@@ -81,11 +81,18 @@ way in you get is a property of the forge, not a preference:
 
 - **GitHub** — a device code. The forge shows a short code and a URL; you type
   the code on whatever device has a browser, and the forge does the polling.
-  This is the flow that works over SSH with no browser on the server. It needs
-  `FORGE_GITHUB_CLIENT_ID` set on the forge (and optionally
-  `FORGE_GITHUB_CLIENT_SECRET`, which only buys revoke-on-disconnect); without
-  the client id the button is replaced by a hint rather than left there to
-  fail.
+  This is the flow that works over SSH with no browser on the server. Setting
+  it up is three steps, once, for everyone on the forge:
+
+  1. Create an OAuth App at <https://github.com/settings/developers>. Name it
+     anything, set the homepage to your forge's URL, set the authorization
+     callback URL to `https://your.forge/settings/origins/callback`, and tick
+     **Enable Device Flow**.
+  2. Start the forge with `FORGE_GITHUB_CLIENT_ID=<client id>`.
+     `FORGE_GITHUB_CLIENT_SECRET` is optional and buys one thing:
+     disconnecting revokes the grant on GitHub too.
+  3. The GitHub button appears. Until it does, both surfaces print these three
+     steps rather than naming an environment variable and leaving you to it.
 - **Forgejo / Gitea** — authorization code with PKCE. They implement no device
   grant, and every instance needs its own OAuth application, so you paste a
   client id once per host. The page gives you the exact redirect URI to enter
@@ -98,6 +105,15 @@ way in you get is a property of the forge, not a preference:
 - **A pasted token** — the fallback that needs no registration anywhere. It is
   validated against the origin before it is stored, encrypted at rest, and
   never displayed again.
+
+Both connect screens hand the job to whatever device has a browser: a **QR
+code** to point a camera at, a **short link** (`https://your.forge/go/<10
+characters>`, live for ten minutes and gone once used) short enough to type by
+hand, and — in the terminal — `c` to put the link on *your* clipboard through
+your own terminal (OSC 52, so it works over SSH; iTerm2, Ghostty, kitty and
+WezTerm honour it, Apple Terminal does not). `o` opens a browser only when the
+forge's terminal is the one in front of you; over SSH it says so rather than
+appearing to work.
 
 Then pick what you want: **Repositories** on an origin lists everything the
 token can see, and you mirror them one at a time. There is no "mirror

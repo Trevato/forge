@@ -1277,7 +1277,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ? { clientSecret: input.clientSecret }
         : {}),
     });
-    if (!saved.ok) return apiError(saved.error, 422, connectMessage(saved.error));
+    if (!saved.ok)
+      return apiError(saved.error, 422, connectMessage(saved.error));
     return json(saved.value, 201);
   });
 
@@ -1425,13 +1426,27 @@ export function oauthCallbackUri(
   configuredHost: string | undefined,
   env: Record<string, string | undefined> = process.env,
 ): string {
-  const path = "/settings/origins/callback";
+  const base = forgeBaseUrl(requestUrl, configuredHost, env);
+  return base === "" ? "" : `${base}/settings/origins/callback`;
+}
+
+/**
+ * The forge's own address, by the rule above and nothing else. Anything we
+ * hand a person to type or scan on another device — the callback URI, the
+ * `/go/<code>` short link — is built from this, so the two can never disagree
+ * about which forge this is.
+ */
+export function forgeBaseUrl(
+  requestUrl: URL,
+  configuredHost: string | undefined,
+  env: Record<string, string | undefined> = process.env,
+): string {
   const configured = (env.FORGE_URL ?? "").trim();
   if (configured !== "") {
     try {
       const url = new URL(configured);
       if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-      return `${url.origin}${path}`;
+      return url.origin;
     } catch {
       return "";
     }
@@ -1442,7 +1457,7 @@ export function oauthCallbackUri(
     host === "localhost" ||
     host === "127.0.0.1" ||
     host === "[::1]";
-  return vouched ? `${requestUrl.origin}${path}` : "";
+  return vouched ? requestUrl.origin : "";
 }
 
 function connectMessage(code: string): string {

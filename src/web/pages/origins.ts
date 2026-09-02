@@ -33,14 +33,15 @@ import { getFlowFor } from "../../origins/oauth.ts";
 import { getOriginFor, type Origin } from "../../core/origins.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { oauthCallbackUri } from "../../http/api.ts";
+import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
+import { qrEncode, qrSvg } from "../../design/qr.ts";
 import {
   settingsLayout,
   signInFirst,
   type SettingsSection,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { pollJs } from "../client.ts";
 import {
@@ -223,15 +224,47 @@ const blankValues = (): ConnectValues => ({
   tokenHost: "",
 });
 
-function githubSection(configured: boolean): Html {
+/**
+ * The GitHub path — or, when nobody has registered an application yet, the
+ * three steps that produce one. "Not configured" is a *task*, not a status:
+ * the previous version of this note named the environment variable and left
+ * the reader to find out on GitHub's site what to put in it, which is the
+ * kind of dead end that sends someone back to pasting a token forever.
+ */
+function githubSection(configured: boolean, callback: string): Html {
   if (!configured) {
+    const back =
+      callback === "" ? "<your forge>/settings/origins/callback" : callback;
     return html`<div class="connect-path">
       <h3>${icon("github")}GitHub</h3>
       <p class="muted small">
-        This forge has no GitHub application configured (<span class="mono"
-          >FORGE_GITHUB_CLIENT_ID</span
-        >), so the one-click device flow is unavailable. Paste a personal access
-        token below, or ask the operator to set one.
+        No GitHub application is registered for this forge yet, so the device
+        flow has no client id to use. Three steps, once, for every user of this
+        forge:
+      </p>
+      <ol class="steps small">
+        <li>
+          Create an OAuth App at
+          <a
+            href="https://github.com/settings/developers"
+            target="_blank"
+            rel="noopener noreferrer"
+            >github.com/settings/developers</a
+          >: name it anything, set the homepage to this forge's URL, set the
+          authorization callback URL to <span class="mono break">${back}</span>,
+          and tick <strong>Enable Device Flow</strong>.
+        </li>
+        <li>
+          Start the forge with
+          <span class="mono">FORGE_GITHUB_CLIENT_ID=&lt;client id&gt;</span>.
+          <span class="mono">FORGE_GITHUB_CLIENT_SECRET</span> is optional and
+          buys one thing: disconnecting revokes the grant on GitHub too.
+        </li>
+        <li>Reload this page — the GitHub button appears here.</li>
+      </ol>
+      <p class="muted small">
+        Until then, a personal access token below works and needs no
+        registration anywhere.
       </p>
     </div>`;
   }
@@ -307,7 +340,9 @@ function forgejoSection(
             <li>
               Open
               <span class="mono"
-                >${values.host === "" ? "https://your.forge" : values.host}/user/settings/applications</span
+                >${values.host === ""
+                  ? "https://your.forge"
+                  : values.host}/user/settings/applications</span
               >.
             </li>
             <li>
@@ -451,7 +486,7 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
         })
       : html`<div class="stack">${origins.map(originCard)}</div>`}
     ${card(
-      html`${githubSection(githubConfigured)}
+      html`${githubSection(githubConfigured, callbackUri(ctx))}
       ${forgejoSection(
         ctx,
         values,
@@ -697,6 +732,9 @@ export function originFlowPage(ctx: Ctx): Response {
     flow.flow === "code"
       ? authorizeLink(ctx.url.searchParams.get("to") ?? "", flow.webUrl)
       : undefined;
+  const base = forgeBaseUrl(ctx.url, ctx.app.config.host);
+  const shortLink =
+    base === "" || flow.shortCode === "" ? "" : `${base}/go/${flow.shortCode}`;
   const body =
     flow.flow === "device"
       ? html`${card(
@@ -706,24 +744,11 @@ export function originFlowPage(ctx: Ctx): Response {
                 >${flow.verificationUri}</a
               >. Any device with a browser will do — this page waits.
             </p>
-            <p class="device-code" id="device-code">${flow.userCode}</p>
             <div class="bar">
-              ${btn("Open the verification page", {
-                href: flow.verificationUri,
-                variant: "primary",
-                icon: "external",
-              })}
-              <button
-                class="btn btn-icon"
-                data-size="sm"
-                type="button"
-                data-copy="device-code"
-                aria-label="Copy the code"
-                title="Copy"
-              >
-                ${icon("copy")}
-              </button>
-            </div>`,
+              <p class="device-code" id="device-code">${flow.userCode}</p>
+              ${copyBtn("device-code", "Copy the code")}
+            </div>
+            ${handoff(flow.verificationUri, shortLink)}`,
           {
             head: html`${icon("github")}
               <h2>Enter this code</h2>`,
@@ -732,8 +757,8 @@ export function originFlowPage(ctx: Ctx): Response {
       : html`${card(
           authorize === undefined
             ? html`<p>
-                  This connect cannot be continued from here — the
-                  authorization link was lost. Start it again from Origins.
+                  This connect cannot be continued from here — the authorization
+                  link was lost. Start it again from Origins.
                 </p>
                 <div class="bar mt">
                   ${btn("Back to origins", {
@@ -746,13 +771,7 @@ export function originFlowPage(ctx: Ctx): Response {
                   <span class="mono">${hostLabel(flow.webUrl)}</span> and
                   approve the application. You will come straight back here.
                 </p>
-                <div class="bar mt">
-                  ${btn("Continue to the instance", {
-                    href: authorize,
-                    variant: "primary",
-                    icon: "external",
-                  })}
-                </div>`,
+                ${handoff(authorize, shortLink, "Continue to the instance")}`,
           {
             head: html`${icon("forgejo")}
               <h2>Authorize on the instance</h2>`,
@@ -794,6 +813,62 @@ export function originFlowPage(ctx: Ctx): Response {
       </div>`,
     scriptJs: pollJs,
   });
+}
+
+/** The copy affordance: an icon button that is inert without a script, and
+ * sits beside text that stays selectable either way. */
+function copyBtn(target: string, label: string): Html {
+  return html`<button
+    class="btn btn-icon js-only"
+    data-size="sm"
+    type="button"
+    data-copy="${target}"
+    aria-label="${label}"
+    title="Copy"
+  >
+    ${icon("copy")}
+  </button>`;
+}
+
+/**
+ * Getting the person to the other device: a QR code they point a camera at,
+ * the short link they could type instead, the full URL for a browser that is
+ * already here, and one button that opens it.
+ *
+ * The QR carries the short link when the forge knows its own address and the
+ * long URL otherwise — the shorter the payload, the coarser the modules and
+ * the further away a phone can read it.
+ */
+function handoff(url: string, shortLink: string, openLabel?: string): Html {
+  const payload = shortLink === "" ? url : shortLink;
+  const code = qrEncode(payload);
+  return html`<div class="handoff">
+    ${code.ok
+      ? raw(qrSvg(code.value, { title: "Scan to open the link" }))
+      : null}
+    <div class="handoff-links">
+      ${shortLink === ""
+        ? null
+        : html`<p class="muted small">Or open this on a phone:</p>
+            <div class="bar">
+              <span class="mono" id="flow-short">${shortLink}</span>
+              ${copyBtn("flow-short", "Copy the short link")}
+            </div>`}
+      <p class="muted small mt">The full link:</p>
+      <div class="bar">
+        <span class="mono small break" id="flow-url">${url}</span>
+        ${copyBtn("flow-url", "Copy the link")}
+      </div>
+      <div class="bar mt">
+        ${btn(openLabel ?? "Open the verification page", {
+          href: url,
+          variant: "primary",
+          icon: "external",
+          external: true,
+        })}
+      </div>
+    </div>
+  </div>`;
 }
 
 function notFoundNote(): Html {

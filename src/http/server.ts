@@ -56,11 +56,7 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { labelsSubmit, stateSubmit } from "../web/pages/thread.ts";
-import {
-  newPullPage,
-  newPullSubmit,
-  pullsList,
-} from "../web/pages/pulls.ts";
+import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
 import {
   pullCommentSubmit,
   pullMergeSubmit,
@@ -118,6 +114,8 @@ import {
   originsPage,
 } from "../web/pages/origins.ts";
 import { pushThrough } from "../origins/push-through.ts";
+import { notFoundPage } from "../web/chrome.ts";
+import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { cookieValue, type Auth, type Ctx, type Handler } from "./context.ts";
 import { json, noRoute, notFound } from "./respond.ts";
@@ -251,6 +249,31 @@ export function buildRouter(): Router<Handler> {
     return new Response(null, {
       status: 303,
       headers: { location: `/settings/origins?${query}` },
+    });
+  });
+
+  // The short link for a connect in flight, and the one route here that is
+  // deliberately anonymous: the device typing it is a phone that has never
+  // signed in to this forge, and where it lands is a public page on GitHub or
+  // a Forgejo instance. The code is 50 bits of randomness on a row that lives
+  // ten minutes, and an unknown code and an expired one give the same 404 —
+  // anything else would tell somebody guessing which half of the guess was
+  // right. The target never reaches a log line; it is only ever a header.
+  //
+  // The cost of a two-character prefix: a user named `go` loses `/go/<repo>`
+  // (their profile and every deeper repo route still resolve). That is the
+  // price of a link short enough to type off a screen, and it is paid by one
+  // reserved word rather than by everyone typing `/-/go/…` on a phone.
+  router.add("GET", "/go/:code", (ctx) => {
+    const target = targetForShortCode(
+      ctx.app.db,
+      ctx.app.config.dataDir,
+      ctx.params.code ?? "",
+    );
+    if (target === undefined) return notFoundPage(ctx);
+    return new Response(null, {
+      status: 303,
+      headers: { location: target, "cache-control": "no-store" },
     });
   });
 

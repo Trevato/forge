@@ -76,6 +76,9 @@ export interface BtnOptions {
   shortcut?: string;
   /** Copy the text of the element with this id (enhancement; inert with JS off). */
   copy?: string;
+  /** A link that leaves the forge: new tab, and never a referrer or an
+   * opener handle back into this page. */
+  external?: boolean;
   disabled?: boolean;
   current?: boolean;
   extra?: string;
@@ -96,7 +99,12 @@ function btnAttrs(o: BtnOptions): Html {
 export function btn(content: Html | string, o: BtnOptions = {}): Html {
   const inner = html`${o.icon ? icon(o.icon) : null}${content}`;
   if (o.href !== undefined) {
-    return html`<a href="${o.href}" ${btnAttrs(o)}>${inner}</a>`;
+    return html`<a
+      href="${o.href}"
+      ${o.external ? raw('target="_blank" rel="noopener noreferrer"') : null}
+      ${btnAttrs(o)}
+      >${inner}</a
+    >`;
   }
   return html`<button
     type="${o.type ?? "submit"}"

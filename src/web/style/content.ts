@@ -76,6 +76,21 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   font-variant-numeric: tabular-nums; letter-spacing: 0.14em;
   text-align: center; user-select: all; word-break: break-all;
 }
+/* Handing a connect to another device: a code to scan, a short link to type,
+   the long one to copy. The QR keeps its own white ground in every theme —
+   a scanner reads dark modules on light and refuses the inverse, so this is
+   the one thing on the page the theme does not get a vote on. */
+.handoff { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; margin-top: 12px; }
+.handoff > svg {
+  flex: none; width: 168px; height: 168px;
+  background: #fff; border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.handoff-links { flex: 1 1 16rem; min-width: 0; }
+.handoff-links .mono { user-select: all; overflow-wrap: anywhere; }
+.break { overflow-wrap: anywhere; }
+
+.bar > .device-code { flex: 1 1 auto; }
+
 .repo-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 
 .repo-layout { display: grid; gap: 16px; margin-top: 16px; align-items: start; }

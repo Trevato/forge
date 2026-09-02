@@ -18,6 +18,8 @@ import { Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
 import {
   TerminalSession,
+  copyToTerminal,
+  openInBrowser,
   type Terminal,
   type SessionOpts,
 } from "../term/terminal.ts";
@@ -81,6 +83,19 @@ export interface Ctx {
   track<T>(work: Promise<T>): Promise<T>;
   setTheme(name: ThemeName): void;
   quit(): void;
+  /**
+   * Put text on the user's own clipboard, through their terminal (OSC 52) —
+   * the only route that works over SSH. Whether it lands is the far-side
+   * terminal's decision and there is no answer to wait for, so a screen may
+   * say it was sent and never that it arrived.
+   */
+  copy(text: string): void;
+  /**
+   * Open a URL in a browser on the machine this terminal runs on. False when
+   * there is no such machine to reach — every SSH session — which a screen
+   * must say out loud rather than pretending the keypress did something.
+   */
+  openUrl(url: string): boolean;
   readonly theme: Theme;
   readonly cols: number;
   readonly rows: number;
@@ -183,6 +198,8 @@ export class App {
       },
       setTheme: (name) => app.applyTheme(name),
       quit: () => app.stop(),
+      copy: (text) => copyToTerminal(app.opts.terminal, text),
+      openUrl: (url) => openInBrowser(app.opts.terminal, url),
       get theme() {
         return theme(app.themeName);
       },

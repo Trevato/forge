@@ -26,7 +26,10 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import type { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
-import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import {
+  headlessTerminal,
+  type HeadlessTerminal,
+} from "../src/tui/term/terminal.ts";
 import {
   newFakeOAuth,
   newFakeState,
@@ -40,12 +43,15 @@ setLogLevel("error");
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-9f2a";
 const CLIENT_ID = "Iv1.forge-tui-client";
+/** What an operator sets so the forge knows its own address. */
+const FORGE_URL = "https://forge.example.test";
 
 const basic = (user: string, secret: string): string =>
   `Basic ${Buffer.from(`${user}:${secret}`).toString("base64")}`;
 
 interface Harness {
   app: App;
+  terminal: HeadlessTerminal;
   text(): string;
   press(...keys: string[]): Promise<void>;
   typeText(text: string): Promise<void>;
@@ -55,8 +61,13 @@ interface Harness {
   stop(): void;
 }
 
-function boot(forge: Forge, identity: TuiIdentity): Harness {
-  const terminal = headlessTerminal(140, 40);
+function boot(
+  forge: Forge,
+  identity: TuiIdentity,
+  cols = 140,
+  rows = 40,
+): Harness {
+  const terminal = headlessTerminal(cols, rows);
   const { app } = createForgeApp(forge, identity, {
     terminal,
     exitHooks: false,
@@ -82,6 +93,7 @@ function boot(forge: Forge, identity: TuiIdentity): Harness {
   };
   return {
     app,
+    terminal,
     text: () => app.screen.toText(),
     async press(...keys) {
       for (const key of keys) await one(key);
@@ -131,6 +143,21 @@ describe("origins in the terminal", () => {
     fingerprint: "SHA256:test",
     user: alice,
   });
+
+  /** Dashboard → account → origins → connect → GitHub → the device screen. */
+  const openDeviceScreen = async (h: Harness): Promise<void> => {
+    await h.press("A");
+    await h.until("Account");
+    await h.press("o");
+    await h.until("Origins");
+    await h.press("c");
+    await h.until("Connect an origin");
+    await h.press("enter");
+    await h.until("Connect GitHub");
+    await h.typeText(github.url);
+    await h.press("enter");
+    await h.until("W X Y Z - 1 2 3 4");
+  };
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tuiorigins-"));
@@ -281,6 +308,122 @@ describe("origins in the terminal", () => {
       await h.press("esc");
     } finally {
       delete process.env.FORGE_GITHUB_CLIENT_ID;
+      h.stop();
+    }
+  }, 60_000);
+
+  /**
+   * The reason this screen has the shape it does: over SSH the URL on screen
+   * is a string you cannot click and often cannot copy. So the test asserts
+   * the three ways off it — a QR made of real cells, a short link short
+   * enough to type, and an OSC 52 sequence that reaches the *user's*
+   * terminal rather than the server's.
+   */
+  test("the device screen hands the connect to a phone, and c reaches the user's clipboard", async () => {
+    process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
+    process.env.FORGE_URL = FORGE_URL;
+    resetConnectLimit();
+    const h = boot(forge, asAlice(), 120, 40);
+    try {
+      await openDeviceScreen(h);
+
+      const text = h.text();
+      const found = /https:\/\/forge\.example\.test\/go\/[0-9a-z]{10}/.exec(text);
+      expect(found).not.toBeNull();
+      const short = found![0];
+      // The code in it belongs to a live flow row, and to nothing else.
+      const row = forge.db
+        .query<{ short_code: string }, []>(
+          "SELECT short_code FROM oauth_flow WHERE status = 'pending' ORDER BY id DESC LIMIT 1",
+        )
+        .get();
+      expect(short.endsWith(row!.short_code)).toBe(true);
+
+      // A QR, drawn as half blocks. The signature is the top of a finder
+      // pattern: seven dark modules over a dark-light-dark row render as one
+      // full block, five upper halves and one full block.
+      expect(text).toContain("\u2588\u2580\u2580\u2580\u2580\u2580\u2588");
+      // And the full URL is still there for anyone who wants to read it.
+      expect(text).toContain(ghOauth.verificationUri);
+
+      // `c` copies the short link through the terminal itself.
+      h.terminal.takeOutput();
+      await h.press("c");
+      const copied = h.terminal.takeOutput();
+      expect(copied).toContain(
+        `\u001b]52;c;${Buffer.from(short, "utf8").toString("base64")}\u0007`,
+      );
+      expect(h.text()).toContain("copied");
+      expect(h.text()).toContain("Apple Terminal does not");
+
+      // `C` copies the device code instead.
+      h.terminal.takeOutput();
+      await h.press("C");
+      expect(h.terminal.takeOutput()).toContain(
+        `\u001b]52;c;${Buffer.from("WXYZ-1234", "utf8").toString("base64")}\u0007`,
+      );
+
+      // `o` cannot reach a browser from the far side of a connection, and
+      // says exactly that rather than appearing to work.
+      await h.press("o");
+      expect(h.text()).toContain("no browser on this machine");
+      await h.press("esc");
+    } finally {
+      delete process.env.FORGE_GITHUB_CLIENT_ID;
+      delete process.env.FORGE_URL;
+      h.stop();
+    }
+  }, 60_000);
+
+  test("at 80x24 the QR is dropped and the short link is kept", async () => {
+    process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
+    process.env.FORGE_URL = FORGE_URL;
+    resetConnectLimit();
+    const h = boot(forge, asAlice(), 80, 24);
+    try {
+      await openDeviceScreen(h);
+      const text = h.text();
+      // Half a QR is not a smaller QR, so at this height there is none.
+      expect(text).not.toContain("\u2588\u2580\u2580\u2580\u2580\u2580\u2588");
+      expect(text).toMatch(/https:\/\/forge\.example\.test\/go\/[0-9a-z]{10}/);
+      expect(text).toContain("W X Y Z - 1 2 3 4");
+      // All three ways off the screen are named in the help bar.
+      expect(text).toContain("copy link");
+      expect(text).toContain("copy code");
+      expect(text).toContain("open");
+      await h.press("esc");
+    } finally {
+      delete process.env.FORGE_GITHUB_CLIENT_ID;
+      delete process.env.FORGE_URL;
+      h.stop();
+    }
+  }, 60_000);
+
+  test("an unconfigured GitHub explains how to configure it, where it failed", async () => {
+    delete process.env.FORGE_GITHUB_CLIENT_ID;
+    resetConnectLimit();
+    const h = boot(forge, asAlice(), 80, 24);
+    try {
+      await h.press("A");
+      await h.until("Account");
+      await h.press("o");
+      await h.until("Origins");
+      await h.press("c");
+      await h.until("Connect an origin");
+      await h.press("enter");
+      await h.until("Connect GitHub");
+      await h.typeText(github.url);
+      await h.press("enter");
+
+      await h.until("Set up GitHub");
+      const text = h.text();
+      expect(text).toContain("github.com/settings/developers");
+      expect(text).toContain("Enable Device Flow");
+      expect(text).toContain("FORGE_GITHUB_CLIENT_ID");
+      expect(text).toContain("/settings/origins/callback");
+      expect(text).toContain("'Paste a token' needs no registration");
+      await h.press("esc");
+    } finally {
       h.stop();
     }
   }, 60_000);

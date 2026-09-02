@@ -285,6 +285,8 @@ export interface OAuthStart {
   readonly userCode: string;
   /** Where the human goes — a verification page, or the authorize URL. */
   readonly url: string;
+  /** The `/go/<code>` half of the short link that redirects to `url`. */
+  readonly shortCode: string;
   readonly intervalSecs: number;
   readonly expiresAt: string;
 }
@@ -343,6 +345,7 @@ export async function startOAuthConnect(
       deviceCode: started.value.deviceCode,
       userCode: started.value.userCode,
       verificationUri: started.value.verificationUri,
+      target: started.value.verificationUri,
       intervalSecs: started.value.intervalSecs,
       ttlMs: started.value.expiresInSecs * 1000,
     });
@@ -351,6 +354,7 @@ export async function startOAuthConnect(
       flow: "device",
       userCode: started.value.userCode,
       url: started.value.verificationUri,
+      shortCode: flow.shortCode,
       intervalSecs: started.value.intervalSecs,
       expiresAt: flow.expiresAt,
     });
@@ -365,6 +369,12 @@ export async function startOAuthConnect(
       message:
         "this forge does not know its own public URL; set FORGE_URL so it can register a callback",
     });
+  const url = authorizeUrl(registration.value, {
+    state,
+    challenge: challenge.challenge,
+    redirectUri,
+    scope,
+  });
   const flow = createFlow(app.db, app.config.dataDir, {
     userId: user.value.id,
     flow: "code",
@@ -372,17 +382,14 @@ export async function startOAuthConnect(
     state,
     verifier: challenge.verifier,
     redirectUri,
+    target: url,
   });
   return ok({
     flowId: flow.id,
     flow: "code",
     userCode: "",
-    url: authorizeUrl(registration.value, {
-      state,
-      challenge: challenge.challenge,
-      redirectUri,
-      scope,
-    }),
+    url,
+    shortCode: flow.shortCode,
     intervalSecs: 0,
     expiresAt: flow.expiresAt,
   });

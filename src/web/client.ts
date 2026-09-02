@@ -109,17 +109,38 @@ export const shellJs = /* js */ `
   }
 
   // ---- copy buttons ----
+  // navigator.clipboard is unavailable on a plain-http origin, which is
+  // exactly where a self-hosted forge on a LAN lives. So the fallback is to
+  // select the text: the copy is then one keystroke away instead of a
+  // retype, and the button never does nothing.
+  function selectText(el) {
+    try {
+      var range = doc.createRange();
+      range.selectNodeContents(el);
+      var sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return true;
+    } catch (err) { return false; }
+  }
   doc.addEventListener('click', function (e) {
     var b = e.target && e.target.closest ? e.target.closest('[data-copy]') : null;
-    if (!b || !navigator.clipboard) return;
+    if (!b) return;
     var src = doc.getElementById(b.getAttribute('data-copy'));
     if (!src) return;
     e.preventDefault();
-    navigator.clipboard.writeText(src.textContent.trim()).then(function () {
-      var was = b.getAttribute('title');
-      b.setAttribute('data-tip', 'Copied');
+    var was = b.getAttribute('title');
+    function done(tip) {
+      b.setAttribute('data-tip', tip);
       window.setTimeout(function () { b.removeAttribute('data-tip'); b.setAttribute('title', was || ''); }, 1200);
-    }, function () {});
+    }
+    function fallback() {
+      done(selectText(src) ? 'Selected — press Ctrl/Cmd+C' : 'Copy it by hand');
+    }
+    if (!navigator.clipboard) { fallback(); return; }
+    navigator.clipboard.writeText(src.textContent.trim()).then(function () {
+      done('Copied');
+    }, fallback);
   });
 
   // ---- code line ranges: shift-click extends #L3 to #L3-L9 ----

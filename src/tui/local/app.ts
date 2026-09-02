@@ -14,7 +14,11 @@ import { ForgeApi } from "../../cli/api.ts";
 import type { Config } from "../../cli/config.ts";
 import { App, type Ctx, type Screen } from "../app/app.ts";
 import type { Command } from "../app/palette.ts";
-import { stdioTerminal, type Terminal } from "../term/terminal.ts";
+import {
+  copyToTerminal,
+  stdioTerminal,
+  type Terminal,
+} from "../term/terminal.ts";
 import type { ThemeName } from "../ui/theme.ts";
 import type { Local } from "./common.ts";
 import { reposScreen } from "./repos.ts";
@@ -42,7 +46,7 @@ export function createLocalApp(opts: LocalOpts): LocalApp {
   const local: Local = {
     root: opts.root,
     api,
-    copy: (text) => copyToClipboard(terminal, text),
+    copy: (text) => copyToTerminal(terminal, text),
   };
 
   const app = new App({
@@ -94,15 +98,4 @@ function commands(local: Local, ctx: Ctx): Command[] {
       run: () => ctx.replace(reposScreen(local, ctx)),
     },
   ];
-}
-
-/**
- * OSC 52. The terminal itself puts the text on the system clipboard, which is
- * the only mechanism that works over SSH and in tmux alike — and the reason
- * the local screens take a `copy` from the session rather than reaching for
- * a clipboard binary that would not exist on the far side of a connection.
- */
-function copyToClipboard(terminal: Terminal, text: string): void {
-  const encoded = Buffer.from(text, "utf8").toString("base64");
-  terminal.write(new TextEncoder().encode(`\x1b]52;c;${encoded}\x07`));
 }

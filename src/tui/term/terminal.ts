@@ -34,9 +34,55 @@ export interface Terminal {
   close(): void;
   /** The `TERM` the client announced; the only env var SSH forwards. */
   readonly term?: string;
+  /**
+   * True only for the terminal attached to *this* machine's stdio. An SSH
+   * channel and a test harness are both false, which is the difference
+   * between "I can open your browser" and "I can only show you a link".
+   */
+  readonly local?: boolean;
 }
 
 const encoder = new TextEncoder();
+
+/**
+ * Put text on the user's system clipboard, through the terminal itself.
+ *
+ * OSC 52 is the only mechanism that works over SSH: the sequence travels
+ * back down the connection and the *client's* terminal does the copying, so
+ * no clipboard binary has to exist on the server. Support is a property of
+ * the far-side terminal — iTerm2, Ghostty, kitty and WezTerm do it, Apple's
+ * Terminal does not — and there is no reply to read, so a caller can say it
+ * was sent but never that it arrived.
+ */
+export function copyToTerminal(terminal: Terminal, text: string): void {
+  const encoded = Buffer.from(text, "utf8").toString("base64");
+  terminal.write(encoder.encode(`\x1b]52;c;${encoded}\x07`));
+}
+
+/**
+ * Open a URL in a browser on the machine this terminal is attached to.
+ *
+ * Only the local stdio session can: over SSH the browser is on the far side
+ * of the connection and nothing here can reach it, which is precisely why
+ * the connect screens print a QR code and a short link. Returns whether it
+ * was attempted, so a screen can say the true thing either way.
+ */
+export function openInBrowser(terminal: Terminal, url: string): boolean {
+  if (terminal.local !== true) return false;
+  if (!/^https?:\/\//i.test(url)) return false;
+  const opener = process.platform === "darwin" ? "open" : "xdg-open";
+  try {
+    // argv, never a shell — the URL is data and must stay data.
+    Bun.spawn([opener, url], {
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface SessionOpts {
   /**
@@ -143,6 +189,9 @@ export function stdioTerminal(): Terminal {
   stdin.resume();
 
   const term: Terminal = {
+    // The one terminal that is on the same machine as the process: `o` can
+    // open a browser here and nowhere else.
+    local: true,
     write(bytes) {
       if (!closed) stdout.write(bytes);
     },

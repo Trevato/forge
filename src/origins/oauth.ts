@@ -341,6 +341,8 @@ export type FlowKind = "device" | "code";
 export interface FlowRow {
   readonly id: string;
   readonly userId: string;
+  /** The `/go/<code>` half of the short link. Empty on pre-migration rows. */
+  readonly shortCode: string;
   readonly flow: FlowKind;
   readonly kind: OriginKind;
   readonly apiUrl: string;
@@ -361,6 +363,8 @@ export interface FlowRow {
 interface RawFlow {
   id: string;
   user_id: string;
+  short_code: string | null;
+  target_enc: string;
   flow: FlowKind;
   kind: OriginKind;
   api_url: string;
@@ -385,6 +389,7 @@ interface RawFlow {
 const toFlow = (row: RawFlow): FlowRow => ({
   id: row.id,
   userId: row.user_id,
+  shortCode: row.short_code ?? "",
   flow: row.flow,
   kind: row.kind,
   apiUrl: row.api_url,
@@ -402,10 +407,31 @@ const toFlow = (row: RawFlow): FlowRow => ({
   lastPollAt: row.last_poll_at,
 });
 
+/**
+ * The alphabet a person retypes off a screen: Crockford base32 without the
+ * letters that read as digits. Ten characters is fifty bits — nothing an
+ * attacker enumerates inside a ten-minute window, and short enough that the
+ * whole link fits a version 1–3 QR code and one line of a terminal.
+ */
+const SHORT_ALPHABET = "0123456789abcdefghjkmnpqrstvwxyz";
+
+export function newShortCode(): string {
+  const bytes = new Uint8Array(10);
+  crypto.getRandomValues(bytes);
+  let out = "";
+  // One byte per character, taken modulo 32. The bias that leaves (0–7 are a
+  // shade likelier than 8–31) costs a fraction of a bit out of fifty, which
+  // is worth less than the rejection loop it would take to remove.
+  for (const byte of bytes) out += SHORT_ALPHABET[byte % 32];
+  return out;
+}
+
 export interface NewFlow {
   userId: string;
   flow: FlowKind;
   app: AppRegistration;
+  /** Where the short link sends a browser: verification page, or authorize. */
+  target?: string;
   /** Device flow: the secret half we poll with. */
   deviceCode?: string;
   userCode?: string;
@@ -428,8 +454,9 @@ export function createFlow(
     `INSERT INTO oauth_flow
        (id, user_id, flow, kind, api_url, web_url, client_id, client_secret_enc,
         state_hash, verifier_enc, redirect_uri, device_code_enc, user_code,
-        verification_uri, interval_secs, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)`,
+        verification_uri, interval_secs, expires_at, short_code, target_enc)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+             ?17, ?18)`,
   ).run(
     flowId,
     input.userId,
@@ -453,8 +480,40 @@ export function createFlow(
     input.verificationUri ?? "",
     input.intervalSecs ?? 5,
     new Date(Date.now() + (input.ttlMs ?? FLOW_TTL_MS)).toISOString(),
+    newShortCode(),
+    // Sealed for the same reason the state is hashed: a code flow's target
+    // carries the `state`, and nothing readable in this table may complete a
+    // connect on its own.
+    input.target === undefined || input.target === ""
+      ? ""
+      : seal(dataDir, input.target, flowId),
   );
   return getFlow(db, flowId)!;
+}
+
+/**
+ * Resolve a short link. Only a live flow answers: pending, unexpired, and
+ * with a target it was created with. A code that was never issued, one whose
+ * flow expired, and one already claimed are all the same answer, because the
+ * difference is only interesting to somebody guessing codes.
+ */
+export function targetForShortCode(
+  db: Database,
+  dataDir: string,
+  code: string,
+  now = new Date(),
+): string | undefined {
+  if (code === "") return undefined;
+  const row = db
+    .query<
+      RawFlow,
+      [string]
+    >("SELECT * FROM oauth_flow WHERE short_code = ?1 AND status = 'pending'")
+    .get(code);
+  if (!row || row.target_enc === "") return undefined;
+  if (Date.parse(row.expires_at) <= now.getTime()) return undefined;
+  const opened = open(dataDir, row.target_enc, row.id);
+  return opened.ok ? opened.value : undefined;
 }
 
 export function getFlow(db: Database, flowId: string): FlowRow | undefined {
@@ -540,7 +599,7 @@ export function finishFlow(
     `UPDATE oauth_flow
      SET status = ?1, detail = ?2, origin_id = ?3,
          device_code_enc = '', verifier_enc = '', client_secret_enc = '',
-         state_hash = NULL
+         state_hash = NULL, target_enc = '', short_code = NULL
      WHERE id = ?4`,
   ).run(outcome.status, outcome.detail, outcome.originId ?? null, flowId);
 }

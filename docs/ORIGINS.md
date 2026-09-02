@@ -33,7 +33,8 @@ their `…Through` twins are the path that works for both kinds of repo.
 origin        a connected account: kind, api_url, web_url, login, token_enc,
               auth_kind (pat|oauth), refresh_token_enc, expires_at, needs_reauth
 origin_app    an OAuth application registered on one instance (per user)
-oauth_flow    a connect in flight: a device poll, or a state+PKCE round trip
+oauth_flow    a connect in flight: a device poll, or a state+PKCE round trip,
+              plus a short_code and the sealed target it redirects to
 origin_repo   the origin's repo list, cached for the import picker
 origin_cursor per-origin sync watermarks and the next-due / paused-until times
 repo          + origin_id, origin_full_name, origin_remote_id, origin_html_url,
@@ -79,6 +80,20 @@ rather than a preference:
   and PKCE is mandatory for one.
 - **A pasted token**, still, as the fallback that needs no registration
   anywhere.
+
+Both OAuth flows end with a URL somebody has to open on a device that has a
+browser, which over SSH is a string that can be neither clicked nor reliably
+copied. So a flow also carries a **short link**: ten Crockford-base32
+characters of crypto randomness on the row, redirected by `GET /go/<code>`
+(migration 10). That route is deliberately anonymous — the phone typing it has
+never signed in here and the target is a public page — and it answers only
+while the flow is pending and unexpired; an unknown code and a dead one give
+the same 404, byte for byte. The target is sealed at rest like every other
+secret in that table, because a code flow's authorize URL carries the `state`,
+and it is never written to a log. Both surfaces render the link as a QR code
+(`src/design/qr.ts`, zero dependencies) beside the link itself; the terminal
+also offers OSC 52 copy, which reaches the user's own terminal rather than the
+server's clipboard.
 
 Discovery: `github.com` is known by name. Otherwise `GET /api/v1/version` —
 NodeInfo is the one thing here resembling a standard and no live Forgejo
@@ -178,6 +193,8 @@ ahead/behind/dirty. The server never knows local state.
 ## API
 
 ```
+GET    /go/:code                               anonymous: 303 to a live flow's
+                                               verification/authorize URL
 GET    /api/v1/user/origins                    list (no tokens, ever)
 POST   /api/v1/user/origins                    {host|kind, token}  → discovers, validates
 POST   /api/v1/user/origins/oauth              {host|kind} → starts device OR code flow

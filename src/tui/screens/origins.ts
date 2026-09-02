@@ -23,14 +23,15 @@ import {
 } from "../../actions/origins.ts";
 import type { OriginRepoRow } from "../../core/origins.ts";
 import type { Origin } from "../../origins/types.ts";
-import { oauthCallbackUri } from "../../http/api.ts";
+import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
 import type { Ctx, Screen } from "../app/app.ts";
-import { binding } from "../app/keys.ts";
-import { style } from "../term/style.ts";
-import { G } from "../term/screen.ts";
+import { binding, type Binding } from "../app/keys.ts";
+import { BOLD, style, type Style } from "../term/style.ts";
+import { G, type Rect, type Screen as TermScreen } from "../term/screen.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { card, emptyState, spinner } from "../ui/widgets.ts";
+import { drawQr, qrSize, terminalQr } from "../ui/qr.ts";
 import type { Session } from "../session.ts";
 import {
   Filter,
@@ -84,9 +85,25 @@ export function originState(origin: Origin): {
  * was never trustworthy for this — so it asks about the forge's own address.
  */
 function callbackUri(f: Session): string {
-  const host = f.app.config.host ?? "localhost";
-  const url = URL.parse(`http://${host}:${f.app.config.port ?? 3000}/`);
+  const url = selfUrl(f);
   return url === null ? "" : oauthCallbackUri(url, f.app.config.host);
+}
+
+/** The forge's own base URL, by the same rule — "" when it knows of none. */
+function baseUri(f: Session): string {
+  const url = selfUrl(f);
+  return url === null ? "" : forgeBaseUrl(url, f.app.config.host);
+}
+
+function selfUrl(f: Session): URL | null {
+  const host = f.app.config.host ?? "localhost";
+  return URL.parse(`http://${host}:${f.app.config.port ?? 3000}/`);
+}
+
+/** `<forge>/go/<code>` — what a phone types, or a camera reads. */
+function shortLink(f: Session, code: string): string {
+  const base = baseUri(f);
+  return base === "" || code === "" ? "" : `${base}/go/${code}`;
 }
 
 // ---- the list ----
@@ -334,31 +351,216 @@ function startDevice(
       redirectUri: callbackUri(f),
     });
     if (!started.ok) {
-      ctx.toast(started.error.message, "danger");
+      // "Not configured" is a task, not a status: the one error a person can
+      // actually fix from here gets the instructions instead of a toast that
+      // names an environment variable and leaves them to it.
+      if (started.error.error === "no_app") ctx.push(githubSetup(f, ctx, parent));
+      else ctx.toast(started.error.message, "danger");
       return;
     }
     ctx.push(deviceScreen(f, ctx, parent, started.value, done));
   });
 }
 
+// ---- handing a connect to a device that has a browser ----
+
 /**
- * The device-code screen: the code, where to type it, and a spinner while
- * the forge polls on the user's behalf. Esc cancels — the flow row expires
- * on its own, so abandoning it costs nothing.
+ * Everything a person needs to finish a connect somewhere else, and every way
+ * of getting it to them.
+ *
+ * This screen exists because of one situation: the forge is on a server, you
+ * are in a terminal over SSH, and the URL on the screen is a string you can
+ * neither click nor reliably copy. So all three routes off this screen are
+ * offered at once — a QR code the phone in your hand reads directly, a short
+ * link that is ten characters of path and can be typed by hand, and OSC 52,
+ * which asks *your* terminal (not the server) to put the link on *your*
+ * clipboard. Opening a browser is the one thing that genuinely cannot be done
+ * from the far side of an SSH connection, and `o` says so rather than
+ * appearing to work.
+ */
+interface Handoff {
+  /** The device grant's user code. Empty for the code flow, which has none. */
+  readonly userCode: string;
+  /** The full URL the person has to reach. */
+  readonly url: string;
+  /** `<forge>/go/<code>`, or "" when the forge does not know its address. */
+  readonly link: string;
+  /** The lead line: what to do with all this. */
+  readonly lead: string;
+  /** What the spinner says. A failed poll rewrites it. */
+  detail: string;
+}
+
+function handoffKeys(h: Handoff): Binding[] {
+  return [
+    binding(["c"], "copy link"),
+    ...(h.userCode === "" ? [] : [binding(["C"], "copy code")]),
+    binding(["o"], "open"),
+    binding(["esc"], "cancel"),
+  ];
+}
+
+const COPY_NOTE =
+  "copied — if your terminal allows it (iTerm2, Ghostty, kitty, WezTerm do; Apple Terminal does not)";
+
+function handoffKey(ctx: Ctx, h: Handoff, key: string): boolean {
+  if (key === "c") {
+    ctx.copy(h.link === "" ? h.url : h.link);
+    ctx.toast(COPY_NOTE, "success");
+    return true;
+  }
+  if (key === "C" && h.userCode !== "") {
+    ctx.copy(h.userCode);
+    ctx.toast(COPY_NOTE, "success");
+    return true;
+  }
+  if (key === "o") {
+    if (ctx.openUrl(h.url)) ctx.toast("opening in your browser", "success");
+    else
+      ctx.toast(
+        "no browser on this machine — scan the code, or open the short link",
+        "attn",
+      );
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Draw the card. The QR is the first thing dropped when the terminal is
+ * short: a code that does not fit is not a smaller code, and the short link
+ * below it says the same thing in characters.
+ */
+function drawHandoff(
+  ctx: Ctx,
+  surface: TermScreen,
+  area: Rect,
+  parent: Screen,
+  h: Handoff,
+  title: string,
+): void {
+  const c = ctx.theme.c;
+  parent.render(area, surface);
+  const w = Math.min(64, Math.max(24, area.w - 6));
+  const urlLines = wrap(h.url, w).slice(0, 2);
+  const linkRows = h.link === "" ? 0 : 1;
+  const codeRows = h.userCode === "" ? 0 : 2;
+  const fixed = 1 + codeRows + 1 + linkRows + urlLines.length + 1 + 1;
+
+  const qr = terminalQr(h.link === "" ? h.url : h.link);
+  const dim = qr === undefined ? undefined : qrSize(qr);
+  const withQr =
+    qr !== undefined &&
+    dim !== undefined &&
+    dim.cols <= w &&
+    fixed + dim.rows + 1 + 2 <= area.h;
+  const rows = fixed + (withQr && dim ? dim.rows + 1 : 0);
+  const height = Math.min(area.h, rows + 2);
+
+  const inner = card(
+    surface,
+    {
+      x: area.x + ((area.w - w) >> 1),
+      y: area.y + ((area.h - height) >> 1),
+      w,
+      h: height,
+    },
+    c,
+    { title, focused: true },
+  );
+  const right = inner.x + inner.w;
+  let y = inner.y;
+  const line = (text: string, st: Style, centred = false): void => {
+    const x = centred
+      ? inner.x + Math.max(0, (inner.w - text.length) >> 1)
+      : inner.x;
+    surface.text(x, y++, truncate(text, inner.w), st, right);
+  };
+
+  line(h.lead, style(c.mutedFg, c.card));
+  if (h.userCode !== "") {
+    y++;
+    // The code is the whole point of the screen, so it gets the one
+    // deliberately loud line in the terminal UI: spaced out, centred.
+    line([...h.userCode].join(" "), style(c.fg, c.card, BOLD), true);
+  }
+  y++;
+  if (withQr && qr) {
+    y = drawQr(surface, { x: inner.x, y, w: inner.w, h: inner.h }, qr);
+    y++;
+  }
+  if (h.link !== "") line(h.link, style(c.accent, c.card));
+  for (const part of urlLines) line(part, style(c.faint, c.card));
+  y++;
+  const x = spinner(surface, inner.x, y, c, ctx.tick);
+  surface.text(
+    x + 1,
+    y,
+    truncate(h.detail, Math.max(0, right - x - 1)),
+    style(c.mutedFg, c.card),
+    right,
+  );
+}
+
+/**
+ * How to make the GitHub button work, in the three steps that do it. Shown
+ * where the failure happens, because a person who just pressed "GitHub" is
+ * exactly the person who wants to know.
+ */
+function githubSetup(f: Session, ctx: Ctx, parent: Screen): Screen {
+  const back = callbackUri(f);
+  return confirmScreen(ctx, parent, {
+    title: "Set up GitHub",
+    body: [
+      "No GitHub OAuth application is configured yet.",
+      "",
+      "1. Create an OAuth App at",
+      "   github.com/settings/developers. Homepage: this",
+      "   forge. Authorization callback URL:",
+      `   ${back === "" ? "<your forge>/settings/origins/callback" : back}`,
+      "   Tick 'Enable Device Flow'.",
+      "2. Start the forge with",
+      "   FORGE_GITHUB_CLIENT_ID=<client id>  (and, only",
+      "   for revoke-on-disconnect, the client secret).",
+      "3. Come back here — GitHub connects.",
+      "",
+      "Until then, 'Paste a token' needs no registration.",
+    ],
+    actions: [{ label: "OK", variant: "default" }],
+    onChoose: () => undefined,
+  });
+}
+
+/**
+ * The device-code screen: the code, the ways to reach the verification page,
+ * and a spinner while the forge polls on the user's behalf. Esc cancels — the
+ * flow row expires on its own, so abandoning it costs nothing.
  */
 function deviceScreen(
   f: Session,
   ctx: Ctx,
   parent: Screen,
-  flow: { flowId: string; userCode: string; url: string; intervalSecs: number },
+  flow: {
+    flowId: string;
+    userCode: string;
+    url: string;
+    shortCode: string;
+    intervalSecs: number;
+  },
   done: () => void,
 ): Screen {
-  let detail = "waiting for you to authorize…";
   let finished = false;
+  const handoff: Handoff = {
+    userCode: flow.userCode,
+    url: flow.url,
+    link: shortLink(f, flow.shortCode),
+    lead: `Type this code at ${hostLabel(flow.url)}:`,
+    detail: "waiting for you to authorize…",
+  };
 
   return {
     title: "Connect GitHub",
-    keys: [binding(["esc"], "cancel")],
+    keys: handoffKeys(handoff),
     load(signal) {
       const every = Math.max(1, flow.intervalSecs) * 1000;
       const timer = setInterval(() => {
@@ -375,8 +577,8 @@ function deviceScreen(
             ctx.pop();
             return;
           }
-          detail = polled.value.detail || "that connect failed";
-          ctx.toast(detail, "danger");
+          handoff.detail = polled.value.detail || "that connect failed";
+          ctx.toast(handoff.detail, "danger");
           ctx.invalidate();
         })();
       }, every);
@@ -384,63 +586,10 @@ function deviceScreen(
       return Promise.resolve();
     },
     render(area, s) {
-      const c = ctx.theme.c;
-      parent.render(area, s);
-      const w = Math.min(60, Math.max(24, area.w - 6));
-      const h = Math.min(area.h, 11);
-      const inner = card(
-        s,
-        {
-          x: area.x + ((area.w - w) >> 1),
-          y: area.y + ((area.h - h) >> 1),
-          w,
-          h,
-        },
-        c,
-        { title: "Connect GitHub", focused: true },
-      );
-      const right = inner.x + inner.w;
-      s.text(
-        inner.x,
-        inner.y,
-        truncate("Type this code at", inner.w),
-        style(c.mutedFg, c.card),
-        right,
-      );
-      s.text(
-        inner.x,
-        inner.y + 1,
-        truncate(flow.url, inner.w),
-        style(c.accent, c.card),
-        right,
-      );
-      // The code is the whole point of the screen, so it gets the one
-      // deliberately loud line in the terminal UI: spaced out, centred.
-      const code = [...flow.userCode].join(" ");
-      s.text(
-        inner.x + Math.max(0, (inner.w - code.length) >> 1),
-        inner.y + 3,
-        truncate(code, inner.w),
-        style(c.fg, c.card),
-        right,
-      );
-      const x = spinner(s, inner.x, inner.y + 5, c, ctx.tick);
-      s.text(
-        x + 1,
-        inner.y + 5,
-        truncate(detail, Math.max(0, right - x - 1)),
-        style(c.mutedFg, c.card),
-        right,
-      );
-      s.text(
-        inner.x,
-        inner.y + 7,
-        truncate("esc  cancel", inner.w),
-        style(c.faint, c.card),
-        right,
-      );
+      drawHandoff(ctx, s, area, parent, handoff, "Connect GitHub");
     },
     key(e) {
+      if (handoffKey(ctx, handoff, e.key)) return true;
       if (e.key === "esc" || e.key === "q") {
         finished = true;
         ctx.pop();
@@ -497,7 +646,16 @@ function startCodeFlow(
                   return;
                 }
                 ctx.push(
-                  authorizeScreen(f, ctx, parent, started.value.url, done),
+                  authorizeScreen(
+                    f,
+                    ctx,
+                    parent,
+                    {
+                      url: started.value.url,
+                      shortCode: started.value.shortCode,
+                    },
+                    done,
+                  ),
                 );
               })();
             },
@@ -512,19 +670,30 @@ function startCodeFlow(
  * Print the authorize URL and wait. The callback lands on the *web* surface,
  * so this screen has nothing to poll but the origin list itself — which is
  * exactly the question being asked: did an origin appear?
+ *
+ * A Forgejo authorize URL is long — client id, state, challenge, scopes —
+ * which is precisely the URL nobody retypes off a terminal. The short link
+ * and the QR carry it instead.
  */
 function authorizeScreen(
   f: Session,
   ctx: Ctx,
   parent: Screen,
-  url: string,
+  flow: { url: string; shortCode: string },
   done: () => void,
 ): Screen {
   const before = f.user ? listUserOrigins(f.app, f.user).length : 0;
   let finished = false;
+  const handoff: Handoff = {
+    userCode: "",
+    url: flow.url,
+    link: shortLink(f, flow.shortCode),
+    lead: `Open this and approve the application on ${hostLabel(flow.url)}:`,
+    detail: "waiting for you to authorize…",
+  };
   return {
     title: "Authorize",
-    keys: [binding(["esc"], "cancel")],
+    keys: handoffKeys(handoff),
     load(signal) {
       const timer = setInterval(() => {
         if (finished || !f.user) return;
@@ -539,43 +708,10 @@ function authorizeScreen(
       return Promise.resolve();
     },
     render(area, s) {
-      const c = ctx.theme.c;
-      parent.render(area, s);
-      const w = Math.min(72, Math.max(24, area.w - 6));
-      const h = Math.min(area.h, 10);
-      const inner = card(
-        s,
-        {
-          x: area.x + ((area.w - w) >> 1),
-          y: area.y + ((area.h - h) >> 1),
-          w,
-          h,
-        },
-        c,
-        { title: "Authorize on the instance", focused: true },
-      );
-      const right = inner.x + inner.w;
-      s.text(
-        inner.x,
-        inner.y,
-        truncate("Open this URL and approve the application:", inner.w),
-        style(c.mutedFg, c.card),
-        right,
-      );
-      for (const [i, line] of wrap(url, inner.w).entries()) {
-        if (i > 2) break;
-        s.text(inner.x, inner.y + 2 + i, line, style(c.accent, c.card), right);
-      }
-      const x = spinner(s, inner.x, inner.y + 6, c, ctx.tick);
-      s.text(
-        x + 1,
-        inner.y + 6,
-        truncate("waiting for you to authorize…", Math.max(0, right - x - 1)),
-        style(c.mutedFg, c.card),
-        right,
-      );
+      drawHandoff(ctx, s, area, parent, handoff, "Authorize on the instance");
     },
     key(e) {
+      if (handoffKey(ctx, handoff, e.key)) return true;
       if (e.key === "esc" || e.key === "q") {
         finished = true;
         ctx.pop();

@@ -362,6 +362,18 @@ describe("origins on the web", () => {
 
   // ---- the device grant ----
 
+  test("an unconfigured GitHub says how to configure it, in three steps", async () => {
+    delete process.env.FORGE_GITHUB_CLIENT_ID;
+    const page = await (await asUser(bob, "/settings/origins")).text();
+    expect(page).toContain("github.com/settings/developers");
+    expect(page).toContain("Enable Device Flow");
+    expect(page).toContain("FORGE_GITHUB_CLIENT_ID=&lt;client id&gt;");
+    expect(page).toContain("FORGE_GITHUB_CLIENT_SECRET");
+    expect(page).toContain(`${new URL(base).origin}/settings/origins/callback`);
+    // And the fallback that needs no registration is still offered.
+    expect(page).toContain("personal access token");
+  });
+
   test("the device flow shows the code and the poll route completes it", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
     resetConnectLimit();
@@ -397,6 +409,123 @@ describe("origins on the web", () => {
     ).text();
     expect(landing).toContain("Origin connected.");
     expect(landing).toContain("OAuth");
+  });
+
+  /**
+   * The flow page has to work for someone whose browser is a phone across
+   * the room. Everything that gets it there is asserted here: the QR, the
+   * short link, a copy control beside each thing worth copying, and an open
+   * link that cannot hand the other tab a handle back into this session.
+   */
+  test("the flow page carries a QR, a short link, copy buttons and a safe open link", async () => {
+    process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
+    resetConnectLimit();
+    const started = await asUser(alice, "/settings/origins/oauth", {
+      form: { kind: "github", host: github.url },
+    });
+    const where = started.headers.get("location") ?? "";
+    const page = await (await asUser(alice, where)).text();
+
+    // The QR is inline SVG: no request, no dependency, and dark-on-light
+    // whatever the theme is doing around it.
+    expect(page).toContain('shape-rendering="crispEdges"');
+    expect(page).toContain('fill="#ffffff"');
+    expect(page).toContain("<path");
+    // The short link, built from the forge's own base URL.
+    const short = /http:\/\/[^"<\s]+\/go\/[0-9a-z]{10}/.exec(page);
+    expect(short).not.toBeNull();
+    expect(short![0]).toStartWith(new URL(base).origin);
+    // Copy affordances beside the code and beside each link.
+    expect(page).toContain('data-copy="device-code"');
+    expect(page).toContain('data-copy="flow-short"');
+    expect(page).toContain('data-copy="flow-url"');
+    // Open leaves the forge safely, and the text stays selectable with no JS.
+    expect(page).toContain('rel="noopener noreferrer"');
+    expect(page).toContain('target="_blank"');
+    expect(page).toContain(ghOauth.verificationUri);
+  });
+
+  /**
+   * The one anonymous route in the origins surface. The phone that types it
+   * has never signed in here, and where it lands is a public page — but the
+   * code must behave like a secret: unguessable, short-lived, and giving the
+   * same answer for "never existed" as for "expired".
+   */
+  test("/go/:code redirects a signed-out phone, and dead codes are one 404", async () => {
+    process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
+    resetConnectLimit();
+    const started = await asUser(alice, "/settings/origins/oauth", {
+      form: { kind: "github", host: github.url },
+    });
+    const where = started.headers.get("location") ?? "";
+    const flowId = where.split("/").pop()!;
+    const row = app.db
+      .query<{ short_code: string }, [string]>(
+        "SELECT short_code FROM oauth_flow WHERE id = ?1",
+      )
+      .get(flowId)!;
+    expect(row.short_code).toMatch(/^[0-9a-z]{10}$/);
+
+    // No cookie at all: this is a different device.
+    const logs: string[] = [];
+    const wrote = (...args: unknown[]): void => {
+      logs.push(args.map(String).join(" "));
+    };
+    const real = { log: console.log, warn: console.warn, error: console.error };
+    console.log = wrote;
+    console.warn = wrote;
+    console.error = wrote;
+    let hop: Response;
+    try {
+      hop = await fetch(`${base}/go/${row.short_code}`, { redirect: "manual" });
+    } finally {
+      console.log = real.log;
+      console.warn = real.warn;
+      console.error = real.error;
+    }
+    expect(hop.status).toBe(303);
+    expect(hop.headers.get("location")).toBe(ghOauth.verificationUri);
+    expect(hop.headers.get("cache-control")).toBe("no-store");
+    // Where it sends people is a header, never a log line.
+    expect(logs.join("\n")).not.toContain(ghOauth.verificationUri);
+    expect(logs.join("\n")).not.toContain(row.short_code);
+
+    // A code nobody issued and a flow that has expired are the same answer,
+    // byte for byte — anything else tells a guesser which half was right.
+    const unknown = await fetch(`${base}/go/zzzzzzzzzz`, { redirect: "manual" });
+    expect(unknown.status).toBe(404);
+    app.db
+      .query("UPDATE oauth_flow SET expires_at = ?1 WHERE id = ?2")
+      .run("2020-01-01T00:00:00.000Z", flowId);
+    const stale = await fetch(`${base}/go/${row.short_code}`, {
+      redirect: "manual",
+    });
+    expect(stale.status).toBe(404);
+    // Identical but for the per-response CSP nonce, which every page gets.
+    const sameBut = (text: string): string =>
+      text.replaceAll(/nonce="[^"]*"/g, 'nonce="N"');
+    expect(sameBut(await stale.text())).toBe(sameBut(await unknown.text()));
+
+    // A finished flow's link dies with it, and the code is not reissued.
+    const fresh = await asUser(alice, "/settings/origins/oauth", {
+      form: { kind: "github", host: github.url },
+    });
+    const secondId = (fresh.headers.get("location") ?? "").split("/").pop()!;
+    const second = app.db
+      .query<{ short_code: string }, [string]>(
+        "SELECT short_code FROM oauth_flow WHERE id = ?1",
+      )
+      .get(secondId)!;
+    expect(second.short_code).not.toBe(row.short_code);
+    ghOauth.approved = true;
+    await asUser(alice, `/settings/origins/flows/${secondId}/poll`, {
+      form: {},
+    });
+    ghOauth.approved = false;
+    const spent = await fetch(`${base}/go/${second.short_code}`, {
+      redirect: "manual",
+    });
+    expect(spent.status).toBe(404);
   });
 
   test("the poll route answers JSON when asked, for the enhancement", async () => {
