@@ -352,6 +352,20 @@ export function listComments(
   }));
 }
 
+/**
+ * How many conversation comments a thread carries. A list shows this beside
+ * every row, so it is a count query, never `listComments(...).length`.
+ */
+export function countComments(db: Database, issueId: string): number {
+  const row = db
+    .query<
+      { n: number },
+      [string]
+    >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND kind = 'comment'")
+    .get(issueId);
+  return row?.n ?? 0;
+}
+
 // ---- labels ----
 
 export interface Label {

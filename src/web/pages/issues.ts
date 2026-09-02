@@ -6,6 +6,7 @@
 
 import { addComment, openIssue } from "../../actions/issues.ts";
 import {
+  countComments,
   countIssues,
   labelsFor,
   listIssues,
@@ -42,6 +43,7 @@ import {
   stateBadge,
   time,
   userLink,
+  userTag,
   field as formField,
 } from "../ui.ts";
 import {
@@ -173,7 +175,12 @@ function hidden(name: string, value: string): Html {
   return html`<input type="hidden" name="${name}" value="${value}" />`;
 }
 
-/** One issue or pull row: title, its labels, and one metadata line. */
+/**
+ * One issue or pull row: state as the colour of the leading icon, title with
+ * its label chips, one metadata line, and the comment count trailing. There
+ * is no state badge — the list is already filtered by state, and a badge that
+ * repeats the filter is noise. Nothing inside is a link: the row *is* one.
+ */
 export function threadRow(
   base: string,
   segment: "issues" | "pulls",
@@ -181,11 +188,12 @@ export function threadRow(
   labels: Label[],
   state: "open" | "closed" | "merged",
   meta: Html,
+  comments = 0,
 ): Html {
   return html`<li>
     <a
       class="row"
-      data-state="${state === "merged" ? "merged" : state}"
+      data-state="${state}"
       data-nav
       tabindex="-1"
       href="${base}/${segment}/${issue.number}"
@@ -207,7 +215,15 @@ export function threadRow(
         >
         <span class="row-meta">${meta}</span>
       </span>
-      <span class="row-trail">${stateBadge(state)}</span>
+      ${when(
+        comments > 0,
+        () =>
+          html`<span class="row-trail"
+            ><span class="count" title="${`${comments} comments`}"
+              >${icon("comment")}${comments}</span
+            ></span
+          >`,
+      )}
     </a>
   </li>`;
 }
@@ -232,6 +248,7 @@ export function issuesList(ctx: Ctx): Response {
   const rows = issues.map((issue) => ({
     issue,
     labels: labelsFor(db, issue.id),
+    comments: countComments(db, issue.id),
   }));
   const repoLabels = listLabels(db, repo.id);
   const counts = {
@@ -267,7 +284,7 @@ export function issuesList(ctx: Ctx): Response {
           action: newIssue,
         })
       : listCard(
-          rows.map(({ issue, labels }) =>
+          rows.map(({ issue, labels, comments }) =>
             threadRow(
               base,
               "issues",
@@ -275,7 +292,8 @@ export function issuesList(ctx: Ctx): Response {
               labels,
               issue.state,
               html`#${issue.number} opened ${time(issue.createdAt)} by
-              ${userLink(issue.authorName, { avatar: false })}`,
+              ${userTag(issue.authorName)}`,
+              comments,
             ),
           ),
         );
@@ -351,7 +369,10 @@ export function newIssuePage(ctx: Ctx): Response {
     title: `New issue · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(repo),
-    body: html`${repoHeader(ctx, repo, "issues", { compact: true, ownTitle: true })}
+    body: html`${repoHeader(ctx, repo, "issues", {
+        compact: true,
+        ownTitle: true,
+      })}
       <h1 class="mt">New issue</h1>
       ${newIssueForm(repo, { title: "", body: "" })}`,
   });
@@ -378,7 +399,10 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
         ctx,
         title: `New issue · ${repo.name}`,
         crumbs: crumbsFor(repo),
-        body: html`${repoHeader(ctx, repo, "issues", { compact: true, ownTitle: true })}
+        body: html`${repoHeader(ctx, repo, "issues", {
+            compact: true,
+            ownTitle: true,
+          })}
           <h1 class="mt">New issue</h1>
           ${newIssueForm(repo, values, message)}`,
       },
@@ -404,7 +428,10 @@ export function issuePage(ctx: Ctx): Response {
   const all = listLabels(ctx.app.db, repo.id);
   const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
 
-  const body = html`${repoHeader(ctx, repo, "issues", { compact: true, ownTitle: true })}
+  const body = html`${repoHeader(ctx, repo, "issues", {
+      compact: true,
+      ownTitle: true,
+    })}
     <div class="issue-head">
       <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
       <div class="issue-meta">

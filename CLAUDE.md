@@ -85,9 +85,14 @@ src/
               scope floors, pagination), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
   design/     shared design tokens: themes (palettes both surfaces render)
-  web/        SSR: html tag, style (the stylesheet),
-              layout (CSP+nonce, topbar, theme switcher), markdown, highlight,
-              diff-view, pages/*
+  web/        SSR. html (the tag), icons (Lucide SVG), ui (the component
+              vocabulary — docs/DESIGN.md is its contract), chrome (repo
+              header, settings shell, the one 404), flash, layout (CSP+nonce,
+              topbar, theme switcher), client (progressive enhancement, as a
+              string), style/{base,components,content} assembled by style.ts,
+              markdown, highlight, code, worddiff, diff-view, live, and
+              pages/{site,repo,issues,pulls,pull,thread,commits,refs,search,
+              org,account,settings}
   ssh/        the SSH server: transport (kex/ciphers), auth (publickey),
               channels (session only), keys, wire — zero deps, no forwarding
   tui/        the terminal UI. term/ is the transport boundary (`Terminal`);

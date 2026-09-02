@@ -44,7 +44,6 @@ import {
   empty,
   listCard,
   pager,
-  pill,
   row,
   selectField,
   time,
@@ -139,6 +138,11 @@ function orgMembers(ctx: Ctx, teams: Team[]): User[] {
   );
 }
 
+/** "1 member" / "4 members" — a sentence, not a number in a pill. */
+function memberCount(n: number): Html {
+  return html`${n} member${n === 1 ? "" : "s"}`;
+}
+
 function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
   const teams = listTeams(ctx.app.db, org.id);
   const members = orgMembers(ctx, teams);
@@ -163,10 +167,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
         row({
           lead: icon("users"),
           title: t.name,
-          meta: html`${pill(listTeamMembers(ctx.app.db, t.id).length)}
-          ${listTeamMembers(ctx.app.db, t.id).length === 1
-            ? "member"
-            : "members"}`,
+          meta: memberCount(listTeamMembers(ctx.app.db, t.id).length),
           trail: html`${badge(t.permission)}${when(canManage, () =>
             btn("Manage", {
               href: `/${org.username}/-/teams/${t.id}`,

@@ -550,6 +550,77 @@ describe("web ui", () => {
     expect(search).not.toContain("kim/secret");
   });
 
+  test("the label colour input submits #rrggbb and is stored as six digits", async () => {
+    const repo = getRepo(app.db, "mel", "proj")!;
+    await fetch(`${base}/mel/proj/settings/labels`, {
+      method: "POST",
+      headers: { cookie: owner },
+      body: form({ name: "tide", color: "#0E8A16" }),
+      redirect: "manual",
+    });
+    const tide = listLabels(app.db, repo.id).find((l) => l.name === "tide");
+    expect(tide?.color).toBe("0e8a16");
+
+    // And the page offers a real colour control, so it works with no script.
+    const page = await (
+      await fetch(`${base}/mel/proj/settings/labels`, {
+        headers: { cookie: owner },
+      })
+    ).text();
+    expect(page).toContain('type="color"');
+    expect(page).toContain('value="#0e8a16"');
+  });
+
+  // ---- markup that a browser will not silently rewrite ----
+
+  /**
+   * `<a>` inside `<a>` is not merely invalid: the HTML parser closes the
+   * outer anchor and re-parents everything after it as a *sibling*, so a
+   * list row visibly falls apart — the author's name and the trailing badge
+   * escape the row's padding. This sweeps every list page for it.
+   */
+  test("no linked list row contains a nested link", async () => {
+    const pages = [
+      "/",
+      "/mel/proj",
+      "/mel/proj/issues",
+      "/mel/proj/issues?state=all",
+      "/mel/proj/pulls?state=all",
+      "/mel/proj/commits",
+      "/mel",
+      "/search?q=a",
+    ];
+    for (const path of pages) {
+      const html = await (
+        await fetch(`${base}${path}`, { headers: { cookie: owner } })
+      ).text();
+      for (const match of html.matchAll(/<a\b[^>]*class="row"[^>]*>/g)) {
+        const from = match.index + match[0].length;
+        const body = html.slice(from, html.indexOf("</a", from));
+        expect({ path, nested: /<a[\s>]/.test(body) }).toEqual({
+          path,
+          nested: false,
+        });
+      }
+    }
+  });
+
+  test("an issue row carries its author inside the meta line", async () => {
+    const html = await (
+      await fetch(`${base}/mel/proj/issues`, { headers: { cookie: owner } })
+    ).text();
+    const start = html.indexOf('<span class="row-meta"');
+    expect(start).toBeGreaterThan(-1);
+    // From the meta to the end of the row it belongs to.
+    const meta = html.slice(start, html.indexOf("</a", start));
+    expect(meta).toContain("opened");
+    expect(meta).toContain('class="avatar"');
+    expect(meta).toContain('class="byline-name"');
+    expect(meta).toContain("mel");
+    // The state is the leading glyph's colour, not a badge repeating the filter.
+    expect(html).not.toContain('class="badge" data-state="open"');
+  });
+
   // ---- CSRF ----
 
   test("every destructive POST refuses a cross-origin submission", async () => {

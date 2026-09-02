@@ -25,7 +25,7 @@ import {
   row,
   stateBadge,
   time,
-  userLink,
+  userTag,
 } from "../ui.ts";
 
 /** One repository, as a row. The same shape the dashboard and profiles use. */
@@ -105,11 +105,10 @@ export function searchPage(ctx: Ctx): Response {
             lead: icon(kind === "issue" ? "issue" : "pull"),
             title: issue.title,
             titleAttr: issue.title,
-            meta: html`<a href="/${repo.ownerName}/${repo.name}"
-                >${repo.ownerName}/${repo.name}</a
-              >
-              #${issue.number} · opened ${time(issue.createdAt)} by
-              ${userLink(issue.authorName, { avatar: false })}`,
+            // Nothing inside a linked row may itself be a link: the parser
+            // would close the row's anchor and re-parent the rest.
+            meta: html`${repo.ownerName}/${repo.name} #${issue.number} ·
+            opened ${time(issue.createdAt)} by ${userTag(issue.authorName)}`,
             trail: stateBadge(issue.state),
           }),
         );

@@ -238,6 +238,21 @@ export function avatar(name: string, size?: "md" | "lg"): Html {
   >`;
 }
 
+/**
+ * An author *inside* something that is already a link — a list row, a diff
+ * gutter. HTML forbids nesting `<a>` in `<a>`, and a browser does not merely
+ * ignore it: the parser closes the outer anchor and re-parents everything
+ * after it as a sibling, which silently tears the row apart. So a linked row
+ * gets the name as text, and the row's own href carries the navigation.
+ */
+export function userTag(username: string, o: { avatar?: boolean } = {}): Html {
+  return html`<span class="byline"
+    >${o.avatar === false ? null : avatar(username)}<span class="byline-name"
+      >${username}</span
+    ></span
+  >`;
+}
+
 /** An author: avatar plus a link to their profile. Never bare text. */
 export function userLink(
   username: string,

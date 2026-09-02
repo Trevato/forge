@@ -54,7 +54,8 @@ export const components = /* css */ `
 .btn[data-variant="link"]:hover { background: none; text-decoration: underline; text-underline-offset: 3px; }
 .btn[data-size="sm"] { min-height: 28px; padding: 0 10px; font-size: 13px; gap: 5px; }
 .btn[data-size="lg"] { min-height: 44px; padding: 0 18px; font-size: 15px; }
-.btn-icon { padding: 0; width: 32px; min-width: 32px; }
+/* An icon button is a square of its size class — 36px matches the button min-height, so a row of mixed buttons has one silhouette. */
+.btn-icon { padding: 0; width: 36px; min-width: 36px; }
 .btn-icon[data-size="sm"] { width: 28px; min-width: 28px; }
 .btn-icon[data-size="lg"] { width: 44px; min-width: 44px; }
 /* Touch targets stay thumb-sized on a phone; padding does it, so text stays centered. */
@@ -225,7 +226,10 @@ a.sha:hover { color: var(--accent); }
   box-shadow: var(--shadow-1);
   overflow: clip;
 }
+/* Cards stacked in normal flow space themselves. Inside a container that
+   already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
+:is(.stack, .hero-points, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);
@@ -256,18 +260,67 @@ a.row:hover .row-title { color: var(--accent); }
   font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: color 100ms var(--ease);
 }
+/* One honest line: everything in it is inline, so text-overflow actually
+   has a block box to ellipsize (a flex container would silently ignore it)
+   and nothing can wrap out from under the row's padding. */
 .row-meta {
-  font-size: 12.5px; color: var(--muted-fg); line-height: 1.45;
+  display: block; font-size: 12.5px; color: var(--muted-fg); line-height: 1.5;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
 }
+.row-meta .byline { display: inline; }
+.row-meta .avatar { width: 16px; height: 16px; font-size: 8.5px; vertical-align: -0.28em; }
+.row-meta .byline-name { margin-left: 4px; }
 .row-lead { color: var(--faint); display: inline-flex; flex: none; }
 .row-trail { display: flex; align-items: center; gap: 8px; flex: none; }
+/* The leading glyph is the row's state; a badge repeating it is noise. */
+.row[data-state="open"] .row-lead { color: var(--success); }
+.row[data-state="closed"] .row-lead { color: var(--danger); }
+.row[data-state="merged"] .row-lead { color: var(--merged); }
+.row[data-state="draft"] .row-lead { color: var(--muted-fg); }
+/* A count with its glyph: comments on a row, members on a team. */
+.count {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums;
+}
+.count .ico { width: 14px; height: 14px; }
 /* Secondary actions are always in the DOM, revealed without layout shift. */
 .row-actions { opacity: 0; transition: opacity 120ms var(--ease); }
 .row:hover .row-actions, .row:focus-within .row-actions { opacity: 1; }
 @media (pointer: coarse) { .row-actions { opacity: 1; } .row { min-height: 44px; } }
-.row[data-state="closed"] .row-title { color: var(--muted-fg); }
+.row[data-state="closed"] .row-title, .row[data-state="merged"] .row-title { color: var(--muted-fg); }
+
+/* ---- edit row: a list row whose body is a small form ---- */
+.edit-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 14px;
+}
+.edit-row > .preview { flex: none; }
+.edit-row > .input { flex: 1 1 160px; width: auto; min-width: 0; }
+.edit-row .btn { flex: none; }
+/* A swatch and its hex, as one control-shaped thing. */
+.color-field {
+  display: inline-flex; align-items: center; gap: 8px; flex: none;
+  min-height: 36px; padding: 0 10px 0 4px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.color-field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.color-field input[type="color"] {
+  appearance: none; -webkit-appearance: none; flex: none;
+  width: 26px; height: 26px; padding: 0; border: 0; border-radius: 999px;
+  background: none; cursor: pointer;
+}
+.color-field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.color-field input[type="color"]::-webkit-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
+.color-field input[type="color"]::-moz-color-swatch { border: 1px solid var(--border-strong); border-radius: 999px; }
+.color-field .hex { font-family: var(--mono); font-size: 12.5px; color: var(--muted-fg); }
+@media (pointer: coarse) { .color-field { min-height: 44px; } }
+@media (max-width: 719px) {
+  .edit-row { align-items: stretch; }
+  .edit-row > .input { flex-basis: 100%; }
+  .edit-row .color-field, .edit-row .btn { flex: 1 1 auto; justify-content: center; }
+}
 
 /* ---- table ---- */
 .table { width: 100%; font-size: 13px; }

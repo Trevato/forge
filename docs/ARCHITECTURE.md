@@ -66,7 +66,8 @@ src/
   actions/           every mutation as one function: authorize, mutate, record
   http/              router, auth resolution, response shapes, the JSON API
   design/            the theme registry both surfaces render
-  web/               SSR: html template tag, design tokens, pages, components
+  web/               SSR: html tag, icons, ui (components), chrome, layout,
+                     client, style/ (base + components + content), pages/
   ssh/               the SSH server: transport, userauth, channels
   tui/               the terminal UI: runtime, widgets, screens, the front door
   test/              bun test — protocol-level and adversarial

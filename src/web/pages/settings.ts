@@ -218,43 +218,52 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
 
 // ---- labels ----
 
+/** `<input type="color">` submits `#rrggbb`; the store keeps six hex digits. */
+function readColor(form: Form): string {
+  return field(form, "color").replace(/^#/, "").toLowerCase();
+}
+
+/**
+ * The colour control is a native `<input type="color">`, so it works with no
+ * script at all — the hex beside it is a readout, updated live where there is
+ * a script and correct on load where there is not. A browser submits it as
+ * `#rrggbb`; `readColor` strips the hash on the way in.
+ */
+function colorField(value: string, label: string): Html {
+  return html`<span class="color-field"
+    ><input
+      type="color"
+      name="color"
+      value="#${value}"
+      aria-label="${label}"
+    /><span class="hex">#${value}</span></span
+  >`;
+}
+
 function labelEditor(base: string, label: Label): Html {
   return html`<li>
-    <div class="row">
-      <span class="row-lead">${labelChip(label)}</span>
-      <form
-        class="row-main bar"
-        method="post"
-        action="${base}/settings/labels/${label.id}"
-      >
-        <input
-          class="input"
-          type="text"
-          name="name"
-          value="${label.name}"
-          aria-label="Label name"
-          required
-        />
-        <input
-          class="input mono"
-          type="text"
-          name="color"
-          value="${label.color}"
-          aria-label="Label color, six hex digits"
-          pattern="[0-9a-fA-F]{6}"
-          size="7"
-          required
-        />
-        ${btn("Save", { size: "sm" })}
-      </form>
-      <span class="row-trail row-actions">
-        ${confirmAction({
-          action: `${base}/settings/labels/${label.id}/delete`,
-          verb: "Delete label",
-          size: "sm",
-        })}
-      </span>
-    </div>
+    <form
+      class="edit-row"
+      method="post"
+      action="${base}/settings/labels/${label.id}"
+    >
+      <span class="preview">${labelChip(label)}</span>
+      <input
+        class="input"
+        type="text"
+        name="name"
+        value="${label.name}"
+        aria-label="Label name"
+        required
+      />
+      ${colorField(label.color, `Colour of the label ${label.name}`)}
+      ${btn("Save", { size: "sm" })}
+      ${confirmAction({
+        action: `${base}/settings/labels/${label.id}/delete`,
+        verb: "Delete",
+        size: "sm",
+      })}
+    </form>
   </li>`;
 }
 
@@ -278,28 +287,19 @@ export function labelsPage(ctx: Ctx): Response {
         </div>`;
 
   const create = card(
-    html`<form class="bar" method="post" action="${base}/settings/labels">
+    html`<form class="edit-row" method="post" action="${base}/settings/labels">
       <input
-        class="input grow"
+        class="input"
         type="text"
         name="name"
         placeholder="Label name"
         aria-label="New label name"
         required
       />
-      <input
-        class="input mono"
-        type="text"
-        name="color"
-        value="6b7280"
-        aria-label="New label color, six hex digits"
-        pattern="[0-9a-fA-F]{6}"
-        size="7"
-        required
-      />
-      ${btn("Add label", { variant: "primary" })}
+      ${colorField("6b7280", "Colour of the new label")}
+      ${btn("Add label", { variant: "primary", size: "sm" })}
     </form>`,
-    { head: html`<h2>New label</h2>` },
+    { head: html`<h2>New label</h2>`, pad: false },
   );
 
   const body = html`${list}
@@ -323,7 +323,7 @@ export async function labelCreate(ctx: Ctx): Promise<Response> {
     ctx.auth.user,
     repo,
     field(form, "name"),
-    field(form, "color") || "6b7280",
+    readColor(form) || "6b7280",
   );
   return flashTo(
     ctx,
@@ -350,7 +350,7 @@ export async function labelUpdate(ctx: Ctx): Promise<Response> {
     repo,
     ctx.params.id ?? "",
     field(form, "name"),
-    field(form, "color"),
+    readColor(form),
   );
   return flashTo(
     ctx,

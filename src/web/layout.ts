@@ -75,12 +75,7 @@ function themeMenu(active: ThemeName | undefined): Html {
       <span class="tick" aria-hidden="true">${icon("check")}</span>
     </label>`;
   return html`<details class="menu theme-menu">
-    <summary
-      class="btn btn-icon"
-      data-size="sm"
-      aria-label="Choose theme"
-      title="Theme"
-    >
+    <summary class="btn btn-icon" aria-label="Choose theme" title="Theme">
       ${themeGlyph}
     </summary>
     <form class="menu-panel" method="post" action="/theme">
@@ -106,7 +101,7 @@ function newMenu(): Html {
     items,
     label: "Create new",
     title: "Create",
-    triggerOptions: { size: "sm", extra: "btn-icon" },
+    triggerOptions: { extra: "btn-icon" },
   });
 }
 
@@ -125,7 +120,6 @@ function userMenu(user: User): Html {
     trigger: html`${icon("user")}<span class="hide-sm">${user.username}</span>`,
     items,
     title: `Signed in as ${user.username}`,
-    triggerOptions: { size: "sm" },
   });
 }
 
@@ -147,23 +141,26 @@ function searchBar(): Html {
       />
       ${kbd(["/"])}
     </form>
-    <a
-      class="btn btn-icon hide-lg"
-      data-size="sm"
-      href="/search"
-      aria-label="Search"
+    <a class="btn btn-icon hide-lg" href="/search" aria-label="Search"
       >${icon("search")}</a
-    >
-    <button
-      class="btn btn-icon hide-sm"
-      data-size="sm"
-      type="button"
-      data-palette
-      aria-label="Command palette"
-      title="Command palette"
-    >
-      ${icon("command")}
-    </button>`;
+    >`;
+}
+
+/**
+ * Keyboard help. The shortcuts it lists only exist when the script runs, so
+ * the button that opens it only exists then too — `js-only` is revealed by
+ * the shell script rather than shown and then found to be dead.
+ */
+function helpButton(): Html {
+  return html`<button
+    class="btn btn-icon js-only"
+    type="button"
+    data-help
+    aria-label="Keyboard shortcuts"
+    title="Keyboard shortcuts"
+  >
+    ${icon("help")}
+  </button>`;
 }
 
 // ---- palette index ----
@@ -321,10 +318,10 @@ export function page(options: PageOptions, status = 200): Response {
           )}
           <span class="spacer"></span>
           <span class="topbar-tools">
-            ${searchBar()} ${themeMenu(theme)}
+            ${searchBar()}${helpButton()}${themeMenu(theme)}
             ${user
               ? html`${newMenu()}${userMenu(user)}`
-              : btn("Sign in", { href: "/signin", size: "sm" })}
+              : btn("Sign in", { href: "/signin" })}
           </span>
         </header>
         <main class="shell" id="main">
@@ -335,7 +332,7 @@ export function page(options: PageOptions, status = 200): Response {
           <span>forge — your code, your machine</span>
           <span class="spacer"></span>
           <button
-            class="btn"
+            class="btn js-only"
             data-variant="link"
             data-size="sm"
             type="button"

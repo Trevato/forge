@@ -179,19 +179,22 @@ function renderRow(row: Row, ctx: RowCtx): Html {
     </td>`;
   };
 
+  // `.dc` is `white-space: pre`, so the cell's contents are assembled here,
+  // in one value, and interpolated whole. A pretty-printed newline between
+  // `<td>` and its span would render as a literal blank line and an indent —
+  // which is exactly how this viewer once lost its density.
+  const cell = html`<span class="dcx"
+      >${composeLine(row.text, tokenLine, row.changed)}</span
+    >${when(
+      row.noNewline,
+      () => html`<span class="nonl" title="No newline at end of file">↵</span>`,
+    )}`;
   const rowHtml = html`<tr class="dl" data-k="${row.kind}">
     ${gutter(row.oldNumber, side === "old")}${gutter(
       row.newNumber,
       side === "new",
     )}
-    <td class="dc" data-mark="${mark}">
-      <span class="dcx">${composeLine(row.text, tokenLine, row.changed)}</span
-      >${when(
-        row.noNewline,
-        () =>
-          html`<span class="nonl" title="No newline at end of file">↵</span>`,
-      )}
-    </td>
+    <td class="dc" data-mark="${mark}">${cell}</td>
   </tr>`;
 
   // Existing comments and a form, if any, ride under the row.
@@ -263,7 +266,11 @@ function reviewRows(
           >
             Add comment
           </button>
-          <a class="btn" data-size="sm" data-variant="ghost" href="${opts.reviewBase}"
+          <a
+            class="btn"
+            data-size="sm"
+            data-variant="ghost"
+            href="${opts.reviewBase}"
             >Cancel</a
           >
         </div>
@@ -279,15 +286,15 @@ function reviewRows(
 
 function hunkHeader(hunk: Hunk): Html {
   const at = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+  // One value, one line — see the note on `cell` above: `.dc` is `pre`.
+  const cell = html`<span class="mono muted">${at}</span>${when(
+      hunk.section !== "",
+      () => html` <span class="muted">${hunk.section}</span>`,
+    )}`;
   return html`<tr class="dh">
     <td class="dn"></td>
     <td class="dn"></td>
-    <td class="dc">
-      <span class="mono muted">${at}</span>${when(
-        hunk.section !== "",
-        () => html` <span class="muted">${hunk.section}</span>`,
-      )}
-    </td>
+    <td class="dc">${cell}</td>
   </tr>`;
 }
 

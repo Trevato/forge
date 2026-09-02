@@ -8,6 +8,7 @@
 import { openPull } from "../../actions/pulls.ts";
 import {
   countIssues,
+  countComments,
   labelsFor,
   listLabels,
   type Label,
@@ -40,7 +41,8 @@ import {
   pager,
   seg,
   time,
-  userLink,
+
+  userTag,
   field as formField,
 } from "../ui.ts";
 import { refSet } from "./refs.ts";
@@ -80,7 +82,11 @@ export function pullsList(ctx: Ctx): Response {
     ...(q !== "" ? { query: q } : {}),
     ...(cursor !== undefined ? { cursor } : {}),
   });
-  const rows = pulls.map((pull) => ({ pull, labels: labelsFor(db, pull.id) }));
+  const rows = pulls.map((pull) => ({
+    pull,
+    labels: labelsFor(db, pull.id),
+    comments: countComments(db, pull.id),
+  }));
   const counts = {
     open: countIssues(db, repo.id, "pull", "open"),
     closed: countIssues(db, repo.id, "pull", "closed"),
@@ -124,7 +130,7 @@ export function pullsList(ctx: Ctx): Response {
           action: newPull,
         })
       : listCard(
-          rows.map(({ pull, labels }) =>
+          rows.map(({ pull, labels, comments }) =>
             threadRow(
               base,
               "pulls",
@@ -136,7 +142,8 @@ export function pullsList(ctx: Ctx): Response {
                   >${pull.headBranch} → ${pull.baseBranch}</span
                 >
                 · opened ${time(pull.createdAt)} by
-                ${userLink(pull.authorName, { avatar: false })}`,
+                ${userTag(pull.authorName)}`,
+              comments,
             ),
           ),
         );

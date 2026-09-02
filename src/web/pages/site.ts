@@ -8,14 +8,20 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import type { Database } from "bun:sqlite";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
-import { listEvents } from "../../core/events.ts";
-import { listIssues } from "../../core/issues.ts";
+import { listEvents, type ForgeEvent } from "../../core/events.ts";
+import { getIssue, listIssues } from "../../core/issues.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
-import { countUsers, verifyPassword, type User } from "../../core/users.ts";
+import {
+  countUsers,
+  getUserById,
+  verifyPassword,
+  type User,
+} from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
@@ -32,10 +38,7 @@ import {
   pager,
   row,
   selectField,
-  stateBadge,
   time,
-  tlEvent,
-  userLink,
 } from "../ui.ts";
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
@@ -90,31 +93,55 @@ function eventIcon(kind: string): IconName {
   return "activity";
 }
 
-/** Plain English for an event kind — the rail is read, not parsed. */
+/**
+ * Plain English for an event kind. The rail is read, not parsed, so this is
+ * the *verb phrase alone* — the repository and the thing acted on go on the
+ * second line, where they have room to be a link and to be truncated at the
+ * end rather than mid-word.
+ */
 function eventVerb(kind: string): string {
   const words: Record<string, string> = {
-    push: "pushed to",
-    "issue.opened": "opened an issue in",
-    "issue.closed": "closed an issue in",
-    "issue.reopened": "reopened an issue in",
-    "issue.commented": "commented in",
-    "issue.labeled": "labelled an issue in",
-    "pull.opened": "opened a pull request in",
-    "pull.merged": "merged a pull request in",
-    "pull.closed": "closed a pull request in",
-    "pull.reopened": "reopened a pull request in",
-    "pull.commented": "commented on a pull request in",
-    "pull.reviewed": "reviewed a pull request in",
-    "repo.created": "created",
-    "repo.forked": "forked",
-    "repo.updated": "changed the settings of",
-    "label.created": "added a label to",
-    "label.updated": "edited a label in",
-    "label.deleted": "removed a label from",
-    "webhook.created": "added a webhook to",
-    "webhook.deleted": "removed a webhook from",
+    push: "pushed",
+    "issue.opened": "opened an issue",
+    "issue.closed": "closed an issue",
+    "issue.reopened": "reopened an issue",
+    "issue.commented": "commented on an issue",
+    "issue.labeled": "labelled an issue",
+    "pull.opened": "opened a pull request",
+    "pull.merged": "merged a pull request",
+    "pull.closed": "closed a pull request",
+    "pull.reopened": "reopened a pull request",
+    "pull.commented": "commented on a pull request",
+    "pull.reviewed": "reviewed a pull request",
+    "repo.created": "created a repository",
+    "repo.forked": "forked a repository",
+    "repo.settings_updated": "changed repository settings",
+    "label.created": "added a label",
+    "label.updated": "edited a label",
+    "label.deleted": "removed a label",
+    "webhook.created": "added a webhook",
+    "webhook.deleted": "removed a webhook",
   };
-  return words[kind] ?? "acted on";
+  return words[kind] ?? "acted on this repository";
+}
+
+/** The thing an event happened to, as `#3 Title` or a label/hook name. */
+function eventSubject(db: Database, event: ForgeEvent): string {
+  const number = event.payload["number"];
+  if (typeof number === "number" && event.repoId !== null) {
+    const issue = getIssue(db, event.repoId, number);
+    return issue ? `#${number} ${issue.title}` : `#${number}`;
+  }
+  for (const key of ["name", "url", "parent"] as const) {
+    const value = event.payload[key];
+    if (typeof value === "string" && value !== "") return value;
+  }
+  const updates = event.payload["updates"];
+  if (Array.isArray(updates)) {
+    const ref = (updates[0] as { ref?: string } | undefined)?.ref;
+    if (typeof ref === "string") return ref.replace(/^refs\/heads\//, "");
+  }
+  return "";
 }
 
 function activityRail(ctx: Ctx, visible: Repo[]): Html {
@@ -131,22 +158,29 @@ function activityRail(ctx: Ctx, visible: Repo[]): Html {
       { head: html`<h2>Recent activity</h2>` },
     );
   }
+  const db = ctx.app.db;
   return card(
-    html`<div class="timeline">
+    html`<ul class="list act">
       ${events.map((event) => {
         const repo = byId.get(event.repoId ?? "")!;
-        return tlEvent({
-          icon: eventIcon(event.kind),
-          body: html`<span class="grow truncate"
-              >${eventVerb(event.kind)}
-              <a href="/${repo.ownerName}/${repo.name}"
-                >${repo.ownerName}/${repo.name}</a
-              ></span
-            >${time(event.createdAt)}`,
+        const actor =
+          event.actorId === null ? undefined : getUserById(db, event.actorId);
+        const subject = eventSubject(db, event);
+        const where = `${repo.ownerName}/${repo.name}`;
+        return row({
+          href: `/${where}`,
+          lead: icon(eventIcon(event.kind)),
+          title: html`<strong>${actor?.username ?? "someone"}</strong>
+          ${eventVerb(event.kind)}`,
+          meta: html`${where}${subject !== ""
+            ? html` · ${subject}`
+            : null}`,
+          titleAttr: `${actor?.username ?? "someone"} ${eventVerb(event.kind)}`,
+          trail: time(event.createdAt),
         });
       })}
-    </div>`,
-    { head: html`<h2>Recent activity</h2>` },
+    </ul>`,
+    { head: html`<h2>Recent activity</h2>`, pad: false },
   );
 }
 

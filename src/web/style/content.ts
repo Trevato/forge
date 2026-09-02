@@ -66,16 +66,25 @@ export const content = /* css */ `
 .filters .search { min-width: 180px; flex: 1; max-width: 320px; }
 
 .merge-box { margin-top: 14px; }
-.merge-box .card-body { display: flex; align-items: flex-start; gap: 10px; }
-.merge-box .ico { margin-top: 2px; flex: none; }
-.merge-box[data-status="ready"] .ico { color: var(--success); }
-.merge-box[data-status="blocked"] .ico { color: var(--danger); }
-.merge-box[data-status="merged"] .ico { color: var(--merged); }
-.merge-box[data-status="closed"] .ico { color: var(--muted-fg); }
-.merge-headline { font-weight: 600; }
+.merge-box .card-body { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+/* Only the verdict glyph, never the merge button's own icon. */
+.merge-box .card-body > .ico { margin-top: 2px; flex: none; color: var(--muted-fg); }
+.merge-box[data-tone="success"] .card-body > .ico { color: var(--success); }
+.merge-box[data-tone="danger"] .card-body > .ico { color: var(--danger); }
+.merge-box[data-tone="merged"] .card-body > .ico { color: var(--merged); }
+.merge-box .card-body > .grow { flex: 1 1 220px; }
+.merge-headline { font-weight: 600; text-wrap: pretty; }
 .merge-sub { color: var(--muted-fg); font-size: 13px; margin-top: 2px; text-wrap: pretty; }
-.merge-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.merge-form { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: none; }
 .merge-form select { min-width: 150px; width: auto; }
+/* On a phone the sentence gets the width and the controls go under it, with
+   the primary action full-width where the thumb already is. */
+@media (max-width: 719px) {
+  .merge-box .card-body > .grow { flex-basis: 100%; }
+  .merge-box .merge-form, .merge-box .merge-form > form { width: 100%; }
+  .merge-box .merge-form select { flex: 1 1 140px; }
+  .merge-box .merge-form .btn { flex: 1 1 180px; }
+}
 
 .commit-head .card-body { padding: 14px 16px; }
 .commit-body {
@@ -96,6 +105,12 @@ export const content = /* css */ `
 .hero-points .card-body { font-size: 13px; color: var(--muted-fg); }
 .hero-points strong { display: block; color: var(--fg); font-size: 14px; margin-bottom: 3px; }
 
+/* Every page grid, in one rule: a grid item's automatic minimum size is its
+   *content*, so a column with a long unbreakable line pushes the page wider
+   than the phone rather than letting its own ellipsis do the work. A zero
+   min-width is what makes truncation inside a grid actually truncate. */
+.dash > *, .split > *, .repo-layout > *, .hero-points > * { min-width: 0; }
+
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
 @media (min-width: 960px) {
@@ -104,7 +119,15 @@ export const content = /* css */ `
 }
 
 .dash { display: grid; gap: 16px; align-items: start; }
-@media (min-width: 900px) { .dash { grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; } }
+@media (min-width: 900px) { .dash { grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; } }
+
+/* The activity rail: a sentence on top, where it happened underneath, and the
+   clock beside the sentence it belongs to. */
+.act .row { align-items: flex-start; padding: 10px 14px; }
+.act .row-lead, .act .row-trail { margin-top: 1px; }
+.act .row-title { font-weight: 400; }
+.act .row-title strong { font-weight: 600; }
+.act .row-trail { font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 
 /* ---- code view ---- */
 .code { overflow-x: auto; scrollbar-width: thin; }
@@ -228,12 +251,15 @@ export const content = /* css */ `
   white-space: nowrap; border-right: 1px solid var(--border);
   font-variant-numeric: tabular-nums;
 }
+/* The cell never wraps; the code itself is what is pre-formatted. Keeping that on the
+   inner span means a stray newline in the markup costs one collapsed space
+   instead of a rendered blank line and a six-space indent. */
 .dc {
-  width: 100%; padding: 0 8px 0 12px; white-space: pre;
+  width: 100%; padding: 0 8px 0 12px; white-space: nowrap;
   border-left: 3px solid transparent;
   font-variant-ligatures: none;
 }
-.dcx { display: inline-block; min-height: 1.5em; } /* blank lines keep height */
+.dcx { display: inline-block; white-space: pre; min-height: 1.5em; } /* blank lines keep height */
 /* The +/-/space marker lives in ::before so selecting and copying skip it. */
 .dc::before { content: attr(data-mark) " "; color: var(--faint); }
 .dl[data-k="add"] .dc { background: var(--add-bg); border-left-color: var(--add-edge); }

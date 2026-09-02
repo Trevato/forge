@@ -14,6 +14,10 @@ export const shellJs = /* js */ `
 (function () {
   var doc = document;
 
+  // Controls that only mean something with a script running stay hidden
+  // until one is: no dead buttons on a page with JavaScript switched off.
+  doc.documentElement.classList.add('js');
+
   // ---- menus (details) ----
   function closeMenus(except) {
     doc.querySelectorAll('details.menu[open]').forEach(function (m) {
@@ -278,6 +282,16 @@ export const shellJs = /* js */ `
   }
   doc.querySelectorAll('[data-palette]').forEach(function (b) {
     b.addEventListener('click', function (e) { e.preventDefault(); openPalette(); });
+  });
+  doc.querySelectorAll('[data-help]').forEach(function (b) {
+    b.addEventListener('click', function (e) { e.preventDefault(); openHelp(); });
+  });
+
+  // ---- colour pickers show the hex they are about to submit ----
+  doc.querySelectorAll('.color-field input[type="color"]').forEach(function (i) {
+    var out = i.parentNode.querySelector('.hex');
+    if (!out) return;
+    i.addEventListener('input', function () { out.textContent = i.value; });
   });
 })();
 `;

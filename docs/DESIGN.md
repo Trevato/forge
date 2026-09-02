@@ -135,13 +135,17 @@ specification.
 | **checkbox**                                  | `.check`                                                                                   | —                                                                                                        | native, `accent-color` themed                                | `[x]` / `[ ]`                                |
 | **badge** `badge()` / `stateBadge()`          | `.badge`                                                                                   | `variant=secondary\|outline\|success\|danger\|merged\|attn`; `data-state=open\|closed`, `data-pr=merged` | —                                                            | a bracketed word in the state color          |
 | **label chip** `labelChip()`                  | `.label`                                                                                   | color via `--label` (see §7)                                                                             | —                                                            | a colored `‹name›`                           |
+| **author** `userLink()` / `userTag()`         | `.byline` (`.byline-name`)                                                                 | —                                                                                                        | `userTag` inside anything already a link — see below                                            | `@name` in the avatar hue                    |
 | **avatar** `avatar()`                         | `.avatar`                                                                                  | `size=md\|lg`, `data-h=0..11`                                                                            | initials, deterministic hue                                  | two initial letters in the same hue          |
+| **count**                                     | `.count`                                                                                   | —                                                                                                        | glyph plus a tabular number                                                                  | `⌸ 3`                                        |
 | **stat pill** `pill()`                        | `.pill`                                                                                    | `data-tone=accent\|danger`                                                                               | tabular                                                      | a parenthesised count                        |
 | **status dot** `dot()`                        | `.dot`                                                                                     | `data-tone=success\|danger\|attn\|merged`                                                                | —                                                            | `●` in the tone                              |
 | **sha** `sha()`                               | `.sha`                                                                                     | —                                                                                                        | first 7 chars                                                | the same 7 chars, dim                        |
 | **kbd** `kbd()`                               | `kbd`                                                                                      | —                                                                                                        | —                                                            | a reverse-video key name                     |
 | **card** `card()` / `listCard()`              | `.card` (`.card-head`, `.card-body`, `.card-foot`)                                         | `data-tone=success\|danger\|merged\|attn`                                                                | —                                                            | a box with a title bar                       |
-| **list row** `row()`                          | `.row` (`.row-lead`, `.row-main`, `.row-title`, `.row-meta`, `.row-trail`, `.row-actions`) | `data-state=open\|closed\|merged\|draft`                                                                 | hover, focus, `data-nav`                                     | one line: glyph, title, right-aligned meta   |
+| **list row** `row()`                          | `.row` (`.row-lead`, `.row-main`, `.row-title`, `.row-meta`, `.row-trail`, `.row-actions`) | `data-state=open\|closed\|merged\|draft` — colours the **lead glyph**, so a list filtered by state carries no badge repeating the filter | hover, focus, `data-nav`; `.row-meta` is one honest line: nowrap, ellipsis, `title`           | one line: glyph, title, right-aligned meta   |
+| **edit row**                                  | `.edit-row`                                                                                | —                                                                                                        | one line on a desktop, stacked below 720px                                                   | a form line                                  |
+| **colour field**                              | `.color-field`                                                                             | —                                                                                                        | native `<input type=color>` plus its hex; works with no script                               | a hex entry                                  |
 | **table**                                     | `.table`                                                                                   | `data-dense`                                                                                             | —                                                            | aligned columns                              |
 | **tabs** `tabs()`                             | `.tabs > a`                                                                                | —                                                                                                        | `aria-current="page"` + 2px `--fg` underline                 | a header row with the active item underlined |
 | **segmented control** `seg()`                 | `.seg > a`                                                                                 | —                                                                                                        | `aria-current`, or `:has(:checked)` for radios               | `‹ Open                                      | Closed | All ›` |
@@ -165,6 +169,23 @@ Two things are deliberately **not** in the vocabulary: skeleton loaders (the
 server renders whole pages — there is nothing to skeletonise) and a custom
 switch control (a native checkbox with `accent-color` is themed, keyboard-correct
 and honest about what it is).
+
+Three rules the browser enforces whether or not you meant them:
+
+- **A link inside a link is not a link.** `<a>` nested in `<a>` is not merely
+  invalid — the parser closes the outer anchor and re-parents everything after
+  it as a *sibling*, so the row visibly falls apart. Anything rendered inside a
+  linked `.row` uses the non-anchor form: `userTag()`, not `userLink()`; plain
+  text, not a repo link. `test/web-ui.test.ts` sweeps the list pages for it.
+- **Whitespace is content inside `white-space: pre`.** The diff cell (`.dc`) is
+  pre-formatted, so a pretty-printer's newline between `<td>` and its span
+  renders as a blank line and an indent. Assemble such a cell into one value
+  and interpolate it whole; `.dcx` holds the `pre`, so a stray newline costs a
+  collapsed space rather than a broken line.
+- **A grid or flex item's automatic minimum size is its content.** A column
+  holding one long unbreakable line pushes the page wider than the phone
+  instead of letting its own ellipsis work. Every page grid sets
+  `min-width: 0` on its children.
 
 ---
 
@@ -234,3 +255,6 @@ deletes a repository.
 7. Nothing on the page needs JavaScript to work.
 8. It survives 200% zoom and a 320px viewport with no horizontal body scroll —
    diffs and code scroll inside their own card.
+9. Nothing inside a linked row is itself a link.
+10. Any control that only works with a script carries `js-only`, so a page
+    without JavaScript never shows a dead button.
