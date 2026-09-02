@@ -313,3 +313,38 @@ describe("actions own authorization and events", () => {
     });
   });
 });
+
+describe("sign-up races", () => {
+  test("two simultaneous first sign-ups yield exactly one admin", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-race-"));
+    const fresh = createApp({ dataDir: dir });
+    try {
+      const [a, b] = await Promise.all([
+        signUp(fresh, { username: "one", email: "one@x.io", password: "a-good-passphrase" }),
+        signUp(fresh, { username: "two", email: "two@x.io", password: "a-good-passphrase" }),
+      ]);
+      if (!a.ok || !b.ok) throw new Error("sign-ups failed");
+      expect([a.value.isAdmin, b.value.isAdmin].filter(Boolean)).toHaveLength(1);
+    } finally {
+      fresh.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("two simultaneous sign-ups for one username settle without a throw", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-race-"));
+    const fresh = createApp({ dataDir: dir });
+    try {
+      const results = await Promise.all([
+        signUp(fresh, { username: "same", email: "s1@x.io", password: "a-good-passphrase" }),
+        signUp(fresh, { username: "same", email: "s2@x.io", password: "a-good-passphrase" }),
+      ]);
+      const errors = results.filter((r) => !r.ok).map((r) => (r as { error: string }).error);
+      expect(results.filter((r) => r.ok)).toHaveLength(1);
+      expect(errors).toEqual(["username_taken"]);
+    } finally {
+      fresh.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

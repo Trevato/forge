@@ -18,7 +18,6 @@ import {
 } from "../core/tokens.ts";
 import {
   changePassword as rehash,
-  countUsers,
   createUser,
   updateProfile as writeProfile,
   verifyPassword,
@@ -41,8 +40,7 @@ export async function signUp(
   app: App,
   input: SignUpInput,
 ): Promise<Result<User, CreateUserError>> {
-  const isFirst = countUsers(app.db) === 0;
-  const created = await createUser(app.db, { ...input, isAdmin: isFirst });
+  const created = await createUser(app.db, { ...input, adminIfFirst: true });
   if (!created.ok) return created;
   app.bus.append({ kind: "user.created", actorId: created.value.id });
   return created;

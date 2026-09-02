@@ -60,6 +60,12 @@ export interface CreateUserInput {
   displayName?: string;
   /** @default false */
   isAdmin?: boolean;
+  /**
+   * Make this account the admin if it is the first one — decided inside the
+   * INSERT, so two racing first sign-ups can never both win.
+   * @default false
+   */
+  adminIfFirst?: boolean;
 }
 
 export async function createUser(
@@ -85,18 +91,42 @@ export async function createUser(
 
   const userId = id();
   const hash = await Bun.password.hash(input.password, "argon2id");
-  db.query(
-    `INSERT INTO user (id, username, email, password_hash, display_name, is_admin)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-  ).run(
-    userId,
-    input.username,
-    input.email,
-    hash,
-    input.displayName ?? "",
-    input.isAdmin === true ? 1 : 0,
-  );
+  // The hash above yielded the event loop, so another sign-up may have landed
+  // meanwhile. Uniqueness is settled by the constraint, and "first user" by a
+  // subquery in the same statement — neither is a check-then-act.
+  try {
+    db.query(
+      `INSERT INTO user (id, username, email, password_hash, display_name, is_admin)
+       VALUES (?1, ?2, ?3, ?4, ?5,
+         CASE WHEN ?6 = 1 THEN 1
+              WHEN ?7 = 1 AND (SELECT COUNT(*) FROM user) = 0 THEN 1
+              ELSE 0 END)`,
+    ).run(
+      userId,
+      input.username,
+      input.email,
+      hash,
+      input.displayName ?? "",
+      input.isAdmin === true ? 1 : 0,
+      input.adminIfFirst === true ? 1 : 0,
+    );
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+    const taken = db
+      .query<{ username: string }, [string]>(
+        "SELECT username FROM user WHERE username = ?1",
+      )
+      .get(input.username);
+    return err(taken ? "username_taken" : "email_taken");
+  }
   return ok(getUserById(db, userId)!);
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    /UNIQUE constraint failed/.test(error.message)
+  );
 }
 
 export interface ProfilePatch {
