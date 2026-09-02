@@ -23,6 +23,7 @@ import {
 } from "../../actions/origins.ts";
 import type { OriginRepoRow } from "../../core/origins.ts";
 import type { Origin } from "../../origins/types.ts";
+import { oauthCallbackUri } from "../../http/api.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -74,10 +75,18 @@ export function originState(origin: Origin): {
   return { text: "healthy", tone: "success" };
 }
 
-/** Where an OAuth application must send the browser back to. */
+/**
+ * Where an OAuth application must send the browser back to.
+ *
+ * The same rule the web surface uses, asked from this side: `FORGE_URL`, or a
+ * host the operator vouched for, or loopback. A terminal session has no
+ * request to read a Host header from — which is the point, since that header
+ * was never trustworthy for this — so it asks about the forge's own address.
+ */
 function callbackUri(f: Session): string {
   const host = f.app.config.host ?? "localhost";
-  return `http://${host}:${f.app.config.port ?? 3000}/settings/origins/callback`;
+  const url = URL.parse(`http://${host}:${f.app.config.port ?? 3000}/`);
+  return url === null ? "" : oauthCallbackUri(url, f.app.config.host);
 }
 
 // ---- the list ----
@@ -461,6 +470,8 @@ function startCodeFlow(
       placeholder: "codeberg.org",
       onSubmit: (host) => {
         if (host === "") return "an instance is required";
+        if (redirect === "")
+          return "this forge does not know its own public URL — set FORGE_URL";
         return later(ctx, () =>
           promptScreen(ctx, parent, {
             title: `Register an app on ${host}`,

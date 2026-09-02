@@ -166,6 +166,7 @@ describe("origins on the web", () => {
     // Whatever the environment thinks: this suite decides when GitHub is
     // configured, and its first assertion is about it *not* being.
     delete process.env.FORGE_GITHUB_CLIENT_ID;
+    delete process.env.FORGE_URL;
     alice = await signUp("alice");
     bob = await signUp("bob");
     resetConnectLimit();
@@ -428,6 +429,34 @@ describe("origins on the web", () => {
     expect(html).toContain(`${new URL(base).origin}/settings/origins/callback`);
     expect(html).toContain("public client is fine");
     expect(html).toContain("Client ID");
+  });
+
+  test("a forge that does not know its own URL says so instead of guessing", async () => {
+    // The request's Host header is not evidence: this one claims a hostname
+    // the operator never vouched for, so the code flow has no callback URI to
+    // register and must say why rather than register the caller's guess.
+    const page = await fetch(`${base}/settings/origins`, {
+      headers: { cookie: alice, host: "forge.example" },
+      redirect: "manual",
+    });
+    const html = await page.text();
+    expect(html).toContain("does not know its own public URL");
+    expect(html).toContain("FORGE_URL");
+    // The token path is unaffected, and still offered.
+    expect(html).toContain("Personal access token");
+
+    const started = await fetch(`${base}/settings/origins/oauth`, {
+      method: "POST",
+      headers: {
+        cookie: alice,
+        host: "forge.example",
+        origin: "http://forge.example",
+      },
+      body: new URLSearchParams({ host: forgejo.url }),
+      redirect: "manual",
+    });
+    expect(started.status).toBe(422);
+    expect(await started.text()).toContain("FORGE_URL");
   });
 
   test("registering an app then authorizing sends a PKCE challenge", async () => {

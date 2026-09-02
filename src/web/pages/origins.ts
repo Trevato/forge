@@ -33,6 +33,7 @@ import { getFlowFor } from "../../origins/oauth.ts";
 import { getOriginFor, type Origin } from "../../core/origins.ts";
 import { getRepo, getRepoById } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import { oauthCallbackUri } from "../../http/api.ts";
 import {
   settingsLayout,
   signInFirst,
@@ -112,9 +113,18 @@ function sameHost(a: string, b: string): boolean {
   return one !== null && two !== null && one.host === two.host;
 }
 
-/** Where an OAuth application must be told to send the browser back to. */
+/**
+ * Where an OAuth application must be told to send the browser back to.
+ *
+ * Deliberately not `ctx.url.origin`: that is the request's Host header, which
+ * a client or a sloppy proxy can write, and this string is registered with
+ * another forge. `oauthCallbackUri` takes it from `FORGE_URL`, or from a
+ * request whose hostname the operator already vouched for with `FORGE_HOST`,
+ * or from loopback — and answers "" when it knows none of those, which is
+ * the case this page has to explain rather than paper over.
+ */
 export const callbackUri = (ctx: Ctx): string =>
-  `${ctx.url.origin}/settings/origins/callback`;
+  oauthCallbackUri(ctx.url, ctx.app.config.host);
 
 /**
  * The floor every page here sits on, matching the JSON API's exactly: an
@@ -244,6 +254,18 @@ function forgejoSection(
   registered: { webUrl: string; clientId: string; id: string } | undefined,
 ): Html {
   const back = callbackUri(ctx);
+  if (back === "") {
+    return html`<div class="connect-path">
+      <h3>${icon("forgejo")}Forgejo or Gitea</h3>
+      <p class="error-note">
+        This forge does not know its own public URL, so it cannot register a
+        callback for the code flow. Set
+        <span class="mono">FORGE_URL</span> to the base URL people reach it at
+        (or <span class="mono">FORGE_HOST</span> to the hostname it is served
+        on) and this path lights up. A pasted token works either way.
+      </p>
+    </div>`;
+  }
   // Two verbs, two endpoints, and HTML forbids nesting one form in another —
   // so the "forget" form sits beside the authorize form and its button joins
   // it by id.
@@ -542,10 +564,19 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const kind = field(form, "kind");
   const host = field(form, "host").trim();
 
+  const back = callbackUri(ctx);
+  if (back === "" && kind !== "github") {
+    const values = blankValues();
+    values.host = host;
+    values.mode = "host";
+    values.hostError =
+      "This forge does not know its own public URL. Set FORGE_URL (or FORGE_HOST) and try again — or paste a token instead.";
+    return shell(ctx, originsView(ctx, values), 422);
+  }
   const started = await startOAuthConnect(ctx.app, ctx.auth.user, {
     host: host || kind,
     ...(kind === "github" ? { kind: "github" as const } : {}),
-    redirectUri: callbackUri(ctx),
+    redirectUri: back,
   });
   if (!started.ok) {
     if (started.error.error === "no_app" && kind !== "github") {

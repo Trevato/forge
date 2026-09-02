@@ -60,7 +60,10 @@ nothing else can.
 
 Configuration is environment variables, all with defaults: `FORGE_DATA`
 (`data/`), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
-`FORGE_HOST` (`localhost`, the hostname in clone URLs). Everything a forge
+`FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
+adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
+`FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
+`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
@@ -79,12 +82,19 @@ way in you get is a property of the forge, not a preference:
 - **GitHub** — a device code. The forge shows a short code and a URL; you type
   the code on whatever device has a browser, and the forge does the polling.
   This is the flow that works over SSH with no browser on the server. It needs
-  `FORGE_GITHUB_CLIENT_ID` set on the forge; without it the button is replaced
-  by a hint rather than left there to fail.
+  `FORGE_GITHUB_CLIENT_ID` set on the forge (and optionally
+  `FORGE_GITHUB_CLIENT_SECRET`, which only buys revoke-on-disconnect); without
+  the client id the button is replaced by a hint rather than left there to
+  fail.
 - **Forgejo / Gitea** — authorization code with PKCE. They implement no device
   grant, and every instance needs its own OAuth application, so you paste a
   client id once per host. The page gives you the exact redirect URI to enter
   (`https://your.forge/settings/origins/callback`); a public client is fine.
+  This flow needs the forge to know its own public URL, since that URL is
+  registered with the other forge and a `Host` header is not evidence: set
+  **`FORGE_URL`** to the canonical base URL (`FORGE_HOST` and loopback are the
+  fallbacks it trusts). Until one of those is true the card says so, and the
+  token path still works.
 - **A pasted token** — the fallback that needs no registration anywhere. It is
   validated against the origin before it is stored, encrypted at rest, and
   never displayed again.
