@@ -216,9 +216,34 @@ export function detectLanguage(path: string): Language {
   return EXT[name.slice(dot + 1).toLowerCase()] ?? "plain";
 }
 
-interface ScanState {
+export interface ScanState {
   block: boolean; // inside a block comment
   str: { close: string; escape: boolean } | null; // inside a multi-line string
+}
+
+/** The state a scan of the first line of a file starts from. */
+export const INITIAL_SCAN: ScanState = { block: false, str: null };
+
+/**
+ * Tokenize **one** line, given the state the previous line ended in.
+ *
+ * `highlightLines` re-tokenizes a whole file, which is right for a page that
+ * renders one. An editor is the other case: a keystroke changes one line, and
+ * re-scanning ten thousand of them per character is the difference between an
+ * editor that feels instant and one that does not. So the primitive the whole
+ * file walk is already built on is offered directly, and a caller that keeps a
+ * `ScanState[]` beside its lines can re-scan from the edit downward until the
+ * state converges — usually one line, unbounded only inside an unterminated
+ * block comment.
+ */
+export function scanOneLine(
+  line: string,
+  lang: Language,
+  state: ScanState,
+): { tokens: Token[]; state: ScanState } {
+  const spec = SPECS[lang];
+  if (!spec) return { tokens: [{ cls: "plain", text: line }], state };
+  return scanLine(line, spec, state);
 }
 
 export function highlightLines(code: string, lang: Language): Token[][] {

@@ -45,6 +45,26 @@ export const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
 export const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l\x1b[?1003l\x1b[?1000l";
 export const FOCUS_OFF = "\x1b[?1004l";
 
+/**
+ * OSC 8 hyperlinks. `ESC ] 8 ; <params> ; <uri> BEL` opens, the same with an
+ * empty URI closes. BEL rather than ST because that is what this file already
+ * emits for OSC 52 and every terminal in the support matrix accepts both.
+ *
+ * `id=` is always sent: cells sharing a URI *and* a non-empty id are one link
+ * for hover purposes, which is what keeps a link painted as several disjoint
+ * dirty runs from underlining as several links.
+ */
+export const OSC8_CLOSE = "\x1b]8;;\x07";
+
+export function osc8Open(uri: string, id: number): string {
+  return `\x1b]8;id=f${id};${uri}\x07`;
+}
+
+/** Reset the cursor shape. nvim leaves a steady block behind on exit. */
+export const CURSOR_SHAPE_RESET = "\x1b[0 q";
+/** Pop any kitty keyboard-protocol flags a suspended child pushed. */
+export const KITTY_KEYS_POP = "\x1b[>0u";
+
 /** Cursor position. Terminal coordinates are 1-based; ours are 0-based. */
 export function cup(row: number, col: number): string {
   return `\x1b[${row + 1};${col + 1}H`;
@@ -115,7 +135,10 @@ function sequenceEnd(s: string, i: number): number {
   // after an ESC is literal text, so `stripAnsi("a\x1bb")` keeps the b.
   const code = next.charCodeAt(0);
   const twoByte =
-    next === "7" || next === "8" || next === "=" || next === ">" ||
+    next === "7" ||
+    next === "8" ||
+    next === "=" ||
+    next === ">" ||
     (code >= 0x40 && code <= 0x5f);
   return twoByte ? i + 2 : -1;
 }

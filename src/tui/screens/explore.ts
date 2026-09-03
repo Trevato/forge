@@ -16,6 +16,8 @@ import {
   Filter,
   ListState,
   PIN_MARK,
+  countsColumn,
+  metaOf,
   drawList,
   errorText,
   runAsync,
@@ -85,10 +87,14 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
         });
         return;
       }
+      const counts = countsColumn(rows.map((repo) => repo.counts));
       const list = rows.map((repo) => ({
         title: `${pinned.has(repo.id) ? `${PIN_MARK} ` : ""}${repo.ownerName}/${repo.name}`,
         secondary: repo.description,
-        meta: repo.visibility === "private" ? "private" : "",
+        meta: metaOf(
+          repo.visibility === "private" ? "private" : "",
+          counts(repo.counts),
+        ),
       }));
       if (more && !filter.on)
         list.push({ title: "Load more…", secondary: "", meta: "" });

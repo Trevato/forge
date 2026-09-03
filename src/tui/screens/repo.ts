@@ -37,15 +37,20 @@ import {
   drawLines,
   drawList,
   errorText,
+  // `live` is already the name of this screen's origin browse; the outbox
+  // subscription is renamed rather than the local, which reads better here.
+  live as liveUpdates,
   runAsync,
 } from "./common.ts";
 import { commitsScreen } from "./commits.ts";
 import { issuesScreen } from "./issues.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
+import { codeScreen } from "./code.ts";
+import { finderScreen } from "./finder.ts";
 import { blobScreen, treeScreen } from "./tree.ts";
 import { forkScreen } from "./newrepo.ts";
 import { ownerScreen } from "./owner.ts";
-import { refPickerScreen } from "./refs.ts";
+import { branchesScreen, refPickerScreen } from "./refs.ts";
 import { settingsScreen } from "./settings.ts";
 import {
   hostOf,
@@ -53,6 +58,8 @@ import {
   local,
   localRepo,
   liveOrigin,
+  otherSide,
+  otherSideLabel,
   sourceName,
   whereRows,
   whereStrip,
@@ -159,7 +166,12 @@ export function repoScreen(
         binding(["i"], "issues"),
         binding(["p"], "pulls"),
         binding(["c"], "commits"),
-        binding(["b"], "ref"),
+        binding(["b"], "branches"),
+        binding(["t", "ctrl+p"], "find file"),
+        binding(["T"], "switch ref"),
+        ...(otherSideLabel(f, src) === undefined
+          ? []
+          : [binding(["W"], otherSideLabel(f, src) ?? "")]),
         // `p` is pulls on this screen and has been since before pins
         // existed, so the toggle takes the shifted key here. Everywhere a
         // repo is a *row* — explore, the dashboard — plain `p` is free and
@@ -179,7 +191,13 @@ export function repoScreen(
         binding(["r"], "refresh"),
       ];
     },
-    load: reload,
+    load(signal) {
+      if (repo !== undefined)
+        liveUpdates(f, signal, { repoId: repo.id }, () =>
+          runAsync(ctx, reload),
+        );
+      return reload();
+    },
     render(area, s) {
       const c = ctx.theme.c;
       const rows = aboutFacts(f, src, facts);
@@ -240,6 +258,7 @@ export function repoScreen(
         },
         c,
         rows,
+        c.card,
       );
 
       const [left, right] = ctx.twoPane
@@ -317,11 +336,44 @@ export function repoScreen(
         return true;
       }
       if (e.key === "b") {
+        // The full branches screen rather than the overlay picker: from a
+        // repo's front door the interesting questions are which branches
+        // exist and how far they have drifted, not just "switch to one".
+        ctx.push(
+          branchesScreen(f, ctx, src, {
+            current: ref,
+            onPick: (chosen) =>
+              ctx.replace(repoScreen(f, ctx, src, { ref: chosen })),
+          }),
+        );
+        return true;
+      }
+      if ((e.key === "t" && !e.ctrl) || (e.ctrl && e.key === "p")) {
+        // The finder is reachable from anywhere inside a repository, not
+        // only from the file browser: "where is that file" is a question you
+        // have on the front door as often as in the tree.
+        ctx.push(
+          finderScreen(f, ctx, screen, src, ref, (path) =>
+            ctx.push(codeScreen(f, ctx, src, ref, { path, focus: "file" })),
+          ),
+        );
+        return true;
+      }
+      if (e.key === "T") {
         ctx.push(
           refPickerScreen(f, ctx, screen, src, (chosen) =>
             ctx.replace(repoScreen(f, ctx, src, { ref: chosen })),
           ),
         );
+        return true;
+      }
+      if (e.key === "W") {
+        const other = otherSide(f, src);
+        if (other === undefined) {
+          ctx.toast("this repository has only one side", "attn");
+          return true;
+        }
+        ctx.replace(repoScreen(f, ctx, other, { ref }));
         return true;
       }
       if (liveKey(f, ctx, e, src, { parent: screen, onDone: openLocal }))

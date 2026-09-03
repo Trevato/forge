@@ -11,7 +11,7 @@
 
 import { openIssueThrough } from "../../actions/issues.ts";
 import type { IssueKind, Label } from "../../core/issues.ts";
-import { getPull } from "../../core/pulls.ts";
+import { mergedPullNumbers } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { IssueSummary, RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -26,8 +26,11 @@ import {
   Filter,
   ListState,
   ORIGIN_MARK,
+  commentsMeta,
+  metaOf,
   drawList,
   errorText,
+  live,
   pickerScreen,
   relTime,
   runAsync,
@@ -78,10 +81,14 @@ export function issuesScreen(
   const merged = new Set<number>();
   const markMerged = (rows: readonly IssueSummary[]): void => {
     if (repo === undefined || kind !== "pull") return;
-    for (const row of rows) {
-      const pull = getPull(f.db, repo.id, row.number);
-      if (pull !== undefined && pull.mergedAt !== null) merged.add(row.number);
-    }
+    // One query for the page, addressed the way the list has them: by
+    // number. `getPull` per row was a query per row on the hottest list.
+    for (const number of mergedPullNumbers(
+      f.db,
+      repo.id,
+      rows.map((row) => row.number),
+    ))
+      merged.add(number);
   };
 
   const query = (at?: string): Parameters<RepoSource["issues"]>[0] => ({
@@ -165,7 +172,14 @@ export function issuesScreen(
         binding(["r"], "refresh"),
       ];
     },
-    load: reload,
+    load(signal) {
+      // A list of conversations is exactly the thing somebody else changes
+      // while you look at it. Repo-scoped where we can be: a live browse has
+      // no local repo id, and no local event can be about it.
+      if (repo !== undefined)
+        live(f, signal, { repoId: repo.id }, () => runAsync(ctx, reload));
+      return reload();
+    },
     render(area, s) {
       const c = ctx.theme.c;
       const [strip, seg, box, body] = split(area, "v", [
@@ -227,11 +241,14 @@ export function issuesScreen(
           secondary: item.labels.map((l) => l.name).join(" "),
           // An imported row is the origin's author, marked as upstream: a
           // login from another forge must never read as an account here.
-          meta: `#${item.number} ${
-            item.originAuthor === null || item.originAuthor === ""
-              ? item.authorName
-              : `${ORIGIN_MARK} ${item.originAuthor}`
-          } ${relTime(item.updatedAt)}`,
+          meta: metaOf(
+            `#${item.number} ${
+              item.originAuthor === null || item.originAuthor === ""
+                ? item.authorName
+                : `${ORIGIN_MARK} ${item.originAuthor}`
+            } ${relTime(item.updatedAt)}`,
+            commentsMeta(item.commentCount),
+          ),
         };
       });
       if (more) list.push({ title: "Load more…" });

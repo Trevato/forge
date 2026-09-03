@@ -8,12 +8,16 @@
  */
 
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
-import { getIssue } from "../../core/issues.ts";
-import { listPins, type Pin } from "../../core/pins.ts";
+import { getIssuesByRef } from "../../core/issues.ts";
+import { listPins, pinnedRepoIds, type Pin } from "../../core/pins.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
-import { listEvents, type ForgeEvent } from "../../core/events.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
-import { getUserById } from "../../core/users.ts";
+import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
+import {
+  getReposByIds,
+  listReposVisibleTo,
+  type Repo,
+} from "../../core/repos.ts";
+import { getUsersByIds } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Rect } from "../term/screen.ts";
@@ -27,8 +31,11 @@ import {
   Filter,
   ListState,
   PIN_MARK,
+  countsColumn,
+  metaOf,
   drawList,
   errorText,
+  live,
   relTime,
   runAsync,
   type ListRow,
@@ -55,7 +62,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     // The server remembers the *choice* and nothing about the laptop, so
     // this is a list of decisions — never a status that would be stale.
     pins = f.user ? listPins(f.db, f.user.id) : [];
-    pinned = new Set(pins.map((pin) => pin.repoId));
+    pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     const all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     // "Yours" is ownership plus the orgs you are on a team of; everything
     // else lives in Explore, one key away.
@@ -68,11 +75,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             repo.ownerId === f.user?.id || orgs.includes(repo.ownerName),
         )
       : all;
-    const visible = listEvents(f.db, { limit: 60 }).filter(
-      (event) =>
-        event.repoId === null || all.some((repo) => repo.id === event.repoId),
-    );
-    feed = visible.flatMap((event) => item(f, event, all) ?? []);
+    // The feed asks for *visible* events rather than the newest sixty and a
+    // filter in JS: on a forge with any traffic at all, sixty events can be
+    // sixty events in repos this session cannot see, and the old shape drew
+    // an empty card. The predicate belongs in the query.
+    const visible = listEventsVisibleTo(f.db, f.user, { limit: 40 });
+    feed = feedItems(f, visible);
     ctx.invalidate();
   };
 
@@ -96,7 +104,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["r"], "refresh"),
       ];
     },
-    load() {
+    load(signal) {
+      // Anything anyone does anywhere the viewer can see lands here: the
+      // repo list, the counts beside it and the activity feed are all
+      // functions of the outbox, so one subscription refreshes all three.
+      live(f, signal, {}, reload);
       reload();
       return Promise.resolve();
     },
@@ -115,7 +127,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             ? "Press n to create one, or e to explore."
             : "Press s to sign in, or e to explore.",
         });
-      else
+      else {
+        // The counts come off `listReposVisibleTo`, which fills them in one
+        // grouped query for the whole page — never one per row.
+        const counts = countsColumn(rows.map((repo) => repo.counts));
         drawList(
           s,
           list!,
@@ -125,10 +140,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             (repo): ListRow => ({
               title: `${pinned.has(repo.id) ? `${PIN_MARK} ` : ""}${repo.ownerName}/${repo.name}`,
               secondary: repo.description,
-              meta: repo.visibility === "private" ? "private" : "",
+              meta: metaOf(
+                repo.visibility === "private" ? "private" : "",
+                counts(repo.counts),
+              ),
             }),
           ),
         );
+      }
       if (right === undefined) return;
 
       const [activity, side] = split(right, "v", [fill(2), len(7)]);
@@ -157,7 +176,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             ...pins
               .slice(0, 4)
               .map((pin) => `${PIN_MARK} ${pin.ownerName}/${pin.name}`),
-            "forge sync   clone and refresh them (see \"Origins\" in the README)",
+            'forge sync   clone and refresh them (see "Origins" in the README)',
           ]
         : f.signedIn
           ? orgs.length > 0
@@ -247,27 +266,44 @@ const TWO_LINE = 40;
  * Resolve everything `describeEvent` needs — the actor, the repo, and the
  * title of whatever the event numbered — and hand it the finished nouns.
  */
-function item(
-  f: Session,
-  event: ForgeEvent,
-  repos: readonly Repo[],
-): FeedItem | null {
-  const actor =
-    event.actorId === null
-      ? "someone"
-      : (getUserById(f.db, event.actorId)?.username ?? "someone");
-  const repo = repos.find((r) => r.id === event.repoId);
-  const number = event.payload["number"];
-  const title =
-    repo !== undefined && typeof number === "number"
-      ? getIssue(f.db, repo.id, number)?.title
-      : undefined;
-  const line = describeEvent(event, {
-    actor,
-    ...(repo === undefined ? {} : { repo: `${repo.ownerName}/${repo.name}` }),
-    ...(title === undefined ? {} : { title }),
+function feedItems(f: Session, events: readonly ForgeEvent[]): FeedItem[] {
+  // Three grouped reads for the whole feed, not three per row: the actors,
+  // the repos, and the titles of whatever was numbered. A feed is precisely
+  // the list where N+1 is invisible in development and fatal in production.
+  const actors = getUsersByIds(
+    f.db,
+    events.flatMap((e) => (e.actorId === null ? [] : [e.actorId])),
+  );
+  const repos = getReposByIds(
+    f.db,
+    events.flatMap((e) => (e.repoId === null ? [] : [e.repoId])),
+  );
+  const titled = getIssuesByRef(
+    f.db,
+    events.flatMap((e) =>
+      e.repoId !== null && typeof e.payload["number"] === "number"
+        ? [{ repoId: e.repoId, number: e.payload["number"] }]
+        : [],
+    ),
+  );
+  return events.flatMap((event) => {
+    const actor =
+      event.actorId === null
+        ? "someone"
+        : (actors.get(event.actorId)?.username ?? "someone");
+    const repo = event.repoId === null ? undefined : repos.get(event.repoId);
+    const number = event.payload["number"];
+    const title =
+      repo !== undefined && typeof number === "number"
+        ? titled.get(`${repo.id}#${number}`)?.title
+        : undefined;
+    const line = describeEvent(event, {
+      actor,
+      ...(repo === undefined ? {} : { repo: `${repo.ownerName}/${repo.name}` }),
+      ...(title === undefined ? {} : { title }),
+    });
+    return line === null ? [] : [{ ...line, when: relTime(event.createdAt) }];
   });
-  return line === null ? null : { ...line, when: relTime(event.createdAt) };
 }
 
 /**

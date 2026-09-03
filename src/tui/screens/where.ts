@@ -24,7 +24,7 @@ import { isPinned } from "../../core/pins.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Origin } from "../../origins/types.ts";
 import { localSource } from "../../view/local.ts";
-import type { RepoSource } from "../../view/source.ts";
+import { sourceFor, type RepoSource } from "../../view/source.ts";
 import {
   G,
   type Rect,
@@ -80,10 +80,81 @@ export function originUrl(src: RepoSource): string {
   return link.htmlUrl;
 }
 
+/** Which forge software is behind this source's origin, when there is one. */
+export function originKind(
+  src: RepoSource,
+): "github" | "forgejo" | "gitea" | undefined {
+  if (src.where.kind === "origin") return src.where.origin.kind;
+  return src.where.repo.origin?.kind;
+}
+
+/**
+ * The page for one *file* on the origin.
+ *
+ * Two shapes cover every forge we speak to: GitHub's `/blob/<ref>/<path>` and
+ * Forgejo/Gitea's `/src/branch/<ref>/<path>`. This is a link we hand a person,
+ * not an API call — a wrong guess costs a 404 in their browser, not a broken
+ * read — so the branch is worth the two lines and the honesty of returning ""
+ * when there is no origin at all.
+ */
+export function originFileUrl(
+  src: RepoSource,
+  ref: string,
+  path: string,
+): string {
+  const base = originUrl(src);
+  if (base === "" || path === "") return base;
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const at = encodeURIComponent(ref);
+  return originKind(src) === "github"
+    ? `${base}/blob/${at}/${encoded}`
+    : `${base}/src/branch/${at}/${encoded}`;
+}
+
 /** `codeberg.org` from `https://codeberg.org/octo/widgets`. */
 export function hostOf(url: string): string {
   const parsed = URL.parse(url);
   return parsed === null ? url : parsed.host;
+}
+
+/**
+ * The same repository, read from the other side.
+ *
+ * A mirror has two truths a person moves between constantly: the copy here
+ * and the live origin. `W` is that move, and this is the whole of it — a
+ * local source whose repo has an origin becomes a live browse of it, and a
+ * live browse that already has a mirror becomes the local source. Undefined
+ * means there is no other side (a native repo, or an unmirrored browse), and
+ * the access rules are `sourceFor`'s own: a live browse spends the origin
+ * owner's credential, so anybody else gets nothing rather than somebody
+ * else's connection.
+ */
+export function otherSide(f: Session, src: RepoSource): RepoSource | undefined {
+  if (src.where.kind === "origin") {
+    const mirror = src.where.mirroredAs;
+    return mirror === undefined ? undefined : local(f, mirror);
+  }
+  const link = src.where.repo.origin;
+  if (link === null) return undefined;
+  const opened = sourceFor(f.app, f.user, {
+    originId: link.originId,
+    fullName: link.fullName,
+  });
+  return opened.ok ? opened.value : undefined;
+}
+
+/** What `W` is called on this screen, or undefined when it does not apply. */
+export function otherSideLabel(
+  f: Session,
+  src: RepoSource,
+): string | undefined {
+  if (src.where.kind === "origin")
+    return src.where.mirroredAs === undefined
+      ? undefined
+      : "the workbench copy";
+  const link = src.where.repo.origin;
+  if (link === null || f.user === undefined) return undefined;
+  return `live on ${hostOf(link.htmlUrl === "" ? link.fullName : link.htmlUrl)}`;
 }
 
 /** The branch a screen can open with before `describe()` has answered. */

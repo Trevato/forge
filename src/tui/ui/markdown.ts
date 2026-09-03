@@ -257,11 +257,21 @@ export function inline(text: string, c: Tokens, base: Style): Span[] {
             style: { ...base, attr: base.attr | ITALIC },
           });
         else {
+          // The label carries the link (OSC 8), and the URL still trails in
+          // dim: a terminal that understands hyperlinks makes the label
+          // clickable, and one that does not still shows where it goes. Both
+          // readers get something, which is the only honest design given how
+          // uneven OSC 8 support still is.
           out.push({
             text: label,
             style: style(c.accent, base.bg, base.attr | UNDERLINE),
+            ...(isHttp(url) ? { link: url } : {}),
           });
-          out.push({ text: ` ${url}`, style: style(c.faint, base.bg, DIM) });
+          out.push({
+            text: ` ${url}`,
+            style: style(c.faint, base.bg, DIM),
+            ...(isHttp(url) ? { link: url } : {}),
+          });
         }
         i = end + 1;
         continue;
@@ -279,12 +289,22 @@ export function inline(text: string, c: Tokens, base: Style): Span[] {
  * bytes as width is the single most common bug in ANSI markdown renderers,
  * which is why nothing here ever holds a pre-rendered escape string.
  */
+/** Only http(s) becomes a hyperlink; nothing else is a thing to click. */
+export function isHttp(url: string): boolean {
+  return /^https?:\/\//i.test(url);
+}
+
 export function wrapSpans(spans: readonly Span[], width: number): Line[] {
   if (width <= 0) return [[...spans]];
   const words: Span[] = [];
   for (const span of spans)
     for (const piece of span.text.split(/(\s+)/))
-      if (piece !== "") words.push({ text: piece, style: span.style });
+      if (piece !== "")
+        words.push({
+          text: piece,
+          style: span.style,
+          ...(span.link === undefined ? {} : { link: span.link }),
+        });
 
   const out: Line[] = [];
   let line: Span[] = [];
@@ -306,7 +326,11 @@ export function wrapSpans(spans: readonly Span[], width: number): Line[] {
           line = [];
           used = 0;
         }
-        line.push({ text: chunk, style: word.style });
+        line.push({
+          text: chunk,
+          style: word.style,
+          ...(word.link === undefined ? {} : { link: word.link }),
+        });
         used = displayWidth(chunk);
       }
       continue;

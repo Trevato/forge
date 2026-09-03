@@ -44,6 +44,7 @@ import {
   confirmScreen,
   drawLines,
   errorText,
+  live,
   plural,
   relTime,
   runAsync,
@@ -221,12 +222,8 @@ export function pullScreen(
       ];
     },
     load(signal) {
-      if (repo !== undefined) {
-        const off = f.app.bus.subscribe((event) => {
-          if (event.repoId === repo.id) runAsync(ctx, reload);
-        });
-        signal.addEventListener("abort", off);
-      }
+      if (repo !== undefined)
+        live(f, signal, { repoId: repo.id }, () => runAsync(ctx, reload));
       return reload();
     },
     render(area, s) {

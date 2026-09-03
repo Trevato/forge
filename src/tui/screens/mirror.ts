@@ -35,7 +35,7 @@ import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { card, spinner } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { errorText } from "./common.ts";
+import { errorText, openLink } from "./common.ts";
 import { liveOrigin, originUrl } from "./where.ts";
 
 /** The working stages, in order. `done` and `failed` are the outcome line. */
@@ -152,13 +152,7 @@ export function liveKey(
   if (e.key === "O") {
     const url = originUrl(src);
     if (url === "") return false;
-    if (ctx.openUrl(url)) ctx.toast("opening in your browser", "success");
-    else {
-      // Over SSH there is no browser to reach, so the link goes to *your*
-      // terminal's clipboard instead of pretending the keypress worked.
-      ctx.copy(url);
-      ctx.toast(`no browser here — copied ${url}`, "attn");
-    }
+    openLink(ctx, url);
     return true;
   }
   return false;

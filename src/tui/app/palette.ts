@@ -23,6 +23,42 @@ export interface Command {
   run(): void | Promise<void>;
 }
 
+/**
+ * One row of search results. Same shape as a command — because from the
+ * palette's side "open octo/widgets" and "New repository" are the same act,
+ * and the only difference worth drawing is which heading it sits under.
+ */
+export interface PaletteItem extends Command {
+  /** The heading it appears under: "Repos", "Issues & pulls", "Code". */
+  readonly section: string;
+  /** A leading mark: the where-dot, `▲ mirrored as …`. */
+  readonly mark?: string;
+  /** Matched offsets in `title`, when the provider scored it itself. */
+  readonly indices?: readonly number[];
+}
+
+/**
+ * Where search results come from. The app owns the debounce and the
+ * cancellation; a provider is handed a query, whether the caller has paused
+ * long enough to justify spending somebody's rate budget on their origins,
+ * and a signal that fires when the answer stops mattering.
+ */
+export type PaletteSearch = (
+  query: string,
+  live: boolean,
+  signal: AbortSignal,
+) => Promise<PaletteItem[]>;
+
+/** A drawn line: either a heading, or something selectable. */
+type Row =
+  | { readonly kind: "header"; readonly label: string }
+  | {
+      readonly kind: "item";
+      readonly item: Command | PaletteItem;
+      readonly indices: readonly number[];
+      readonly mark: string;
+    };
+
 export interface Match {
   readonly command: Command;
   readonly score: number;
@@ -83,26 +119,94 @@ export function rank(commands: readonly Command[], query: string): Match[] {
   return out;
 }
 
+/**
+ * The palette is the search box.
+ *
+ * It used to be a filter over forty verbs. That is a fine thing to have and it
+ * is still the last section — but the question a person actually types into a
+ * box in a forge is "where is that repo / that issue / that line of code", and
+ * asking it in three different places was the bug. So the same keystrokes now
+ * run `actions/search.ts` across everything the session can reach, local *and*
+ * every connected origin, and the answers arrive in sections.
+ *
+ * The palette itself stays synchronous and dumb: it holds a query, a list of
+ * results somebody else fetched, and a cursor. Debouncing, cancelling and the
+ * decision to spend an origin's rate budget all live in the loop
+ * (`app/app.ts`), because those are timing concerns and this is a widget.
+ */
 export class Palette {
   query = "";
   selected = 0;
+  /** True while a search for the current query is in flight. */
+  searching = false;
   private commands: readonly Command[] = [];
+  private results: readonly PaletteItem[] = [];
 
   open(commands: readonly Command[]): void {
     this.commands = commands;
+    this.results = [];
+    this.searching = false;
     this.query = "";
     this.selected = 0;
+  }
+
+  /** Fresh results for the current query. Keeps the cursor in range. */
+  setResults(items: readonly PaletteItem[]): void {
+    this.results = items;
+    this.searching = false;
+    this.selected = Math.min(
+      this.selected,
+      Math.max(0, this.items().length - 1),
+    );
   }
 
   matches(): Match[] {
     return rank(this.commands, this.query);
   }
 
+  /**
+   * Everything drawable, headings included, in section order: search results
+   * first (they answer the question that was typed), commands last.
+   */
+  rows(): Row[] {
+    const out: Row[] = [];
+    let section = "";
+    for (const item of this.results) {
+      if (item.section !== section) {
+        section = item.section;
+        out.push({ kind: "header", label: section });
+      }
+      out.push({
+        kind: "item",
+        item,
+        indices: item.indices ?? [],
+        mark: item.mark ?? "",
+      });
+    }
+    const verbs = this.matches();
+    if (verbs.length > 0) {
+      if (out.length > 0) out.push({ kind: "header", label: "Commands" });
+      for (const match of verbs)
+        out.push({
+          kind: "item",
+          item: match.command,
+          indices: match.indices,
+          mark: "",
+        });
+    }
+    return out;
+  }
+
+  /** Just the selectable rows, which is what `selected` indexes. */
+  items(): (Command | PaletteItem)[] {
+    return this.rows().flatMap((r) => (r.kind === "item" ? [r.item] : []));
+  }
+
   /** Returns the chosen command, "close", or null when it merely consumed. */
   key(e: KeyEvent): Command | "close" | null {
-    const list = this.matches();
+    const list = this.items();
     if (e.key === "esc") return "close";
-    if (e.key === "enter") return list[this.selected]?.command ?? "close";
+    if (e.key === "enter") return list[this.selected] ?? "close";
     if (e.key === "down" || (e.ctrl && e.key === "n")) {
       this.selected = Math.min(this.selected + 1, Math.max(0, list.length - 1));
       return null;
@@ -124,10 +228,14 @@ export class Palette {
   }
 
   render(s: Surface, area: Rect, c: Tokens): CursorPos | null {
-    const list = this.matches();
-    const height = Math.min(area.h - 4, list.length + 5);
-    const r = center(area, Math.min(64, area.w - 4), Math.max(6, height));
-    const inner = card(s, r, c, { title: "Command", focused: true });
+    const rows = this.rows();
+    const height = Math.min(area.h - 4, rows.length + 5);
+    const r = center(area, Math.min(76, area.w - 4), Math.max(6, height));
+    const inner = card(s, r, c, {
+      title: "Search",
+      ...(this.searching ? { footer: "searching…" } : {}),
+      focused: true,
+    });
     const [box, rest] = split(inner, "v", [len(1), fill(1)]);
     const cursor =
       box === undefined
@@ -135,22 +243,52 @@ export class Palette {
         : input(s, box, c, {
             value: this.query,
             cursor: [...this.query].length,
-            placeholder: "type a command, or :pr 42",
+            placeholder: "repos, issues, code, or a command",
             focused: true,
           });
     if (rest === undefined) return cursor;
+
+    // Scroll the flat row list so the selection stays visible, counting
+    // headers as rows — otherwise a long Repos section hides the cursor.
+    const selectedRow = rows.findIndex(
+      (row, i) =>
+        row.kind === "item" &&
+        rows.slice(0, i).filter((x) => x.kind === "item").length ===
+          this.selected,
+    );
+    let from = 0;
+    if (selectedRow >= rest.h) from = selectedRow - rest.h + 1;
+
+    let index = -1;
     for (let i = 0; i < rest.h; i++) {
-      const match = list[i];
-      if (match === undefined) break;
+      const row = rows[from + i];
+      if (row === undefined) break;
       const y = rest.y + i;
-      const sel = i === this.selected;
+      if (row.kind === "header") {
+        s.fill({ x: rest.x, y, w: rest.w, h: 1 }, " ", style(c.faint, c.card));
+        s.text(
+          rest.x + 1,
+          y,
+          truncate(row.label.toUpperCase(), Math.max(0, rest.w - 2)),
+          style(c.faint, c.card, BOLD),
+          rest.x + rest.w,
+        );
+        continue;
+      }
+      index = rows.slice(0, from + i).filter((x) => x.kind === "item").length;
+      const sel = index === this.selected;
       const bg = sel ? c.muted : c.card;
       s.fill({ x: rest.x, y, w: rest.w, h: 1 }, " ", style(c.fg, bg));
-      const title = truncate(match.command.title, Math.max(0, rest.w - 2));
       let x = rest.x + 1;
+      if (row.mark !== "")
+        x = s.text(x, y, `${row.mark} `, style(c.mutedFg, bg), rest.x + rest.w);
+      const title = truncate(
+        row.item.title,
+        Math.max(0, rest.w - 2 - (x - rest.x)),
+      );
       // Bold exactly the matched characters — the payoff of returning indices.
       [...title].forEach((ch, ci) => {
-        const hot = match.indices.includes(ci);
+        const hot = row.indices.includes(ci);
         x = s.text(
           x,
           y,
@@ -159,11 +297,11 @@ export class Palette {
           rest.x + rest.w,
         );
       });
-      if (match.command.hint !== undefined)
+      if (row.item.hint !== undefined)
         s.text(
           x + 2,
           y,
-          truncate(match.command.hint, Math.max(0, rest.x + rest.w - x - 2)),
+          truncate(row.item.hint, Math.max(0, rest.x + rest.w - x - 2)),
           style(c.faint, bg),
           rest.x + rest.w,
         );

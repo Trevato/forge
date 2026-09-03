@@ -135,7 +135,8 @@ describe("the app loop", () => {
     terminal.feed("q");
     terminal.feed(":");
     app.frame();
-    expect(app.screen.toText()).toContain("Command");
+    // The palette is the search box now; its card says so.
+    expect(app.screen.toText()).toContain("Search");
     app.stop();
   });
 });
