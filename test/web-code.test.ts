@@ -99,6 +99,10 @@ describe("the code browser on the web", () => {
         { path: "src/weather.ts", content: "export const gale = 34\n" },
         { path: "src/optics/lens.ts", content: "export const rings = 24\n" },
         { path: "docs/keeping.md", content: "# keeping\n" },
+        {
+          path: "docs/fenced.md",
+          content: "# fenced\n\n```ts\nconst lit = true\n```\n",
+        },
       ],
     });
     await commitToBranch(app, a.value, made.value, {
@@ -170,6 +174,48 @@ describe("the code browser on the web", () => {
     expect(html).toContain('class="code-layout"');
     expect(html).toContain('class="explorer"');
     expect(html).toContain("the lamp");
+  });
+
+  /** Markup with its line breaks squeezed out, for asserting on structure. */
+  const flat = (html: string): string => html.replace(/\s+/g, " ");
+
+  // ---- Markdown, and the two right answers it has ----
+
+  /**
+   * A README is prose; a README you are about to edit is text. The page
+   * offers both and defaults to the one people came for, and both halves are
+   * plain links — no script decides which of them you get.
+   */
+  test("a Markdown file renders as prose by default", async () => {
+    const html = await text("/alice/beacon/blob/main/README.md");
+    expect(html).toContain('class="card prose"');
+    expect(html).toContain("<h1>beacon</h1>");
+    // The switch is on the page, and Rendered is the one you are on.
+    expect(html).toContain(
+      'href="/alice/beacon/blob/main/README.md?view=source"',
+    );
+    expect(flat(html)).toContain('aria-current="page" >Rendered');
+    // Not the source table.
+    expect(html).not.toContain('class="card code"');
+  });
+
+  test("?view=source is the same file as text, highlighted", async () => {
+    const html = await text("/alice/beacon/blob/main/README.md?view=source");
+    expect(html).toContain('class="card code"');
+    expect(html).toContain('class="tok-keyword tok-heading"');
+    expect(html).not.toContain("<h1>beacon</h1>");
+    expect(flat(html)).toContain('aria-current="page" >Source');
+  });
+
+  test("only Markdown gets the switch, and a fence inside it is highlighted", async () => {
+    const code = await text("/alice/beacon/blob/main/src/lamp.ts");
+    expect(code).not.toContain("?view=source");
+    expect(code).toContain('class="tok-keyword"');
+
+    // A fenced block in the README is coloured by the language it names.
+    const readme = await text("/alice/beacon/blob/main/docs/fenced.md");
+    expect(readme).toContain('<code class="language-ts">');
+    expect(readme).toContain('<span class="tok-keyword">const</span>');
   });
 
   test("the explorer fragment is one directory of rows, not a page", async () => {

@@ -310,7 +310,12 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 }
 .code tr:target .ln, .code tr[data-hl] .ln { color: var(--attn); }
 
-/* ---- syntax tokens (colors come from the active theme) ---- */
+/* ---- syntax tokens (colors come from the active theme) ----
+   Two layers, exactly as the tokenizer emits them: a colour class every
+   consumer understands, and — where the web can say something finer — a kind
+   painted over it: .tok-string.tok-regex is a regex, and dropping the second
+   class leaves a string. Order matters and specificity does not: the kind
+   rules come last, so they win at equal weight. */
 .tok-keyword { color: var(--tok-keyword); }
 .tok-string { color: var(--tok-string); }
 .tok-comment { color: var(--tok-comment); font-style: italic; }
@@ -319,7 +324,28 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .tok-type { color: var(--tok-type); }
 .tok-constant { color: var(--tok-constant); }
 .tok-meta { color: var(--tok-meta); }
-.tok-operator, .tok-punctuation, .tok-plain { color: inherit; }
+.tok-plain { color: inherit; }
+/* Punctuation and operators sit *below* the text colour on purpose: they are
+   the scaffolding of a line, and colouring them loudly makes code shout. */
+.tok-operator { color: var(--tok-operator); }
+.tok-punctuation { color: var(--tok-punctuation); }
+/* the refinements */
+.tok-property { color: var(--tok-property); }
+.tok-tag { color: var(--tok-tag); }
+.tok-attribute { color: var(--tok-attribute); }
+.tok-regex { color: var(--tok-regex); }
+.tok-variable { color: var(--tok-variable); }
+.tok-decorator { color: var(--tok-decorator); }
+.tok-heading { color: var(--tok-heading); font-weight: 600; }
+.tok-emphasis { color: var(--tok-emphasis); font-style: italic; }
+.tok-link { color: var(--tok-link); }
+.tok-inserted { color: var(--add-fg); }
+.tok-deleted { color: var(--del-fg); }
+
+/* A rendered Markdown blob wears the same frame its source does: one card,
+   one path header, and the switch between the two views in it. */
+.blob-view { margin-left: 8px; }
+.blob-view .seg { font-size: 12px; }
 
 /* ---- prose (markdown) ---- */
 .prose { padding: 16px 20px; font-size: 15px; line-height: 1.65; overflow-wrap: break-word; }
@@ -354,6 +380,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .prose img { border-radius: var(--radius-sm); }
 .prose table { width: 100%; font-size: 14px; margin: 14px 0; }
 .prose th, .prose td { padding: 6px 10px; border: 1px solid var(--border); text-align: left; }
+.prose th { background: var(--muted); font-weight: 600; }
+.prose .ta-c { text-align: center; }
+.prose .ta-r { text-align: right; }
 .prose hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
 
 /* ---- diff viewer ---- */
@@ -570,6 +599,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   border: 1px solid var(--border); border-top: none;
   border-radius: 0 0 var(--radius) var(--radius);
   background: var(--card); overflow: hidden;
+  /* The ceiling lives here, on the thing that holds all three layers, so the
+     gutter, the mirror and the textarea are always exactly as tall as each
+     other and scroll as one. */
+  max-height: 70dvh;
 }
 .editor-gutter {
   flex: none; width: 3.5rem; padding: 10px 8px 10px 0;
@@ -580,15 +613,50 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   overflow: hidden;
 }
 .editor-gutter span { display: block; }
+
+/* The overlay. The mirror holds the syntax-coloured text and the textarea
+   sits on top of it with transparent text and a visible caret, so one grid
+   cell and one set of metrics serve both — any divergence in font, padding,
+   line height or tab size would put the caret in the wrong place. Neither
+   wraps: the editor scrolls horizontally instead of reflowing, which is what
+   a code editor does. */
+.editor-stack {
+  position: relative; display: grid; flex: 1; min-width: 0; min-height: 0;
+}
+.editor-mirror,
 textarea.editor {
-  flex: 1; min-width: 0;
-  border: none; background: none; resize: vertical;
+  grid-area: 1 / 1;
+  margin: 0; border: none; background: none;
   padding: 10px 12px; min-height: 14rem;
   font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
-  tab-size: 2; white-space: pre; overflow: auto;
-  field-sizing: content; max-height: 70dvh;
+  tab-size: 2; white-space: pre;
+  overflow: auto;
 }
+.editor-wrap.mirrored .editor-mirror,
+.editor-wrap.mirrored textarea.editor { min-height: 0; }
+textarea.editor { resize: vertical; field-sizing: content; }
 textarea.editor:focus { outline: none; }
+.editor-mirror {
+  overflow: hidden; pointer-events: none; user-select: none;
+  color: var(--fg);
+}
+/* Only when the mirror is live does the textarea's own text step aside — with
+   no script (or no bundle) the plain textarea is what you see. */
+.editor-wrap:not(.mirrored) .editor-mirror { display: none; }
+.editor-wrap.mirrored textarea.editor {
+  color: transparent;
+  caret-color: var(--fg);
+  -webkit-text-fill-color: transparent;
+}
+.editor-wrap.mirrored textarea.editor::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.editor-mirror .ml {
+  display: block; min-height: 1.55em; min-width: 100%; width: max-content;
+}
+.editor-mirror .ml.cur {
+  background: color-mix(in srgb, var(--muted) 75%, transparent);
+}
 .editor-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
 .editor-preview {
   border: 1px solid var(--border); border-top: none;
@@ -596,6 +664,8 @@ textarea.editor:focus { outline: none; }
   background: var(--card); min-height: 12rem;
 }
 .editor-commit { margin-top: 12px; }
+.editor-hint { margin: 6px 2px 0; font-size: 12.5px; color: var(--faint); }
+.editor-hint kbd { margin: 0 2px; }
 .editor-target { border: 0; padding: 0; margin: 4px 0 0; }
 .editor-target legend { font-weight: 600; margin-bottom: 6px; }
 .editor-target .check { display: flex; }

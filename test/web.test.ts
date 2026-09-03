@@ -62,6 +62,41 @@ describe("markdown", () => {
     expect(renderMarkdown("[no](data:text/html,x)").text).not.toContain(
       "href=",
     );
+    // A relative path is how a README actually links to a sibling file, and
+    // it cannot leave this origin — unlike `//host`, which can.
+    expect(renderMarkdown("[doc](docs/keeping.md)").text).toContain(
+      'href="docs/keeping.md"',
+    );
+    expect(renderMarkdown("[no](//evil.test/x)").text).not.toContain("href=");
+    expect(renderMarkdown("[no](vbscript:x)").text).not.toContain("href=");
+  });
+
+  test("a fenced block is highlighted in the language it names", () => {
+    const out = renderMarkdown('```ts\nconst x = "<b>";\n```').text;
+    expect(out).toContain('<code class="language-ts">');
+    expect(out).toContain('<span class="tok-keyword">const</span>');
+    // Still escaped: a fence produces spans and nothing else.
+    expect(out).toContain("&lt;b&gt;");
+    expect(out).not.toContain("<b>");
+    // A fence with no language is left as plain text.
+    expect(renderMarkdown("```\nplain\n```").text).toContain(
+      "<pre><code>plain</code></pre>",
+    );
+  });
+
+  test("tables need a delimiter row, and honour its alignment", () => {
+    const out = renderMarkdown(
+      "| a | b | c |\n| --- | :-: | --: |\n| 1 | 2 | 3 |\n\nafter",
+    ).text;
+    expect(out).toContain("<table><thead><tr><th>a</th>");
+    expect(out).toContain('<th class="ta-c">b</th>');
+    expect(out).toContain('<th class="ta-r">c</th>');
+    expect(out).toContain("<tbody>\n<tr><td>1</td>");
+    expect(out).toContain("</tbody></table>");
+    expect(out).toContain("<p>after</p>");
+    // A lone pipe line is a sentence, not a table.
+    expect(renderMarkdown("| just text |").text).toContain("<p>| just text |");
+    expect(renderMarkdown("a | b").text).toContain("<p>a | b</p>");
   });
 });
 

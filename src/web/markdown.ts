@@ -3,8 +3,16 @@
  * quotes, and inline emphasis/code/links. Input is escaped before any
  * transformation, so the renderer cannot be talked into emitting markup.
  * CommonMark completeness is a non-goal — READMEs and issue prose are.
+ *
+ * A fence with an info string is handed to the tokenizer, so the code samples
+ * in a README read as code. That is the one place this renderer emits markup
+ * it did not escape itself, and it is safe for the same reason the file
+ * browser is: the tokenizer is lossless over its input and every token's text
+ * is escaped on the way out, so a fence can produce spans and nothing else.
  */
 
+import { languageFromName, type Language } from "./highlight.ts";
+import { highlightToHtml } from "./highlight-html.ts";
 import { escapeHtml, Html, raw } from "./html.ts";
 
 function inline(escaped: string): string {
@@ -18,26 +26,83 @@ function inline(escaped: string): string {
       .replace(
         /\[([^\]]+)\]\(([^)\s]+)\)/g,
         (match, text: string, url: string) => {
-          // Protocol-relative "//host" escapes to another origin — reject it
-          // alongside javascript:/data:. Allow absolute-http, rooted, anchor,
-          // and explicitly-relative links only.
+          // Protocol-relative "//host" escapes to another origin — reject it,
+          // and reject anything carrying a scheme other than http(s), which is
+          // what keeps javascript:, data: and vbscript: out. What is left is a
+          // relative path (`docs/keeping.md`), a rooted one, or an anchor —
+          // all of which stay on this origin by construction.
           if (url.startsWith("//")) return match;
-          if (/^(https?:\/\/|\/|#|\.\/|\.\.\/)/.test(url)) {
-            return `<a href="${url}" rel="nofollow noopener">${text}</a>`;
-          }
-          return match;
+          const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url);
+          if (scheme && !/^https?$/i.test(scheme[1]!)) return match;
+          return `<a href="${url}" rel="nofollow noopener">${text}</a>`;
         },
       )
   );
 }
 
+/**
+ * A fenced block, opening tag and all, as one chunk — the whole block is one
+ * entry in `out` so the newline that joins entries never lands inside a `pre`,
+ * where it would show up as a blank first line.
+ */
+function closeFence(body: string[], lang: Language): string {
+  const code =
+    lang === "plain"
+      ? escapeHtml(body.join("\n"))
+      : highlightToHtml(body.join("\n"), lang);
+  const open =
+    lang === "plain" ? "<pre><code>" : `<pre><code class="language-${lang}">`;
+  return `${open}${code}</code></pre>`;
+}
+
+const isTableRow = (line: string): boolean => /^\s*\|.*\|\s*$/.test(line);
+
+const isDelimiterRow = (line: string): boolean =>
+  /^\s*\|(\s*:?-{1,}:?\s*\|)+\s*$/.test(line);
+
+/** The alignment of each column, from the delimiter row's colons. */
+function alignments(delimiter: string): string[] {
+  return splitRow(delimiter).map((cell) => {
+    const left = cell.startsWith(":");
+    const right = cell.endsWith(":");
+    return right ? (left ? "c" : "r") : "";
+  });
+}
+
+function splitRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+/** One row's cells, inline-rendered, aligned as the delimiter row asked. */
+function cells(line: string, align: string[], tag: "th" | "td"): string {
+  return splitRow(line)
+    .map((cell, i) => {
+      const a = align[i];
+      const attr = a === "c" || a === "r" ? ` class="ta-${a}"` : "";
+      return `<${tag}${attr}>${inline(cell)}</${tag}>`;
+    })
+    .join("");
+}
+
 export function renderMarkdown(source: string): Html {
-  const lines = escapeHtml(source.replaceAll("\r\n", "\n")).split("\n");
+  const text = source.replaceAll("\r\n", "\n");
+  // Escaping does not move a newline, so the two arrays stay in step: `lines`
+  // is what prose is built from, `raws` is what the tokenizer needs.
+  const lines = escapeHtml(text).split("\n");
+  const raws = text.split("\n");
   const out: string[] = [];
   let paragraph: string[] = [];
   let list: "ul" | "ol" | null = null;
   let quote = false;
   let fence = false;
+  let fenceLang: Language = "plain";
+  let body: string[] = [];
+  let align: string[] | null = null;
+  let skip = -1;
 
   const closeParagraph = () => {
     if (paragraph.length > 0) {
@@ -57,26 +122,54 @@ export function renderMarkdown(source: string): Html {
       quote = false;
     }
   };
+  const closeTable = () => {
+    if (align) {
+      out.push("</tbody></table>");
+      align = null;
+    }
+  };
   const closeBlocks = () => {
     closeParagraph();
     closeList();
     closeQuote();
+    closeTable();
   };
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
+    // The delimiter row was consumed with the header it belongs to.
+    if (index === skip) continue;
     if (fence) {
       if (line.startsWith("```")) {
-        out.push("</code></pre>");
+        out.push(closeFence(body, fenceLang));
+        body = [];
         fence = false;
       } else {
-        out.push(line);
+        body.push(raws[index] ?? "");
       }
       continue;
     }
     if (line.startsWith("```")) {
       closeBlocks();
       fence = true;
-      out.push("<pre><code>");
+      body = [];
+      fenceLang = languageFromName((raws[index] ?? "").slice(3));
+      continue;
+    }
+
+    // A table: a row of pipes over a row of dashes. Both halves have to be
+    // there — a lone line with a pipe in it is a sentence, not a table.
+    if (align) {
+      if (isTableRow(line)) {
+        out.push(`<tr>${cells(line, align, "td")}</tr>`);
+        continue;
+      }
+      closeTable();
+    } else if (isTableRow(line) && isDelimiterRow(lines[index + 1] ?? "")) {
+      closeBlocks();
+      align = alignments(lines[index + 1]!);
+      out.push(`<table><thead><tr>${cells(line, align, "th")}</tr></thead>`);
+      out.push("<tbody>");
+      skip = index + 1;
       continue;
     }
 
@@ -124,7 +217,7 @@ export function renderMarkdown(source: string): Html {
     paragraph.push(line);
   }
 
-  if (fence) out.push("</code></pre>");
+  if (fence) out.push(closeFence(body, fenceLang));
   closeBlocks();
   return raw(out.join("\n"));
 }

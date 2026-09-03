@@ -42,6 +42,7 @@ import {
   iconBtn,
   listCard,
   row,
+  seg,
   time,
 } from "../ui.ts";
 
@@ -270,6 +271,21 @@ export async function readmeFor(
     head: html`${icon("file")}
       <h2>${readme.name}</h2>`,
   });
+}
+
+/**
+ * A Markdown file has two right answers — the prose it becomes and the text
+ * you would edit — so the page offers both and defaults to the one people
+ * came for. `?view=source` is a plain link, so both halves work with no
+ * JavaScript, are addressable, and survive being sent to somebody.
+ */
+export type BlobView = "source" | "rendered";
+
+export const isMarkdownPath = (path: string): boolean =>
+  /\.(md|markdown|mdx)$/i.test(path);
+
+export function blobView(value: string | null): BlobView {
+  return value === "source" ? "source" : "rendered";
 }
 
 /** One file, in each of the three states a source can hand one back in. */
@@ -568,12 +584,24 @@ export function editAction(scope: RepoScope, ref: string, path: string): Html {
  */
 export function renderBlob(
   scope: RepoScope,
-  o: { refs: RefSet; ref: string; path: string; blob: Blob },
+  o: {
+    refs: RefSet;
+    ref: string;
+    path: string;
+    blob: Blob;
+    view?: BlobView;
+  },
 ): Html {
   const base = scope.base;
   const encoded = encodeURIComponent(o.ref);
-  const { content, lines } = blobBody(base, o.ref, o.path, o.blob);
+  const markdown = o.blob.kind === "text" && isMarkdownPath(o.path);
+  const view: BlobView = markdown ? (o.view ?? "rendered") : "source";
+  const { content, lines } =
+    view === "rendered" && o.blob.kind === "text"
+      ? renderedMarkdown(o.blob)
+      : blobBody(base, o.ref, o.path, o.blob);
   const sizeText = o.blob.kind === "too_large" ? "" : fileSize(o.blob.size);
+  const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
     <div class="path-head">
       ${refMenu(
@@ -591,6 +619,24 @@ export function renderBlob(
             >${lines.toLocaleString()} lines · ${sizeText}</span
           >`,
       )}
+      ${when(
+        markdown,
+        () =>
+          html`<span class="blob-view"
+            >${seg([
+              {
+                label: "Source",
+                href: `${fileHref}?view=source`,
+                current: view === "source",
+              },
+              {
+                label: "Rendered",
+                href: fileHref,
+                current: view === "rendered",
+              },
+            ])}</span
+          >`,
+      )}
       ${btn("Raw", {
         href: `${base}/raw/${encoded}/${o.path}`,
         size: "sm",
@@ -606,6 +652,18 @@ export function renderBlob(
     </div>
     ${content}
   </div>`;
+}
+
+/** A Markdown file as prose, framed exactly the way a README is. */
+function renderedMarkdown(blob: Blob & { kind: "text" }): {
+  content: Html;
+  lines: number;
+} {
+  const text = new TextDecoder().decode(blob.body);
+  return {
+    lines: text === "" ? 0 : text.replace(/\n$/, "").split("\n").length,
+    content: html`<div class="card prose">${renderMarkdown(text)}</div>`,
+  };
 }
 
 /** The bytes, with the headers that stop them ever executing as a page. */
@@ -792,7 +850,13 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
-  const pane = renderBlob(scope, { refs, ref, path, blob: capped(blob.value) });
+  const pane = renderBlob(scope, {
+    refs,
+    ref,
+    path,
+    blob: capped(blob.value),
+    view: blobView(ctx.url.searchParams.get("view")),
+  });
 
   // The preview a script drops into the pane beside the explorer. Same
   // renderer, same markup — a preview and a real page load are the same file.
