@@ -331,7 +331,10 @@ export class App {
   readonly globals: Binding[] = [
     binding(["?"], "help"),
     binding([":", "ctrl+k"], "palette"),
-    binding(["t"], "theme"),
+    // Ctrl+T, not `t`: inside a workspace `t` is the file finder, and a
+    // global that only works on *some* screens is worse than one more
+    // modifier. One key, everywhere, whatever has focus.
+    binding(["ctrl+t"], "appearance"),
     binding(["q", "esc"], "back"),
     binding(["ctrl+c"], "quit", { hidden: true }),
   ];
@@ -758,7 +761,7 @@ export class App {
         this.palette.open(this.commands);
         this.schedulePaletteSearch();
         return;
-      case "theme":
+      case "appearance":
         this.overlay = "theme";
         this.pickerRow = this.themeIndex;
         return;
@@ -877,9 +880,9 @@ export class App {
           this.pickerRow - THEME_NAMES.length,
           back ? -1 : 1,
         );
-      else if (e.key === "esc" || e.key === "t" || e.key === "q")
+      else if (e.key === "esc" || e.key === "q" || (e.ctrl && e.key === "t"))
         this.overlay = "none";
-    } else if (e.key === "enter" || e.key === "esc" || e.key === "t")
+    } else if (e.key === "enter" || e.key === "esc" || (e.ctrl && e.key === "t"))
       this.close();
     else if (e.key === "q") this.close();
     this.invalidate();

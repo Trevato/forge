@@ -494,9 +494,12 @@ Four rules hold the gestures together:
 Clickable today: every list row, the dashboard's four panes, the workspace's
 explorer rows and tab chips (including the active tab's `✗`), the file pane
 (focus, and the wheel), the where-strip's three places, the palette's results,
-the appearance picker's rows, and **every hint in the help bar** — clicking a
-hint presses the key it names, taken from the binding itself so a label can
-never drift from the action.
+the appearance picker's rows, the owner, refs, settings, account and origins
+lists, the origin picker's rows, the pull's diff-and-threads pane, and **every
+hint in the help bar** — clicking a hint presses the key it names, taken from
+the binding itself so a label can never drift from the action. A list with no
+`hitList` is a bug, not a design decision: "everything you can see is
+something you can click" is the whole claim.
 
 ### 6·0a. The dashboard's four panes
 
@@ -530,7 +533,7 @@ and never a shifted row. Where the two sets would say different things, the
 plain set keeps the documented grammar: `◆` still means "kept on your
 machine", and an unpinned row still wears nothing.
 
-`t` opens **Appearance**: the six themes, then two more rows —
+`ctrl+t` opens **Appearance**: the six themes, then two more rows —
 
 | row      | values                                        |
 | -------- | --------------------------------------------- |
@@ -539,7 +542,10 @@ machine", and an unpinned row still wears nothing.
 
 `j`/`k` move, `left`/`right`/`enter` cycle a setting's value, a theme applies
 as the cursor passes over it, and both settings persist through
-`setPreference` into `user_setting`. Under the rows is a **live preview** —
+`setPreference` into `user_setting`. It is `ctrl+t` and not `t` because the
+workspace already spends `t` on the file finder, and an appearance picker
+that silently does nothing on the one screen people live in is worse than a
+modifier: one key, every screen, whatever has focus. Under the rows is a **live preview** —
 three real icons in the set currently chosen — because the only honest way to
 settle a bet about somebody's font is to show them three glyphs and let them
 look. If they see boxes, one keypress puts it back.
@@ -734,10 +740,76 @@ commit — the ref pill becomes the new branch and every tab is re-read from it.
 **A refused commit keeps every buffer**, and says why on the dialog: a
 protected branch, a name git will not take, an origin that said no.
 
-Where the source cannot be written — a live origin browse, or a reader without
-write access — `e`, `c`, `n` and `D` say so instead of opening something that
-could never land. On a mirror, `W` is the one key that gets you to the copy you
-can edit.
+Where the change has nowhere to go — a reader without write access, a live
+browse of a repository nobody has offered you a route into — `e`, `c`, `n` and
+`D` say so instead of opening something that could never land. Where it has a
+route, they open the proposal dialog instead; §6c·1 is that route.
+
+### 6c·1. Contributing: fork at the origin, propose a change
+
+The workflow the origins layer exists for — _grab their repo, branch, edit,
+propose it back_ — is one intention, so it is two keys and one action call
+(`actions/contribute.ts`), never five screens with five half-finished states
+between them.
+
+**`F` — fork at the origin.** On a live browse (and on the picker's rows) `F`
+forks at the origin rather than here: a local fork of a mirror is a copy of a
+copy with nowhere to propose it back to. One confirm card, saying the whole
+sentence because two machines are involved —
+
+```
+╭─ Fork at the origin ───────────────────────────────╮
+│ Fork octo/widgets to your account                  │
+│ at codeberg.org and mirror it here?                │
+│                                                    │
+│ The copy here is your workbench.                   │
+│                                    Cancel  ▸ Fork  │
+╰────────────────────────────────────────────────────╯
+```
+
+— then the ordinary mirror card over the job the fork started, then the fork's
+own workspace. A native repository keeps the native fork. Wherever a
+repository forks something at an origin, the where-strip and the about card
+say so: `· fork of octo/widgets`, read from `repo.origin_fork_of` on a mirror
+and from the picker's cached `fork_of` on a live browse.
+
+**`c` — propose a change.** When the source says `permissions.push === false`
+— a live browse of somebody else's repository, or a mirror whose upstream is
+not ours to push to — editing is allowed and the commit dialog becomes a
+proposal dialog. Same buffers, same ticked files, no "commit to `<ref>`"
+option (there is no ref of theirs you may write), and a branch that lands in
+your fork:
+
+```
+╭─ Propose a change ──────────────────────────── octo/widgets ─╮
+│ Message                                                      │
+│ Update README.md                                             │
+│ optional — this becomes the pull request's body              │
+│ Files · 1 of 1                                               │
+│ [x] ~ README.md                                              │
+│ Branch in your fork                                          │
+│ alice/edit-README-md                                         │
+│ Pull request › octo/widgets · main                           │
+│ Update README.md                                             │
+│   Propose                                                    │
+╰──────────────────────────────────────────────────────────────╯
+```
+
+`contribute` does the rest in one call: fork if a fork is needed, branch from
+the *upstream's* base rather than a stale copy of it, commit into the fork,
+push it there, and open the pull upstream with the `owner:branch` head form
+both forges take. The toast reads `opened pull #12 on octo/widgets`, and when
+we hold a mirror of that upstream the imported pull is pushed on the stack so
+the reader lands on what they just proposed. **A refusal keeps every buffer**
+and names which half failed — `fork_timeout`, `origin_refused`,
+`mirror_failed`, an edit reason, or "the commit landed but the pull did not
+open". While such a workspace is open the status row says
+`proposing to octo/widgets via your fork`, on every frame, so nobody has to
+press `c` to find out where their change is going.
+
+A repository the origin says you *may* push to keeps the ordinary commit
+dialog: on a mirror that is `editFiles` plus push-through, which is
+`contribute`'s own `via: "direct"` path by another name.
 
 ### 6d. `$FORGE_EDITOR` — the operator's own editor, over a pty
 
@@ -792,6 +864,54 @@ says `copied — cmd-click the link to open it`, rather than the old, true and
 useless "no browser available". On the local stdio session it really opens.
 Three routes to one URL (the hyperlink, the clipboard, the visible text),
 because none of them is reliable on its own.
+
+### 6e·1. Reviews, threads, and the merge gate
+
+A pull is judged in three places, and each says one thing.
+
+**The verdict (`R`).** A card with three radios and an optional note —
+`( ) approve  ( ) request changes  ( ) comment`, `ctrl+d` submits. Approve is
+**absent** when the viewer wrote the change, because `submitReview` refuses it
+(`self_review`) and a disabled control would only be a slower way to be told
+no. A verdict renders in the conversation as a timeline item with a state chip
+(success / danger / muted), and it is recorded against the head it was passed
+on — so a push dismisses it and the item wears `before the latest push` in
+muted rather than quietly still counting.
+
+**The gate.** The merge box grows a second line saying where the verdicts
+stand: `2 approvals · changes requested by bob`, and `N dismissed by a push`
+when a push has cleared some. When the reviews do not let it land the box
+reads `review` in `attn` and `m` says the reason out loud rather than doing
+nothing:
+
+```
+╭─ Merge ──────────────────────────────────────────────────────────╮
+│  review  Needs an approval of this head before it can merge      │
+│ no approvals yet                                                 │
+╰────────────────────────────────────── fix › main · 1 file +1 -1 ─╯
+```
+
+That is a rendering of `reviewGate` (`core/pulls.ts`) and nothing more: an
+outstanding request for changes blocks whatever the setting says, and
+`require a review before merging` (repo settings, `R`) additionally demands an
+approval of the current head. The refusal is mechanical in `mergePull`, which
+reads the gate from the live head — a check computed earlier and handed down
+is a check that can be skipped.
+
+**Threads.** Review comments sharing one anchor are one conversation. In the
+files tab the section header reads `3 threads · 1 unresolved`; `x` settles or
+reopens the thread the cursor is standing on (a writer, or whoever raised it);
+`n`/`p` walk the unsettled ones while the cursor is inside one, and go back to
+walking hunks when it is not. A settled thread collapses to a single dim line
+— `✓ resolved by alice · 2h · enter to expand` — because the point of settling
+something is to stop looking at it, and `enter` opens the record back up
+because the point of a record is that it is still there. Standing on the diff
+line a thread hangs from counts as standing on the thread: that is what a
+reader means by "this one".
+
+A pull list row wears the same verdict in one tabular column — `✓` approved,
+`✗` changes requested, `·` nobody has looked — read for the whole page in one
+grouped query, never one per row.
 
 ### 6f. Realtime
 

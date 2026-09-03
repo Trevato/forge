@@ -33,6 +33,7 @@ import {
   ListState,
   countsColumn,
   drawList,
+  hitList,
   errorText,
   metaOf,
   plural,
@@ -137,6 +138,12 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
           state,
           teams.map((t) => ({ title: t.name, meta: t.permission })),
         );
+        // A team's members are what the right pane shows, so selecting one
+        // *is* opening it — the click reloads exactly what `j` reloads.
+        hitList(ctx, left!, state, teams.length, {
+          select: () => reload(),
+          open: () => reload(),
+        });
         members.forEach((member, i) => {
           if (i >= right!.h) return;
           s.text(
@@ -183,6 +190,12 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
           ),
         })),
       );
+      hitList(ctx, list!, state, rows.length, {
+        open: (index) => {
+          const repo = rows[index];
+          if (repo !== undefined) ctx.push(repoScreen(f, ctx, local(f, repo)));
+        },
+      });
     },
     key(e) {
       if (filter.key(e)) {

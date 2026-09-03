@@ -47,9 +47,12 @@ import {
   promptScreen,
   runAsync,
   type ListRow,
+  hitList,
 } from "./common.ts";
 import { startMirror } from "./mirror.ts";
+import { forkAtOrigin } from "./contribute.ts";
 import { repoScreen } from "./repo.ts";
+import { local } from "./where.ts";
 
 /**
  * Push a screen *after* the prompt that asked for it has closed itself.
@@ -165,6 +168,14 @@ export function originsScreen(f: Session, ctx: Ctx): Screen {
           };
         }),
       );
+      // Opening an origin is browsing its repositories — the same thing `r`
+      // does, so the pointer cannot reach somewhere the keyboard could not.
+      hitList(ctx, area, state, origins.length, {
+        open: (index) => {
+          const origin = origins[index];
+          if (origin !== undefined) ctx.push(originReposScreen(f, ctx, origin));
+        },
+      });
     },
     key(e) {
       if (state.key(e, origins.length)) return true;
@@ -910,6 +921,7 @@ export function originReposScreen(
       binding(["j", "k"], "move"),
       binding(["enter"], "browse — nothing is downloaded"),
       binding(["m"], "mirror into your workbench"),
+      binding(["F"], `fork to ${origin.login}@${hostLabel(origin.webUrl)}`),
       binding(["/"], "filter"),
       binding(["r"], "refresh from origin"),
     ],
@@ -939,7 +951,11 @@ export function originReposScreen(
           const pinned = held !== undefined && page.pinned.has(held.id);
           const marks = [
             remote.private ? "private" : "public",
-            remote.fork ? "fork" : "",
+            remote.forkOf === null
+              ? remote.fork
+                ? "fork"
+                : ""
+              : `fork of ${remote.forkOf}`,
             held === undefined
               ? ""
               : `${G.dot} mirrored as ${held.ownerName}/${held.name}`,
@@ -955,6 +971,12 @@ export function originReposScreen(
           };
         }),
       );
+      hitList(ctx, body!, state, rows.length, {
+        open: (index) => {
+          const remote = rows[index];
+          if (remote !== undefined) browse(remote);
+        },
+      });
     },
     key(e) {
       if (filter.key(e)) {
@@ -981,6 +1003,23 @@ export function originReposScreen(
           fullName: remote.fullName,
           onLanded: () => {
             runAsync(ctx, () => load());
+          },
+        });
+        return true;
+      }
+      if (e.key === "F") {
+        const remote = rows[state.index];
+        if (remote === undefined) return true;
+        forkAtOrigin(f, ctx, {
+          parent: screen,
+          target: {
+            originId: origin.id,
+            fullName: remote.fullName,
+            host: hostLabel(origin.webUrl),
+          },
+          onForked: (fork) => {
+            runAsync(ctx, () => load(true));
+            ctx.push(repoScreen(f, ctx, local(f, fork)));
           },
         });
         return true;

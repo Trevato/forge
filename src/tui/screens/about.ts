@@ -25,7 +25,7 @@ import { truncate } from "../term/width.ts";
 import { badge, card } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { PIN_MARK, ago, drawFacts, plural } from "./common.ts";
-import { hostOf, liveOrigin, localRepo, sourceName } from "./where.ts";
+import { forkOf, hostOf, liveOrigin, localRepo, sourceName } from "./where.ts";
 
 /**
  * `I` — everything a repository is, in one card: what it is for, whether it
@@ -165,6 +165,12 @@ function aboutFacts(
           ],
         ];
   const branch = facts?.defaultBranch ?? repo?.defaultBranch ?? "";
+  // Whose work this descends from. A fork at an origin is not `forkParentId`
+  // — that is a fork made *here* — so the badge above cannot say it and this
+  // row can.
+  const upstream = forkOf(f, src);
+  const fork: [string, string][] =
+    upstream === "" ? [] : [["fork of", upstream]];
   // "browsing" only when it is not the obvious answer: a row that repeats
   // the line above it is a row nobody reads.
   const browsing: [string, string][] =
@@ -174,6 +180,7 @@ function aboutFacts(
       ["default branch", branch],
       ...browsing,
       ...counts,
+      ...fork,
       ...originFacts(repo),
       ...cloneFacts(f, repo),
     ];
@@ -190,6 +197,7 @@ function aboutFacts(
   }
   out.push(...browsing);
   out.push(...counts);
+  out.push(...fork);
   if (live !== undefined) out.push(["page", live.htmlUrl]);
   return out;
 }

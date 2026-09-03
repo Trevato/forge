@@ -80,7 +80,23 @@ export function startMirror(f: Session, ctx: Ctx, o: MirrorCardOptions): void {
     ctx.toast(errorText(started.error), "danger");
     return;
   }
-  const job = started.value;
+  showMirrorJob(f, ctx, started.value, o);
+}
+
+/**
+ * The same card, over a job somebody else started.
+ *
+ * `forkOrigin(…, { mirror: "job" })` makes the fork *and* starts the copy in
+ * one call, and hands the job back — so the fork flow has a job before it has
+ * a card, which is the reverse of `startMirror`'s order. Both end up here, so
+ * there is one card, one watcher and one dedupe rule however the job began.
+ */
+export function showMirrorJob(
+  f: Session,
+  ctx: Ctx,
+  job: MirrorJob,
+  o: MirrorCardOptions,
+): void {
   // The watcher is deliberately not the card's: hiding the card must not stop
   // the news of the outcome arriving.
   watch(ctx, job, o.onLanded);

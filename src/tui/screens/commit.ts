@@ -1,27 +1,36 @@
 /**
- * The commit dialog: the last screen between an edit and a commit.
+ * The commit dialog: the last screen between an edit and a change landing.
  *
- * It asks the three questions `editFiles` takes and nothing else — what to say,
- * where to put it, and whether to propose it — because those three *are* the
- * action's shape, and a dialog that collected them separately would invent the
- * half-finished states (a branch with no commit, a commit with no pull) that
- * one call exists to prevent.
+ * It asks the questions the action it feeds actually takes and nothing else —
+ * what to say, where to put it, and whether to propose it — because those
+ * *are* the action's shape, and a dialog that collected them separately would
+ * invent the half-finished states (a branch with no commit, a commit with no
+ * pull) that one call exists to prevent.
  *
  * The default target is a new branch. On a repo whose default branch is
  * protected that is the only thing that can work for a non-admin, and even
  * where it is not, "write straight to main from a terminal file browser" is not
  * a default anybody should have to notice they chose.
+ *
+ * **Two modes, one dialog.** On a repository you can push to it is a commit
+ * dialog. On one you cannot — a live browse of somebody else's repo, or a
+ * mirror of it — it is a *proposal* dialog: the same buffers, the same ticked
+ * files, no "commit to <ref>" option (there is no ref of theirs you may
+ * write), and a branch that lands in your fork with a pull opened upstream.
+ * The two are one screen because the reader's act is one act; only the place
+ * it goes differs, and the header says so in words.
  */
 
-import type { EditFilesError, EditResult } from "../../actions/contents.ts";
 import type { Repo } from "../../core/repos.ts";
+import type { EditFilesError } from "../../actions/contents.ts";
 import type { Result } from "../../kernel/result.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
+import { G } from "../term/screen.ts";
 import { style, BOLD } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { center, fill, len, split } from "../ui/layout.ts";
-import { card, input, type CursorPos } from "../ui/widgets.ts";
+import { card, input, type CursorPos, type Tone } from "../ui/widgets.ts";
 import { Textarea } from "../ui/textarea.ts";
 import type { Session } from "../session.ts";
 import { errorText, runAsync } from "./common.ts";
@@ -38,6 +47,22 @@ export interface CommitPlan {
   readonly paths: readonly string[];
 }
 
+/**
+ * What happened, in the caller's own words.
+ *
+ * The dialog does not know whether it just called `editFiles` or
+ * `contribute`, and it must not: one lands a commit here and the other opens
+ * a pull on another forge. So the caller says what the toast reads and what
+ * to do next, and the dialog owns only the two things it can own — closing,
+ * and keeping every buffer when it does not.
+ */
+export interface CommitDone {
+  readonly message: string;
+  readonly tone?: Tone;
+  /** Run once the dialog is off the stack. */
+  readonly then?: () => void;
+}
+
 /** One line of the change list: what is happening to which path. */
 export interface CommitFile {
   readonly path: string;
@@ -45,7 +70,10 @@ export interface CommitFile {
 }
 
 export interface CommitDialogOptions {
-  readonly repo: Repo;
+  /** The repository the commit lands in — absent on a live browse. */
+  readonly repo?: Repo;
+  /** `owner/name`, whichever side this is: the card's footer. */
+  readonly where: string;
   /** The branch being browsed — the "current branch" target. */
   readonly branch: string;
   readonly title: string;
@@ -58,8 +86,15 @@ export interface CommitDialogOptions {
    * is what `editFiles` takes — one call, one commit, no half state.
    */
   readonly files?: readonly CommitFile[];
-  commit(plan: CommitPlan): Promise<Result<EditResult, EditFilesError>>;
-  onDone(result: EditResult): void;
+  /**
+   * `propose` drops the "commit to <ref>" option and makes the pull request
+   * part of the shape rather than a checkbox: there is no ref of theirs you
+   * may write to, so a branch and a proposal are the only thing this can be.
+   */
+  readonly mode?: "commit" | "propose";
+  /** Propose mode: what the pull targets, said on the label. */
+  readonly upstream?: { readonly fullName: string; readonly base: string };
+  commit(plan: CommitPlan): Promise<Result<CommitDone, string>>;
 }
 
 type Field =
@@ -69,6 +104,7 @@ type Field =
   | "target"
   | "branch"
   | "pull"
+  | "title"
   | "submit";
 
 /** `+ src/new.ts`, `~ src/lamp.ts`, `- old.md` — the change, in one column. */
@@ -109,11 +145,17 @@ export function commitScreen(
   parent: Screen,
   o: CommitDialogOptions,
 ): Screen {
+  const proposing = o.mode === "propose";
   let subject = o.subject;
   const body = new Textarea();
   let onNewBranch = true;
   let branchName = o.defaultBranchName;
   let openPull = false;
+  // The pull's title follows the commit subject until somebody types over it:
+  // in the overwhelming case they are the same sentence, and asking for it
+  // twice is asking somebody to notice a field they did not need.
+  let pullTitle = o.subject;
+  let titleEdited = false;
   let field: Field = "subject";
   let error = "";
   let busy = false;
@@ -121,20 +163,31 @@ export function commitScreen(
   const chosen = new Set(all.map((file) => file.path));
   let fileAt = 0;
 
-  const fields = (): Field[] => [
-    "subject",
-    "body",
-    ...(all.length > 0 ? (["files"] as Field[]) : []),
-    "target",
-    ...(onNewBranch ? (["branch", "pull"] as Field[]) : []),
-    "submit",
-  ];
+  const fileFields = (): Field[] => (all.length > 0 ? ["files"] : []);
+
+  const fields = (): Field[] =>
+    proposing
+      ? ["subject", "body", ...fileFields(), "branch", "title", "submit"]
+      : [
+          "subject",
+          "body",
+          ...fileFields(),
+          "target",
+          ...(onNewBranch ? (["branch", "pull"] as Field[]) : []),
+          "submit",
+        ];
 
   const step = (delta: number): void => {
     const list = fields();
     const at = Math.max(0, list.indexOf(field));
     field = list[(at + delta + list.length) % list.length]!;
   };
+
+  const message = (): string =>
+    body.isEmpty ? subject.trim() : `${subject.trim()}\n\n${body.value.trim()}`;
+
+  const title = (): string =>
+    (titleEdited ? pullTitle : subject).trim() || subject.trim();
 
   const submit = (): void => {
     if (busy) return;
@@ -143,9 +196,14 @@ export function commitScreen(
       field = "subject";
       return;
     }
-    if (onNewBranch && branchName.trim() === "") {
+    if ((proposing || onNewBranch) && branchName.trim() === "") {
       error = "a branch name is required";
       field = "branch";
+      return;
+    }
+    if (proposing && title() === "") {
+      error = "the pull request needs a title";
+      field = "title";
       return;
     }
     if (all.length > 0 && chosen.size === 0) {
@@ -155,16 +213,17 @@ export function commitScreen(
     }
     busy = true;
     error = "";
+    const wantsPull = proposing || (onNewBranch && openPull);
     const plan: CommitPlan = {
-      paths: all.filter((file) => chosen.has(file.path)).map((file) => file.path),
-      message: body.isEmpty
-        ? subject.trim()
-        : `${subject.trim()}\n\n${body.value.trim()}`,
-      ...(onNewBranch ? { newBranch: branchName.trim() } : {}),
-      ...(onNewBranch && openPull
+      paths: all
+        .filter((file) => chosen.has(file.path))
+        .map((file) => file.path),
+      message: message(),
+      ...(proposing || onNewBranch ? { newBranch: branchName.trim() } : {}),
+      ...(wantsPull
         ? {
             pull: {
-              title: subject.trim(),
+              title: title(),
               ...(body.isEmpty ? {} : { body: body.value.trim() }),
             },
           }
@@ -174,19 +233,16 @@ export function commitScreen(
       const done = await o.commit(plan);
       busy = false;
       if (!done.ok) {
-        error = editErrorText(done.error);
+        // A refusal keeps every buffer: the dialog stays up with what was
+        // typed still in it, because losing a commit message to a network
+        // error is unforgivable and entirely avoidable.
+        error = done.error;
         ctx.invalidate();
         return;
       }
       ctx.pop();
-      const made = done.value;
-      ctx.toast(
-        made.pull === undefined
-          ? `committed to ${made.branch}`
-          : `committed to ${made.branch} · pull #${made.pull.number} opened`,
-        "success",
-      );
-      o.onDone(made);
+      ctx.toast(done.value.message, done.value.tone ?? "success");
+      done.value.then?.();
     });
   };
 
@@ -195,7 +251,16 @@ export function commitScreen(
     get keys() {
       return [
         binding(["tab", "shift+tab"], "next field"),
-        binding(["ctrl+s", "enter"], busy ? "committing…" : "commit"),
+        binding(
+          ["ctrl+s", "enter"],
+          busy
+            ? proposing
+              ? "proposing…"
+              : "committing…"
+            : proposing
+              ? "propose"
+              : "commit",
+        ),
         binding(["space"], "toggle"),
         binding(["esc"], "cancel"),
       ];
@@ -203,20 +268,20 @@ export function commitScreen(
     render(area, s) {
       parent.render(area, s);
       const c = ctx.theme.c;
-      // Tall enough for what is actually in it and no taller: two rows for
-      // the frame, the message block, the change list, the target, and one
-      // spare for the error line.
+      // Tall enough for what is actually in it and no taller — counted, not
+      // guessed: the frame, the message block, the change list, the rows the
+      // mode actually draws, and one spare for the error line. A card with
+      // empty rows under its last line reads as a card that lost something.
+      const fileRows = all.length === 0 ? 0 : 1 + Math.min(all.length, 6);
+      const tailRows = proposing ? 5 : onNewBranch ? 5 : 3;
       const r = center(
         area,
         Math.min(66, area.w - 4),
-        Math.min(
-          all.length === 0 ? 20 : 17 + Math.min(all.length, 6),
-          area.h,
-        ),
+        Math.min(2 + 2 + 4 + fileRows + tailRows + 1, area.h),
       );
       const inner = card(s, r, c, {
         title: o.title,
-        footer: `${o.repo.ownerName}/${o.repo.name}`,
+        footer: o.where,
         focused: true,
       });
       const [head, bodyBox, rest] = split(inner, "v", [
@@ -248,7 +313,12 @@ export function commitScreen(
         s.text(
           bodyBox!.x + 2,
           bodyBox!.y,
-          truncate("optional longer description", bodyBox!.w - 2),
+          truncate(
+            proposing
+              ? "optional — this becomes the pull request's body"
+              : "optional longer description",
+            bodyBox!.w - 2,
+          ),
           style(c.faint, c.card),
           bodyBox!.x + bodyBox!.w,
         );
@@ -271,6 +341,21 @@ export function commitScreen(
         );
         y++;
       };
+      const textField = (
+        value: string,
+        placeholder: string,
+        which: Field,
+      ): void => {
+        if (y >= rest!.y + rest!.h) return;
+        const at = input(s, { x: rest!.x, y, w: rest!.w, h: 1 }, c, {
+          value,
+          placeholder,
+          focused: field === which,
+          ...(field === which ? { cursor: [...value].length } : {}),
+        });
+        if (field === which) caret = at;
+        y++;
+      };
       // The change itself, ticked on, before the questions about it: what is
       // going in is the thing to check, and a dialog that hid it behind a
       // count would be asking somebody to trust a number.
@@ -280,8 +365,11 @@ export function commitScreen(
           false,
           field === "files" ? c.fg : c.mutedFg,
         );
-        const room = Math.max(1, rest!.y + rest!.h - y - 5);
-        const from = Math.max(0, Math.min(fileAt - room + 1, all.length - room));
+        const room = Math.max(1, rest!.y + rest!.h - y - (proposing ? 6 : 5));
+        const from = Math.max(
+          0,
+          Math.min(fileAt - room + 1, all.length - room),
+        );
         for (let i = Math.max(0, from); i < all.length; i++) {
           const file = all[i]!;
           if (i >= from + room) {
@@ -295,32 +383,38 @@ export function commitScreen(
           );
         }
       }
-      line(
-        `${onNewBranch ? "( )" : "(o)"} commit to ${o.branch}`,
-        field === "target" && !onNewBranch,
-      );
-      line(
-        `${onNewBranch ? "(o)" : "( )"} commit to a new branch`,
-        field === "target" && onNewBranch,
-      );
-      if (onNewBranch) {
-        if (y < rest!.y + rest!.h) {
-          const branchCaret = input(s, { x: rest!.x, y, w: rest!.w, h: 1 }, c, {
-            value: branchName,
-            placeholder: "branch name",
-            focused: field === "branch",
-            ...(field === "branch" ? { cursor: [...branchName].length } : {}),
-          });
-          if (field === "branch") caret = branchCaret;
-          y++;
+      if (proposing) {
+        line("Branch in your fork", false, c.mutedFg);
+        textField(branchName, "branch name", "branch");
+        line(
+          `Pull request ${G.chevron} ${o.upstream?.fullName ?? ""} · ${o.upstream?.base ?? ""}`,
+          false,
+          c.mutedFg,
+        );
+        textField(title(), "pull request title", "title");
+        line("  Propose  ", field === "submit", c.accent);
+      } else {
+        line(
+          `${onNewBranch ? "( )" : "(o)"} commit to ${o.branch}`,
+          field === "target" && !onNewBranch,
+        );
+        line(
+          `${onNewBranch ? "(o)" : "( )"} commit to a new branch`,
+          field === "target" && onNewBranch,
+        );
+        if (onNewBranch) {
+          textField(branchName, "branch name", "branch");
+          line(
+            `[${openPull ? "x" : " "}] open a pull request`,
+            field === "pull",
+          );
         }
-        line(`[${openPull ? "x" : " "}] open a pull request`, field === "pull");
+        line(
+          busy ? "  Committing…  " : "  Commit  ",
+          field === "submit",
+          c.accent,
+        );
       }
-      line(
-        busy ? "  Committing…  " : "  Commit  ",
-        field === "submit",
-        c.accent,
-      );
       if (error !== "" && y < rest!.y + rest!.h)
         s.text(
           rest!.x,
@@ -335,6 +429,10 @@ export function commitScreen(
       if (field === "body") body.paste(text);
       else if (field === "subject") subject += text.replace(/\s+/g, " ");
       else if (field === "branch") branchName += text.trim();
+      else if (field === "title") {
+        titleEdited = true;
+        pullTitle = title() + text.replace(/\s+/g, " ");
+      }
       return true;
     },
     key(e) {
@@ -357,8 +455,7 @@ export function commitScreen(
         return true;
       }
       if (field === "files") {
-        if (e.key === "up" || e.key === "k")
-          fileAt = Math.max(0, fileAt - 1);
+        if (e.key === "up" || e.key === "k") fileAt = Math.max(0, fileAt - 1);
         else if (e.key === "down" || e.key === "j")
           fileAt = Math.min(all.length - 1, fileAt + 1);
         else if (e.key === " ") {
@@ -394,11 +491,19 @@ export function commitScreen(
         else if (e.key === "up") step(-1);
         return true;
       }
-      // The two plain text fields.
-      const value = field === "subject" ? subject : branchName;
+      // The plain text fields.
+      const value =
+        field === "subject"
+          ? subject
+          : field === "title"
+            ? title()
+            : branchName;
       const set = (next: string): void => {
         if (field === "subject") subject = next;
-        else branchName = next;
+        else if (field === "title") {
+          titleEdited = true;
+          pullTitle = next;
+        } else branchName = next;
         error = "";
       };
       if (e.key === "enter") {

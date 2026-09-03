@@ -88,7 +88,7 @@ describe("the app loop", () => {
     // Sample a cell the screen itself never paints, so what changes is the
     // theme's page background rather than the demo text.
     const before = app.screen.styleAt(70, 10).bg;
-    terminal.feed("t");
+    terminal.feed("\x14"); // ctrl+t
     terminal.feed("\x1b[B");
     app.frame();
     expect(app.screen.styleAt(70, 10).bg).not.toBe(before);

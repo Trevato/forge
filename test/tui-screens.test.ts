@@ -73,14 +73,16 @@ function boot(
   // sleep-and-hope version was the flake in this file.
   const settle = (): Promise<void> => settleApp(app);
   const press = async (...keys: string[]): Promise<void> => {
-    for (const key of keys)
+    for (const key of keys) {
+      const ctrl = key.startsWith("ctrl+");
       app.dispatch({
         type: "key",
-        key,
-        ctrl: key.startsWith("ctrl+"),
+        key: ctrl ? key.slice(5) : key,
+        ctrl,
         alt: false,
         shift: false,
       });
+    }
     await settle();
   };
   return {
@@ -478,7 +480,7 @@ describe("the terminal UI, against a real forge", () => {
   test("the theme is remembered for the next session", async () => {
     const h = boot(forge, asAlice());
     await h.settle();
-    await h.press("t", "j", "enter");
+    await h.press("ctrl+t", "j", "enter");
     const stored = getUserSetting(forge.db, alice.id, "theme");
     expect(stored).toBeDefined();
     h.stop();

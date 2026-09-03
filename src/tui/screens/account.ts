@@ -32,6 +32,7 @@ import {
   confirmScreen,
   drawFacts,
   drawList,
+  hitList,
   errorText,
   promptScreen,
   ago,
@@ -116,6 +117,9 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
                 : `used ${ago(token.lastUsedAt)}`,
           })),
         );
+        // Nothing here opens: a token and a key are rows you act on with a
+        // letter, so the pointer's job is to say *which* row that is.
+        hitList(ctx, body!, state, tokens.length, {});
         return;
       }
       drawList(
@@ -129,6 +133,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           meta: f.isCurrentKey(key) ? "this session" : key.algo,
         })),
       );
+      hitList(ctx, body!, state, keys.length, {});
     },
     key(e) {
       if (e.key === "tab") {

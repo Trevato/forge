@@ -19,8 +19,35 @@ import { BOLD, ITALIC, style } from "../term/style.ts";
 import { renderMarkdown } from "../ui/markdown.ts";
 import { Textarea } from "../ui/textarea.ts";
 import type { Tokens } from "../ui/theme.ts";
-import { avatarStyle, card, initials } from "../ui/widgets.ts";
+import {
+  avatarStyle,
+  card,
+  initials,
+  readableOn,
+  type Tone,
+} from "../ui/widgets.ts";
 import { ago } from "./common.ts";
+
+/**
+ * The `badge()` widget paints straight onto the surface; a timeline is spans.
+ * Same colours, same reading — one chip, the tone's ground, a foreground
+ * derived rather than stored so any palette stays legible.
+ */
+function badgeStyle(c: Tokens, tone: Tone): ReturnType<typeof style> {
+  if (tone === "outline" || tone === "default")
+    return style(c.mutedFg, c.muted, BOLD);
+  const bg =
+    tone === "success"
+      ? c.success
+      : tone === "danger"
+        ? c.danger
+        : tone === "merged"
+          ? c.merged
+          : tone === "attn"
+            ? c.attn
+            : c.mutedFg;
+  return style(readableOn(bg), bg, BOLD);
+}
 
 export interface ThreadEntry {
   readonly kind: "comment" | "event";
@@ -29,6 +56,13 @@ export interface ThreadEntry {
   readonly body: string;
   /** Shown after the author, e.g. "outdated" or a review anchor. */
   readonly note?: string;
+  /**
+   * A verdict, as a chip before the author: `approved`, `changes requested`.
+   * The tone carries the meaning at a glance — a conversation is scanned,
+   * not read, and "did anybody approve this" must be answerable from the
+   * shape of the column rather than from the words in it.
+   */
+  readonly badge?: { readonly text: string; readonly tone: Tone };
 }
 
 /** A timeline as styled lines: header row, then the body behind a rule. */
@@ -43,6 +77,15 @@ export function threadLines(
     const header: Span[] = [
       { text: ` ${initials(entry.actor)} `, style: avatarStyle(entry.actor) },
       { text: ` ${entry.actor}`, style: style(c.fg, c.bg, BOLD) },
+      ...(entry.badge === undefined
+        ? []
+        : [
+            { text: "  ", style: style(c.fg, c.bg) },
+            {
+              text: ` ${entry.badge.text} `,
+              style: badgeStyle(c, entry.badge.tone),
+            },
+          ]),
       { text: `  ${ago(entry.at)}`, style: style(c.faint, c.bg) },
     ];
     if (entry.note !== undefined)
