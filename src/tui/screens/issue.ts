@@ -36,6 +36,7 @@ import {
   ago,
   drawLines,
   errorText,
+  live,
   pickerScreen,
   plural,
   runAsync,
@@ -171,12 +172,8 @@ export function issueScreen(
     },
     load(signal) {
       // Live: any event touching this repo invalidates what we are showing.
-      if (repo !== undefined) {
-        const off = f.app.bus.subscribe((event) => {
-          if (event.repoId === repo.id) runAsync(ctx, reload);
-        });
-        signal.addEventListener("abort", off);
-      }
+      if (repo !== undefined)
+        live(f, signal, { repoId: repo.id }, () => runAsync(ctx, reload));
       return reload();
     },
     render(area, s) {

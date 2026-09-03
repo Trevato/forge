@@ -43,7 +43,7 @@ import {
   type CursorPos,
 } from "../ui/widgets.ts";
 import { binding, find, type Binding } from "./keys.ts";
-import { Palette, type Command } from "./palette.ts";
+import { Palette, type Command, type PaletteSearch } from "./palette.ts";
 import { truncate } from "../term/width.ts";
 
 /**
@@ -96,6 +96,13 @@ export interface Ctx {
    * must say out loud rather than pretending the keypress did something.
    */
   openUrl(url: string): boolean;
+  /**
+   * Hand the terminal to another full-screen program and take it back when it
+   * exits. Refuses (and returns false through the promise's `handed` flag)
+   * when one is already running on this session — nested suspends are how
+   * every TUI that shells out ends up wedged.
+   */
+  suspend<T>(run: (host: RawHost) => Promise<T>): Promise<T | undefined>;
   readonly theme: Theme;
   readonly cols: number;
   readonly rows: number;
@@ -112,15 +119,40 @@ interface Entry {
   loading: boolean;
 }
 
+/**
+ * The terminal, raw, while the UI is suspended. Bytes in both directions pass
+ * through verbatim and one chunk at a time — never buffered, never coalesced.
+ * A proxy that batches splits a single keypress's bytes across writes, and
+ * every terminal-side ESC-disambiguation timer is calibrated on the
+ * assumption that it does not: batching is how `ESC[A` becomes Esc, `[`, `A`.
+ */
+export interface RawHost {
+  write(bytes: Uint8Array): void;
+  onData(cb: (chunk: Uint8Array) => void): void;
+  onResize(cb: (cols: number, rows: number) => void): void;
+  readonly cols: number;
+  readonly rows: number;
+  /** The `TERM` the client announced. `Bun.Terminal`'s `name` does not set it. */
+  readonly term: string | undefined;
+  /** True only for this machine's own stdio — never an SSH channel. */
+  readonly local: boolean;
+}
+
 const FRAME_MS = 16; // ~60fps; a held `j` repeats far faster than a repaint
 const ESC_MS = 25; // idle backstop for Esc-vs-Alt (neovim uses 50)
 const TOAST_MS = 4000;
+/** Local search runs this long after the last keystroke. */
+const PALETTE_DEBOUNCE_MS = 120;
+/** Origins are only asked after a real pause — their rate budget is finite. */
+const PALETTE_LIVE_MS = 400;
 
 export interface AppOpts extends SessionOpts {
   readonly terminal: Terminal;
   readonly theme?: ThemeName;
   readonly root: (ctx: Ctx) => Screen;
   readonly commands?: (ctx: Ctx) => Command[];
+  /** Turns the palette into the global search box. */
+  readonly search?: (ctx: Ctx) => PaletteSearch;
   /**
    * Called whenever the theme settles on a new value — the picker closing or
    * `ctx.setTheme`. The loop knows nothing about persistence; the host does.
@@ -145,6 +177,13 @@ export class App {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private escTimer: ReturnType<typeof setTimeout> | null = null;
   private frames = 0;
+  /** Set while another program owns the terminal (`suspend`). */
+  private suspended = false;
+  private raw: ((chunk: Uint8Array) => void) | null = null;
+  private rawResize: ((cols: number, rows: number) => void) | null = null;
+  private paletteTimers: ReturnType<typeof setTimeout>[] = [];
+  private paletteAbort: AbortController | null = null;
+  private search: PaletteSearch | undefined;
   readonly ctx: Ctx;
   readonly commands: Command[] = [];
 
@@ -201,6 +240,7 @@ export class App {
     this.themeIndex = Math.max(0, THEME_NAMES.indexOf(this.themeName));
     this.ctx = this.makeCtx();
     this.commands = opts.commands?.(this.ctx) ?? [];
+    this.search = opts.search?.(this.ctx);
     this.push(opts.root(this.ctx));
   }
 
@@ -220,6 +260,7 @@ export class App {
       quit: () => app.stop(),
       copy: (text) => copyToTerminal(app.opts.terminal, text),
       openUrl: (url) => openInBrowser(app.opts.terminal, url),
+      suspend: (run) => app.suspend(run),
       get theme() {
         return theme(app.themeName);
       },
@@ -313,6 +354,10 @@ export class App {
    * still produces one repaint per frame, not one per keystroke.
    */
   private schedule(): void {
+    // While an editor owns the terminal nothing may paint, so nothing may
+    // ask to: without this the dirty flag would keep re-arming the timer for
+    // the whole editing session, sixty wakeups a second to draw nothing.
+    if (this.suspended) return;
     if (!this.running || this.timer !== null) return;
     this.timer = setTimeout(() => {
       this.timer = null;
@@ -366,11 +411,70 @@ export class App {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
     if (this.escTimer !== null) clearTimeout(this.escTimer);
+    for (const t of this.paletteTimers) clearTimeout(t);
+    this.paletteTimers = [];
+    this.paletteAbort?.abort();
     for (const entry of this.stack) entry.abort.abort();
     this.session.leave();
   }
 
+  /**
+   * Suspend the UI, run something with the raw terminal, resume.
+   *
+   * Nothing here trusts the terminal to have preserved anything: on resume
+   * the alt screen is re-entered, the renderer invalidated, and a full frame
+   * painted. tcell, gocui, tview and tig all reached the same conclusion —
+   * 1049's save/restore is a per-terminal courtesy, and the child usually
+   * cleared the buffer anyway.
+   */
+  async suspend<T>(run: (host: RawHost) => Promise<T>): Promise<T | undefined> {
+    if (this.raw !== null || this.suspended) return undefined;
+    this.suspended = true;
+    const app = this;
+    let onData: (chunk: Uint8Array) => void = () => undefined;
+    const resizes: ((cols: number, rows: number) => void)[] = [];
+    this.raw = (chunk) => onData(chunk);
+    this.rawResize = (cols, rows) => {
+      for (const cb of resizes) cb(cols, rows);
+    };
+    const host: RawHost = {
+      write: (bytes) => app.opts.terminal.write(bytes),
+      onData: (cb) => {
+        onData = cb;
+      },
+      onResize: (cb) => resizes.push(cb),
+      get cols() {
+        return app.surface.cols;
+      },
+      get rows() {
+        return app.surface.rows;
+      },
+      term: this.opts.terminal.term,
+      local: this.opts.terminal.local === true,
+    };
+    this.session.suspend();
+    try {
+      return await run(host);
+    } finally {
+      this.raw = null;
+      this.rawResize = null;
+      this.suspended = false;
+      // Swallow whatever the client answered while we were away — nvim asks
+      // for a Primary DA on the way out and the reply lands here, on the
+      // resumed input stream, as a stray `ESC[?…c`.
+      this.decoder = new InputDecoder();
+      this.session.resume();
+      this.renderer.invalidate();
+      this.invalidate();
+      this.frame();
+    }
+  }
+
   private onChunk(chunk: Uint8Array): void {
+    if (this.raw !== null) {
+      this.raw(chunk);
+      return;
+    }
     for (const event of this.decoder.push(chunk)) this.dispatch(event);
     if (this.escTimer !== null) clearTimeout(this.escTimer);
     // Read batching settles Alt+key in the common case; this timer is the
@@ -383,6 +487,9 @@ export class App {
   }
 
   private onResize(cols: number, rows: number): void {
+    // A suspended child owns the screen: it gets the new size first, and our
+    // own buffer is resized behind it so the resumed repaint is correct.
+    this.rawResize?.(Math.max(1, cols), Math.max(1, rows));
     if (cols === this.surface.cols && rows === this.surface.rows) return;
     // A resize invalidates every assumption; never diff across one.
     this.surface = new Surface(Math.max(1, cols), Math.max(1, rows));
@@ -422,7 +529,6 @@ export class App {
     // Ctrl+C always quits, from any overlay and any screen; Ctrl+Z is
     // swallowed (over SSH there is no process group to suspend into).
     if (e.ctrl && e.key === "c") return this.stop();
-    if (e.ctrl && e.key === "z") return;
     if (this.overlay !== "none") {
       this.overlayKey(e);
       return;
@@ -433,6 +539,12 @@ export class App {
     // them either.
     if (this.top().screen.key(e)) return;
 
+    // Ctrl+Z is swallowed *after* the screen has had it: over SSH there is no
+    // process group to suspend into, so it must never reach a shell — but the
+    // editor legitimately owns it as undo, and stealing it above would have
+    // meant an editor with no undo key.
+    if (e.ctrl && e.key === "z") return;
+
     const hit = find(this.globals, e);
     switch (hit?.help) {
       case "help":
@@ -441,6 +553,7 @@ export class App {
       case "palette":
         this.overlay = "palette";
         this.palette.open(this.commands);
+        this.schedulePaletteSearch();
         return;
       case "theme":
         this.overlay = "theme";
@@ -454,9 +567,55 @@ export class App {
     }
   }
 
+  /**
+   * Search on a pause, not on a keystroke.
+   *
+   * Two timers, because there are two costs. The local half — repos, issues,
+   * `git grep` — is cheap and bounded, so it runs 120ms after you stop typing.
+   * The live half asks every connected origin's own search API, spending
+   * somebody's rate budget, so it waits for a real pause at 400ms and only
+   * then re-runs the same query with `live` set. Both are cancelled by the
+   * next keystroke, and a result that lands for a query nobody is typing any
+   * more is dropped rather than drawn.
+   */
+  private schedulePaletteSearch(): void {
+    const search = this.search;
+    if (search === undefined) return;
+    this.paletteAbort?.abort();
+    if (this.paletteTimers.length > 0)
+      for (const t of this.paletteTimers) clearTimeout(t);
+    this.paletteTimers = [];
+    const query = this.palette.query;
+    if (query.trim() === "") {
+      this.palette.setResults([]);
+      this.paletteAbort = null;
+      return;
+    }
+    const abort = new AbortController();
+    this.paletteAbort = abort;
+    this.palette.searching = true;
+    const run = (live: boolean): void => {
+      void search(query, live, abort.signal)
+        .then((items) => {
+          if (abort.signal.aborted || this.palette.query !== query) return;
+          this.palette.setResults(items);
+          this.invalidate();
+        })
+        .catch(() => {
+          if (!abort.signal.aborted) this.palette.searching = false;
+        });
+    };
+    this.paletteTimers = [
+      setTimeout(() => run(false), PALETTE_DEBOUNCE_MS),
+      setTimeout(() => run(true), PALETTE_LIVE_MS),
+    ];
+  }
+
   private overlayKey(e: KeyEvent): void {
     if (this.overlay === "palette") {
+      const before = this.palette.query;
       const result = this.palette.key(e);
+      if (this.palette.query !== before) this.schedulePaletteSearch();
       if (result === "close") this.overlay = "none";
       else if (result !== null) {
         this.overlay = "none";
@@ -498,6 +657,9 @@ export class App {
 
   /** Render one frame if anything changed. Safe to call directly in a test. */
   frame(): void {
+    // While something else owns the screen we paint nothing at all: one stray
+    // frame in the middle of an editor session is a corrupted display.
+    if (this.suspended) return;
     if (this.toastState !== null && Date.now() > this.toastState.until) {
       this.toastState = null;
       this.dirty = true;

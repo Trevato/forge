@@ -17,6 +17,8 @@ import {
   PASTE_ON,
   SGR_RESET,
   CURSOR_HIDE,
+  CURSOR_SHAPE_RESET,
+  KITTY_KEYS_POP,
   WRAP_OFF,
   WRAP_ON,
 } from "./ansi.ts";
@@ -145,6 +147,52 @@ export class TerminalSession {
     for (const off of this.detach) off();
     this.detach = [];
     this.term.close();
+  }
+
+  /**
+   * Give the terminal back to another full-screen program (an editor) without
+   * ending the session.
+   *
+   * Every mode we set is undone, in the order `leave()` uses, and one thing
+   * `leave()` does not do is added: auto-wrap goes back **on**. The renderer
+   * runs with `?7l` because it positions absolutely; nvim assumes wrap is on
+   * and renders wrongly without it. The alt screen is left last, after the
+   * SGR reset, for the same reason it is there — attributes must not leak
+   * into the buffer we are handing over.
+   */
+  suspend(): void {
+    this.send(
+      SGR_RESET +
+        PASTE_OFF +
+        MOUSE_OFF +
+        FOCUS_OFF +
+        CURSOR_SHOW +
+        WRAP_ON +
+        ALT_LEAVE,
+    );
+  }
+
+  /**
+   * Take it back. Unconditional and state-independent on purpose: the child
+   * may have crashed, in which case it restored nothing, and "undo what we
+   * think it did" is exactly the reasoning that leaves a broken terminal.
+   *
+   * Two additions beyond `enter()`, both measured against real nvim: it exits
+   * having set `ESC[2 q` (a steady block) and never resets the cursor shape,
+   * so we send `ESC[0 q`; and it pushes kitty keyboard flags it does not pop,
+   * so we pop them (harmless where unsupported).
+   */
+  resume(): void {
+    this.send(
+      ALT_ENTER +
+        WRAP_OFF +
+        CURSOR_HIDE +
+        ERASE_ALL +
+        CURSOR_SHAPE_RESET +
+        KITTY_KEYS_POP +
+        PASTE_ON +
+        (this.opts.mouse ? MOUSE_ON : ""),
+    );
   }
 
   /** Anything printed outside the frame loop needs CRLF: raw mode has ONLCR off. */
@@ -320,6 +368,8 @@ export class VirtualTerminal {
   private x = 0;
   private y = 0;
   private cur: Style = PLAIN;
+  /** The OSC 8 URI currently open in the byte stream we are consuming. */
+  private link = "";
   cursorVisible = true;
   syncDepth = 0;
 
@@ -334,6 +384,16 @@ export class VirtualTerminal {
       const c = input[i]!;
       if (c !== "\x1b") {
         i = this.print(input, i);
+        continue;
+      }
+      if (input[i + 1] === "]") {
+        // OSC. We decode exactly one: hyperlinks, because a virtual terminal
+        // that swallowed them could not check that we open and close them in
+        // the right places.
+        const end = oscEnd(input, i);
+        if (end === -1) return;
+        this.osc(input.slice(i + 2, end.body));
+        i = end.next;
         continue;
       }
       if (input[i + 1] !== "[") {
@@ -358,9 +418,20 @@ export class VirtualTerminal {
     while (i < input.length && input[i] !== "\x1b") run += input[i++];
     for (const cluster of clusters(run)) {
       if (this.x >= this.screen.cols) break; // auto-wrap is off
-      this.x += this.screen.set(this.x, this.y, cluster, this.cur);
+      this.x +=
+        this.link === ""
+          ? this.screen.set(this.x, this.y, cluster, this.cur)
+          : this.screen.linkText(this.x, this.y, cluster, this.cur, this.link) -
+            this.x;
     }
     return i;
+  }
+
+  /** OSC 8 only: `8;<params>;<uri>`. An empty URI closes the open link. */
+  private osc(body: string): void {
+    if (!body.startsWith("8;")) return;
+    const semi = body.indexOf(";", 2);
+    this.link = semi === -1 ? "" : body.slice(semi + 1);
   }
 
   private csi(body: string, fin: string): void {
@@ -469,6 +540,18 @@ export class VirtualTerminal {
   }
 }
 
+/**
+ * Where an OSC starting at `i` ends: `body` is one past its payload and
+ * `next` one past its terminator (BEL, or ST). -1 when it is incomplete.
+ */
+function oscEnd(s: string, i: number): { body: number; next: number } | -1 {
+  for (let j = i + 2; j < s.length; j++) {
+    if (s[j] === "\x07") return { body: j, next: j + 1 };
+    if (s[j] === "\x1b" && s[j + 1] === "\\") return { body: j, next: j + 2 };
+  }
+  return -1;
+}
+
 /** Cell-by-cell comparison, with the annotation that makes a failure obvious. */
 export function diffScreens(a: Screen, b: Screen): string | null {
   if (a.cols !== b.cols || a.rows !== b.rows)
@@ -481,7 +564,8 @@ export function diffScreens(a: Screen, b: Screen): string | null {
         a.glyph[i] !== b.glyph[i] ||
         a.fg[i] !== b.fg[i] ||
         a.bg[i] !== b.bg[i] ||
-        a.attr[i] !== b.attr[i]
+        a.attr[i] !== b.attr[i] ||
+        a.linkAt(x, y) !== b.linkAt(x, y)
       ) {
         const hidden =
           a.glyph[i] === TRAIL || b.glyph[i] === TRAIL

@@ -15,7 +15,9 @@ import {
   SGR_RESET,
   SYNC_BEGIN,
   SYNC_END,
+  OSC8_CLOSE,
   cup,
+  osc8Open,
 } from "./ansi.ts";
 import { glyphText, Screen, TRAIL } from "./screen.ts";
 import {
@@ -84,6 +86,8 @@ export class Renderer {
     this.prev.bg.set(next.bg);
     this.prev.attr.set(next.attr);
     this.prev.width.set(next.width);
+    this.prev.link.set(next.link);
+    this.prev.adoptLinks(next);
     this.prevCursor = cursor;
   }
 
@@ -101,7 +105,13 @@ export class Renderer {
       prev.fg[i] !== next.fg[i] ||
       prev.bg[i] !== next.bg[i] ||
       prev.attr[i] !== next.attr[i] ||
-      prev.width[i] !== next.width[i]
+      prev.width[i] !== next.width[i] ||
+      // Plane values are per-frame table indices, so a raw compare would
+      // call two different URLs equal whenever the tables were built in a
+      // different order. Compare the URIs; the id compare short-circuits the
+      // overwhelmingly common "neither cell is a link" case first.
+      (prev.link[i] !== next.link[i] &&
+        prev.uriOf(prev.link[i]!) !== next.uriOf(next.link[i]!))
     );
   }
 
@@ -116,8 +126,24 @@ export class Renderer {
     let cur: Style = PLAIN;
     let lastRow = -1;
     let lastCol = -1;
+    // The URI currently open in the byte stream, "" for none. OSC 8 and SGR
+    // are independent — the frame-final SGR reset does *not* close a
+    // hyperlink — so this is tracked and closed explicitly.
+    let openUri = "";
+    const link = (uri: string, id: number): void => {
+      if (uri === openUri) return;
+      if (openUri !== "") out += OSC8_CLOSE;
+      // Always carry `id=`: a diff renderer paints dirty *runs*, so one
+      // logical link routinely reaches the terminal as several disjoint
+      // spans, and without a shared id each underlines separately on hover.
+      if (uri !== "") out += osc8Open(uri, id);
+      openUri = uri;
+    };
 
     for (let y = 0; y < next.rows; y++) {
+      // Never carry a link across a row: the renderer positions absolutely,
+      // and an open link spanning a CUP swallows everything in between.
+      link("", 0);
       let x = 0;
       while (x < next.cols) {
         const i = next.idx(x, y);
@@ -146,7 +172,10 @@ export class Renderer {
         }
 
         // Elide the cursor move when the previous write ended exactly here.
-        if (lastRow !== y || lastCol !== x) out += cup(y, x);
+        if (lastRow !== y || lastCol !== x) {
+          link("", 0);
+          out += cup(y, x);
+        }
         const st: Style = {
           fg: next.fg[i]!,
           bg: next.bg[i]!,
@@ -157,6 +186,10 @@ export class Renderer {
           out += delta;
           cur = st;
         }
+        // SGR first, then the OSC 8 open, so the styled underline covers the
+        // link text rather than the cell before it.
+        const id = next.link[i]!;
+        link(next.uriOf(id), id);
         const g = next.glyph[i]!;
         out += g === TRAIL ? " " : glyphText(g);
         lastRow = y;
@@ -164,6 +197,7 @@ export class Renderer {
         x += w;
       }
     }
+    link("", 0);
     return out;
   }
 }

@@ -9,7 +9,7 @@
  */
 
 import { signUp } from "../../actions/users.ts";
-import { countUsers } from "../../core/users.ts";
+import { hasAnyUser } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -37,7 +37,9 @@ const CREATE: Field[] = [
 ];
 
 export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
-  const first = countUsers(f.db) === 0;
+  // "Is this forge empty?" is a existence question, not a count: `COUNT(*)`
+  // walks the whole user table on the one screen every session paints.
+  const first = !hasAnyUser(f.db);
   let mode: "signin" | "create" = first ? "create" : "signin";
   let values = ["", "", ""];
   let focus = 0;

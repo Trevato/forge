@@ -452,10 +452,16 @@ describe("origins in the terminal", () => {
         `\u001b]52;c;${Buffer.from("WXYZ-1234", "utf8").toString("base64")}\u0007`,
       );
 
-      // `o` cannot reach a browser from the far side of a connection, and
-      // says exactly that rather than appearing to work.
+      // `o` cannot reach a browser from the far side of a connection. It no
+      // longer says so and stops there: the URL goes to the reader's own
+      // clipboard through their terminal, and the toast names the gesture
+      // that opens the OSC 8 link already on screen.
+      h.terminal.takeOutput();
       await h.press("o");
-      expect(h.text()).toContain("no browser on this machine");
+      expect(h.terminal.takeOutput()).toContain(
+        `]52;c;${Buffer.from("https://example.invalid/device", "utf8").toString("base64")}`,
+      );
+      expect(h.text()).toContain("copied — cmd-click the link to open it");
       await h.press("esc");
     } finally {
       delete process.env.FORGE_GITHUB_CLIENT_ID;
@@ -692,6 +698,46 @@ describe("origins in the terminal", () => {
       await h.until("mirrored as alice/gadgets");
       expect(getRepo(forge.db, "alice", "gadgets")).toBeDefined();
       expect(h.text()).toContain("reading live from");
+    } finally {
+      h.stop();
+    }
+  }, 120_000);
+
+  /**
+   * The question the where-strip answers is "which of these two am I reading",
+   * and `W` is the answer to "show me the other one". The dot moving is the
+   * whole assertion: it is the same grammar on every repo screen, so if it
+   * moves here it moves everywhere.
+   */
+  test("W swaps a mirror between the workbench copy and the live origin", async () => {
+    const h = boot(forge, asAlice());
+    try {
+      // `widgets` was mirrored by the test above, so this repo has two sides.
+      await h.press("/");
+      await h.typeText("widgets");
+      await h.press("enter");
+      await h.press("enter");
+      await h.until("mirrored from");
+      // Both places hold the repo, so both wear a filled dot — what says
+      // which one you are *reading* is the accent, so that is what is
+      // asserted. (The colour, not the glyph: that is the strip's grammar.)
+      expect(h.text().split("\n")[2]).toMatch(/^● \S+ {2}·  ● workbench/);
+      const workbenchAccent = h.app.screen.styleAt(0, 2).fg;
+      expect(h.text()).not.toContain("reading live from");
+      expect(await helpText(h)).toContain("live on");
+
+      await h.press("W");
+      await h.until("reading live from");
+      // Same three places, same glyphs — and the accent has moved to the
+      // first one, which is the whole of what `W` means.
+      expect(h.text().split("\n")[2]).toMatch(/^● \S+ {2}·  ● workbench/);
+      expect(h.app.screen.styleAt(0, 2).fg).not.toBe(workbenchAccent);
+      expect(h.text()).toContain("read-only");
+
+      // And back again, to the copy we hold.
+      await h.press("W");
+      await h.until("mirrored from");
+      expect(h.text()).not.toContain("reading live from");
     } finally {
       h.stop();
     }

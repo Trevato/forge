@@ -9,13 +9,25 @@
  */
 
 import type { App as Forge } from "../app.ts";
+import { search } from "../actions/search.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
+import { sourceFor } from "../view/source.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
-import type { Command } from "./app/palette.ts";
+import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
+import { G } from "./term/screen.ts";
 import type { SessionOpts, Terminal } from "./term/terminal.ts";
 import { Session, type TuiIdentity } from "./session.ts";
 import { accountScreen } from "./screens/account.ts";
-import { promptScreen } from "./screens/common.ts";
+import {
+  ISSUE_MARK,
+  ORIGIN_MARK,
+  PULL_MARK,
+  errorText,
+  promptScreen,
+} from "./screens/common.ts";
+import { issueScreen } from "./screens/issue.ts";
+import { pullScreen } from "./screens/pull.ts";
+import { blobScreen } from "./screens/tree.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { exploreScreen } from "./screens/explore.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
@@ -153,6 +165,149 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
   };
 }
 
+/**
+ * The palette's search half: one `search()` call, three sections.
+ *
+ * Everything the session can reach is in scope — the repos here, the repos
+ * cached from every origin they have connected, conversations on both sides,
+ * and the code itself through `git grep`. The action decides visibility once,
+ * exactly as the web search page and the API do; nothing is filtered here,
+ * because a row that reached this function was already allowed to.
+ *
+ * Enter on an origin repo opens the **live browse**, not a mirror: browse
+ * first, mirror if you mean it (`view/source.ts`). A repo somebody else's
+ * origin holds is `not_found` for you, and `sourceFor` is what says so.
+ */
+function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
+  return (ctx) => async (query, live, signal) => {
+    const found = await search(session.app, session.user, {
+      q: query,
+      limit: 8,
+      live,
+    });
+    if (signal.aborted) return [];
+    const items: PaletteItem[] = [];
+
+    for (const hit of found.repos) {
+      if (hit.source === "local") {
+        items.push({
+          id: `repo:${hit.id}`,
+          section: "Repos",
+          mark: G.dot,
+          title: `${hit.owner}/${hit.name}`,
+          hint: countsHint(hit.openIssues, hit.openPulls, hit.description),
+          run: () => {
+            const repo = getRepo(session.db, hit.owner, hit.name);
+            if (repo && canRead(session.db, repo, session.user))
+              ctx.push(repoScreen(session, ctx, local(session, repo)));
+          },
+        });
+        continue;
+      }
+      const mirrored =
+        hit.mirroredAs === null
+          ? ""
+          : ` · ${ORIGIN_MARK} mirrored as ${hit.mirroredAs.owner}/${hit.mirroredAs.name}`;
+      items.push({
+        id: `origin:${hit.originId}:${hit.fullName}`,
+        section: "Repos",
+        // A hollow dot: this one is not here. The same grammar the where-strip
+        // uses on every repo screen, so the mark means one thing everywhere.
+        mark: G.ring,
+        title: hit.fullName,
+        hint: `${countsHint(hit.openIssues, hit.openPulls, hit.description)}${mirrored}`,
+        run: () => {
+          const opened = sourceFor(session.app, session.user, {
+            originId: hit.originId,
+            fullName: hit.fullName,
+          });
+          if (!opened.ok) {
+            ctx.toast(errorText(opened.error), "danger");
+            return;
+          }
+          ctx.push(repoScreen(session, ctx, opened.value));
+        },
+      });
+    }
+
+    for (const hit of found.issues) {
+      const where =
+        hit.source === "local"
+          ? `${hit.repo.owner}/${hit.repo.name}`
+          : hit.fullName;
+      items.push({
+        id: `issue:${where}#${hit.number}`,
+        section: "Issues & pulls",
+        mark: hit.source === "local" ? G.dot : G.ring,
+        title: `${where}#${hit.number} ${hit.title}`,
+        hint: `${hit.kind} · ${hit.state}`,
+        run: () => {
+          if (hit.source !== "local") {
+            const opened = sourceFor(session.app, session.user, {
+              originId: hit.originId,
+              fullName: hit.fullName,
+            });
+            if (!opened.ok) {
+              ctx.toast(errorText(opened.error), "danger");
+              return;
+            }
+            ctx.push(issuesScreen(session, ctx, opened.value, hit.kind));
+            return;
+          }
+          const repo = getRepo(session.db, hit.repo.owner, hit.repo.name);
+          if (!repo || !canRead(session.db, repo, session.user)) return;
+          const src = local(session, repo);
+          ctx.push(
+            hit.kind === "pull"
+              ? pullScreen(session, ctx, src, hit.number)
+              : issueScreen(session, ctx, src, hit.number),
+          );
+        },
+      });
+    }
+
+    for (const hit of found.code) {
+      const where = `${hit.repo.owner}/${hit.repo.name}`;
+      items.push({
+        id: `code:${where}:${hit.path}:${hit.line}`,
+        section: "Code",
+        mark: G.dot,
+        title: `${hit.path}:${hit.line}`,
+        hint: `${where} · ${hit.text.trim().slice(0, 60)}`,
+        run: () => {
+          const repo = getRepo(session.db, hit.repo.owner, hit.repo.name);
+          if (!repo || !canRead(session.db, repo, session.user)) return;
+          ctx.push(
+            blobScreen(
+              session,
+              ctx,
+              local(session, repo),
+              repo.defaultBranch,
+              hit.path,
+            ),
+          );
+        },
+      });
+    }
+    return items;
+  };
+}
+
+/** `12 issues · 3 pulls · description` — whatever of it there is. */
+function countsHint(
+  issues: number,
+  pulls: number,
+  description: string,
+): string {
+  return [
+    issues > 0 ? `${ISSUE_MARK} ${issues}` : "",
+    pulls > 0 ? `${PULL_MARK} ${pulls}` : "",
+    description,
+  ]
+    .filter((p) => p !== "")
+    .join("  ");
+}
+
 /** A prompt with no parent to draw behind it — the palette closed already. */
 function askFor(
   ctx: Ctx,
@@ -185,6 +340,7 @@ export function createForgeApp(
     theme: session.theme(),
     root: forgeRoot(session),
     commands: forgeCommands(session),
+    search: forgeSearch(session),
     onTheme: (name) => session.saveTheme(name),
   });
   return { app, session };

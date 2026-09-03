@@ -31,8 +31,10 @@ import type { Session } from "../session.ts";
 import {
   Filter,
   ListState,
+  countsColumn,
   drawList,
   errorText,
+  metaOf,
   plural,
   promptScreen,
   runAsync,
@@ -166,6 +168,7 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
         });
         return;
       }
+      const counts = countsColumn(rows.map((repo) => repo.counts));
       drawList(
         s,
         list!,
@@ -174,7 +177,10 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
         rows.map((repo) => ({
           title: repo.name,
           secondary: repo.description,
-          meta: repo.visibility === "private" ? "private" : "",
+          meta: metaOf(
+            repo.visibility === "private" ? "private" : "",
+            counts(repo.counts),
+          ),
         })),
       );
     },

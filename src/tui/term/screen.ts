@@ -33,6 +33,8 @@ export interface Rect {
 export interface Span {
   readonly text: string;
   readonly style: Style;
+  /** When set, these cells are an OSC 8 hyperlink to this URI. */
+  readonly link?: string;
 }
 
 export const BLANK = 32; // ' '
@@ -67,6 +69,21 @@ export class Screen {
   readonly bg: Int32Array;
   readonly attr: Uint8Array;
   readonly width: Uint8Array;
+  /**
+   * The sixth plane: 0 for a plain cell, else a 1-based index into this
+   * frame's URI table. A URL is a property of a *run of cells*, exactly like
+   * a colour, so it belongs beside the other planes rather than in a side
+   * table the diff renderer would have to reconcile — `differs()` gains one
+   * integer compare and OSC 8 falls out of the emit loop that already does
+   * SGR deltas.
+   */
+  readonly link: Uint16Array;
+
+  /** This frame's URIs. Index 0 is unused, so `link[i] === 0` means "none". */
+  private uris: string[] = [];
+  private uriIds = new Map<string, number>();
+  /** The link every subsequent `set()` joins, until it is cleared again. */
+  private pendingLink = 0;
 
   constructor(
     readonly cols: number,
@@ -78,6 +95,42 @@ export class Screen {
     this.bg = new Int32Array(n).fill(DEFAULT);
     this.attr = new Uint8Array(n);
     this.width = new Uint8Array(n).fill(1);
+    this.link = new Uint16Array(n);
+  }
+
+  /**
+   * Intern a URI for this frame and return its plane value. VTE and iTerm2
+   * both cap a hyperlink URI at 2083 bytes, so anything longer is refused
+   * here rather than emitted and silently dropped by the terminal.
+   */
+  linkId(uri: string): number {
+    if (uri === "" || uri.length > 2083) return 0;
+    const known = this.uriIds.get(uri);
+    if (known !== undefined) return known;
+    // 65534 distinct links in one frame is not a screen, it is a bug; past
+    // the cap the cells render unlinked rather than aliasing to a wrong URL.
+    if (this.uris.length >= 0xfffe) return 0;
+    const id = this.uris.length + 1;
+    this.uris.push(uri);
+    this.uriIds.set(uri, id);
+    return id;
+  }
+
+  /** The URI behind a plane value; "" for an unlinked cell. */
+  uriOf(id: number): string {
+    return id <= 0 ? "" : (this.uris[id - 1] ?? "");
+  }
+
+  /** The URI under one cell — what a test asks and what `y` copies. */
+  linkAt(x: number, y: number): string {
+    if (!this.inside(x, y)) return "";
+    return this.uriOf(this.link[this.idx(x, y)]!);
+  }
+
+  /** Take another frame's URI table, so a remembered frame can be diffed. */
+  adoptLinks(other: Screen): void {
+    this.uris = [...other.uris];
+    this.uriIds = new Map(other.uriIds);
   }
 
   rect(): Rect {
@@ -99,6 +152,10 @@ export class Screen {
     this.bg.fill(s.bg);
     this.attr.fill(s.attr);
     this.width.fill(1);
+    this.link.fill(0);
+    this.uris = [];
+    this.uriIds = new Map();
+    this.pendingLink = 0;
   }
 
   styleAt(x: number, y: number): Style {
@@ -133,6 +190,7 @@ export class Screen {
     this.bg[i] = s.bg;
     this.attr[i] = s.attr;
     this.width[i] = w;
+    this.link[i] = this.pendingLink;
     if (w === 2) {
       const j = i + 1;
       this.glyph[j] = TRAIL;
@@ -140,6 +198,7 @@ export class Screen {
       this.bg[j] = s.bg;
       this.attr[j] = s.attr;
       this.width[j] = 0;
+      this.link[j] = this.pendingLink;
     }
     return w;
   }
@@ -150,9 +209,11 @@ export class Screen {
     if (this.width[i] === 2 && x + 1 < this.cols) {
       this.glyph[i + 1] = BLANK;
       this.width[i + 1] = 1;
+      this.link[i + 1] = 0;
     } else if (this.glyph[i] === TRAIL && x > 0) {
       this.glyph[i - 1] = BLANK;
       this.width[i - 1] = 1;
+      this.link[i - 1] = 0;
     }
   }
 
@@ -169,11 +230,34 @@ export class Screen {
     return cx;
   }
 
+  /**
+   * Draw a string whose cells carry `uri` — a clickable run. The renderer
+   * closes the hyperlink at the end of every row and before every cursor
+   * jump, so a caller cannot leak a link across a line by forgetting to.
+   */
+  linkText(
+    x: number,
+    y: number,
+    text: string,
+    st: Style,
+    uri: string,
+    right?: number,
+  ): number {
+    const previous = this.pendingLink;
+    this.pendingLink = this.linkId(uri);
+    const out = this.text(x, y, text, st, right);
+    this.pendingLink = previous;
+    return out;
+  }
+
   /** Draw styled runs left to right within a clip. Returns the next column. */
   spans(x: number, y: number, list: readonly Span[], right?: number): number {
     let cx = x;
     for (const span of list)
-      cx = this.text(cx, y, span.text, span.style, right);
+      cx =
+        span.link === undefined || span.link === ""
+          ? this.text(cx, y, span.text, span.style, right)
+          : this.linkText(cx, y, span.text, span.style, span.link, right);
     return cx;
   }
 
@@ -264,6 +348,13 @@ export const G = {
   hHeavy: "━",
   dot: "●",
   ring: "○",
+  // The three at-a-glance marks a list row wears. `○` is an open
+  // conversation, `↳` is a branch proposed into another (the ASCII-art shape
+  // every terminal already draws a branch with), `▭` is a comment. All three
+  // are BMP, width 1, and in every default terminal font — no Nerd Font, and
+  // no emoji, whose width is genuinely inconsistent.
+  pull: "↳",
+  comment: "▭",
   diamond: "◆",
   caretRight: "▸",
   caretDown: "▾",

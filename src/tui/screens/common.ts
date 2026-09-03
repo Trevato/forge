@@ -10,9 +10,11 @@
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
-import { Screen as Surface, type Rect } from "../term/screen.ts";
+import type { RepoCounts } from "../../core/repos.ts";
+import type { Session } from "../session.ts";
+import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
-import { truncate } from "../term/width.ts";
+import { pad, truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
 import {
@@ -251,25 +253,56 @@ export function drawLines(
   });
 }
 
-/** A label/value column — the "about" blocks every detail screen carries. */
+/**
+ * A label/value column — the "about" blocks every detail screen carries.
+ *
+ * A value that *is* a URL is emitted as an OSC 8 hyperlink, so the clone line
+ * and the page link on a repo's front door are clickable in every terminal
+ * that supports them and unchanged in every one that does not. `bg` matters
+ * here: these blocks live inside cards as often as not.
+ */
 export function drawFacts(
   s: Surface,
   r: Rect,
   c: Tokens,
   facts: readonly (readonly [string, string])[],
+  bg = c.bg,
 ): void {
   facts.forEach(([label, value], i) => {
     if (i >= r.h) return;
     const y = r.y + i;
-    s.text(r.x, y, truncate(label, 14), style(c.mutedFg, c.bg), r.x + r.w);
-    s.text(
+    s.text(r.x, y, truncate(label, 14), style(c.mutedFg, bg), r.x + r.w);
+    linkedText(
+      s,
       r.x + 15,
       y,
       truncate(value, Math.max(0, r.w - 15)),
-      style(c.fg, c.bg),
+      style(c.fg, bg),
       r.x + r.w,
     );
   });
+}
+
+/** Every http(s) URL inside `text` becomes a link; the rest is plain. */
+export function linkedText(
+  s: Surface,
+  x: number,
+  y: number,
+  text: string,
+  st: ReturnType<typeof style>,
+  right: number,
+): number {
+  const pattern = /https?:\/\/[^\s<>"']+/g;
+  let cx = x;
+  let at = 0;
+  for (const hit of text.matchAll(pattern)) {
+    const start = hit.index;
+    if (start > at) cx = s.text(cx, y, text.slice(at, start), st, right);
+    cx = s.linkText(cx, y, hit[0], st, hit[0], right);
+    at = start + hit[0].length;
+  }
+  if (at < text.length) cx = s.text(cx, y, text.slice(at), st, right);
+  return cx;
 }
 
 // ---- modal screens ----
@@ -506,6 +539,93 @@ export function pickerScreen(
   };
 }
 
+// ---- realtime ----
+
+/** How long events are gathered before one refresh runs. */
+const LIVE_COALESCE_MS = 40;
+
+export interface LiveOptions {
+  /** Only events touching this repository. Omit for everything. */
+  readonly repoId?: string;
+  /** Only these event kinds. Omit for all of them. */
+  readonly kinds?: readonly string[];
+}
+
+/**
+ * Keep a screen live for as long as it is on the stack.
+ *
+ * Every meaningful mutation appends to the outbox (invariant 5), so "realtime"
+ * needs no polling and no second channel: subscribe to the bus, refresh on
+ * anything relevant, and unsubscribe when the screen's own `AbortSignal`
+ * fires. Popping the screen is what stops it — there is no lifecycle to get
+ * wrong, which is why every screen that wants this uses this one function
+ * rather than its own three lines.
+ *
+ * A burst — a push that closes four issues — is coalesced into one refresh:
+ * the outbox has no ordering guarantee a screen could use anyway, and four
+ * reloads in a frame is four times the git for the same picture.
+ */
+export function live(
+  f: Session,
+  signal: AbortSignal,
+  o: LiveOptions,
+  refresh: () => void | Promise<void>,
+): void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const off = f.app.bus.subscribe((event) => {
+    if (o.repoId !== undefined && event.repoId !== o.repoId) return;
+    if (o.kinds !== undefined && !o.kinds.includes(event.kind)) return;
+    if (timer !== null) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (signal.aborted) return;
+      void Promise.resolve(refresh()).catch(() => undefined);
+    }, LIVE_COALESCE_MS);
+  });
+  signal.addEventListener("abort", () => {
+    off();
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  });
+}
+
+// ---- links ----
+
+/**
+ * `O` / `o` on a URL.
+ *
+ * There is no control sequence that means "open this in the reader's browser"
+ * — OSC 8 marks text clickable and the *user* clicks — so a session over SSH
+ * cannot open anything, and that is the normal case, not the exception. The
+ * old answer was "no browser available", which was true and useless. This one
+ * does the two things that actually work: put the URL on the reader's own
+ * clipboard through their terminal (OSC 52), and say so in words that name the
+ * gesture. The URL is on screen as a hyperlink besides.
+ *
+ * Whether OSC 52 lands is the far-side terminal's decision and there is no
+ * reply to read, which is why the toast says what was sent, never that it
+ * arrived.
+ */
+export function openLink(ctx: Ctx, url: string): void {
+  if (ctx.openUrl(url)) {
+    ctx.toast("opening in your browser", "success");
+    return;
+  }
+  ctx.copy(url);
+  ctx.toast("copied — cmd-click the link to open it", "success");
+}
+
+/** A branch-safe slug of a path: `src/main.ts` → `src-main-ts`. */
+export function slug(path: string): string {
+  return (
+    path
+      .replace(/[^A-Za-z0-9._/-]+/g, "-")
+      .replace(/[/.]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "file"
+  );
+}
+
 // ---- errors and time ----
 
 const MESSAGES: Record<string, string> = {
@@ -572,6 +692,66 @@ const MESSAGES: Record<string, string> = {
  */
 export const ORIGIN_MARK = "\u25b2";
 export const PIN_MARK = "\u25c6";
+
+/**
+ * The counts every repo row wears: open issues and open pulls, then comments
+ * on a conversation row. Three glyphs, documented in `docs/DESIGN.md`, from
+ * the same safe set as everything else.
+ */
+export const ISSUE_MARK = G.ring;
+export const PULL_MARK = G.pull;
+export const COMMENT_MARK = G.comment;
+
+/**
+ * A formatter for a whole list's counts, so the numbers line up as a column
+ * instead of jittering row to row. Zero is *absent*, not `\u25cb 0` \u2014 an empty
+ * queue should read as quiet, and a column of zeroes reads as noise.
+ *
+ * Take the counts from `countsForRepos` / `withCounts`, never from a query per
+ * row: a list is exactly where N+1 hurts most, and `test/counts.test.ts`
+ * exists to keep it that way.
+ */
+export function countsColumn(
+  all: readonly (RepoCounts | undefined)[],
+): (counts: RepoCounts | undefined) => string {
+  const width = (pick: (c: RepoCounts) => number): number =>
+    all.reduce(
+      (max, c) =>
+        c === undefined || pick(c) === 0
+          ? max
+          : Math.max(max, String(pick(c)).length),
+      0,
+    );
+  const issueW = width((c) => c.openIssues);
+  const pullW = width((c) => c.openPulls);
+  return (counts) => {
+    if (counts === undefined) return "";
+    if (counts.openIssues === 0 && counts.openPulls === 0) return "";
+    const issues =
+      issueW === 0
+        ? ""
+        : counts.openIssues === 0
+          ? " ".repeat(issueW + 2)
+          : `${ISSUE_MARK} ${pad(String(counts.openIssues), issueW, "right")}`;
+    const pulls =
+      pullW === 0
+        ? ""
+        : counts.openPulls === 0
+          ? " ".repeat(pullW + 2)
+          : `${PULL_MARK} ${pad(String(counts.openPulls), pullW, "right")}`;
+    return `${issues}${issues !== "" && pulls !== "" ? "  " : ""}${pulls}`.trimEnd();
+  };
+}
+
+/** `\u25ad 4` on a conversation row; nothing at all when nobody has replied. */
+export function commentsMeta(count: number): string {
+  return count > 0 ? `${COMMENT_MARK} ${count}` : "";
+}
+
+/** Join a row's meta pieces, dropping the empty ones. */
+export function metaOf(...parts: readonly string[]): string {
+  return parts.filter((p) => p !== "").join("  ");
+}
 
 /** A stable error code, as a sentence. Unknown codes are shown verbatim. */
 export function errorText(code: string): string {

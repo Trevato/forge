@@ -21,14 +21,14 @@ import {
   syncOriginNow,
 } from "../../actions/origins.ts";
 import type { OriginRepoRow } from "../../core/origins.ts";
-import { isPinned } from "../../core/pins.ts";
-import { getRepoById, type Repo } from "../../core/repos.ts";
+import { pinnedRepoIds } from "../../core/pins.ts";
+import { getRepoById, getReposByIds, type Repo } from "../../core/repos.ts";
 import { sourceFor } from "../../view/source.ts";
 import type { Origin } from "../../origins/types.ts";
 import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
-import { BOLD, style, type Style } from "../term/style.ts";
+import { BOLD, UNDERLINE, style, type Style } from "../term/style.ts";
 import { G, type Rect, type Screen as TermScreen } from "../term/screen.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -43,6 +43,7 @@ import {
   confirmScreen,
   drawList,
   errorText,
+  openLink,
   promptScreen,
   runAsync,
   type ListRow,
@@ -492,12 +493,10 @@ function handoffKey(ctx: Ctx, h: Handoff, key: string): boolean {
     return true;
   }
   if (key === "o") {
-    if (ctx.openUrl(h.url)) ctx.toast("opening in your browser", "success");
-    else
-      ctx.toast(
-        "no browser on this machine — scan the code, or open the short link",
-        "attn",
-      );
+    // Over SSH there is no browser here to reach, so the URL goes to the
+    // reader's *own* clipboard and the toast names the gesture that opens
+    // the link on screen. Three routes, no dead end.
+    openLink(ctx, h.url);
     return true;
   }
   return false;
@@ -566,8 +565,31 @@ function drawHandoff(
     y = drawQr(surface, { x: inner.x, y, w: inner.w, h: inner.h }, qr);
     y++;
   }
-  if (h.link !== "") line(h.link, style(c.accent, c.card));
-  for (const part of urlLines) line(part, style(c.faint, c.card));
+  // Both URLs are real hyperlinks (OSC 8), so a terminal that supports them
+  // turns the one thing this screen exists to hand over into something the
+  // reader can click instead of retype. The QR and the plain text stay for
+  // everybody else — three routes to one URL, because none of them is
+  // reliable on its own.
+  if (h.link !== "") {
+    surface.linkText(
+      inner.x,
+      y++,
+      truncate(h.link, inner.w),
+      style(c.accent, c.card, UNDERLINE),
+      h.link,
+      right,
+    );
+  }
+  for (const part of urlLines) {
+    surface.linkText(
+      inner.x,
+      y++,
+      truncate(part, inner.w),
+      style(c.faint, c.card),
+      h.url,
+      right,
+    );
+  }
   y++;
   const x = spinner(surface, inner.x, y, c, ctx.tick);
   surface.text(
@@ -841,6 +863,27 @@ export function originReposScreen(
   const shown = (): OriginRepoRow[] =>
     repos.filter((r) => filter.matches(`${r.fullName} ${r.description}`));
 
+  /**
+   * The local repositories these rows were mirrored into, and which of them
+   * are pinned — both resolved for the whole page in one query each, because
+   * `getRepoById` and `isPinned` inside `rows.map` was two queries per row on
+   * a list that routinely runs to a few hundred.
+   */
+  const mirrors = (): {
+    repoOf: (row: OriginRepoRow) => Repo | undefined;
+    pinned: ReadonlySet<string>;
+  } => {
+    const held = getReposByIds(
+      f.db,
+      repos.flatMap((r) => (r.mirroredAs === null ? [] : [r.mirroredAs])),
+    );
+    return {
+      repoOf: (row) =>
+        row.mirroredAs === null ? undefined : held.get(row.mirroredAs),
+      pinned: f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>(),
+    };
+  };
+
   /** The local repository a row was mirrored into, if it still exists. */
   const mirrorOf = (remote: OriginRepoRow): Repo | undefined =>
     remote.mirroredAs === null
@@ -885,17 +928,15 @@ export function originReposScreen(
         });
         return;
       }
+      const page = mirrors();
       drawList(
         s,
         body!,
         c,
         state,
         rows.map((remote): ListRow => {
-          const held = mirrorOf(remote);
-          const pinned =
-            held !== undefined &&
-            f.user !== undefined &&
-            isPinned(f.db, f.user.id, held.id);
+          const held = page.repoOf(remote);
+          const pinned = held !== undefined && page.pinned.has(held.id);
           const marks = [
             remote.private ? "private" : "public",
             remote.fork ? "fork" : "",
