@@ -49,6 +49,17 @@ const TOKEN_KEYS = [
   "tok-type",
   "tok-constant",
   "tok-meta",
+  "tok-property",
+  "tok-operator",
+  "tok-punctuation",
+  "tok-tag",
+  "tok-attribute",
+  "tok-regex",
+  "tok-variable",
+  "tok-decorator",
+  "tok-heading",
+  "tok-emphasis",
+  "tok-link",
 ] as const;
 
 type TokenKey = (typeof TOKEN_KEYS)[number];
@@ -98,6 +109,17 @@ const porcelain: Palette = {
   "tok-type": "#953800",
   "tok-constant": "#0550ae",
   "tok-meta": "#116329",
+  "tok-property": "#0550ae",
+  "tok-operator": "#57606a",
+  "tok-punctuation": "#8c959f",
+  "tok-tag": "#116329",
+  "tok-attribute": "#953800",
+  "tok-regex": "#1a7f37",
+  "tok-variable": "#953800",
+  "tok-decorator": "#8250df",
+  "tok-heading": "#0550ae",
+  "tok-emphasis": "#24292f",
+  "tok-link": "#0969da",
 };
 
 /** Ink — the default dark: near-black, high legibility, no haze. */
@@ -136,6 +158,17 @@ const ink: Palette = {
   "tok-type": "#ffa657",
   "tok-constant": "#79c0ff",
   "tok-meta": "#7ee787",
+  "tok-property": "#79c0ff",
+  "tok-operator": "#9198a1",
+  "tok-punctuation": "#6e7681",
+  "tok-tag": "#7ee787",
+  "tok-attribute": "#ffa657",
+  "tok-regex": "#56d364",
+  "tok-variable": "#ffa657",
+  "tok-decorator": "#d2a8ff",
+  "tok-heading": "#79c0ff",
+  "tok-emphasis": "#f0f6fc",
+  "tok-link": "#58a6ff",
 };
 
 /** Paper — warm ivory and ink, tuned for long reading (Flexoki lineage). */
@@ -174,6 +207,17 @@ const paper: Palette = {
   "tok-type": "#bc5215",
   "tok-constant": "#205ea6",
   "tok-meta": "#66800b",
+  "tok-property": "#205ea6",
+  "tok-operator": "#6f6e69",
+  "tok-punctuation": "#b7b5ac",
+  "tok-tag": "#66800b",
+  "tok-attribute": "#bc5215",
+  "tok-regex": "#24837b",
+  "tok-variable": "#bc5215",
+  "tok-decorator": "#5e409d",
+  "tok-heading": "#205ea6",
+  "tok-emphasis": "#100f0f",
+  "tok-link": "#205ea6",
 };
 
 /** Dawn — rosé-tinted parchment; soft, warm, unhurried (Rosé Pine Dawn). */
@@ -212,6 +256,17 @@ const dawn: Palette = {
   "tok-type": "#56949f",
   "tok-constant": "#907aa9",
   "tok-meta": "#56949f",
+  "tok-property": "#56949f",
+  "tok-operator": "#797593",
+  "tok-punctuation": "#9893a5",
+  "tok-tag": "#286983",
+  "tok-attribute": "#d7827e",
+  "tok-regex": "#ea9d34",
+  "tok-variable": "#575279",
+  "tok-decorator": "#907aa9",
+  "tok-heading": "#b4637a",
+  "tok-emphasis": "#575279",
+  "tok-link": "#286983",
 };
 
 /** Midnight — deep indigo night; electric, focused (Tokyo Night lineage). */
@@ -250,6 +305,17 @@ const midnight: Palette = {
   "tok-type": "#2ac3de",
   "tok-constant": "#ff9e64",
   "tok-meta": "#73daca",
+  "tok-property": "#7dcfff",
+  "tok-operator": "#89ddff",
+  "tok-punctuation": "#7982a9",
+  "tok-tag": "#f7768e",
+  "tok-attribute": "#bb9af7",
+  "tok-regex": "#b4f9f8",
+  "tok-variable": "#c0caf5",
+  "tok-decorator": "#e0af68",
+  "tok-heading": "#7aa2f7",
+  "tok-emphasis": "#c0caf5",
+  "tok-link": "#73daca",
 };
 
 /** Aurora — polar blue-grey with glacial accents (Nord lineage). */
@@ -288,6 +354,17 @@ const aurora: Palette = {
   "tok-type": "#8fbcbb",
   "tok-constant": "#d08770",
   "tok-meta": "#ebcb8b",
+  "tok-property": "#88c0d0",
+  "tok-operator": "#81a1c1",
+  "tok-punctuation": "#7b88a1",
+  "tok-tag": "#81a1c1",
+  "tok-attribute": "#8fbcbb",
+  "tok-regex": "#ebcb8b",
+  "tok-variable": "#d8dee9",
+  "tok-decorator": "#ebcb8b",
+  "tok-heading": "#88c0d0",
+  "tok-emphasis": "#eceff4",
+  "tok-link": "#88c0d0",
 };
 
 export const THEMES = {

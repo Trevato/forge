@@ -55,6 +55,13 @@ export interface PageOptions {
    * never interpolated into the script text.
    */
   scriptJs?: string;
+  /**
+   * A same-origin script file this page needs (today: the highlighter bundle
+   * the editor loads). It is the one thing that relaxes the script CSP — from
+   * "this page's nonce only" to "this page's nonce, or a file from this
+   * origin" — so pages that do not ask for it keep the stricter policy.
+   */
+  scriptAsset?: string;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
@@ -312,6 +319,10 @@ export function page(options: PageOptions, status = 200): Response {
           href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
         />
         <link rel="stylesheet" href="/assets/forge.css" />
+        ${when(
+          options.scriptAsset,
+          (src) => html`<script type="module" src="${src}"></script>`,
+        )}
         ${options.styleCss
           ? raw(`<style nonce="${nonce}">${options.styleCss}</style>`)
           : null}
@@ -370,7 +381,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
   });

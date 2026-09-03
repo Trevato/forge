@@ -41,6 +41,34 @@ describe("composeLine", () => {
     expect(textOf(composeLine(text, tokens, changed))).toBe(text);
   });
 
+  test("a refined token keeps both classes through the change layer", () => {
+    // A regex is a string *and* a regex; a word-diff change rides on top of
+    // both. The three layers have no reason to agree on boundaries, so this
+    // is the case that proves the character-level merge.
+    const text = "const re = /a+b/g;";
+    const tokens = highlightLines(text, "ts")[0]!;
+    const at = text.indexOf("/a+b/g");
+    const changed = Array.from(text, (_, i) => i >= at && i < at + 6);
+    const out = composeLine(text, tokens, changed).text;
+    expect(out).toContain('class="tok-string tok-regex wd">/a+b/g');
+    expect(textOf(composeLine(text, tokens, changed))).toBe(text);
+
+    // Half a token changed splits it, and both halves keep both classes.
+    const half = Array.from(text, (_, i) => i >= at && i < at + 3);
+    const split = composeLine(text, tokens, half).text;
+    expect(split).toContain('class="tok-string tok-regex wd">/a+');
+    expect(split).toContain('class="tok-string tok-regex">b/g');
+    expect(textOf(composeLine(text, tokens, half))).toBe(text);
+  });
+
+  test("a plain token with only a kind still gets its span", () => {
+    const text = "a **bold** word";
+    const tokens = highlightLines(text, "markdown")[0]!;
+    const out = composeLine(text, tokens, undefined).text;
+    expect(out).toContain('class="tok-emphasis">**bold**');
+    expect(textOf(composeLine(text, tokens, undefined))).toBe(text);
+  });
+
   test("change layer alone yields wd spans", () => {
     const text = "hello world";
     const changed = Array.from(text, (_, i) => i < 5); // "hello"

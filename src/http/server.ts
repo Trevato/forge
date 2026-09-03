@@ -24,6 +24,7 @@ import { defect } from "../kernel/error.ts";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { css } from "../web/style.ts";
+import { assetResponse, highlightAsset } from "../web/asset.ts";
 import { isThemeName } from "../design/themes.ts";
 import {
   home,
@@ -251,6 +252,14 @@ export function buildRouter(): Router<Handler> {
   // Literal-prefix routes come before parameterized repo routes; the router
   // matches in insertion order.
   router.add("GET", "/assets/forge.css", stylesheet);
+  // The highlighter bundle, content-addressed. A stale hash is a 404 rather
+  // than a redirect: the page that asked for it names the hash it was built
+  // with, so a miss means an old tab, and an old tab should reload.
+  router.add("GET", "/assets/:name.js", async (ctx) => {
+    const asset = await highlightAsset();
+    if (asset === null || ctx.params.name !== asset.name) return notFound();
+    return assetResponse(asset);
+  });
   router.add("GET", "/", home);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);

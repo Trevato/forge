@@ -70,7 +70,13 @@ import {
 } from "./explorer.ts";
 import { accountOnly, hostLabel, originIcon } from "./origins.ts";
 import { refSetFrom } from "./refs.ts";
-import { codePage, renderBlob, renderCode, rawResponse } from "./repo.ts";
+import {
+  blobView,
+  codePage,
+  renderBlob,
+  renderCode,
+  rawResponse,
+} from "./repo.ts";
 import {
   filterBar,
   readQuery,
@@ -251,7 +257,13 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
-  const pane = renderBlob(scope, { refs, ref, path, blob: blob.value });
+  const pane = renderBlob(scope, {
+    refs,
+    ref,
+    path,
+    blob: blob.value,
+    view: blobView(ctx.url.searchParams.get("view")),
+  });
   if (ctx.url.searchParams.get("fragment") === "1") return fragment(pane);
 
   const explorer = await loadExplorer(scope.source, ref, path, true);
