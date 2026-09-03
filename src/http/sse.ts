@@ -19,6 +19,35 @@ import type { ForgeEvent } from "../core/events.ts";
 
 const HEARTBEAT_MS = 25_000;
 
+/**
+ * How much unread stream a client may be behind before it is dropped.
+ *
+ * An SSE connection whose reader has stopped reading — a laptop that slept, a
+ * tab the OS froze, a scraper that opened the stream and walked away — does
+ * not error. It simply never drains, and every event the forge appends is
+ * another buffer held alive by a controller nobody is pulling from. With a
+ * fleet of agents pushing events that is a memory leak with a heartbeat.
+ *
+ * So the buffer is a budget. A quarter-megabyte is thousands of events, far
+ * more than any live viewer is ever behind; a client past it is not slow, it
+ * is gone, and dropping it is both correct and kind. Nothing is lost by the
+ * drop: the outbox is the source of truth and a reconnect resumes from the
+ * last id it saw.
+ */
+const MAX_BUFFERED_BYTES = 256 * 1024;
+
+/**
+ * How many streams have been dropped for falling too far behind. Exported so
+ * the behaviour can be asserted rather than assumed — a backpressure policy
+ * nobody can observe is a comment.
+ */
+let slowClientsDropped = 0;
+export const sseDroppedCount = (): number => slowClientsDropped;
+/** Test seam. */
+export const resetSseDroppedCount = (): void => {
+  slowClientsDropped = 0;
+};
+
 /** Send one frame. `id` lets a reconnecting client resume where it left off. */
 export type Emit = (event: string, data: unknown, id?: string) => void;
 
@@ -34,51 +63,68 @@ export function eventStream(
   const encoder = new TextEncoder();
   let cleanup = () => {};
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      let open = true;
-      const write = (text: string) => {
-        if (!open) return;
-        try {
-          controller.enqueue(encoder.encode(text));
-        } catch {
-          cleanup();
-        }
-      };
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        let open = true;
+        const write = (text: string) => {
+          if (!open) return;
+          try {
+            controller.enqueue(encoder.encode(text));
+          } catch {
+            cleanup();
+            return;
+          }
+          // `desiredSize` is the budget minus what is still queued, so it
+          // goes negative exactly when a reader has stopped keeping up. One
+          // check after the write, no bookkeeping of our own, and the client
+          // is released the moment it stops being one.
+          const room = controller.desiredSize;
+          if (room !== null && room <= 0) {
+            slowClientsDropped++;
+            cleanup();
+          }
+        };
 
-      const emit: Emit = (event, data, id) => {
-        write(
-          `${id === undefined ? "" : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
-        );
-      };
+        const emit: Emit = (event, data, id) => {
+          write(
+            `${id === undefined ? "" : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+          );
+        };
 
-      const heartbeat = setInterval(() => write(`: ping\n\n`), HEARTBEAT_MS);
-      // Assigned before `register` runs: a source that finishes immediately
-      // (a job that is already done) must find a cleanup that works.
-      let unsubscribe = () => {};
-      cleanup = () => {
-        if (!open) return;
-        open = false;
-        unsubscribe();
-        clearInterval(heartbeat);
-        try {
-          controller.close();
-        } catch {
-          // already closed
-        }
-      };
+        const heartbeat = setInterval(() => write(`: ping\n\n`), HEARTBEAT_MS);
+        // Assigned before `register` runs: a source that finishes immediately
+        // (a job that is already done) must find a cleanup that works.
+        let unsubscribe = () => {};
+        cleanup = () => {
+          if (!open) return;
+          open = false;
+          unsubscribe();
+          clearInterval(heartbeat);
+          try {
+            controller.close();
+          } catch {
+            // already closed
+          }
+        };
 
-      request.signal.addEventListener("abort", cleanup);
-      write(`: connected\n\n`);
-      unsubscribe = register(emit, () => cleanup());
-      // A registration that closed the stream synchronously leaves an
-      // unsubscribe nobody has run yet.
-      if (!open) unsubscribe();
+        request.signal.addEventListener("abort", cleanup);
+        write(`: connected\n\n`);
+        unsubscribe = register(emit, () => cleanup());
+        // A registration that closed the stream synchronously leaves an
+        // unsubscribe nobody has run yet.
+        if (!open) unsubscribe();
+      },
+      cancel() {
+        cleanup();
+      },
     },
-    cancel() {
-      cleanup();
-    },
-  });
+    // Byte-counted, not chunk-counted. The default strategy counts one per
+    // enqueue with a high-water mark of one, which would call every stream
+    // that is two frames ahead of its reader "full" — the budget has to be
+    // in the unit the leak is measured in.
+    new ByteLengthQueuingStrategy({ highWaterMark: MAX_BUFFERED_BYTES }),
+  );
 
   return new Response(stream, {
     headers: {

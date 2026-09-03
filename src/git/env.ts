@@ -3,6 +3,12 @@
  * deterministic — server-side git must never inherit operator config — and
  * every spawn carries a wall-clock timeout with a kill, because a hung git
  * process must never become a hung request.
+ *
+ * It also carries the one limit that keeps a fleet of agents from taking the
+ * host down: a semaphore. A repo page is half a dozen git processes, so two
+ * hundred agents browsing at once is a thousand forks, and a thousand forks
+ * is not slow — it is a machine that stops answering. The queue is the
+ * difference between "the forge got busy" and "the forge fell over".
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -19,6 +25,97 @@ export function gitEnv(extra?: Record<string, string>): Record<string, string> {
     ...extra,
   };
 }
+
+// ---- the spawn limit ----
+
+/**
+ * A counting semaphore with a FIFO queue. Twenty lines, no dependency, and
+ * the only thing standing between an agent fleet and `fork: Resource
+ * temporarily unavailable`.
+ *
+ * FIFO on purpose: LIFO would be marginally better for cache locality and
+ * catastrophically worse for fairness, which is the entire point — the
+ * request that has waited longest goes next, so a burst degrades everyone's
+ * latency a little rather than starving somebody forever.
+ */
+export class Gate {
+  private active = 0;
+  private readonly waiting: (() => void)[] = [];
+  private peak = 0;
+
+  constructor(readonly limit: number) {}
+
+  async acquire(): Promise<() => void> {
+    if (this.active < this.limit) {
+      this.active++;
+    } else {
+      // Wait for a permit to be *handed* to us. The releaser does not
+      // decrement when it wakes somebody: the count stays taken and simply
+      // changes owner. Decrementing first would open a window in which a
+      // caller arriving synchronously slips in ahead of the queue and the
+      // limit is briefly exceeded — a semaphore that is only usually one.
+      await new Promise<void>((resolve) => this.waiting.push(resolve));
+    }
+    if (this.active > this.peak) this.peak = this.active;
+    let released = false;
+    return () => {
+      // Idempotent: a caller that releases twice must not hand out a permit
+      // it never held, which is how a semaphore quietly stops being one.
+      if (released) return;
+      released = true;
+      const next = this.waiting.shift();
+      if (next !== undefined) next();
+      else this.active--;
+    };
+  }
+
+  /** Run `work` holding one permit, released however it ends. */
+  async run<T>(work: () => Promise<T>): Promise<T> {
+    const release = await this.acquire();
+    try {
+      return await work();
+    } finally {
+      release();
+    }
+  }
+
+  stats(): { active: number; waiting: number; limit: number; peak: number } {
+    return {
+      active: this.active,
+      waiting: this.waiting.length,
+      limit: this.limit,
+      peak: this.peak,
+    };
+  }
+
+  /** Test seam. */
+  resetPeak(): void {
+    this.peak = this.active;
+  }
+}
+
+const limitFromEnv = (name: string, fallback: number): number => {
+  const parsed = Number(process.env[name]);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
+
+/**
+ * Short-lived plumbing: `rev-parse`, `cat-file`, `diff`, `commit-tree`. These
+ * are milliseconds each, so a small limit costs almost nothing in latency and
+ * buys a hard ceiling on process count.
+ */
+export const gitGate = new Gate(limitFromEnv("FORGE_GIT_CONCURRENCY", 8));
+
+/**
+ * Pack transfers: `upload-pack` and `receive-pack`. A separate pool, and that
+ * separation is load-bearing — a `receive-pack` holds its permit for the
+ * whole push, and the pre-receive hook it runs comes back into the forge and
+ * needs *plumbing* permits to check branch protection. One shared pool would
+ * deadlock the moment pushes filled it.
+ */
+export const transferGate = new Gate(
+  limitFromEnv("FORGE_GIT_TRANSFER_CONCURRENCY", 16),
+);
 
 export interface GitFailure {
   readonly code: number;
@@ -39,27 +136,29 @@ export async function runGitRaw(
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<Result<Uint8Array, GitFailure>> {
-  const proc = Bun.spawn(["git", ...args], {
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-    env: gitEnv(options.env),
-    stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  return gitGate.run(async () => {
+    const proc = Bun.spawn(["git", ...args], {
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      env: gitEnv(options.env),
+      stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const timeoutMs = options.timeoutMs ?? 30_000;
-  const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      readAll(proc.stdout),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    if (code !== 0) return err({ code, stderr: stderr.trim(), args });
-    return ok(stdout);
-  } finally {
-    clearTimeout(timer);
-  }
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
+    try {
+      const [stdout, stderr, code] = await Promise.all([
+        readAll(proc.stdout),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      if (code !== 0) return err({ code, stderr: stderr.trim(), args });
+      return ok(stdout);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 /** Run git to completion, capturing stdout as trimmed text. */
@@ -87,27 +186,29 @@ export async function runGitCapture(
   args: readonly string[],
   options: RunOptions = {},
 ): Promise<GitCapture> {
-  const proc = Bun.spawn(["git", ...args], {
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-    env: gitEnv(options.env),
-    stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
-    stdout: "pipe",
-    stderr: "pipe",
+  return gitGate.run(async () => {
+    const proc = Bun.spawn(["git", ...args], {
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      env: gitEnv(options.env),
+      stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const timer = setTimeout(
+      () => proc.kill("SIGKILL"),
+      options.timeoutMs ?? 30_000,
+    );
+    try {
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      return { code, stdout, stderr };
+    } finally {
+      clearTimeout(timer);
+    }
   });
-  const timer = setTimeout(
-    () => proc.kill("SIGKILL"),
-    options.timeoutMs ?? 30_000,
-  );
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { code, stdout, stderr };
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 /**

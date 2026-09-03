@@ -132,7 +132,17 @@ import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { cookieValue, type Auth, type Ctx, type Handler } from "./context.ts";
-import { json, noRoute, notFound } from "./respond.ts";
+import { apiError, json, noRoute, notFound } from "./respond.ts";
+import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
+import {
+  MAX_KEY_LENGTH,
+  claimInFlight,
+  joinInFlight,
+  lookupIdempotent,
+  requestFingerprint,
+  storeIdempotent,
+  type StoredResponse,
+} from "../core/idempotency.ts";
 import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
 
@@ -326,11 +336,7 @@ export function buildRouter(): Router<Handler> {
     browseCommitPage,
   );
   router.add("GET", "/origins/:id/r/:owner/:name/issues", browseIssues);
-  router.add(
-    "GET",
-    "/origins/:id/r/:owner/:name/issues/:number",
-    browseIssue,
-  );
+  router.add("GET", "/origins/:id/r/:owner/:name/issues/:number", browseIssue);
   router.add("GET", "/origins/:id/r/:owner/:name/pulls", browsePulls);
   router.add("GET", "/origins/:id/r/:owner/:name/pulls/:number", browsePull);
   // The one mutation a live browse offers.
@@ -455,7 +461,7 @@ export function buildRouter(): Router<Handler> {
 async function withGitAccess(
   ctx: Ctx,
   service: GitService,
-  serve: (dir: string, repoId: string) => Response,
+  serve: (dir: string, repoId: string) => Response | Promise<Response>,
 ): Promise<Response> {
   let repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
   const write = service === "git-receive-pack";
@@ -493,6 +499,162 @@ async function withGitAccess(
   }
   return serve(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.id);
 }
+
+// ---- limits and replays ----
+
+/**
+ * The key a token-authenticated caller is limited and de-duplicated under.
+ *
+ * It is the *hash* of the presented secret, never the secret: this value
+ * ends up in an in-memory map and in a database row, and neither is a place
+ * a bearer token belongs. Sessions and passwords return `undefined` and are
+ * therefore exempt — a browser is a person, and throttling the UI to protect
+ * the forge from automation punishes the wrong party.
+ */
+function tokenCredential(request: Request, auth: Auth): string | undefined {
+  if (auth.via !== "token") return undefined;
+  const header = request.headers.get("authorization");
+  if (header === null) return undefined;
+  if (header.startsWith("Bearer ")) return sha256(header.slice(7));
+  if (header.startsWith("Basic ")) {
+    const decoded = Buffer.from(header.slice(6), "base64").toString();
+    const colon = decoded.indexOf(":");
+    return colon === -1 ? undefined : sha256(decoded.slice(colon + 1));
+  }
+  return undefined;
+}
+
+const tooManyRequests = (verdict: Verdict): Response =>
+  apiError(
+    "rate_limited",
+    429,
+    `too many requests: ${verdict.limit} per minute per token — retry in ${verdict.retryAfter}s`,
+  );
+
+/**
+ * Headers on every token-authenticated answer, refusal or not. A client that
+ * can only learn its budget by being refused will find out by being refused;
+ * a client told its remaining allowance on every response can pace itself,
+ * which is the outcome the limit actually wants.
+ */
+function withRateHeaders(
+  response: Response,
+  verdict: Verdict | undefined,
+): Response {
+  if (verdict === undefined) return response;
+  try {
+    response.headers.set("x-ratelimit-limit", String(verdict.limit));
+    response.headers.set("x-ratelimit-remaining", String(verdict.remaining));
+    response.headers.set("x-ratelimit-reset", String(verdict.reset));
+    if (!verdict.allowed) {
+      response.headers.set("retry-after", String(verdict.retryAfter));
+    }
+  } catch {
+    // An immutable header set is not worth failing a request over; the
+    // limit itself is still enforced.
+  }
+  return response;
+}
+
+const REPLAYABLE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Honour `Idempotency-Key` on API mutations.
+ *
+ * Deliberately here and not in `api.ts`: every route keeps its shape, no
+ * handler learns that retries exist, and a route added tomorrow gets this
+ * for free. The rules live in `core/idempotency.ts`; this is the plumbing
+ * that reads the header, replays the answer, and remembers the new one.
+ */
+async function withIdempotency(
+  app: App,
+  request: Request,
+  url: URL,
+  credential: string,
+  invoke: (request: Request) => Response | Promise<Response>,
+): Promise<Response> {
+  const key = request.headers.get("idempotency-key");
+  if (
+    key === null ||
+    !REPLAYABLE.has(request.method) ||
+    !url.pathname.startsWith("/api/v1/")
+  ) {
+    return invoke(request);
+  }
+  if (key.length === 0 || key.length > MAX_KEY_LENGTH) {
+    return apiError(
+      "invalid_idempotency_key",
+      422,
+      `Idempotency-Key must be 1..${MAX_KEY_LENGTH} characters`,
+    );
+  }
+
+  // Read the body once and hand the handler a request carrying the same
+  // bytes. Cloning would work too; this way there is exactly one copy, and
+  // exactly one thing that can be hashed.
+  const raw = await request.text();
+  const fingerprint = requestFingerprint(request.method, url.pathname, raw);
+  const replay = (): Request =>
+    new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      ...(raw === "" ? {} : { body: raw }),
+    });
+
+  const stored = lookupIdempotent(app.db, credential, key);
+  if (stored !== undefined) {
+    if (stored.fingerprint !== fingerprint) return keyReused();
+    return fromStored(stored.response, true);
+  }
+  // A retry that arrives while the first attempt is still running joins it
+  // rather than starting a second — the duplicate this whole path prevents.
+  const racing = joinInFlight(credential, key);
+  if (racing !== undefined) return fromStored(await racing, true);
+
+  const work = (async (): Promise<StoredResponse> => {
+    const response = await invoke(replay());
+    const body = await response.clone().text();
+    const outcome: StoredResponse = {
+      status: response.status,
+      body,
+      contentType: response.headers.get("content-type") ?? "application/json",
+    };
+    // A 5xx is not an outcome, it is the absence of one. Remembering it
+    // would pin the caller to a failure it was right to retry.
+    if (response.status < 500) {
+      storeIdempotent(app.db, {
+        tokenId: credential,
+        key,
+        fingerprint,
+        response: outcome,
+      });
+    }
+    return outcome;
+  })();
+  claimInFlight(credential, key, work);
+  // The first caller gets the original answer, unlabelled: it is not a
+  // replay, and telling it otherwise would make the header useless for
+  // exactly the reconciliation it exists for.
+  return fromStored(await work, false);
+}
+
+const keyReused = (): Response =>
+  apiError(
+    "idempotency_key_reused",
+    422,
+    "this Idempotency-Key was used for a different request",
+  );
+
+const fromStored = (stored: StoredResponse, replay: boolean): Response =>
+  new Response(stored.body === "" ? null : stored.body, {
+    status: stored.status,
+    headers: {
+      "content-type": stored.contentType,
+      // So a caller can tell a replay from the original — the difference
+      // matters when you are reconciling what your retries actually did.
+      ...(replay ? { "idempotent-replay": "true" } : {}),
+    },
+  });
 
 // ---- the internal server (unix socket, hooks only) ----
 
@@ -607,6 +769,9 @@ async function clearStaleSocket(app: App): Promise<void> {
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
   await clearStaleSocket(app);
+  // One limiter per listener: its state is a minute of timestamps, and two
+  // forges in one process (every test file) must not share a budget.
+  const limiter = new RateLimiter();
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
@@ -616,15 +781,35 @@ export async function serve(app: App): Promise<Servers> {
       const matched = router.match(request.method, url.pathname);
       if (!matched) return noRoute(request.method, url.pathname);
       const auth = await resolveAuth(app, request);
+
+      // The two things standing between one runaway agent and everybody
+      // else's latency, applied before a handler runs and after auth is
+      // known — a limit needs an identity, and a replay needs a credential.
+      const credential = tokenCredential(request, auth);
+      const verdict =
+        credential === undefined
+          ? undefined
+          : limiter.take(credential, auth.scope ?? "ro");
+      if (verdict !== undefined && !verdict.allowed) {
+        return withRateHeaders(tooManyRequests(verdict), verdict);
+      }
+
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      return matched.handler({
-        app,
-        request,
-        url,
-        params: matched.params,
-        auth,
-        theme: isThemeName(themeCookie) ? themeCookie : undefined,
-      });
+      const invoke = (into: Request): Response | Promise<Response> =>
+        matched.handler({
+          app,
+          request: into,
+          url,
+          params: matched.params,
+          auth,
+          theme: isThemeName(themeCookie) ? themeCookie : undefined,
+        });
+
+      const response =
+        credential === undefined
+          ? await invoke(request)
+          : await withIdempotency(app, request, url, credential, invoke);
+      return withRateHeaders(response, verdict);
     },
     error(error) {
       app.log.error("unhandled request error", { error: String(error) });

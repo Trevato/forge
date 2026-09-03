@@ -1,0 +1,35 @@
+/**
+ * "Which repos may this viewer see", as one SQL fragment.
+ *
+ * It lived inside `repos.ts` and was correct there. It moved here the moment
+ * a second query needed it: the activity feed has to filter events by repo
+ * visibility, and doing that in JavaScript means reading a page of events,
+ * throwing most of them away, and showing the viewer a feed with holes in
+ * it. Two copies of a visibility rule is exactly the shape invariant 6 warns
+ * about — a protection kept by convention rather than by code — so there is
+ * one copy and both queries import it.
+ *
+ * The predicate takes the viewer id as `?1`. An anonymous viewer sees public
+ * repos and nothing else; a site admin sees everything.
+ */
+
+/** Repos `?1` may read, as a boolean expression over a `repo` row. */
+export const REPO_VISIBLE = `(
+  repo.visibility = 'public'
+  OR repo.owner_id = ?1
+  OR repo.owner_id IN (
+    SELECT team.org_id FROM team
+    JOIN team_member ON team_member.team_id = team.id
+    WHERE team_member.user_id = ?1)
+  OR EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
+)`;
+
+/**
+ * The predicate for a viewer who may or may not exist. An anonymous viewer
+ * cannot own anything and cannot be on a team, so the general form would
+ * already give the right answer — but it would also make SQLite plan four
+ * subqueries to prove it, on the one path (the signed-out home page) that is
+ * hit most often and cached least.
+ */
+export const repoVisible = (signedIn: boolean): string =>
+  signedIn ? REPO_VISIBLE : "repo.visibility = 'public'";

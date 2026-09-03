@@ -142,7 +142,7 @@ export class App {
   private palette = new Palette();
   private themeIndex = 0;
   private toastState: { text: string; tone: Tone; until: number } | null = null;
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private escTimer: ReturnType<typeof setTimeout> | null = null;
   private frames = 0;
   readonly ctx: Ctx;
@@ -153,6 +153,26 @@ export class App {
   /** True while any screen is loading or tracked work is in flight. */
   get busy(): boolean {
     return this.pending > 0 || this.stack.some((e) => e.loading);
+  }
+
+  /**
+   * Nothing in flight *and* nothing waiting to be drawn.
+   *
+   * `busy` alone is not the same question, and the difference is where a
+   * headless test goes flaky: work can finish, mark the screen dirty, and
+   * leave the next paint sitting on a frame timer — so a harness that only
+   * waits for `busy` can read the *previous* frame's cells and assert
+   * against a screen the app has already decided is out of date. This is the
+   * whole condition, which is what makes waiting on it a settlement rather
+   * than a guess.
+   */
+  get settled(): boolean {
+    return !this.dirty && !this.busy;
+  }
+
+  /** Frames actually painted. A harness watches it stop changing. */
+  get frameCount(): number {
+    return this.frames;
   }
 
   track<T>(work: Promise<T>): Promise<T> {
@@ -274,6 +294,42 @@ export class App {
 
   invalidate(): void {
     this.dirty = true;
+    this.schedule();
+  }
+
+  /**
+   * Ask for a frame. Not a 60fps heartbeat: a repaint is scheduled only when
+   * something has actually changed, and the timer stops as soon as nothing
+   * has.
+   *
+   * The loop used to tick every 16ms for the whole life of a session and
+   * return immediately when nothing was dirty — correct, and almost free
+   * for one terminal. For two hundred SSH sessions it is twelve thousand
+   * wakeups a second to decide, twelve thousand times, that there is nothing
+   * to draw. An idle session should cost nothing, and now does.
+   *
+   * Frames are still *coalesced* at FRAME_MS, which is the property that
+   * matters for a held `j`: a key repeat far faster than the refresh rate
+   * still produces one repaint per frame, not one per keystroke.
+   */
+  private schedule(): void {
+    if (!this.running || this.timer !== null) return;
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      this.frame();
+      // A spinner is animation and a toast expires, so both keep asking for
+      // the next frame; everything else settles and the timer goes quiet.
+      if (this.animating()) this.schedule();
+    }, FRAME_MS);
+  }
+
+  /** Is anything on screen still moving under its own steam? */
+  private animating(): boolean {
+    return (
+      this.dirty ||
+      this.toastState !== null ||
+      this.stack.some((e) => e.loading)
+    );
   }
 
   /** The one place the theme changes, so persistence has one hook to sit on. */
@@ -300,14 +356,15 @@ export class App {
     this.opts.terminal.onInput((chunk) => this.onChunk(chunk));
     this.opts.terminal.onResize((cols, rows) => this.onResize(cols, rows));
     this.opts.terminal.onClose(() => this.stop());
-    this.timer = setInterval(() => this.frame(), FRAME_MS);
     this.frame();
+    this.schedule();
   }
 
   stop(): void {
     if (!this.running) return;
     this.running = false;
-    if (this.timer !== null) clearInterval(this.timer);
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
     if (this.escTimer !== null) clearTimeout(this.escTimer);
     for (const entry of this.stack) entry.abort.abort();
     this.session.leave();

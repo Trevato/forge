@@ -594,7 +594,27 @@ export async function syncDue(app: App, now = new Date()): Promise<number> {
  * codebase has already paid for once.
  */
 export function runSync(app: App): void {
-  syncDue(app).catch((error: unknown) => {
-    app.log.error("origin sync batch failed", { error: String(error) });
-  });
+  // Single-flight, for the same reason the delivery worker is. A sweep of
+  // four origins over a slow network outlives the sixty-second tick easily,
+  // and a second sweep starting on top of the first would re-fetch every
+  // page the first is still walking — doubling the load on an origin that
+  // was already the reason the sweep is slow. `syncOrigin` already refuses
+  // to run twice for one origin; this is the same promise for the batch.
+  //
+  // Per forge, not per process: two forges in one process have unrelated
+  // origins and must not gate each other's sweeps.
+  if (sweeping.has(app)) return;
+  sweeping.add(app);
+  syncDue(app)
+    .catch((error: unknown) => {
+      app.log.error("origin sync batch failed", { error: String(error) });
+    })
+    .finally(() => {
+      sweeping.delete(app);
+    });
 }
+
+const sweeping = new WeakSet<App>();
+
+/** For tests, and for anyone asking why a tick did nothing. */
+export const syncBusy = (app: App): boolean => sweeping.has(app);
