@@ -421,15 +421,9 @@ a.row:hover .row-title { color: var(--accent); }
 .menu-item .ico { color: var(--faint); }
 .menu-item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-sep { border: 0; border-top: 1px solid var(--border); margin: 5px 4px; }
-/* Where anchor positioning exists, menus flip instead of running off-screen. */
-@supports (anchor-name: --a) {
-  .menu > summary { anchor-name: --menu-trigger; }
-  .menu-panel {
-    position: fixed; position-anchor: --menu-trigger;
-    position-area: bottom span-left; position-try-fallbacks: flip-block, flip-inline;
-    top: auto; right: auto; margin-top: 6px;
-  }
-}
+/* No anchor positioning: browsers that accept anchor-name but not
+   position-area would keep position: fixed and park the panel at the
+   viewport's corner. Absolute-inside-the-details works everywhere. */
 
 /* ---- topbar search (always a real form, so JS-off still searches) ---- */
 .topbar-search {
@@ -473,6 +467,9 @@ a.row:hover .row-title { color: var(--accent); }
 
 /* ---- dialog (progressive: every dialog has a real page behind it) ---- */
 .dialog {
+  /* The reset zeroes every margin, which takes away the UA's margin: auto
+     that centres a top-layer dialog — so a dialog must say so itself. */
+  margin: auto;
   width: min(560px, calc(100vw - 32px)); padding: 0;
   border: 1px solid var(--border); border-radius: var(--radius-lg);
   background: var(--card); color: var(--fg);
