@@ -22,9 +22,21 @@ import {
   WRAP_OFF,
   WRAP_ON,
 } from "./ansi.ts";
+import {
+  capabilitiesFor,
+  type GraphicsSetting,
+  type IconSetting,
+  type TermCapabilities,
+} from "./graphics.ts";
 import { Screen, TRAIL } from "./screen.ts";
 import { DEFAULT, PLAIN, type Style } from "./style.ts";
 import { clusters } from "./width.ts";
+
+/** The window in pixels, when the client bothered to report one. */
+export interface PixelSize {
+  readonly width: number;
+  readonly height: number;
+}
 
 export interface Terminal {
   write(bytes: Uint8Array): void;
@@ -35,13 +47,49 @@ export interface Terminal {
   /** Release the transport (raw mode, the channel). Idempotent. */
   close(): void;
   /** The `TERM` the client announced; the only env var SSH forwards. */
-  readonly term?: string;
+  readonly term?: string | undefined;
+  /**
+   * The window's size in pixels, when the transport has one. `pty-req` and
+   * `window-change` both carry it and most clients send zeros, so this is a
+   * bonus that makes image placement exact — never something to require.
+   */
+  readonly pixelSize?: PixelSize | undefined;
   /**
    * True only for the terminal attached to *this* machine's stdio. An SSH
    * channel and a test harness are both false, which is the difference
    * between "I can open your browser" and "I can only show you a link".
    */
   readonly local?: boolean;
+}
+
+/** The two per-user preferences that feed capability detection. */
+export interface TerminalPrefs {
+  readonly graphics?: GraphicsSetting | undefined;
+  readonly icons?: IconSetting | undefined;
+}
+
+/**
+ * What this session can do, from what the transport knows: the client's
+ * `TERM`, its size, and its pixel size if it sent one. Preferences override
+ * the guesses and come from the caller — `term/` does not read the database,
+ * because that is the boundary that lets one runtime serve stdio, an SSH
+ * channel and a test with no branch anywhere.
+ */
+export function terminalCapabilities(
+  terminal: Terminal,
+  prefs: TerminalPrefs = {},
+): TermCapabilities {
+  const size = terminal.size();
+  const pixels = terminal.pixelSize;
+  return capabilitiesFor({
+    term: terminal.term,
+    graphics: prefs.graphics,
+    icons: prefs.icons,
+    cols: size.cols,
+    rows: size.rows,
+    pixelWidth: pixels?.width,
+    pixelHeight: pixels?.height,
+  });
 }
 
 const encoder = new TextEncoder();
@@ -283,6 +331,8 @@ export interface HeadlessTerminal extends Terminal {
   /** Push input as if the user typed it. */
   feed(bytes: Uint8Array | string): void;
   resize(cols: number, rows: number): void;
+  /** Pretend the client reported a window size in pixels (a `pty-req` does). */
+  setPixelSize(width: number, height: number): void;
   /** The grid our own ANSI produced — the renderer's self-check. */
   readonly screen: Screen;
   toText(): string;
@@ -296,9 +346,14 @@ export interface HeadlessTerminal extends Terminal {
  * the two grids diverge and the test catches it — which is worth far more
  * than substring-matching ANSI soup.
  */
-export function headlessTerminal(cols = 80, rows = 24): HeadlessTerminal {
+export function headlessTerminal(
+  cols = 80,
+  rows = 24,
+  term?: string,
+): HeadlessTerminal {
   let cursorCols = cols;
   let cursorRows = rows;
+  let pixels: PixelSize | undefined;
   let all = "";
   let since = "";
   let closed = false;
@@ -341,6 +396,15 @@ export function headlessTerminal(cols = 80, rows = 24): HeadlessTerminal {
     feed(bytes) {
       const chunk = typeof bytes === "string" ? encoder.encode(bytes) : bytes;
       for (const cb of inputs) cb(chunk);
+    },
+    get term() {
+      return term;
+    },
+    get pixelSize() {
+      return pixels;
+    },
+    setPixelSize(width, height) {
+      pixels = { width, height };
     },
     resize(c, r) {
       cursorCols = c;
