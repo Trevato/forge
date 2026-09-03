@@ -62,6 +62,16 @@ export interface RemoteRepo {
   /** Last push on the origin, ISO 8601, or null when empty. */
   readonly pushedAt: string | null;
   readonly permissions: { readonly push: boolean; readonly admin: boolean };
+  /**
+   * Open conversations, as the origin counts them. GitHub's
+   * `open_issues_count` is issues *and* pull requests in one number and it
+   * offers no way to split them, so `openIssuesIncludesPulls` says whether
+   * `openIssues` is that sum — a surface that renders "3 issues" when the
+   * origin meant "3 issues and pulls" is telling a small lie, every time.
+   */
+  readonly openIssues: number;
+  readonly openPulls: number;
+  readonly openIssuesIncludesPulls: boolean;
 }
 
 export interface RemoteLabel {
@@ -94,6 +104,11 @@ export interface RemoteIssue {
   readonly closedAt: string | null;
   readonly htmlUrl: string;
   readonly comments: number;
+  /**
+   * `owner/name` on the origin. Only a cross-repo result (search) carries
+   * it — a per-repo list already knows which repo it asked about.
+   */
+  readonly repo?: string;
   readonly pull?: {
     readonly baseBranch: string;
     readonly headBranch: string;
@@ -271,6 +286,16 @@ export interface Provider {
     fullName: string,
     number: number,
   ): Promise<ProviderResult<RemoteIssue>>;
+  /**
+   * Issues and pulls matching a free-text query, across every repo the
+   * credential can see — the one read here that is not scoped to a
+   * repository, because a global search box has no repository to scope to.
+   * Bounded by the origin's own search endpoint; each hit carries `repo`.
+   */
+  searchIssues(
+    query: string,
+    limit?: number,
+  ): Promise<ProviderResult<readonly RemoteIssue[]>>;
   listComments(
     fullName: string,
     number: number,

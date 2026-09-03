@@ -40,6 +40,15 @@ export interface RepoOrigin {
   readonly fetchError: string;
 }
 
+/**
+ * What a repo list wants beside every row. Both numbers are open counts —
+ * a closed conversation is history, not a queue.
+ */
+export interface RepoCounts {
+  readonly openIssues: number;
+  readonly openPulls: number;
+}
+
 export interface Repo {
   readonly id: string;
   readonly ownerId: string;
@@ -53,6 +62,12 @@ export interface Repo {
   readonly forkParentId: string | null;
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
+  /**
+   * Open issue and pull counts. Absent from a bare `getRepo` — a single
+   * fetch on a hot path should not pay for a count nobody asked for — and
+   * always present on a list, filled by `countsForRepos` in one query.
+   */
+  readonly counts?: RepoCounts;
 }
 
 interface RepoRow {
@@ -103,6 +118,60 @@ function toRepo(row: RepoRow): Repo {
           }
         : null,
   };
+}
+
+const NO_COUNTS: RepoCounts = { openIssues: 0, openPulls: 0 };
+
+/** How many ids one `IN (...)` carries; the rest come in further rounds. */
+const COUNT_CHUNK = 500;
+
+/**
+ * Open issue and pull counts for many repos, in one grouped query per chunk
+ * — never one query per row. A repo list is the place N+1 hurts most (the
+ * dashboard asks for fifty repos at once), so the grouped shape is the only
+ * shape offered: there is deliberately no `countsForRepo` singular.
+ */
+export function countsForRepos(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, RepoCounts> {
+  const counts = new Map<string, RepoCounts>();
+  for (const id of repoIds) counts.set(id, NO_COUNTS);
+  for (let i = 0; i < repoIds.length; i += COUNT_CHUNK) {
+    const chunk = repoIds.slice(i, i + COUNT_CHUNK);
+    if (chunk.length === 0) continue;
+    const holes = chunk.map((_, n) => `?${n + 1}`).join(",");
+    const rows = db
+      .query<{ repo_id: string; kind: "issue" | "pull"; n: number }, string[]>(
+        `SELECT repo_id, kind, COUNT(*) AS n FROM issue
+         WHERE state = 'open' AND repo_id IN (${holes})
+         GROUP BY repo_id, kind`,
+      )
+      .all(...chunk);
+    for (const row of rows) {
+      const current = counts.get(row.repo_id) ?? NO_COUNTS;
+      counts.set(
+        row.repo_id,
+        row.kind === "pull"
+          ? { ...current, openPulls: row.n }
+          : { ...current, openIssues: row.n },
+      );
+    }
+  }
+  return counts;
+}
+
+/** Attach counts to a page of repos with one extra query for the page. */
+export function withCounts(db: Database, repos: Repo[]): Repo[] {
+  if (repos.length === 0) return repos;
+  const counts = countsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  return repos.map((repo) => ({
+    ...repo,
+    counts: counts.get(repo.id) ?? NO_COUNTS,
+  }));
 }
 
 export type CreateRepoError = "invalid_name" | "name_taken" | "git_init_failed";
@@ -303,13 +372,13 @@ export function listReposVisibleTo(
     where += ` AND repo.id < ?${params.length}`;
   }
   params.push(pageLimit(options.limit));
-  return db
-    .query<
-      RepoRow,
-      (string | number)[]
-    >(`${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`)
+  const rows = db
+    .query<RepoRow, (string | number)[]>(
+      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+    )
     .all(...params)
     .map(toRepo);
+  return withCounts(db, rows);
 }
 
 /** Repos owned by one user or org, visible to the viewer. */
@@ -334,13 +403,13 @@ export function listReposByOwner(
     where += ` AND repo.id < ?${params.length}`;
   }
   params.push(pageLimit(options.limit));
-  return db
-    .query<
-      RepoRow,
-      (string | number)[]
-    >(`${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`)
+  const rows = db
+    .query<RepoRow, (string | number)[]>(
+      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+    )
     .all(...params)
     .map(toRepo);
+  return withCounts(db, rows);
 }
 
 /**

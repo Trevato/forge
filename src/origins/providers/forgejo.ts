@@ -421,6 +421,38 @@ export class ForgejoProvider implements Provider {
     });
   }
 
+  /**
+   * Forgejo has a cross-repo issue search of its own, already scoped to what
+   * the credential can see — so unlike GitHub there is no scope to append,
+   * and the repo travels on each row as `repository.full_name`.
+   */
+  async searchIssues(
+    query: string,
+    limit = 30,
+  ): Promise<ProviderResult<readonly RemoteIssue[]>> {
+    const text = query.trim();
+    if (text === "") return succeed([]);
+    const ceiling = await this.pageSize();
+    const result = await this.api.call({
+      path: "/repos/issues/search",
+      query: {
+        q: text,
+        state: "all",
+        limit: Math.min(Math.max(limit, 1), ceiling),
+        page: 1,
+      },
+    });
+    if (!result.ok) return result;
+    const items: RemoteIssue[] = [];
+    for (const raw of asArray(result.value.data)) {
+      if (raw === null || typeof raw !== "object") continue;
+      const issue = toIssue(raw);
+      const repo = asString(dig(raw, "repository", "full_name"));
+      items.push(repo === "" ? issue : { ...issue, repo });
+    }
+    return succeed(items);
+  }
+
   async getIssue(
     fullName: string,
     number: number,
@@ -698,6 +730,11 @@ function toRepo(raw: unknown): RemoteRepo {
       push: asBool(dig(raw, "permissions", "push")),
       admin: asBool(dig(raw, "permissions", "admin")),
     },
+    // Forgejo separates the two, so no honesty flag is needed: its
+    // `open_issues_count` really is issues alone.
+    openIssues: asNumber(field(raw, "open_issues_count")),
+    openPulls: asNumber(field(raw, "open_pr_counter")),
+    openIssuesIncludesPulls: false,
   };
 }
 

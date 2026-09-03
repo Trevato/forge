@@ -512,6 +512,67 @@ export function deleteLabel(
   );
 }
 
+/** How many ids one `IN (...)` carries; the rest come in further rounds. */
+const GROUP_CHUNK = 500;
+
+const holes = (n: number): string =>
+  Array.from({ length: n }, (_, i) => `?${i + 1}`).join(",");
+
+/**
+ * Labels for a page of issues, in one grouped query — the shape a list must
+ * use. `labelsFor` below is the singular, and calling it in a loop is the
+ * N+1 this exists to replace.
+ */
+export function labelsForIssues(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, Label[]> {
+  const byIssue = new Map<string, Label[]>();
+  for (const id of issueIds) byIssue.set(id, []);
+  for (let i = 0; i < issueIds.length; i += GROUP_CHUNK) {
+    const chunk = issueIds.slice(i, i + GROUP_CHUNK);
+    if (chunk.length === 0) continue;
+    const rows = db
+      .query<Label & { issue_id: string }, string[]>(
+        `SELECT issue_label.issue_id, label.id, label.name, label.color
+         FROM label JOIN issue_label ON issue_label.label_id = label.id
+         WHERE issue_label.issue_id IN (${holes(chunk.length)})
+         ORDER BY label.name`,
+      )
+      .all(...chunk);
+    for (const row of rows) {
+      byIssue.get(row.issue_id)?.push({
+        id: row.id,
+        name: row.name,
+        color: row.color,
+      });
+    }
+  }
+  return byIssue;
+}
+
+/** Conversation-comment counts for a page of issues, in one grouped query. */
+export function commentCounts(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const id of issueIds) counts.set(id, 0);
+  for (let i = 0; i < issueIds.length; i += GROUP_CHUNK) {
+    const chunk = issueIds.slice(i, i + GROUP_CHUNK);
+    if (chunk.length === 0) continue;
+    const rows = db
+      .query<{ issue_id: string; n: number }, string[]>(
+        `SELECT issue_id, COUNT(*) AS n FROM comment
+         WHERE kind = 'comment' AND issue_id IN (${holes(chunk.length)})
+         GROUP BY issue_id`,
+      )
+      .all(...chunk);
+    for (const row of rows) counts.set(row.issue_id, row.n);
+  }
+  return counts;
+}
+
 export function labelsFor(db: Database, issueId: string): Label[] {
   return db
     .query<Label, [string]>(

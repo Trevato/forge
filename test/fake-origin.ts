@@ -45,6 +45,10 @@ export interface FakeRepo {
   pushedAt?: string;
   push?: boolean;
   admin?: boolean;
+  /** GitHub reports issues+pulls here; Forgejo reports issues alone. */
+  openIssues?: number;
+  /** Forgejo only — GitHub has no separate pull counter. */
+  openPulls?: number;
 }
 
 export interface FakeIssue {
@@ -329,6 +333,16 @@ function route(
     const rows = state.repos.map((r) => repoJson(state, r));
     const payload = rest === "/repos/search" ? { ok: true, data: rows } : rows;
     return jsonResponse(payload, 200, { "x-total-count": String(rows.length) });
+  }
+
+  // Cross-repo issue search. Both forges hang it off a path that *looks*
+  // like a repository path (`/repos/issues/search`), which is exactly the
+  // trap an adapter falls into, so it is answered before the repo matcher.
+  if (
+    (rest === "/search/issues" && state.kind === "github") ||
+    (rest === "/repos/issues/search" && state.kind !== "github")
+  ) {
+    return searchIssuesJson(state, url, q.get("q") ?? "", q);
   }
 
   const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(.*)$/.exec(rest);
@@ -653,6 +667,59 @@ function refuse(state: FakeState): Response {
   return jsonResponse({ message: state.refuseWrite }, 422);
 }
 
+/**
+ * The cross-repo issue search, in each forge's own dialect: GitHub wraps its
+ * hits in `{items}` and names the repo only through `repository_url`;
+ * Forgejo returns a bare array whose rows carry `repository.full_name`.
+ * The scope lives inside GitHub's query string (`user:<login>`), so that
+ * token is stripped from the needle rather than matched against titles.
+ */
+function searchIssuesJson(
+  state: FakeState,
+  url: URL,
+  query: string,
+  params: URLSearchParams,
+): Response {
+  const needle = query
+    .split(/\s+/)
+    .filter((t) => t !== "" && !t.includes(":"))
+    .join(" ")
+    .toLowerCase();
+  const limit =
+    Number(params.get("per_page") ?? params.get("limit") ?? 30) || 30;
+
+  const hits: { fullName: string; issue: FakeIssue }[] = [];
+  for (const [fullName, issues] of state.issues) {
+    for (const issue of issues) {
+      const haystack = `${issue.title} ${issue.body ?? ""}`.toLowerCase();
+      if (needle !== "" && !haystack.includes(needle)) continue;
+      hits.push({ fullName, issue });
+    }
+  }
+  const page = hits.slice(0, limit);
+
+  if (state.kind === "github") {
+    return jsonResponse({
+      total_count: hits.length,
+      incomplete_results: false,
+      items: page.map(({ fullName, issue }) => ({
+        ...(issue.pull
+          ? pullJson(state, url, issue)
+          : issueJson(state, url, issue)),
+        repository_url: `${url.origin}/repos/${fullName}`,
+      })),
+    });
+  }
+  return jsonResponse(
+    page.map(({ fullName, issue }) => ({
+      ...(issue.pull
+        ? pullJson(state, url, issue)
+        : issueJson(state, url, issue)),
+      repository: { full_name: fullName },
+    })),
+  );
+}
+
 const parse = (text: string): Record<string, unknown> => {
   try {
     const value: unknown = JSON.parse(text);
@@ -765,8 +832,18 @@ function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
     permissions: { push: repo.push ?? true, admin: repo.admin ?? true },
   };
   return state.kind === "github"
-    ? { ...common, pushed_at: repo.pushedAt ?? null }
-    : { ...common, updated_at: repo.pushedAt ?? null };
+    ? {
+        ...common,
+        pushed_at: repo.pushedAt ?? null,
+        // GitHub's one number is issues AND pulls; there is no second field.
+        open_issues_count: repo.openIssues ?? 0,
+      }
+    : {
+        ...common,
+        updated_at: repo.pushedAt ?? null,
+        open_issues_count: repo.openIssues ?? 0,
+        open_pr_counter: repo.openPulls ?? 0,
+      };
 }
 
 function issueJson(

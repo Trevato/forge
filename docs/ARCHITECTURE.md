@@ -175,7 +175,7 @@ any form, and why disconnecting destroys it rather than tombstoning it. Lose
 the key file and you lose the tokens; you lose nothing else, and reconnecting
 costs a click. Every other row in the database is still reconstructible from
 git or from the origin, which is the same rule one level out: for a mirrored
-repo, *the origin* is truth and our rows are its index.
+repo, _the origin_ is truth and our rows are its index.
 
 Two lessons Forgejo is still paying for, designed in up front:
 
@@ -361,6 +361,30 @@ The centerpiece of code review, built from the distilled state of the art:
   (`content-visibility`), the `+`/`-` marker is a `::before` so copy skips it,
   and files over ~5000 changed lines show a stub instead of rendering.
 
+## Search, and where semantic search would go
+
+Search (`core/search.ts`, `actions/search.ts`, `GET /api/v1/search`) holds no
+index of its own. Repos and conversations are already indexed rows; code is
+answered by `git grep` against the object store, which _is_ the truth. Every
+list is capped and every subprocess has a deadline, so a one-character query
+costs the same order of work as a precise one — the palette is a hot path once
+agents outnumber people. Cross-repo reach comes from what is already cached:
+the origins' picker rows answer "is it on another forge?" without spending a
+request, and only `live=1` asks an origin's own issue search, inside one budget.
+
+Semantic search is deliberately absent, and the shape above is what leaves room
+for it. An embedding index would be a **derived table, never truth** — the same
+standing as the SQLite index over git: `embedding(source_kind, source_id, ref,
+chunk, vector)`, filled by a consumer of the event outbox (a `push` event
+re-embeds the changed paths at the new tree; `issue.*` events re-embed one
+conversation) and rebuildable from scratch by walking the bare repos and the
+issue table, exactly as `core/reconcile.ts` rebuilds the index today. It would
+plug in as a fourth source inside `search()`, ranked alongside the lexical hits
+rather than replacing them, and gated by the same `listReposVisibleTo` pass — a
+vector store that answers from repos the caller cannot read is a leak that no
+amount of relevance makes acceptable. Nothing about adding it requires changing
+the API shape: `{repos, issues, code, truncated}` gains a key.
+
 ## v1 scope
 
 A forge that Just Works for a person and their crew: register/login, create
@@ -376,9 +400,14 @@ commit pages, settings, webhook delivery from the event outbox (HMAC-signed,
 retried), SSE live updates, forks (alternates-backed, detach-before-delete)
 with cross-repo pull requests, organizations + teams with membership-based
 permissions, an SSH transport (git and a terminal UI on one port), the
-terminal UI itself, and origins — connected GitHub/Forgejo/Gitea accounts,
+terminal UI itself, origins — connected GitHub/Forgejo/Gitea accounts,
 mirrored repositories with imported issues and pulls, incremental sync,
-write-through of contributions, and push-through of branches.
+write-through of contributions, and push-through of branches — branches as a
+first-class unit (create/delete with git's own leases, ahead/behind, and the
+origin's word first on a mirror), editing files as one action (new branch and
+a pull in the same call), open counts on every repo row through grouped
+queries, and one search across local repos, cached origin repos, issues and
+code.
 
 Not in v1: CI runners (the events + API surface is designed so a runner
 integrates without core changes), an AI build crew (the harness — it drives the

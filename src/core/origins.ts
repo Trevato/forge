@@ -260,6 +260,14 @@ export interface OriginRepoRow {
   readonly seenAt: string;
   /** The local repo mirroring this one, when there is one. */
   readonly mirroredAs: string | null;
+  /**
+   * Open counts as the origin states them. When
+   * `openIssuesIncludingPulls` is true the origin (GitHub) gave one number
+   * covering both, and `openPulls` is unknown rather than zero.
+   */
+  readonly openIssues: number;
+  readonly openPulls: number;
+  readonly openIssuesIncludingPulls: boolean;
 }
 
 const REPO_SELECT = `
@@ -281,6 +289,9 @@ interface RawOriginRepo {
   pushed_at: string | null;
   can_push: number;
   seen_at: string;
+  open_issues: number;
+  open_pulls: number;
+  counts_include_pulls: number;
   mirrored_id: string | null;
 }
 
@@ -298,7 +309,58 @@ const toOriginRepo = (row: RawOriginRepo): OriginRepoRow => ({
   canPush: row.can_push === 1,
   seenAt: row.seen_at,
   mirroredAs: row.mirrored_id,
+  openIssues: row.open_issues,
+  openPulls: row.open_pulls,
+  openIssuesIncludingPulls: row.counts_include_pulls === 1,
 });
+
+/**
+ * One upsert, shared by the full refresh and the single-row remember, so the
+ * picker's cache can never gain a column in one path and miss it in the other.
+ */
+const UPSERT_ORIGIN_REPO = `
+  INSERT INTO origin_repo
+    (origin_id, remote_id, full_name, description, private, fork,
+     default_branch, clone_url, html_url, pushed_at, can_push, seen_at,
+     open_issues, open_pulls, counts_include_pulls)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+  ON CONFLICT (origin_id, remote_id) DO UPDATE SET
+    full_name = excluded.full_name,
+    description = excluded.description,
+    private = excluded.private,
+    fork = excluded.fork,
+    default_branch = excluded.default_branch,
+    clone_url = excluded.clone_url,
+    html_url = excluded.html_url,
+    pushed_at = excluded.pushed_at,
+    can_push = excluded.can_push,
+    seen_at = excluded.seen_at,
+    open_issues = excluded.open_issues,
+    open_pulls = excluded.open_pulls,
+    counts_include_pulls = excluded.counts_include_pulls`;
+
+/** The bound parameters of one `UPSERT_ORIGIN_REPO`, in order. */
+const upsertArgs = (
+  originId: string,
+  repo: RemoteRepo,
+  seenAt: string,
+): (string | number | null)[] => [
+  originId,
+  repo.remoteId,
+  repo.fullName,
+  repo.description,
+  repo.private ? 1 : 0,
+  repo.fork ? 1 : 0,
+  repo.defaultBranch,
+  repo.cloneUrl,
+  repo.htmlUrl,
+  repo.pushedAt,
+  repo.permissions.push ? 1 : 0,
+  seenAt,
+  repo.openIssues,
+  repo.openPulls,
+  repo.openIssuesIncludesPulls ? 1 : 0,
+];
 
 /**
  * Refresh the cached picker rows. Repos the origin no longer reports are
@@ -312,39 +374,10 @@ export function cacheOriginRepos(
 ): void {
   const seenAt = new Date().toISOString();
   const write = db.transaction(() => {
-    const upsert = db.query(
-      `INSERT INTO origin_repo
-         (origin_id, remote_id, full_name, description, private, fork,
-          default_branch, clone_url, html_url, pushed_at, can_push, seen_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-       ON CONFLICT (origin_id, remote_id) DO UPDATE SET
-         full_name = excluded.full_name,
-         description = excluded.description,
-         private = excluded.private,
-         fork = excluded.fork,
-         default_branch = excluded.default_branch,
-         clone_url = excluded.clone_url,
-         html_url = excluded.html_url,
-         pushed_at = excluded.pushed_at,
-         can_push = excluded.can_push,
-         seen_at = excluded.seen_at`,
-    );
+    const upsert = db.query(UPSERT_ORIGIN_REPO);
     for (const repo of repos) {
       if (repo.remoteId === "" || repo.fullName === "") continue;
-      upsert.run(
-        originId,
-        repo.remoteId,
-        repo.fullName,
-        repo.description,
-        repo.private ? 1 : 0,
-        repo.fork ? 1 : 0,
-        repo.defaultBranch,
-        repo.cloneUrl,
-        repo.htmlUrl,
-        repo.pushedAt,
-        repo.permissions.push ? 1 : 0,
-        seenAt,
-      );
+      upsert.run(...upsertArgs(originId, repo, seenAt));
     }
     db.query(
       `DELETE FROM origin_repo
@@ -364,35 +397,8 @@ export function rememberOriginRepo(
   originId: string,
   repo: RemoteRepo,
 ): void {
-  db.query(
-    `INSERT INTO origin_repo
-       (origin_id, remote_id, full_name, description, private, fork,
-        default_branch, clone_url, html_url, pushed_at, can_push, seen_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-     ON CONFLICT (origin_id, remote_id) DO UPDATE SET
-       full_name = excluded.full_name,
-       description = excluded.description,
-       private = excluded.private,
-       fork = excluded.fork,
-       default_branch = excluded.default_branch,
-       clone_url = excluded.clone_url,
-       html_url = excluded.html_url,
-       pushed_at = excluded.pushed_at,
-       can_push = excluded.can_push,
-       seen_at = excluded.seen_at`,
-  ).run(
-    originId,
-    repo.remoteId,
-    repo.fullName,
-    repo.description,
-    repo.private ? 1 : 0,
-    repo.fork ? 1 : 0,
-    repo.defaultBranch,
-    repo.cloneUrl,
-    repo.htmlUrl,
-    repo.pushedAt,
-    repo.permissions.push ? 1 : 0,
-    new Date().toISOString(),
+  db.query(UPSERT_ORIGIN_REPO).run(
+    ...upsertArgs(originId, repo, new Date().toISOString()),
   );
 }
 

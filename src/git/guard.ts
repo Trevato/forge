@@ -39,10 +39,16 @@ export function isSafeOid(oid: string): boolean {
   return /^[0-9a-f]{40}$/.test(oid) || /^[0-9a-f]{64}$/.test(oid);
 }
 
-/** Paths inside a repository tree: relative, no traversal, no NULs. */
+/**
+ * Paths inside a repository tree: relative, no traversal, no control bytes.
+ * The control-byte rule is not cosmetic — a newline or a tab in a path is
+ * a record separator to `update-index --index-info` and to half of git's
+ * porcelain, so a path carrying one could be read as two entries.
+ */
 export function isSafeTreePath(path: string): boolean {
   if (path.length === 0 || path.length > 4096) return false;
-  if (path.startsWith("/") || path.includes("\0")) return false;
+  if (path.startsWith("/")) return false;
+  if (/[\x00-\x1f\x7f]/.test(path)) return false;
   for (const part of path.split("/")) {
     if (part.length === 0 || part === "." || part === "..") return false;
   }

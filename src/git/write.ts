@@ -16,7 +16,8 @@ import { resolveOid } from "./merge.ts";
 
 export interface FileWrite {
   readonly path: string;
-  readonly content: string | Uint8Array;
+  /** The new bytes, or `null` to delete the path from the tree. */
+  readonly content: string | Uint8Array | null;
 }
 
 export type CommitFilesError =
@@ -24,6 +25,7 @@ export type CommitFilesError =
   | { kind: "invalid_path"; path: string }
   | { kind: "no_files" }
   | { kind: "branch_moved" }
+  | { kind: "land_refused"; message: string }
   | { kind: "git"; message: string };
 
 export interface CommitResult {
@@ -42,6 +44,17 @@ export async function commitFiles(
     message: string;
     files: readonly FileWrite[];
     author: { name: string; email: string };
+    /**
+     * Called with the sealed commit *before* the local ref moves. An error
+     * aborts the landing: the objects stay written but unreferenced (git gc
+     * prunes them) and the branch does not move. This is how a mirrored repo
+     * gets the origin's answer first — the objects have to exist locally to
+     * be pushable, and the ref must not move until the origin took them.
+     */
+    land?: (
+      commitOid: string,
+      tip: string | undefined,
+    ) => Promise<Result<void, string>>;
   },
 ): Promise<Result<CommitResult, CommitFilesError>> {
   if (!isSafeRef(input.branch)) return err({ kind: "invalid_branch" });
@@ -73,6 +86,20 @@ export async function commitFiles(
     if (!seed.ok) return err({ kind: "git", message: seed.error.stderr });
 
     for (const file of input.files) {
+      if (file.content === null) {
+        // A deletion is mode 0 through `--index-info`, not `--force-remove`:
+        // the latter stats the working file and there is no work tree here.
+        // `-z` makes the records NUL-terminated, so a path can never be read
+        // as two entries. Removing a path the branch never had is a no-op.
+        const removed = await runGit(["update-index", "-z", "--index-info"], {
+          cwd: dir,
+          env,
+          stdin: `0 ${"0".repeat(40)}\t${file.path}\0`,
+        });
+        if (!removed.ok)
+          return err({ kind: "git", message: removed.error.stderr });
+        continue;
+      }
       const hashed = await runGit(["hash-object", "-w", "--stdin"], {
         cwd: dir,
         env,
@@ -107,6 +134,14 @@ export async function commitFiles(
     );
     if (!commit.ok) return err({ kind: "git", message: commit.error.stderr });
     const commitOid = commit.value.trim();
+
+    // Whoever has the last word gets it here, while the commit exists but
+    // nothing points at it yet.
+    if (input.land) {
+      const landed = await input.land(commitOid, tip);
+      if (!landed.ok)
+        return err({ kind: "land_refused", message: landed.error });
+    }
 
     // Land it: CAS on the old tip, or create-if-absent for a new branch.
     const ref = `refs/heads/${input.branch}`;

@@ -39,7 +39,13 @@ import {
   syncRepoNow,
   unpinRepo,
 } from "../actions/origins.ts";
+import {
+  createBranch,
+  deleteBranch as deleteBranchAction,
+} from "../actions/branches.ts";
+import { editFiles } from "../actions/contents.ts";
 import { addReview, mergePull, openPull } from "../actions/pulls.ts";
+import { search } from "../actions/search.ts";
 import {
   commitToBranch,
   createLabel,
@@ -62,8 +68,10 @@ import {
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
 import {
+  commentCounts,
   getIssue,
   labelsFor,
+  labelsForIssues,
   listComments,
   listIssues,
   listLabels,
@@ -85,13 +93,16 @@ import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
 import {
   canAdmin,
   canRead,
+  countsForRepos,
   getRepo,
   listForks,
   listReposByOwner,
   listReposVisibleTo,
   type Repo,
+  type RepoCounts,
   getRepoById,
 } from "../core/repos.ts";
+import { searchKind } from "../core/search.ts";
 import { listReviewComments, withOutdated } from "../core/reviews.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
@@ -101,6 +112,7 @@ import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
+import { listBranches } from "../git/branches.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Result } from "../kernel/result.ts";
@@ -151,12 +163,36 @@ function withLabels(ctx: Ctx, issue: Issue) {
 }
 
 /**
- * A repo, plus the two viewer-relative facts a client needs: where it is
- * mirrored from, and whether this viewer wants it on their machine.
+ * A page of issues with their labels and comment counts, in two grouped
+ * queries for the whole page. Never `map(withLabels)` over a list — that is
+ * the N+1 these helpers exist to remove.
+ */
+function withLabelsMany<T extends Issue>(ctx: Ctx, issues: T[]) {
+  const ids = issues.map((i) => i.id);
+  const labels = labelsForIssues(ctx.app.db, ids);
+  const comments = commentCounts(ctx.app.db, ids);
+  return issues.map((issue) => ({
+    ...issue,
+    labels: labels.get(issue.id) ?? [],
+    comments: comments.get(issue.id) ?? 0,
+  }));
+}
+
+const NO_COUNTS: RepoCounts = { openIssues: 0, openPulls: 0 };
+
+/**
+ * A repo, plus the viewer-relative facts a client needs: where it is
+ * mirrored from, whether this viewer wants it on their machine, and how much
+ * is open in it. A list arrives with `counts` already filled for the whole
+ * page; a single repo pays one grouped query for itself.
  */
 function repoJson(ctx: Ctx, repo: Repo) {
   return {
     ...repo,
+    counts:
+      repo.counts ??
+      countsForRepos(ctx.app.db, [repo.id]).get(repo.id) ??
+      NO_COUNTS,
     pinned:
       ctx.auth.user !== undefined &&
       isPinned(ctx.app.db, ctx.auth.user.id, repo.id),
@@ -307,6 +343,56 @@ function originAware(error: string, status = 422): Response {
       "the origin refused this change; nothing was changed here either",
     );
   return respondAccess(error, status);
+}
+
+/**
+ * Which status a branch refusal deserves. A conflict is something that
+ * changed under the caller (or was already there); everything else is the
+ * caller's own request being wrong.
+ */
+function branchStatus(error: string): number {
+  if (error === "exists" || error === "branch_moved") return 409;
+  if (error === "default_branch") return 409;
+  if (error === "unknown_branch") return 404;
+  return 422;
+}
+
+/**
+ * An edit's failure. The action's non-access errors are objects with a
+ * `kind`; that kind is the stable code, and the extra fields on it (the
+ * offending path, the size, the commit that did land) travel with it,
+ * because "too large" without a number is not actionable.
+ */
+function editFailure(error: { kind: string } & Record<string, unknown>) {
+  const { kind, ...detail } = error;
+  const status =
+    kind === "branch_moved"
+      ? 409
+      : kind === "file_too_large" || kind === "commit_too_large"
+        ? 413
+        : kind === "protected_branch"
+          ? 403
+          : 422;
+  return json({ error: kind, message: editMessage(kind), ...detail }, status);
+}
+
+function editMessage(kind: string): string {
+  switch (kind) {
+    case "protected_branch":
+      return "the default branch is protected; only a repo admin may commit to it directly";
+    case "file_too_large":
+      return "that file is larger than an edit may carry; push it instead";
+    case "commit_too_large":
+      return "the edit is larger than one commit may carry; push it instead";
+    case "branch_moved":
+      return "the branch moved while this edit was being written; re-read and retry";
+    case "land_refused":
+      return "the origin refused this commit; nothing was changed here either";
+    case "pull_failed":
+      return "the commit landed, but the pull request could not be opened";
+    default:
+      return "this edit could not be applied";
+  }
 }
 
 // ---- query parsing ----
@@ -689,6 +775,23 @@ export function apiRoutes(router: Router<Handler>): void {
     },
   );
 
+  // ── search ───────────────────────────────────────────────────────────
+  //
+  // One query, four sources: repos here, repos cached from every origin the
+  // caller has connected, conversations here, and the code itself. `live=1`
+  // additionally asks each origin's own issue search, inside one budget.
+
+  router.add("GET", "/api/v1/search", async (ctx) => {
+    const q = ctx.url.searchParams;
+    const found = await search(ctx.app, ctx.auth.user, {
+      q: q.get("q") ?? "",
+      kind: searchKind(q.get("kind")),
+      ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
+      live: q.get("live") === "1" || q.get("live") === "true",
+    });
+    return json(found);
+  });
+
   // ── repositories ─────────────────────────────────────────────────────
 
   router.add("GET", "/api/v1/repos", (ctx) => {
@@ -790,19 +893,62 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── git reads. The agent arena showed the write path was complete but the
   // read path was missing, so automation couldn't inspect before acting.
 
+  // Branches carry their divergence from the default and whether they are
+  // protected — the three facts a branch list is asked for. `ahead`/`behind`
+  // are null when the repo has more branches than the comparison cap.
   router.add("GET", "/api/v1/repos/:owner/:name/branches", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const refs = await listRefs(dirOf(ctx, repo), "refs/heads/");
-    if (!refs.ok) return json([]);
+    const listed = await listBranches(dirOf(ctx, repo), repo.defaultBranch);
+    if (!listed.ok) return json([]);
     return json(
-      refs.value.map((r) => ({
-        name: r.name.replace("refs/heads/", ""),
-        oid: r.oid,
-        isDefault: r.name === `refs/heads/${repo.defaultBranch}`,
+      listed.value.branches.map((b) => ({
+        name: b.name,
+        oid: b.oid,
+        isDefault: b.isDefault,
+        ahead: b.ahead,
+        behind: b.behind,
+        protected: b.isDefault && repo.protectDefault,
       })),
     );
   });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/branches", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const created = await createBranch(ctx.app, ctx.auth.user, repo, {
+      name: str(input.name),
+      from: str(input.from),
+    });
+    if (!created.ok)
+      return originAware(created.error, branchStatus(created.error));
+    return json(created.value, 201);
+  });
+
+  // `*branch` rather than `:branch`, because a branch name has slashes in it
+  // more often than not (`feat/thing`) and a single segment would 404 them.
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/branches/*branch",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const deleted = await deleteBranchAction(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.branch ?? "",
+      );
+      if (!deleted.ok)
+        return originAware(deleted.error, branchStatus(deleted.error));
+      return new Response(null, { status: 204 });
+    },
+  );
 
   router.add("GET", "/api/v1/repos/:owner/:name/tags", async (ctx) => {
     const repo = loadRepo(ctx);
@@ -928,6 +1074,63 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(committed.value, 201);
   });
 
+  // The whole edit as one call: write files (or delete them), optionally on
+  // a branch created for the purpose, optionally proposing them back. One
+  // request, one Result — the shape an agent needs so it cannot leave a
+  // branch behind with no commit on it.
+  router.add("POST", "/api/v1/repos/:owner/:name/edits", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+
+    const files = (Array.isArray(input.files) ? input.files : [])
+      .filter(
+        (f): f is { path: string; content: string | null } =>
+          typeof f === "object" &&
+          f !== null &&
+          typeof (f as { path?: unknown }).path === "string" &&
+          // `null` is the delete; anything else must be a string of bytes.
+          (typeof (f as { content?: unknown }).content === "string" ||
+            (f as { content?: unknown }).content === null),
+      )
+      .map((f) => ({ path: f.path, content: f.content }));
+    if (files.length === 0) return json({ error: "no_files" }, 422);
+
+    const pull = input.openPull;
+    const edited = await editFiles(ctx.app, ctx.auth.user, repo, {
+      branch: str(input.branch),
+      base: str(input.base),
+      message: str(input.message),
+      newBranch: str(input.newBranch),
+      files,
+      ...(typeof pull === "object" && pull !== null
+        ? {
+            openPull: {
+              title: str((pull as Record<string, unknown>).title),
+              body: str((pull as Record<string, unknown>).body),
+            },
+          }
+        : {}),
+    });
+    if (!edited.ok) {
+      return typeof edited.error === "string"
+        ? originAware(edited.error, 422)
+        : editFailure(
+            edited.error as { kind: string } & Record<string, unknown>,
+          );
+    }
+    return json(
+      {
+        commit: edited.value.commit,
+        branch: edited.value.branch,
+        pull: edited.value.pull ?? null,
+      },
+      201,
+    );
+  });
+
   // ── labels ───────────────────────────────────────────────────────────
 
   router.add("GET", "/api/v1/repos/:owner/:name/labels", (ctx) => {
@@ -1001,10 +1204,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = listIssues(ctx.app.db, repo.id, {
-      ...query,
-      kind: "issue",
-    }).map((i) => withLabels(ctx, i));
+    const items = withLabelsMany(
+      ctx,
+      listIssues(ctx.app.db, repo.id, { ...query, kind: "issue" }),
+    );
     return json(paged(items, query.limit, (i) => i.number));
   });
 
@@ -1082,9 +1285,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = listPulls(ctx.app.db, repo.id, query).map((p) =>
-      withLabels(ctx, p),
-    );
+    const items = withLabelsMany(ctx, listPulls(ctx.app.db, repo.id, query));
     return json(paged(items, query.limit, (p) => p.number));
   });
 

@@ -72,8 +72,11 @@ export class GitHubProvider implements Provider {
   readonly apiUrl: string;
   readonly webUrl: string;
   private readonly api: ApiClient;
+  /** The account's login, for the search scope. Learned once. */
+  private login: string | undefined;
 
   constructor(private readonly credential: ProviderCredential) {
+    this.login = credential.login;
     this.apiUrl = credential.apiUrl;
     this.webUrl = credential.webUrl;
     this.api = new ApiClient(credential, (token) => ({
@@ -384,6 +387,45 @@ export class GitHubProvider implements Provider {
     return succeed(toIssue(result.value.data));
   }
 
+  /**
+   * GitHub's search is one global endpoint with the scope expressed inside
+   * the query string, so the account's login is appended as `user:<login>`
+   * — without it the search is the whole of GitHub, which is neither what
+   * a palette means nor something we should spend an origin's rate budget on.
+   */
+  async searchIssues(
+    query: string,
+    limit = 30,
+  ): Promise<ProviderResult<readonly RemoteIssue[]>> {
+    const text = query.trim();
+    if (text === "") return succeed([]);
+    const login = await this.loginName();
+    const result = await this.api.call({
+      path: "/search/issues",
+      query: {
+        q: login === "" ? text : `${text} user:${login}`,
+        per_page: Math.min(Math.max(limit, 1), PER_PAGE),
+        sort: "updated",
+        order: "desc",
+      },
+    });
+    if (!result.ok) return result;
+    const items = asArray(field(result.value.data, "items")).map((raw) => {
+      const issue = toIssue(raw);
+      const repo = repoFromApiUrl(asString(field(raw, "repository_url")));
+      return repo === "" ? issue : { ...issue, repo };
+    });
+    return succeed(items);
+  }
+
+  /** The account's own login, learned once. */
+  private async loginName(): Promise<string> {
+    if (this.login !== undefined) return this.login;
+    const who = await this.whoami();
+    this.login = who.ok ? who.value.login : "";
+    return this.login;
+  }
+
   private async getPull(
     owner: string,
     name: string,
@@ -567,6 +609,20 @@ const pageOf = (cursor: string | undefined): number => {
   return Number.isInteger(n) && n > 0 ? n : 1;
 };
 
+/**
+ * `owner/name` out of an API repository URL. Search results name the repo
+ * only this way — `https://api.github.com/repos/octo/gears` — and the last
+ * two segments are the answer wherever the API is hosted (github.com,
+ * Enterprise at /api/v3, anything else).
+ */
+function repoFromApiUrl(url: string): string {
+  const parts = url.split("/").filter((p) => p !== "");
+  if (parts.length < 2) return "";
+  const name = parts[parts.length - 1] ?? "";
+  const owner = parts[parts.length - 2] ?? "";
+  return owner === "" || name === "" ? "" : `${owner}/${name}`;
+}
+
 function toRepo(raw: unknown): RemoteRepo {
   const fullName = asString(field(raw, "full_name"));
   const named = splitFullName(fullName);
@@ -587,6 +643,11 @@ function toRepo(raw: unknown): RemoteRepo {
       push: asBool(dig(raw, "permissions", "push")),
       admin: asBool(dig(raw, "permissions", "admin")),
     },
+    // GitHub counts issues and pull requests together here and offers no
+    // second number; the flag records that rather than pretending.
+    openIssues: asNumber(field(raw, "open_issues_count")),
+    openPulls: 0,
+    openIssuesIncludesPulls: true,
   };
 }
 

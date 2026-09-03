@@ -1,0 +1,173 @@
+/**
+ * Search, as an action. It mutates nothing and appends no event — but it is
+ * an action rather than a read helper because it decides what an actor may
+ * see across four different sources, and that decision belongs in exactly
+ * one place.
+ *
+ * The origins half is deliberately opt-in (`live`). A palette that fired
+ * three API calls to three other forges on every keystroke would spend
+ * somebody's rate budget to render a dropdown; the cached rows answer
+ * instantly and the live search is what a person asks for when the cache
+ * did not have it.
+ */
+
+import type { App } from "../app.ts";
+import { listOrigins } from "../core/origins.ts";
+import { listReposVisibleTo } from "../core/repos.ts";
+import {
+  cleanQuery,
+  grepRepos,
+  searchLocalIssues,
+  searchLocalRepos,
+  searchOriginRepos,
+  MAX_CODE_HITS,
+  MAX_SEARCH_REPOS,
+  type IssueHit,
+  type SearchKind,
+  type SearchResults,
+} from "../core/search.ts";
+import type { User } from "../core/users.ts";
+import { providerForOrigin } from "../origins/credential.ts";
+
+/** Default page size for each list. */
+export const SEARCH_LIMIT = 20;
+/** Hard ceiling on a caller-chosen limit. */
+export const SEARCH_LIMIT_MAX = 100;
+
+/**
+ * The whole live half gets this long, all origins together. A search box
+ * that blocks for a slow forge is worse than one that quietly returns what
+ * the other origins had.
+ */
+export const LIVE_BUDGET_MS = 5_000;
+
+export interface SearchInput {
+  q: string;
+  /** @default "all" */
+  kind?: SearchKind;
+  /** @default SEARCH_LIMIT (max SEARCH_LIMIT_MAX) */
+  limit?: number;
+  /** Also ask each connected origin's own issue search. @default false */
+  live?: boolean;
+}
+
+/**
+ * Search everything the actor can reach. Anonymous callers get the public
+ * half — the same rows a signed-out repo listing shows — and no origins,
+ * because an origin belongs to the person who connected it.
+ */
+export async function search(
+  app: App,
+  actor: User | undefined,
+  input: SearchInput,
+): Promise<SearchResults> {
+  const q = cleanQuery(input.q);
+  const kind = input.kind ?? "all";
+  const limit = Math.min(
+    Math.max(Math.trunc(input.limit ?? SEARCH_LIMIT) || SEARCH_LIMIT, 1),
+    SEARCH_LIMIT_MAX,
+  );
+  const empty: SearchResults = {
+    repos: [],
+    issues: [],
+    code: [],
+    truncated: { repos: false, issues: false, code: false },
+  };
+  if (q === "") return empty;
+
+  const wants = (which: SearchKind) => kind === "all" || kind === which;
+
+  // One visibility pass. Issues and code both search "the repos this actor
+  // may read", so it is resolved once and shared rather than re-derived.
+  const visible =
+    wants("issues") || wants("code")
+      ? listReposVisibleTo(app.db, actor, { limit: MAX_SEARCH_REPOS })
+      : [];
+
+  const repos = wants("repos")
+    ? [
+        ...searchLocalRepos(app.db, actor, q, limit),
+        ...(actor ? searchOriginRepos(app.db, actor.id, q, limit) : []),
+      ]
+    : [];
+
+  const issues: IssueHit[] = wants("issues")
+    ? searchLocalIssues(app.db, visible, q, limit)
+    : [];
+  const localIssueCount = issues.length;
+
+  if (wants("issues") && input.live === true && actor !== undefined) {
+    issues.push(...(await liveIssues(app, actor, q, limit)));
+  }
+
+  const code = wants("code")
+    ? await grepRepos(
+        app.reposRoot,
+        visible,
+        q,
+        Math.min(limit * 5, MAX_CODE_HITS),
+      )
+    : { hits: [], truncated: false };
+
+  return {
+    repos,
+    issues,
+    code: code.hits,
+    truncated: {
+      repos: repos.length >= limit,
+      issues: localIssueCount >= limit,
+      code: code.truncated,
+    },
+  };
+}
+
+/**
+ * Every connected origin's own issue search, in parallel, inside one budget.
+ * An origin that needs reauthenticating is skipped without a request — that
+ * is the whole point of recording `needsReauth` — and an origin that
+ * rate-limits us or times out simply contributes nothing.
+ */
+async function liveIssues(
+  app: App,
+  actor: User,
+  q: string,
+  limit: number,
+): Promise<IssueHit[]> {
+  const origins = listOrigins(app.db, actor.id).filter((o) => !o.needsReauth);
+  if (origins.length === 0) return [];
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), LIVE_BUDGET_MS);
+  });
+
+  const asked = origins.map(async (origin) => {
+    const provider = providerForOrigin(app, origin);
+    if (!provider.ok) return [];
+    const found = await provider.value.searchIssues(q, limit);
+    if (!found.ok) return [];
+    return found.value.slice(0, limit).map(
+      (issue): IssueHit => ({
+        source: "origin",
+        originId: origin.id,
+        fullName: issue.repo ?? "",
+        number: issue.number,
+        kind: issue.pull === undefined ? "issue" : "pull",
+        title: issue.title,
+        state: issue.state,
+        updatedAt: issue.updatedAt,
+        htmlUrl: issue.htmlUrl,
+      }),
+    );
+  });
+
+  try {
+    const settled = await Promise.race([
+      Promise.all(asked.map((p) => p.catch((): IssueHit[] => []))),
+      deadline,
+    ]);
+    return settled === "timeout" ? [] : settled.flat();
+  } finally {
+    clearTimeout(timer);
+  }
+}

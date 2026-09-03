@@ -72,15 +72,22 @@ src/
   kernel/     zero-dep primitives: result, error, id (monotonic ULID), log,
               db (sqlite/WAL), hash
   git/        env (runGit*), read (cat-file batch readers), diff, merge (bare
-              plumbing, no work tree), write (commit via plumbing), repos
-              (fork via alternates), smart-http, smart-ssh (exec-channel git),
-              hooks (+ hook-entry, guard)
+              plumbing, no work tree), write (commit via plumbing, deletes as
+              index-info mode 0, a `land` hook so an origin answers first),
+              branches (create/delete via update-ref leases, ahead/behind),
+              repos (fork via alternates), smart-http, smart-ssh
+              (exec-channel git), hooks (+ hook-entry, guard)
   core/       domain: users (kind user|org), sessions, tokens (ro/rw/admin),
-              repos (access checks), issues (issue|pull), pulls, reviews,
-              orgs/teams, webhooks, keys (ssh public keys), events
-              (outbox+bus), reconcile, schema — pure data, no authz, no events
+              repos (access checks, grouped `countsForRepos`), issues
+              (issue|pull, grouped `labelsForIssues`/`commentCounts`), pulls,
+              reviews, orgs/teams, webhooks, keys (ssh public keys), search
+              (repos/issues/`git grep`, all bounded), events (outbox+bus),
+              reconcile, schema — pure data, no authz, no events
   actions/    one function per platform mutation: authorize (access.ts tiers),
-              call core, `bus.append`. API, web, and TUI are adapters over these
+              call core, `bus.append`. API, web, and TUI are adapters over
+              these. branches.ts also owns `originPush` — how a mirror's ref
+              updates reach its origin — and contents.ts is the whole edit
+              (files, a new branch, a pull) as one call
   http/       router, request context (Ctx/auth), respond (json/error shapes,
               scope floors, pagination), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
@@ -152,11 +159,22 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   `assertBatchSafe`.
 - **New event type:** add it where you append it; make sure a reconcile sweep or
   consumer can tolerate a missed or duplicated delivery (outbox semantics).
+- **Anything that returns a list of rows:** never fetch a per-row fact in a
+  loop. Add a grouped helper beside the singular one (`countsForRepos`,
+  `labelsForIssues`, `commentCounts` are the pattern: ids in, `Map` out, one
+  query per chunk) and use it from the adapter. `test/counts.test.ts` asserts
+  a listing's SQL statement count does not grow with its row count.
 - **Touching a mirrored repo:** the origin is truth (`docs/ORIGINS.md`). A
   local-only write on a mirror is a bug, so the sync actions refuse one
   (`"mirrored"`) and the `…Through` twins write to the origin first. Never
   put a credential in argv or a URL — `origins/credentials.ts` is the only
   way one reaches git.
+- **Moving a ref on a mirror:** `update-ref` runs no hooks, so nothing forwards
+  it for you. Resolve `originPush` (`actions/branches.ts`) first: `undefined`
+  means a native repo and the ref moves locally; otherwise push upstream and
+  move the local ref only if the origin took it. `git/write.ts`'s `land` hook
+  is the same rule for a commit — objects written, ref held back until the
+  origin agrees.
 
 ## Not yet built (deliberately)
 
