@@ -270,7 +270,7 @@ describe("browsing an origin repository on the web", () => {
     expect(html).toContain(`Open on ${new URL(fake.url).host}`);
   });
 
-  test("a live browse has no way to write anything on it", async () => {
+  test("a live browse never writes to the repository it is reading", async () => {
     for (const path of [
       browse,
       `${browse}/tree/main`,
@@ -282,8 +282,11 @@ describe("browsing an origin repository on the web", () => {
       `${browse}/pulls/9`,
     ]) {
       const html = await bodyOf(alice, path);
-      // The only POST on any of these pages is the mirror. (Theme and sign
-      // out are the shell's, on every page in the product.)
+      // Every POST a browse page carries creates something *for you* — a
+      // copy here, a fork of your own there, a proposal on it. None of them
+      // changes the repository being read, because a live `RepoSource` has
+      // no mutation on it at all. (Theme and sign out are the shell's, on
+      // every page in the product.)
       const forms = [...html.matchAll(/<form[\s\S]*?>/g)].map((m) => m[0]);
       const posts = forms
         .filter((tag) => tag.includes('method="post"'))
@@ -291,6 +294,8 @@ describe("browsing an origin repository on the web", () => {
       for (const action of posts) {
         const allowed =
           action.endsWith("/mirror") ||
+          action.endsWith("/fork") ||
+          action.endsWith("/contribute") ||
           action === "/theme" ||
           action === "/logout";
         expect(`${path} allows ${action}`).toBe(

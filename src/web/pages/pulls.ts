@@ -16,7 +16,9 @@ import {
   type Label,
 } from "../../core/issues.ts";
 import { listPulls, type Pull } from "../../core/pulls.ts";
+import { reviewSummary, type ReviewSummary } from "../../core/reviews.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
+import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -34,6 +36,7 @@ import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
+  badge,
   btn,
   card,
   empty,
@@ -43,7 +46,6 @@ import {
   pager,
   seg,
   time,
-
   originTag,
   userTag,
   field as formField,
@@ -62,8 +64,63 @@ export function pullState(pull: Pull): "open" | "closed" | "merged" {
 
 // ---- the list ----
 
+/**
+ * Where each pull on this page stands, review-wise.
+ *
+ * A verdict only counts against the commit that is head *now*, and the row's
+ * `head_oid` is the snapshot taken when the pull opened — so the live tips
+ * are read in one `for-each-ref` for the whole page rather than a `rev-parse`
+ * per row.
+ *
+ * The summaries themselves are still one query per pull: `core/reviews.ts`
+ * has no grouped twin of `reviewSummary`, and this adapter has no business
+ * writing SQL. Bounded by the page size (25), and the gap to close is a
+ * `reviewSummariesFor(ids, heads)` beside `commentCounts`.
+ */
+async function verdictsFor(
+  ctx: Ctx,
+  repo: Repo,
+  pulls: readonly Pull[],
+): Promise<Map<string, ReviewSummary>> {
+  const out = new Map<string, ReviewSummary>();
+  // Only an open pull has a review still to satisfy; a closed or merged row
+  // wears its own state badge and pays for nothing here.
+  const open = pulls.filter((p) => p.state === "open" && p.mergedAt === null);
+  if (open.length === 0) return out;
+  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  const refs = await listRefs(dir, "refs/");
+  const tips = new Map(refs.ok ? refs.value.map((r) => [r.name, r.oid]) : []);
+  for (const pull of open) {
+    const head =
+      (pull.crossRepo
+        ? tips.get(`refs/pull/${pull.number}/head`)
+        : tips.get(`refs/heads/${pull.headBranch}`)) ?? pull.headOid;
+    out.set(pull.id, reviewSummary(ctx.app.db, pull.id, head));
+  }
+  return out;
+}
+
+/**
+ * The row's review mark. Only ever three answers, because a list is a place
+ * to spot the one pull that needs you, not to read the whole record: it is
+ * approved, somebody wants changes, or nobody has said yet.
+ */
+function verdictMark(summary: ReviewSummary | undefined): Html {
+  if (summary === undefined) return html``;
+  if (summary.changesRequested > 0)
+    return badge("Changes requested", { icon: "alert", tone: "danger" });
+  if (summary.approvals > 0)
+    return badge(
+      `${summary.approvals} approval${summary.approvals === 1 ? "" : "s"}`,
+      { icon: "check", tone: "success" },
+    );
+  return html`<span class="badge verdict-stale"
+    >${icon("eye")}Needs review</span
+  >`;
+}
+
 // GET /:owner/:name/pulls
-export function pullsList(ctx: Ctx): Response {
+export async function pullsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const base = repoBase(repo);
@@ -90,10 +147,12 @@ export function pullsList(ctx: Ctx): Response {
   const ids = pulls.map((pull) => pull.id);
   const labels = labelsForIssues(db, ids);
   const comments = commentCounts(db, ids);
+  const verdicts = await verdictsFor(ctx, repo, pulls);
   const rows = pulls.map((pull) => ({
     pull,
     labels: labels.get(pull.id) ?? [],
     comments: comments.get(pull.id) ?? 0,
+    verdict: verdicts.get(pull.id),
   }));
   // One pass over the covering index gives both numbers the seg control shows.
   const counts = issueCounts(db, repo.id, "pull");
@@ -136,7 +195,7 @@ export function pullsList(ctx: Ctx): Response {
           action: newPull,
         })
       : listCard(
-          rows.map(({ pull, labels, comments }) =>
+          rows.map(({ pull, labels, comments, verdict }) =>
             threadRow(
               base,
               "pulls",
@@ -150,7 +209,10 @@ export function pullsList(ctx: Ctx): Response {
                 · opened ${time(pull.createdAt)} by
                 ${pull.originAuthor
                   ? originTag(pull.originAuthor, originGlyph(repo))
-                  : userTag(pull.authorName)}`,
+                  : userTag(pull.authorName)}${when(
+                  pullState(pull) === "open",
+                  () => html` ${verdictMark(verdict)}`,
+                )}`,
               comments,
             ),
           ),
@@ -341,7 +403,10 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
     ? c.baseBranches.length >= 1 && c.headBranches.length >= 1
     : c.headBranches.length >= 2;
 
-  const body = html`${repoHeader(ctx, repo, "pulls", { compact: true, ownTitle: true })}
+  const body = html`${repoHeader(ctx, repo, "pulls", {
+      compact: true,
+      ownTitle: true,
+    })}
     <h1 class="mt">New pull request</h1>
     <div class="narrow-wide mt">
       ${when(
@@ -427,7 +492,10 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
         ctx,
         title: `New pull request · ${repo.name}`,
         crumbs: crumbsFor(repo),
-        body: html`${repoHeader(ctx, repo, "pulls", { compact: true, ownTitle: true })}
+        body: html`${repoHeader(ctx, repo, "pulls", {
+            compact: true,
+            ownTitle: true,
+          })}
           <h1 class="mt">New pull request</h1>
           <div class="narrow-wide mt">
             ${composeForm(

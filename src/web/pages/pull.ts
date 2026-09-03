@@ -8,16 +8,34 @@
 
 import { addCommentThrough } from "../../actions/issues.ts";
 import type { AccessError } from "../../actions/access.ts";
-import { addReview, mergePull } from "../../actions/pulls.ts";
+import {
+  addReview,
+  mergePull,
+  pullThreads,
+  resolveReviewThread,
+  submitReview,
+} from "../../actions/pulls.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import {
   pullDiff,
   type MergePullError,
   type Pull,
+  type PullReviewStatus,
   type PullStatus,
 } from "../../core/pulls.ts";
 import { getPull } from "../../core/pulls.ts";
-import { byAnchor, listReviewComments, type Side } from "../../core/reviews.ts";
+import {
+  anchorKey,
+  byAnchor,
+  isReviewState,
+  latestReviewByAuthor,
+  listReviewComments,
+  listReviews,
+  type Review,
+  type ReviewState,
+  type Side,
+} from "../../core/reviews.ts";
+import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -32,9 +50,15 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { diffSyntax } from "../diff-syntax.ts";
-import { renderDiff, type DiffViewOptions } from "../diff-view.ts";
+import {
+  renderDiff,
+  type DiffViewOptions,
+  type ThreadView,
+} from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { renderMarkdown } from "../markdown.ts";
+import type { IconName as Glyph } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -49,7 +73,10 @@ import {
   sha,
   stateBadge,
   time,
+  tlEvent,
   userLink,
+  verdictBadge,
+  type Tone,
 } from "../ui.ts";
 import {
   composer,
@@ -59,6 +86,7 @@ import {
   originGlyph,
   parseNumber,
   threadFragment,
+  type Entry,
 } from "./thread.ts";
 import { pullState } from "./pulls.ts";
 
@@ -89,6 +117,82 @@ function parseAnchor(
   return { path, side, line };
 }
 
+// ---- where the review stands ----
+
+/** A reviewer's current verdict, keyed the way `latestReviewByAuthor` keys it. */
+interface Standing {
+  readonly who: string;
+  readonly state: ReviewState;
+  readonly stale: boolean;
+}
+
+/**
+ * Where each reviewer stands right now, in the order they last spoke.
+ *
+ * `reviewSummary` counts this; the merge box has to *name* it — "changes
+ * requested by bob" is a person to go and talk to, and "1 change requested"
+ * is a number to stare at.
+ */
+function standings(
+  db: Ctx["app"]["db"],
+  pull: Pull,
+  headOid: string,
+): Standing[] {
+  return [...latestReviewByAuthor(db, pull.id).values()].map((review) => ({
+    who: review.originAuthor ?? review.authorName,
+    state: review.state,
+    stale: review.commitOid !== headOid,
+  }));
+}
+
+/**
+ * The reviews chip: the state of play in one line.
+ *
+ * Rendered whenever anybody has reviewed or the repository demands one —
+ * otherwise the merge box stays the four-line card it was, because a repo
+ * with no review policy should not grow review furniture.
+ */
+function reviewsChip(
+  reviews: PullReviewStatus | null,
+  by: readonly Standing[],
+): Html {
+  if (reviews === null) return html``;
+  const blocking = by.filter(
+    (s) => !s.stale && s.state === "changes_requested",
+  );
+  const parts: Html[] = [];
+  if (reviews.approved > 0)
+    parts.push(
+      html`<span class="ok"
+        >${icon("check")}${reviews.approved}
+        approval${reviews.approved === 1 ? "" : "s"}</span
+      >`,
+    );
+  if (blocking.length > 0)
+    parts.push(
+      html`<span class="bad"
+        >${icon("alert")}changes requested by
+        ${blocking.map((s) => s.who).join(", ")}</span
+      >`,
+    );
+  if (parts.length === 0) {
+    if (!reviews.required) return html``;
+    parts.push(html`<span class="muted">No reviews yet</span>`);
+  }
+  return html`<p class="reviews-chip">
+    ${parts.map((part, i) =>
+      i === 0
+        ? part
+        : html`<span class="where-sep" aria-hidden="true">·</span>${part}`,
+    )}${when(
+      reviews.required,
+      () =>
+        html`<span class="where-sep" aria-hidden="true">·</span
+          ><span class="muted">an approval is required</span>`,
+    )}
+  </p>`;
+}
+
 // ---- the merge box ----
 
 /**
@@ -101,6 +205,7 @@ function mergeBox(
   pull: Pull,
   status: PullStatus,
   mayMerge: boolean,
+  by: readonly Standing[],
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
   const reopen = html`<form method="post" action="${thread}/state">
@@ -157,9 +262,9 @@ function mergeBox(
             This repository mirrors
             ${at === null || at.fullName === ""
               ? html`another forge`
-              : html`<span class="mono">${at.fullName}</span>`}, which is truth
-            for it. Merge there and the next sync brings back the merge commit
-            it actually made.
+              : html`<span class="mono">${at.fullName}</span>`},
+            which is truth for it. Merge there and the next sync brings back the
+            merge commit it actually made.
           </p>
         </div>
         ${when(
@@ -196,8 +301,47 @@ function mergeBox(
         <div class="grow">
           <div class="merge-headline">Can't merge.</div>
           <p class="merge-sub">${reason}</p>
+          ${reviewsChip(status.reviews, by)}
         </div>`,
       { tone: "danger", extra: "merge-box" },
+    );
+  }
+
+  // Git says yes; the review gate may still say no. It is the same question
+  // `mergePull` asks at the moment it lands (`review_required`) — asked here
+  // so the button is honest, not so the check happens here.
+  const gated = status.reviews !== null && !status.reviews.mergeable;
+  if (gated) {
+    const blocking = by.filter(
+      (s) => !s.stale && s.state === "changes_requested",
+    );
+    const why =
+      blocking.length > 0
+        ? html`${blocking.map((s) => s.who).join(", ")} asked for changes. Push
+          a fix, and ask for another look.`
+        : html`This repository requires an approving review of the commit that
+          is head right now. A verdict passed before the latest push does not
+          count.`;
+    return card(
+      html`${icon("eye")}
+        <div class="grow">
+          <div class="merge-headline">Waiting on review.</div>
+          <p class="merge-sub">${why}</p>
+          ${reviewsChip(status.reviews, by)}
+        </div>
+        ${when(
+          mayMerge,
+          () =>
+            html`<span class="merge-form"
+              >${btn("Merge pull request", {
+                variant: "primary",
+                icon: "merge",
+                disabled: true,
+                title: "An approving review of this head is required first",
+              })}</span
+            >`,
+        )}`,
+      { tone: "attn", extra: "merge-box" },
     );
   }
 
@@ -212,6 +356,7 @@ function mergeBox(
           ${status.ahead} commit${status.ahead === 1 ? "" : "s"} will land on
           <span class="mono">${pull.baseBranch}</span>.
         </p>
+        ${reviewsChip(status.reviews, by)}
       </div>
       ${mayMerge
         ? html`<span class="merge-form">
@@ -234,6 +379,188 @@ function mergeBox(
   );
 }
 
+// ---- threads ----
+
+/**
+ * Every thread's settled-ness, keyed the way the diff viewer looks it up.
+ *
+ * Who may settle one is the same rule `resolveReviewThread` enforces: a
+ * writer, or anybody who commented in the thread — the reviewer who raised a
+ * point is exactly the person who can say it is answered. Resolvers are
+ * named in one grouped read rather than one per thread.
+ */
+function threadStateViews(
+  ctx: Ctx,
+  repo: Repo,
+  threads: ReturnType<typeof pullThreads>,
+): Map<string, ThreadView> {
+  const user = ctx.auth.user;
+  const writer = canWrite(ctx.app.db, repo, user);
+  const resolvers = getUsersByIds(
+    ctx.app.db,
+    threads.map((t) => t.resolvedBy ?? "").filter(Boolean),
+  );
+  const views = new Map<string, ThreadView>();
+  for (const t of threads) {
+    const mine =
+      user !== undefined &&
+      t.comments.some((c) => c.authorName === user.username);
+    views.set(anchorKey(t.path, t.side, t.line), {
+      anchor: t.anchor,
+      resolvedAt: t.resolvedAt,
+      resolvedBy:
+        t.resolvedBy === null
+          ? null
+          : (resolvers.get(t.resolvedBy)?.username ?? null),
+      mayResolve: user !== undefined && (writer || mine),
+    });
+  }
+  return views;
+}
+
+// ---- verdicts, in the timeline ----
+
+/**
+ * One verdict as a timeline entry.
+ *
+ * Muted and marked when it was passed on an older head: it is history, not a
+ * current position, and a dismissed approval that still looks like an
+ * approval is exactly how a review gate becomes decorative.
+ */
+function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
+  const stale = review.commitOid !== headOid;
+  const tone: Tone = stale
+    ? "default"
+    : review.state === "approved"
+      ? "success"
+      : review.state === "changes_requested"
+        ? "danger"
+        : "default";
+  const who =
+    review.originAuthor === null
+      ? userLink(review.authorName)
+      : originTag(review.originAuthor, glyph);
+  return {
+    at: review.createdAt,
+    node: tlEvent({
+      icon:
+        review.state === "approved"
+          ? "check"
+          : review.state === "changes_requested"
+            ? "alert"
+            : "comment",
+      tone,
+      body: html`${who} ${verdictBadge(review.state, { stale })}
+      ${time(review.createdAt)}${when(
+        stale,
+        () => html`<span class="muted">— before the latest push</span>`,
+      )}${when(
+        review.body !== "",
+        () =>
+          html`<div class="prose review-body">
+            ${renderMarkdown(review.body)}
+          </div>`,
+      )}`,
+    }),
+  };
+}
+
+/**
+ * The review card: pass a verdict.
+ *
+ * One form, three radios and a box. Which radios appear is the rule made
+ * visible — a reader may only comment, because an approval that anyone who
+ * can see the repository could give would make "require review" decorative;
+ * and the author never sees Approve, because you cannot approve your own
+ * change. Both are refused in `submitReview` too, which is where they are
+ * actually enforced.
+ */
+function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
+  const user = ctx.auth.user;
+  if (user === undefined)
+    return card(html`<a href="/signin">Sign in</a> to review this change.`, {
+      extra: "mt",
+      head: html`${icon("eye")}
+        <h2>Review</h2>`,
+    });
+  if (pull.mergedAt !== null || pull.state === "closed") return html``;
+  const writer = canWrite(ctx.app.db, repo, user);
+  const isAuthor = pull.authorId === user.id;
+  const options: { value: string; label: string; hint: string }[] = [];
+  if (writer && !isAuthor)
+    options.push({
+      value: "approved",
+      label: "Approve",
+      hint: "This is good to merge.",
+    });
+  if (writer)
+    options.push({
+      value: "changes_requested",
+      label: "Request changes",
+      hint: "Blocks the merge until it is withdrawn.",
+    });
+  options.push({
+    value: "commented",
+    label: "Comment",
+    hint: "A note on the change as a whole, with no verdict.",
+  });
+
+  return card(
+    html`<form method="post" action="${action}">
+      <fieldset class="review-verdicts">
+        <legend class="sr-only">Your verdict</legend>
+        ${options.map(
+          (option, i) =>
+            html`<label class="check">
+              <input
+                type="radio"
+                name="state"
+                value="${option.value}"
+                ${i === options.length - 1 ? raw("checked") : null}
+              />
+              <span
+                >${option.label} <span class="hint">${option.hint}</span></span
+              >
+            </label>`,
+        )}
+      </fieldset>
+      <label class="sr-only" for="review-body">Review comment</label>
+      <textarea
+        class="input mt"
+        id="review-body"
+        name="body"
+        rows="3"
+        data-grow
+        placeholder="Say something about the change as a whole (optional)"
+      ></textarea>
+      <div class="form-actions">
+        ${when(
+          isAuthor,
+          () =>
+            html`<span class="muted small"
+              >${icon("alert")} You cannot approve your own pull request.</span
+            >`,
+        )}
+        ${when(
+          !writer,
+          () =>
+            html`<span class="muted small"
+              >${icon("alert")} A verdict that gates a merge needs write
+              access.</span
+            >`,
+        )}
+        <span class="spacer"></span>
+        ${btn("Submit review", { variant: "primary", icon: "check" })}
+      </div>
+    </form>`,
+    {
+      extra: "mt review-card",
+      head: html`${icon("eye")}
+        <h2>Review</h2>`,
+    },
+  );
+}
+
 // ---- the page ----
 
 // GET /:owner/:name/pulls/:number
@@ -245,12 +572,22 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const base = repoBase(repo);
   const thread = `${base}/pulls/${pull.number}`;
 
-  const { status, from, diff } = await pullDiff(dir, pull);
+  // The review gate travels with the status, so the merge box and
+  // `mergePull` are answering the same question from the same numbers.
+  const { status, from, diff } = await pullDiff(dir, pull, {
+    db: ctx.app.db,
+    requireReview: repo.requireReview,
+  });
   const syntax = await diffSyntax(dir, diff, from, status.headOid);
   const reviewComments = byAnchor(listReviewComments(ctx.app.db, pull.id));
   const mayMerge = canWrite(ctx.app.db, repo, ctx.auth.user);
   const applied = labelsFor(ctx.app.db, pull.id);
   const allLabels = listLabels(ctx.app.db, repo.id);
+  const verdicts = listReviews(ctx.app.db, pull.id);
+  const by = standings(ctx.app.db, pull, status.headOid);
+  const threads = pullThreads(ctx.app, pull);
+  const threadViews = threadStateViews(ctx, repo, threads);
+  const unresolved = threads.filter((t) => t.resolvedAt === null).length;
 
   // A "?rc=path~side~line" link opens an inline comment form at that row.
   const active = ctx.auth.user
@@ -259,6 +596,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const diffOptions: DiffViewOptions = {
     syntax,
     comments: reviewComments,
+    threads: threadViews,
     ...(ctx.auth.user ? { reviewBase: thread } : {}),
     ...(active ? { active } : {}),
   };
@@ -270,9 +608,11 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
     : pull.headBranch;
 
+  const glyph = originGlyph(repo);
   const talk = conversation(ctx, repo, pull, {
     openVerb: html`wants to merge <span class="mono">${headLabel}</span> into
       <span class="mono">${pull.baseBranch}</span> ·`,
+    extra: verdicts.map((review) => reviewEntry(review, status.headOid, glyph)),
   });
 
   const log = await commitLog(dir, status.headOid, {
@@ -308,7 +648,10 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     },
   );
 
-  const body = html`${repoHeader(ctx, repo, "pulls", { compact: true, ownTitle: true })}
+  const body = html`${repoHeader(ctx, repo, "pulls", {
+      compact: true,
+      ownTitle: true,
+    })}
     <div class="issue-head">
       <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
       <div class="issue-meta">
@@ -333,7 +676,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
         ${when(pull.crossRepo, () => badge("fork", { icon: "fork" }))}
       </div>
     </div>
-    ${mergeBox(ctx, repo, pull, status, mayMerge)}
+    ${mergeBox(ctx, repo, pull, status, mayMerge, by)}
     <div class="split">
       <div>
         ${talk.node}
@@ -344,13 +687,24 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
           locked: pull.mergedAt !== null,
           kind: "pull",
         })}
+        ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>
       <aside>
         ${labelsCard(ctx, repo, pull, applied, allLabels, `${thread}/labels`)}
         <div class="mt">${commitsCard}</div>
       </aside>
     </div>
-    <h2 class="mt" id="files">Files changed</h2>
+    <div class="files-head">
+      <h2 class="mt" id="files">Files changed</h2>
+      ${when(
+        threads.length > 0,
+        () =>
+          html`<span class="muted small thread-count"
+            >${threads.length} thread${threads.length === 1 ? "" : "s"} ·
+            ${unresolved} unresolved</span
+          >`,
+      )}
+    </div>
     ${renderDiff(diff, diffOptions)}
     ${liveMount({
       repo: base,
@@ -402,8 +756,7 @@ export async function pullCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        originError(added.error) ?? "That comment could not be posted.",
+      message: originError(added.error) ?? "That comment could not be posted.",
     });
   return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }
@@ -469,9 +822,7 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
  * or lifecycle code, or git's own structured `MergeError` — both are answers
  * the person pressing the button deserves to see.
  */
-function mergeFailure(
-  error: AccessError | MergePullError,
-): string {
+function mergeFailure(error: AccessError | MergePullError): string {
   if (typeof error !== "string") {
     if (error.kind === "conflict")
       return `The branches conflict in ${error.files.length} file${error.files.length === 1 ? "" : "s"} — merge the base branch in and push again.`;
@@ -482,12 +833,115 @@ function mergeFailure(
   }
   const fromOrigin = originError(error);
   if (fromOrigin !== undefined) return fromOrigin;
-  if (error === "already_merged") return "This pull request was already merged.";
+  if (error === "already_merged")
+    return "This pull request was already merged.";
   if (error === "closed")
     return "A closed pull request cannot be merged. Reopen it first.";
+  // The gate races: the page was rendered with an approval that a push
+  // dismissed a second later, or a reviewer asked for changes in between.
+  if (error === "review_required")
+    return "This pull request needs an approving review of its current head, and does not have one. Nothing was merged.";
   if (error === "forbidden" || error === "unauthorized")
     return "You do not have write access to this repository.";
   return "That pull request is no longer here.";
+}
+
+// ---- verdicts and threads ----
+
+/**
+ * POST /:owner/:name/pulls/:number/review-state — pass a verdict.
+ *
+ * One endpoint, one verb, and the two refusals that matter get their own
+ * sentences: a reader cannot approve (that is what makes "require review"
+ * mean anything) and an author cannot approve their own change (that is the
+ * whole point of requiring one). Both are decided in `submitReview`; this
+ * only puts them into words.
+ */
+export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const state = field(form, "state");
+  if (!isReviewState(state))
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: "Pick approve, request changes, or comment.",
+    });
+  const bodyText = field(form, "body").trim();
+  const submitted = await submitReview(
+    ctx.app,
+    ctx.auth.user,
+    found.repo,
+    found.pull,
+    { state, ...(bodyText === "" ? {} : { body: bodyText }) },
+  );
+  if (!submitted.ok) {
+    const error = submitted.error;
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message:
+        originError(error) ??
+        (error === "self_review"
+          ? "You cannot approve your own pull request."
+          : error === "forbidden"
+            ? "A verdict that gates a merge needs write access. You can still leave a comment."
+            : error === "body_too_long"
+              ? "That review is too long (64 KB at most)."
+              : error === "invalid_state"
+                ? "That is not a verdict this forge knows."
+                : "That review could not be recorded."),
+    });
+  }
+  return flashTo(ctx, `${dest}#conversation`, {
+    message:
+      state === "approved"
+        ? "Approved."
+        : state === "changes_requested"
+          ? "Changes requested."
+          : "Review posted.",
+  });
+}
+
+/** POST …/pulls/:number/threads/:anchor/{resolve,unresolve}. */
+export function threadResolveSubmit(
+  resolved: boolean,
+): (ctx: Ctx) => Promise<Response> {
+  return async (ctx: Ctx): Promise<Response> => {
+    const found = pullContext(ctx);
+    if (found instanceof Response) return found;
+    if (!ctx.auth.user) return signInFirst(ctx);
+    const form = await readForm(ctx, "rw");
+    if (form instanceof Response) return form;
+
+    const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+    const anchor = ctx.params.anchor ?? "";
+    // The anchor is a hex digest and nothing else; anything shaped
+    // differently never reaches a query.
+    if (!/^[0-9a-f]{16}$/.test(anchor)) return notFoundPage(ctx);
+    const changed = resolveReviewThread(
+      ctx.app,
+      ctx.auth.user,
+      found.repo,
+      found.pull,
+      anchor,
+      resolved,
+    );
+    if (!changed.ok)
+      return flashTo(ctx, `${dest}#files`, {
+        tone: "danger",
+        message:
+          changed.error === "not_found"
+            ? "That thread is not here any more."
+            : "Only someone in the thread, or a writer, can settle it.",
+      });
+    return flashTo(ctx, `${dest}#files`, {
+      message: resolved ? "Thread resolved." : "Thread reopened.",
+    });
+  };
 }
 
 // POST /:owner/:name/pulls/:number/merge

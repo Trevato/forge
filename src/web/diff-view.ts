@@ -20,7 +20,7 @@ import {
 import { composeLine } from "./code.ts";
 import type { Token } from "./highlight.ts";
 import { escapeHtml, html, raw, when, type Html } from "./html.ts";
-import { time, userLink } from "./ui.ts";
+import { icon, time, userLink } from "./ui.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { wordDiff, type Segment } from "./worddiff.ts";
 
@@ -31,11 +31,31 @@ export interface FileTokens {
 }
 export type SyntaxMap = Map<string, FileTokens>;
 
+/**
+ * One review thread's settled-ness, as the viewer may act on it.
+ *
+ * A thread is every review comment sharing one anchor, and "resolved" is a
+ * property of the conversation rather than of any line in it — so it is
+ * rendered once, above the comments, and it is what decides whether they are
+ * shown at all.
+ */
+export interface ThreadView {
+  /** The digest that addresses this thread in a URL (`anchorId`). */
+  readonly anchor: string;
+  readonly resolvedAt: string | null;
+  /** Who settled it, by username. */
+  readonly resolvedBy: string | null;
+  /** Whether this viewer may settle it, or take that back. */
+  readonly mayResolve: boolean;
+}
+
 /** Everything the viewer needs beyond the diff itself. */
 export interface DiffViewOptions {
   syntax?: SyntaxMap;
   /** Review comments, grouped by `anchorKey(path, side, line)`. */
   comments?: Map<string, ReviewComment[]>;
+  /** Thread state, under the same key as `comments`. */
+  threads?: Map<string, ThreadView>;
   /** Render an inline comment form at this anchor (from a `?rc=` link). */
   active?: { path: string; side: Side; line: number };
   /** Base path for comment forms and "+" links, e.g. `/owner/repo/pulls/3`.
@@ -221,6 +241,7 @@ function reviewRows(
     opts.active.line === line;
   if (comments.length === 0 && !isActive) return html``;
 
+  const state = opts.threads?.get(key);
   const currentHash = hashLine(currentText);
   const thread = comments.map((c) => {
     const outdated = c.lineHash !== currentHash;
@@ -277,11 +298,60 @@ function reviewRows(
       </form>`
     : html``;
 
+  // A settled thread collapses to one line: who settled it and when, with
+  // the conversation itself one click away. The point of resolving is to get
+  // an answered question out of the way of the unanswered ones, and a
+  // "resolved" badge above the same wall of text does not do that.
+  const body =
+    state?.resolvedAt != null
+      ? html`<div class="rc-resolved">
+          <span class="rc-resolved-line"
+            >${icon("check")}
+            resolved${state.resolvedBy === null
+              ? null
+              : html` by ${userLink(state.resolvedBy)}`}
+            · ${time(state.resolvedAt)}</span
+          >
+          ${threadToggle(opts, state, false)}
+          <details class="rc-hidden">
+            <summary>
+              Show ${comments.length}
+              ${comments.length === 1 ? "comment" : "comments"}
+            </summary>
+            ${thread}
+          </details>
+        </div>`
+      : html`${thread}${threadToggle(opts, state, true)}`;
+
   return html`<tr class="dl-review">
     <td class="dn"></td>
     <td class="dn"></td>
-    <td class="dc-review">${thread}${form}</td>
+    <td class="dc-review">${body}${form}</td>
   </tr>`;
+}
+
+/**
+ * Resolve, or take it back. A writer may settle any thread; so may whoever
+ * commented in it — the reviewer who raised a point is exactly the person
+ * who can say it is answered (`resolveReviewThread` enforces both).
+ */
+function threadToggle(
+  opts: DiffViewOptions,
+  state: ThreadView | undefined,
+  resolve: boolean,
+): Html {
+  if (state === undefined || !state.mayResolve || !opts.reviewBase)
+    return html``;
+  const verb = resolve ? "resolve" : "unresolve";
+  return html`<form
+    class="rc-resolve"
+    method="post"
+    action="${opts.reviewBase}/threads/${state.anchor}/${verb}"
+  >
+    <button class="btn" data-size="sm" data-variant="outline" type="submit">
+      ${resolve ? "Resolve" : "Unresolve"}
+    </button>
+  </form>`;
 }
 
 function hunkHeader(hunk: Hunk): Html {

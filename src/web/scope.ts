@@ -23,7 +23,12 @@
  */
 
 import { isPinned } from "../core/pins.ts";
-import type { Origin } from "../core/origins.ts";
+import {
+  getOriginRepo,
+  originForRepo,
+  repoForkOf,
+  type Origin,
+} from "../core/origins.ts";
 import { canWrite, countsForRepos, type Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import type {
@@ -60,9 +65,51 @@ export interface RepoScope {
   readonly originUrl: string;
   /** A mirror of the repository being browsed, when one already exists. */
   readonly mirror: Repo | undefined;
+  /**
+   * `owner/name` at the origin that this repository is *my fork of*, when it
+   * is one. The fork flow records it (`setRepoForkOf`); it is the lineage a
+   * native fork gets from `forkParentId`, for a fork that lives on somebody
+   * else's forge.
+   */
+  readonly upstream: string | undefined;
+  /**
+   * Where a change made here has to go, when it cannot simply be committed.
+   * Set exactly when the origin says this account may **not** push to the
+   * repository — on a live browse of it, or on a mirror of it. A native
+   * repo, and a mirror you may push through, take the ordinary editor.
+   */
+  readonly propose: ProposeTarget | undefined;
   readonly crumbs: { label: string; href: string }[];
   readonly palette: PaletteItem[];
 }
+
+/**
+ * What a repository proposes changes *to*, and through what.
+ *
+ * The whole workflow in five fields: the repo the pull opens on, the fork
+ * the commit lands in, where the form posts, and whether a fork is needed at
+ * all. `actions/contribute.ts` decides the last one for real — this is the
+ * same question asked early, so the page can say what is about to happen
+ * before anybody types twenty minutes of it.
+ */
+export interface ProposeTarget {
+  readonly originId: string;
+  /** `owner/name` at the origin — where the pull request opens. */
+  readonly upstream: string;
+  /**
+   * `owner/name` of your fork of it at the origin. The conventional name
+   * (`<your login>/<repo>`) when you have no fork yet, because that is
+   * exactly the one `forkOrigin` will make.
+   */
+  readonly fork: string;
+  readonly host: string;
+  /** Where the contribute form POSTs. */
+  readonly action: string;
+}
+
+/** The conventional fork name for `owner/name` under `login`. */
+const forkNameFor = (login: string, fullName: string): string =>
+  `${login}/${fullName.split("/")[1] ?? fullName}`;
 
 /** `codeberg.org` out of `https://codeberg.org/octo/widgets`. */
 export function hostOf(url: string): string {
@@ -80,6 +127,8 @@ export function hostOf(url: string): string {
 export function localScope(ctx: Ctx, repo: Repo): RepoScope {
   const base = `/${repo.ownerName}/${repo.name}`;
   const source = localSource(ctx.app, repo, ctx.auth.user);
+  // Only a mirror has an upstream, so only a mirror pays for these reads.
+  const mirrored = repo.origin === null ? undefined : mirrorFacts(ctx, repo);
   // One grouped query for both tab counts — the same helper a repo *list*
   // uses, asked for a list of one, rather than two count queries per page.
   const counts = repo.counts ??
@@ -114,11 +163,43 @@ export function localScope(ctx: Ctx, repo: Repo): RepoScope {
     origin: undefined,
     originUrl: repo.origin?.htmlUrl ?? "",
     mirror: undefined,
+    upstream: mirrored?.upstream,
+    propose: mirrored?.propose,
     crumbs: [
       { label: repo.ownerName, href: `/${repo.ownerName}` },
       { label: repo.name, href: base },
     ],
     palette: repoPalette(base, `${repo.ownerName}/${repo.name}`, true),
+  };
+}
+
+/**
+ * The two things a mirror knows that a native repo does not: what it is a
+ * fork of, and whether a change made here can be pushed upstream at all.
+ *
+ * `can_push` is the origin's own answer, cached on the picker row when the
+ * mirror was made. Absent (a repository mirrored before the column existed,
+ * say) it is read as "yes" — an editor that fails loudly with the origin's
+ * refusal beats an editor that quietly hides itself.
+ */
+function mirrorFacts(
+  ctx: Ctx,
+  repo: Repo,
+): { upstream: string | undefined; propose: ProposeTarget | undefined } {
+  const upstream = repoForkOf(ctx.app.db, repo.id) ?? undefined;
+  const link = originForRepo(ctx.app.db, repo.id);
+  if (link === undefined) return { upstream, propose: undefined };
+  const cached = getOriginRepo(ctx.app.db, link.origin.id, link.fullName);
+  if (cached?.canPush !== false) return { upstream, propose: undefined };
+  return {
+    upstream,
+    propose: {
+      originId: link.origin.id,
+      upstream: link.fullName,
+      fork: forkNameFor(link.origin.login, link.fullName),
+      host: hostOf(link.origin.webUrl),
+      action: `/${repo.ownerName}/${repo.name}/contribute`,
+    },
   };
 }
 
@@ -153,6 +234,24 @@ export async function originScope(
     origin,
     originUrl: facts.htmlUrl ?? (where.kind === "origin" ? where.htmlUrl : ""),
     mirror: where.kind === "origin" ? where.mirroredAs : undefined,
+    // A live browse does not ask the origin who its parent is: `describe()`
+    // carries no parent, and one more round trip to decorate a header is not
+    // worth it. Lineage appears once the fork is mirrored here.
+    upstream: undefined,
+    // A repository the origin says you *can* push to needs no fork: mirror
+    // it and edit it here, which is the flow the header already offers. One
+    // you cannot push to is what the propose card exists for.
+    ...(facts.permissions?.push === false
+      ? {
+          propose: {
+            originId: origin.id,
+            upstream: fullName,
+            fork: forkNameFor(origin.login, fullName),
+            host: hostOf(origin.webUrl),
+            action: `${base}/contribute`,
+          },
+        }
+      : { propose: undefined }),
     crumbs: [
       {
         label: hostOf(origin.webUrl),
@@ -230,7 +329,16 @@ function placesFor(ctx: Ctx, scope: RepoScope): Place[] {
       glyph: "●",
       icon: at.kind,
       ...(at.htmlUrl === "" ? {} : { href: at.htmlUrl, external: true }),
-      title: `mirrored from ${at.fullName}`,
+      // A fork says so right here, where you are already reading "which
+      // forge is truth for this" — the one line that stops somebody
+      // proposing a change to their own copy and wondering why nobody saw it.
+      ...(scope.upstream === undefined
+        ? {}
+        : { note: `fork of ${scope.upstream}` }),
+      title:
+        scope.upstream === undefined
+          ? `mirrored from ${at.fullName}`
+          : `${at.fullName} is my fork of ${scope.upstream}`,
     });
   }
 
@@ -397,14 +505,58 @@ export function liveBanner(scope: RepoScope): Html {
 }
 
 /**
- * What a live browse offers instead of the write affordances: one primary
- * verb, and the way out to the forge that actually owns this repository.
+ * Where the repository this one forks can be read: the live browse of it on
+ * the same origin, because that is a page in this product which then offers
+ * Fork, Propose a change, and its pull list. A link straight out to the
+ * origin drops you out of the workflow you are in the middle of.
+ */
+export function upstreamHref(scope: RepoScope): string | undefined {
+  const originId = scope.repo?.origin?.originId ?? scope.origin?.id;
+  if (scope.upstream === undefined || originId === undefined) return undefined;
+  return browseBase(originId, scope.upstream);
+}
+
+/** Whether `owner/name` belongs to the connected account itself. */
+export const isOwnRepo = (login: string, fullName: string): boolean =>
+  login !== "" && fullName.toLowerCase().startsWith(`${login.toLowerCase()}/`);
+
+/**
+ * Fork it, at the origin.
+ *
+ * The one write a live browse makes on somebody else's forge, and the first
+ * step of the workflow this whole surface exists for: grab their repo,
+ * branch, edit, propose it back. Not offered on a repository the connected
+ * account already owns — neither forge forks you to yourself.
+ */
+export function forkButton(scope: RepoScope): Html {
+  const origin = scope.origin;
+  if (scope.kind !== "origin" || origin === undefined) return html``;
+  if (isOwnRepo(origin.login, scope.fullName)) return html``;
+  return html`<form method="post" action="${scope.base}/fork">
+    <button
+      class="btn"
+      data-size="sm"
+      data-variant="outline"
+      type="submit"
+      title="Fork ${scope.fullName} into your account at ${hostOf(
+        origin.webUrl,
+      )}"
+    >
+      ${icon("fork", 16)}Fork
+    </button>
+  </form>`;
+}
+
+/**
+ * What a live browse offers instead of the write affordances: fork it, one
+ * primary verb, and the way out to the forge that actually owns this
+ * repository.
  */
 export function browseActions(scope: RepoScope): Html {
   if (scope.kind !== "origin" || scope.origin === undefined) return html``;
   const host = hostOf(scope.origin.webUrl);
   const mirror = scope.mirror;
-  return html`${mirror === undefined
+  return html`${forkButton(scope)}${mirror === undefined
     ? html`<form method="post" action="${scope.base}/mirror">
         <button class="btn" data-variant="primary" data-size="sm" type="submit">
           ${icon("download", 16)}Mirror into your workbench

@@ -485,6 +485,65 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .rc-form { display: block; }
 .rc-form textarea { width: 100%; }
 
+/* A settled thread is one line plus a disclosure: the point of resolving is
+   to get an answered question out of the way of the unanswered ones. */
+.rc-resolved { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rc-resolved-line {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--muted-fg);
+}
+.rc-resolved-line .ico { width: 14px; height: 14px; color: var(--success); }
+.rc-hidden { flex-basis: 100%; }
+.rc-hidden > summary {
+  cursor: pointer; font-size: 13px; color: var(--muted-fg);
+  padding: 2px 0; list-style: none;
+}
+.rc-hidden > summary::-webkit-details-marker { display: none; }
+.rc-hidden > summary::before { content: "▸ "; }
+.rc-hidden[open] > summary::before { content: "▾ "; }
+.rc-hidden > summary:hover { color: var(--fg); }
+.rc-hidden[open] { margin-top: 6px; }
+.rc-resolve { display: inline-flex; margin-left: auto; }
+
+/* ---- review verdicts ---- */
+/* A verdict passed before the latest push is history, not a position: it
+   keeps its words and loses its colour. */
+.verdict-stale { color: var(--muted-fg); background: none; }
+.verdict-stale .ico { width: 12px; height: 12px; }
+.review-body {
+  flex-basis: 100%; margin-top: 4px; padding: 8px 12px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); font-size: 13.5px; color: var(--fg);
+}
+.review-body p:first-child { margin-top: 0; }
+.review-body p:last-child { margin-bottom: 0; }
+.review-card .review-verdicts { border: 0; padding: 0; margin: 0; display: grid; gap: 10px; }
+.review-verdicts .check .hint {
+  display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 1px;
+}
+.review-card textarea { width: 100%; }
+.reviews-chip {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 13px; color: var(--muted-fg);
+}
+.reviews-chip .ico { width: 14px; height: 14px; }
+.reviews-chip .ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
+.reviews-chip .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
+.files-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.files-head h2 { margin-bottom: 0; }
+
+/* ---- proposing a change ---- */
+/* The editor's commit block, when the commit is a contribution: the whole
+   outcome in one sentence before anybody types. */
+.editor-target.propose > legend { display: inline-flex; align-items: center; gap: 6px; }
+.propose-line { margin: 0 0 14px; text-wrap: pretty; }
+.propose-line .hint { display: block; margin-top: 2px; font-size: 12.5px; color: var(--muted-fg); }
+/* The commit block's inputs sit inline beside a radio; the propose card's
+   are ordinary fields, and want the full column. */
+.editor-target.propose .input {
+  display: block; width: 100%; min-width: 0; margin-left: 0;
+}
+
 /* A diff card is narrower inside a two-column PR page; its header wraps
    instead of squeezing the path to nothing. */
 .diff-file { container-type: inline-size; }

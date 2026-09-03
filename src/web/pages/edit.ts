@@ -18,7 +18,8 @@
  */
 
 import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
-import { canAdmin } from "../../core/repos.ts";
+import { contribute } from "../../actions/contribute.ts";
+import { canAdmin, getRepoById } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import { highlightAsset } from "../asset.ts";
@@ -26,16 +27,21 @@ import { editorJs } from "../client.ts";
 import { detectLanguage } from "../highlight.ts";
 import { highlightToHtml } from "../highlight-html.ts";
 import { loadRepo, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
-import { field as formValue, readForm } from "../form.ts";
+import { field as formValue, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { localScope, type RepoScope } from "../scope.ts";
+import {
+  browseBase,
+  localScope,
+  type ProposeTarget,
+  type RepoScope,
+} from "../scope.ts";
 import { btn, card, field, icon } from "../ui.ts";
 import { pathCrumbs, refSetFrom } from "./refs.ts";
 
 /** What the form is holding, so a refusal can hand every word back. */
-interface Draft {
+export interface Draft {
   ref: string;
   path: string;
   content: string;
@@ -50,6 +56,12 @@ interface Draft {
   creating: boolean;
   /** True when committing straight to `ref` is not on offer at all. */
   mustBranch: boolean;
+  /**
+   * Set when this edit is a *contribution*: it lands on a fork and opens a
+   * pull upstream. There is no "commit directly" in that world, so the
+   * whole "where this lands" fieldset is replaced by the propose card.
+   */
+  propose?: ProposeTarget;
   error?: string;
 }
 
@@ -69,10 +81,12 @@ export function mirrorFor(
   path: string,
   content: string,
 ): { lang: string; mirror: boolean } {
-  const lang = detectLanguage(path, content.slice(0, content.indexOf("\n") + 1 || 200));
+  const lang = detectLanguage(
+    path,
+    content.slice(0, content.indexOf("\n") + 1 || 200),
+  );
   const tooBig =
-    content.length > MAX_MIRROR_BYTES ||
-    countLines(content) > MAX_MIRROR_LINES;
+    content.length > MAX_MIRROR_BYTES || countLines(content) > MAX_MIRROR_LINES;
   return { lang, mirror: !tooBig };
 }
 
@@ -147,7 +161,11 @@ function editorForm(
   const suggestion =
     draft.branch !== "" ? draft.branch : suggestBranch(username, draft.path);
 
-  return html`<form method="post" action="${base}/edit" class="editor-form">
+  return html`<form
+    method="post"
+    action="${draft.propose?.action ?? `${base}/edit`}"
+    class="editor-form"
+  >
     <input type="hidden" name="ref" value="${draft.ref}" />
     ${draft.creating
       ? raw('<input type="hidden" name="creating" value="1" />')
@@ -253,83 +271,18 @@ ${draft.content}</textarea
           rows: 3,
           value: draft.body,
         })}
-        <fieldset class="editor-target">
-          <legend>Where this lands</legend>
-          <label class="check">
-            <input
-              type="radio"
-              name="target"
-              value="current"
-              ${draft.target === "current" && !draft.mustBranch
-                ? raw("checked")
-                : null}
-              ${draft.mustBranch ? raw("disabled") : null}
-            />
-            <span
-              >Commit directly to <span class="mono">${draft.ref}</span> ${when(
-                draft.mustBranch,
-                () =>
-                  html`<span class="hint"
-                    >Not available: ${draft.ref} is protected, or is not a
-                    branch.</span
-                  >`,
-              )}</span
-            >
-          </label>
-          <label class="check">
-            <input
-              type="radio"
-              name="target"
-              value="new"
-              ${draft.target === "new" || draft.mustBranch
-                ? raw("checked")
-                : null}
-            />
-            <span class="grow"
-              >Create a new branch
-              <input
-                class="input mono"
-                id="f-branch"
-                name="branch"
-                value="${suggestion}"
-                aria-label="New branch name"
-                autocomplete="off"
-                spellcheck="false"
-              />
-            </span>
-          </label>
-          <div id="f-pull-block">
-            <label class="check">
-              <input
-                type="checkbox"
-                name="pull"
-                value="1"
-                ${draft.pull ? raw("checked") : null}
-              />
-              <span
-                >Open a pull request from the new branch back into
-                <span class="mono">${draft.ref}</span></span
-              >
-            </label>
-            ${field({
-              label: "Pull request title",
-              name: "pullTitle",
-              value: draft.pullTitle,
-              placeholder: "Same as the commit message",
-            })}
-            ${field({
-              label: "Pull request description",
-              name: "pullBody",
-              type: "textarea",
-              rows: 3,
-              value: draft.pullBody,
-            })}
-          </div>
-        </fieldset>
+        ${draft.propose !== undefined
+          ? proposeBlock(draft, draft.propose, suggestion)
+          : landingBlock(draft, suggestion)}
         <div class="form-actions">
-          ${btn(draft.creating ? "Create file" : "Commit change", {
-            variant: "primary",
-          })}
+          ${btn(
+            draft.propose !== undefined
+              ? "Propose this change"
+              : draft.creating
+                ? "Create file"
+                : "Commit change",
+            { variant: "primary" },
+          )}
           ${btn("Cancel", {
             href: draft.creating
               ? `${base}/tree/${encoded}`
@@ -337,7 +290,7 @@ ${draft.content}</textarea
             variant: "ghost",
           })}
           <span class="spacer"></span>
-          ${when(!draft.creating, () =>
+          ${when(!draft.creating && draft.propose === undefined, () =>
             btn("Delete this file", {
               href: `${base}/delete/${encoded}/${draft.path}`,
               variant: "danger",
@@ -351,7 +304,149 @@ ${draft.content}</textarea
   </form>`;
 }
 
-async function editorPage(
+/**
+ * "Where this lands", for a repository that can take the commit: directly on
+ * the ref, or on a new branch with an optional pull request behind it.
+ */
+function landingBlock(draft: Draft, suggestion: string): Html {
+  return html`<fieldset class="editor-target">
+    <legend>Where this lands</legend>
+    <label class="check">
+      <input
+        type="radio"
+        name="target"
+        value="current"
+        ${draft.target === "current" && !draft.mustBranch
+          ? raw("checked")
+          : null}
+        ${draft.mustBranch ? raw("disabled") : null}
+      />
+      <span
+        >Commit directly to <span class="mono">${draft.ref}</span> ${when(
+          draft.mustBranch,
+          () =>
+            html`<span class="hint"
+              >Not available: ${draft.ref} is protected, or is not a
+              branch.</span
+            >`,
+        )}</span
+      >
+    </label>
+    <label class="check">
+      <input
+        type="radio"
+        name="target"
+        value="new"
+        ${draft.target === "new" || draft.mustBranch ? raw("checked") : null}
+      />
+      <span class="grow"
+        >Create a new branch
+        <input
+          class="input mono"
+          id="f-branch"
+          name="branch"
+          value="${suggestion}"
+          aria-label="New branch name"
+          autocomplete="off"
+          spellcheck="false"
+        />
+      </span>
+    </label>
+    <div id="f-pull-block">
+      <label class="check">
+        <input
+          type="checkbox"
+          name="pull"
+          value="1"
+          ${draft.pull ? raw("checked") : null}
+        />
+        <span
+          >Open a pull request from the new branch back into
+          <span class="mono">${draft.ref}</span></span
+        >
+      </label>
+      ${field({
+        label: "Pull request title",
+        name: "pullTitle",
+        value: draft.pullTitle,
+        placeholder: "Same as the commit message",
+      })}
+      ${field({
+        label: "Pull request description",
+        name: "pullBody",
+        type: "textarea",
+        rows: 3,
+        value: draft.pullBody,
+      })}
+    </div>
+  </fieldset>`;
+}
+
+/**
+ * The propose card: what happens to this text when you cannot push.
+ *
+ * It says the whole outcome in one sentence, up front, with both repository
+ * names in it — the fork the commit lands on and the repository the pull
+ * opens against — because "commit" means something different here and
+ * finding that out afterwards is the worst possible time. There is no
+ * "commit directly" radio, because there is no such option.
+ */
+function proposeBlock(
+  draft: Draft,
+  propose: ProposeTarget,
+  suggestion: string,
+): Html {
+  return html`<fieldset class="editor-target propose">
+    <legend>${icon("fork")}Propose a change</legend>
+    <p class="propose-line">
+      This lands on your fork
+      <a href="${browseBase(propose.originId, propose.fork)}"
+        ><span class="mono">${propose.fork}</span></a
+      >
+      on a new branch and opens a pull on
+      <a href="${browseBase(propose.originId, propose.upstream)}"
+        ><span class="mono">${propose.upstream}</span></a
+      >.
+      <span class="hint"
+        >You cannot push to ${propose.upstream}. If you have no fork of it at
+        ${propose.host} yet, one is made for you first.</span
+      >
+    </p>
+    <div class="field">
+      <label for="f-branch">Branch on the fork</label>
+      <input
+        class="input mono"
+        id="f-branch"
+        name="branch"
+        value="${suggestion}"
+        aria-label="New branch name"
+        autocomplete="off"
+        spellcheck="false"
+        required
+      />
+      <span class="hint"
+        >The pull's head, as
+        <span class="mono">${propose.fork.split("/")[0]}:${suggestion}</span
+        >.</span
+      >
+    </div>
+    ${field({
+      label: "Pull request title",
+      name: "pullTitle",
+      value: draft.pullTitle,
+      placeholder: "Same as the commit message",
+    })}
+    ${field({
+      label: "Pull request description",
+      name: "pullBody",
+      type: "textarea",
+      rows: 3,
+      value: draft.pullBody,
+    })}
+  </fieldset>`;
+}
+
+export async function editorPage(
   ctx: Ctx,
   scope: RepoScope,
   draft: Draft,
@@ -367,9 +462,19 @@ async function editorPage(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body: html`${pageHead(
-      html`${icon(draft.creating ? "filePlus" : "pencil")}${draft.creating
-        ? "New file"
-        : "Editing a file"}`,
+      html`${icon(
+        draft.propose !== undefined
+          ? "fork"
+          : draft.creating
+            ? "filePlus"
+            : "pencil",
+      )}${draft.propose !== undefined
+        ? draft.creating
+          ? "Proposing a new file"
+          : "Proposing a change"
+        : draft.creating
+          ? "New file"
+          : "Editing a file"}`,
       { sub: html`in <span class="mono">${scope.fullName}</span>` },
     )}
     ${when(
@@ -460,21 +565,50 @@ export async function editPage(ctx: Ctx): Promise<Response> {
       },
     );
   }
-  const mustBranch = await mustBranchFrom(ctx, scope, ref);
-  return await editorPage(ctx, scope, {
+  return await editorPage(
+    ctx,
+    scope,
+    await blankDraft(ctx, scope, ref, {
+      path,
+      content: new TextDecoder().decode(blob.value.body),
+      creating: false,
+    }),
+  );
+}
+
+/**
+ * A fresh draft for this repository, this ref and this file — with the
+ * propose/commit decision already made, so every page and every refusal
+ * renders the same form.
+ */
+export async function blankDraft(
+  ctx: Ctx,
+  scope: RepoScope,
+  ref: string,
+  o: { path: string; content: string; creating: boolean },
+): Promise<Draft> {
+  const propose = scope.propose;
+  // A contribution always branches: there is nothing here to commit onto.
+  const mustBranch =
+    propose !== undefined || (await mustBranchFrom(ctx, scope, ref));
+  return {
     ref,
-    path,
-    content: new TextDecoder().decode(blob.value.body),
+    path: o.path,
+    content: o.content,
     subject: "",
     body: "",
     target: mustBranch ? "new" : "current",
-    branch: suggestBranch(ctx.auth.user?.username ?? "edit", path),
+    branch: suggestBranch(
+      ctx.auth.user?.username ?? "edit",
+      o.creating ? "new-file" : o.path,
+    ),
     pull: mustBranch,
     pullTitle: "",
     pullBody: "",
-    creating: false,
+    creating: o.creating,
     mustBranch,
-  });
+    ...(propose === undefined ? {} : { propose }),
+  };
 }
 
 // GET /:owner/:name/new/:ref[/*path]
@@ -484,21 +618,155 @@ export async function newFilePage(ctx: Ctx): Promise<Response> {
   const { scope, ref } = found;
   const dir = ctx.params.path ?? "";
   if (dir !== "" && !isSafeTreePath(dir)) return notFoundPage(ctx);
-  const mustBranch = await mustBranchFrom(ctx, scope, ref);
-  return await editorPage(ctx, scope, {
-    ref,
-    path: dir === "" ? "" : `${dir}/`,
-    content: "",
-    subject: "",
-    body: "",
-    target: mustBranch ? "new" : "current",
-    branch: suggestBranch(ctx.auth.user?.username ?? "edit", "new-file"),
-    pull: mustBranch,
-    pullTitle: "",
-    pullBody: "",
-    creating: true,
-    mustBranch,
+  return await editorPage(
+    ctx,
+    scope,
+    await blankDraft(ctx, scope, ref, {
+      path: dir === "" ? "" : `${dir}/`,
+      content: "",
+      creating: true,
+    }),
+  );
+}
+
+// ---- proposing a change to a repository you cannot push to ----
+
+/**
+ * The words for a refused contribution.
+ *
+ * Everything `editFiles` can say, plus the four ways the *origin* half can
+ * go wrong. They are worth their own sentences: a fork that has not appeared
+ * yet is a "try again in a moment", an origin that refused is not, and a
+ * commit that landed with no pull behind it is a third thing again — the
+ * work is safe on the fork and only the proposal is missing.
+ */
+export function contributeErrorText(error: unknown): string {
+  if (typeof error === "object" && error !== null && "kind" in error) {
+    const e = error as { kind: string; reason?: unknown };
+    if (e.kind === "edit_failed") return editErrorText(e.reason);
+    if (e.kind === "pull_failed")
+      return "The commit landed on your fork, but the pull request could not be opened there. Nothing was lost — open it from the fork.";
+    return editErrorText(error);
+  }
+  const code = String(error);
+  if (code === "fork_timeout")
+    return "The origin took the fork request and the fork has not appeared yet. Give it a moment and propose this again — nothing was lost.";
+  if (code === "mirror_failed")
+    return "The fork exists at the origin, but a local copy of it could not be made, so there was nowhere to commit.";
+  if (code === "invalid_branch")
+    return "That branch name is not one git will take.";
+  if (code === "unknown_base")
+    return "That branch does not exist on the upstream any more.";
+  return editErrorText(code);
+}
+
+/** Everything the propose form said, read back off the body. */
+function proposeDraft(form: Form, propose: ProposeTarget): Draft {
+  return {
+    ref: formValue(form, "ref"),
+    path: formValue(form, "path").trim().replace(/^\/+/, ""),
+    content: formValue(form, "content"),
+    subject: formValue(form, "message").trim(),
+    body: formValue(form, "description").trim(),
+    target: "new",
+    branch: formValue(form, "branch").trim(),
+    pull: true,
+    pullTitle: formValue(form, "pullTitle").trim(),
+    pullBody: formValue(form, "pullBody").trim(),
+    creating: formValue(form, "creating") === "1",
+    mustBranch: true,
+    propose,
+  };
+}
+
+/**
+ * Grab their repo, branch, edit, propose it back — the whole thing, from one
+ * form.
+ *
+ * `actions/contribute.ts` does the work as a single call, which is exactly
+ * what a form wants: one button, one outcome, nothing half-finished if a
+ * step fails. This side's job is the two things a page owes a person — hand
+ * every typed word back when it is refused, and land them on the pull when
+ * it is not.
+ */
+export async function runContribute(
+  ctx: Ctx,
+  scope: RepoScope,
+  propose: ProposeTarget,
+  form: Form,
+): Promise<Response> {
+  const draft = proposeDraft(form, propose);
+  const refuse = (message: string): Promise<Response> =>
+    editorPage(ctx, scope, { ...draft, error: message });
+
+  if (!isSafeRef(draft.ref)) return notFoundPage(ctx);
+  if (draft.path === "" || !isSafeTreePath(draft.path))
+    return refuse("Give the file a path this repository can hold.");
+  if (draft.subject === "") return refuse("A commit needs a message.");
+  if (draft.branch === "")
+    return refuse("Give the branch on your fork a name.");
+
+  const message =
+    draft.body === "" ? draft.subject : `${draft.subject}\n\n${draft.body}`;
+  const proposed = await contribute(ctx.app, ctx.auth.user, {
+    originId: propose.originId,
+    fullName: propose.upstream,
+    branch: draft.branch,
+    base: draft.ref,
+    message,
+    files: [{ path: draft.path, content: draft.content }],
+    openPull: {
+      title: draft.pullTitle === "" ? draft.subject : draft.pullTitle,
+      body: draft.pullBody,
+    },
   });
+  if (!proposed.ok) return refuse(contributeErrorText(proposed.error));
+
+  const result = proposed.value;
+  const pull = result.pull;
+  const where =
+    result.via === "fork"
+      ? `your fork ${result.forkFullName ?? result.fork.name}`
+      : propose.upstream;
+  if (pull === undefined)
+    return flashTo(ctx, `/${result.fork.ownerName}/${result.fork.name}`, {
+      message: `Committed ${draft.branch} to ${where}.`,
+    });
+
+  // The pull belongs to the origin. When we also mirror the upstream it was
+  // imported here and has a page of its own; when we do not, the live browse
+  // of that pull is still a page in this product — reading it there beats
+  // being thrown out to another forge mid-workflow.
+  const local = pull.local;
+  const mirror =
+    local === undefined ? undefined : getRepoById(ctx.app.db, local.repoId);
+  const dest =
+    mirror === undefined
+      ? `${browseBase(propose.originId, propose.upstream)}/pulls/${pull.number}`
+      : `/${mirror.ownerName}/${mirror.name}/pulls/${pull.number}`;
+  return flashTo(ctx, dest, {
+    message: `Committed to ${where} and opened ${propose.upstream}#${pull.number} at ${propose.host}.`,
+  });
+}
+
+/**
+ * POST /:owner/:name/contribute — propose a change from a mirror.
+ *
+ * A mirror of a repository the origin says you cannot push to takes its
+ * edits this way: the commit goes to your fork there, the pull opens on the
+ * upstream, and (because we hold a mirror of that upstream) the pull is
+ * imported and shown here.
+ */
+export async function contributeSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const scope = localScope(ctx, repo);
+  if (!scope.caps.write || scope.propose === undefined)
+    return notFoundPage(ctx);
+  return runContribute(ctx, scope, scope.propose, form);
 }
 
 /**

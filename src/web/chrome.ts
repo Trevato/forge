@@ -18,6 +18,7 @@ import {
   browseActions,
   hostOf,
   localScope,
+  upstreamHref,
   whereRow,
   type RepoScope,
 } from "./scope.ts";
@@ -191,7 +192,7 @@ export function scopeHeader(
   const owner = facts.owner;
   const actions = options.actions ?? browseActions(scope);
   const title = html`${icon(
-      repo?.forkParentId != null
+      repo?.forkParentId != null || scope.upstream !== undefined
         ? "fork"
         : scope.kind === "origin"
           ? "globe"
@@ -200,8 +201,7 @@ export function scopeHeader(
     <span
       >${scope.kind === "local"
         ? html`<a class="owner" href="/${owner}">${owner}</a>`
-        : html`<span class="owner">${owner}</span>`}<span class="slash"
-        >/</span
+        : html`<span class="owner">${owner}</span>`}<span class="slash">/</span
       ><a href="${base}">${facts.name}</a></span
     >
     ${facts.visibility === "private"
@@ -225,6 +225,18 @@ export function scopeHeader(
         html`<p class="repo-lineage">
           forked from
           <a href="/${p.ownerName}/${p.name}">${p.ownerName}/${p.name}</a>
+        </p>`,
+    )}
+    ${when(
+      scope.upstream !== undefined && upstreamHref(scope) === undefined,
+      // The where strip carries "fork of octo/widgets" and links it, which
+      // is where somebody is already looking to answer "which forge is
+      // truth for this". This line is the fallback for the one case the
+      // strip cannot link: a fork whose origin has been disconnected.
+      () =>
+        html`<p class="repo-lineage">
+          ${icon("fork", 16)}fork of
+          <span class="mono">${scope.upstream}</span>
         </p>`,
     )}
     ${whereRow(ctx, scope)} ${tabs(items, "Repository")}
