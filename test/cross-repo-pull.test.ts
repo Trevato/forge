@@ -181,4 +181,147 @@ describe("cross-repo pull requests (fork → upstream)", () => {
     expect(refs).toContain("refs/pull/1/head");
     expect(refs).toContain("refs/pull/1/merged");
   });
+
+  // ---- the same workflow, driven entirely through the API ----
+  //
+  // The web has always been able to propose a fork's branch upstream. An
+  // agent has to be able to do it too, and through the same action — so this
+  // is the whole loop with no browser in it: edit on the fork, open the pull
+  // across repositories, watch it follow a later push, merge it.
+
+  const json = async <T>(response: Response): Promise<T> =>
+    (await response.json()) as T;
+
+  const call = (
+    path: string,
+    token: string,
+    init: RequestInit = {},
+  ): Promise<Response> =>
+    fetch(`${base}${path}`, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(init.body === undefined
+          ? {}
+          : { "content-type": "application/json" }),
+      },
+    });
+
+  test("an edit on a fork opens a cross-repo pull through the API", async () => {
+    // Alice's repo needs a second branch to target so the fork has somewhere
+    // to aim that is not the branch it just merged into.
+    const edited = await call("/api/v1/repos/bob/app/edits", bobToken, {
+      method: "POST",
+      body: JSON.stringify({
+        newBranch: "api-topic",
+        base: "main",
+        message: "from the API",
+        files: [{ path: "api.txt", content: "written by an agent\n" }],
+      }),
+    });
+    expect(edited.status).toBe(201);
+    const commit = await json<{ commit: { commitOid: string } }>(edited);
+
+    // `headRepo` is what makes it cross-repo, and it is the same string the
+    // web form sends: `owner/name`.
+    const opened = await call("/api/v1/repos/alice/app/pulls", bobToken, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "from the API",
+        body: "proposed by an agent",
+        base: "main",
+        head: "api-topic",
+        headRepo: "bob/app",
+      }),
+    });
+    expect(opened.status).toBe(201);
+    const pull = await json<{ number: number; crossRepo: boolean }>(opened);
+    expect(pull.crossRepo).toBe(true);
+
+    const detail = await json<{
+      status: { headOid: string; mergeable: boolean };
+      diff: { files: { path: string }[] };
+    }>(
+      await call(`/api/v1/repos/alice/app/pulls/${pull.number}`, aliceToken),
+    );
+    expect(detail.status.headOid).toBe(commit.commit.commitOid);
+    expect(detail.diff.files.map((f) => f.path)).toContain("api.txt");
+    expect(detail.status.mergeable).toBe(true);
+  });
+
+  test("a fork that pushes again is reviewed at its new tip, not the old one", async () => {
+    const pulls = await json<{ items: { number: number }[] }>(
+      await call("/api/v1/repos/alice/app/pulls?state=open", aliceToken),
+    );
+    const number = pulls.items[0]!.number;
+
+    // Bob pushes more work to the same branch, in his own repository. The
+    // base repo holds only a snapshot of it (`refs/pull/N/head`), so unless
+    // that is refreshed the reviewer is reading a commit nobody proposes.
+    const again = await call("/api/v1/repos/bob/app/edits", bobToken, {
+      method: "POST",
+      body: JSON.stringify({
+        branch: "api-topic",
+        message: "second thoughts",
+        files: [{ path: "api.txt", content: "written by an agent, twice\n" }],
+      }),
+    });
+    expect(again.status).toBe(201);
+    const second = await json<{ commit: { commitOid: string } }>(again);
+
+    const detail = await json<{ status: { headOid: string } }>(
+      await call(`/api/v1/repos/alice/app/pulls/${number}`, aliceToken),
+    );
+    expect(detail.status.headOid).toBe(second.commit.commitOid);
+
+    // The durable ref moved with it, which is what any client fetching
+    // `refs/pull/N/head` is entitled to expect.
+    const head = await gitOk(
+      [
+        "-C",
+        join(dataDir, "repos/alice/app.git"),
+        "rev-parse",
+        `refs/pull/${number}/head`,
+      ],
+      work,
+    );
+    expect(head).toBe(second.commit.commitOid);
+
+    const merged = await call(
+      `/api/v1/repos/alice/app/pulls/${number}/merge`,
+      aliceToken,
+      { method: "POST", body: JSON.stringify({ strategy: "squash" }) },
+    );
+    expect(merged.status).toBe(200);
+    const blob = await (
+      await fetch(`${base}/api/v1/repos/alice/app/contents/api.txt?ref=main`)
+    ).json();
+    expect(JSON.stringify(blob)).toContain("twice");
+  });
+
+  test("a head repo that is not a fork of this base is not_found", async () => {
+    // Bob makes an unrelated repository and tries to propose it upstream.
+    await call("/api/v1/repos", bobToken, {
+      method: "POST",
+      body: JSON.stringify({ name: "unrelated", visibility: "public" }),
+    });
+    await call("/api/v1/repos/bob/unrelated/edits", bobToken, {
+      method: "POST",
+      body: JSON.stringify({
+        branch: "main",
+        message: "seed",
+        files: [{ path: "x.txt", content: "x\n" }],
+      }),
+    });
+    const refused = await call("/api/v1/repos/alice/app/pulls", bobToken, {
+      method: "POST",
+      body: JSON.stringify({
+        title: "sneaky",
+        base: "main",
+        head: "main",
+        headRepo: "bob/unrelated",
+      }),
+    });
+    expect(refused.status).toBe(404);
+  });
 });

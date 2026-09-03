@@ -28,6 +28,7 @@ import type {
   RemoteIssue,
   RemoteLabel,
   RemoteReview,
+  RemoteReviewState,
 } from "./types.ts";
 
 /** Same caps as a native issue: an origin does not get to write a novel. */
@@ -459,4 +460,66 @@ export function applyLabelNames(
     for (const labelId of ids) link.run(issueId, labelId);
   });
   write();
+}
+
+/**
+ * Bring a pull's *verdicts* in line with the origin's.
+ *
+ * Keyed on the origin's review id, like every other import here, so a
+ * re-sync of the same reviews rewrites the same rows. The local `author_id`
+ * is the connecting user (the convention this whole module rests on) and
+ * `origin_author` carries the reviewer's login — which is also the key
+ * `latestReviewByAuthor` collapses on, so five upstream reviewers stay five
+ * reviewers rather than becoming five verdicts by one person.
+ *
+ * Returns how many were new.
+ */
+export function importReviewStates(
+  ctx: ImportContext,
+  pullId: string,
+  states: readonly RemoteReviewState[],
+): number {
+  let added = 0;
+  const write = ctx.db.transaction(() => {
+    for (const remote of states) {
+      if (remote.remoteId === "") continue;
+      const body = clamp(remote.body, MAX_BODY);
+      const author = oneLine(remote.author, MAX_TITLE);
+      const existing = ctx.db
+        .query<
+          { id: string },
+          [string, string]
+        >("SELECT id FROM review WHERE issue_id = ?1 AND origin_remote_id = ?2")
+        .get(pullId, remote.remoteId);
+      if (existing) {
+        ctx.db
+          .query(
+            `UPDATE review SET state = ?1, body = ?2, commit_oid = ?3,
+               origin_author = ?4 WHERE id = ?5`,
+          )
+          .run(remote.state, body, safeOid(remote.commitOid), author, existing.id);
+        continue;
+      }
+      ctx.db
+        .query(
+          `INSERT INTO review (id, issue_id, author_id, state, body, commit_oid,
+                               origin_remote_id, origin_author, created_at)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+        )
+        .run(
+          id(),
+          pullId,
+          ctx.actorId,
+          remote.state,
+          body,
+          safeOid(remote.commitOid),
+          remote.remoteId,
+          author,
+          remote.createdAt,
+        );
+      added++;
+    }
+  });
+  write();
+  return added;
 }

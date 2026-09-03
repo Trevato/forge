@@ -40,6 +40,7 @@ import type {
   RemoteReadme,
   RemoteRepo,
   RemoteReview,
+  RemoteReviewState,
   RemoteTreeEntry,
 } from "../types.ts";
 import {
@@ -544,6 +545,59 @@ export class ForgejoProvider implements Provider {
     return succeed(reviews);
   }
 
+  /**
+   * The verdicts alone — the same `/reviews` list `listReviews` walks, read
+   * for its states instead of followed into each review's comments. One
+   * request rather than one per review, which is why the merge gate uses it.
+   */
+  async listReviewStates(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<readonly RemoteReviewState[]>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    const list = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}/reviews`,
+    });
+    if (!list.ok) return list;
+    const states: RemoteReviewState[] = [];
+    for (const raw of asArray(list.value.data).slice(0, MAX_REVIEWS)) {
+      const state = toReviewState(raw);
+      if (state !== undefined) states.push(state);
+    }
+    return succeed(states);
+  }
+
+  async submitReview(
+    fullName: string,
+    number: number,
+    input: {
+      state: "approved" | "changes_requested" | "commented";
+      body: string;
+    },
+  ): Promise<ProviderResult<RemoteReviewState>> {
+    const named = splitFullName(fullName);
+    if (!named) return fail("not_found", `not a repository name: ${fullName}`);
+    // Forgejo's `event` takes its own noun vocabulary, not GitHub's verbs:
+    // APPROVED / REQUEST_CHANGES / COMMENT.
+    const event =
+      input.state === "approved"
+        ? "APPROVED"
+        : input.state === "changes_requested"
+          ? "REQUEST_CHANGES"
+          : "COMMENT";
+    const result = await this.api.call({
+      path: `/repos/${seg(named.owner)}/${seg(named.name)}/pulls/${number}/reviews`,
+      method: "POST",
+      body: { event, body: input.body },
+    });
+    if (!result.ok) return result;
+    const state = toReviewState(result.value.data);
+    return state === undefined
+      ? fail("invalid_response", "the origin returned no review")
+      : succeed(state);
+  }
+
   async createIssue(
     fullName: string,
     input: { title: string; body: string; labels?: readonly string[] },
@@ -720,6 +774,7 @@ function toRepo(raw: unknown): RemoteRepo {
     // so it becomes private. Never silently widen a visibility on import.
     private: asBool(field(raw, "private")) || asBool(field(raw, "internal")),
     fork: asBool(field(raw, "fork")),
+    parent: asString(dig(raw, "parent", "full_name")) || null,
     defaultBranch: asString(field(raw, "default_branch")) || "main",
     cloneUrl: asString(field(raw, "clone_url")),
     sshUrl: asString(field(raw, "ssh_url")),
@@ -735,6 +790,37 @@ function toRepo(raw: unknown): RemoteRepo {
     openIssues: asNumber(field(raw, "open_issues_count")),
     openPulls: asNumber(field(raw, "open_pr_counter")),
     openIssuesIncludesPulls: false,
+  };
+}
+
+/**
+ * One verdict, or `undefined` when the row is not one. Forgejo's own words
+ * are APPROVED / REQUEST_CHANGES / COMMENT, and it also has PENDING (an
+ * unsubmitted draft) and REQUEST_REVIEW (a request *for* one) — neither is a
+ * verdict and neither is counted as one.
+ */
+function toReviewState(raw: unknown): RemoteReviewState | undefined {
+  const word = asString(field(raw, "state")).toUpperCase();
+  const state =
+    word === "APPROVED"
+      ? ("approved" as const)
+      : word === "REQUEST_CHANGES" || word === "CHANGES_REQUESTED"
+        ? ("changes_requested" as const)
+        : word === "COMMENT" || word === "COMMENTED"
+          ? ("commented" as const)
+          : undefined;
+  if (state === undefined) return undefined;
+  return {
+    remoteId: asId(field(raw, "id")),
+    author: authorOf(raw),
+    state,
+    body: asString(field(raw, "body")),
+    commitOid: asString(field(raw, "commit_id")),
+    createdAt:
+      asTime(field(raw, "submitted_at")) ??
+      asTime(field(raw, "created_at")) ??
+      new Date().toISOString(),
+    htmlUrl: asString(field(raw, "html_url")),
   };
 }
 

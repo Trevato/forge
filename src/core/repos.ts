@@ -60,6 +60,11 @@ export interface Repo {
   readonly description: string;
   readonly defaultBranch: string;
   readonly protectDefault: boolean;
+  /**
+   * Whether a pull needs an approval of its current head before it merges.
+   * Mechanical, not advisory: `mergePull` refuses `review_required`.
+   */
+  readonly requireReview: boolean;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
   /** The origin this mirrors, or null for a native repo. */
@@ -81,6 +86,7 @@ interface RepoRow {
   description: string;
   default_branch: string;
   protect_default: number;
+  require_review: number;
   fork_parent_id: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
@@ -107,6 +113,7 @@ function toRepo(row: RepoRow): Repo {
     description: row.description,
     defaultBranch: row.default_branch,
     protectDefault: row.protect_default === 1,
+    requireReview: row.require_review === 1,
     forkParentId: row.fork_parent_id,
     origin:
       row.origin_id !== null && row.origin_kind !== null
@@ -523,6 +530,8 @@ export interface RepoSettings {
   visibility?: "public" | "private";
   description?: string;
   protectDefault?: boolean;
+  /** Require an approval of a pull's current head before it may merge. */
+  requireReview?: boolean;
   /** The caller must have pointed git HEAD at this branch first. */
   defaultBranch?: string;
 }
@@ -534,12 +543,14 @@ export function updateRepoSettings(
   settings: RepoSettings,
 ): Repo {
   db.query(
-    "UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3, default_branch = ?4 WHERE id = ?5",
+    `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
+       default_branch = ?4, require_review = ?5 WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
     settings.description ?? repo.description,
     (settings.protectDefault ?? repo.protectDefault) ? 1 : 0,
     settings.defaultBranch ?? repo.defaultBranch,
+    (settings.requireReview ?? repo.requireReview) ? 1 : 0,
     repo.id,
   );
   return getRepoById(db, repo.id)!;

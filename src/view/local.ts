@@ -24,6 +24,7 @@ import {
 } from "../core/issues.ts";
 import { getPull, pullDiff } from "../core/pulls.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
+import { listReviews } from "../core/reviews.ts";
 import type { User } from "../core/users.ts";
 import { diffCommit, type Diff } from "../git/diff.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
@@ -77,6 +78,9 @@ export function localSource(
       openPulls: issueCounts(app.db, repo.id, "pull").open,
       pushedAt: tip.ok ? (tip.value[0]?.date ?? null) : null,
       htmlUrl: repo.origin?.htmlUrl ?? null,
+      permissions: {
+        push: actor !== undefined && canWrite(app.db, repo, actor),
+      },
     });
   };
 
@@ -294,6 +298,14 @@ export function localSource(
             diff,
             mergeable: status.mergeable,
             conflicts: status.conflicts,
+            reviews: listReviews(app.db, row.id).map((review) => ({
+              author: review.originAuthor ?? review.authorName,
+              state: review.state,
+              body: review.body,
+              commitOid: review.commitOid,
+              createdAt: review.createdAt,
+              current: review.commitOid === status.headOid,
+            })),
           };
         }
       }

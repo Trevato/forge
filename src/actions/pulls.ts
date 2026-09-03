@@ -11,23 +11,37 @@ import {
   getPull,
   mergePull as landPull,
   pullDiff,
+  pullStatus,
   type CreatePullError,
   type MergePullError,
   type Pull,
 } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
-import { canRead } from "../core/repos.ts";
+import { canRead, getRepoById } from "../core/repos.ts";
 import {
   addReviewComment,
   anchorContent,
+  anchorId,
+  getReviewByRemoteId,
   hashLine,
+  isReviewState,
+  listReviewComments,
+  resolveThread,
+  submitReview as recordReview,
+  threadComments,
+  threadStates,
+  unresolveThread,
+  type Review,
   type ReviewComment,
+  type ReviewState,
   type Side,
+  type ThreadState,
 } from "../core/reviews.ts";
 import type { User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
+import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { importIssue } from "../origins/import.ts";
+import { importIssue, importReviewStates } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   refusal,
@@ -39,6 +53,7 @@ import {
   requireWriter,
   type AccessError,
 } from "./access.ts";
+import { canWrite } from "../core/repos.ts";
 
 export interface OpenPullInput {
   title: string;
@@ -132,6 +147,55 @@ export async function openPull(
   return created;
 }
 
+/**
+ * Bring `refs/pull/N/head` up to date with the fork it came from.
+ *
+ * A cross-repo pull's head lives in another repository, so the base repo
+ * holds a *snapshot* of it — fetched when the pull opened and pointed at by
+ * `refs/pull/N/head`. Everything downstream (the diff, mergeability, the
+ * merge itself) reads that ref, so a fork that pushed again after opening
+ * the pull would be reviewed and merged at the commit it opened with.
+ *
+ * This is the one place that closes it: fetch the fork's branch again, move
+ * the ref, and let `pullStatus` read the tip that is actually being proposed.
+ * A native same-repo pull needs none of it (its head is a live branch here),
+ * and a mirrored pull's head lives on the origin and is not ours to fetch.
+ *
+ * Best-effort by design: a deleted fork or a vanished branch leaves the last
+ * snapshot in place, which is a stale diff rather than no diff at all.
+ */
+export async function refreshPullHead(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+): Promise<string | undefined> {
+  if (!pull.crossRepo || pull.originHeadRepo !== null) return undefined;
+  if (pull.mergedAt !== null) return undefined;
+  const head = getRepoById(app.db, pull.headRepoId);
+  if (head === undefined) return undefined;
+  const headDir = repoDir(app.reposRoot, head.ownerName, head.name);
+  const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  // Two cheap `rev-parse`s before a fetch: this runs on every read of a
+  // cross-repo pull, and the overwhelmingly common answer is "nothing moved".
+  const [live, snapshot] = await Promise.all([
+    resolveOid(headDir, `refs/heads/${pull.headBranch}`),
+    resolveOid(baseDir, `refs/pull/${pull.number}/head`),
+  ]);
+  if (live === undefined || live === snapshot) return undefined;
+  const tip = await fetchInto(
+    baseDir,
+    headDir,
+    `refs/heads/${pull.headBranch}`,
+  );
+  if (tip === undefined) return undefined;
+  await writeRef(
+    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    `refs/pull/${pull.number}/head`,
+    tip,
+  );
+  return tip;
+}
+
 export interface ReviewInput {
   body: string;
   path: string;
@@ -204,11 +268,15 @@ export async function mergePull(
   // reflects it, with the merge commit the origin actually made.
   if (pull.originHeadRepo !== null || repo.origin !== null)
     return err("mirrored");
+  // A fork may have pushed since the pull opened; merge what is being
+  // proposed now, not the snapshot taken when it was.
+  await refreshPullHead(app, repo, pull);
   const merged = await landPull(
     app.db,
     repoDir(app.reposRoot, repo.ownerName, repo.name),
     pull,
     {
+      gate: { db: app.db, requireReview: repo.requireReview },
       strategy,
       message:
         strategy === "squash"
@@ -243,3 +311,178 @@ function getPullByNumber(
 ): Pull | undefined {
   return getPull(app.db, repo.id, number);
 }
+
+// ---- review states: the verdict, and what gates a merge ----
+
+export type SubmitReviewActionError =
+  | AccessError
+  | WriteThroughError
+  | "body_too_long"
+  | "invalid_state"
+  /** You cannot approve your own change. */
+  | "self_review";
+
+export interface SubmitReviewInput {
+  readonly state: ReviewState;
+  readonly body?: string;
+}
+
+/**
+ * Pass a verdict on a pull.
+ *
+ * Two rules, and both are mechanical rather than advisory. **A verdict with
+ * authority takes write access**: anyone who can read the repo may leave a
+ * `commented` review, and only a writer may approve or request changes —
+ * otherwise "require review" would be satisfiable by any account that could
+ * see the repository. And **you cannot approve your own change**, which is
+ * the whole point of requiring one.
+ *
+ * The verdict is recorded against the head it was passed on, so a later push
+ * dismisses it without anything having to remember to (`reviewSummary`).
+ *
+ * On a mirror the origin decides: the review is submitted there under the
+ * connecting account's credential and imported back, exactly as a comment
+ * is. The self-approval rule is the origin's to apply there — its notion of
+ * who the author is, not ours.
+ */
+export async function submitReview(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+  input: SubmitReviewInput,
+): Promise<Result<Review, SubmitReviewActionError>> {
+  if (!isReviewState(input.state)) return err("invalid_state");
+  const participant = requireParticipant(app, actor, repo);
+  if (!participant.ok) return participant;
+  const user = participant.value;
+  if (pull.repoId !== repo.id) return err("not_found");
+  // A verdict that gates a merge is a writer's; a comment is anyone's.
+  if (input.state !== "commented" && !canWrite(app.db, repo, user))
+    return err("forbidden");
+
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const status = await pullStatus(dir, pull);
+
+  const through = writeThroughFor(app, user, repo);
+  if (!through.ok) return through;
+  if (through.value !== undefined) {
+    const sent = await through.value.provider.submitReview(
+      through.value.fullName,
+      pull.number,
+      { state: input.state, body: (input.body ?? "").trim() },
+    );
+    if (!sent.ok) return err(refusal(sent.error.error));
+    importReviewStates(
+      { db: app.db, repoId: repo.id, actorId: user.id },
+      pull.id,
+      [sent.value],
+    );
+    app.bus.append({
+      kind: "pull.reviewed",
+      repoId: repo.id,
+      actorId: user.id,
+      payload: { number: pull.number, state: input.state, via: "origin" },
+    });
+    const stored = getReviewByRemoteId(app.db, pull.id, sent.value.remoteId);
+    return stored ? ok(stored) : err("origin_refused");
+  }
+
+  if (input.state === "approved" && pull.authorId === user.id)
+    return err("self_review");
+
+  const recorded = recordReview(app.db, {
+    issueId: pull.id,
+    authorId: user.id,
+    state: input.state,
+    body: input.body ?? "",
+    commitOid: status.headOid,
+  });
+  if (!recorded.ok) return recorded;
+  app.bus.append({
+    kind: "pull.reviewed",
+    repoId: repo.id,
+    actorId: user.id,
+    payload: { number: pull.number, state: input.state },
+  });
+  return recorded;
+}
+
+export type ThreadActionError = AccessError;
+
+/**
+ * Mark a review thread settled, or take that back.
+ *
+ * A thread is every review comment sharing one anchor, addressed by the
+ * digest `anchorId` computes. Either a writer or somebody who commented in
+ * the thread may resolve it — the reviewer who raised a point is exactly the
+ * person who can say it is answered — and a thread with no comments does not
+ * exist to resolve (`not_found`, like every other missing thing).
+ */
+export function resolveReviewThread(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+  anchor: string,
+  resolved = true,
+): Result<ThreadState, ThreadActionError> {
+  const participant = requireParticipant(app, actor, repo);
+  if (!participant.ok) return participant;
+  const user = participant.value;
+  if (pull.repoId !== repo.id) return err("not_found");
+
+  const comments = threadComments(app.db, pull.id, anchor);
+  if (comments.length === 0) return err("not_found");
+  const mine = comments.some((c) => c.authorName === user.username);
+  if (!mine && !canWrite(app.db, repo, user)) return err("forbidden");
+
+  const state = resolved
+    ? resolveThread(app.db, pull.id, anchor, user.id)
+    : unresolveThread(app.db, pull.id, anchor);
+  app.bus.append({
+    kind: "pull.thread_resolved",
+    repoId: repo.id,
+    actorId: user.id,
+    payload: { number: pull.number, anchor, resolved },
+  });
+  return ok(state);
+}
+
+/** The threads on a pull, with their comments and resolution state. */
+export function pullThreads(
+  app: App,
+  pull: Pull,
+): {
+  anchor: string;
+  path: string;
+  side: Side;
+  line: number;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  comments: ReviewComment[];
+}[] {
+  const states = threadStates(app.db, pull.id);
+  const byAnchorId = new Map<string, ReviewComment[]>();
+  for (const comment of listReviewComments(app.db, pull.id)) {
+    const key = anchorId(comment.path, comment.side, comment.line);
+    const existing = byAnchorId.get(key);
+    if (existing) existing.push(comment);
+    else byAnchorId.set(key, [comment]);
+  }
+  return [...byAnchorId].map(([anchor, comments]) => {
+    const first = comments[0]!;
+    const state = states.get(anchor);
+    return {
+      anchor,
+      path: first.path,
+      side: first.side,
+      line: first.line,
+      resolvedAt: state?.resolvedAt ?? null,
+      resolvedBy: state?.resolvedBy ?? null,
+      comments,
+    };
+  });
+}
+
+export { anchorId, listReviews } from "../core/reviews.ts";

@@ -189,6 +189,10 @@ function build(
         openPulls: null,
         pushedAt: repo.value.pushedAt,
         htmlUrl: repo.value.htmlUrl || htmlUrl,
+        // The origin's own answer. A live browse writes nothing here, but
+        // "can I push there?" is what decides whether a surface offers to
+        // edit through the mirror or to contribute via a fork.
+        permissions: { push: repo.value.permissions.push },
       });
     },
 
@@ -378,6 +382,11 @@ function build(
       let pull: PullFacts | null = null;
       if (remote.value.pull !== undefined) {
         const facts = remote.value.pull;
+        const verdicts = await cached(
+          cacheKey(scope, "reviews", number),
+          LIST_TTL_MS,
+          () => provider.listReviewStates(fullName, number),
+        );
         const diff = await cached(
           cacheKey(scope, "pull-diff", number, facts.headOid),
           facts.headOid === "" ? LIST_TTL_MS : IMMUTABLE_TTL_MS,
@@ -395,6 +404,19 @@ function build(
           // in a form worth rendering. Null is the honest answer.
           mergeable: null,
           conflicts: [],
+          reviews: verdicts.ok
+            ? verdicts.value.map((review) => ({
+                author: review.author,
+                state: review.state,
+                body: review.body,
+                commitOid: review.commitOid,
+                createdAt: review.createdAt,
+                // The origin decides what is stale; where it named a commit
+                // we can still say whether it is the head we were told about.
+                current:
+                  review.commitOid === "" || review.commitOid === facts.headOid,
+              }))
+            : [],
         };
       }
 

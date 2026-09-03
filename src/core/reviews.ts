@@ -184,3 +184,292 @@ export function withOutdated(
     };
   });
 }
+
+// ---- review states: a verdict on the pull, not on a line ----
+
+/**
+ * What a reviewer said about the change as a whole. `commented` is the
+ * verdict that carries no authority — a reader may leave one — and the other
+ * two are a writer's.
+ */
+export type ReviewState = "approved" | "changes_requested" | "commented";
+
+export interface Review {
+  readonly id: string;
+  readonly authorId: string;
+  readonly authorName: string;
+  /** The login on the origin, for a review imported from one. */
+  readonly originAuthor: string | null;
+  readonly state: ReviewState;
+  readonly body: string;
+  /** The head the verdict was passed on. A verdict on an older head is stale. */
+  readonly commitOid: string;
+  readonly createdAt: string;
+}
+
+export type SubmitReviewError = "body_too_long" | "invalid_state";
+
+const STATES: readonly ReviewState[] = [
+  "approved",
+  "changes_requested",
+  "commented",
+];
+
+export const isReviewState = (value: string): value is ReviewState =>
+  (STATES as readonly string[]).includes(value);
+
+export interface SubmitReviewInput {
+  issueId: string;
+  authorId: string;
+  state: ReviewState;
+  /** May be empty: an approval needs no words. */
+  body?: string;
+  commitOid: string;
+  /** Set when the review came from an origin rather than from here. */
+  originRemoteId?: string;
+  originAuthor?: string;
+  createdAt?: string;
+}
+
+/**
+ * Record a verdict. Every submission is its own row — the history of who
+ * said what, when, and against which commit is the whole value of the table,
+ * and `latestReviewByAuthor` is what collapses it into "where do we stand".
+ */
+export function submitReview(
+  db: Database,
+  input: SubmitReviewInput,
+): Result<Review, SubmitReviewError> {
+  if (!isReviewState(input.state)) return err("invalid_state");
+  const body = (input.body ?? "").trim();
+  if (body.length > MAX_BODY) return err("body_too_long");
+  const reviewId = id();
+  const now = input.createdAt ?? new Date().toISOString();
+  const write = db.transaction(() => {
+    db.query(
+      `INSERT INTO review (id, issue_id, author_id, state, body, commit_oid,
+                           origin_remote_id, origin_author, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+    ).run(
+      reviewId,
+      input.issueId,
+      input.authorId,
+      input.state,
+      body,
+      input.commitOid,
+      input.originRemoteId ?? null,
+      input.originAuthor ?? null,
+      now,
+    );
+    db.query("UPDATE issue SET updated_at = ?1 WHERE id = ?2").run(
+      new Date().toISOString(),
+      input.issueId,
+    );
+  });
+  write();
+  return ok(getReview(db, reviewId)!);
+}
+
+interface ReviewRowRaw {
+  id: string;
+  author_id: string;
+  author_name: string;
+  origin_author: string | null;
+  state: ReviewState;
+  body: string;
+  commit_oid: string;
+  created_at: string;
+}
+
+const REVIEW_SELECT = `
+  SELECT review.id, review.author_id, user.username AS author_name,
+         review.origin_author, review.state, review.body, review.commit_oid,
+         review.created_at
+  FROM review JOIN user ON user.id = review.author_id`;
+
+const toReview = (row: ReviewRowRaw): Review => ({
+  id: row.id,
+  authorId: row.author_id,
+  authorName: row.author_name,
+  originAuthor: row.origin_author,
+  state: row.state,
+  body: row.body,
+  commitOid: row.commit_oid,
+  createdAt: row.created_at,
+});
+
+export function getReview(db: Database, reviewId: string): Review | undefined {
+  const row = db
+    .query<ReviewRowRaw, [string]>(`${REVIEW_SELECT} WHERE review.id = ?1`)
+    .get(reviewId);
+  return row ? toReview(row) : undefined;
+}
+
+/** Every verdict on a pull, oldest first — the record, not the summary. */
+export function listReviews(db: Database, issueId: string): Review[] {
+  return db
+    .query<
+      ReviewRowRaw,
+      [string]
+    >(`${REVIEW_SELECT} WHERE review.issue_id = ?1 ORDER BY review.id`)
+    .all(issueId)
+    .map(toReview);
+}
+
+/**
+ * Where each reviewer currently stands: their most recent verdict, keyed by
+ * author. A reviewer who requested changes and later approved counts once,
+ * as an approval — which is the only reading that lets a review be
+ * withdrawn without a delete path.
+ *
+ * An imported review is keyed by its origin login rather than by the local
+ * author id, because every imported row is attributed to the connecting
+ * user (`origins/import.ts`) and collapsing five upstream reviewers into
+ * one would turn five approvals into whichever arrived last.
+ */
+export function latestReviewByAuthor(
+  db: Database,
+  issueId: string,
+): Map<string, Review> {
+  const latest = new Map<string, Review>();
+  for (const review of listReviews(db, issueId)) {
+    latest.set(review.originAuthor ?? review.authorId, review);
+  }
+  return latest;
+}
+
+export interface ReviewSummary {
+  /** Distinct reviewers whose current verdict approves *this* head. */
+  readonly approvals: number;
+  readonly changesRequested: number;
+  readonly commented: number;
+  /** Current verdicts passed on an older head — dismissed by the push. */
+  readonly stale: number;
+}
+
+/**
+ * The state of play at one head. A verdict is counted only when it was
+ * passed on the commit that is now the head: a push after a review is new
+ * code nobody has looked at, and treating an old approval as current is how
+ * a review gate becomes decorative.
+ */
+export function reviewSummary(
+  db: Database,
+  issueId: string,
+  headOid: string,
+): ReviewSummary {
+  let approvals = 0;
+  let changesRequested = 0;
+  let commented = 0;
+  let stale = 0;
+  for (const review of latestReviewByAuthor(db, issueId).values()) {
+    if (review.commitOid !== headOid) {
+      if (review.state !== "commented") stale++;
+      continue;
+    }
+    if (review.state === "approved") approvals++;
+    else if (review.state === "changes_requested") changesRequested++;
+    else commented++;
+  }
+  return { approvals, changesRequested, commented, stale };
+}
+
+// ---- threads ----
+
+/**
+ * The stable, URL-safe name of a thread: every review comment sharing one
+ * (path, side, line) is one conversation, and this is what addresses it.
+ * A digest rather than the joined key itself, because the key contains NUL
+ * and a path, neither of which belongs in a URL segment.
+ */
+export function anchorId(path: string, side: Side, line: number): string {
+  return sha256(anchorKey(path, side, line)).slice(0, 16);
+}
+
+export interface ThreadState {
+  readonly anchor: string;
+  readonly resolvedAt: string | null;
+  readonly resolvedBy: string | null;
+}
+
+/** Resolution state for every thread on a pull that has one, by anchor. */
+export function threadStates(
+  db: Database,
+  issueId: string,
+): Map<string, ThreadState> {
+  const rows = db
+    .query<
+      { anchor: string; resolved_at: string | null; resolved_by: string | null },
+      [string]
+    >(
+      `SELECT anchor, resolved_at, resolved_by FROM review_thread
+       WHERE issue_id = ?1`,
+    )
+    .all(issueId);
+  return new Map(
+    rows.map((row) => [
+      row.anchor,
+      {
+        anchor: row.anchor,
+        resolvedAt: row.resolved_at,
+        resolvedBy: row.resolved_by,
+      },
+    ]),
+  );
+}
+
+export function resolveThread(
+  db: Database,
+  issueId: string,
+  anchor: string,
+  userId: string,
+): ThreadState {
+  const now = new Date().toISOString();
+  db.query(
+    `INSERT INTO review_thread (issue_id, anchor, resolved_at, resolved_by)
+     VALUES (?1, ?2, ?3, ?4)
+     ON CONFLICT (issue_id, anchor) DO UPDATE SET
+       resolved_at = excluded.resolved_at, resolved_by = excluded.resolved_by`,
+  ).run(issueId, anchor, now, userId);
+  return { anchor, resolvedAt: now, resolvedBy: userId };
+}
+
+export function unresolveThread(
+  db: Database,
+  issueId: string,
+  anchor: string,
+): ThreadState {
+  db.query(
+    `INSERT INTO review_thread (issue_id, anchor, resolved_at, resolved_by)
+     VALUES (?1, ?2, NULL, NULL)
+     ON CONFLICT (issue_id, anchor) DO UPDATE SET
+       resolved_at = NULL, resolved_by = NULL`,
+  ).run(issueId, anchor);
+  return { anchor, resolvedAt: null, resolvedBy: null };
+}
+
+/** The comments of one thread, in order — who may resolve it is read off this. */
+export function threadComments(
+  db: Database,
+  issueId: string,
+  anchor: string,
+): ReviewComment[] {
+  return listReviewComments(db, issueId).filter(
+    (c) => anchorId(c.path, c.side, c.line) === anchor,
+  );
+}
+
+/** The stored form of a review the origin just returned, by its origin id. */
+export function getReviewByRemoteId(
+  db: Database,
+  issueId: string,
+  remoteId: string,
+): Review | undefined {
+  const row = db
+    .query<
+      ReviewRowRaw,
+      [string, string]
+    >(`${REVIEW_SELECT} WHERE review.issue_id = ?1 AND review.origin_remote_id = ?2`)
+    .get(issueId, remoteId);
+  return row ? toReview(row) : undefined;
+}

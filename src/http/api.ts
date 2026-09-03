@@ -43,8 +43,22 @@ import {
   createBranch,
   deleteBranch as deleteBranchAction,
 } from "../actions/branches.ts";
-import { editFiles } from "../actions/contents.ts";
-import { addReview, mergePull, openPull } from "../actions/pulls.ts";
+import { editFiles, type EditFile } from "../actions/contents.ts";
+import {
+  contribute,
+  forkOrigin,
+  type ContributeResult,
+} from "../actions/contribute.ts";
+import {
+  addReview,
+  anchorId,
+  mergePull,
+  openPull,
+  pullThreads,
+  refreshPullHead,
+  resolveReviewThread,
+  submitReview,
+} from "../actions/pulls.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -104,7 +118,12 @@ import {
   getRepoById,
 } from "../core/repos.ts";
 import { searchKind } from "../core/search.ts";
-import { listReviewComments, withOutdated } from "../core/reviews.ts";
+import {
+  isReviewState,
+  listReviewComments,
+  listReviews,
+  withOutdated,
+} from "../core/reviews.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
 import { getUserByName, verifyPassword, type User } from "../core/users.ts";
@@ -117,7 +136,7 @@ import { listBranches } from "../git/branches.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Result } from "../kernel/result.ts";
-import type { OriginRepoRow } from "../core/origins.ts";
+import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
 import {
@@ -375,6 +394,109 @@ function editFailure(error: { kind: string } & Record<string, unknown>) {
           ? 403
           : 422;
   return json({ error: kind, message: editMessage(kind), ...detail }, status);
+}
+
+/**
+ * The files of an edit, out of a JSON body. `content: null` deletes; a
+ * `base64` encoding is how a client sends bytes that are not text.
+ */
+function editFilesFrom(raw: unknown): EditFile[] {
+  if (!Array.isArray(raw)) return [];
+  const files: EditFile[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    const path = str(row.path);
+    if (path === "") continue;
+    if (row.content === null) {
+      files.push({ path, content: null });
+      continue;
+    }
+    const content = str(row.content);
+    files.push({
+      path,
+      content:
+        str(row.encoding) === "base64"
+          ? new Uint8Array(Buffer.from(content, "base64"))
+          : content,
+    });
+  }
+  return files;
+}
+
+/**
+ * What a contribution produced: where the branch landed here, where the
+ * fork lives at the origin, the commit, and the pull it opened upstream.
+ * `pull.local` is present only when we also mirror the upstream — the pull
+ * belongs to the origin either way.
+ */
+function contributionJson(ctx: Ctx, result: ContributeResult) {
+  return {
+    via: result.via,
+    repo: { owner: result.fork.ownerName, name: result.fork.name },
+    forkFullName: result.forkFullName ?? null,
+    branch: result.branch,
+    commit: result.commit,
+    pull:
+      result.pull === undefined
+        ? null
+        : {
+            number: result.pull.number,
+            htmlUrl: result.pull.htmlUrl,
+            local:
+              result.pull.local === undefined
+                ? null
+                : withLabels(ctx, result.pull.local),
+          },
+  };
+}
+
+/**
+ * A contribute refusal. The object-shaped ones carry their detail (the edit
+ * that failed, the commit that landed anyway); the string ones are the
+ * ordinary access and origin codes every other route already speaks.
+ */
+function contributeFailure(error: unknown): Response {
+  if (typeof error === "object" && error !== null && "kind" in error) {
+    const detail = error as {
+      kind: string;
+      reason?: unknown;
+      commit?: unknown;
+    };
+    if (detail.kind === "edit_failed") {
+      const reason = detail.reason;
+      if (typeof reason === "object" && reason !== null && "kind" in reason)
+        return editFailure(
+          reason as { kind: string } & Record<string, unknown>,
+        );
+      return respondAccess(String(reason), 422);
+    }
+    return json(
+      {
+        error: "pull_failed",
+        message: editMessage("pull_failed"),
+        reason: detail.reason,
+        commit: detail.commit,
+      },
+      422,
+    );
+  }
+  const code = String(error);
+  if (code === "fork_timeout")
+    return apiError(
+      "fork_timeout",
+      504,
+      "the origin took the fork request and the fork has not appeared yet; try again shortly",
+    );
+  if (code === "mirror_failed")
+    return apiError(
+      "mirror_failed",
+      502,
+      "a local copy of that repository could not be made",
+    );
+  if (code === "invalid_branch" || code === "unknown_base")
+    return apiError(code, 422, "that branch is not one this forge can use");
+  return originAware(code, 422);
 }
 
 function editMessage(kind: string): string {
@@ -837,6 +959,9 @@ export function apiRoutes(router: Router<Handler>): void {
         : {}),
       ...(typeof input.protectDefault === "boolean"
         ? { protectDefault: input.protectDefault }
+        : {}),
+      ...(typeof input.requireReview === "boolean"
+        ? { requireReview: input.requireReview }
         : {}),
       ...(typeof input.description === "string"
         ? { description: input.description }
@@ -1326,9 +1451,17 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/pulls/:number", async (ctx) => {
     const found = loadPull(ctx);
     if ("error" in found) return found.error;
+    // A fork may have pushed since the pull opened; review what is being
+    // proposed now, not the snapshot taken when it was.
+    await refreshPullHead(ctx.app, found.repo, found.pull);
     // Include the diff so a reviewer (human or agent) reads the change without
-    // a second round trip.
-    const { status, diff } = await pullDiff(dirOf(ctx, found.repo), found.pull);
+    // a second round trip, and the review gate beside it so a client knows
+    // whether merging is even on offer.
+    const { status, diff } = await pullDiff(
+      dirOf(ctx, found.repo),
+      found.pull,
+      { db: ctx.app.db, requireReview: found.repo.requireReview },
+    );
     return json({ ...withLabels(ctx, found.pull), status, diff });
   });
 
@@ -1416,7 +1549,14 @@ export function apiRoutes(router: Router<Handler>): void {
       if ("error" in found) return found.error;
       const { diff } = await pullDiff(dirOf(ctx, found.repo), found.pull);
       return json(
-        withOutdated(listReviewComments(ctx.app.db, found.pull.id), diff),
+        withOutdated(listReviewComments(ctx.app.db, found.pull.id), diff).map(
+          // The thread this comment belongs to, so a client can resolve it
+          // without reassembling the key itself.
+          (comment) => ({
+            ...comment,
+            anchor: anchorId(comment.path, comment.side, comment.line),
+          }),
+        ),
       );
     },
   );
@@ -1447,6 +1587,135 @@ export function apiRoutes(router: Router<Handler>): void {
       return json(added.value, 201);
     },
   );
+
+  // Review *states* — the verdicts. A sibling route rather than a mode of
+  // `…/reviews`, because a line comment and a verdict are different things
+  // with different rules, and one path that means two of them behind a query
+  // parameter is the shape that gets called wrong.
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/pulls/:number/review-states",
+    (ctx) => {
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      return json(listReviews(ctx.app.db, found.pull.id));
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/review-states",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const state = str(input.state);
+      if (!isReviewState(state))
+        return apiError(
+          "invalid_state",
+          422,
+          "a review is approved, changes_requested, or commented",
+        );
+      const submitted = await submitReview(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        { state, body: str(input.body) },
+      );
+      if (!submitted.ok) {
+        if (submitted.error === "self_review")
+          return apiError(
+            "self_review",
+            422,
+            "you cannot approve your own pull request",
+          );
+        return originAware(submitted.error, 422);
+      }
+      return json(submitted.value, 201);
+    },
+  );
+
+  // Review threads: every review comment sharing one anchor, and whether the
+  // conversation is settled.
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/pulls/:number/threads",
+    (ctx) => {
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      return json(pullThreads(ctx.app, found.pull));
+    },
+  );
+
+  const thread = (resolved: boolean) => (ctx: Ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadPull(ctx);
+    if ("error" in found) return found.error;
+    const settledNow = resolveReviewThread(
+      ctx.app,
+      ctx.auth.user,
+      found.repo,
+      found.pull,
+      ctx.params.anchor ?? "",
+      resolved,
+    );
+    if (!settledNow.ok) return respondAccess(settledNow.error, 422);
+    return json(settledNow.value);
+  };
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/threads/:anchor/resolve",
+    thread(true),
+  );
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/pulls/:number/threads/:anchor/resolve",
+    thread(false),
+  );
+
+  // ── contributing to a repository you cannot push to ──────────────────
+  //
+  // One call: fork at the origin if needed, branch, commit, and open the
+  // pull upstream. `rw` is the floor here, as for every other repo write —
+  // and the write travels under the *origin owner's* credential, which is
+  // the rule `origin_owner_only` enforces underneath.
+
+  router.add("POST", "/api/v1/repos/:owner/:name/contribute", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    // Only a mirror has an upstream to contribute to; a native repo is edited
+    // directly (`POST …/contents`), and saying so would be a hint about a
+    // repo the caller may not be able to see anyway.
+    const link = originForRepo(ctx.app.db, repo.id);
+    if (!link) return notFound();
+    const input = await body(ctx.request);
+    const result = await contribute(ctx.app, ctx.auth.user, {
+      originId: link.origin.id,
+      // The repo names its own upstream; a caller cannot redirect the write
+      // at some other repository by asking nicely.
+      fullName: link.fullName,
+      branch: str(input.branch),
+      ...(str(input.base) === "" ? {} : { base: str(input.base) }),
+      ...(str(input.message) === "" ? {} : { message: str(input.message) }),
+      files: editFilesFrom(input.files),
+      ...(typeof input.openPull === "object" && input.openPull !== null
+        ? {
+            openPull: {
+              title: str((input.openPull as Record<string, unknown>).title),
+              body: str((input.openPull as Record<string, unknown>).body),
+            },
+          }
+        : {}),
+    });
+    if (!result.ok) return contributeFailure(result.error);
+    return json(contributionJson(ctx, result.value), 201);
+  });
 
   // ── webhooks — admin-scoped, since a webhook exfiltrates repo events ──
 
@@ -1818,6 +2087,65 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!started.ok) return respondAccess(started.error, 404);
     return json({ job: jobJson(ctx, started.value) }, 202);
+  });
+
+  // Fork at the origin. 202, like mirroring: the fork is asynchronous on
+  // GitHub, and the local copy of it is a job to watch.
+  router.add("POST", "/api/v1/user/origins/:id/fork", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const forked = await forkOrigin(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.id!,
+      str(input.fullName),
+    );
+    if (!forked.ok) return contributeFailure(forked.error);
+    return json(
+      {
+        remote: forked.value.remote,
+        existed: forked.value.existed,
+        job:
+          forked.value.job === undefined
+            ? null
+            : jobJson(ctx, forked.value.job),
+        mirroredAs:
+          forked.value.mirror === undefined
+            ? null
+            : {
+                owner: forked.value.mirror.ownerName,
+                name: forked.value.mirror.name,
+              },
+      },
+      202,
+    );
+  });
+
+  // Contribute to a repository we are only *browsing* — the fork flow
+  // straight from the picker, with no mirror of the upstream first.
+  router.add("POST", `${BROWSE}/contribute`, async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const result = await contribute(ctx.app, ctx.auth.user, {
+      originId: ctx.params.id!,
+      fullName: `${ctx.params.owner!}/${ctx.params.name!}`,
+      branch: str(input.branch),
+      ...(str(input.base) === "" ? {} : { base: str(input.base) }),
+      ...(str(input.message) === "" ? {} : { message: str(input.message) }),
+      files: editFilesFrom(input.files),
+      ...(typeof input.openPull === "object" && input.openPull !== null
+        ? {
+            openPull: {
+              title: str((input.openPull as Record<string, unknown>).title),
+              body: str((input.openPull as Record<string, unknown>).body),
+            },
+          }
+        : {}),
+    });
+    if (!result.ok) return contributeFailure(result.error);
+    return json(contributionJson(ctx, result.value), 201);
   });
 
   router.add("GET", "/api/v1/user/origins/:id/mirror/:job", (ctx) => {

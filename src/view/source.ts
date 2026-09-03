@@ -34,7 +34,11 @@ import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { App } from "../app.ts";
 import type { Diff } from "../git/diff.ts";
-import type { Commit as GitCommit, PathListing, TreeEntry } from "../git/read.ts";
+import type {
+  Commit as GitCommit,
+  PathListing,
+  TreeEntry,
+} from "../git/read.ts";
 import type { Origin, Page } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { localSource } from "./local.ts";
@@ -77,6 +81,18 @@ export interface RepoFacts {
   readonly pushedAt: string | null;
   /** The canonical page for this repo at its origin, when it has one. */
   readonly htmlUrl: string | null;
+  /**
+   * What this viewer may do to the repository *itself* — locally `canWrite`,
+   * live whatever the origin reports. It is the question that decides
+   * between "edit here" and "contribute via a fork", and it has to come from
+   * the source, because only the source knows which side answered it.
+   *
+   * Optional because a surface may assemble `RepoFacts` off rows it already
+   * has rather than pay for a `describe()`; both implementations of
+   * `describe()` always state it. It is a hint for what to render, never a
+   * protection — those live in `actions/`, where they are mechanical.
+   */
+  readonly permissions?: { readonly push: boolean };
 }
 
 export interface Branch {
@@ -135,6 +151,19 @@ export interface CommentView {
   readonly createdAt: string;
 }
 
+/** One verdict on a pull, as either side reports it. */
+export interface ReviewFact {
+  /** The local account, or the origin login when browsing live. */
+  readonly author: string;
+  readonly state: "approved" | "changes_requested" | "commented";
+  readonly body: string;
+  /** The head the verdict was passed on; "" when nobody said. */
+  readonly commitOid: string;
+  readonly createdAt: string;
+  /** False when the verdict was passed on an older head — dismissed. */
+  readonly current: boolean;
+}
+
 /** What a pull adds to a conversation. */
 export interface PullFacts {
   readonly baseBranch: string;
@@ -148,6 +177,8 @@ export interface PullFacts {
   /** Local only: mergeability against the live base. */
   readonly mergeable: boolean | null;
   readonly conflicts: readonly string[];
+  /** Every verdict, newest last. Empty when nobody has reviewed. */
+  readonly reviews: readonly ReviewFact[];
 }
 
 export interface IssueDetail {

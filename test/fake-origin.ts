@@ -39,6 +39,8 @@ export interface FakeRepo {
   description?: string;
   private?: boolean;
   fork?: boolean;
+  /** `owner/name` this repo forks, as `getRepo` reports it. */
+  parent?: string;
   defaultBranch?: string;
   cloneUrl: string;
   htmlUrl?: string;
@@ -95,6 +97,22 @@ export interface FakeReview {
   side?: "LEFT" | "RIGHT";
 }
 
+/**
+ * A verdict on a pull. Distinct from `FakeReview`, which is one line
+ * comment — both forges model reviews as a state with comments under it, and
+ * an adapter that conflates them counts comments as approvals.
+ */
+export interface FakeReviewState {
+  id: number;
+  issueNumber: number;
+  user: string;
+  /** The forge's own word: APPROVED / CHANGES_REQUESTED / REQUEST_CHANGES / … */
+  state: string;
+  body?: string;
+  commitId?: string;
+  submittedAt?: string;
+}
+
 export interface FakeLabel {
   id: number;
   name: string;
@@ -138,6 +156,8 @@ export interface FakeState {
   issues: Map<string, FakeIssue[]>;
   comments: Map<string, FakeComment[]>;
   reviews: Map<string, FakeReview[]>;
+  /** Verdicts, keyed `owner/name`. */
+  reviewStates: Map<string, FakeReviewState[]>;
   /** The git side of a repo, for the browse endpoints: refs, files, log. */
   branches: Map<string, FakeBranch[]>;
   tags: Map<string, FakeBranch[]>;
@@ -156,6 +176,17 @@ export interface FakeState {
   conditionalHits: number;
   /** Refuse the next write with this message. */
   refuseWrite: string;
+  /**
+   * How many `getRepo` calls a freshly forked repository 404s for before it
+   * appears. GitHub creates a fork asynchronously and answers 202 with a
+   * repository that is not there yet; a fake that materialises it instantly
+   * would never exercise the poll that makes the real thing work.
+   */
+  forkDelayReads: number;
+  /** Internal: remaining 404s per pending fork, keyed `owner/name`. */
+  pendingForks: Map<string, number>;
+  /** Refuse the next fork with this message (Forgejo 409s an existing one). */
+  refuseFork: string;
   /** Hold every issue-search answer this long before sending it. */
   searchDelayMs: number;
   nextId: number;
@@ -185,6 +216,7 @@ export function newFakeState(
     issues: new Map(),
     comments: new Map(),
     reviews: new Map(),
+    reviewStates: new Map(),
     branches: new Map(),
     tags: new Map(),
     files: new Map(),
@@ -196,6 +228,9 @@ export function newFakeState(
     etagsEnabled: false,
     conditionalHits: 0,
     refuseWrite: "",
+    forkDelayReads: 0,
+    pendingForks: new Map(),
+    refuseFork: "",
     searchDelayMs: 0,
     nextId: 1000,
   };
@@ -359,7 +394,43 @@ function route(
   const repo = state.repos.find((r) => r.fullName === fullName);
   if (!repo) return jsonResponse({ message: "Not Found" }, 404);
 
+  // A fork the origin has accepted but not finished making is a 404 for as
+  // many reads as the fixture asked for. This is the real GitHub behaviour
+  // and the reason `forkOrigin` polls at all.
+  const pending = state.pendingForks.get(fullName) ?? 0;
+  if (pending > 0) {
+    state.pendingForks.set(fullName, pending - 1);
+    return jsonResponse({ message: "Not Found" }, 404);
+  }
+
   if (tail === "") return jsonResponse(repoJson(state, repo));
+
+  // ---- forking ----
+  if (tail === "/forks" && method === "POST") {
+    if (state.refuseFork !== "")
+      return jsonResponse({ message: state.refuseFork }, 409);
+    const name = fullName.split("/")[1]!;
+    const forkName = `${state.login}/${name}`;
+    const already = state.repos.find((r) => r.fullName === forkName);
+    if (already === undefined) {
+      state.repos.push({
+        id: state.nextId++,
+        fullName: forkName,
+        fork: true,
+        parent: fullName,
+        defaultBranch: repo.defaultBranch ?? "main",
+        // A fork's git host is the origin's, exactly as the upstream's is.
+        cloneUrl: repo.cloneUrl.replace(`/${fullName}.git`, `/${forkName}.git`),
+        push: true,
+        admin: true,
+      });
+      if (state.forkDelayReads > 0)
+        state.pendingForks.set(forkName, state.forkDelayReads);
+    }
+    const created = state.repos.find((r) => r.fullName === forkName)!;
+    // 202, not 201: the repository is promised, not yet made.
+    return jsonResponse(repoJson(state, created), 202);
+  }
 
   // ---- browsing: refs, files, log, diffs ----
 
@@ -532,8 +603,13 @@ function route(
       updatedAt: new Date().toISOString(),
       pull: {
         base: String(input.base ?? "main"),
-        head: String(input.head ?? ""),
-        headRepo: fullName,
+        // `owner:branch` is the cross-repository head form. Split it, so a
+        // test can assert both halves arrived.
+        head:
+          String(input.head ?? "")
+            .split(":")
+            .at(-1) ?? "",
+        headRepo: headRepoOf(fullName, String(input.head ?? "")),
         baseSha: "b".repeat(40),
         headSha: "c".repeat(40),
         mergedAt: null,
@@ -644,18 +720,41 @@ function route(
       issue.updatedAt = new Date().toISOString();
       return jsonResponse(commentJson(url, created), 201);
     }
-    // Forgejo: reviews, then each review's comments.
+    // `/reviews` serves both readings: the verdicts (which carry a `state`)
+    // and, on Forgejo, the review objects whose comments the line-comment
+    // walk follows. One list, exactly as both forges serve it.
     if (suffix === "/reviews" && method === "GET") {
       const rows = (state.reviews.get(fullName) ?? []).filter(
         (r) => r.issueNumber === number,
       );
-      return jsonResponse(
-        rows.map((r) => ({
+      const verdicts = (state.reviewStates.get(fullName) ?? []).filter(
+        (r) => r.issueNumber === number,
+      );
+      return jsonResponse([
+        ...verdicts.map((r) => reviewStateJson(url, r)),
+        ...rows.map((r) => ({
           id: r.id,
           body: "",
           user: { login: r.user },
         })),
-      );
+      ]);
+    }
+    if (suffix === "/reviews" && method === "POST") {
+      if (state.refuseWrite !== "") return refuse(state);
+      const input = parse(bodyText);
+      const created: FakeReviewState = {
+        id: state.nextId++,
+        issueNumber: number,
+        user: state.login,
+        state: String(input.event ?? ""),
+        body: String(input.body ?? ""),
+        commitId: issue.pull?.headSha ?? "",
+        submittedAt: new Date().toISOString(),
+      };
+      const all = state.reviewStates.get(fullName) ?? [];
+      all.push(created);
+      state.reviewStates.set(fullName, all);
+      return jsonResponse(reviewStateJson(url, created), 200);
     }
     const reviewComments = /^\/reviews\/(\d+)\/comments$/.exec(suffix);
     if (reviewComments && method === "GET") {
@@ -837,6 +936,11 @@ function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
     ssh_url: "",
     html_url: repo.htmlUrl ?? `https://example.invalid/${repo.fullName}`,
     permissions: { push: repo.push ?? true, admin: repo.admin ?? true },
+    // Both forges report the parent here and nowhere else, which is why the
+    // picker's cache must keep the one it has when a listing omits it.
+    ...(repo.parent === undefined
+      ? {}
+      : { parent: { full_name: repo.parent } }),
   };
   return state.kind === "github"
     ? {
@@ -933,6 +1037,36 @@ const reviewJson = (url: URL, r: FakeReview): Record<string, unknown> => ({
   created_at: new Date().toISOString(),
   html_url: `${url.origin}/r/${r.id}`,
 });
+/**
+ * A verdict, in the shape both forges serve. GitHub answers its POST with
+ * `APPROVED` even though the request said `APPROVE`; the fake keeps whatever
+ * word the request used, which is exactly the mismatch an adapter has to
+ * survive.
+ */
+const reviewStateJson = (
+  url: URL,
+  r: FakeReviewState,
+): Record<string, unknown> => ({
+  id: r.id,
+  user: { login: r.user },
+  state: r.state,
+  body: r.body ?? "",
+  commit_id: r.commitId ?? "",
+  submitted_at: r.submittedAt ?? new Date().toISOString(),
+  html_url: `${url.origin}/rs/${r.id}`,
+});
+
+/**
+ * `owner:branch` names a branch in another repository; a bare branch names
+ * one in this repository. Both forges resolve the owner against a repo of
+ * the same name, which is why a fork keeps the name it was forked from.
+ */
+function headRepoOf(fullName: string, head: string): string {
+  const colon = head.indexOf(":");
+  if (colon < 0) return fullName;
+  return `${head.slice(0, colon)}/${fullName.split("/")[1] ?? ""}`;
+}
+
 // ---- OAuth, for the connect flows ----
 
 export interface FakeOAuth {
