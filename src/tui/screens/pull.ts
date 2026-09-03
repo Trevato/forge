@@ -7,17 +7,43 @@
  * It reads a `RepoSource`, so a pull on another forge renders in the same
  * shape; what it cannot do there is merge it, comment on it, or review a
  * line of it, and those keys are absent rather than present-and-failing.
+ *
+ * Three things a review needs, and where each lives.
+ *
+ * - **The verdict** (`R`) is a decision about the change as a whole. It
+ *   renders in the conversation as a timeline item with a state chip, and it
+ *   is recorded against the head it was passed on — so a push after it
+ *   dismisses it, and the item says `before the latest push` rather than
+ *   quietly still counting.
+ * - **The gate.** The merge box shows where the verdicts stand
+ *   (`2 approvals · changes requested by bob`) and, on a repository with
+ *   `require_review` on, refuses `m` with the reason. It is a *rendering* of
+ *   the same rule `mergePull` enforces — the refusal is mechanical there,
+ *   never here.
+ * - **The threads.** Review comments sharing one anchor are one
+ *   conversation. In the files tab `x` settles or reopens one (a writer, or
+ *   whoever raised it), a settled thread collapses to a single dim line, and
+ *   `n`/`p` walk the unsettled ones while the cursor is inside a thread.
  */
 
 import {
   addCommentThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
-import { addReview, mergePull } from "../../actions/pulls.ts";
-import { getIssue } from "../../core/issues.ts";
-import { getPull } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
 import {
+  addReview,
+  mergePull,
+  pullThreads,
+  resolveReviewThread,
+  submitReview,
+} from "../../actions/pulls.ts";
+import { getIssue } from "../../core/issues.ts";
+import { getPull, type Pull } from "../../core/pulls.ts";
+import { getRepoById, type Repo } from "../../core/repos.ts";
+import { err, ok } from "../../kernel/result.ts";
+import { getUsersByIds } from "../../core/users.ts";
+import {
+  anchorId,
   anchorKey,
   listReviewComments,
   withOutdated,
@@ -29,6 +55,7 @@ import type {
   IssueSummary,
   PullFacts,
   RepoSource,
+  ReviewFact,
 } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -41,6 +68,7 @@ import type { Session } from "../session.ts";
 import {
   ORIGIN_MARK,
   Scroll,
+  ago,
   confirmScreen,
   drawLines,
   hitScroll,
@@ -50,12 +78,84 @@ import {
   relTime,
   runAsync,
 } from "./common.ts";
-import { DiffView, type DiffAnchor } from "./commits.ts";
+import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
+import { reviewScreen } from "./review.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 
+/** One thread on the diff, as this screen holds it. */
+interface Thread {
+  readonly anchor: string;
+  readonly path: string;
+  readonly side: "old" | "new";
+  readonly line: number;
+  readonly resolvedAt: string | null;
+  /** The account that settled it, resolved to a name a person recognises. */
+  readonly resolvedBy: string;
+  readonly comments: readonly { authorName: string; body: string }[];
+}
+
+/**
+ * Where the verdicts stand at *this* head — the same reading `reviewGate`
+ * makes in `core/pulls.ts`, over the shape a `RepoSource` hands a surface.
+ *
+ * The latest verdict per author wins (a reviewer who requested changes and
+ * later approved counts once, as an approval), and only a verdict passed on
+ * the current head counts at all, in either direction: new code is new code.
+ */
+export interface Standing {
+  readonly approvals: number;
+  /** Who is currently blocking, by name — a count alone says nothing useful. */
+  readonly blocking: readonly string[];
+  /** Verdicts a push has dismissed. */
+  readonly stale: number;
+}
+
+export function standingOf(reviews: readonly ReviewFact[]): Standing {
+  const latest = new Map<string, ReviewFact>();
+  for (const review of reviews) latest.set(review.author, review);
+  let approvals = 0;
+  let stale = 0;
+  const blocking: string[] = [];
+  for (const review of latest.values()) {
+    if (!review.current) {
+      if (review.state !== "commented") stale++;
+      continue;
+    }
+    if (review.state === "approved") approvals++;
+    else if (review.state === "changes_requested") blocking.push(review.author);
+  }
+  return { approvals, blocking, stale };
+}
+
+/** `2 approvals · changes requested by bob` — the merge box's second line. */
+export function standingText(
+  standing: Standing,
+  required: boolean,
+): string {
+  const parts = [
+    standing.approvals === 0
+      ? required
+        ? "no approvals yet"
+        : ""
+      : plural(standing.approvals, "approval"),
+    standing.blocking.length === 0
+      ? ""
+      : `changes requested by ${standing.blocking.join(", ")}`,
+    standing.stale === 0 ? "" : `${standing.stale} dismissed by a push`,
+  ].filter((part) => part !== "");
+  return parts.join(" · ");
+}
+
 type Tab = 0 | 1;
+
+/** What each verdict is called on screen — one wording, every surface. */
+const VERDICT_WORDS: Record<ReviewFact["state"], string> = {
+  approved: "approved",
+  changes_requested: "changes requested",
+  commented: "commented",
+};
 
 export function pullScreen(
   f: Session,
@@ -68,6 +168,9 @@ export function pullScreen(
   let facts: PullFacts | null = null;
   let diff: Diff = { files: [], additions: 0, deletions: 0 };
   let reviews: AnchoredReview[] = [];
+  let threads: Thread[] = [];
+  /** Settled threads the reader has opened back up, for this visit only. */
+  const expanded = new Set<string>();
   let lines: Span[][] = [];
   let width = 0;
   let tab: Tab = keep.tab ?? 0;
@@ -76,6 +179,13 @@ export function pullScreen(
   const view = new DiffView();
   const composer = new Composer();
   const repo = localRepo(src);
+  /**
+   * Whether this repository demands an approval, read on every reload rather
+   * than off the row the screen opened with: a `Repo` handed down a stack is
+   * a snapshot, and somebody turning the gate on in settings must change what
+   * the merge box says without anybody re-entering the screen.
+   */
+  let requireReview = repo?.requireReview === true;
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   scroll.top = keep.top ?? 0;
 
@@ -92,14 +202,89 @@ export function pullScreen(
     // Review comments are anchored rows in *our* database; a live browse has
     // none of them, and neither forge exposes an equivalent we could read.
     const row = repo === undefined ? undefined : getPull(f.db, repo.id, number);
+    requireReview =
+      repo !== undefined && getRepoById(f.db, repo.id)?.requireReview === true;
     reviews =
       row === undefined
         ? []
         : withOutdated(listReviewComments(f.db, row.id), diff);
+    threads = row === undefined ? [] : readThreads(row);
     view.setFiles(diff.files);
-    view.setNotes(reviewNotes(reviews, ctx));
+    view.setNotes(threadNotes());
     width = 0;
     ctx.invalidate();
+  };
+
+  /**
+   * The threads, with `resolved_by` turned into a name. The column stores a
+   * user id (it is a foreign key), and "resolved by 01J9…" is not a sentence.
+   * One grouped lookup for the whole page rather than one per thread.
+   */
+  const readThreads = (row: Pull): Thread[] => {
+    const raw = pullThreads(f.app, row);
+    const names = getUsersByIds(
+      f.db,
+      raw.flatMap((t) => (t.resolvedBy === null ? [] : [t.resolvedBy])),
+    );
+    return raw.map((t) => ({
+      anchor: t.anchor,
+      path: t.path,
+      side: t.side,
+      line: t.line,
+      resolvedAt: t.resolvedAt,
+      resolvedBy:
+        t.resolvedBy === null
+          ? ""
+          : (names.get(t.resolvedBy)?.username ?? "somebody"),
+      comments: t.comments.map((comment) => ({
+        authorName: comment.authorName,
+        body: comment.body,
+      })),
+    }));
+  };
+
+  /**
+   * Review comments as rows spliced into the diff under the line they mark.
+   *
+   * A settled thread collapses to one dim line, because the point of settling
+   * something is to stop looking at it — and `enter` opens it again, because
+   * the point of a record is that it is still there.
+   */
+  const threadNotes = (): Map<string, DiffNote> => {
+    const c = ctx.theme.c;
+    const out = new Map<string, DiffNote>();
+    for (const thread of threads) {
+      const key = anchorKey(thread.path, thread.side, thread.line);
+      const settled = thread.resolvedAt !== null;
+      const open = !settled || expanded.has(thread.anchor);
+      const rows: Span[][] = [];
+      if (settled)
+        rows.push([
+          { text: "      ", style: style(c.mutedFg, c.bg) },
+          {
+            text: `${G.check} resolved${thread.resolvedBy === "" ? "" : ` by ${thread.resolvedBy}`} · ${relTime(thread.resolvedAt ?? "")} · enter to ${open ? "collapse" : "expand"}`,
+            style: style(c.faint, c.bg, ITALIC),
+          },
+        ]);
+      if (open)
+        for (const comment of thread.comments)
+          rows.push([
+            { text: "      ", style: style(c.mutedFg, c.bg) },
+            {
+              text: ` ${comment.authorName} `,
+              style: style(c.accentFg, c.accent, BOLD),
+            },
+            {
+              text: ` ${comment.body.replace(/\s+/g, " ")}`,
+              style: style(c.mutedFg, c.bg, ITALIC),
+            },
+          ]);
+      out.set(key, {
+        rows,
+        thread: { anchor: thread.anchor, resolved: settled },
+      });
+    }
+    return out;
   };
 
   // An imported author is the login on the *origin*: shown in its place, and
@@ -144,7 +329,46 @@ export function pullScreen(
       body: review.body,
       note: `${review.path}:${review.line}${review.outdated ? " · outdated" : ""}`,
     })),
+    ...verdicts().map(
+      (review): ThreadEntry => ({
+        kind: "comment" as const,
+        actor: review.author,
+        at: review.createdAt,
+        body: review.body === "" ? `_${VERDICT_WORDS[review.state]}._` : review.body,
+        badge: {
+          text: VERDICT_WORDS[review.state],
+          // A verdict a push has dismissed is muted, not green and not red:
+          // it counts for nothing in either direction, and colouring it as
+          // though it did is how a review gate becomes decorative.
+          tone: !review.current
+            ? "outline"
+            : review.state === "approved"
+              ? "success"
+              : review.state === "changes_requested"
+                ? "danger"
+                : "outline",
+        },
+        ...(review.current ? {} : { note: "before the latest push" }),
+      }),
+    ),
   ];
+
+  /** Every verdict on this pull, oldest first — the record, not the tally. */
+  const verdicts = (): readonly ReviewFact[] => facts?.reviews ?? [];
+
+  const standing = (): Standing => standingOf(verdicts());
+
+  /**
+   * The same reading `reviewGate` makes before a merge: an outstanding
+   * request for changes blocks whatever the setting is, and `require_review`
+   * additionally demands an approval of *this* head. Rendered here, enforced
+   * in `mergePull` — this decides what the box says, never what may land.
+   */
+  const gated = (): boolean => {
+    if (repo === undefined) return false;
+    const now = standing();
+    return now.blocking.length > 0 || (requireReview && now.approvals === 0);
+  };
 
   const submit = (): void => {
     if (repo === undefined) return;
@@ -187,6 +411,58 @@ export function pullScreen(
     });
   };
 
+  /** `R` — the verdict card, and the one call behind it. */
+  const review = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    ctx.push(
+      reviewScreen(ctx, {
+        parent: screen,
+        title: `Review #${number}`,
+        // The author of a change cannot approve it, so the option is not
+        // there. `submitReview` refuses it as well (`self_review`) — this is
+        // the rendering of that rule, never a substitute for it.
+        mayApprove: f.user !== undefined && row.authorId !== f.user.id,
+        head: facts?.headOid ?? "",
+        submit: async (input) => {
+          const sent = await submitReview(f.app, f.user, target, row, {
+            state: input.state,
+            ...(input.body.trim() === "" ? {} : { body: input.body.trim() }),
+          });
+          if (!sent.ok) return err(errorText(String(sent.error)));
+          await reload();
+          ctx.toast(`review submitted: ${VERDICT_WORDS[input.state]}`, "success");
+          return ok(sent.value);
+        },
+      }),
+    );
+  };
+
+  /** `x` on a thread in the files view: settle it, or open it back up. */
+  const settleThread = (anchor: string, resolved: boolean): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    const done = resolveReviewThread(
+      f.app,
+      f.user,
+      target,
+      row,
+      anchor,
+      resolved,
+    );
+    if (!done.ok) {
+      ctx.toast(errorText(done.error), "danger");
+      return;
+    }
+    expanded.delete(anchor);
+    runAsync(ctx, reload);
+    ctx.toast(resolved ? "thread resolved" : "thread reopened", "success");
+  };
+
   const merge = (strategy: "merge" | "squash"): void => {
     if (repo === undefined) return;
     const target = repo;
@@ -204,7 +480,8 @@ export function pullScreen(
   };
 
   const mirrored = (): boolean => repo === undefined || repo.origin !== null;
-  const state = (): MergeState => mergeState(detail?.issue, facts, mirrored());
+  const state = (): MergeState =>
+    mergeState(detail?.issue, facts, mirrored(), gated());
 
   const screen: Screen = {
     title: `#${number}`,
@@ -215,8 +492,18 @@ export function pullScreen(
         ...(mayWrite()
           ? [
               binding(["c"], tab === 1 ? "review line" : "comment"),
+              binding(["R"], "review"),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
-              binding(["x"], "close"),
+              ...(tab === 1 && view.threadHere() !== null
+                ? [
+                    binding(
+                      ["x"],
+                      view.threadHere()?.resolved === true
+                        ? "reopen the thread"
+                        : "resolve the thread",
+                    ),
+                  ]
+                : [binding(["x"], "close")]),
             ]
           : liveBindings(src)),
         binding(["r"], "refresh"),
@@ -232,10 +519,15 @@ export function pullScreen(
       if (!detail) return;
       const issue = detail.issue;
       const foot = composer.height();
+      // Four rows when there are verdicts to report, three when there are
+      // none: the box is exactly as tall as what is in it.
+      const boxH = standingText(standing(), requireReview) === ""
+        ? 3
+        : 4;
       const [strip, head, boxRow, tabRow, body, comp] = split(area, "v", [
         len(whereRows(src)),
         len(1),
-        len(3),
+        len(boxH),
         len(2),
         fill(1),
         len(Math.min(foot, Math.max(0, area.h - 10 - whereRows(src)))),
@@ -257,19 +549,48 @@ export function pullScreen(
         style(c.fg, c.bg, BOLD),
         edge,
       );
-      drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored());
+      drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored(), {
+        gated: gated(),
+        standing: standing(),
+        required: requireReview,
+      });
       tabs(s, tabRow!, c, {
         items: [
           {
             label: "Conversation",
-            count: conversation().length + reviews.length,
+            count: conversation().length + reviews.length + verdicts().length,
           },
           { label: "Files", count: diff.files.length },
         ],
         active: tab,
       });
-      if (tab === 1) view.render(s, body!, c);
-      else {
+      if (tab === 1) {
+        // The thread count is a section header, not a badge on the tab: how
+        // many conversations are still open is the question a reviewer opens
+        // this tab to answer, and it deserves a line.
+        const unsettled = threads.filter((t) => t.resolvedAt === null).length;
+        if (threads.length === 0) {
+          view.render(s, body!, c);
+          hitScroll(ctx, body!, view.scroll, view.length);
+        } else {
+          const [note, files] = split(body!, "v", [len(1), fill(1)]);
+          s.text(
+            note!.x,
+            note!.y,
+            truncate(
+              `${plural(threads.length, "thread")} · ${unsettled} unresolved`,
+              note!.w,
+            ),
+            style(unsettled > 0 ? c.attn : c.mutedFg, c.bg),
+            note!.x + note!.w,
+          );
+          view.render(s, files!, c);
+          // The wheel moves the diff, threads and all — the pane a reviewer
+          // spends the most time in was the one pane the pointer could not
+          // touch.
+          hitScroll(ctx, files!, view.scroll, view.length);
+        }
+      } else {
         if (width !== body!.w) {
           width = body!.w;
           lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
@@ -294,6 +615,28 @@ export function pullScreen(
         tab = tab === 0 ? 1 : 0;
         return true;
       }
+      if (e.key === "R" && mayWrite()) {
+        review();
+        return true;
+      }
+      // A thread the cursor is standing in owns `x` and `enter` before the
+      // screen does: settling a conversation is the act on offer there, and
+      // closing the whole pull from inside one would be a surprise.
+      if (tab === 1 && mayWrite()) {
+        const here = view.threadHere();
+        if (here !== null && (e.key === "x" || e.key === "enter")) {
+          if (e.key === "x") settleThread(here.anchor, !here.resolved);
+          else if (here.resolved) {
+            // A settled thread is a record, not a deletion: enter opens it
+            // back up to read, without reopening the conversation itself.
+            if (expanded.has(here.anchor)) expanded.delete(here.anchor);
+            else expanded.add(here.anchor);
+            view.setNotes(threadNotes());
+            ctx.invalidate();
+          } else settleThread(here.anchor, true);
+          return true;
+        }
+      }
       if (e.key === "c" && mayWrite()) {
         if (tab === 1) {
           const at = view.anchorAt();
@@ -307,6 +650,18 @@ export function pullScreen(
           anchor = null;
           composer.start("Comment");
         }
+        return true;
+      }
+      // A merge the gate would refuse says so here rather than going quiet:
+      // `m` doing nothing is indistinguishable from `m` being unbound.
+      if (e.key === "m" && mayWrite() && state() === "review_required") {
+        const now = standing();
+        ctx.toast(
+          now.blocking.length > 0
+            ? `changes requested by ${now.blocking.join(", ")}`
+            : errorText("review_required"),
+          "attn",
+        );
         return true;
       }
       if (
@@ -390,6 +745,8 @@ export type MergeState =
   | "mirrored"
   | "conflicts"
   | "empty"
+  /** The verdicts do not let this land yet — `mergePull` refuses it too. */
+  | "review_required"
   | "ready"
   | "unknown";
 
@@ -403,6 +760,7 @@ export function mergeState(
   issue: IssueSummary | undefined,
   pull: PullFacts | null | undefined,
   mirrored = false,
+  gated = false,
 ): MergeState {
   if (issue === undefined || pull === null || pull === undefined)
     return "unknown";
@@ -413,7 +771,10 @@ export function mergeState(
   if (mirrored) return "mirrored";
   if (pull.mergeable === null) return "unknown";
   if (pull.diff !== null && pull.diff.files.length === 0) return "empty";
-  return pull.mergeable ? "ready" : "conflicts";
+  if (!pull.mergeable) return "conflicts";
+  // Git could take it; the reviewers have not. Said after the conflict check
+  // because a conflict is the more urgent of the two and only one line fits.
+  return gated ? "review_required" : "ready";
 }
 
 function drawMergeBox(
@@ -424,8 +785,9 @@ function drawMergeBox(
   pull: PullFacts | null,
   summary: string,
   mirrored: boolean,
+  o: { gated: boolean; standing: Standing; required: boolean },
 ): void {
-  const state = mergeState(issue, pull, mirrored);
+  const state = mergeState(issue, pull, mirrored, o.gated);
   const tone =
     state === "merged"
       ? "merged"
@@ -433,7 +795,7 @@ function drawMergeBox(
         ? "success"
         : state === "conflicts" || state === "closed"
           ? "danger"
-          : state === "mirrored"
+          : state === "mirrored" || state === "review_required"
             ? "attn"
             : "default";
   // Where it is going belongs on the frame, not on a body row: the box is
@@ -458,9 +820,13 @@ function drawMergeBox(
             ? `Conflicts in ${plural(conflicts.length, "file")}: ${conflicts.slice(0, 3).join(", ")}`
             : state === "empty"
               ? "Nothing to merge — the base already has these commits"
-              : `Ready to merge · ${summary}`;
+              : state === "review_required"
+                ? o.standing.blocking.length > 0
+                  ? `Changes requested by ${o.standing.blocking.join(", ")}`
+                  : "Needs an approval of this head before it can merge"
+                : `Ready to merge · ${summary}`;
   const x = badge(s, inner.x, inner.y, c, {
-    text: state,
+    text: state === "review_required" ? "review" : state,
     variant: tone as "success",
   });
   s.text(
@@ -470,31 +836,17 @@ function drawMergeBox(
     style(c.fg, c.card),
     inner.x + inner.w,
   );
+  // Where the verdicts stand, under the state. Two rows only when there is
+  // something to say — a box with an empty second line reads as a box that
+  // lost something.
+  const verdicts = standingText(o.standing, o.required);
+  if (verdicts !== "" && inner.h > 1)
+    s.text(
+      inner.x,
+      inner.y + 1,
+      truncate(verdicts, inner.w),
+      style(o.standing.blocking.length > 0 ? c.danger : c.mutedFg, c.card),
+      inner.x + inner.w,
+    );
 }
 
-/** Review comments as rows spliced into the diff under the line they mark. */
-function reviewNotes(
-  reviews: readonly AnchoredReview[],
-  ctx: Ctx,
-): Map<string, Span[][]> {
-  const c = ctx.theme.c;
-  const out = new Map<string, Span[][]>();
-  for (const review of reviews) {
-    if (review.outdated) continue;
-    const key = anchorKey(review.path, review.side, review.line);
-    const rows = out.get(key) ?? [];
-    rows.push([
-      { text: "      ", style: style(c.mutedFg, c.bg) },
-      {
-        text: ` ${review.authorName} `,
-        style: style(c.accentFg, c.accent, BOLD),
-      },
-      {
-        text: ` ${review.body.replace(/\s+/g, " ")}`,
-        style: style(c.mutedFg, c.bg, ITALIC),
-      },
-    ]);
-    out.set(key, rows);
-  }
-  return out;
-}

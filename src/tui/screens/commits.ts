@@ -213,7 +213,11 @@ export class DiffView {
   private anchors: (DiffAnchor | null)[] = [];
   private hunkRows: number[] = [];
   private fileRows: number[] = [];
-  private notes = new Map<string, Span[][]>();
+  private notes = new Map<string, DiffNote>();
+  /** Parallel to `lines`: the thread a spliced row belongs to, if any. */
+  private threads: (DiffThread | null)[] = [];
+  /** First row of each unresolved thread — what `n`/`p` step through. */
+  private openThreadRows: number[] = [];
   private width = 0;
   readonly scroll = new Scroll();
 
@@ -231,9 +235,24 @@ export class DiffView {
   }
 
   /** Rows to splice in after the diff row at `anchorKey(path, side, line)`. */
-  setNotes(notes: Map<string, Span[][]>): void {
+  setNotes(notes: Map<string, DiffNote>): void {
     this.notes = notes;
     this.invalidate();
+  }
+
+  /** The thread the viewport is standing in, or null. */
+  threadHere(row = this.scroll.top): DiffThread | null {
+    return this.threads[row] ?? null;
+  }
+
+  /** How many unresolved threads are anchored in what is on screen. */
+  get openThreads(): number {
+    return this.openThreadRows.length;
+  }
+
+  /** Rendered rows — what a scroll region has to clamp against. */
+  get length(): number {
+    return this.lines.length;
   }
 
   invalidate(): void {
@@ -261,10 +280,19 @@ export class DiffView {
     this.hunkRows = [];
     this.fileRows = [];
 
-    const push = (row: Span[], file: number, anchor: DiffAnchor | null): void => {
+    this.threads = [];
+    this.openThreadRows = [];
+
+    const push = (
+      row: Span[],
+      file: number,
+      anchor: DiffAnchor | null,
+      thread: DiffThread | null = null,
+    ): void => {
       this.lines.push(row);
       this.owner.push(file);
       this.anchors.push(anchor);
+      this.threads.push(thread);
     };
 
     // One gutter width for every file in the view: the numbers must not step
@@ -280,8 +308,8 @@ export class DiffView {
         nw,
       );
       if (collapsed) {
-        for (const row of rendered) push(row, i, null);
-        push([], i, null);
+        for (const row of rendered) push(row, i, null, null);
+        push([], i, null, null);
         return;
       }
       let at = 0;
@@ -294,12 +322,21 @@ export class DiffView {
           const number = side === "old" ? line.oldNumber : line.newNumber;
           const anchor =
             number === null ? null : { path: file.path, side, line: number };
-          push(rendered[at++] ?? [], i, anchor);
-          const extra =
+          const note =
             anchor === null
               ? undefined
-              : this.notes.get(`${anchor.path}\0${anchor.side}\0${anchor.line}`);
-          if (extra) for (const row of extra) push(row, i, null);
+              : this.notes.get(
+                  `${anchor.path}\0${anchor.side}\0${anchor.line}`,
+                );
+          const thread = note?.thread ?? null;
+          // The *line the comment is about* is part of the thread, not just
+          // the rows under it: standing on it is standing on the
+          // conversation, which is what a reader means by "this one".
+          if (thread !== null && !thread.resolved)
+            this.openThreadRows.push(this.lines.length);
+          push(rendered[at++] ?? [], i, anchor, thread);
+          if (note === undefined) continue;
+          for (const row of note.rows) push(row, i, null, thread);
         }
       }
       push([], i, null);
@@ -329,8 +366,15 @@ export class DiffView {
   }
 
   key(e: KeyEvent, ctx: Ctx): boolean {
-    if (e.key === "n") return this.jump(this.hunkRows, 1);
-    if (e.key === "p") return this.jump(this.hunkRows, -1);
+    // Standing in a thread changes what "next" means. A reviewer walking the
+    // unanswered comments is doing one thing; a reader walking the change is
+    // doing another, and the cursor already says which.
+    const stops =
+      this.threadHere() !== null && this.openThreadRows.length > 0
+        ? this.openThreadRows
+        : this.hunkRows;
+    if (e.key === "n") return this.jump(stops, 1);
+    if (e.key === "p") return this.jump(stops, -1);
     if (e.key === "]") return this.jump(this.fileRows, 1);
     if (e.key === "[") return this.jump(this.fileRows, -1);
     if (e.key === "enter") {
@@ -353,6 +397,18 @@ export class DiffView {
     if (next !== undefined) this.scroll.to(next, this.lines.length);
     return true;
   }
+}
+
+/** A review thread, as the diff view has to know it: an id and a state. */
+export interface DiffThread {
+  readonly anchor: string;
+  readonly resolved: boolean;
+}
+
+/** What hangs under one anchored diff row: some rows, and maybe a thread. */
+export interface DiffNote {
+  readonly rows: Span[][];
+  readonly thread?: DiffThread;
 }
 
 export interface DiffAnchor {

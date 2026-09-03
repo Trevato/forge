@@ -36,6 +36,7 @@ import {
   confirmScreen,
   drawFacts,
   drawList,
+  hitList,
   errorText,
   promptScreen,
   runAsync,
@@ -85,6 +86,7 @@ export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           binding(["v"], "visibility"),
           binding(["b"], "default branch"),
           binding(["p"], "protection"),
+          binding(["R"], "require a review"),
         ];
       if (tab === 1)
         return [
@@ -120,6 +122,12 @@ export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             "protection",
             current.protectDefault ? "on — no force pushes or deletion" : "off",
           ],
+          [
+            "require review",
+            current.requireReview
+              ? "on — a pull needs an approval of its current head"
+              : "off",
+          ],
         ]);
         return;
       }
@@ -131,6 +139,7 @@ export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           state,
           labels.map((l) => ({ title: l.name, meta: `#${l.color}` })),
         );
+        hitList(ctx, body!, state, labels.length, {});
         labels.slice(state.offset, state.offset + body!.h).forEach((l, i) => {
           labelChip(
             s,
@@ -155,6 +164,7 @@ export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
             meta: lastDelivery(deliveries.get(hook.id) ?? []),
           })),
         );
+        hitList(ctx, body!, state, hooks.length, {});
         return;
       }
       s.text(
@@ -233,6 +243,12 @@ export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     }
     if (key === "p") {
       save({ protectDefault: !current.protectDefault });
+      return true;
+    }
+    // The gate `mergePull` enforces: with this on, a pull with no approval
+    // of its *current* head is refused, here and on every other surface.
+    if (key === "R") {
+      save({ requireReview: !current.requireReview });
       return true;
     }
     if (key === "b") {

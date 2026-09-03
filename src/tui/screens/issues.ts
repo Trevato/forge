@@ -12,6 +12,7 @@
 import { openIssueThrough } from "../../actions/issues.ts";
 import type { IssueKind, Label } from "../../core/issues.ts";
 import { mergedPullNumbers } from "../../core/pulls.ts";
+import { repoDir } from "../../git/repos.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { IssueSummary, RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -26,6 +27,7 @@ import {
   Filter,
   ListState,
   ORIGIN_MARK,
+  VERDICT_MARKS,
   commentsMeta,
   metaOf,
   drawList,
@@ -40,6 +42,7 @@ import {
 import { issueScreen } from "./issue.ts";
 import { newPullScreen } from "./newpull.ts";
 import { pullScreen } from "./pull.ts";
+import { verdictsForPulls, type Verdict } from "./verdicts.ts";
 import {
   local,
   localRepo,
@@ -80,16 +83,26 @@ export function issuesScreen(
    * browse shows "closed", which is all the origin's list endpoint says too.
    */
   const merged = new Set<number>();
-  const markMerged = (rows: readonly IssueSummary[]): void => {
+  /**
+   * Where each open pull stands with its reviewers. Same rule as the merged
+   * set: one grouped query for the whole page, never one per row.
+   */
+  const verdicts = new Map<number, Verdict>();
+  const markMerged = async (rows: readonly IssueSummary[]): Promise<void> => {
     if (repo === undefined || kind !== "pull") return;
     // One query for the page, addressed the way the list has them: by
     // number. `getPull` per row was a query per row on the hottest list.
-    for (const number of mergedPullNumbers(
-      f.db,
-      repo.id,
-      rows.map((row) => row.number),
-    ))
+    const numbers = rows.map((row) => row.number);
+    for (const number of mergedPullNumbers(f.db, repo.id, numbers))
       merged.add(number);
+    for (const [number, verdict] of await verdictsForPulls(
+      f.db,
+      repoDir(f.app.reposRoot, repo.ownerName, repo.name),
+      repo.id,
+      numbers,
+    ))
+      verdicts.set(number, verdict);
+    ctx.invalidate();
   };
 
   const query = (at?: string): Parameters<RepoSource["issues"]>[0] => ({
@@ -115,9 +128,10 @@ export function issuesScreen(
 
   const reload = async (): Promise<void> => {
     merged.clear();
+    verdicts.clear();
     items = await take();
     loaded = true;
-    markMerged(items);
+    await markMerged(items);
     if (!more) counted.set(STATES[segment]!, items.length);
     state.clamp(items.length);
     ctx.invalidate();
@@ -139,7 +153,7 @@ export function issuesScreen(
     if (at === undefined) return;
     runAsync(ctx, async () => {
       const page = await take(at);
-      markMerged(page);
+      await markMerged(page);
       items = [...items, ...page];
       if (!more) counted.set(STATES[segment]!, items.length);
       ctx.invalidate();
@@ -248,6 +262,14 @@ export function issuesScreen(
         });
         return;
       }
+      // A mark per row, always the same width, so a queue of pulls reads as a
+      // column. Absent entirely on an issue list and on a live browse, where
+      // there are no verdicts of ours to report.
+      const verdictMark = (item: IssueSummary): string => {
+        if (kind !== "pull" || repo === undefined) return "";
+        if (merged.has(item.number) || item.state === "closed") return " ";
+        return VERDICT_MARKS[verdicts.get(item.number) ?? "none"];
+      };
       const list: ListRow[] = rows.map((item) => {
         return {
           title: item.title,
@@ -260,6 +282,7 @@ export function issuesScreen(
           // An imported row is the origin's author, marked as upstream: a
           // login from another forge must never read as an account here.
           meta: metaOf(
+            verdictMark(item),
             `#${item.number} ${
               item.originAuthor === null || item.originAuthor === ""
                 ? item.authorName

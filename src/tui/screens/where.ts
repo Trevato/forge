@@ -21,6 +21,7 @@
  */
 
 import { isPinned } from "../../core/pins.ts";
+import { getOriginRepo, repoForkOf } from "../../core/origins.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Origin } from "../../origins/types.ts";
 import { localSource } from "../../view/local.ts";
@@ -158,6 +159,22 @@ export function otherSideLabel(
   return `live on ${hostOf(link.htmlUrl === "" ? link.fullName : link.htmlUrl)}`;
 }
 
+/**
+ * The upstream this repository forks, when it forks one at an origin.
+ *
+ * Two rows can say it and they say it about the same thing. A mirror we hold
+ * carries `repo.origin_fork_of`, written when `forkOrigin` made it; a live
+ * browse has only the picker's cached row for the remote, whose `fork_of` is
+ * what the origin itself reported. Either way the answer is `owner/name` at
+ * the origin, and "" when this is nobody's fork.
+ */
+export function forkOf(f: Session, src: RepoSource): string {
+  return src.where.kind === "local"
+    ? (repoForkOf(f.db, src.where.repo.id) ?? "")
+    : (getOriginRepo(f.db, src.where.origin.id, src.where.fullName)?.forkOf ??
+        "");
+}
+
 /** The branch a screen can open with before `describe()` has answered. */
 export const knownDefaultRef = (src: RepoSource): string | undefined =>
   src.where.kind === "local" ? src.where.repo.defaultBranch : undefined;
@@ -263,7 +280,26 @@ export function whereSpans(
       style: style(place.mark === "reading" ? c.fg : c.mutedFg, c.bg),
     });
   });
+  spans.push(...tailSpans(f, src, c));
   return spans;
+}
+
+/**
+ * `· fork of octo/widgets` — the one fact the three dots cannot carry.
+ *
+ * A fork looks exactly like any other repository in the strip, and knowing
+ * whose work it descends from is the difference between "my copy" and "the
+ * place I propose changes to". It goes after the places rather than inside
+ * them, so `whereLayout`'s arithmetic (and every hit box built from it) is
+ * untouched: nothing here is clickable.
+ */
+function tailSpans(f: Session, src: RepoSource, c: Tokens): Span[] {
+  const upstream = forkOf(f, src);
+  if (upstream === "") return [];
+  return [
+    { text: "  ·  ", style: style(c.faint, c.bg) },
+    { text: `fork of ${upstream}`, style: style(c.mutedFg, c.bg) },
+  ];
 }
 
 /**

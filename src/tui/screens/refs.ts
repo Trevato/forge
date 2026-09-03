@@ -21,6 +21,7 @@ import {
   ListState,
   confirmScreen,
   drawList,
+  hitList,
   errorText,
   pickerScreen,
   plural,
@@ -336,6 +337,16 @@ export function branchesScreen(
           };
         }),
       );
+      // Picking a ref is what this screen is for, so a click on the row you
+      // are already on picks it — the same act `enter` performs.
+      hitList(ctx, body!, state, list.length, {
+        open: (index) => {
+          const row = list[index];
+          if (row === undefined || o.onPick === undefined) return;
+          ctx.pop();
+          o.onPick(row.name);
+        },
+      });
     },
     key(e) {
       if (filter.key(e)) {

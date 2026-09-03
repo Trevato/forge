@@ -243,14 +243,16 @@ describe("the icon set a session actually draws", () => {
     );
     app.start();
     const press = async (...keys: string[]): Promise<void> => {
-      for (const key of keys)
+      for (const key of keys) {
+        const ctrl = key.startsWith("ctrl+");
         app.dispatch({
           type: "key",
-          key,
-          ctrl: false,
+          key: ctrl ? key.slice(5) : key,
+          ctrl,
           alt: false,
           shift: false,
         });
+      }
       await settleApp(app);
     };
     return {
@@ -326,7 +328,7 @@ describe("the icon set a session actually draws", () => {
     const h = boot("xterm-256color");
     try {
       await h.settle();
-      await h.press("t");
+      await h.press("ctrl+t");
       // Three rows the theme list did not have: the two settings, and a line
       // of real glyphs to look at.
       expect(h.text()).toContain("Images");
@@ -363,7 +365,7 @@ describe("the icon set a session actually draws", () => {
     const h = boot("xterm-ghostty");
     try {
       await h.settle();
-      await h.press("t", "j", "j", "j");
+      await h.press("ctrl+t", "j", "j", "j");
       expect(h.text()).toContain("auto (kitty)");
       await h.press("right");
       await h.press("esc");

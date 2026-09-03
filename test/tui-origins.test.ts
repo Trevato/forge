@@ -574,13 +574,14 @@ describe("origins in the terminal", () => {
       // The tree came from the same place.
       expect(text).toContain("src/");
 
-      // No write key exists here — not disabled, absent — and the two keys
-      // that do make sense on somebody else's repository are offered.
+      // No key that would write *here* exists — not disabled, absent — and
+      // the keys that do make sense on somebody else's repository are
+      // offered, forking at the origin among them.
       const help = await helpText(h);
       expect(help).toMatch(/m\s+mirror/);
       expect(help).toContain("open on origin");
+      expect(help).toContain(`fork at ${host}`);
       expect(help).not.toContain("settings");
-      expect(help).not.toContain("fork");
       expect(help).not.toContain("sync now");
 
       // Pressing them anyway names the one key that leads somewhere: a live

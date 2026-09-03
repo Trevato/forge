@@ -753,6 +753,16 @@ const MESSAGES: Record<string, string> = {
   fork_failed: "the fork could not be created",
   bad_anchor: "that line is not part of this diff",
   invalid_url: "that URL is not valid",
+  // Reviews. `review_required` is the merge gate refusing, and it is the one
+  // refusal a reviewer can act on, so it names the act rather than the rule.
+  review_required: "this needs an approval of its current head first",
+  self_review: "you cannot approve your own change",
+  invalid_state: "that is not a review verdict",
+  // The fork flow. Each of these leaves the world in a different place, so
+  // each keeps its own sentence.
+  fork_timeout: "the origin took the fork and it never appeared — try again",
+  mirror_failed: "the fork was made, but the copy here failed",
+  empty_files: "there is nothing to propose",
   invalid_token: "that token is not valid",
   // Origins. Three of these mean nothing changed anywhere and the fourth
   // means the change belongs on another forge — a single "that failed"
@@ -778,6 +788,19 @@ const MESSAGES: Record<string, string> = {
  */
 export const ORIGIN_MARK = "\u25b2";
 export const PIN_MARK = "\u25c6";
+
+/**
+ * The verdict a pull row wears, from the same safe set: `\u2713` approved,
+ * `\u2717` changes requested, `\u00b7` nobody has looked yet. One column, tabular,
+ * so a queue of pulls reads as a column of marks rather than a ragged edge —
+ * and the "nobody has looked" mark is a dot on purpose, because an unreviewed
+ * pull is a quiet fact, not a warning.
+ */
+export const VERDICT_MARKS = {
+  approved: "\u2713",
+  changes_requested: "\u2717",
+  none: "\u00b7",
+} as const;
 
 /**
  * The counts every repo row wears: open issues and open pulls, then comments

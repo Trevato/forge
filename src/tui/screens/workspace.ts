@@ -35,6 +35,7 @@
  */
 
 import { editFiles } from "../../actions/contents.ts";
+import { err, ok } from "../../kernel/result.ts";
 import { createBranch } from "../../actions/branches.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
@@ -73,7 +74,22 @@ import { tokColor, type Tokens } from "../ui/theme.ts";
 import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { aboutScreen } from "./about.ts";
-import { commitScreen, suggestBranch, type CommitFile } from "./commit.ts";
+import {
+  commitScreen,
+  editErrorText,
+  suggestBranch,
+  type CommitFile,
+} from "./commit.ts";
+import {
+  contributeErrorText,
+  forkAtOrigin,
+  importedInto,
+  originTarget,
+  propose,
+  proposeTarget,
+  proposingStatus,
+  type OriginTarget,
+} from "./contribute.ts";
 import { commitsScreen } from "./commits.ts";
 import {
   Filter,
@@ -96,6 +112,7 @@ import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { forkScreen } from "./newrepo.ts";
+import { pullScreen } from "./pull.ts";
 import { branchesScreen } from "./refs.ts";
 import { settingsScreen } from "./settings.ts";
 import {
@@ -472,6 +489,24 @@ export function workspaceScreen(
   const repo = localRepo(src);
   const liveSide = liveOrigin(src);
   const writable = (): boolean => src.capabilities.write && repo !== undefined;
+  /**
+   * What the ORIGIN says about pushing to the repository behind this one.
+   *
+   * A live browse gets it from its own `describe()` — the origin answered it
+   * already. A mirror cannot: `describe()` on a local source reports
+   * `canWrite` *here*, and the question "may I move this branch upstream" is
+   * only the upstream's to answer. So a mirror asks the other side once, on
+   * load, through the same cached source `W` would open. Undefined means
+   * nobody has said, which is the ordinary commit dialog.
+   */
+  let upstreamPush: boolean | undefined;
+  const canPushUpstream = (): boolean | undefined =>
+    src.where.kind === "origin" ? facts?.permissions?.push : upstreamPush;
+  /** Set when a change made here has to travel to another forge to land. */
+  const proposal = (): OriginTarget | undefined =>
+    proposeTarget(src, canPushUpstream());
+  /** Editing is allowed wherever the change has somewhere to go. */
+  const editable = (): boolean => writable() || proposal() !== undefined;
   const admin = (): boolean =>
     repo !== undefined && canAdmin(f.db, repo, f.user);
   const readPin = (): void => {
@@ -685,6 +720,7 @@ export function workspaceScreen(
       ctx.toast(errorText(described.error), "danger");
       return;
     }
+    void askUpstream(mine);
     // Coming back to a workspace we remember: the tree and every buffer are
     // already here, edits included. Re-reading them would be slower *and*
     // would throw away uncommitted work, so the only thing worth asking git
@@ -718,10 +754,31 @@ export function workspaceScreen(
     focus = o.focus ?? "file";
   };
 
+  /**
+   * Ask the origin whether this mirror's upstream is one we may push to.
+   *
+   * Detached from `reload` on purpose: the answer only changes a label and a
+   * dialog, and a workspace must open at the speed of git rather than at the
+   * speed of somebody else's API. It is one request a minute at worst — the
+   * browse cache holds a `describe` for sixty seconds — and a failure simply
+   * leaves the ordinary commit dialog, which is what a mirror had before.
+   */
+  const askUpstream = async (mine: number): Promise<void> => {
+    if (src.where.kind !== "local" || repo?.origin == null) return;
+    if (upstreamPush !== undefined) return;
+    const other = otherSide(f, src);
+    if (other === undefined) return;
+    const described = await other.describe();
+    if (stale(mine) || !described.ok) return;
+    upstreamPush = described.value.permissions?.push;
+    ctx.invalidate();
+  };
+
   // ---- mutations ----
 
   const commit = (): void => {
-    if (!writable() || repo === undefined) {
+    const target = proposal();
+    if (!writable() && target === undefined) {
       readOnlyToast();
       return;
     }
@@ -740,44 +797,138 @@ export function workspaceScreen(
         : first.kind === "delete"
           ? `Delete ${first.path}`
           : `${first.kind === "add" ? "Add" : "Update"} ${first.path}`;
+    /** The bytes for one ticked path: the buffer if there is one, else gone. */
+    const payload = (paths: readonly string[]) => {
+      const chosen = new Set(paths);
+      return files
+        .filter((file) => chosen.has(file.path))
+        .map((file) => ({
+          path: file.path,
+          content:
+            file.kind === "delete"
+              ? null
+              : (tabs.find((t) => t.path === file.path)?.bytes() ??
+                new Uint8Array(0)),
+        }));
+    };
+    if (target !== undefined) {
+      proposeChange(target, files, subject, payload);
+      return;
+    }
+    if (repo === undefined) {
+      readOnlyToast();
+      return;
+    }
+    const here = repo;
     ctx.push(
       commitScreen(f, ctx, screen, {
-        repo,
+        repo: here,
+        where: `${here.ownerName}/${here.name}`,
         branch: ref,
         title: files.length > 1 ? "Commit changes" : `Commit ${first.path}`,
         subject,
         files,
         defaultBranchName: suggestBranch(f, "edit", slug(first.path)),
         commit: async (plan) => {
-          const chosen = new Set(plan.paths);
-          return editFiles(f.app, f.user, repo, {
+          const made = await editFiles(f.app, f.user, here, {
             branch: ref,
             base: ref,
             ...(plan.newBranch === undefined
               ? {}
               : { newBranch: plan.newBranch }),
             message: plan.message,
-            files: files
-              .filter((file) => chosen.has(file.path))
-              .map((file) => ({
-                path: file.path,
-                content:
-                  file.kind === "delete"
-                    ? null
-                    : (tabs.find((t) => t.path === file.path)?.bytes() ??
-                      new Uint8Array(0)),
-              })),
+            files: payload(plan.paths),
             ...(plan.pull === undefined ? {} : { openPull: plan.pull }),
           });
+          if (!made.ok) return err(editErrorText(made.error));
+          const result = made.value;
+          return ok({
+            message:
+              result.pull === undefined
+                ? `committed to ${result.branch}`
+                : `committed to ${result.branch} · pull #${result.pull.number} opened`,
+            then: () => {
+              // The commit landed: the workspace follows it. A new branch
+              // becomes the ref being browsed, every buffer is re-read from
+              // what git now holds, and the pending deletions are gone
+              // because they happened.
+              for (const t of tabs) t.creating = false;
+              pending.clear();
+              ref = result.branch;
+              runAsync(ctx, reload);
+            },
+          });
         },
-        onDone: (result) => {
-          // The commit landed: the workspace follows it. A new branch becomes
-          // the ref being browsed, every buffer is re-read from what git now
-          // holds, and the pending deletions are gone because they happened.
-          for (const t of tabs) t.creating = false;
-          pending.clear();
-          ref = result.branch;
-          runAsync(ctx, reload);
+      }),
+    );
+  };
+
+  /**
+   * The same dialog, aimed at somebody else's forge.
+   *
+   * One call does the whole of it (`actions/contribute.ts`): fork if a fork
+   * is needed, branch from the *upstream's* base rather than a stale copy of
+   * it, commit into the fork, push it there, and open the pull upstream with
+   * the `owner:branch` head form. Everything this function adds is the two
+   * sentences a person reads afterwards.
+   */
+  const proposeChange = (
+    target: OriginTarget,
+    files: readonly CommitFile[],
+    subject: string,
+    payload: (paths: readonly string[]) => {
+      path: string;
+      content: Uint8Array | null;
+    }[],
+  ): void => {
+    const first = files[0]!;
+    const base = ref === "" ? (facts?.defaultBranch ?? "") : ref;
+    ctx.push(
+      commitScreen(f, ctx, screen, {
+        where: target.fullName,
+        branch: ref,
+        title: "Propose a change",
+        subject,
+        files,
+        mode: "propose",
+        upstream: { fullName: target.fullName, base },
+        defaultBranchName: suggestBranch(f, "edit", slug(first.path)),
+        commit: async (plan) => {
+          const sent = await propose(f, {
+            target,
+            base,
+            branch: plan.newBranch ?? "",
+            message: plan.message,
+            files: payload(plan.paths),
+            pull: plan.pull ?? { title: subject },
+          });
+          if (!sent.ok) return err(contributeErrorText(sent.error));
+          const result = sent.value;
+          const number = result.pull?.number;
+          const imported = importedInto(f, result);
+          return ok({
+            message:
+              number === undefined
+                ? `pushed ${result.branch} to your fork`
+                : `opened pull #${number} on ${target.fullName}`,
+            then: () => {
+              // The work lives in the fork and in the pull now, so the
+              // buffers here go back to being what the upstream holds —
+              // keeping them would offer to propose the same change twice.
+              for (const t of tabs) {
+                t.creating = false;
+                t.editor = null;
+                t.mode = "view";
+                t.rebuild(ctx.theme.c);
+              }
+              pending.clear();
+              ctx.invalidate();
+              if (imported !== undefined)
+                ctx.push(
+                  pullScreen(f, ctx, local(f, imported.repo), imported.number),
+                );
+            },
+          });
         },
       }),
     );
@@ -915,7 +1066,7 @@ export function workspaceScreen(
   };
 
   const markDeleted = (node: Node): void => {
-    if (!writable()) {
+    if (!editable()) {
       readOnlyToast();
       return;
     }
@@ -954,7 +1105,7 @@ export function workspaceScreen(
   };
 
   const newFile = (): void => {
-    if (!writable()) {
+    if (!editable()) {
       readOnlyToast();
       return;
     }
@@ -1000,7 +1151,7 @@ export function workspaceScreen(
       ctx.toast("open a file first", "attn");
       return;
     }
-    if (!writable()) {
+    if (!editable()) {
       readOnlyToast();
       return;
     }
@@ -1075,7 +1226,7 @@ export function workspaceScreen(
     binding(["enter", "l"], "open / expand"),
     binding(["h"], "collapse"),
     binding(["/"], "filter this level"),
-    binding(["n", "D"], "new file / delete", { disabled: !writable() }),
+    binding(["n", "D"], "new file / delete", { disabled: !editable() }),
   ];
 
   const fileKeys = (): Binding[] => {
@@ -1092,7 +1243,7 @@ export function workspaceScreen(
       t !== undefined && (t.image !== null || isMarkdownPath(t.path));
     return [
       binding(["tab"], "focus explorer"),
-      binding(["e"], "edit", { disabled: !writable() }),
+      binding(["e"], "edit", { disabled: !editable() }),
       binding(
         ["v"],
         t?.image !== null && t !== undefined
@@ -1124,7 +1275,9 @@ export function workspaceScreen(
           : [
               binding(["]", "["], "next / previous tab"),
               binding(["x", "X"], "close tab / others"),
-              binding(["c"], "commit", { disabled: !writable() }),
+              binding(["c"], proposal() === undefined ? "commit" : "propose a change", {
+                disabled: !editable(),
+              }),
               binding(["b", "B"], "switch ref / new branch"),
               binding(["t", "ctrl+p"], "find file"),
               binding(["y"], "copy path"),
@@ -1135,9 +1288,18 @@ export function workspaceScreen(
                 ? []
                 : [binding(["w"], "open the workbench copy")]),
               ...(other === undefined ? [] : [binding(["W"], other)]),
-              ...(originUrl(src) === ""
+
+              ...(originTarget(src) === undefined && repo === undefined
                 ? []
-                : [binding(["O"], "open on origin")]),
+                : [
+                    binding(
+                      ["F"],
+                      originTarget(src) === undefined
+                        ? "fork"
+                        : `fork at ${originTarget(src)?.host ?? "the origin"}`,
+                      { disabled: !f.signedIn },
+                    ),
+                  ]),
               ...(repo === undefined
                 ? []
                 : [
@@ -1147,7 +1309,6 @@ export function workspaceScreen(
                     binding(["S"], "sync now", {
                       disabled: repo.origin === null || !admin(),
                     }),
-                    binding(["F"], "fork", { disabled: !f.signedIn }),
                     binding([","], "settings", { disabled: !admin() }),
                   ]),
               binding(["r"], "refresh"),
@@ -1486,8 +1647,18 @@ export function workspaceScreen(
         });
         return true;
       }
-      if (plain && e.key === "F" && f.signedIn && repo !== undefined) {
-        ctx.push(forkScreen(f, ctx, repo));
+      if (plain && e.key === "F" && f.signedIn) {
+        // A repository that lives at an origin is forked *there* — a local
+        // fork of a mirror would be a copy of a copy, with nowhere to
+        // propose it back to. A native repository keeps the native fork.
+        const target = originTarget(src);
+        if (target !== undefined)
+          forkAtOrigin(f, ctx, {
+            parent: screen,
+            target,
+            onForked: openLocal,
+          });
+        else if (repo !== undefined) ctx.push(forkScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "," && repo !== undefined && admin()) {
@@ -1777,7 +1948,7 @@ export function workspaceScreen(
       // The README the repository opens on, rendered the way the web
       // renders it. `v` shows the bytes; `e` edits them, always.
       t.document(Math.max(8, r.w - 2), c);
-      drawLines(s, r, c, t.scroll, t.doc);
+      drawDoc(s, r, c, t);
       return;
     }
     drawCode(s, r, c, t);
@@ -1817,6 +1988,45 @@ export function workspaceScreen(
     }
     const placed = drawImage(s, r, c, image, ctx.caps);
     if (placed !== undefined) ctx.placeImage(placed);
+  }
+
+  /**
+   * The rendered document, with `/` hits tinted the way the code view tints
+   * them. Prose searched the same way code does and then said nothing about
+   * what it found: `n` moved the viewport and the reader had to guess which
+   * line was the answer. The row under the hit wears `c.muted`, exactly as
+   * `drawCode` does — one grammar for "this is what you searched for".
+   */
+  function drawDoc(s: Surface, r: Rect, c: Tokens, t: Tab): void {
+    if (r.w <= 0 || r.h <= 0) return;
+    if (t.hits.length === 0) {
+      drawLines(s, r, c, t.scroll, t.doc);
+      return;
+    }
+    const hits = new Set(t.hits);
+    const from = t.scroll.window(r.h, t.doc.length);
+    const width = Math.max(0, r.w - 1);
+    for (let i = 0; i < r.h; i++) {
+      const row = from + i;
+      const line = t.doc[row];
+      if (line === undefined) break;
+      const y = r.y + i;
+      if (!hits.has(row)) {
+        s.spans(r.x, y, line, r.x + width);
+        continue;
+      }
+      s.fill({ x: r.x, y, w: width, h: 1 }, " ", style(c.fg, c.muted));
+      s.spans(
+        r.x,
+        y,
+        line.map((span) => ({ ...span, style: { ...span.style, bg: c.muted } })),
+        r.x + width,
+      );
+    }
+    scrollbar(s, { x: r.x + r.w - 1, y: r.y, w: 1, h: r.h }, c, {
+      total: t.doc.length,
+      offset: from,
+    });
   }
 
   function drawStatus(s: Surface, r: Rect, c: Tokens): void {
@@ -1882,10 +2092,15 @@ export function workspaceScreen(
     }
 
     const dirty = tabs.filter((x) => x.modified).length;
+    const target = proposal();
     const parts = [
       ref === "" ? "no ref" : ref,
       dirty === 0 ? "" : `${dirty} modified`,
       pending.size === 0 ? "" : `${plural(pending.size, "deletion")} pending`,
+      // Said on every frame, not only in the dialog: somebody typing into a
+      // repository they cannot push to should never have to press `c` to
+      // find out where their change is going.
+      target === undefined ? "" : proposingStatus(target),
     ].filter((p) => p !== "");
     s.text(
       r.x + 1,
@@ -1915,7 +2130,7 @@ export function workspaceScreen(
                   t.reading ? t.doc.length : t.plain.length,
                   "line",
                 )}${t.reading ? " rendered" : ""}${
-                  writable() ? "" : " · read only"
+                  writable() || target !== undefined ? "" : " · read only"
                 }`;
     if (tail === "") return;
     const shown = truncate(tail, Math.max(0, r.w - 4));
