@@ -21,6 +21,7 @@ import {
   type MergeStrategy,
 } from "../git/merge.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { transact } from "../kernel/db.ts";
 import {
   createIssue,
   getIssue,
@@ -60,11 +61,7 @@ interface PullRow {
   origin_head_repo: string | null;
 }
 
-function join(db: Database, issue: Issue): Pull | undefined {
-  const row = db
-    .query<PullRow, [string]>("SELECT * FROM pull WHERE issue_id = ?1")
-    .get(issue.id);
-  if (!row) return undefined;
+function fromRow(issue: Issue, row: PullRow): Pull {
   const headRepoId = row.head_repo_id ?? issue.repoId;
   return {
     ...issue,
@@ -78,6 +75,13 @@ function join(db: Database, issue: Issue): Pull | undefined {
     crossRepo: headRepoId !== issue.repoId,
     originHeadRepo: row.origin_head_repo,
   };
+}
+
+function join(db: Database, issue: Issue): Pull | undefined {
+  const row = db
+    .query<PullRow, [string]>("SELECT * FROM pull WHERE issue_id = ?1")
+    .get(issue.id);
+  return row ? fromRow(issue, row) : undefined;
 }
 
 export type CreatePullError =
@@ -176,9 +180,77 @@ export function listPulls(
   repoId: string,
   options: ListPullsOptions = {},
 ): Pull[] {
-  return listIssues(db, repoId, { ...options, kind: "pull" })
-    .map((issue) => join(db, issue))
-    .filter((p): p is Pull => p !== undefined);
+  return joinMany(db, listIssues(db, repoId, { ...options, kind: "pull" }));
+}
+
+/**
+ * Attach the pull rows to a page of issues in one query.
+ *
+ * The per-row `join` above is right for one pull and wrong for fifty: a list
+ * of fifty pulls was fifty `SELECT * FROM pull WHERE issue_id = ?`, which is
+ * fifty times the planner's fixed cost to fetch fifty tiny rows that a
+ * single `IN` returns together. Issues that have no pull row are dropped, as
+ * the per-row version already did.
+ */
+export function joinMany(db: Database, issues: readonly Issue[]): Pull[] {
+  if (issues.length === 0) return [];
+  const rows = new Map<string, PullRow & { issue_id: string }>();
+  const CHUNK = 400;
+  for (let i = 0; i < issues.length; i += CHUNK) {
+    const batch = issues.slice(i, i + CHUNK);
+    const found = db
+      .query<
+        PullRow & { issue_id: string },
+        string[]
+      >(`SELECT * FROM pull WHERE issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`)
+      .all(...batch.map((issue) => issue.id));
+    for (const row of found) rows.set(row.issue_id, row);
+  }
+  const out: Pull[] = [];
+  for (const issue of issues) {
+    const row = rows.get(issue.id);
+    if (row !== undefined) out.push(fromRow(issue, row));
+  }
+  return out;
+}
+
+/** The pull rows for a page of issues, keyed by issue id. */
+export function pullsForIssues(
+  db: Database,
+  issues: readonly Issue[],
+): Map<string, Pull> {
+  return new Map(joinMany(db, issues).map((pull) => [pull.id, pull]));
+}
+
+/**
+ * Which of these pull numbers have landed.
+ *
+ * A list of pulls renders a "merged" mark, and the summary shape a surface
+ * gets from `RepoSource` cannot say — so the row was asked directly, once
+ * per row. This is the same question for a whole page, addressed the way a
+ * list has them: by number.
+ */
+export function mergedPullNumbers(
+  db: Database,
+  repoId: string,
+  numbers: readonly number[],
+): Set<number> {
+  const out = new Set<number>();
+  const unique = [...new Set(numbers)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ number: number }, (string | number)[]>(
+        `SELECT issue.number FROM issue
+         JOIN pull ON pull.issue_id = issue.id
+         WHERE issue.repo_id = ?1 AND pull.merged_at IS NOT NULL
+           AND issue.number IN (${batch.map((_, n) => `?${n + 2}`).join(",")})`,
+      )
+      .all(repoId, ...batch);
+    for (const row of rows) out.add(row.number);
+  }
+  return out;
 }
 
 export interface PullDiff {
@@ -272,7 +344,7 @@ export async function mergePull(
   if (!landed.ok) return landed;
 
   const now = new Date().toISOString();
-  const finalize = db.transaction(() => {
+  transact(db, () => {
     db.query(
       "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5 WHERE issue_id = ?6",
     ).run(
@@ -285,7 +357,6 @@ export async function mergePull(
     );
     setIssueState(db, pull.id, "closed");
   });
-  finalize();
 
   // The merge commit is kept reachable forever, independent of the base branch.
   await writeRef(dir, `refs/pull/${pull.number}/merged`, landed.value.mergeOid);

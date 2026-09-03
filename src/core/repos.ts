@@ -8,6 +8,7 @@
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { installHooks } from "../git/hooks.ts";
+import { closeReader } from "../git/read.ts";
 import {
   deleteRepoDir,
   detachFork,
@@ -19,6 +20,7 @@ import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
+import { REPO_VISIBLE } from "./visibility.ts";
 import { accessAllows, orgAccess, type Access } from "./orgs.ts";
 import { getUserById, type User } from "./users.ts";
 
@@ -263,6 +265,31 @@ export function getRepoById(db: Database, repoId: string): Repo | undefined {
   return row ? toRepo(row) : undefined;
 }
 
+/**
+ * Several repos by id, in one query, keyed by id. What a pin list, an
+ * activity feed, or any other page holding a bag of repo ids should ask,
+ * instead of `getRepoById` in a loop.
+ */
+export function getReposByIds(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, Repo> {
+  const out = new Map<string, Repo>();
+  const CHUNK = 400;
+  const unique = [...new Set(repoIds)];
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        RepoRow,
+        string[]
+      >(`${SELECT} WHERE repo.id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`)
+      .all(...batch);
+    for (const row of rows) out.set(row.id, toRepo(row));
+  }
+  return out;
+}
+
 export interface ListReposOptions {
   /** Case-insensitive substring of `owner/name` — the list page's filter box. */
   query?: string;
@@ -275,15 +302,9 @@ export interface ListReposOptions {
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
 // team of. Site admins see everything. The same rule canRead applies, so a
 // listing never shows a repo whose page would 404.
-const VISIBLE = `(
-  repo.visibility = 'public'
-  OR repo.owner_id = ?1
-  OR repo.owner_id IN (
-    SELECT team.org_id FROM team
-    JOIN team_member ON team_member.team_id = team.id
-    WHERE team_member.user_id = ?1)
-  OR EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
-)`;
+// The rule itself lives in visibility.ts, because the activity feed needs the
+// same one and two copies of an access rule is how a forge grows a leak.
+const VISIBLE = REPO_VISIBLE;
 
 export function listReposVisibleTo(
   db: Database,
@@ -304,10 +325,9 @@ export function listReposVisibleTo(
   }
   params.push(pageLimit(options.limit));
   return db
-    .query<
-      RepoRow,
-      (string | number)[]
-    >(`${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`)
+    .query<RepoRow, (string | number)[]>(
+      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+    )
     .all(...params)
     .map(toRepo);
 }
@@ -335,10 +355,9 @@ export function listReposByOwner(
   }
   params.push(pageLimit(options.limit));
   return db
-    .query<
-      RepoRow,
-      (string | number)[]
-    >(`${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`)
+    .query<RepoRow, (string | number)[]>(
+      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+    )
     .all(...params)
     .map(toRepo);
 }
@@ -372,9 +391,12 @@ export async function deleteRepo(
   }
 
   db.query("DELETE FROM repo WHERE id = ?1").run(repo.id);
-  const removed = await deleteRepoDir(
-    repoDir(reposRoot, repo.ownerName, repo.name),
-  );
+  const dir = repoDir(reposRoot, repo.ownerName, repo.name);
+  // A pooled `cat-file` holds this directory open. Closing it first is what
+  // keeps the space actually free after the unlink instead of pinned to a
+  // descriptor nobody will ever read again.
+  closeReader(dir);
+  const removed = await deleteRepoDir(dir);
   if (!removed.ok) return err("delete_failed");
   return ok();
 }

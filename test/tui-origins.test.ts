@@ -26,6 +26,7 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import type { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
+import { settleApp } from "./helpers/tui.ts";
 import {
   headlessTerminal,
   type HeadlessTerminal,
@@ -81,14 +82,7 @@ function boot(
     exitHooks: false,
   });
   app.start();
-  const settle = async (): Promise<void> => {
-    const deadline = Date.now() + 20_000;
-    do {
-      for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 2));
-    } while (app.busy && Date.now() < deadline);
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 2));
-    app.frame();
-  };
+  const settle = (): Promise<void> => settleApp(app);
   const one = async (key: string): Promise<void> => {
     app.dispatch({
       type: "key",

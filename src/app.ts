@@ -12,6 +12,7 @@ import { EventBus } from "./core/events.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
 import { createLog, type Log } from "./kernel/log.ts";
+import { closeReadersUnder } from "./git/read.ts";
 
 export interface ForgeConfig {
   /** Everything lives here: index db, bare repos, the internal socket. */
@@ -63,6 +64,13 @@ export function createApp(config: ForgeConfig): App {
     log: createLog("forge"),
     reposRoot,
     socketPath: join(dataDir, "forge.sock"),
-    close: () => db.close(),
+    close: () => {
+      // The pooled `cat-file` readers for this forge's repos are processes,
+      // and processes outlive a closed database unless somebody says
+      // otherwise. One data dir is one forge, so closing the forge is where
+      // that is said.
+      closeReadersUnder(reposRoot);
+      db.close();
+    },
   };
 }

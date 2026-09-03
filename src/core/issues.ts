@@ -7,6 +7,8 @@
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { transact } from "../kernel/db.ts";
+import { repoVisible } from "./visibility.ts";
 
 export type IssueKind = "issue" | "pull";
 export type IssueState = "open" | "closed";
@@ -115,15 +117,18 @@ export function createIssue(
   if ((input.body ?? "").length > MAX_BODY) return err("body_too_long");
 
   // Number allocation and insert in one transaction: a visible row always
-  // has a number, and a number is never handed out without a row.
-  const create = db.transaction(() => {
+  // has a number, and a number is never handed out without a row. Through
+  // `transact`, so the transaction takes its write lock up front and a burst
+  // of agents opening issues at once queues instead of colliding — fifty
+  // callers must get fifty consecutive numbers, not a `SQLITE_BUSY`.
+  const issueId = transact(db, () => {
     const number = nextNumber(db, input.repoId);
-    const issueId = id();
+    const newId = id();
     db.query(
       `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id)
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
     ).run(
-      issueId,
+      newId,
       input.repoId,
       number,
       input.kind ?? "issue",
@@ -131,9 +136,8 @@ export function createIssue(
       input.body ?? "",
       input.authorId,
     );
-    return issueId;
+    return newId;
   });
-  const issueId = create();
   return ok(getIssueById(db, issueId)!);
 }
 
@@ -290,7 +294,7 @@ export function addComment(
   if (body.length > MAX_BODY) return err("body_too_long");
   const commentId = id();
   const now = new Date().toISOString();
-  const write = db.transaction(() => {
+  transact(db, () => {
     db.query(
       "INSERT INTO comment (id, issue_id, author_id, body) VALUES (?1, ?2, ?3, ?4)",
     ).run(commentId, input.issueId, input.authorId, body);
@@ -299,7 +303,6 @@ export function addComment(
       input.issueId,
     );
   });
-  write();
   return ok(getComment(db, commentId)!);
 }
 
@@ -490,14 +493,13 @@ export function setIssueLabels(
   issueId: string,
   labelIds: string[],
 ): void {
-  const write = db.transaction(() => {
+  transact(db, () => {
     db.query("DELETE FROM issue_label WHERE issue_id = ?1").run(issueId);
     const insert = db.query(
       "INSERT OR IGNORE INTO issue_label (issue_id, label_id) VALUES (?1, ?2)",
     );
     for (const labelId of labelIds) insert.run(issueId, labelId);
   });
-  write();
 }
 
 export function deleteLabel(
@@ -520,4 +522,203 @@ export function labelsFor(db: Database, issueId: string): Label[] {
        WHERE issue_label.issue_id = ?1 ORDER BY label.name`,
     )
     .all(issueId);
+}
+
+// ---- grouped reads: one query for a page, not one query per row ----
+//
+// A list page asks the same question of fifty rows. Asked one row at a time
+// that is fifty round trips through the query planner, and it is fifty at
+// ten rows and fifty at ten thousand — the cost does not show up in a
+// benchmark of one page, it shows up as a forge that got slower and nobody
+// can say when. These are the same answers, asked once.
+//
+// SQLite takes 999 bound parameters by default, so every one of these
+// chunks. Fifty-row pages never reach the boundary; a sync importing four
+// thousand issues does.
+
+const CHUNK = 400;
+
+const chunked = <T>(items: readonly T[]): T[][] => {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += CHUNK)
+    out.push(items.slice(i, i + CHUNK));
+  return out;
+};
+
+const placeholders = (n: number): string =>
+  Array.from({ length: n }, (_, i) => `?${i + 1}`).join(",");
+
+/**
+ * Every label on every one of these issues, grouped by issue id. An issue
+ * with no labels is absent from the map — callers use `?? []`, which is
+ * cheaper than materialising empty arrays for a page that mostly has none.
+ */
+export function labelsForMany(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, Label[]> {
+  const out = new Map<string, Label[]>();
+  for (const batch of chunked(issueIds)) {
+    const rows = db
+      .query<
+        { issue_id: string; id: string; name: string; color: string },
+        string[]
+      >(
+        `SELECT issue_label.issue_id, label.id, label.name, label.color
+         FROM issue_label JOIN label ON label.id = issue_label.label_id
+         WHERE issue_label.issue_id IN (${placeholders(batch.length)})
+         ORDER BY issue_label.issue_id, label.name`,
+      )
+      .all(...batch);
+    for (const row of rows) {
+      const list = out.get(row.issue_id);
+      const label: Label = { id: row.id, name: row.name, color: row.color };
+      if (list === undefined) out.set(row.issue_id, [label]);
+      else list.push(label);
+    }
+  }
+  return out;
+}
+
+/**
+ * Conversation-comment counts for a page of issues. The counterpart to
+ * `countComments`, and the thing a list must use instead of it — or instead
+ * of the worse habit of calling `listComments(...).length`, which reads
+ * every comment body off disk to arrive at a number.
+ */
+export function commentCountsFor(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const batch of chunked(issueIds)) {
+    const rows = db
+      .query<{ issue_id: string; n: number }, string[]>(
+        `SELECT issue_id, COUNT(*) AS n FROM comment
+         WHERE kind = 'comment' AND issue_id IN (${placeholders(batch.length)})
+         GROUP BY issue_id`,
+      )
+      .all(...batch);
+    for (const row of rows) out.set(row.issue_id, row.n);
+  }
+  return out;
+}
+
+/**
+ * Open and closed counts for one repo and kind, in a single pass over the
+ * covering index — the pair every list page shows above its tabs, which was
+ * two full count queries.
+ */
+export function issueCounts(
+  db: Database,
+  repoId: string,
+  kind: IssueKind,
+): { open: number; closed: number } {
+  const rows = db
+    .query<
+      { state: IssueState; n: number },
+      [string, IssueKind]
+    >("SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 GROUP BY state")
+    .all(repoId, kind);
+  let open = 0;
+  let closed = 0;
+  for (const row of rows) {
+    if (row.state === "closed") closed = row.n;
+    else open = row.n;
+  }
+  return { open, closed };
+}
+
+/** Issues addressed the way an activity feed has them: by repo and number. */
+export function getIssuesByRef(
+  db: Database,
+  refs: readonly { repoId: string; number: number }[],
+): Map<string, Issue> {
+  const out = new Map<string, Issue>();
+  if (refs.length === 0) return out;
+  // Grouped by repo: one query per repo touched, not one per event. A feed
+  // spans a handful of repos however many events it shows.
+  const byRepo = new Map<string, number[]>();
+  for (const ref of refs) {
+    const list = byRepo.get(ref.repoId);
+    if (list === undefined) byRepo.set(ref.repoId, [ref.number]);
+    else list.push(ref.number);
+  }
+  for (const [repoId, numbers] of byRepo) {
+    for (const batch of chunked(numbers)) {
+      const rows = db
+        .query<IssueRow, (string | number)[]>(
+          `${SELECT} WHERE issue.repo_id = ?1
+           AND issue.number IN (${batch.map((_, i) => `?${i + 2}`).join(",")})`,
+        )
+        .all(repoId, ...batch);
+      for (const row of rows) out.set(`${repoId}#${row.number}`, toIssue(row));
+    }
+  }
+  return out;
+}
+
+/** The key `getIssuesByRef` uses, so callers never have to guess it. */
+export const issueRefKey = (repoId: string, number: number): string =>
+  `${repoId}#${number}`;
+
+export interface IssueHit extends Issue {
+  readonly ownerName: string;
+  readonly repoName: string;
+}
+
+/**
+ * Titles matching `query`, across every repo the viewer can see, in one
+ * query.
+ *
+ * The shape this replaces was a loop: take the twenty most recent visible
+ * repos, ask each of them for issues and again for pulls, forty queries for
+ * one search box. It was also *wrong* in a way that only shows up with
+ * scale — a hit in the twenty-first repo did not exist as far as the search
+ * was concerned, and the twenty-first repo arrives on the day the forge gets
+ * interesting.
+ *
+ * Ordered newest-first by id, which for a monotonic ULID is creation order
+ * across every repo at once — the only ordering that means anything when the
+ * rows come from everywhere.
+ */
+export function searchIssuesVisibleTo(
+  db: Database,
+  viewer: { id: string } | undefined,
+  query: string,
+  options: { limit?: number; kind?: IssueKind } = {},
+): IssueHit[] {
+  const text = query.trim();
+  if (text === "") return [];
+  const params: (string | number)[] = [
+    viewer?.id ?? "",
+    `%${likeEscape(text)}%`,
+  ];
+  let where = `${repoVisible(viewer !== undefined)}
+    AND issue.title LIKE ?2 ESCAPE '\\' COLLATE NOCASE`;
+  if (options.kind !== undefined) {
+    params.push(options.kind);
+    where += ` AND issue.kind = ?${params.length}`;
+  }
+  params.push(pageLimit(options.limit));
+  return db
+    .query<
+      IssueRow & { owner_name: string; repo_name: string },
+      (string | number)[]
+    >(
+      `SELECT issue.*, user.username AS author_name,
+              owner.username AS owner_name, repo.name AS repo_name
+       FROM issue
+       JOIN user ON user.id = issue.author_id
+       JOIN repo ON repo.id = issue.repo_id
+       JOIN user AS owner ON owner.id = repo.owner_id
+       WHERE ${where}
+       ORDER BY issue.id DESC LIMIT ?${params.length}`,
+    )
+    .all(...params)
+    .map((row) => ({
+      ...toIssue(row),
+      ownerName: row.owner_name,
+      repoName: row.repo_name,
+    }));
 }

@@ -61,6 +61,123 @@ export class RepoReader {
   }
 }
 
+// ---- the reader pool ----
+
+/**
+ * One `cat-file` pair per hot repository, kept alive between requests.
+ *
+ * A `RepoReader` is two long-lived git processes, and the whole reason it
+ * exists is that spawning git per object is the difference between a tree
+ * page costing a millisecond and costing fifty. But a reader per repo held
+ * forever is two file descriptors and ~4 MB of RSS per repo, and a forge
+ * with two thousand repos would hold four thousand processes open — so the
+ * pool is bounded in both directions that can hurt: idle readers are evicted
+ * on a timer, and the least recently used is closed when the cap is reached.
+ *
+ * Safe to reuse across pushes: `cat-file` re-reads the object store when a
+ * lookup misses, so a reader opened before a push still finds what the push
+ * wrote. Refs are resolved per lookup, not cached.
+ */
+const READER_IDLE_MS = 60_000;
+const MAX_READERS = 64;
+
+interface Pooled {
+  readonly reader: RepoReader;
+  usedAt: number;
+}
+
+const pool = new Map<string, Pooled>();
+let sweeper: ReturnType<typeof setInterval> | undefined;
+
+function sweepReaders(now = Date.now()): void {
+  for (const [dir, entry] of pool) {
+    if (now - entry.usedAt >= READER_IDLE_MS) {
+      entry.reader.close();
+      pool.delete(dir);
+    }
+  }
+  if (pool.size === 0 && sweeper !== undefined) {
+    clearInterval(sweeper);
+    sweeper = undefined;
+  }
+}
+
+/**
+ * The reader for `dir`, opened on first use. Callers never close it — the
+ * pool owns its lifetime, which is what makes "just ask for a reader" the
+ * cheap thing to do rather than a resource decision at every call site.
+ */
+export function readerFor(dir: string): RepoReader {
+  const existing = pool.get(dir);
+  if (existing !== undefined) {
+    existing.usedAt = Date.now();
+    // Re-insert so Map iteration order stays LRU order.
+    pool.delete(dir);
+    pool.set(dir, existing);
+    return existing.reader;
+  }
+  if (pool.size >= MAX_READERS) {
+    const oldest = pool.keys().next();
+    if (!oldest.done) {
+      pool.get(oldest.value)?.reader.close();
+      pool.delete(oldest.value);
+    }
+  }
+  const reader = new RepoReader(dir);
+  pool.set(dir, { reader, usedAt: Date.now() });
+  if (sweeper === undefined) {
+    sweeper = setInterval(() => sweepReaders(), READER_IDLE_MS);
+    // The pool must never be the reason a process refuses to exit.
+    sweeper.unref?.();
+  }
+  return reader;
+}
+
+/**
+ * Drop the reader for one repo. Called when a repo is deleted: a `cat-file`
+ * holding a deleted directory open is how a forge leaks disk on a platform
+ * that keeps unlinked files alive for their last descriptor.
+ */
+export function closeReader(dir: string): void {
+  const entry = pool.get(dir);
+  if (entry === undefined) return;
+  entry.reader.close();
+  pool.delete(dir);
+}
+
+/**
+ * Drop every reader under one repos root. The pool is process-global (it is
+ * keyed by directory, and directories are globally unique), but a *forge* is
+ * one data directory — so closing a forge has to release the processes that
+ * belong to it, or a test suite that boots fifty forges leaves a hundred
+ * `cat-file`s idling on directories it has already deleted.
+ */
+export function closeReadersUnder(prefix: string): number {
+  let closed = 0;
+  for (const [dir, entry] of pool) {
+    if (dir === prefix || dir.startsWith(`${prefix}/`)) {
+      entry.reader.close();
+      pool.delete(dir);
+      closed++;
+    }
+  }
+  return closed;
+}
+
+/** Shut the pool down — process exit, and the seam every test uses. */
+export function closeAllReaders(): void {
+  for (const entry of pool.values()) entry.reader.close();
+  pool.clear();
+  if (sweeper !== undefined) {
+    clearInterval(sweeper);
+    sweeper = undefined;
+  }
+}
+
+/** For the pool's own tests. */
+export const readerPoolSize = (): number => pool.size;
+export const sweepReaderPool = (now?: number): void => sweepReaders(now);
+
 /** One cat-file process with a buffered stdout reader and serialized access. */
 class BatchProc {
   private proc: Bun.Subprocess<"pipe", "pipe", "ignore"> | undefined;
@@ -194,6 +311,15 @@ export async function blobForRender(
   const spec = `${rev}:${path}`;
   assertBatchSafe(spec);
 
+  // The pooled reader answers both the stat and the body without a fork.
+  // Two `cat-file` invocations used to become three processes per blob, and
+  // a file tree is one of those per file — the single largest source of
+  // spawn pressure the forge had.
+  const pooled = await viaReader(dir, spec, maxBytes);
+  if (pooled !== undefined) return pooled;
+
+  // The reader died (a repo removed under us, a git that refused to start).
+  // Correctness does not depend on the pool, so fall back to plain spawns.
   const kind = await runGit(["cat-file", "-t", spec], { cwd: dir });
   if (!kind.ok || kind.value !== "blob") return { kind: "missing" };
 
@@ -205,10 +331,42 @@ export async function blobForRender(
 
   const body = await runGitRaw(["cat-file", "blob", spec], { cwd: dir });
   if (!body.ok) return { kind: "missing" };
+  return classify(body.value, size);
+}
+
+/**
+ * `undefined` means "the pool could not answer" — never "the blob is not
+ * there". A miss the reader is sure about comes back as a real verdict, so
+ * the fallback below runs only when the reader itself failed.
+ */
+async function viaReader(
+  dir: string,
+  spec: string,
+  maxBytes: number,
+): Promise<BlobForRender | undefined> {
+  const reader = readerFor(dir);
+  try {
+    const stat = await reader.stat(spec);
+    if (!stat.ok) return { kind: "missing" };
+    if (stat.value.type !== "blob") return { kind: "missing" };
+    const size = stat.value.size;
+    if (!Number.isSafeInteger(size)) return { kind: "missing" };
+    // The guard that matters: a 2 GB blob costs a stat and a verdict, and
+    // not one byte off the pipe.
+    if (size > maxBytes) return { kind: "too_large", size };
+    const object = await reader.object(spec);
+    if (!object.ok) return { kind: "missing" };
+    return classify(object.value.body, size);
+  } catch {
+    closeReader(dir);
+    return undefined;
+  }
+}
+
+function classify(body: Uint8Array, size: number): BlobForRender {
   // NUL in the first 8KB is git's own binary heuristic.
-  if (body.value.subarray(0, 8000).includes(0))
-    return { kind: "binary", body: body.value, size };
-  return { kind: "text", body: body.value, size };
+  if (body.subarray(0, 8000).includes(0)) return { kind: "binary", body, size };
+  return { kind: "text", body, size };
 }
 
 export interface Ref {

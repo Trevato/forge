@@ -10,9 +10,12 @@
 
 import type { App } from "../app.ts";
 import {
-  countIssues,
+  commentCountsFor,
+  countComments,
   getIssue,
+  issueCounts,
   labelsFor,
+  labelsForMany,
   listComments,
   listIssues,
   listLabels,
@@ -68,14 +71,14 @@ export function localSource(
       description: repo.description,
       visibility: repo.visibility,
       defaultBranch: repo.defaultBranch,
-      openIssues: countIssues(app.db, repo.id, "issue", "open"),
-      openPulls: countIssues(app.db, repo.id, "pull", "open"),
+      openIssues: issueCounts(app.db, repo.id, "issue").open,
+      openPulls: issueCounts(app.db, repo.id, "pull").open,
       pushedAt: tip.ok ? (tip.value[0]?.date ?? null) : null,
       htmlUrl: repo.origin?.htmlUrl ?? null,
     });
   };
 
-  const summaryOf = (issue: {
+  interface IssueLike {
     number: number;
     kind: "issue" | "pull";
     title: string;
@@ -87,7 +90,18 @@ export function localSource(
     updatedAt: string;
     closedAt: string | null;
     id: string;
-  }): IssueSummary => ({
+  }
+
+  /**
+   * The row shape, given its labels and comment count. Split out from
+   * `summaryOf` so a *page* of rows can be built from two queries instead of
+   * two per row — the same answers, asked once.
+   */
+  const rowOf = (
+    issue: IssueLike,
+    labels: Label[],
+    commentCount: number,
+  ): IssueSummary => ({
     number: issue.number,
     kind: issue.kind,
     title: issue.title,
@@ -98,9 +112,30 @@ export function localSource(
     createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
     closedAt: issue.closedAt,
-    labels: labelsFor(app.db, issue.id),
-    commentCount: listComments(app.db, issue.id, { kind: "comment" }).length,
+    labels,
+    commentCount,
   });
+
+  /** One row on its own — the detail page, where there is nothing to group. */
+  const summaryOf = (issue: IssueLike): IssueSummary =>
+    rowOf(
+      issue,
+      labelsFor(app.db, issue.id),
+      // A count, not `listComments(...).length`: the old spelling read every
+      // comment body off disk, joined each author, and then discarded all of
+      // it to arrive at an integer.
+      countComments(app.db, issue.id),
+    );
+
+  /** A whole page of rows, in two queries. */
+  const summariesOf = (issues: IssueLike[]): IssueSummary[] => {
+    const ids = issues.map((issue) => issue.id);
+    const labels = labelsForMany(app.db, ids);
+    const counts = commentCountsFor(app.db, ids);
+    return issues.map((issue) =>
+      rowOf(issue, labels.get(issue.id) ?? [], counts.get(issue.id) ?? 0),
+    );
+  };
 
   return {
     where: { kind: "local", repo },
@@ -211,7 +246,7 @@ export function localSource(
         ...(query.query === undefined ? {} : { query: query.query }),
         ...(Number.isInteger(cursor) && cursor > 0 ? { cursor } : {}),
       });
-      const items = rows.map(summaryOf);
+      const items = summariesOf(rows);
       const last = items[items.length - 1];
       return ok({
         items,

@@ -5,7 +5,7 @@
  * bytes, forward the protocol version, and never interpret the pack stream.
  */
 
-import { gitEnv } from "./env.ts";
+import { gitEnv, transferGate } from "./env.ts";
 
 export type GitService = "git-upload-pack" | "git-receive-pack";
 
@@ -32,13 +32,13 @@ export interface SmartHttpOptions {
  * The `# service=` preamble is required for smart clients on protocol v0/v1
  * and ignored-by-spec on v2, so it is always sent.
  */
-export function advertiseRefs(
+export async function advertiseRefs(
   repoDir: string,
   service: GitService,
   request: Request,
   options: SmartHttpOptions = {},
-): Response {
-  const proc = spawnService(repoDir, service, request, options, [
+): Promise<Response> {
+  const proc = await spawnService(repoDir, service, request, options, [
     "--advertise-refs",
   ]);
 
@@ -60,13 +60,13 @@ export function advertiseRefs(
  * Request body streams to git's stdin (gunzipped if the client compressed
  * it); git's stdout streams back as the response.
  */
-export function serviceRpc(
+export async function serviceRpc(
   repoDir: string,
   service: GitService,
   request: Request,
   options: SmartHttpOptions = {},
-): Response {
-  const proc = spawnService(repoDir, service, request, options, []);
+): Promise<Response> {
+  const proc = await spawnService(repoDir, service, request, options, []);
   feedStdin(proc, request).catch(() => proc.kill("SIGKILL"));
 
   return new Response(proc.stdout, {
@@ -77,13 +77,28 @@ export function serviceRpc(
   });
 }
 
-function spawnService(
+/**
+ * Spawn one pack service, holding a transfer permit for its whole life.
+ *
+ * This is where a fleet would otherwise take the host down: a pack transfer
+ * is not milliseconds, it is seconds to minutes of CPU and memory, and two
+ * hundred agents cloning at once is two hundred of them at once. The permit
+ * is released when the process exits, not when this returns — the response
+ * is a stream over that process, so returning is the *middle* of the work.
+ *
+ * The pool is separate from the plumbing one on purpose: a receive-pack
+ * holds its permit across the pre-receive hook, and that hook calls back
+ * into the forge for a branch-protection check that needs plumbing permits
+ * of its own. One shared pool would deadlock the first time pushes filled it.
+ */
+async function spawnService(
   repoDir: string,
   service: GitService,
   request: Request,
   options: SmartHttpOptions,
   extraArgs: readonly string[],
 ) {
+  const release = await transferGate.acquire();
   // "git-upload-pack" the service is "upload-pack" the subcommand.
   const subcommand = service.slice(4);
 
@@ -97,22 +112,38 @@ function spawnService(
     env.GIT_PROTOCOL = protocol;
   }
 
-  const proc = Bun.spawn(
-    ["git", subcommand, "--stateless-rpc", ...extraArgs, repoDir],
-    {
-      env: gitEnv(env),
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    },
-  );
+  let proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
+  try {
+    proc = Bun.spawn(
+      ["git", subcommand, "--stateless-rpc", ...extraArgs, repoDir],
+      {
+        env: gitEnv(env),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+  } catch (error) {
+    // A spawn that never happened still holds a permit. Sixteen of these and
+    // no transfer would ever start again — the permit has to go back on
+    // every path out of here, not just the one where a process exists.
+    release();
+    throw error;
+  }
 
   const timer = setTimeout(
     () => proc.kill("SIGKILL"),
     options.timeoutMs ?? 600_000,
   );
-  proc.exited.finally(() => clearTimeout(timer));
+  void proc.exited.finally(() => {
+    clearTimeout(timer);
+    release();
+  });
   request.signal.addEventListener("abort", () => proc.kill("SIGKILL"));
+  // The client may have hung up while this call was queued behind other
+  // transfers, in which case the listener above will never fire — nothing
+  // is left to abort. Check once, now that there is a process to kill.
+  if (request.signal.aborted) proc.kill("SIGKILL");
 
   return proc;
 }

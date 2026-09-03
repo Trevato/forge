@@ -61,9 +61,11 @@ import {
   updateProfile,
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
+import { getReposByIds } from "../core/repos.ts";
 import {
   getIssue,
   labelsFor,
+  labelsForMany,
   listComments,
   listIssues,
   listLabels,
@@ -148,6 +150,23 @@ function publicKey(key: UserKey) {
 
 function withLabels(ctx: Ctx, issue: Issue) {
   return { ...issue, labels: labelsFor(ctx.app.db, issue.id) };
+}
+
+/**
+ * The same shape for a whole page, in one query rather than one per row.
+ * A fifty-item list asking `labelsFor` fifty times is the difference
+ * between a list endpoint that stays flat as a repo grows and one that
+ * quietly does not.
+ */
+function withLabelsMany<T extends Issue>(ctx: Ctx, issues: T[]) {
+  const labels = labelsForMany(
+    ctx.app.db,
+    issues.map((issue) => issue.id),
+  );
+  return issues.map((issue) => ({
+    ...issue,
+    labels: labels.get(issue.id) ?? [],
+  }));
 }
 
 /**
@@ -1001,10 +1020,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = listIssues(ctx.app.db, repo.id, {
-      ...query,
-      kind: "issue",
-    }).map((i) => withLabels(ctx, i));
+    const items = withLabelsMany(
+      ctx,
+      listIssues(ctx.app.db, repo.id, { ...query, kind: "issue" }),
+    );
     return json(paged(items, query.limit, (i) => i.number));
   });
 
@@ -1082,9 +1101,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = listPulls(ctx.app.db, repo.id, query).map((p) =>
-      withLabels(ctx, p),
-    );
+    const items = withLabelsMany(ctx, listPulls(ctx.app.db, repo.id, query));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -1668,8 +1685,14 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!ctx.auth.user) return unauthorized();
     const host = ctx.app.config.host ?? ctx.url.hostname;
     const sshPort = ctx.app.config.sshPort;
-    const items = listPinned(ctx.app, ctx.auth.user).flatMap((pin) => {
-      const repo = getRepoById(ctx.app.db, pin.repoId);
+    const pins = listPinned(ctx.app, ctx.auth.user);
+    // One query for every pinned repo, not one per pin.
+    const repos = getReposByIds(
+      ctx.app.db,
+      pins.map((pin) => pin.repoId),
+    );
+    const items = pins.flatMap((pin) => {
+      const repo = repos.get(pin.repoId);
       if (!repo) return [];
       const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
       return [
