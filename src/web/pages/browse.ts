@@ -24,6 +24,7 @@
  */
 
 import { mirrorJobFor, startMirrorJob } from "../../actions/origins.ts";
+import { forkOrigin } from "../../actions/contribute.ts";
 import { getOriginFor } from "../../core/origins.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -60,6 +61,7 @@ import {
   tlComment,
 } from "../ui.ts";
 import { browseCommit, browseCommits } from "./commits.ts";
+import { blankDraft, editorPage, runContribute } from "./edit.ts";
 import { renderBranches } from "./branches.ts";
 import {
   codeMount,
@@ -608,6 +610,141 @@ export async function browseMirrorSubmit(ctx: Ctx): Promise<Response> {
       message: "That repository could not be mirrored.",
     });
   return redirect(`/settings/origins/${originId}/mirror/${started.value.id}`);
+}
+
+// ---- proposing a change to something you are only browsing ----
+
+/**
+ * GET /origins/:id/r/:owner/:name/edit/:ref/*path — the editor, live.
+ *
+ * The same editor as everywhere else, because it is the same file and the
+ * same textarea. What differs is where the text goes: there is nothing local
+ * to commit to, so the commit form is the propose card and the submit button
+ * opens a pull request on somebody else's forge.
+ */
+export async function browseEditPage(ctx: Ctx): Promise<Response> {
+  const scope = await browseScope(ctx);
+  if (scope instanceof Response) return scope;
+  const propose = scope.propose;
+  if (propose === undefined) return notFoundPage(ctx);
+  const ref = refOf(ctx, scope);
+  const path = ctx.params.path ?? "";
+  if (!isSafeTreePath(path)) return notFoundPage(ctx);
+  const blob = await scope.source.blob(ref, path);
+  if (!blob.ok) return notFoundPage(ctx);
+  if (blob.value.kind !== "text")
+    return flashTo(
+      ctx,
+      `${scope.base}/blob/${encodeURIComponent(ref)}/${path}`,
+      {
+        tone: "danger",
+        message:
+          blob.value.kind === "binary"
+            ? "That file is binary — propose it with git, not a textarea."
+            : "That file is too large to edit here.",
+      },
+    );
+  return editorPage(
+    ctx,
+    scope,
+    await blankDraft(ctx, scope, ref, {
+      path,
+      content: new TextDecoder().decode(blob.value.body),
+      creating: false,
+    }),
+  );
+}
+
+// GET /origins/:id/r/:owner/:name/new/:ref[/*path]
+export async function browseNewFilePage(ctx: Ctx): Promise<Response> {
+  const scope = await browseScope(ctx);
+  if (scope instanceof Response) return scope;
+  if (scope.propose === undefined) return notFoundPage(ctx);
+  const ref = refOf(ctx, scope);
+  const dir = ctx.params.path ?? "";
+  if (dir !== "" && !isSafeTreePath(dir)) return notFoundPage(ctx);
+  return editorPage(
+    ctx,
+    scope,
+    await blankDraft(ctx, scope, ref, {
+      path: dir === "" ? "" : `${dir}/`,
+      content: "",
+      creating: true,
+    }),
+  );
+}
+
+/**
+ * POST /origins/:id/r/:owner/:name/contribute — fork, branch, commit, propose.
+ *
+ * `admin` is the floor, as it is for every other mutation reachable from a
+ * live browse: the write travels under the *origin owner's* credential, and
+ * a leaked read/write token must not be able to spend it.
+ */
+export async function browseContributeSubmit(ctx: Ctx): Promise<Response> {
+  const scope = await browseScope(ctx);
+  if (scope instanceof Response) return scope;
+  const propose = scope.propose;
+  if (propose === undefined) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  return runContribute(ctx, scope, propose, form);
+}
+
+// ---- forking, at the origin ----
+
+/** Why a fork did not happen, in words a person can act on. */
+export function forkFailure(error: string): string {
+  if (error === "fork_timeout")
+    return "The origin took the request and the fork has not appeared yet. Give it a moment and try again.";
+  if (error === "origin_unreachable")
+    return "The origin could not be reached. Nothing was created.";
+  if (error === "origin_refused")
+    return "The origin refused to fork that repository.";
+  if (error === "mirror_failed")
+    return "The fork was made, but a local copy of it could not be.";
+  if (error === "unauthorized") return "Sign in first.";
+  return "That repository could not be forked.";
+}
+
+/**
+ * POST /origins/:id/r/:owner/:name/fork — grab their repo.
+ *
+ * The fork is made at the origin, because that is where the repository
+ * lives; the local copy of it is a mirror, and a mirror is a job with
+ * stages. So this answers exactly as the Mirror button does — a 303 to the
+ * page that watches the job — and the flash says what was created and where.
+ * A fork that already existed skips the job and lands straight on it.
+ */
+export async function browseForkSubmit(ctx: Ctx): Promise<Response> {
+  const denied = accountOnly(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const originId = ctx.params.id ?? "";
+  const fullName = `${ctx.params.owner ?? ""}/${ctx.params.name ?? ""}`;
+  const here = browseBase(originId, fullName);
+
+  const origin = getOriginFor(ctx.app.db, ctx.auth.user!.id, originId);
+  const forked = await forkOrigin(ctx.app, ctx.auth.user, originId, fullName);
+  if (!forked.ok)
+    return flashTo(ctx, here, {
+      tone: "danger",
+      message: forkFailure(forked.error),
+    });
+
+  const at = origin === undefined ? "the origin" : hostOf(origin.webUrl);
+  const message = forked.value.existed
+    ? `You already had ${forked.value.remote.fullName} at ${at} — that is the fork of ${fullName}.`
+    : `Forked ${fullName} to ${forked.value.remote.fullName} at ${at}.`;
+  const mirror = forked.value.mirror;
+  if (mirror !== undefined)
+    return flashTo(ctx, `/${mirror.ownerName}/${mirror.name}`, { message });
+  const job = forked.value.job;
+  if (job === undefined) return flashTo(ctx, here, { message });
+  return flashTo(ctx, `/settings/origins/${originId}/mirror/${job.id}`, {
+    message,
+  });
 }
 
 // ---- the job page ----

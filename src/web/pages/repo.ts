@@ -32,7 +32,8 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
-import { localScope, type RepoScope } from "../scope.ts";
+import { browseBase, localScope, type RepoScope } from "../scope.ts";
+import { repoForkOf } from "../../core/origins.ts";
 import {
   btn,
   card,
@@ -391,6 +392,14 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
       ? getRepoById(ctx.app.db, repo.forkParentId)
       : undefined;
   const origin = repo.origin;
+  // A fork made at the origin has no `forkParentId` — its parent is a
+  // repository on another forge — so the lineage row reads it off the link
+  // the fork flow wrote, and points at the live browse of the upstream.
+  const upstream = repoForkOf(ctx.app.db, repo.id);
+  const upstreamHref =
+    upstream === null || origin === null
+      ? undefined
+      : browseBase(origin.originId, upstream);
   const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
   const whereItLives = when(
     origin,
@@ -456,6 +465,16 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
                   <a href="/${p.ownerName}/${p.name}"
                     >${p.ownerName}/${p.name}</a
                   >
+                </dd>`,
+          )}
+          ${when(
+            upstream,
+            (up) =>
+              html`<dt>Fork of</dt>
+                <dd>
+                  ${upstreamHref === undefined
+                    ? html`<span class="mono">${up}</span>`
+                    : html`<a href="${upstreamHref}">${up}</a>`}
                 </dd>`,
           )}
         </dl>
@@ -545,12 +564,27 @@ export async function renderCode(
 }
 
 /**
- * What a file page offers besides reading it. On a repository we hold, a
- * writer gets Edit; on a live browse there is nothing to edit here, and the
- * button says the true thing — mirror it first — rather than disappearing.
+ * What a file page offers besides reading it.
+ *
+ * Three situations, one button. On a repository we hold and may push, it is
+ * Edit. On one whose origin says we may not — a live browse, or a mirror of
+ * somebody else's repository — it is **Propose a change**, which is the same
+ * editor with a fork and a pull request behind the button. Nothing
+ * disappears, because "you cannot change this" is never the whole truth: you
+ * can always propose it.
  */
 export function editAction(scope: RepoScope, ref: string, path: string): Html {
   const encoded = encodeURIComponent(ref);
+  if (scope.propose !== undefined) {
+    return btn("Propose a change", {
+      href: `${scope.base}/edit/${encoded}/${path}`,
+      size: "sm",
+      variant: "outline",
+      icon: "fork",
+      shortcut: "e",
+      title: `You cannot push to ${scope.propose.upstream} — this lands on your fork and opens a pull there`,
+    });
+  }
   if (scope.kind === "origin") {
     const mirror = scope.mirror;
     return btn("Mirror to edit", {
@@ -761,16 +795,27 @@ function knownRef(refs: RefSet, name: string): boolean {
   return refs.branches.includes(name) || refs.tags.includes(name);
 }
 
-/** The explorer's "New file" affordance, for a writer standing in a folder. */
+/**
+ * The explorer's "New file" affordance, for a writer standing in a folder —
+ * or, where the origin says you cannot push, its propose twin.
+ */
 export function newFileAction(
   scope: RepoScope,
   ref: string,
   dir: string,
 ): Html {
-  if (!scope.caps.write || scope.kind !== "local") return html``;
   const encoded = encodeURIComponent(ref);
+  const href = `${scope.base}/new/${encoded}${dir === "" ? "" : `/${dir}`}`;
+  if (scope.propose !== undefined)
+    return btn("Propose a new file", {
+      href,
+      size: "sm",
+      variant: "ghost",
+      icon: "fork",
+    });
+  if (!scope.caps.write || scope.kind !== "local") return html``;
   return btn("New file", {
-    href: `${scope.base}/new/${encoded}${dir === "" ? "" : `/${dir}`}`,
+    href,
     size: "sm",
     variant: "ghost",
     icon: "filePlus",

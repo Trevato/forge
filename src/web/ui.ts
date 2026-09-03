@@ -164,6 +164,42 @@ export function stateBadge(state: "open" | "closed" | "merged"): Html {
   >`;
 }
 
+/** What a reviewer said about the change as a whole. */
+export type Verdict = "approved" | "changes_requested" | "commented";
+
+const VERDICTS: Record<Verdict, { label: string; icon: IconName; tone: Tone }> =
+  {
+    approved: { label: "Approved", icon: "check", tone: "success" },
+    changes_requested: {
+      label: "Changes requested",
+      icon: "alert",
+      tone: "danger",
+    },
+    commented: { label: "Commented", icon: "comment", tone: "default" },
+  };
+
+/**
+ * One review verdict, as a badge.
+ *
+ * A verdict passed on an older head is rendered *muted* rather than hidden:
+ * it happened, and who said what is the history the review table exists to
+ * keep. What it must not do is look current, because an approval that a push
+ * dismissed is exactly the thing a review gate exists to catch.
+ */
+export function verdictBadge(
+  state: Verdict,
+  o: { stale?: boolean } = {},
+): Html {
+  const look = VERDICTS[state];
+  if (o.stale)
+    return html`<span
+      class="badge verdict-stale"
+      title="Passed before the latest push, so it no longer counts"
+      >${icon(look.icon)}${look.label}</span
+    >`;
+  return badge(look.label, { icon: look.icon, tone: look.tone });
+}
+
 export interface LabelLike {
   readonly name: string;
   readonly color: string;

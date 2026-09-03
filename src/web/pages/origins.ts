@@ -45,7 +45,7 @@ import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { pollJs } from "../client.ts";
-import { browseBase } from "../scope.ts";
+import { browseBase, isOwnRepo } from "../scope.ts";
 import {
   badge,
   btn,
@@ -1100,41 +1100,64 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
               openPulls: remote.openPulls,
               issuesIncludePulls: remote.openIssuesIncludingPulls,
             });
+            // Fork is the row's other verb: grabbing a repository you cannot
+            // push to is a different intention from keeping a copy of one,
+            // and making people open the repository first to find it out is
+            // a step in the way of the workflow this picker exists for.
+            const forkable =
+              !remote.canPush && !isOwnRepo(origin.login, remote.fullName);
+            const forkForm = when(
+              forkable,
+              () =>
+                html`<form
+                  class="mirror-form"
+                  method="post"
+                  action="${browseBase(origin.id, remote.fullName)}/fork"
+                >
+                  ${btn("Fork", {
+                    size: "sm",
+                    variant: "ghost",
+                    icon: "fork",
+                    title: `Fork ${remote.fullName} into your account at ${hostLabel(origin.webUrl)}`,
+                  })}
+                </form>`,
+            );
             const trail =
               mirror !== undefined
-                ? html`${counted}${btn("Open mirror", {
+                ? html`${counted}${forkForm}${btn("Open mirror", {
                     href: `/${mirror.ownerName}/${mirror.name}`,
                     size: "sm",
                     variant: "outline",
                     icon: "repo",
                   })}`
-                : html`${counted}<form
-                    class="mirror-form"
-                    method="post"
-                    action="/settings/origins/${origin.id}/mirror"
-                  >
-                    <input
-                      type="hidden"
-                      name="fullName"
-                      value="${remote.fullName}"
-                    />
-                    ${when(
-                      collides,
-                      () =>
-                        html`<input
-                          class="input"
-                          name="name"
-                          placeholder="local name"
-                          aria-label="Local name for ${remote.fullName}"
-                          autocomplete="off"
-                        />`,
-                    )}
-                    ${btn("Mirror", {
-                      size: "sm",
-                      variant: "outline",
-                      icon: "download",
-                    })}
-                  </form>`;
+                : html`${counted}${forkForm}
+                    <form
+                      class="mirror-form"
+                      method="post"
+                      action="/settings/origins/${origin.id}/mirror"
+                    >
+                      <input
+                        type="hidden"
+                        name="fullName"
+                        value="${remote.fullName}"
+                      />
+                      ${when(
+                        collides,
+                        () =>
+                          html`<input
+                            class="input"
+                            name="name"
+                            placeholder="local name"
+                            aria-label="Local name for ${remote.fullName}"
+                            autocomplete="off"
+                          />`,
+                      )}
+                      ${btn("Mirror", {
+                        size: "sm",
+                        variant: "outline",
+                        icon: "download",
+                      })}
+                    </form>`;
             return row({
               nav: true,
               lead: icon(originIcon(origin.kind)),

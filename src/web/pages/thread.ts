@@ -51,10 +51,8 @@ export function originError(error: string): string | undefined {
       "This repository mirrors an origin — do it there, and the next sync brings it back.",
     origin_owner_only:
       "Only the person who connected this origin can write through it. Your comment would otherwise appear upstream under their name.",
-    origin_refused:
-      "The origin refused that. Nothing was changed here either.",
-    origin_unreachable:
-      "The origin could not be reached. Nothing was changed.",
+    origin_refused: "The origin refused that. Nothing was changed here either.",
+    origin_unreachable: "The origin could not be reached. Nothing was changed.",
   };
   return words[error];
 }
@@ -86,7 +84,8 @@ export function threadContext(
 
 // ---- timeline ----
 
-interface Entry {
+/** One thing that happened, and when — the unit the timeline sorts. */
+export interface Entry {
   at: string;
   node: Html;
 }
@@ -123,7 +122,11 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
   const events = listEvents(ctx.app.db, { repoId: repo.id, limit: 200 }).filter(
     (event) =>
       EVENT_LOOK[event.kind] !== undefined &&
-      Number(event.payload.number) === issue.number,
+      Number(event.payload.number) === issue.number &&
+      // A `pull.reviewed` carrying a `state` is a *verdict*, and the pull
+      // page renders those off the `review` table with their badge and
+      // their words. Rendering the event too would say it twice.
+      !(event.kind === "pull.reviewed" && event.payload.state !== undefined),
   );
   // One read for every actor the timeline names, rather than one per entry.
   const actors = getUsersByIds(
@@ -154,6 +157,13 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
 export interface ConversationOptions {
   /** The verb on the opening card ("opened this", "wants to merge …"). */
   openVerb: Html | string;
+  /**
+   * Entries only one kind of thread has — review verdicts on a pull. They
+   * are merged into the same sort as comments and state changes, because a
+   * verdict is a thing that happened at a time like any other, and a
+   * timeline that files it separately reads as two conversations.
+   */
+  extra?: readonly Entry[];
 }
 
 /**
@@ -179,6 +189,7 @@ export function conversation(
     }),
   }));
   entries.push(...stateEvents(ctx, repo, issue));
+  entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
   const opening = tlComment(

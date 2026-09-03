@@ -182,6 +182,20 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="requireReview"
+            ${repo.requireReview ? html`checked` : null}
+          />
+          <span
+            >Require an approving review before merging — of the commit that is
+            head <em>now</em>, so a push after an approval dismisses it. Refused
+            in the merge itself, not just hidden on the button.</span
+          >
+        </label>
+      </div>
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
@@ -202,6 +216,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
     description: field(form, "description"),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     protectDefault: form.get("protect") !== null,
+    requireReview: form.get("requireReview") !== null,
     ...(branch !== "" ? { defaultBranch: branch } : {}),
   });
   const flash: Flash = updated.ok

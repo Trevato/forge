@@ -54,6 +54,7 @@ import {
   branchesPage,
 } from "../web/pages/branches.ts";
 import {
+  contributeSubmit,
   deleteFilePage,
   deleteFileSubmit,
   editPage,
@@ -76,8 +77,10 @@ import {
   pullCommentSubmit,
   pullMergeSubmit,
   pullPage,
+  pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
+  threadResolveSubmit,
 } from "../web/pages/pull.ts";
 import {
   dangerPage,
@@ -120,10 +123,14 @@ import {
   browseBranchesPage,
   browseCommitPage,
   browseCommitsPage,
+  browseContributeSubmit,
+  browseEditPage,
+  browseForkSubmit,
   browseHome,
   browseIssue,
   browseIssues,
   browseMirrorSubmit,
+  browseNewFilePage,
   browsePaths,
   browsePull,
   browsePulls,
@@ -356,11 +363,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/origins/:id/r/:owner/:name/raw/:ref/*path", browseRaw);
   // The finder's path list and the branch list, twinned for a live browse.
   router.add("GET", "/origins/:id/r/:owner/:name/paths/:ref", browsePaths);
-  router.add(
-    "GET",
-    "/origins/:id/r/:owner/:name/branches",
-    browseBranchesPage,
-  );
+  router.add("GET", "/origins/:id/r/:owner/:name/branches", browseBranchesPage);
   router.add("GET", "/origins/:id/r/:owner/:name/commits", browseCommitsPage);
   router.add(
     "GET",
@@ -371,8 +374,28 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/origins/:id/r/:owner/:name/issues/:number", browseIssue);
   router.add("GET", "/origins/:id/r/:owner/:name/pulls", browsePulls);
   router.add("GET", "/origins/:id/r/:owner/:name/pulls/:number", browsePull);
-  // The one mutation a live browse offers.
+  // The editor, live: the same page, with a fork and a pull behind its
+  // button instead of a commit.
+  router.add(
+    "GET",
+    "/origins/:id/r/:owner/:name/edit/:ref/*path",
+    browseEditPage,
+  );
+  router.add("GET", "/origins/:id/r/:owner/:name/new/:ref", browseNewFilePage);
+  router.add(
+    "GET",
+    "/origins/:id/r/:owner/:name/new/:ref/*path",
+    browseNewFilePage,
+  );
+  // The three mutations a live browse offers, and all three of them create
+  // something *for you*: a copy here, a fork there, a proposal on it.
   router.add("POST", "/origins/:id/r/:owner/:name/mirror", browseMirrorSubmit);
+  router.add("POST", "/origins/:id/r/:owner/:name/fork", browseForkSubmit);
+  router.add(
+    "POST",
+    "/origins/:id/r/:owner/:name/contribute",
+    browseContributeSubmit,
+  );
 
   router.add("GET", "/settings/keys", keysPage);
   router.add("POST", "/settings/keys", keyCreate);
@@ -435,6 +458,22 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
+  // The verdict on the change as a whole, and the threads it settles.
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/review-state",
+    pullReviewStateSubmit,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/threads/:anchor/resolve",
+    threadResolveSubmit(true),
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/threads/:anchor/unresolve",
+    threadResolveSubmit(false),
+  );
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),
@@ -485,6 +524,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/delete/:ref/*path", deleteFilePage);
   router.add("POST", "/:owner/:name/delete", deleteFileSubmit);
   router.add("POST", "/:owner/:name/preview", previewSubmit);
+  // A mirror of a repository you cannot push to takes its edits as
+  // proposals: fork at the origin, commit there, open the pull upstream.
+  router.add("POST", "/:owner/:name/contribute", contributeSubmit);
 
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
