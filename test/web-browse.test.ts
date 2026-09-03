@@ -319,6 +319,49 @@ describe("browsing an origin repository on the web", () => {
     expect(await raw.text()).toBe(SOURCE_FILE);
   });
 
+  test("a live browse gets the same explorer column the workbench does", async () => {
+    const blob = await bodyOf(alice, `${browse}/blob/main/src/index.ts`);
+    expect(blob).toContain('class="explorer"');
+    expect(blob).toContain('class="code-layout"');
+    // The spine is expanded on the origin's tree, with origin URLs under it.
+    expect(blob).toContain(`href="${browse}/blob/main/src/index.ts"`);
+    expect(blob).toContain('data-path="src"');
+    expect(blob).toContain('id="code-pane"');
+    // And the finder is pointed at the origins twin of the paths route.
+    expect(blob).toContain(`data-paths="${browse}/paths/main"`);
+  });
+
+  test("a live blob offers Mirror to edit, never Edit", async () => {
+    const blob = await bodyOf(alice, `${browse}/blob/main/src/index.ts`);
+    expect(blob).toContain("Mirror to edit");
+    expect(blob).not.toContain(`${browse}/edit/`);
+  });
+
+  test("the origins paths route answers for the account that connected it", async () => {
+    const mine = await asUser(alice, `${browse}/paths/main`);
+    expect(mine.status).toBe(200);
+    const listed = (await mine.json()) as { paths: string[] };
+    expect(listed.paths).toContain("src/index.ts");
+    expect(listed.paths).toContain("README.md");
+
+    // Somebody else's connected account does not exist for you.
+    const theirs = await asUser(bob, `${browse}/paths/main`);
+    expect(theirs.status).toBe(404);
+    const anon = await asUser("", `${browse}/paths/main`);
+    expect(anon.status).toBe(404);
+  });
+
+  test("the origins branches page reads live and offers no verbs", async () => {
+    const html = await bodyOf(alice, `${browse}/branches`);
+    expect(html).toContain(">main<");
+    expect(html).toContain("Default");
+    // Read-only means read-only: no create form, no delete, no new pull.
+    expect(html).not.toContain("Create a branch");
+    expect(html).not.toContain("/branches/main/delete");
+    // The banner still says where the bytes came from.
+    expect(html).toContain("Reading live from");
+  });
+
   test("commits and one commit render live, with the origin's author", async () => {
     const list = await bodyOf(alice, `${browse}/commits`);
     expect(list).toContain("first");

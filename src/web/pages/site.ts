@@ -34,6 +34,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import {
   btn,
   card,
@@ -42,6 +43,7 @@ import {
   iconBtn,
   listCard,
   pager,
+  repoCounts,
   row,
   selectField,
   time,
@@ -84,7 +86,10 @@ const repoRow = (repo: Repo, pinned?: ReadonlySet<string>): Html =>
     title: `${repo.ownerName}/${repo.name}`,
     titleAttr: `${repo.ownerName}/${repo.name}`,
     ...(repo.description !== "" ? { meta: html`${repo.description}` } : {}),
-    trail: html`${when(
+    trail: html`${repoCounts({
+      openIssues: repo.counts?.openIssues,
+      openPulls: repo.counts?.openPulls,
+    })}${when(
       pinned?.has(repo.id) === true,
       () =>
         html`<span class="badge" data-variant="outline" title="On your machine"
@@ -177,22 +182,44 @@ function eventSubject(db: Database, event: ForgeEvent): string {
   return "";
 }
 
-function activityRail(ctx: Ctx, visible: Repo[]): Html {
+/**
+ * Recent activity, plus the repositories worth watching for more of it.
+ *
+ * There is no user-level event stream — the outbox fans out per repository —
+ * so the rail names the few repositories its own rows came from and the live
+ * client subscribes to those. That is the honest bound: the pill says "3 new"
+ * for the repositories you were just looking at, and never pretends to cover
+ * a forge-wide feed it is not connected to.
+ */
+function activityRail(
+  ctx: Ctx,
+  visible: Repo[],
+): { body: Html; watch: string[] } {
   const byId = new Map(visible.map((r) => [r.id, r]));
   const events = listEvents(ctx.app.db, { limit: 40 })
     .filter((e) => e.repoId !== null && byId.has(e.repoId))
     .slice(0, 12);
+  const watch: string[] = [];
+  for (const event of events) {
+    const repo = byId.get(event.repoId ?? "");
+    if (repo === undefined) continue;
+    const at = `/${repo.ownerName}/${repo.name}`;
+    if (!watch.includes(at)) watch.push(at);
+  }
   if (events.length === 0) {
-    return card(
-      html`<p class="muted small">
-        Nothing has happened yet. Push a commit or open an issue and it shows up
-        here.
-      </p>`,
-      { head: html`<h2>Recent activity</h2>` },
-    );
+    return {
+      watch,
+      body: card(
+        html`<p class="muted small">
+          Nothing has happened yet. Push a commit or open an issue and it shows
+          up here.
+        </p>`,
+        { head: html`<h2>Recent activity</h2>` },
+      ),
+    };
   }
   const db = ctx.app.db;
-  return card(
+  const body = card(
     html`<ul class="list act">
       ${events.map((event) => {
         const repo = byId.get(event.repoId ?? "")!;
@@ -221,6 +248,7 @@ function activityRail(ctx: Ctx, visible: Repo[]): Html {
     </ul>`,
     { head: html`<h2>Recent activity</h2>`, pad: false },
   );
+  return { body, watch };
 }
 
 /**
@@ -402,6 +430,7 @@ function dashboard(ctx: Ctx, user: User): Html {
   const pinned = new Set(
     listPins(ctx.app.db, user.id).map((pin) => pin.repoId),
   );
+  const rail = activityRail(ctx, visible);
 
   const filter = html`<form class="filters" method="get" action="/">
     <input
@@ -455,9 +484,12 @@ function dashboard(ctx: Ctx, user: User): Html {
       })}
     </div>
     <aside class="stack">
-      ${activityRail(ctx, visible)} ${downloadsCard(ctx, user)}
-      ${orgsCard(ctx, user)}
+      ${rail.body} ${downloadsCard(ctx, user)} ${orgsCard(ctx, user)}
     </aside>
+    ${liveMount({
+      repo: rail.watch[0] ?? "",
+      repos: rail.watch.slice(1),
+    })}
   </div>`;
 }
 
@@ -467,6 +499,7 @@ export function home(ctx: Ctx): Response {
     ctx,
     title: "forge",
     body: user ? dashboard(ctx, user) : landing(ctx),
+    ...(user === undefined ? {} : { scriptJs: liveClientJs }),
   });
 }
 

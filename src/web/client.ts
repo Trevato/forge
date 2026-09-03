@@ -102,6 +102,438 @@ export const mirrorJs = /* js */ `
 })();
 `;
 
+/**
+ * The code browser: the explorer column, the preview it paints beside itself,
+ * and the fuzzy file finder.
+ *
+ * Everything here is an accelerant on something the page already does. The
+ * explorer's links are real links; the preview is a fetch of the very blob
+ * route those links point at, rendered by the same server template, so a
+ * preview and a navigation produce identical markup. A folder the server did
+ * not expand already carries a link to its own page; the script replaces that
+ * link with the folder's contents. The finder is a dialog over the JSON the
+ * \`paths\` route serves — with no script, the column beside it is the finder.
+ *
+ * Keyboard: \`j\`/\`k\`, \`enter\` and \`o\` are the shell's own row traversal (the
+ * explorer's files are \`data-nav\` rows), and \`t\`/\`e\` are \`data-shortcut\`
+ * attributes on real controls. This file adds no key handler of its own — it
+ * listens for focus, so arrowing a file and hovering one do the same thing.
+ */
+export const codeJs = /* js */ `
+(function () {
+  var doc = document;
+  var cfg = doc.getElementById('code');
+  if (!cfg || typeof fetch === 'undefined') return;
+  var nav = doc.querySelector('.explorer');
+  var main = doc.getElementById('code-main');
+
+  // ---- preview ----
+  if (nav && main) {
+  var cache = new Map(); var order = [];
+  var inflight = null; var hoverTimer = 0; var showing = '';
+
+  function remember(url, text) {
+    cache.set(url, text); order.push(url);
+    while (order.length > 40) { var old = order.shift(); if (old !== url) cache.delete(old); }
+  }
+  function mark(link) {
+    nav.querySelectorAll('.ex-file[data-previewing]').forEach(function (a) {
+      a.removeAttribute('data-previewing');
+    });
+    if (link) link.setAttribute('data-previewing', '');
+  }
+  function preview(link) {
+    if (!main) return;
+    var url = link.getAttribute('href');
+    if (!url || url === showing) { mark(link); return; }
+    mark(link);
+    var at = url + (url.indexOf('?') === -1 ? '?' : '&') + 'fragment=1';
+    if (cache.has(at)) { main.innerHTML = cache.get(at); showing = url; return; }
+    if (inflight) inflight.abort();
+    var ctl = new AbortController();
+    inflight = ctl;
+    main.setAttribute('aria-busy', 'true');
+    fetch(at, { signal: ctl.signal, headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        if (ctl.signal.aborted) return;
+        main.removeAttribute('aria-busy');
+        if (!text) return;
+        remember(at, text);
+        // Our own server-rendered markup, escaped where it was built.
+        main.innerHTML = text;
+        showing = url;
+      }, function () { if (!ctl.signal.aborted) main.removeAttribute('aria-busy'); });
+  }
+  nav.addEventListener('focusin', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('.ex-file') : null;
+    if (a) preview(a);
+  });
+  nav.addEventListener('pointerover', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('.ex-file') : null;
+    window.clearTimeout(hoverTimer);
+    if (!a) return;
+    hoverTimer = window.setTimeout(function () { preview(a); }, 140);
+  });
+  nav.addEventListener('pointerleave', function () { window.clearTimeout(hoverTimer); });
+  }
+
+  // ---- a folder the server did not expand fills itself in ----
+  if (nav) nav.addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (!d || !d.matches || !d.matches('details.ex-dir[open]')) return;
+    var stub = d.querySelector('ul[data-stub]');
+    var url = d.getAttribute('data-url');
+    if (!stub || !url || stub.parentNode !== d) return;
+    stub.removeAttribute('data-stub');
+    fetch(url + '?fragment=explorer', { headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        if (!text) return;
+        var holder = doc.createElement('div');
+        holder.innerHTML = text;
+        var list = holder.querySelector('ul.ex-list');
+        if (list && stub.parentNode === d) d.replaceChild(list, stub);
+      }, function () { stub.setAttribute('data-stub', ''); });
+  }, true);
+
+  // ---- fuzzy file finder ----
+  // fzf's FuzzyMatchV2 constants under its \`path\` scheme, plus VS Code's
+  // basename tiering: any hit inside a file's own name outranks any hit that
+  // only lands in its directories, however good.
+  var SCORE_MATCH = 16, GAP = -1, B_BOUNDARY = 8, B_NONWORD = 8;
+  var B_CAMEL = 7, B_CONSEC = 4, B_DELIM = 9, FIRST_MULT = 2;
+  var TIER_BASENAME = 1 << 16, TIER_PREFIX = 1 << 17;
+  var NEG = -1e7;
+  var WHITE = 0, NONWORD = 1, DELIM = 2, LOWER = 3, UPPER = 4, DIGIT = 5;
+
+  function classOf(c) {
+    if (c === 47) return DELIM;            // '/'
+    if (c === 32 || c === 9) return WHITE;
+    if (c >= 97 && c <= 122) return LOWER;
+    if (c >= 65 && c <= 90) return UPPER;
+    if (c >= 48 && c <= 57) return DIGIT;
+    return NONWORD;
+  }
+  function bonusFor(prev, cur) {
+    if (prev === DELIM) return B_DELIM;
+    if (prev === WHITE) return B_BOUNDARY;
+    if (prev === NONWORD) return B_NONWORD;
+    if (prev === LOWER && cur === UPPER) return B_CAMEL;
+    if (prev !== DIGIT && cur === DIGIT) return B_CAMEL;
+    return 0;
+  }
+  function maskOf(s) {
+    var m = 0;
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charCodeAt(i);
+      if (c >= 97 && c <= 122) m |= 1 << (c - 97);
+      else if (c >= 48 && c <= 57) m |= 1 << 26;
+      else m |= 1 << 27;
+    }
+    return m;
+  }
+  function subsequence(text, pat, from) {
+    var j = from || 0;
+    for (var i = 0; i < pat.length; i++) {
+      var c = pat.charCodeAt(i);
+      while (j < text.length && text.charCodeAt(j) !== c) j++;
+      if (j >= text.length) return -1;
+      j++;
+    }
+    return j;
+  }
+  // fzy's affine-gap DP on one row, with fzf's bonuses. Enough to rank; we
+  // never reconstruct the path of the match, only its score.
+  function score(text, lower, pat) {
+    var n = lower.length, m = pat.length;
+    if (m === 0 || m > n) return NEG;
+    var bonus = new Int16Array(n);
+    var prev = DELIM;                       // the path scheme starts at a '/'
+    for (var j = 0; j < n; j++) {
+      var cls = classOf(text.charCodeAt(j));
+      bonus[j] = bonusFor(prev, cls);
+      prev = cls;
+    }
+    var D = new Float64Array(n), M = new Float64Array(n);
+    var pD = new Float64Array(n), pM = new Float64Array(n);
+    for (var i = 0; i < m; i++) {
+      var run = NEG;
+      var pc = pat.charCodeAt(i);
+      for (var k = 0; k < n; k++) {
+        if (lower.charCodeAt(k) === pc) {
+          var s = NEG;
+          if (i === 0) s = k * GAP + bonus[k] * FIRST_MULT;
+          else if (k > 0) {
+            var b = bonus[k];
+            var consec = pD[k - 1] + (b > B_CONSEC ? b : B_CONSEC);
+            var fresh = pM[k - 1] + b;
+            s = consec > fresh ? consec : fresh;
+          }
+          if (s > NEG) s += SCORE_MATCH;
+          D[k] = s;
+          run = run + GAP > s ? run + GAP : s;
+          M[k] = run;
+        } else {
+          D[k] = NEG;
+          run = run + GAP;
+          M[k] = run;
+        }
+      }
+      pD.set(D); pM.set(M);
+    }
+    return pM[n - 1];
+  }
+
+  var dlg = doc.getElementById('finder');
+  var pathsUrl = cfg.getAttribute('data-paths') || '';
+  var repoBase = cfg.getAttribute('data-base') || '';
+  var repoRef = cfg.getAttribute('data-ref') || '';
+  var index = null; var indexNote = '';
+
+  function buildIndex(paths, truncated) {
+    var rows = [];
+    for (var i = 0; i < paths.length; i++) {
+      var p = String(paths[i]);
+      var lower = p.toLowerCase();
+      var cut = p.lastIndexOf('/');
+      rows.push({ p: p, l: lower, mask: maskOf(lower), b: cut + 1 });
+    }
+    indexNote = (truncated ? 'first ' : '') + rows.length + ' files';
+    return rows;
+  }
+  function ensureIndex() {
+    if (index) return Promise.resolve(index);
+    if (!pathsUrl) return Promise.resolve([]);
+    return fetch(pathsUrl, { headers: { accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : { paths: [] }; })
+      .then(function (out) {
+        index = buildIndex(out.paths || [], out.truncated === true);
+        return index;
+      }, function () { index = []; return index; });
+  }
+
+  var MAX_SCORED = 6000, MAX_SHOWN = 50;
+  function search(rows, query) {
+    var q = query.replace(/\\s+/g, '').toLowerCase();
+    if (q === '') return rows.slice(0, MAX_SHOWN).map(function (r) { return { r: r, s: 0 }; });
+    var qm = maskOf(q);
+    var out = [];
+    var scored = 0;
+    for (var i = 0; i < rows.length && scored < MAX_SCORED; i++) {
+      var r = rows[i];
+      if ((r.mask & qm) !== qm) continue;
+      if (subsequence(r.l, q, 0) === -1) continue;
+      scored++;
+      var s = score(r.p, r.l, q);
+      // The tier, not the score, is what makes a finder feel right.
+      if (subsequence(r.l, q, r.b) !== -1) {
+        s += TIER_BASENAME;
+        if (r.l.lastIndexOf(q, r.b) === r.b) s += TIER_PREFIX;
+      }
+      out.push({ r: r, s: s });
+    }
+    out.sort(function (a, b) { return b.s - a.s || a.r.p.length - b.r.p.length; });
+    return out.slice(0, MAX_SHOWN);
+  }
+
+  function fileUrl(path) {
+    var parts = String(path).split('/').map(encodeURIComponent).join('/');
+    return repoBase + '/blob/' + encodeURIComponent(repoRef) + '/' + parts;
+  }
+
+  function openFinder() {
+    if (!dlg || !dlg.showModal) { location.href = repoBase + '/tree/' + encodeURIComponent(repoRef); return; }
+    var input = dlg.querySelector('.palette-input');
+    var list = dlg.querySelector('.palette-list');
+    var note = dlg.querySelector('.finder-note');
+    var at = 0;
+
+    function render(rows) {
+      var hits = search(rows, input.value);
+      at = 0;
+      list.textContent = '';
+      if (note) note.textContent = indexNote;
+      if (hits.length === 0) {
+        var p = doc.createElement('p');
+        p.className = 'palette-empty';
+        p.textContent = rows.length === 0 ? 'No file list for this ref.' : 'No file matches.';
+        list.appendChild(p);
+        return;
+      }
+      hits.forEach(function (hit, n) {
+        var a = doc.createElement('a');
+        a.className = 'palette-item';
+        a.setAttribute('role', 'option');
+        a.setAttribute('href', fileUrl(hit.r.p));
+        if (n === 0) a.setAttribute('aria-selected', 'true');
+        var name = doc.createElement('span');
+        name.className = 'grow';
+        name.textContent = hit.r.p.slice(hit.r.b);
+        var dir = doc.createElement('span');
+        dir.className = 'cat';
+        dir.textContent = hit.r.b === 0 ? '' : hit.r.p.slice(0, hit.r.b - 1);
+        a.appendChild(name); a.appendChild(dir);
+        list.appendChild(a);
+      });
+    }
+    function select(n) {
+      var nodes = list.querySelectorAll('.palette-item');
+      if (nodes.length === 0) return;
+      at = (n + nodes.length) % nodes.length;
+      nodes.forEach(function (el, i) { el.setAttribute('aria-selected', i === at ? 'true' : 'false'); });
+      nodes[at].scrollIntoView({ block: 'nearest' });
+    }
+
+    input.value = '';
+    list.textContent = '';
+    if (note) note.textContent = 'loading…';
+    dlg.showModal();
+    input.focus();
+    ensureIndex().then(function (rows) {
+      render(rows);
+      input.oninput = function () { render(rows); };
+      input.onkeydown = function (e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); select(at + 1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); select(at - 1); }
+        else if (e.key === 'Enter') {
+          var sel = list.querySelectorAll('.palette-item')[at];
+          if (sel) { e.preventDefault(); location.href = sel.getAttribute('href'); }
+        }
+      };
+    });
+  }
+  doc.querySelectorAll('[data-finder]').forEach(function (b) {
+    b.addEventListener('click', function (e) { e.preventDefault(); openFinder(); });
+  });
+})();
+`;
+
+/**
+ * The file editor: a textarea that behaves like one.
+ *
+ * The page is a real form and posts to a real route with JavaScript off —
+ * every line here is comfort. Tab inserts a tab instead of leaving the field,
+ * Enter keeps the indentation you were on, the gutter counts the lines you
+ * can see, and the Preview tab asks the server to render the Markdown with
+ * the same renderer that will render it once it lands.
+ */
+export const editorJs = /* js */ `
+(function () {
+  var doc = document;
+  var area = doc.querySelector('textarea.editor');
+  if (!area) return;
+  var gutter = doc.getElementById('editor-gutter');
+
+  function paintGutter() {
+    if (!gutter) return;
+    var lines = area.value.split('\\n').length;
+    var have = gutter.childElementCount;
+    if (have === lines) return;
+    if (have > lines) {
+      while (gutter.childElementCount > lines) gutter.removeChild(gutter.lastChild);
+      return;
+    }
+    var frag = doc.createDocumentFragment();
+    for (var n = have + 1; n <= lines; n++) {
+      var s = doc.createElement('span');
+      s.textContent = String(n);
+      frag.appendChild(s);
+    }
+    gutter.appendChild(frag);
+  }
+
+  function replaceSelection(text) {
+    var start = area.selectionStart, end = area.selectionEnd;
+    area.setRangeText(text, start, end, 'end');
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  area.addEventListener('keydown', function (e) {
+    if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      replaceSelection('\\t');
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      var upto = area.value.slice(0, area.selectionStart);
+      var line = upto.slice(upto.lastIndexOf('\\n') + 1);
+      var indent = /^[\\t ]*/.exec(line)[0];
+      if (indent === '') return;
+      e.preventDefault();
+      replaceSelection('\\n' + indent);
+    }
+  });
+  area.addEventListener('input', paintGutter);
+  area.addEventListener('scroll', function () {
+    if (gutter) gutter.scrollTop = area.scrollTop;
+  });
+  paintGutter();
+
+  // ---- preview ----
+  var tabs = doc.querySelectorAll('[data-editor-tab]');
+  var pane = doc.getElementById('editor-preview');
+  var wrap = doc.getElementById('editor-write');
+  var url = pane && pane.getAttribute('data-preview');
+  var token = pane && pane.getAttribute('data-token');
+  var last = null; var timer = 0; var rendered = '';
+
+  function ask() {
+    if (!pane || !url || area.value === rendered) return;
+    if (last) last.abort();
+    var ctl = new AbortController();
+    last = ctl;
+    var body = new FormData();
+    body.append('body', area.value);
+    if (token) body.append('path', token);
+    fetch(url, { method: 'POST', body: body, signal: ctl.signal })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        if (ctl.signal.aborted) return;
+        rendered = area.value;
+        pane.innerHTML = text || '<p class="muted">Nothing to preview.</p>';
+      }, function () {});
+  }
+  function show(which) {
+    tabs.forEach(function (t) {
+      t.setAttribute('aria-selected', t.getAttribute('data-editor-tab') === which ? 'true' : 'false');
+    });
+    if (wrap) wrap.hidden = which !== 'write';
+    if (pane) pane.hidden = which !== 'preview';
+    if (which === 'preview') ask();
+  }
+  tabs.forEach(function (t) {
+    t.hidden = false;
+    t.addEventListener('click', function (e) {
+      e.preventDefault();
+      show(t.getAttribute('data-editor-tab'));
+    });
+  });
+  area.addEventListener('input', function () {
+    if (!pane || pane.hidden) return;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(ask, 350);
+  });
+
+  // ---- the commit target ----
+  // Without a script both halves are on the page and the server ignores the
+  // pull fields unless a new branch was chosen; with one, the half that does
+  // not apply gets out of the way.
+  var newName = doc.getElementById('f-branch');
+  var pullBlock = doc.getElementById('f-pull-block');
+  function syncTarget() {
+    var checked = doc.querySelector('input[name="target"]:checked');
+    var fresh = !!checked && checked.value === 'new';
+    if (newName) newName.disabled = !fresh;
+    if (pullBlock) pullBlock.hidden = !fresh;
+  }
+  doc.querySelectorAll('input[name="target"]').forEach(function (r) {
+    r.addEventListener('change', syncTarget);
+  });
+  syncTarget();
+})();
+`;
+
 export const shellJs = /* js */ `
 (function () {
   var doc = document;
@@ -334,43 +766,120 @@ export const shellJs = /* js */ `
     var items = loadIndex().items || [];
     var shown = [];
     var at = 0;
+    var remote = null;
+    var remoteTimer = 0;
+    // Every row is built from DOM nodes: the titles below are repository
+    // names, issue titles and lines of code, and page text is exactly what
+    // must never be parsed as markup.
+    function itemRow(href, title, cat) {
+      var a = doc.createElement('a');
+      a.className = 'palette-item';
+      a.setAttribute('role', 'option');
+      // Same-origin paths only: the index is ours, and this keeps it so.
+      a.setAttribute('href', String(href).charAt(0) === '/' ? href : '/');
+      var t = doc.createElement('span');
+      t.className = 'grow';
+      t.textContent = title;
+      a.appendChild(t);
+      if (cat) {
+        var c = doc.createElement('span');
+        c.className = 'cat';
+        c.textContent = cat;
+        a.appendChild(c);
+      }
+      list.appendChild(a);
+      return a;
+    }
+    function heading(text) {
+      var h = doc.createElement('span');
+      h.className = 'menu-title';
+      h.textContent = text;
+      list.appendChild(h);
+    }
+    function selectFirst() {
+      var nodes = list.querySelectorAll('.palette-item');
+      if (nodes.length > 0 && !list.querySelector('.palette-item[aria-selected="true"]')) {
+        nodes[0].setAttribute('aria-selected', 'true');
+      }
+    }
+    function emptyNote() {
+      var p = doc.createElement('p');
+      p.className = 'palette-empty';
+      p.appendChild(doc.createTextNode('Nothing here. '));
+      var more = doc.createElement('a');
+      more.href = '/search?q=' + encodeURIComponent(input.value);
+      more.textContent = 'Search everything';
+      p.appendChild(more);
+      list.appendChild(p);
+    }
+
     function render() {
       var q = input.value.trim().toLowerCase();
       shown = items.filter(function (i) {
         return q === '' || (i.t + ' ' + (i.c || '')).toLowerCase().indexOf(q) !== -1;
-      }).slice(0, 40);
+      }).slice(0, 12);
       at = 0;
       list.textContent = '';
-      if (shown.length === 0) {
-        var p = doc.createElement('p');
-        p.className = 'palette-empty';
-        p.appendChild(doc.createTextNode('Nothing here. '));
-        var more = doc.createElement('a');
-        more.href = '/search?q=' + encodeURIComponent(input.value);
-        more.textContent = 'Search everything';
-        p.appendChild(more);
-        list.appendChild(p);
-        return;
-      }
-      shown.forEach(function (i, n) {
-        var a = doc.createElement('a');
-        a.className = 'palette-item';
-        a.setAttribute('role', 'option');
-        // Same-origin paths only: the index is ours, and this keeps it so.
-        a.setAttribute('href', String(i.h).charAt(0) === '/' ? i.h : '/');
-        if (n === 0) a.setAttribute('aria-selected', 'true');
-        var title = doc.createElement('span');
-        title.className = 'grow';
-        title.textContent = i.t;
-        a.appendChild(title);
-        if (i.c) {
-          var cat = doc.createElement('span');
-          cat.className = 'cat';
-          cat.textContent = i.c;
-          a.appendChild(cat);
-        }
-        list.appendChild(a);
+      shown.forEach(function (i) { itemRow(i.h, i.t, i.c); });
+      selectFirst();
+      if (shown.length === 0) emptyNote();
+      ask(input.value.trim());
+    }
+
+    // The forge's own search, behind the palette. It is the same action the
+    // /search page and the API call, so the palette can never disagree with
+    // the page behind it — and it is debounced and cancelled, because a
+    // keystroke is not a reason to grep every repository twice.
+    function paint(out) {
+      var note = list.querySelector('.palette-empty');
+      if (note) note.remove();
+      var titled = false;
+      (out.repos || []).slice(0, 5).forEach(function (r) {
+        if (!titled) { heading('Repositories'); titled = true; }
+        itemRow(
+          r.source === 'origin' ? '/origins/' + r.originId + '/r/' + r.fullName : '/' + r.owner + '/' + r.name,
+          r.source === 'origin' ? r.fullName : r.owner + '/' + r.name,
+          r.source === 'origin' ? 'on an origin' : 'repository'
+        );
       });
+      titled = false;
+      (out.issues || []).slice(0, 5).forEach(function (i) {
+        if (i.source !== 'local') return;
+        if (!titled) { heading('Issues and pulls'); titled = true; }
+        itemRow(
+          '/' + i.repo.owner + '/' + i.repo.name + '/' + (i.kind === 'issue' ? 'issues' : 'pulls') + '/' + i.number,
+          i.title,
+          i.repo.owner + '/' + i.repo.name + ' #' + i.number
+        );
+      });
+      titled = false;
+      (out.code || []).slice(0, 5).forEach(function (c) {
+        if (!titled) { heading('Code'); titled = true; }
+        itemRow(
+          '/' + c.repo.owner + '/' + c.repo.name + '/blob/HEAD/' + c.path + '#L' + c.line,
+          c.path + ':' + c.line,
+          (c.text || '').trim().slice(0, 40)
+        );
+      });
+      if (!list.querySelector('.palette-item')) emptyNote();
+      selectFirst();
+    }
+    function ask(q) {
+      window.clearTimeout(remoteTimer);
+      if (remote) { remote.abort(); remote = null; }
+      if (q.length < 2 || typeof fetch === 'undefined') return;
+      remoteTimer = window.setTimeout(function () {
+        var ctl = new AbortController();
+        remote = ctl;
+        fetch('/api/v1/search?limit=5&q=' + encodeURIComponent(q), {
+          signal: ctl.signal, headers: { accept: 'application/json' },
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (out) {
+            if (!out || ctl.signal.aborted || input.value.trim() !== q) return;
+            paint(out);
+          }, function () {});
+      }, 120);
     }
     function select(n) {
       var nodes = list.querySelectorAll('.palette-item');
@@ -390,6 +899,10 @@ export const shellJs = /* js */ `
         if (sel) { e.preventDefault(); location.href = sel.getAttribute('href'); }
       }
     };
+    dlg.addEventListener('close', function () {
+      window.clearTimeout(remoteTimer);
+      if (remote) { remote.abort(); remote = null; }
+    }, { once: true });
     dlg.showModal();
     input.focus();
   }

@@ -15,9 +15,19 @@
 
 import { html, type Html } from "./html.ts";
 
+/** At most this many streams from one page: browsers cap connections. */
+export const MAX_LIVE_STREAMS = 3;
+
 export interface LiveConfig {
   /** Repo base path, e.g. "/alice/app". */
   repo: string;
+  /**
+   * More repositories to watch, for a page that is about several at once
+   * (the dashboard's activity rail). There is no user-level stream yet, so a
+   * page that spans repositories opens one connection per repository —
+   * capped, because a browser will not hold many.
+   */
+  repos?: readonly string[];
   /** "issue" | "pull" for a thread page; omit on lists. */
   thread?: "issue" | "pull";
   /** The issue/PR number, for a thread page. */
@@ -32,6 +42,9 @@ export function liveMount(config: LiveConfig): Html {
       id="live"
       hidden
       data-repo="${config.repo}"
+      data-repos="${(config.repos ?? [])
+        .slice(0, MAX_LIVE_STREAMS)
+        .join(" ")}"
       data-thread="${config.thread ?? ""}"
       data-number="${config.number ?? ""}"
       data-last="${config.lastCommentId ?? ""}"
@@ -59,7 +72,15 @@ export const liveClientJs = /* js */ `
   var status = document.getElementById('live-status');
   var conv = document.getElementById('conversation');
 
-  function showPill() { if (pill) { pill.hidden = false; } }
+  // A count, not a reload. Yanking the page out from under a reader to show
+  // them something new is the one thing a live list must never do.
+  var fresh = 0;
+  function showPill() {
+    if (!pill) return;
+    fresh++;
+    pill.textContent = '\\u21bb ' + fresh + ' new — refresh';
+    pill.hidden = false;
+  }
   if (pill) pill.addEventListener('click', function (e) { e.preventDefault(); location.reload(); });
 
   function relevant(data) {
@@ -101,12 +122,20 @@ export const liveClientJs = /* js */ `
     }
   }
 
-  var es = new EventSource(repo + '/stream');
-  [
+  var KINDS = [
     'push', 'repo.created', 'repo.forked',
     'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled',
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
+    'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
-  ].forEach(function (k) { es.addEventListener(k, onEvent); });
+  ];
+  var extra = (cfg.getAttribute('data-repos') || '').split(' ').filter(Boolean);
+  var watching = [repo].concat(extra).filter(function (r, i, all) {
+    return r && all.indexOf(r) === i;
+  }).slice(0, 3);
+  watching.forEach(function (at) {
+    var es = new EventSource(at + '/stream');
+    KINDS.forEach(function (k) { es.addEventListener(k, onEvent); });
+  });
 })();
 `;

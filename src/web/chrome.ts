@@ -76,13 +76,25 @@ export function signInFirst(ctx: Ctx): Response {
 
 // ---- repo header ----
 
-export type RepoTab = "code" | "issues" | "pulls" | "commits" | "settings";
+export type RepoTab =
+  | "code"
+  | "issues"
+  | "pulls"
+  | "commits"
+  | "branches"
+  | "settings";
 
 export interface RepoHeaderOptions {
   /** Rendered at the right of the title line (fork, clone, watch). */
   actions?: Html;
   /** Suppress the description/lineage block on deep pages. */
   compact?: boolean;
+  /**
+   * How many branches this repository has, when the page already knows.
+   * Counting them costs a git read and the header is on every page, so the
+   * tab carries a number only where one was going to be read anyway.
+   */
+  branchCount?: number;
   /**
    * The page supplies its own `<h1>` (an issue title, "New pull request"), so
    * the repo name steps down to a plain element. Exactly one h1 per document.
@@ -155,6 +167,16 @@ export function scopeHeader(
       icon: "commit",
       current: active === "commits",
       shortcut: "g m",
+    },
+    {
+      label: "Branches",
+      href: `${base}/branches`,
+      icon: "branch",
+      ...(options.branchCount === undefined
+        ? {}
+        : { count: options.branchCount }),
+      current: active === "branches",
+      shortcut: "g b",
     },
   ];
   if (admin)

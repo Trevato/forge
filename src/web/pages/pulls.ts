@@ -324,6 +324,14 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const forceSelf = ctx.url.searchParams.get("self") !== null;
   const c = await composeContext(ctx, repo, forceSelf);
+  // The branches page proposes a branch by linking here with it named, so
+  // "New pull" from a row arrives with that row already chosen.
+  const wantedHead = ctx.url.searchParams.get("head") ?? "";
+  const wantedBase = ctx.url.searchParams.get("base") ?? "";
+  const head = c.headBranches.includes(wantedHead) ? wantedHead : c.headDefault;
+  const baseBranch = c.baseBranches.includes(wantedBase)
+    ? wantedBase
+    : c.baseDefault;
   const cross = c.parent !== undefined;
   const enough = cross
     ? c.baseBranches.length >= 1 && c.headBranches.length >= 1
@@ -347,8 +355,8 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
         ? composeForm(repo, c.parent, c.baseBranches, c.headBranches, {
             title: "",
             body: "",
-            base: c.baseDefault,
-            head: c.headDefault,
+            base: baseBranch,
+            head,
           })
         : empty({
             icon: "branch",

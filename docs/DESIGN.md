@@ -173,6 +173,12 @@ specification.
 | **pin toggle** `whereRow()`                   | `.repo-where form.where-pin > .btn`                                                        | `outline` unpinned · `secondary` pinned                                                                  | reads `Keep on my machine` / `On my machine ◆`; the strip's third place submits the same form by id, so a `<button>` can sit in a row of links; the wanted state rides the form, so a double submit is idempotent | `p` on a row, `P` on a repo home; `◆` marks a pinned row |
 | **device code**                               | `.device-code`                                                                             | —                                                                                                        | the one deliberately large type in the product: monospace, tabular, `user-select: all` | the code spaced out and centred in a card, with a spinner under it |
 | **sticky action** `stickyAction()`            | `.sticky-action`                                                                           | —                                                                                                        | static ≥720px                                                | a footer action bar                          |
+| **count group** `counts()` / `repoCounts()`   | `.counts > .count`                                                                         | —                                                                                                        | icon plus a tabular number; **a zero is never drawn** — the absence is the same information | `⊙3 ⑂1` after the row title |
+| **file explorer** `explorerColumn()`          | `.code-layout` (`.explorer-panel`, `.explorer`, `.ex-dir`, `.ex-file`, `.ex-more`)         | —                                                                                                        | the path's ancestors arrive `open`; the current file is `aria-current`; a folder off the spine holds one `.ex-more` link so it works with no script | a left pane the cursor walks |
+| **fuzzy finder** `finderDialog()`             | `.dialog.palette.finder`                                                                   | —                                                                                                        | JS only; `t` opens it, the explorer beside it is the fallback | the file picker overlay                      |
+| **file editor**                               | `.editor-form` (`.editor-head`, `.editor-wrap`, `textarea.editor`, `.editor-gutter`, `.editor-commit`) | —                                                                                              | a plain `<textarea>` in a `<form>`; the gutter, tab key, auto-indent and Preview tab are all enhancement | a modal buffer with a commit prompt |
+| **branch row**                                | `.branch-row` (`.branch-div` → `.ahead` / `.behind`)                                       | —                                                                                                        | default first, `Default` and `Protected` badges, `↑ahead ↓behind` | one line per branch with the same arrows |
+| **code hit**                                  | `.code-hit` (`.code-line`, `mark`)                                                         | —                                                                                                        | `path:line` in mono, the matching line beneath it with the query marked | the same two lines, the match reversed |
 
 Two things are deliberately **not** in the vocabulary: skeleton loaders (the
 server renders whole pages — there is nothing to skeletonise) and a custom
@@ -240,10 +246,13 @@ never drift from the app.
 | `g i`           | issues                                         |
 | `g p`           | pull requests                                  |
 | `g m`           | commits                                        |
+| `g b`           | branches                                       |
 | `g s`           | repo settings                                  |
 | `j` / `k`       | next / previous row (visible focus ring)       |
 | `o` or `Enter`  | open the focused row                           |
 | `c`             | the page's create action (new issue, new pull) |
+| `t`             | go to file (the fuzzy finder), on a code page  |
+| `e`             | edit the file you are looking at               |
 | `/`             | focus search                                   |
 | `⌘K` / `Ctrl K` | command palette                                |
 | `?`             | shortcut help                                  |
@@ -251,6 +260,63 @@ never drift from the app.
 
 Inside the code view, shift-clicking a second line number extends `#L3` to
 `#L3-L9` and highlights the range.
+
+`t` and `e` are not a new key layer: they are `data-shortcut` attributes on
+the real controls, so the `?` overlay learns them for free and a page without
+those controls does not answer the key. `j`/`k` are the shell's own row
+traversal, and the explorer's files are `data-nav` rows — which is why
+arrowing through the tree previews as you go without a single extra key
+handler: `codeJs` listens for **focus**, not for keys.
+
+### 6a. The code browser
+
+Tree and blob pages are one layout, not two: a `.code-layout` grid with the
+explorer on the left and the content on the right at ≥900px, the explorer
+folding into a "Files" `<details>` above the content below it.
+
+- **The spine, not the tree.** A page renders the path's ancestors and their
+  siblings, never the whole repository, so a monorepo costs the same markup as
+  a toy. Every directory is a `<details>`; the ones on the spine arrive open.
+- **A folder the server did not expand is still a link.** Opening one with no
+  script shows a single `Open src/…` link to that folder's own page; with a
+  script, `codeJs` fetches `?fragment=explorer` and drops the rows in.
+- **The preview is the page.** Hovering or arrowing a file fetches the blob
+  route's own `?fragment=1` — the same renderer, the same markup, the same
+  `#code-pane` — so a preview and a real navigation are indistinguishable, and
+  `enter` simply follows the link that was already there. Fetches are
+  cancelled and cached, and there is no scroll-stealing or URL rewriting.
+- **The explorer opens closed and the stylesheet opens it.** `<details>`
+  without `open`, plus `::details-content { content-visibility: visible }` at
+  ≥900px. Where that pseudo-element is understood the handle is hidden too;
+  where it is not, the handle stays and one click opens the column. Nothing
+  can end up invisible with no way back.
+- **The finder is a dialog over JSON.** `t` (or the button) fetches
+  `/:owner/:name/paths/:ref` once and scores it client-side with fzf's
+  FuzzyMatchV2 constants under its `path` scheme — boundary 8, delimiter 9,
+  camel 7, consecutive 4, match 16, gap −1, first character doubled, string
+  start treated as though it followed a `/` — on top of a 28-bit
+  characters-present bitmask prefilter and a two-pointer subsequence check, so
+  the affine-gap DP only ever runs on real candidates. VS Code's tiering sits
+  above the score rather than inside it: any match inside a file's own name
+  outranks any match that only lands in its directories, and a basename
+  *prefix* outranks that again. Without a script the finder does not exist and
+  the explorer beside it is the answer.
+
+### 6b. The editor
+
+`GET /:owner/:name/edit/:ref/*path` is a `<textarea>` in a `<form>`, and one
+rule governs it: **a refusal never costs you your typing.** A protected
+branch, a file over the size cap, a branch name git will not take, an origin
+that said no — each re-renders the same page with the text, the message, the
+branch name and the pull-request fields exactly as they were, and the reason
+above them. `test/web-editor.test.ts` asserts that, not just the happy path.
+
+The commit box is one submit, because `editFiles` is one call: message,
+target (`current branch` / `new branch <name>`, defaulting to
+`alice/edit-<file>`), and optionally a pull request from the new branch back
+to where you started. Where committing straight to the ref is not on offer at
+all — a protected default, or a ref that is not a branch — the page says so on
+the disabled radio rather than letting somebody find out after typing.
 
 **Terminal keys and glyphs for origins.** Account → `o` opens Origins; there
 `c` connects, `s` syncs now, `r` browses the origin's repositories and `D`

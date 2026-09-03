@@ -9,47 +9,223 @@
  * that was never meant to be confirmed.
  */
 
-import { listIssues } from "../../core/issues.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import { search } from "../../actions/search.ts";
+import {
+  searchKind,
+  type CodeHit,
+  type IssueHit,
+  type RepoHit,
+  type SearchKind,
+  type SearchResults,
+} from "../../core/search.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { page } from "../layout.ts";
+import { browseBase } from "../scope.ts";
 import {
+  badge,
   btn,
   card,
   empty,
   field as formField,
   listCard,
+  repoCounts,
   row,
+  seg,
   stateBadge,
   time,
-  userTag,
 } from "../ui.ts";
-
-/** One repository, as a row. The same shape the dashboard and profiles use. */
-const repoRow = (repo: Repo): Html =>
-  row({
-    href: `/${repo.ownerName}/${repo.name}`,
-    nav: true,
-    lead: icon(repo.forkParentId !== null ? "fork" : "repo"),
-    title: `${repo.ownerName}/${repo.name}`,
-    titleAttr: `${repo.ownerName}/${repo.name}`,
-    ...(repo.description !== "" ? { meta: html`${repo.description}` } : {}),
-    trail:
-      repo.visibility === "private"
-        ? html`<span class="badge" data-variant="secondary"
-            >${icon("lock")}Private</span
-          >`
-        : html``,
-  });
 
 // ---- search ----
 
-// The palette is the fast path; this page is the one that always works.
-export function searchPage(ctx: Ctx): Response {
-  const query = (ctx.url.searchParams.get("q") ?? "").trim();
+/**
+ * One repository hit, ours or an origin's. The where-dot is the same glyph
+ * the repository pages use, so "this is somewhere else" reads the same in a
+ * result list as it does on the page you land on.
+ */
+function repoHitRow(hit: RepoHit): Html {
+  const counts = repoCounts({
+    openIssues: hit.openIssues,
+    openPulls: hit.openPulls,
+    ...(hit.source === "origin"
+      ? { issuesIncludePulls: hit.openIssuesIncludingPulls }
+      : {}),
+  });
+  if (hit.source === "local") {
+    return row({
+      href: `/${hit.owner}/${hit.name}`,
+      nav: true,
+      lead: icon("repo"),
+      title: `${hit.owner}/${hit.name}`,
+      titleAttr: `${hit.owner}/${hit.name}`,
+      meta: html`<span class="where-place" data-state="reading"
+          ><span class="where-dot" aria-hidden="true">●</span>workbench</span
+        >${hit.description === "" ? null : html` · ${hit.description}`}`,
+      trail: html`${counts}${when(hit.visibility === "private", () =>
+        badge("Private", { icon: "lock", variant: "secondary" }),
+      )}`,
+    });
+  }
+  const mirror = hit.mirroredAs;
+  return row({
+    href: browseBase(hit.originId, hit.fullName),
+    nav: true,
+    lead: icon(
+      hit.originKind === "github"
+        ? "github"
+        : hit.originKind === "forgejo"
+          ? "forgejo"
+          : hit.originKind === "gitea"
+            ? "gitea"
+            : "globe",
+    ),
+    title: hit.fullName,
+    titleAttr: hit.fullName,
+    meta: html`<span
+        class="where-place"
+        data-state="${mirror === null ? "absent" : "present"}"
+        ><span class="where-dot" aria-hidden="true"
+          >${mirror === null ? "○" : "●"}</span
+        >${mirror === null
+          ? "not mirrored here"
+          : `mirrored as ${mirror.owner}/${mirror.name}`}</span
+      >${hit.description === "" ? null : html` · ${hit.description}`}`,
+    trail: html`${counts}${when(hit.private, () =>
+      badge("Private", { icon: "lock", variant: "secondary" }),
+    )}`,
+  });
+}
+
+/** One conversation hit. An origin's own goes out to the origin. */
+function issueHitRow(hit: IssueHit): Html {
+  const segment = hit.kind === "issue" ? "issues" : "pulls";
+  const where =
+    hit.source === "local"
+      ? `${hit.repo.owner}/${hit.repo.name}`
+      : hit.fullName;
+  return row({
+    href:
+      hit.source === "local"
+        ? `/${hit.repo.owner}/${hit.repo.name}/${segment}/${hit.number}`
+        : hit.htmlUrl,
+    nav: true,
+    lead: icon(hit.kind === "issue" ? "issue" : "pull"),
+    title: hit.title,
+    titleAttr: hit.title,
+    meta: html`${where} #${hit.number} · updated ${time(hit.updatedAt)}${hit.source ===
+    "origin"
+      ? html` · <span class="muted">on the origin</span>`
+      : null}`,
+    trail: stateBadge(hit.state),
+  });
+}
+
+/**
+ * The matching line, with the query picked out of it. Both halves go through
+ * the `html` tag, so a match inside a file full of markup stays text.
+ */
+export function markMatch(text: string, query: string): Html {
+  const needle = query.toLowerCase();
+  if (needle === "") return html`${text}`;
+  const hay = text.toLowerCase();
+  const parts: Html[] = [];
+  let at = 0;
+  for (let found = hay.indexOf(needle); found !== -1; ) {
+    parts.push(html`${text.slice(at, found)}`);
+    parts.push(html`<mark>${text.slice(found, found + needle.length)}</mark>`);
+    at = found + needle.length;
+    found = hay.indexOf(needle, at);
+    if (parts.length > 40) break;
+  }
+  parts.push(html`${text.slice(at)}`);
+  return html`${parts}`;
+}
+
+/** One line of code, addressed the way the blob page addresses it. */
+function codeHitRow(hit: CodeHit, query: string): Html {
+  const at = `/${hit.repo.owner}/${hit.repo.name}`;
+  return html`<li>
+    <a class="row code-hit" data-nav tabindex="-1" href="${at}/blob/HEAD/${hit.path}#L${hit.line}">
+      <span class="row-lead">${icon("code")}</span>
+      <span class="row-main">
+        <span class="row-title mono"
+          >${hit.repo.owner}/${hit.repo.name}<span class="muted">/</span
+          >${hit.path}<span class="muted">:${hit.line}</span></span
+        >
+        <span class="row-meta code-line mono"
+          >${markMatch(hit.text.trim(), query)}</span
+        >
+      </span>
+    </a>
+  </li>`;
+}
+
+const KINDS: { value: SearchKind; label: string }[] = [
+  { value: "all", label: "Everything" },
+  { value: "repos", label: "Repositories" },
+  { value: "issues", label: "Issues & pulls" },
+  { value: "code", label: "Code" },
+];
+
+function searchHref(
+  query: string,
+  kind: SearchKind,
+  live: boolean,
+): string {
+  const params = new URLSearchParams({ q: query });
+  if (kind !== "all") params.set("kind", kind);
+  if (live) params.set("live", "1");
+  return `/search?${params.toString()}`;
+}
+
+function section(
+  title: string,
+  kind: SearchKind,
+  rows: Html[],
+  o: { truncated: boolean; emptyIcon: Parameters<typeof icon>[0]; emptyText: string; query: string; live: boolean },
+): Html {
+  return html`<h2 class="mt" id="${kind}">
+      ${title}${rows.length === 0
+        ? null
+        : html` <span class="muted small num"
+            >${rows.length}${o.truncated ? "+" : ""}</span
+          >`}
+    </h2>
+    ${rows.length === 0
+      ? html`<p class="no-hits muted small">
+          ${icon(o.emptyIcon)}<span>${o.emptyText}</span>
+        </p>`
+      : listCard(rows)}
+    ${when(
+      o.truncated,
+      () =>
+        html`<p class="muted small mt">
+          More matched than fit here.
+          <a href="${searchHref(o.query, kind, o.live)}">Show only ${title.toLowerCase()}</a>.
+        </p>`,
+    )}`;
+}
+
+/**
+ * GET /search — the whole forge, in one box.
+ *
+ * It is the no-JavaScript twin of the palette and the only search that is
+ * always right: the same `search()` action the API and the palette call, so
+ * the four sources (repositories here, repositories cached from every origin,
+ * conversations, and the code itself) can never disagree between surfaces.
+ *
+ * `live=1` is opt-in and stays opt-in: it spends a round trip on every
+ * connected origin, which is not a thing to do on every keystroke.
+ */
+export async function searchPage(ctx: Ctx): Promise<Response> {
+  const params = ctx.url.searchParams;
+  const query = (params.get("q") ?? "").trim();
+  const kind = searchKind(params.get("kind"));
+  const live = params.get("live") === "1";
+  const hasOrigins = ctx.auth.user !== undefined;
+
   const form = html`<form
     class="filters"
     method="get"
@@ -61,11 +237,15 @@ export function searchPage(ctx: Ctx): Response {
       type="search"
       name="q"
       value="${query}"
-      placeholder="Search repositories and issues"
+      placeholder="Search repositories, issues and code"
       aria-label="Search"
       autofocus
       data-search-input
     />
+    ${when(kind !== "all", () =>
+      html`<input type="hidden" name="kind" value="${kind}" />`,
+    )}
+    ${when(live, () => html`<input type="hidden" name="live" value="1" />`)}
     <button class="btn" data-variant="primary" data-size="sm" type="submit">
       Search
     </button>
@@ -79,52 +259,93 @@ export function searchPage(ctx: Ctx): Response {
       ${empty({
         icon: "search",
         title: "Search this forge",
-        note: "Repository names and issue or pull-request titles, across everything you can see.",
+        note: "Repository names, issue and pull-request titles, and the code itself — across everything you can see, here and on every origin you have connected.",
       })}`,
     });
   }
 
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
-    query,
-    limit: 20,
+  const found: SearchResults = await search(ctx.app, ctx.auth.user, {
+    q: query,
+    kind,
+    live,
   });
-  const scope = listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 20 });
-  const hits: Html[] = [];
-  for (const repo of scope) {
-    for (const kind of ["issue", "pull"] as const) {
-      for (const issue of listIssues(ctx.app.db, repo.id, {
-        state: "all",
-        kind,
-        query,
-        limit: 5,
-      })) {
-        hits.push(
-          row({
-            href: `/${repo.ownerName}/${repo.name}/${kind === "issue" ? "issues" : "pulls"}/${issue.number}`,
-            nav: true,
-            lead: icon(kind === "issue" ? "issue" : "pull"),
-            title: issue.title,
-            titleAttr: issue.title,
-            // Nothing inside a linked row may itself be a link: the parser
-            // would close the row's anchor and re-parent the rest.
-            meta: html`${repo.ownerName}/${repo.name} #${issue.number} ·
-            opened ${time(issue.createdAt)} by ${userTag(issue.authorName)}`,
-            trail: stateBadge(issue.state),
-          }),
-        );
-      }
-    }
-  }
 
-  const body = html`${pageHead(html`Results for “${query}”`)} ${form}
-    <h2 class="mt">Repositories</h2>
-    ${repos.length === 0
-      ? empty({ icon: "repo", title: "No repositories match" })
-      : listCard(repos.map(repoRow))}
-    <h2 class="mt">Issues and pull requests</h2>
-    ${hits.length === 0
-      ? empty({ icon: "issue", title: "No issues or pull requests match" })
-      : listCard(hits.slice(0, 40))}`;
+  const chips = seg(
+    KINDS.map((k) => ({
+      label: k.label,
+      href: searchHref(query, k.value, live),
+      current: k.value === kind,
+    })),
+  );
+
+  const liveToggle = when(
+    hasOrigins,
+    () =>
+      html`<p class="live-toggle small">
+        ${icon("globe")}
+        ${live
+          ? html`<span
+              >Asking every connected origin's own search, live.
+              <a href="${searchHref(query, kind, false)}">Use the cache</a
+              >.</span
+            >`
+          : html`<span
+              >Origins are searched from the cache.
+              <a href="${searchHref(query, kind, true)}"
+                >Search live on origins</a
+              >
+              — a round trip to each connected origin, so it costs a
+              moment.</span
+            >`}
+      </p>`,
+  );
+
+  const wants = (which: SearchKind) => kind === "all" || kind === which;
+
+  const body = html`${pageHead(html`Results for “${query}”`)} ${form} ${chips}
+    ${liveToggle}
+    ${when(wants("repos"), () =>
+      section(
+        "Repositories",
+        "repos",
+        found.repos.map(repoHitRow),
+        {
+          truncated: found.truncated.repos,
+          emptyIcon: "repo",
+          emptyText: "No repository matches",
+          query,
+          live,
+        },
+      ),
+    )}
+    ${when(wants("issues"), () =>
+      section(
+        "Issues and pull requests",
+        "issues",
+        found.issues.map(issueHitRow),
+        {
+          truncated: found.truncated.issues,
+          emptyIcon: "issue",
+          emptyText: "No issue or pull request matches",
+          query,
+          live,
+        },
+      ),
+    )}
+    ${when(wants("code"), () =>
+      section(
+        "Code",
+        "code",
+        found.code.map((hit) => codeHitRow(hit, query)),
+        {
+          truncated: found.truncated.code,
+          emptyIcon: "code",
+          emptyText: "No line of code matches",
+          query,
+          live,
+        },
+      ),
+    )}`;
   return page({ ctx, title: `Search · ${query}`, body });
 }
 
@@ -155,6 +376,15 @@ const DESTRUCTIVE: {
       detail:
         "Every issue, pull request, comment and webhook goes with it, and the git objects are removed from disk. Forks are detached first and keep working. This cannot be undone.",
       phrase: `${m[1]}/${m[2]}`,
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/branches\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Delete branch",
+      title: `Delete ${decodeURIComponent(m[3] ?? "")}?`,
+      detail: `The ref goes from ${m[1]}/${m[2]}. Its commits stay in the object store and any pull request already open on it keeps its diff, but nothing points at the branch any more. On a mirror the deletion travels to the origin first, and the local ref moves only if the origin took it.`,
+      phrase: "",
     }),
   },
   {

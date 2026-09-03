@@ -54,6 +54,7 @@ import {
   empty,
   icon,
   listCard,
+  repoCounts,
   row,
   time,
   field as uiField,
@@ -1084,15 +1085,20 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
               ) !== undefined;
             // Mirroring is no longer what enter does — the row opens the
             // repository live, and this is the secondary verb beside it.
+            const counted = repoCounts({
+              openIssues: remote.openIssues,
+              openPulls: remote.openPulls,
+              issuesIncludePulls: remote.openIssuesIncludingPulls,
+            });
             const trail =
               mirror !== undefined
-                ? btn("Open mirror", {
+                ? html`${counted}${btn("Open mirror", {
                     href: `/${mirror.ownerName}/${mirror.name}`,
                     size: "sm",
                     variant: "outline",
                     icon: "repo",
-                  })
-                : html`<form
+                  })}`
+                : html`${counted}<form
                     class="mirror-form"
                     method="post"
                     action="/settings/origins/${origin.id}/mirror"

@@ -16,6 +16,7 @@ import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import { json, notFound } from "../../http/respond.ts";
 import type { Blob, RepoSource } from "../../view/source.ts";
 import {
   crumbsFor,
@@ -25,10 +26,11 @@ import {
   scopeHeader,
   signInFirst,
 } from "../chrome.ts";
+import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo, fragment, page } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { localScope, type RepoScope } from "../scope.ts";
 import {
@@ -49,6 +51,15 @@ const MAX_RENDER_BYTES = 1_000_000;
 const MAX_RENDER_LINES = 5_000;
 
 import { pathCrumbs, refMenu, refSetFrom, type RefSet } from "./refs.ts";
+import {
+  codeLayout,
+  codeMount,
+  explorerColumn,
+  explorerFragment,
+  finderButton,
+  finderDialog,
+  loadExplorer,
+} from "./explorer.ts";
 
 export { crumbsFor, loadRepo, repoBase };
 export { pathCrumbs, refMenu, refSet, refSetFrom } from "./refs.ts";
@@ -334,8 +345,9 @@ export function codeBar(
   ref: string,
   hrefFor: (r: string) => string,
   historyHref: string,
+  menu: { base?: string; canWrite?: boolean } = {},
 ): Html {
-  return html`${refMenu(refs, ref, hrefFor)}
+  return html`${refMenu(refs, ref, hrefFor, menu)}
   ${btn("History", {
     href: historyHref,
     size: "sm",
@@ -484,13 +496,17 @@ export async function renderCode(
             ref,
             (r) => `${base}?ref=${encodeURIComponent(r)}`,
             `${base}/commits?${historyParams.toString()}`,
+            { base, canWrite: scope.caps.write },
           )}
+          <span class="spacer"></span>
+          ${finderButton()}
         </div>`
       : html`<div class="path-head">
           ${refMenu(
             o.refs,
             ref,
             (r) => `${base}/tree/${encodeURIComponent(r)}/${path}`,
+            { base, canWrite: scope.caps.write },
           )}
           ${pathCrumbs(base, scope.facts.name, ref, path, false)}
           <span class="spacer"></span>
@@ -512,7 +528,44 @@ export async function renderCode(
       </div>`;
 }
 
-/** One file, framed by the same path header the tree uses. */
+/**
+ * What a file page offers besides reading it. On a repository we hold, a
+ * writer gets Edit; on a live browse there is nothing to edit here, and the
+ * button says the true thing — mirror it first — rather than disappearing.
+ */
+export function editAction(scope: RepoScope, ref: string, path: string): Html {
+  const encoded = encodeURIComponent(ref);
+  if (scope.kind === "origin") {
+    const mirror = scope.mirror;
+    return btn("Mirror to edit", {
+      href:
+        mirror === undefined
+          ? scope.base
+          : `/${mirror.ownerName}/${mirror.name}/edit/${encoded}/${path}`,
+      size: "sm",
+      variant: "outline",
+      icon: mirror === undefined ? "download" : "pencil",
+      title:
+        mirror === undefined
+          ? "This repository is read-only here. Mirror it into your workbench to edit it."
+          : "Edit this file in the mirror",
+    });
+  }
+  if (!scope.caps.write) return html``;
+  return btn("Edit", {
+    href: `${scope.base}/edit/${encoded}/${path}`,
+    size: "sm",
+    variant: "outline",
+    icon: "pencil",
+    shortcut: "e",
+  });
+}
+
+/**
+ * One file, framed by the same path header the tree uses. The header is
+ * sticky and the whole pane is one element, because a script swapping a
+ * preview in replaces exactly this.
+ */
 export function renderBlob(
   scope: RepoScope,
   o: { refs: RefSet; ref: string; path: string; blob: Blob },
@@ -521,11 +574,13 @@ export function renderBlob(
   const encoded = encodeURIComponent(o.ref);
   const { content, lines } = blobBody(base, o.ref, o.path, o.blob);
   const sizeText = o.blob.kind === "too_large" ? "" : fileSize(o.blob.size);
-  return html`<div class="path-head">
+  return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
+    <div class="path-head">
       ${refMenu(
         o.refs,
         o.ref,
         (r) => `${base}/blob/${encodeURIComponent(r)}/${o.path}`,
+        { base, canWrite: scope.caps.write },
       )}
       ${pathCrumbs(base, scope.facts.name, o.ref, o.path, true)}
       <span class="spacer"></span>
@@ -547,8 +602,10 @@ export function renderBlob(
         variant: "outline",
         icon: "history",
       })}
+      ${editAction(scope, o.ref, o.path)}
     </div>
-    ${content}`;
+    ${content}
+  </div>`;
 }
 
 /** The bytes, with the headers that stop them ever executing as a page. */
@@ -620,25 +677,75 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   const entries = await scope.source.tree(ref, "");
   const tree = entries.ok ? entries.value : [];
 
-  const body = html`${scopeHeader(ctx, scope, "code")} ${forkBar(ctx, repo)}
+  const body = html`${scopeHeader(ctx, scope, "code", {
+    branchCount: refs.branches.length,
+  })}
+  ${forkBar(ctx, repo)}
   ${await renderCode(scope, {
     refs,
     ref,
     path: "",
     entries: tree,
     rail: aboutCard(ctx, repo, refs),
-  })}`;
+  })}
+  ${codeMount(scope, ref)} ${finderDialog()}`;
   return page({
     ctx,
     title: repo.name,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    scriptJs: codeJs,
   });
 }
 
 function knownRef(refs: RefSet, name: string): boolean {
   return refs.branches.includes(name) || refs.tags.includes(name);
+}
+
+/** The explorer's "New file" affordance, for a writer standing in a folder. */
+export function newFileAction(
+  scope: RepoScope,
+  ref: string,
+  dir: string,
+): Html {
+  if (!scope.caps.write || scope.kind !== "local") return html``;
+  const encoded = encodeURIComponent(ref);
+  return btn("New file", {
+    href: `${scope.base}/new/${encoded}${dir === "" ? "" : `/${dir}`}`,
+    size: "sm",
+    variant: "ghost",
+    icon: "filePlus",
+  });
+}
+
+/**
+ * The code browser's frame: the explorer column, the content beside it, and
+ * the finder dialog that both the button and `t` open. Every code page —
+ * ours and a live browse — goes through here, so the two can never drift.
+ */
+export function codePage(
+  ctx: Ctx,
+  scope: RepoScope,
+  o: {
+    title: string;
+    ref: string;
+    explorer: Html;
+    content: Html;
+    header?: Html;
+    before?: Html;
+  },
+): Response {
+  return page({
+    ctx,
+    title: o.title,
+    crumbs: scope.crumbs,
+    palette: scope.palette,
+    body: html`${o.header ?? scopeHeader(ctx, scope, "code", { compact: true })}
+    ${o.before ?? null} ${codeLayout(o.explorer, o.content)}
+    ${codeMount(scope, o.ref)} ${finderDialog()}`,
+    scriptJs: codeJs,
+  });
 }
 
 // GET /:owner/:name/tree/:ref[/*path]
@@ -650,21 +757,28 @@ export async function treePage(ctx: Ctx): Promise<Response> {
   const path = ctx.params.path ?? "";
   const entries = await scope.source.tree(ref, path);
   if (!entries.ok) return notFoundPage(ctx);
-  const refs = await refSetFrom(scope.source);
 
-  const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
-  ${await renderCode(scope, {
-    refs,
-    ref,
-    path,
-    entries: entries.value,
-  })}`;
-  return page({
-    ctx,
+  // The explorer's lazy expansion asks for exactly one directory.
+  if (ctx.url.searchParams.get("fragment") === "explorer")
+    return fragment(explorerFragment(scope.base, ref, path, entries.value));
+
+  const [refs, explorer] = await Promise.all([
+    refSetFrom(scope.source),
+    loadExplorer(scope.source, ref, path, false),
+  ]);
+  return codePage(ctx, scope, {
     title: `${path || ref} · ${repo.name}`,
-    crumbs: scope.crumbs,
-    palette: scope.palette,
-    body,
+    ref,
+    explorer: explorerColumn(scope, explorer, {
+      finder: true,
+      actions: newFileAction(scope, ref, path),
+    }),
+    content: await renderCode(scope, {
+      refs,
+      ref,
+      path,
+      entries: entries.value,
+    }),
   });
 }
 
@@ -678,17 +792,50 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
+  const pane = renderBlob(scope, { refs, ref, path, blob: capped(blob.value) });
 
+  // The preview a script drops into the pane beside the explorer. Same
+  // renderer, same markup — a preview and a real page load are the same file.
+  if (ctx.url.searchParams.get("fragment") === "1") return fragment(pane);
+
+  const explorer = await loadExplorer(scope.source, ref, path, true);
   const filename = path.split("/").pop() ?? path;
-  const body = html`${scopeHeader(ctx, scope, "code", { compact: true })}
-  ${renderBlob(scope, { refs, ref, path, blob: capped(blob.value) })}`;
-  return page({
-    ctx,
+  return codePage(ctx, scope, {
     title: `${filename} · ${repo.name}`,
-    crumbs: scope.crumbs,
-    palette: scope.palette,
-    body,
+    ref,
+    explorer: explorerColumn(scope, explorer, {
+      finder: true,
+      actions: newFileAction(
+        scope,
+        ref,
+        path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "",
+      ),
+    }),
+    content: pane,
   });
+}
+
+/**
+ * GET /:owner/:name/paths/:ref — every file path at a ref, as JSON, for the
+ * fuzzy finder. It is the same read `RepoSource.paths` already bounds and
+ * caches, behind the same `canRead` every other repo route asks: a repository
+ * you cannot see does not have a path list either.
+ */
+export async function pathsJson(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFound();
+  const scope = localScope(ctx, repo);
+  const listed = await scope.source.paths(ctx.params.ref ?? "");
+  if (!listed.ok) return notFound();
+  return json(
+    {
+      ref: ctx.params.ref ?? "",
+      paths: listed.value.paths,
+      truncated: listed.value.truncated,
+    },
+    200,
+    { "cache-control": "private, max-age=30" },
+  );
 }
 
 /** The page's own render ceiling, under the source's fetch ceiling. */

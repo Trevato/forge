@@ -284,6 +284,8 @@ a.row:hover .row-title { color: var(--accent); }
   font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums;
 }
 .count .ico { width: 14px; height: 14px; }
+/* A group of them — issues and pulls on a repo row, in one muted cluster. */
+.counts { display: inline-flex; align-items: center; gap: 10px; flex: none; }
 /* Secondary actions are always in the DOM, revealed without layout shift. */
 .row-actions { opacity: 0; transition: opacity 120ms var(--ease); }
 .row:hover .row-actions, .row:focus-within .row-actions { opacity: 1; }
@@ -491,7 +493,12 @@ a.row:hover .row-title { color: var(--accent); }
 }
 
 /* ---- command palette ---- */
-.palette { width: min(620px, calc(100vw - 24px)); margin-top: 12dvh; }
+/* A dialog centres itself with its own auto margins, which the reset zeroes
+   — so anything that wants to be centred has to say so again. */
+.palette { width: min(620px, calc(100vw - 24px)); margin: 12dvh auto auto; }
+@media (max-width: 719px) {
+  .palette { width: 100%; max-width: 100%; margin: auto auto 0; }
+}
 .palette .palette-input {
   width: 100%; border: 0; border-bottom: 1px solid var(--border); border-radius: 0;
   min-height: 48px; padding: 0 16px; background: none; font-size: 15px; box-shadow: none;

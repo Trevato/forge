@@ -464,5 +464,177 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .diff-stat { margin-left: auto; }
 }
 
+/* ---- the code browser: explorer beside content ---- */
+/* One grid, two behaviours. Below 900px the explorer is the "Files" drawer
+   above the content and its <summary> is the handle; above it, the summary
+   goes away and the column simply is. The element is always [open], so no
+   layout depends on a script having toggled anything. */
+.code-layout { display: grid; gap: 12px; margin-top: 12px; align-items: start; }
+.code-main { min-width: 0; }
+.code-main[aria-busy="true"] { opacity: .55; transition: opacity 120ms var(--ease); }
+
+.explorer-panel { min-width: 0; }
+.explorer-panel:not([open]) > .explorer-toggle { border-radius: var(--radius-sm); }
+.explorer-toggle {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); font-weight: 550; list-style: none;
+}
+.explorer-toggle::-webkit-details-marker { display: none; }
+.explorer-toggle .ico { color: var(--faint); }
+.explorer-toggle .ex-ref { color: var(--muted-fg); font-size: 12px; }
+.explorer-panel[open] > .explorer-toggle { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+
+.explorer {
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  background: var(--card);
+  max-height: 45dvh; overflow: auto; overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 4px 0 8px;
+}
+.ex-head { display: flex; gap: 6px; padding: 6px 8px; flex-wrap: wrap; }
+.ex-head .btn { flex: 1; justify-content: flex-start; }
+.ex-find kbd { margin-left: auto; }
+
+.ex-list { margin: 0; padding: 0; list-style: none; }
+.ex-list .ex-list { padding-left: 12px; border-left: 1px solid var(--border); margin-left: 10px; }
+.ex-file, .ex-dir > summary, .ex-more {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px; min-height: 26px;
+  font-size: 13px; color: var(--muted-fg);
+  overflow: hidden; cursor: pointer; list-style: none;
+}
+.ex-dir > summary::-webkit-details-marker { display: none; }
+.ex-file .ico, .ex-more .ico { color: var(--faint); flex: none; width: 14px; height: 14px; }
+.ex-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ex-twist { display: inline-flex; flex: none; color: var(--faint); transition: transform 120ms var(--ease); }
+.ex-twist .ico { width: 14px; height: 14px; }
+.ex-dir[open] > summary > .ex-twist { transform: rotate(90deg); }
+.ex-dir > summary { font-weight: 500; color: var(--fg); }
+.ex-file:hover, .ex-dir > summary:hover, .ex-more:hover { background: var(--muted); color: var(--fg); }
+.ex-file[aria-current="page"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg); font-weight: 550;
+}
+.ex-file[data-previewing] { background: var(--muted); color: var(--fg); }
+.ex-file:focus-visible { outline-offset: -2px; }
+.ex-dir > summary[data-current] { color: var(--accent); }
+.ex-more { color: var(--accent); font-size: 12.5px; }
+.ex-empty { display: block; padding: 3px 10px 3px 16px; font-size: 12.5px; color: var(--faint); }
+
+@media (min-width: 900px) {
+  .code-layout { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 16px; }
+  /* On a wide screen the column is not a disclosure at all — it just is.
+     Where this pseudo-element is understood the handle goes away too; where
+     it is not, the handle stays and one click opens the column, which is why
+     the element ships closed rather than open. */
+  .explorer-panel::details-content { content-visibility: visible; block-size: auto; }
+  .explorer {
+    border-top: 1px solid var(--border); border-radius: var(--radius);
+    position: sticky; top: calc(var(--topbar-h) + 12px);
+    max-height: calc(100dvh - var(--topbar-h) - 32px);
+  }
+}
+@supports selector(::details-content) {
+  @media (min-width: 900px) {
+    .explorer-panel > .explorer-toggle { display: none; }
+  }
+}
+@media (min-width: 1180px) {
+  .code-layout { grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
+}
+
+/* ---- the finder ---- */
+.finder { width: min(720px, calc(100vw - 24px)); }
+@media (max-width: 719px) { .finder { width: 100%; max-width: 100%; } }
+.finder .palette-item .cat {
+  font-family: var(--mono); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%;
+}
+.finder .palette-item .grow { font-family: var(--mono); font-size: 12.5px; }
+.finder-note { color: var(--faint); font-variant-numeric: tabular-nums; }
+
+/* ---- the editor ---- */
+.editor-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 12px 0 0; padding: 8px 10px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+}
+.editor-head .editor-path { flex: 1 1 16rem; min-width: 0; }
+.editor-tab[aria-selected="true"] { background: var(--muted); color: var(--fg); font-weight: 550; }
+
+.editor-wrap {
+  display: flex; align-items: stretch;
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--card); overflow: hidden;
+}
+.editor-gutter {
+  flex: none; width: 3.5rem; padding: 10px 8px 10px 0;
+  text-align: right; user-select: none;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  color: var(--faint); background: var(--muted);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+.editor-gutter span { display: block; }
+textarea.editor {
+  flex: 1; min-width: 0;
+  border: none; background: none; resize: vertical;
+  padding: 10px 12px; min-height: 14rem;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  tab-size: 2; white-space: pre; overflow: auto;
+  field-sizing: content; max-height: 70dvh;
+}
+textarea.editor:focus { outline: none; }
+.editor-wrap:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+.editor-preview {
+  border: 1px solid var(--border); border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--card); min-height: 12rem;
+}
+.editor-commit { margin-top: 12px; }
+.editor-target { border: 0; padding: 0; margin: 4px 0 0; }
+.editor-target legend { font-weight: 600; margin-bottom: 6px; }
+.editor-target .check { display: flex; }
+.editor-target .check + .check { margin-top: 10px; }
+.editor-target .check .hint { display: block; font-size: 12.5px; color: var(--muted-fg); }
+.editor-target .input { display: inline-block; width: auto; min-width: 14rem; margin-left: 6px; }
+.editor-target .input:disabled { opacity: .55; }
+#f-pull-block { margin: 12px 0 0 26px; padding-left: 12px; border-left: 2px solid var(--border); }
+#f-pull-block .field { margin-bottom: 10px; }
+
+/* ---- branches ---- */
+.branch-row .row-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.branch-div { display: inline-flex; gap: 8px; font-size: 12.5px; }
+.branch-div .ahead { color: var(--add-fg); }
+.branch-div .behind { color: var(--del-fg); }
+
+/* ---- search results ---- */
+.code-hit .row-title { font-size: 12.5px; }
+.code-line {
+  font-size: 12.5px; white-space: pre; overflow-x: auto;
+  scrollbar-width: none; color: var(--muted-fg);
+}
+.code-line::-webkit-scrollbar { display: none; }
+.code-line mark, .row-title mark {
+  background: color-mix(in srgb, var(--attn) 35%, transparent);
+  color: var(--fg); border-radius: 2px; padding: 0 1px;
+}
+.live-toggle {
+  display: flex; align-items: center; gap: 6px;
+  margin: 10px 0 0; color: var(--muted-fg);
+}
+.live-toggle .ico { color: var(--faint); flex: none; }
+.live-toggle a { color: var(--accent); }
+.no-hits {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; margin: 0;
+  border: 1px dashed var(--border); border-radius: var(--radius);
+}
+.no-hits .ico { color: var(--faint); flex: none; }
+
 }
 `;

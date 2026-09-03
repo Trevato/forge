@@ -195,6 +195,60 @@ export function labelCss(labels: Iterable<LabelLike | string>): string {
   return css;
 }
 
+/**
+ * A muted group of icon-and-number facts on a row — open issues, open pulls,
+ * comments. Zero is never rendered: a row reading "0 0" is noise, and the
+ * absence of the chip carries the same information. Numbers are tabular, so
+ * a column of rows lines up.
+ *
+ * This is the only place a count gets drawn, which is what makes a repository
+ * row on the dashboard, a profile, the landing page, the search results and
+ * the origin picker all say the same thing in the same shape.
+ */
+export function counts(
+  items: { icon: IconName; value: number | null | undefined; label: string }[],
+): Html {
+  const shown = items.filter(
+    (i) =>
+      typeof i.value === "number" && Number.isFinite(i.value) && i.value > 0,
+  );
+  if (shown.length === 0) return html``;
+  return html`<span class="counts"
+    >${shown.map(
+      (i) =>
+        html`<span class="count num" title="${i.label}"
+          >${icon(i.icon)}${i.value}</span
+        >`,
+    )}</span
+  >`;
+}
+
+/** The open issue and pull counts every repository row carries. */
+export function repoCounts(o: {
+  openIssues?: number | null | undefined;
+  openPulls?: number | null | undefined;
+  /** Some origins report one number for issues *and* pulls; say so. */
+  issuesIncludePulls?: boolean;
+}): Html {
+  const issues = o.openIssues ?? null;
+  const pulls = o.openPulls ?? null;
+  return counts([
+    {
+      icon: "issue",
+      value: issues,
+      label:
+        o.issuesIncludePulls === true
+          ? `${issues} open issues and pull requests`
+          : `${issues} open issue${issues === 1 ? "" : "s"}`,
+    },
+    {
+      icon: "pull",
+      value: pulls,
+      label: `${pulls} open pull request${pulls === 1 ? "" : "s"}`,
+    },
+  ]);
+}
+
 export function pill(value: number | string, tone?: "accent" | "danger"): Html {
   return html`<span class="pill" ${tone ? html`data-tone="${tone}"` : null}
     >${value}</span

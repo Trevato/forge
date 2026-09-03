@@ -40,12 +40,26 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import {
   blobPage,
   forkSubmit,
+  pathsJson,
   pinSubmit,
   rawBlob,
   repoHome,
   repoSyncSubmit,
   treePage,
 } from "../web/pages/repo.ts";
+import {
+  branchCreate,
+  branchDelete,
+  branchesPage,
+} from "../web/pages/branches.ts";
+import {
+  deleteFilePage,
+  deleteFileSubmit,
+  editPage,
+  editSubmit,
+  newFilePage,
+  previewSubmit,
+} from "../web/pages/edit.ts";
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
@@ -102,12 +116,14 @@ import {
 import { completeOAuthCallback } from "../actions/origins.ts";
 import {
   browseBlob,
+  browseBranchesPage,
   browseCommitPage,
   browseCommitsPage,
   browseHome,
   browseIssue,
   browseIssues,
   browseMirrorSubmit,
+  browsePaths,
   browsePull,
   browsePulls,
   browseRaw,
@@ -319,6 +335,13 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/origins/:id/r/:owner/:name/tree/:ref/*path", browseTree);
   router.add("GET", "/origins/:id/r/:owner/:name/blob/:ref/*path", browseBlob);
   router.add("GET", "/origins/:id/r/:owner/:name/raw/:ref/*path", browseRaw);
+  // The finder's path list and the branch list, twinned for a live browse.
+  router.add("GET", "/origins/:id/r/:owner/:name/paths/:ref", browsePaths);
+  router.add(
+    "GET",
+    "/origins/:id/r/:owner/:name/branches",
+    browseBranchesPage,
+  );
   router.add("GET", "/origins/:id/r/:owner/:name/commits", browseCommitsPage);
   router.add(
     "GET",
@@ -428,6 +451,26 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
   router.add("GET", "/:owner/:name/raw/:ref/*path", rawBlob);
+  // Every file path at a ref, for the fuzzy finder. JSON, `canRead`-gated.
+  router.add("GET", "/:owner/:name/paths/:ref", pathsJson);
+
+  // Branches: the list, and the two verbs a branch list exists for. Both
+  // mutations go through actions/branches.ts, so a mirror asks its origin.
+  router.add("GET", "/:owner/:name/branches", branchesPage);
+  router.add("POST", "/:owner/:name/branches", branchCreate);
+  router.add("POST", "/:owner/:name/branches/:branch/delete", branchDelete);
+
+  // Editing a file: the page, the one write, and the delete's own confirm.
+  // `preview` renders Markdown for the editor's Preview tab and writes
+  // nothing — it is a POST only because a document body is not a query.
+  router.add("GET", "/:owner/:name/edit/:ref/*path", editPage);
+  router.add("POST", "/:owner/:name/edit", editSubmit);
+  router.add("GET", "/:owner/:name/new/:ref", newFilePage);
+  router.add("GET", "/:owner/:name/new/:ref/*path", newFilePage);
+  router.add("GET", "/:owner/:name/delete/:ref/*path", deleteFilePage);
+  router.add("POST", "/:owner/:name/delete", deleteFileSubmit);
+  router.add("POST", "/:owner/:name/preview", previewSubmit);
+
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);

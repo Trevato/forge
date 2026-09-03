@@ -44,6 +44,7 @@ import {
   empty,
   listCard,
   pager,
+  repoCounts,
   row,
   selectField,
   time,
@@ -113,10 +114,12 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
               ...(repo.description !== ""
                 ? { meta: html`${repo.description}` }
                 : {}),
-              trail:
-                repo.visibility === "private"
-                  ? badge("Private", { icon: "lock", variant: "secondary" })
-                  : badge("Public", { variant: "secondary" }),
+              trail: html`${repoCounts({
+                openIssues: repo.counts?.openIssues,
+                openPulls: repo.counts?.openPulls,
+              })}${repo.visibility === "private"
+                ? badge("Private", { icon: "lock", variant: "secondary" })
+                : badge("Public", { variant: "secondary" })}`,
             }),
           ),
         )}

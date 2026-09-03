@@ -51,10 +51,18 @@ export async function refSetFrom(source: RepoSource): Promise<RefSet> {
  * The ref switcher. Every entry is a real link to the same page at another
  * ref, so it works with the keyboard, with JavaScript off, and in a new tab.
  */
+export interface RefMenuOptions {
+  /** The repository's URL base, which turns on the branch-management feet. */
+  base?: string;
+  /** Offer "create a branch from here" — a writer's verb, not a reader's. */
+  canWrite?: boolean;
+}
+
 export function refMenu(
   refs: RefSet,
   current: string,
   hrefFor: (ref: string) => string,
+  o: RefMenuOptions = {},
 ): Html {
   const entry = (name: string) => ({
     label: name,
@@ -75,6 +83,28 @@ export function refMenu(
           ...refs.tags.map(entry),
         ]
       : []),
+    // The feet: where the whole list lives, and the one verb that makes a
+    // new entry in it. Both are real links, so the menu stays a menu of
+    // links whether or not a script is running.
+    ...(o.base === undefined
+      ? []
+      : [
+          raw('<hr class="menu-sep" />'),
+          {
+            label: "View all branches",
+            href: `${o.base}/branches`,
+            icon: "branch" as const,
+          },
+          ...(o.canWrite === true
+            ? [
+                {
+                  label: `Create branch from ${current}…`,
+                  href: `${o.base}/branches?from=${encodeURIComponent(current)}`,
+                  icon: "plus" as const,
+                },
+              ]
+            : []),
+        ]),
   ];
   return menu({
     trigger: html`${icon("branch")}<span class="truncate">${current}</span>`,

@@ -35,8 +35,9 @@ import { commentCard } from "../comments.ts";
 import { renderDiff } from "../diff-view.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page, redirect } from "../layout.ts";
-import { mirrorJs } from "../client.ts";
+import { flashTo, fragment, page, redirect } from "../layout.ts";
+import { codeJs, mirrorJs } from "../client.ts";
+import { json, notFound } from "../../http/respond.ts";
 import {
   browseBase,
   hostOf,
@@ -59,9 +60,18 @@ import {
   tlComment,
 } from "../ui.ts";
 import { browseCommit, browseCommits } from "./commits.ts";
+import { renderBranches } from "./branches.ts";
+import {
+  codeMount,
+  codeLayout,
+  explorerColumn,
+  explorerFragment,
+  finderDialog,
+  loadExplorer,
+} from "./explorer.ts";
 import { accountOnly, hostLabel, originIcon } from "./origins.ts";
 import { refSetFrom } from "./refs.ts";
-import { renderBlob, renderCode, rawResponse } from "./repo.ts";
+import { codePage, renderBlob, renderCode, rawResponse } from "./repo.ts";
 import {
   filterBar,
   readQuery,
@@ -138,6 +148,7 @@ function browsePage(
     header: Html;
     body: Html;
     styleCss?: string;
+    scriptJs?: string;
   },
 ): Response {
   return page({
@@ -147,6 +158,7 @@ function browsePage(
     palette: scope.palette,
     body: html`${o.header}${liveBanner(scope)} ${o.body}`,
     ...(o.styleCss === undefined ? {} : { styleCss: o.styleCss }),
+    ...(o.scriptJs === undefined ? {} : { scriptJs: o.scriptJs }),
   });
 }
 
@@ -170,9 +182,33 @@ export async function browseHome(ctx: Ctx): Promise<Response> {
   });
   return browsePage(ctx, scope, {
     title: titleFor(scope),
-    header: scopeHeader(ctx, scope, "code"),
-    body,
+    header: scopeHeader(ctx, scope, "code", {
+      branchCount: refs.branches.length,
+    }),
+    body: html`${body}${codeMount(scope, ref)}${finderDialog()}`,
+    scriptJs: codeJs,
   });
+}
+
+// GET /origins/:id/r/:owner/:name/paths/:ref
+export async function browsePaths(ctx: Ctx): Promise<Response> {
+  const scope = await browseScope(ctx);
+  if (scope instanceof Response) return notFound();
+  const ref = refOf(ctx, scope);
+  const listed = await scope.source.paths(ref);
+  if (!listed.ok) return notFound();
+  return json(
+    { ref, paths: listed.value.paths, truncated: listed.value.truncated },
+    200,
+    { "cache-control": "private, max-age=30" },
+  );
+}
+
+// GET /origins/:id/r/:owner/:name/branches
+export async function browseBranchesPage(ctx: Ctx): Promise<Response> {
+  const scope = await browseScope(ctx);
+  if (scope instanceof Response) return scope;
+  return renderBranches(ctx, scope, liveBanner(scope));
 }
 
 // GET /origins/:id/r/:owner/:name/tree/:ref[/*path]
@@ -184,17 +220,25 @@ export async function browseTree(ctx: Ctx): Promise<Response> {
   if (path !== "" && !isSafeTreePath(path)) return notFoundPage(ctx);
   const entries = await scope.source.tree(ref, path);
   if (!entries.ok) return notFoundPage(ctx);
-  const refs = await refSetFrom(scope.source);
-  const body = await renderCode(scope, {
-    refs,
-    ref,
-    path,
-    entries: entries.value,
-  });
-  return browsePage(ctx, scope, {
+
+  if (ctx.url.searchParams.get("fragment") === "explorer")
+    return fragment(explorerFragment(scope.base, ref, path, entries.value));
+
+  const [refs, explorer] = await Promise.all([
+    refSetFrom(scope.source),
+    loadExplorer(scope.source, ref, path, false),
+  ]);
+  return codePage(ctx, scope, {
     title: titleFor(scope, path || ref),
-    header: scopeHeader(ctx, scope, "code", { compact: true }),
-    body,
+    ref,
+    before: liveBanner(scope),
+    explorer: explorerColumn(scope, explorer, { finder: true }),
+    content: await renderCode(scope, {
+      refs,
+      ref,
+      path,
+      entries: entries.value,
+    }),
   });
 }
 
@@ -208,10 +252,16 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
   const blob = await scope.source.blob(ref, path);
   if (!blob.ok) return notFoundPage(ctx);
   const refs = await refSetFrom(scope.source);
-  return browsePage(ctx, scope, {
+  const pane = renderBlob(scope, { refs, ref, path, blob: blob.value });
+  if (ctx.url.searchParams.get("fragment") === "1") return fragment(pane);
+
+  const explorer = await loadExplorer(scope.source, ref, path, true);
+  return codePage(ctx, scope, {
     title: titleFor(scope, path.split("/").pop() ?? path),
-    header: scopeHeader(ctx, scope, "code", { compact: true }),
-    body: renderBlob(scope, { refs, ref, path, blob: blob.value }),
+    ref,
+    before: liveBanner(scope),
+    explorer: explorerColumn(scope, explorer, { finder: true }),
+    content: pane,
   });
 }
 
