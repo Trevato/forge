@@ -7,7 +7,9 @@
 
 import { openPull } from "../../actions/pulls.ts";
 import {
-  countIssues,
+  commentCounts,
+  issueCounts,
+  labelsForMany,
   countComments,
   labelsFor,
   listLabels,
@@ -84,15 +86,17 @@ export function pullsList(ctx: Ctx): Response {
     ...(q !== "" ? { query: q } : {}),
     ...(cursor !== undefined ? { cursor } : {}),
   });
+  // Two grouped reads for the page, never two per row.
+  const ids = pulls.map((pull) => pull.id);
+  const labels = labelsForMany(db, ids);
+  const comments = commentCounts(db, ids);
   const rows = pulls.map((pull) => ({
     pull,
-    labels: labelsFor(db, pull.id),
-    comments: countComments(db, pull.id),
+    labels: labels.get(pull.id) ?? [],
+    comments: comments.get(pull.id) ?? 0,
   }));
-  const counts = {
-    open: countIssues(db, repo.id, "pull", "open"),
-    closed: countIssues(db, repo.id, "pull", "closed"),
-  };
+  // One pass over the covering index gives both numbers the seg control shows.
+  const counts = issueCounts(db, repo.id, "pull");
 
   const href = (patch: Record<string, string>, next?: number) => {
     const p = new URLSearchParams();

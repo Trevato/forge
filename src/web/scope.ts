@@ -22,10 +22,9 @@
  * looking at a clone or at somebody else's server.
  */
 
-import { countIssues } from "../core/issues.ts";
 import { isPinned } from "../core/pins.ts";
 import type { Origin } from "../core/origins.ts";
-import { canWrite, type Repo } from "../core/repos.ts";
+import { canWrite, countsForRepos, type Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import type {
   RepoFacts,
@@ -81,6 +80,13 @@ export function hostOf(url: string): string {
 export function localScope(ctx: Ctx, repo: Repo): RepoScope {
   const base = `/${repo.ownerName}/${repo.name}`;
   const source = localSource(ctx.app, repo, ctx.auth.user);
+  // One grouped query for both tab counts — the same helper a repo *list*
+  // uses, asked for a list of one, rather than two count queries per page.
+  const counts = repo.counts ??
+    countsForRepos(ctx.app.db, [repo.id]).get(repo.id) ?? {
+      openIssues: 0,
+      openPulls: 0,
+    };
   return {
     kind: "local",
     source,
@@ -90,8 +96,8 @@ export function localScope(ctx: Ctx, repo: Repo): RepoScope {
       description: repo.description,
       visibility: repo.visibility,
       defaultBranch: repo.defaultBranch,
-      openIssues: countIssues(ctx.app.db, repo.id, "issue", "open"),
-      openPulls: countIssues(ctx.app.db, repo.id, "pull", "open"),
+      openIssues: counts.openIssues,
+      openPulls: counts.openPulls,
       pushedAt: null,
       htmlUrl: repo.origin?.htmlUrl ?? null,
     },

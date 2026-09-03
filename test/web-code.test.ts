@@ -225,10 +225,12 @@ describe("the code browser on the web", () => {
 
     const hidden = await get("/alice/vault/paths/main", kim);
     expect(hidden.status).toBe(404);
-    expect((await hidden.json()) as { error: string }).toEqual({
-      error: "not_found",
-      message: expect.any(String),
-    });
+    const refusal = (await hidden.json()) as {
+      error: string;
+      message: string;
+    };
+    expect(refusal.error).toBe("not_found");
+    expect(typeof refusal.message).toBe("string");
 
     const anon = await get("/alice/vault/paths/main");
     expect(anon.status).toBe(404);

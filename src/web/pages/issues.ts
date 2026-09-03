@@ -9,7 +9,7 @@ import {
   openIssueThrough,
 } from "../../actions/issues.ts";
 import {
-  countIssues,
+  issueCounts,
   labelsFor,
   listLabels,
   type Issue,
@@ -301,10 +301,8 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
   const nextCursor = listed.ok ? listed.value.next : null;
   const repoLabels = listLabels(db, repo.id);
   const glyph = scopeGlyph(scope);
-  const counts = {
-    open: countIssues(db, repo.id, "issue", "open"),
-    closed: countIssues(db, repo.id, "issue", "closed"),
-  };
+  // One grouped read for both numbers the seg control above the list shows.
+  const counts = issueCounts(db, repo.id, "issue");
 
   const newIssue = ctx.auth.user
     ? btn("New issue", {

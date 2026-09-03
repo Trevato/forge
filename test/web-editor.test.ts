@@ -288,7 +288,7 @@ describe("editing files on the web", () => {
         description: "a long description nobody wants to retype",
         target: "current",
       },
-      { cookie: alice, bearer: undefined },
+      { cookie: alice },
     );
 
     // The owner *is* an admin, so that one lands. Take the admin away and

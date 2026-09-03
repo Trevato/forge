@@ -8,22 +8,21 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
-import type { Database } from "bun:sqlite";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
-import { listEvents, type ForgeEvent } from "../../core/events.ts";
-import { getIssue, listIssues } from "../../core/issues.ts";
+import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
+import { getIssuesByRef, listIssues } from "../../core/issues.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
-import { listPins } from "../../core/pins.ts";
+import { listPins, pinnedRepoIds } from "../../core/pins.ts";
 import {
-  getRepoById,
+  getReposByIds,
   listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import {
-  countUsers,
-  getUserById,
+  getUsersByIds,
+  hasAnyUser,
   verifyPassword,
   type User,
 } from "../../core/users.ts";
@@ -163,12 +162,32 @@ function eventVerb(kind: string): string {
   return words[kind] ?? "acted on this repository";
 }
 
-/** The thing an event happened to, as `#3 Title` or a label/hook name. */
-function eventSubject(db: Database, event: ForgeEvent): string {
+/** Which conversation, if any, an event is about — for one grouped read. */
+function eventIssueRef(
+  event: ForgeEvent,
+): { repoId: string; number: number } | undefined {
   const number = event.payload["number"];
-  if (typeof number === "number" && event.repoId !== null) {
-    const issue = getIssue(db, event.repoId, number);
-    return issue ? `#${number} ${issue.title}` : `#${number}`;
+  return typeof number === "number" && event.repoId !== null
+    ? { repoId: event.repoId, number }
+    : undefined;
+}
+
+const issueKey = (repoId: string, number: number): string =>
+  `${repoId}#${number}`;
+
+/**
+ * The thing an event happened to, as `#3 Title` or a label/hook name. The
+ * issues arrive as a map the caller filled in one grouped read — a feed of
+ * forty rows must not be forty `getIssue` calls.
+ */
+function eventSubject(
+  issues: Map<string, { title: string }>,
+  event: ForgeEvent,
+): string {
+  const ref = eventIssueRef(event);
+  if (ref !== undefined) {
+    const issue = issues.get(issueKey(ref.repoId, ref.number));
+    return issue ? `#${ref.number} ${issue.title}` : `#${ref.number}`;
   }
   for (const key of ["name", "url", "parent"] as const) {
     const value = event.payload[key];
@@ -193,12 +212,17 @@ function eventSubject(db: Database, event: ForgeEvent): string {
  */
 function activityRail(
   ctx: Ctx,
-  visible: Repo[],
+  user: User | undefined,
 ): { body: Html; watch: string[] } {
-  const byId = new Map(visible.map((r) => [r.id, r]));
-  const events = listEvents(ctx.app.db, { limit: 40 })
-    .filter((e) => e.repoId !== null && byId.has(e.repoId))
-    .slice(0, 12);
+  const db = ctx.app.db;
+  // The visibility rule lives in the query, so this is the twelve most recent
+  // things *this viewer* can see — not the twelve newest events in the forge
+  // filtered down to however few of them happened to be visible.
+  const events = listEventsVisibleTo(db, user, { limit: 12 });
+  const byId = getReposByIds(
+    db,
+    events.map((e: ForgeEvent) => e.repoId ?? "").filter(Boolean),
+  );
   const watch: string[] = [];
   for (const event of events) {
     const repo = byId.get(event.repoId ?? "");
@@ -218,14 +242,25 @@ function activityRail(
       ),
     };
   }
-  const db = ctx.app.db;
+  // Three grouped reads for the whole rail: the actors, and the conversations
+  // the rows name. Asked per row this was two queries a row.
+  const actors = getUsersByIds(
+    db,
+    events.map((e: ForgeEvent) => e.actorId ?? "").filter(Boolean),
+  );
+  const issues = getIssuesByRef(
+    db,
+    events
+      .map(eventIssueRef)
+      .filter((r): r is { repoId: string; number: number } => r !== undefined),
+  );
   const body = card(
     html`<ul class="list act">
-      ${events.map((event) => {
+      ${events.map((event: ForgeEvent) => {
         const repo = byId.get(event.repoId ?? "")!;
         const actor =
-          event.actorId === null ? undefined : getUserById(db, event.actorId);
-        const subject = eventSubject(db, event);
+          event.actorId === null ? undefined : actors.get(event.actorId);
+        const subject = eventSubject(issues, event);
         const where = `${repo.ownerName}/${repo.name}`;
         // `via: "origin"` means the sync worker saw this upstream rather than
         // someone doing it here. The glyph is the only honest way to say so
@@ -271,10 +306,14 @@ function downloadsCard(ctx: Ctx, user: User): Html {
       { head },
     );
   }
+  const repos = getReposByIds(
+    ctx.app.db,
+    pins.map((pin) => pin.repoId),
+  );
   return listCard(
     [
       ...pins.map((pin) => {
-        const repo = getRepoById(ctx.app.db, pin.repoId);
+        const repo = repos.get(pin.repoId);
         const at = repo?.origin ?? null;
         return row({
           nav: true,
@@ -426,11 +465,8 @@ function dashboard(ctx: Ctx, user: User): Html {
   const more = repos.length > perPage && last !== undefined;
   const carry = query !== "" ? `q=${encodeURIComponent(query)}&` : "";
   // Cursor lists only move forward; "Newer" is the way back to the top.
-  const visible = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
-  const pinned = new Set(
-    listPins(ctx.app.db, user.id).map((pin) => pin.repoId),
-  );
-  const rail = activityRail(ctx, visible);
+  const pinned = pinnedRepoIds(ctx.app.db, user.id);
+  const rail = activityRail(ctx, user);
 
   const filter = html`<form class="filters" method="get" action="/">
     <input
@@ -527,7 +563,9 @@ function authForm(
   const action = next
     ? `/${kind}?next=${encodeURIComponent(next)}`
     : `/${kind}`;
-  const firstAccount = kind === "signup" && countUsers(ctx.app.db) === 0;
+  // "Is this the first account?" is a `LIMIT 1` existence check, not a count
+  // of the whole user table — and the sign-in screen paints on every session.
+  const firstAccount = kind === "signup" && !hasAnyUser(ctx.app.db);
 
   const body = html`<form method="post" action="${action}">
     ${formField({

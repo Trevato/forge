@@ -63,7 +63,6 @@ import { browseCommit, browseCommits } from "./commits.ts";
 import { renderBranches } from "./branches.ts";
 import {
   codeMount,
-  codeLayout,
   explorerColumn,
   explorerFragment,
   finderDialog,

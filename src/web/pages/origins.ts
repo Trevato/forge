@@ -31,8 +31,8 @@ import {
 } from "../../actions/origins.ts";
 import { getFlowFor } from "../../origins/oauth.ts";
 import { getOriginFor, type Origin } from "../../core/origins.ts";
-import { isPinned } from "../../core/pins.ts";
-import { getRepo, getRepoById } from "../../core/repos.ts";
+import { pinnedRepoIds } from "../../core/pins.ts";
+import { getRepo, getReposByIds } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { forgeBaseUrl, oauthCallbackUri } from "../../http/api.ts";
 import { qrEncode, qrSvg } from "../../design/qr.ts";
@@ -1046,6 +1046,18 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
     })}
   </form>`;
 
+  // Two grouped reads for the whole picker: the mirrors these rows already
+  // point at, and which of those are pinned. A page of fifty remotes was a
+  // hundred single-row queries.
+  const mirrors = getReposByIds(
+    ctx.app.db,
+    rows.map((r) => r.mirroredAs ?? "").filter(Boolean),
+  );
+  const pins =
+    ctx.auth.user === undefined
+      ? new Set<string>()
+      : pinnedRepoIds(ctx.app.db, ctx.auth.user.id);
+
   const body = !listed.ok
     ? empty({
         icon: "alert",
@@ -1070,10 +1082,8 @@ export async function originReposPage(ctx: Ctx): Promise<Response> {
             const mirror =
               remote.mirroredAs === null
                 ? undefined
-                : getRepoById(ctx.app.db, remote.mirroredAs);
-            const pinned =
-              mirror !== undefined &&
-              isPinned(ctx.app.db, ctx.auth.user!.id, mirror.id);
+                : mirrors.get(remote.mirroredAs);
+            const pinned = mirror !== undefined && pins.has(mirror.id);
             // Only offer a name box when the obvious one is taken: the
             // mirror action picks a free name by itself otherwise.
             const collides =

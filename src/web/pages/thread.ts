@@ -17,7 +17,7 @@ import type { Issue, Label } from "../../core/issues.ts";
 import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import type { IconName as Glyph } from "../icons.ts";
-import { getUserById } from "../../core/users.ts";
+import { getUsersByIds } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { field, readForm } from "../form.ts";
@@ -120,16 +120,21 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
  * disagree with what actually happened.
  */
 function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
-  const events = listEvents(ctx.app.db, { repoId: repo.id, limit: 200 });
+  const events = listEvents(ctx.app.db, { repoId: repo.id, limit: 200 }).filter(
+    (event) =>
+      EVENT_LOOK[event.kind] !== undefined &&
+      Number(event.payload.number) === issue.number,
+  );
+  // One read for every actor the timeline names, rather than one per entry.
+  const actors = getUsersByIds(
+    ctx.app.db,
+    events.map((event) => event.actorId ?? "").filter(Boolean),
+  );
   const entries: Entry[] = [];
   for (const event of events) {
-    const look = EVENT_LOOK[event.kind];
-    if (!look) continue;
-    if (Number(event.payload.number) !== issue.number) continue;
+    const look = EVENT_LOOK[event.kind]!;
     const actor =
-      event.actorId !== null
-        ? getUserById(ctx.app.db, event.actorId)
-        : undefined;
+      event.actorId !== null ? actors.get(event.actorId) : undefined;
     entries.push({
       at: event.createdAt,
       node: tlEvent({
