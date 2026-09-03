@@ -22,13 +22,20 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createToken, signUp } from "../src/actions/users.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { getRepo, updateRepoSettings } from "../src/core/repos.ts";
+import type { User } from "../src/core/users.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { listRefs } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
 import { localSource } from "../src/view/local.ts";
-import { suggestBranch } from "../src/web/pages/edit.ts";
+import {
+  MAX_MIRROR_LINES,
+  mirrorFor,
+  suggestBranch,
+} from "../src/web/pages/edit.ts";
+import { highlightAsset } from "../src/web/asset.ts";
+import { highlightToHtml } from "../src/web/highlight-html.ts";
 
 setLogLevel("error");
 
@@ -44,7 +51,7 @@ describe("editing files on the web", () => {
   let alice = "";
   let kim = "";
   let readOnly = "";
-  let aliceUser: { id: string; username: string };
+  let aliceUser: User;
 
   const get = (path: string, cookie = ""): Promise<Response> =>
     fetch(`${base}${path}`, {
@@ -154,8 +161,11 @@ describe("editing files on the web", () => {
     // The suggested branch is the one the brief asks for.
     expect(html).toContain("alice/edit-lamp.ts");
     expect(html).toContain(suggestBranch("alice", "src/lamp.ts"));
-    // The preview tab needs a script, so it ships hidden until one runs.
-    expect(html).toContain('data-editor-tab="preview"');
+    // The preview tab renders Markdown, so it is offered on Markdown. A
+    // TypeScript file has nothing to preview and says so by not asking.
+    expect(html).not.toContain('data-editor-tab="preview"');
+    const markdown = await text("/alice/beacon/edit/main/README.md", alice);
+    expect(markdown).toContain('data-editor-tab="preview"');
   });
 
   test("the blob page offers Edit to a writer and nothing to a reader", async () => {
@@ -508,6 +518,141 @@ describe("editing files on the web", () => {
       { cookie: kim },
     );
     expect(theirs.status).toBe(404);
+  });
+
+  // ---- live highlighting ----
+
+  /**
+   * The overlay editor. What is being proven here is not that it looks nice —
+   * a screenshot does that — but the two things that make it *safe*: the
+   * highlighted mirror is server-rendered, so the first paint is right and a
+   * dead bundle degrades to a plain textarea; and the only page that relaxes
+   * the script CSP is the one that actually loads the script.
+   */
+  test("the editor ships a mirror the browser can keep in step", async () => {
+    const repo = getRepo(app.db, "alice", "beacon")!;
+    await commitToBranch(app, aliceUser, repo, {
+      message: "a file to look at",
+      files: [{ path: "src/mirror.ts", content: "export const lit = true\n" }],
+    });
+    const html = await text("/alice/beacon/edit/main/src/mirror.ts", alice);
+    expect(html).toContain('class="editor-mirror mono"');
+    expect(html).toContain('data-mirror="1"');
+    expect(html).toContain('data-lang="ts"');
+    expect(html).toContain("<textarea");
+    // The first paint is already highlighted: no flash of unstyled code.
+    expect(html).toContain(
+      '<div class="ml"><span class="tok-keyword">export</span>',
+    );
+    // …and the text is still in the textarea, which is what actually posts.
+    expect(html).toContain("export const lit = true");
+  });
+
+  test("the editor is the only page allowed a script file, and only its own", async () => {
+    const asset = await highlightAsset();
+    if (asset === null) throw new Error("the bundle did not build");
+
+    const editor = await get("/alice/beacon/edit/main/src/lamp.ts", alice);
+    const policy = editor.headers.get("content-security-policy") ?? "";
+    expect(await editor.text()).toContain(
+      `<script type="module" src="${asset.path}">`,
+    );
+    expect(policy).toContain(`script-src 'nonce-`);
+    expect(/script-src 'nonce-[^']+' 'self'/.test(policy)).toBe(true);
+
+    // Every other page keeps the stricter policy: nonce only.
+    const blob = await get("/alice/beacon/blob/main/src/lamp.ts", alice);
+    const strict = blob.headers.get("content-security-policy") ?? "";
+    expect(/script-src 'nonce-[^']+';/.test(strict)).toBe(true);
+    expect(/script-src [^;]*'self'/.test(strict)).toBe(false);
+  });
+
+  test("the bundle is served immutably at its hash, and nowhere else", async () => {
+    const asset = await highlightAsset();
+    if (asset === null) throw new Error("the bundle did not build");
+
+    const res = await get(asset.path);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/javascript");
+    expect(res.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    const code = await res.text();
+    expect(code.length).toBeGreaterThan(1000);
+
+    // A stale hash is a miss, not a redirect and not somebody else's file.
+    expect((await get("/assets/highlight-0000000000000000.js")).status).toBe(
+      404,
+    );
+    expect((await get("/assets/../src/main.js")).status).toBe(404);
+  });
+
+  test("the served bundle renders exactly what the server renders", async () => {
+    const res = await get((await highlightAsset())!.path);
+    const dir = await mkdtemp(join(tmpdir(), "forge-hl-bundle-"));
+    const file = join(dir, "highlight.mjs");
+    await Bun.write(file, await res.text());
+    // Importing the built module is the honest test: this is the code the
+    // browser gets, running as the browser will run it.
+    const bundle = (await import(file)) as {
+      default: {
+        render(text: string, lang: string): string;
+        detect(path: string, first?: string): string;
+        Mirror: new (lang: string) => {
+          update(text: string): { html: string[]; from: number; delta: number };
+        };
+      };
+    };
+    const api = bundle.default;
+    expect((globalThis as { forgeHighlight?: unknown }).forgeHighlight).toBe(
+      api,
+    );
+
+    const fixture = [
+      "/** doc */",
+      "export const lamp = { on: true, re: /a+b/gi };",
+      "async function light(name: string): Promise<void> {",
+      "  await send(`lamp:${name}`); // go",
+      "}",
+    ].join("\n");
+    expect(api.render(fixture, "ts")).toBe(highlightToHtml(fixture, "ts"));
+    expect(api.detect("a/b.py")).toBe("python");
+
+    // The incremental model must agree with a full render, line for line.
+    const model = new api.Mirror("ts");
+    model.update(fixture);
+    const edited = fixture.replace("true", "false");
+    const update = model.update(edited);
+    expect(update.html.join("\n")).toBe(highlightToHtml(edited, "ts"));
+    expect(update.from).toBe(1);
+    expect(update.delta).toBe(0);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a file too large for a mirror falls back to a plain textarea", async () => {
+    const repo = getRepo(app.db, "alice", "beacon")!;
+    const huge = `${"export const x = 1\n".repeat(MAX_MIRROR_LINES + 5)}`;
+    await commitToBranch(app, aliceUser, repo, {
+      message: "a generated file",
+      files: [{ path: "src/generated.ts", content: huge }],
+    });
+
+    expect(mirrorFor("src/generated.ts", huge).mirror).toBe(false);
+    expect(mirrorFor("src/lamp.ts", LAMP).mirror).toBe(true);
+    // 200 KB of one line is over the byte cap even though it is one line.
+    expect(mirrorFor("a.ts", "x".repeat(200_001)).mirror).toBe(false);
+
+    const html = await text("/alice/beacon/edit/main/src/generated.ts", alice);
+    expect(html).toContain("<textarea");
+    // No mirror element, no bundle, and the strict script policy back.
+    expect(html).not.toContain('class="editor-mirror');
+    expect(html).not.toContain('data-mirror="1"');
+    expect(html).not.toContain('<script type="module"');
+    const res = await get("/alice/beacon/edit/main/src/generated.ts", alice);
+    const policy = res.headers.get("content-security-policy") ?? "";
+    expect(/script-src [^;]*'self'/.test(policy)).toBe(false);
   });
 
   test("suggestBranch makes a name git will take", () => {

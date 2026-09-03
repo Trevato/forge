@@ -53,7 +53,7 @@ variables, so a theme is data. Six ship today. What each role _means_:
 | `--merged`                       | a merged pull. Purple, and only that.                                                                                   |
 | `--attn`                         | draft, pending, a highlighted line.                                                                                     |
 | `--add-*` / `--del-*` / `--wd-*` | the diff. Tints stay ≤14% so syntax color survives on top.                                                              |
-| `--tok-*`                        | syntax. Eight classes, no more.                                                                                         |
+| `--tok-*`                        | syntax, in two layers: eleven colour classes every consumer knows, plus finer kinds the web paints over them (§6c).      |
 | `--shadow-1` / `--shadow-2`      | a hint and an overlay. Near-transparent in dark palettes, so one rule serves every theme.                               |
 
 **Status surfaces are tinted, never saturated**: `color-mix(in srgb, var(--x)
@@ -302,7 +302,49 @@ folding into a "Files" `<details>` above the content below it.
   *prefix* outranks that again. Without a script the finder does not exist and
   the explorer beside it is the answer.
 
-### 6b. The editor
+### 6b. Code, coloured
+
+One tokenizer, `src/web/highlight.ts`, serves the file browser, the diff
+viewer, Markdown fences, the terminal UI and the browser bundle the editor
+loads. It is a stateful per-line scanner over rule tables — Prism's model, not
+a parser — and it is bound by three properties the tests assert for every
+language: **lossless** (a line's tokens concatenate back to the line),
+**linear** (10,000 characters in well under a millisecond, no backtracking
+regex), and **total** (random bytes never throw).
+
+Roughly thirty languages have rule tables, including the ones a forge actually
+holds: ts/tsx/js/jsx (template literals, regex-versus-division, decorators,
+JSX tags), python, go, rust, c/c++/objective-c, java, kotlin, swift, ruby,
+php, lua, zig, elixir, nix, sql, json/jsonc, yaml, toml, ini, markdown,
+css/scss, html, shell, dockerfile, makefile and diff. Detection is by
+extension, then by whole filename (`Dockerfile`, `Makefile`, `.zshrc`), then —
+only for a file that has said nothing else — by shebang or editor modeline:
+`detectLanguage(path, firstLine)`.
+
+**Two levels of token.** `cls` is the colour *every* consumer understands —
+`keyword string comment number function type operator punctuation constant
+meta plain` — and it is what the terminal's theme table maps. `kind` is a
+refinement only the web paints: `property tag attribute regex variable
+decorator heading emphasis link inserted deleted`. A token renders as
+`class="tok-<cls> tok-<kind>"`, the kind rule comes last in the stylesheet and
+so wins at equal specificity, and dropping the kind leaves a page that is less
+specific but never wrong. That is the whole reason the vocabulary can grow on
+the web without the terminal having to agree first.
+
+Punctuation and operators are deliberately **below** body colour
+(`--tok-punctuation`, `--tok-operator`): they are a line's scaffolding, and
+colouring them loudly makes code shout. Diff-inside-a-fence borrows the diff
+tints (`--add-fg` / `--del-fg`) rather than inventing a colour.
+
+**Markdown has two right answers.** A `.md` blob renders as prose by default
+and offers `Source | Rendered` in its path header; `?view=source` is a plain
+link, so both halves work with no JavaScript, are addressable, and survive
+being sent to somebody. The rendered half is the README renderer — fenced code
+is highlighted in the language the fence names, tables are tables, and a
+relative link (`docs/keeping.md`) resolves, while anything carrying a scheme
+other than http(s), or a protocol-relative `//host`, is left as text.
+
+### 6c. The editor
 
 `GET /:owner/:name/edit/:ref/*path` is a `<textarea>` in a `<form>`, and one
 rule governs it: **a refusal never costs you your typing.** A protected
@@ -317,6 +359,37 @@ target (`current branch` / `new branch <name>`, defaulting to
 to where you started. Where committing straight to the ref is not on offer at
 all — a protected default, or a ref that is not a branch — the page says so on
 the disabled radio rather than letting somebody find out after typing.
+
+**The highlighted mirror.** Under the textarea sits a
+`<pre class="editor-mirror">` holding the same text, syntax-coloured; the
+textarea on top of it has transparent text and a visible caret. They share one grid cell and one set
+of metrics — font, size, line height, padding, tab size — because a single
+divergence puts the caret in the wrong place, and the *height ceiling lives on
+`.editor-wrap`* so the gutter, the mirror and the textarea are always the same
+height and scroll as one. The mirror is rendered by the server for the first
+paint, so there is no flash of uncoloured code, and kept in step by
+`window.forgeHighlight`, which is `web/highlight.ts` itself bundled by
+`Bun.build` at first use and served from `/assets/highlight-<hash>.js`,
+immutable. That asset is the one thing that relaxes the script CSP — from
+"this page's nonce" to "this page's nonce, or a file from this origin" — and
+only the editor page asks for it.
+
+An edit re-scans from the first changed line and stops as soon as the state
+entering an unchanged line matches what it was before, so typing costs one
+line's work; the DOM is patched line by line rather than rebuilt. Tab inserts,
+Enter keeps your indentation, brackets and quotes close themselves (and wrap a
+selection), `⌘/Ctrl+S` submits the commit form, and the current line is
+marked. `⌘/Ctrl+F` is left to the browser on purpose: the mirror holds real
+text, so the page's own find lands on the line you were looking for.
+
+**It degrades, in that order.** Over 200 KB or over 10,000 lines the server
+sends no mirror and no bundle — a file that size is not hand-edited in a
+browser, and a slow editor is worse than an unhighlighted one. If the bundle
+fails to build or never loads, the page keeps the plain textarea, because the
+textarea's own text only turns transparent once the mirror is live. With no
+JavaScript at all it is a `<textarea>` in a `<form>`, which is what it was
+before any of this. The Preview tab is offered on Markdown only, and renders
+through the same `/preview` fragment the server will use for the file.
 
 **Terminal keys and glyphs for origins.** Account → `o` opens Origins; there
 `c` connects, `s` syncs now, `r` browses the origin's repositories and `D`

@@ -5,6 +5,12 @@
  * emit one span per run of (class, changed) — the clean way to compose the
  * syntax layer (text color) with the diff layer (background + underline)
  * without either having to agree on the other's boundaries.
+ *
+ * A token now carries a colour class *and*, sometimes, a finer kind ("this
+ * string is a regex", "this keyword is a tag"). The mask therefore holds the
+ * whole class attribute rather than one name, which is also what keeps a
+ * plain file's markup identical to what the browser bundle renders: both go
+ * through `tokenClasses`.
  */
 
 import {
@@ -12,21 +18,23 @@ import {
   highlightLines,
   type Language,
   type Token,
-  type TokenClass,
 } from "./highlight.ts";
-import { html, type Html } from "./html.ts";
+import { highlightToLines, tokenClasses } from "./highlight-html.ts";
+import { html, raw, type Html } from "./html.ts";
 
-/** Per-character token classes for one line, or null where none apply. */
+/** Per-character class attributes for one line, or null where none apply. */
 function classMask(
   text: string,
   tokens: Token[] | undefined,
-): (TokenClass | null)[] {
-  const mask: (TokenClass | null)[] = new Array(text.length).fill(null);
+): (string | null)[] {
+  const mask: (string | null)[] = new Array(text.length).fill(null);
   if (!tokens) return mask;
   let pos = 0;
   for (const token of tokens) {
+    const classes = tokenClasses(token);
+    const value = classes === "" ? null : classes;
     for (let k = 0; k < token.text.length && pos < text.length; k++)
-      mask[pos++] = token.cls;
+      mask[pos++] = value;
   }
   // If the token stream didn't cover the line (source mismatch), the tail
   // simply stays unclassified — still correct, just uncolored.
@@ -52,10 +60,10 @@ export function composeLine(
     const slice = text.slice(runStart, end);
     const cls = classes[runStart];
     const isChanged = changed?.[runStart] ?? false;
-    if (cls === null && !isChanged) {
+    if ((cls === null || cls === undefined) && !isChanged) {
       parts.push(html`${slice}`);
     } else {
-      const names = [cls ? `tok-${cls}` : "", isChanged ? "wd" : ""]
+      const names = [cls ?? "", isChanged ? "wd" : ""]
         .filter(Boolean)
         .join(" ");
       parts.push(html`<span class="${names}">${slice}</span>`);
@@ -79,10 +87,13 @@ export function highlightBlob(
   path: string,
   lang?: Language,
 ): Html[] {
-  const language = lang ?? detectLanguage(path);
-  return highlightLines(content, language).map((tokens) =>
-    composeLine(tokens.map((t) => t.text).join(""), tokens, undefined),
-  );
+  const language = lang ?? detectLanguage(path, firstLineOf(content));
+  return highlightToLines(content, language).map(raw);
 }
+
+const firstLineOf = (content: string): string => {
+  const end = content.indexOf("\n");
+  return end === -1 ? content.slice(0, 200) : content.slice(0, end);
+};
 
 export { detectLanguage, highlightLines };

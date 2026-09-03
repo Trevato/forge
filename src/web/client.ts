@@ -414,9 +414,21 @@ export const codeJs = /* js */ `
  *
  * The page is a real form and posts to a real route with JavaScript off —
  * every line here is comfort. Tab inserts a tab instead of leaving the field,
- * Enter keeps the indentation you were on, the gutter counts the lines you
- * can see, and the Preview tab asks the server to render the Markdown with
+ * Enter keeps the indentation you were on, brackets close themselves, ⌘S
+ * commits, and the Preview tab asks the server to render the Markdown with
  * the same renderer that will render it once it lands.
+ *
+ * The highlighting is the classic overlay: a `<pre class="editor-mirror">`
+ * holding the syntax-coloured text, and the real textarea on top of it with
+ * transparent text and a visible caret. The two must agree on every metric —
+ * font, size, line height, padding, tab size — which is why they share a
+ * single grid cell and a single set of rules in the stylesheet, and why both
+ * sides render through the *same* tokenizer: `/assets/highlight-<hash>.js` is
+ * `web/highlight.ts` itself, bundled. The mirror is patched line by line from
+ * an incremental model, on an animation frame, so typing costs one line's
+ * work and not the file's.
+ *
+ * Nothing here is load-bearing: no bundle, no mirror; no script, no anything.
  */
 export const editorJs = /* js */ `
 (function () {
@@ -424,10 +436,20 @@ export const editorJs = /* js */ `
   var area = doc.querySelector('textarea.editor');
   if (!area) return;
   var gutter = doc.getElementById('editor-gutter');
+  var wrap = doc.getElementById('editor-write');
+  var mirror = doc.getElementById('editor-mirror');
+  var pathInput = doc.querySelector('.editor-path');
+  var form = area.form;
+  var MAX_MIRROR = 200000;
+  var MAX_LINES = 10000;
+
+  function lineCount() {
+    return area.value.split('\\n').length;
+  }
 
   function paintGutter() {
     if (!gutter) return;
-    var lines = area.value.split('\\n').length;
+    var lines = lineCount();
     var have = gutter.childElementCount;
     if (have === lines) return;
     if (have > lines) {
@@ -443,39 +465,206 @@ export const editorJs = /* js */ `
     gutter.appendChild(frag);
   }
 
-  function replaceSelection(text) {
+  // ---- the highlighted mirror ----
+
+  var model = null, frame = 0, current = -1, lang = '';
+
+  function build(html, from, to) {
+    var out = '';
+    for (var i = from; i < to; i++) out += '<div class="ml">' + html[i] + '</div>';
+    return out;
+  }
+
+  function paint(all) {
+    if (!model || !mirror) return;
+    if (area.value.length > MAX_MIRROR || lineCount() > MAX_LINES) {
+      stopMirror();
+      return;
+    }
+    var up = model.update(area.value);
+    if (all || mirror.childElementCount !== up.html.length - up.delta) {
+      mirror.innerHTML = build(up.html, 0, up.html.length);
+    } else {
+      var i;
+      if (up.delta > 0) {
+        var frag = doc.createDocumentFragment();
+        for (i = 0; i < up.delta; i++) frag.appendChild(doc.createElement('div'));
+        mirror.insertBefore(frag, mirror.children[up.from] || null);
+      } else if (up.delta < 0) {
+        for (i = 0; i < -up.delta; i++) {
+          var gone = mirror.children[up.from];
+          if (gone) mirror.removeChild(gone);
+        }
+      }
+      var end = Math.max(up.to, up.from + Math.max(0, up.delta));
+      for (i = up.from; i < end; i++) {
+        var el = mirror.children[i];
+        if (el) { el.className = 'ml'; el.innerHTML = up.html[i]; }
+      }
+    }
+    current = -1;
+    markCurrent();
+  }
+
+  // Coalesce to one repaint per frame — with a timer racing the frame, because
+  // a background or throttled tab stops handing out frames and a mirror that
+  // has silently stopped following the text is worse than one that never was.
+  var beat = 0, queued = false;
+  function schedule() {
+    if (!model || queued) return;
+    queued = true;
+    frame = window.requestAnimationFrame(run);
+    beat = window.setTimeout(run, 40);
+  }
+  function run() {
+    if (!queued) return;
+    queued = false;
+    window.cancelAnimationFrame(frame);
+    window.clearTimeout(beat);
+    paint(false);
+  }
+
+  function markCurrent() {
+    if (!model || !mirror) return;
+    var at = area.value.slice(0, area.selectionStart).split('\\n').length - 1;
+    if (at === current) return;
+    var was = mirror.children[current];
+    if (was) was.classList.remove('cur');
+    var now = mirror.children[at];
+    if (now) now.classList.add('cur');
+    current = at;
+  }
+
+  function syncScroll() {
+    if (gutter) gutter.scrollTop = area.scrollTop;
+    if (mirror) {
+      mirror.scrollTop = area.scrollTop;
+      mirror.scrollLeft = area.scrollLeft;
+    }
+  }
+
+  function stopMirror() {
+    model = null;
+    if (wrap) wrap.classList.remove('mirrored');
+    if (mirror) mirror.innerHTML = '';
+  }
+
+  function startMirror() {
+    if (!mirror || !wrap || wrap.getAttribute('data-mirror') !== '1') return;
+    var hl = window.forgeHighlight;
+    if (!hl || !hl.Mirror) return;
+    if (area.value.length > MAX_MIRROR || lineCount() > MAX_LINES) return;
+    lang = wrap.getAttribute('data-lang') || 'plain';
+    model = new hl.Mirror(lang);
+    wrap.classList.add('mirrored');
+    paint(true);
+    syncScroll();
+  }
+
+  // A new file has no extension until you type one, so the language follows
+  // the path box as it is filled in.
+  function relang() {
+    var hl = window.forgeHighlight;
+    if (!hl || !pathInput || !wrap) return;
+    var next = hl.detect(pathInput.value || '', area.value.slice(0, 200));
+    if (next === lang) return;
+    lang = next;
+    wrap.setAttribute('data-lang', next);
+    if (!model) { startMirror(); return; }
+    model = new hl.Mirror(next);
+    paint(true);
+  }
+  if (pathInput) {
+    pathInput.addEventListener('input', relang);
+    pathInput.addEventListener('change', relang);
+  }
+
+  // The module that carries the tokenizer is deferred by definition, so the
+  // mirror waits for the document rather than for a load event that may
+  // already have gone.
+  if (doc.readyState === 'loading') {
+    doc.addEventListener('DOMContentLoaded', startMirror);
+  } else {
+    startMirror();
+  }
+
+  // ---- typing ----
+
+  function replaceSelection(text, back) {
     var start = area.selectionStart, end = area.selectionEnd;
     area.setRangeText(text, start, end, 'end');
+    if (back) area.setSelectionRange(area.selectionStart - back, area.selectionStart - back);
     area.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  var PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'", '\\u0060': '\\u0060' };
+
   area.addEventListener('keydown', function (e) {
-    if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) {
       e.preventDefault();
-      replaceSelection('\\t');
+      if (form) { if (form.requestSubmit) form.requestSubmit(); else form.submit(); }
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+    // ⌘F / ctrl-F is the browser's. The mirror holds the real text, so the
+    // page's own find lands on the line you were looking for.
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      replaceSelection('\\t', 0);
+      return;
+    }
+    if (e.key === 'Enter' && !e.shiftKey) {
       var upto = area.value.slice(0, area.selectionStart);
       var line = upto.slice(upto.lastIndexOf('\\n') + 1);
       var indent = /^[\\t ]*/.exec(line)[0];
+      if (/[([{]$/.test(line)) indent += '\\t';
       if (indent === '') return;
       e.preventDefault();
-      replaceSelection('\\n' + indent);
+      replaceSelection('\\n' + indent, 0);
+      return;
+    }
+    var close = PAIRS[e.key];
+    if (close) {
+      var start = area.selectionStart, end = area.selectionEnd;
+      if (start !== end) {
+        // Wrap what is selected rather than replacing it.
+        var picked = area.value.slice(start, end);
+        e.preventDefault();
+        area.setRangeText(e.key + picked + close, start, end, 'preserve');
+        area.setSelectionRange(start + 1, end + 1);
+        area.dispatchEvent(new Event('input', { bubbles: true }));
+        return;
+      }
+      var next = area.value.charAt(start);
+      if (next === '' || /[\\s)\\]}>,;]/.test(next)) {
+        e.preventDefault();
+        replaceSelection(e.key + close, 1);
+      }
+      return;
+    }
+    if (/^[)\\]}]$/.test(e.key) && area.selectionStart === area.selectionEnd) {
+      // Typing the closing half of a pair we just inserted steps over it.
+      if (area.value.charAt(area.selectionStart) === e.key) {
+        e.preventDefault();
+        area.setSelectionRange(area.selectionStart + 1, area.selectionStart + 1);
+      }
     }
   });
-  area.addEventListener('input', paintGutter);
-  area.addEventListener('scroll', function () {
-    if (gutter) gutter.scrollTop = area.scrollTop;
+
+  area.addEventListener('input', function () { paintGutter(); schedule(); });
+  area.addEventListener('scroll', syncScroll);
+  area.addEventListener('click', markCurrent);
+  area.addEventListener('keyup', markCurrent);
+  doc.addEventListener('selectionchange', function () {
+    if (doc.activeElement === area) markCurrent();
   });
   paintGutter();
 
   // ---- preview ----
   var tabs = doc.querySelectorAll('[data-editor-tab]');
   var pane = doc.getElementById('editor-preview');
-  var wrap = doc.getElementById('editor-write');
   var url = pane && pane.getAttribute('data-preview');
-  var token = pane && pane.getAttribute('data-token');
+  var forPath = pane && pane.getAttribute('data-path');
   var last = null; var timer = 0; var rendered = '';
 
   function ask() {
@@ -485,7 +674,7 @@ export const editorJs = /* js */ `
     last = ctl;
     var body = new FormData();
     body.append('body', area.value);
-    if (token) body.append('path', token);
+    body.append('path', (pathInput && pathInput.value) || forPath || '');
     fetch(url, { method: 'POST', body: body, signal: ctl.signal })
       .then(function (r) { return r.ok ? r.text() : ''; })
       .then(function (text) {

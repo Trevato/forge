@@ -1,0 +1,395 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`every language snapshots ts 1`] = `
+"keyword:import | plain:  | punctuation:{ | plain: html  | punctuation:} | plain:  | keyword:from | plain:  | string:"./html.ts" | punctuation:;
+plain:
+comment:/** The lamp. */
+meta/decorator:@sealed
+keyword:export | plain:  | keyword:class | plain:  | type:Lamp | operator:< | type:T | operator:> | plain:  | keyword:extends | plain:  | type:Device | plain:  | punctuation:{
+plain:   | meta/variable:#lit | plain:  | operator:= | plain:  | constant:false | punctuation:;
+plain:   | keyword:static | plain:  | keyword:readonly | plain:  | type:MAX | plain:  | operator:= | plain:  | number:0xff | punctuation:;
+plain:   | function:toggle | punctuation:( | plain:on | operator:: | plain:  | type:boolean | punctuation:) | operator:: | plain:  | string:\`lamp: | punctuation:\${ | plain:string | punctuation:} | string:\` | plain:  | punctuation:{
+plain:     | keyword:const | plain: re  | operator:= | plain:  | string/regex:/^lamp:[a-z]+$/gi | punctuation:;
+plain:     | keyword:return | plain: re | punctuation:. | function:test | punctuation:( | keyword:this | punctuation:. | plain/property:name | punctuation:) | plain:  | operator:? | plain:  | string:\`lamp: | punctuation:\${ | plain:this.name | punctuation:} | string:\` | plain:  | operator:: | plain:  | string:"lamp:none" | punctuation:;
+plain:   | punctuation:}
+punctuation:}
+keyword:const | plain: el  | operator:= | plain:  | punctuation:< | keyword/tag:Card | plain:  | type/attribute:title | operator:= | string:"Lamp" | plain:  | type/attribute:count | operator:= | punctuation:{ | number:2 | punctuation:} | plain: onClick | operator:= | punctuation:{() | plain:  | operator:=> | plain:  | function:toggle | punctuation:( | operator:! | plain:on | punctuation:)} | plain:  | punctuation:/>;
+plain:"
+`;
+
+exports[`every language snapshots python 1`] = `
+"keyword:import | plain: os
+plain:
+plain:
+meta/decorator:@dataclass
+keyword:class | plain:  | type:Point | operator::
+plain:     | string:"""A point.
+plain:
+string:    Spanning lines.
+string:    """
+plain:
+plain:    x | operator:: | plain:  | type:int | plain:  | operator:= | plain:  | number:0
+plain:
+plain:     | keyword:def | plain:  | function:dist | punctuation:( | constant:self | punctuation:, | plain: other | operator:: | plain:  | string:"Point" | punctuation:) | plain:  | operator:-> | plain:  | type:float | operator::
+plain:         | keyword:return | plain:  | punctuation:( | constant:self | punctuation:. | plain/property:x | plain:  | operator:- | plain: other | punctuation:. | plain/property:x | punctuation:) | plain:  | operator:** | plain:  | number:2 | plain:   | comment:# squared
+plain:"
+`;
+
+exports[`every language snapshots go 1`] = `
+"keyword:package | plain: main
+plain:
+keyword:import | plain:  | string:"fmt"
+plain:
+keyword:type | plain:  | type:Beacon | plain:  | keyword:struct | plain:  | punctuation:{
+plain:	 | type:Name | plain:  | type:string
+plain:	lit   | type:bool
+punctuation:}
+plain:
+keyword:func | plain:  | punctuation:( | plain:b  | operator:* | type:Beacon | punctuation:) | plain:  | function:Light | punctuation:() | plain:  | type:error | plain:  | punctuation:{
+plain:	 | keyword:if | plain:  | operator:! | plain:b | punctuation:. | plain/property:lit | plain:  | punctuation:{
+plain:		 | keyword:return | plain: fmt | punctuation:. | function:Errorf | punctuation:( | string:"dark: %q" | punctuation:, | plain: b | punctuation:. | plain/property:Name | punctuation:)
+plain:	 | punctuation:}
+plain:	 | keyword:return | plain:  | constant:nil
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots rust 1`] = `
+"meta/decorator:#[derive(Debug, Clone)]
+keyword:pub | plain:  | keyword:struct | plain:  | type:Beacon | operator:< | meta/variable:'a | operator:> | plain:  | punctuation:{
+plain:    name | operator:: | plain:  | operator:& | meta/variable:'a | plain:  | type:str | punctuation:,
+punctuation:}
+plain:
+keyword:impl | operator:< | meta/variable:'a | operator:> | plain:  | type:Beacon | operator:< | meta/variable:'a | operator:> | plain:  | punctuation:{
+plain:     | keyword:pub | plain:  | keyword:fn | plain:  | function:new | punctuation:( | plain:name | operator:: | plain:  | operator:& | meta/variable:'a | plain:  | type:str | punctuation:) | plain:  | operator:-> | plain:  | keyword:Self | plain:  | punctuation:{
+plain:         | function/decorator:println! | punctuation:( | string:"made {}" | punctuation:, | plain: name | punctuation:);
+plain:         | keyword:Self | plain:  | punctuation:{ | plain: name  | punctuation:}
+plain:     | punctuation:}
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots c 1`] = `
+"meta:#include | plain:  | string:<stdio.h>
+meta:#define | plain:  | type:MAX | plain:  | number:128
+plain:
+comment:/* a block
+comment:   comment */
+keyword:int | plain:  | function:main | punctuation:( | keyword:int | plain: argc | punctuation:, | plain:  | keyword:char | plain:  | operator:** | plain:argv | punctuation:) | plain:  | punctuation:{
+plain:     | keyword:const | plain:  | keyword:char | plain:  | operator:* | plain:name  | operator:= | plain:  | string:"world" | punctuation:;
+plain:     | function:printf | punctuation:( | string:"hello %s\\n" | punctuation:, | plain: name | punctuation:);
+plain:     | keyword:return | plain:  | number:0 | punctuation:;
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots java 1`] = `
+"keyword:package | plain: forge | punctuation:;
+plain:
+meta/decorator:@Service
+keyword:public | plain:  | keyword:final | plain:  | keyword:class | plain:  | type:Beacon | plain:  | keyword:implements | plain:  | type:Light | plain:  | punctuation:{
+plain:     | keyword:private | plain:  | keyword:static | plain:  | keyword:final | plain:  | type:int | plain:  | type:MAX | plain:  | operator:= | plain:  | number:128 | punctuation:;
+plain:
+plain:     | meta/decorator:@Override
+plain:     | keyword:public | plain:  | type:String | plain:  | function:toString | punctuation:() | plain:  | punctuation:{
+plain:         | keyword:return | plain:  | string:"beacon:" | plain:  | operator:+ | plain:  | type:MAX | punctuation:;
+plain:     | punctuation:}
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots kotlin 1`] = `
+"keyword:package | plain: forge
+plain:
+keyword:data | plain:  | keyword:class | plain:  | type:Beacon | punctuation:( | keyword:val | plain: name | operator:: | plain:  | type:String | punctuation:, | plain:  | keyword:var | plain: lit | operator:: | plain:  | type:Boolean | plain:  | operator:= | plain:  | constant:false | punctuation:) | plain:  | punctuation:{
+plain:     | keyword:fun | plain:  | function:light | punctuation:() | operator:: | plain:  | type:String | plain:  | punctuation:{
+plain:         | keyword:if | plain:  | punctuation:( | operator:! | plain:lit | punctuation:) | plain:  | keyword:return | plain:  | string:"dark"
+plain:         | keyword:return | plain:  | string:"lit: $name"
+plain:     | punctuation:}
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots swift 1`] = `
+"keyword:import | plain:  | type:Foundation
+plain:
+meta/decorator:@MainActor
+keyword:struct | plain:  | type:Beacon | plain:  | punctuation:{
+plain:     | keyword:let | plain: name | operator:: | plain:  | type:String
+plain:     | keyword:var | plain: lit  | operator:= | plain:  | constant:false
+plain:
+plain:     | keyword:func | plain:  | function:describe | punctuation:() | plain:  | operator:-> | plain:  | type:String | plain:  | punctuation:{
+plain:         | keyword:guard | plain: lit  | keyword:else | plain:  | punctuation:{ | plain:  | keyword:return | plain:  | string:"dark" | plain:  | punctuation:}
+plain:         | keyword:return | plain:  | string:"lit"
+plain:     | punctuation:}
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots ruby 1`] = `
+"comment:# frozen_string_literal: true
+keyword:require | plain:  | string:"json"
+plain:
+keyword:class | plain:  | type:Beacon
+plain:   | keyword:attr_reader | plain:  | constant::name
+plain:
+plain:   | keyword:def | plain:  | function:initialize | punctuation:( | plain:name | punctuation:)
+plain:     | meta/variable:@name | plain:  | operator:= | plain: name
+plain:     | meta/variable:@lit | plain:  | operator:= | plain:  | constant:false
+plain:   | keyword:end
+plain:
+plain:   | keyword:def | plain:  | function:lit?
+plain:     | meta/variable:@lit | plain:  | operator:&& | plain:  | operator:! | plain:name | punctuation:. | plain/property:empty?
+plain:   | keyword:end
+keyword:end
+plain:"
+`;
+
+exports[`every language snapshots php 1`] = `
+"operator:<? | plain:php
+plain:
+keyword:namespace | plain:  | type:Forge | punctuation:;
+plain:
+keyword:class | plain:  | type:Beacon
+punctuation:{
+plain:     | keyword:private | plain:  | type:string | plain:  | meta/variable:$name | punctuation:;
+plain:
+plain:     | keyword:public | plain:  | keyword:function | plain:  | function:__construct | punctuation:( | type:string | plain:  | meta/variable:$name | punctuation:)
+plain:     | punctuation:{
+plain:         | meta/variable:$this | operator:-> | plain:name  | operator:= | plain:  | meta/variable:$name | punctuation:; | plain:  | comment:// remember it
+plain:     | punctuation:}
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots lua 1`] = `
+"comment:-- a lamp
+keyword:local | plain: M  | operator:= | plain:  | punctuation:{}
+plain:
+keyword:function | plain:  | function:M | punctuation:. | function:light | punctuation:( | plain:name | punctuation:)
+plain:   | keyword:if | plain: name  | operator:== | plain:  | keyword:nil | plain:  | keyword:then
+plain:     | keyword:return | plain:  | string:"dark"
+plain:   | keyword:end
+plain:   | keyword:return | plain:  | type:string | punctuation:. | function:format | punctuation:( | string:"lit: %s" | punctuation:, | plain: name | punctuation:)
+keyword:end
+plain:
+keyword:return | plain: M
+plain:"
+`;
+
+exports[`every language snapshots zig 1`] = `
+"keyword:const | plain: std  | operator:= | plain:  | meta/decorator:@import | punctuation:( | string:"std" | punctuation:);
+plain:
+keyword:pub | plain:  | keyword:fn | plain:  | function:main | punctuation:() | plain:  | operator:! | type:void | plain:  | punctuation:{
+plain:     | keyword:const | plain: stdout  | operator:= | plain: std | punctuation:. | plain/property:io | punctuation:. | function:getStdOut | punctuation:(). | function:writer | punctuation:();
+plain:     | keyword:try | plain: stdout | punctuation:. | function:print | punctuation:( | string:"hello\\n" | punctuation:, | plain:  | punctuation:.{});
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots elixir 1`] = `
+"keyword:defmodule | plain:  | type:Beacon | plain:  | keyword:do
+plain:   | meta/variable:@moduledoc | plain:  | string:"A beacon."
+plain:
+plain:   | keyword:def | plain:  | function:light | punctuation:( | plain:name | punctuation:) | plain:  | keyword:when | plain:  | function:is_binary | punctuation:( | plain:name | punctuation:) | plain:  | keyword:do
+plain:     | punctuation:{ | constant::ok | punctuation:, | plain:  | string:"lit: #{name}" | punctuation:}
+plain:   | keyword:end
+plain:
+plain:   | keyword:def | plain:  | function:light | punctuation:( | plain:_ | punctuation:), | plain:  | keyword:do | operator:: | plain:  | constant::error
+keyword:end
+plain:"
+`;
+
+exports[`every language snapshots nix 1`] = `
+"punctuation:{ | plain:  | type:pkgs | plain:  | operator:? | plain:  | keyword:import | plain:  | operator:< | plain:nixpkgs | operator:> | plain:  | punctuation:{ | plain:  | punctuation:} | plain:  | punctuation:} | operator::
+plain:
+type:pkgs | punctuation:. | type:mkDerivation | plain:  | keyword:rec | plain:  | punctuation:{
+plain:  pname  | operator:= | plain:  | string:"forge" | punctuation:;
+plain:  version  | operator:= | plain:  | string:"0.1.0" | punctuation:;
+plain:  buildInputs  | operator:= | plain:  | punctuation:[ | plain:  | type:pkgs | punctuation:. | plain/property:bun | plain:  | punctuation:];
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots json 1`] = `
+"punctuation:{
+plain:   | string:"name" | operator:: | plain:  | string:"forge" | punctuation:,
+plain:   | string:"private" | operator:: | plain:  | constant:true | punctuation:,
+plain:   | string:"scripts" | operator:: | plain:  | punctuation:{ | plain:  | string:"test" | operator:: | plain:  | string:"bun test" | plain:  | punctuation:},
+plain:   | string:"count" | operator:: | plain:  | number:42 | punctuation:,
+plain:   | string:"nested" | operator:: | plain:  | punctuation:[ | constant:true | punctuation:, | plain:  | constant:false | punctuation:, | plain:  | constant:null | punctuation:]
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots yaml 1`] = `
+"comment:# a workflow
+keyword/property:name | punctuation:: | plain: ci
+keyword/property:on | punctuation::
+plain:   | keyword/property:push | punctuation::
+plain:     | keyword/property:branches | punctuation:: | plain:  | punctuation:[ | plain:main | punctuation:]
+keyword/property:anchors | punctuation:: | plain:  | meta/variable:&defaults
+plain:   | keyword/property:shell | punctuation:: | plain: bash
+keyword/property:jobs | punctuation::
+plain:   | keyword/property:test | punctuation::
+plain:     | keyword/property:<< | punctuation:: | plain:  | meta/variable:*defaults
+plain:     | keyword/property:steps | punctuation::
+plain:      -  | keyword/property:run | punctuation:: | plain:  | operator:|
+string:          bun install
+string:          bun test
+plain:     | keyword/property:timeout | punctuation:: | plain:  | number:15
+plain:     | keyword/property:verbose | punctuation:: | plain:  | constant:no
+plain:"
+`;
+
+exports[`every language snapshots toml 1`] = `
+"comment:# Cargo
+type/heading:[package]
+keyword/property:name | operator: =  | string:"forge"
+keyword/property:version | operator: =  | string:"0.1.0"
+keyword/property:edition | operator: =  | number:2024
+plain:
+type/heading:[[bin]]
+keyword/property:path | operator: =  | string:"src/main.rs"
+keyword/property:features | operator: =  | punctuation:[ | string:"a" | punctuation:, | plain:  | string:"b" | punctuation:]
+plain:"
+`;
+
+exports[`every language snapshots ini 1`] = `
+"comment:; a config
+type/heading:[core]
+keyword/property:editor | operator: =  | plain:vim
+keyword/property:autocrlf | operator: =  | constant:false
+plain:
+type/heading:[remote "origin"]
+keyword/property:url | operator: =  | plain:https | operator::// | plain:example | operator:. | plain:test | operator:/ | plain:x | operator:. | plain:git
+plain:"
+`;
+
+exports[`every language snapshots markdown 1`] = `
+"keyword/heading:# Forge
+plain:
+plain:A  | plain/emphasis:**self-hosted** | plain: forge with  | string:\`zero\` | plain: dependencies.
+plain:
+punctuation:- | plain: one
+punctuation:- | plain:  | constant:[ ] | plain: a task
+plain:
+comment:> A quote with  | plain/emphasis:*emphasis* | comment:.
+plain:
+meta:\`\`\` | type:ts
+keyword:const | plain: lamp | operator:: | plain:  | type:string | plain:  | operator:= | plain:  | string:"lit" | punctuation:; | plain:  | comment:// a fence
+meta:\`\`\`
+plain:
+punctuation:| | plain: col  | punctuation:| | plain: col  | punctuation:|
+punctuation:| | plain: ---  | punctuation:| | plain: ---  | punctuation:|
+punctuation:| | plain: 1    | punctuation:| | plain: 2    | punctuation:|
+plain:
+plain:See  | punctuation:[ | meta/link:the docs | punctuation:]( | string/link:https://example.test/docs | punctuation:) | plain:.
+plain:"
+`;
+
+exports[`every language snapshots css 1`] = `
+"comment:/* the shell */
+type::root | plain:  | punctuation:{
+plain:   | meta/variable:--fg | operator:: | plain:  | number:#18181b | punctuation:;
+punctuation:}
+plain:
+function:.card | plain:  | operator:> | plain:  | type/tag:a | type::hover | punctuation:,
+function:#main | plain:  | punctuation:{
+plain:   | keyword/property:color | operator:: | plain:  | function:var | punctuation:( | meta/variable:--fg | punctuation:);
+plain:   | keyword/property:margin | operator:: | plain:  | number:0 | plain:  | number:8px | plain:  | number:1.5rem | punctuation:;
+plain:   | keyword/property:background | operator:: | plain:  | number:#fff | plain:  | function:url | punctuation:( | string:"x.png" | punctuation:) | plain:  | constant:no-repeat | plain:  | meta:!important | punctuation:;
+punctuation:}
+plain:
+keyword:@media | plain:  | punctuation:( | keyword/property:min-width | operator:: | plain:  | number:40rem | punctuation:) | plain:  | punctuation:{
+plain:   | operator:. | constant:card | plain:  | punctuation:{
+plain:     | keyword/property:display | operator:: | plain:  | constant:grid | punctuation:;
+plain:   | punctuation:}
+punctuation:}
+plain:"
+`;
+
+exports[`every language snapshots html 1`] = `
+"meta:<!doctype html>
+punctuation:< | keyword/tag:html | plain:  | type/attribute:lang | operator:= | string:"en" | punctuation:>
+plain:   | comment:<!-- a note -->
+plain:   | punctuation:< | keyword/tag:body | plain:  | type/attribute:class | operator:= | string:"page" | plain:  | type/attribute:data-theme | punctuation:>
+plain:     | punctuation:< | keyword/tag:p | punctuation:> | plain:Hello  | constant:&amp; | plain: welcome | punctuation:</ | keyword/tag:p | punctuation:>
+plain:     | punctuation:< | keyword/tag:script | punctuation:>
+plain:       | keyword:const | plain: x  | operator:= | plain:  | number:1 | punctuation:; | plain:  | comment:// inline
+plain:     | punctuation:</ | keyword/tag:script | punctuation:>
+plain:     | punctuation:< | keyword/tag:style | punctuation:>
+plain:       | function:.a | plain:  | punctuation:{
+plain:         | keyword/property:color | operator:: | plain:  | constant:red | punctuation:;
+plain:       | punctuation:}
+plain:     | punctuation:</ | keyword/tag:style | punctuation:>
+plain:   | punctuation:</ | keyword/tag:body | punctuation:>
+punctuation:</ | keyword/tag:html | punctuation:>
+plain:"
+`;
+
+exports[`every language snapshots shell 1`] = `
+"comment:#!/usr/bin/env bash
+keyword:set | plain:  | constant/attribute:-euo | plain: pipefail
+plain:
+plain/variable:NAME | operator:= | string:" | meta/variable:\${1:-world} | string:" | plain:  | comment:# default
+plain:
+keyword:if | plain:  | punctuation:[ | plain:  | constant/attribute:-f | plain:  | string:" | meta/variable:$HOME | string:/.zshrc" | plain:  | punctuation:]; | plain:  | keyword:then
+plain:   | function:echo | plain:  | string:"hi  | meta/variable:$NAME | string:" | plain:  | operator:| | plain:  | function:tr | plain: a-z A-Z
+keyword:fi
+plain:
+function:cat | plain:  | operator:<<- | meta:EOF
+string:  raw  | meta/variable:$text | string: here
+meta:EOF
+plain:"
+`;
+
+exports[`every language snapshots sql 1`] = `
+"comment:-- every repo with issues
+keyword:SELECT | plain: r | punctuation:. | plain:id | punctuation:, | plain:  | keyword:COUNT | punctuation:( | plain:i | punctuation:. | plain:id | punctuation:) | plain:  | keyword:AS | plain: n
+keyword:FROM | plain: repos r
+keyword:LEFT | plain:  | keyword:JOIN | plain: issues i  | keyword:ON | plain: i | punctuation:. | plain:repo_id  | operator:= | plain: r | punctuation:. | plain:id
+keyword:WHERE | plain: r | punctuation:. | plain:visibility  | operator:= | plain:  | string:'public'
+keyword:GROUP | plain:  | keyword:BY | plain: r | punctuation:. | plain:id
+keyword:LIMIT | plain:  | number:10 | punctuation:;
+plain:"
+`;
+
+exports[`every language snapshots dockerfile 1`] = `
+"meta:# syntax=docker/dockerfile:1
+keyword:FROM | plain: oven | operator:/ | plain:bun | operator:: | number:1 | plain:  | keyword:AS | plain: base
+keyword:WORKDIR | plain:  | operator:/ | plain:app
+keyword:COPY | plain: package | punctuation:. | plain:json  | punctuation:. | operator:/
+keyword:RUN | plain: bun install  | constant/attribute:--frozen-lockfile
+keyword:ENV | plain: NODE_ENV | operator:= | string:"production"
+keyword:CMD | plain:  | punctuation:[ | string:"bun" | punctuation:, | plain:  | string:"run" | punctuation:, | plain:  | string:"src/main.ts" | punctuation:]
+plain:"
+`;
+
+exports[`every language snapshots makefile 1`] = `
+"comment:# build
+keyword/property:CC | operator: := | plain: clang
+keyword/property:FLAGS | operator: = | plain: -O2
+plain:
+function:.PHONY | operator:: | plain: all test
+plain:
+function:all | operator:: | plain: build test
+punctuation:	 | function:bun | plain: run src | operator:/ | plain:main.ts  | meta/variable:$(FLAGS)
+plain:
+function:test | operator::
+punctuation:	 | function:bun | plain: test
+plain:"
+`;
+
+exports[`every language snapshots diff 1`] = `
+"meta:diff --git a/src/lamp.ts b/src/lamp.ts
+meta:index 1a2b3c4..5d6e7f8 100644
+meta/heading:--- a/src/lamp.ts
+meta/heading:+++ b/src/lamp.ts
+function:@@ -1,4 +1,4 @@
+plain: export const lamp = {
+keyword/deleted:-  on() { return "dark" },
+meta/inserted:+  on() { return "lit" },
+plain: };
+plain:"
+`;

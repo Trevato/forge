@@ -21,7 +21,10 @@ import { editFiles, MAX_FILE_BYTES } from "../../actions/contents.ts";
 import { canAdmin } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
+import { highlightAsset } from "../asset.ts";
 import { editorJs } from "../client.ts";
+import { detectLanguage } from "../highlight.ts";
+import { highlightToHtml } from "../highlight-html.ts";
 import { loadRepo, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field as formValue, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
@@ -48,6 +51,35 @@ interface Draft {
   /** True when committing straight to `ref` is not on offer at all. */
   mustBranch: boolean;
   error?: string;
+}
+
+/**
+ * Where the live-highlighted editor gives up and hands you a plain textarea.
+ *
+ * The mirror re-renders on a frame; on a file this size that stops being free,
+ * and a slow editor is worse than an unhighlighted one. Both limits are the
+ * kind of file nobody hand-edits in a browser anyway — a lockfile, a bundle,
+ * a fixture — so the fallback is the honest answer rather than a defeat.
+ */
+export const MAX_MIRROR_BYTES = 200_000;
+export const MAX_MIRROR_LINES = 10_000;
+
+/** Whether this text gets the highlighted mirror, and in what language. */
+export function mirrorFor(
+  path: string,
+  content: string,
+): { lang: string; mirror: boolean } {
+  const lang = detectLanguage(path, content.slice(0, content.indexOf("\n") + 1 || 200));
+  const tooBig =
+    content.length > MAX_MIRROR_BYTES ||
+    countLines(content) > MAX_MIRROR_LINES;
+  return { lang, mirror: !tooBig };
+}
+
+function countLines(text: string): number {
+  let n = 1;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) n++;
+  return n;
 }
 
 /** A branch name from a file path: `alice/edit-src-lamp-ts`. */
@@ -103,8 +135,14 @@ export function editErrorText(error: unknown): string {
 
 // ---- the page ----
 
-function editorForm(scope: RepoScope, draft: Draft, username: string): Html {
+function editorForm(
+  scope: RepoScope,
+  draft: Draft,
+  username: string,
+  o: { lang: string; mirror: boolean },
+): Html {
   const base = scope.base;
+  const { lang, mirror } = o;
   const encoded = encodeURIComponent(draft.ref);
   const suggestion =
     draft.branch !== "" ? draft.branch : suggestBranch(username, draft.path);
@@ -134,47 +172,67 @@ function editorForm(scope: RepoScope, draft: Draft, username: string): Html {
         pathCrumbs(base, scope.facts.name, draft.ref, draft.path, true),
       )}
       <span class="spacer"></span>
-      <button
-        class="btn editor-tab"
-        data-size="sm"
-        data-variant="ghost"
-        type="button"
-        data-editor-tab="write"
-        aria-selected="true"
-        hidden
-      >
-        Write
-      </button>
-      <button
-        class="btn editor-tab"
-        data-size="sm"
-        data-variant="ghost"
-        type="button"
-        data-editor-tab="preview"
-        aria-selected="false"
-        hidden
-      >
-        Preview
-      </button>
+      ${when(
+        isMarkdownPath(draft.path) || draft.creating,
+        () =>
+          html`<button
+              class="btn editor-tab"
+              data-size="sm"
+              data-variant="ghost"
+              type="button"
+              data-editor-tab="write"
+              aria-selected="true"
+              hidden
+            >
+              Write
+            </button>
+            <button
+              class="btn editor-tab"
+              data-size="sm"
+              data-variant="ghost"
+              type="button"
+              data-editor-tab="preview"
+              aria-selected="false"
+              hidden
+            >
+              Preview
+            </button>`,
+      )}
     </div>
 
-    <div class="editor-wrap" id="editor-write">
+    <div
+      class="editor-wrap"
+      id="editor-write"
+      data-lang="${lang}"
+      ${mirror ? raw('data-mirror="1"') : null}
+    >
       <div class="editor-gutter" id="editor-gutter" aria-hidden="true"></div>
-      <textarea
-        class="editor mono"
-        name="content"
-        id="f-content"
-        aria-label="File contents"
-        spellcheck="false"
-        wrap="off"
-      >
+      <div class="editor-stack">
+        ${when(mirror, () =>
+          raw(
+            `<pre class="editor-mirror mono" id="editor-mirror" aria-hidden="true">${mirrorHtml(
+              draft.content,
+              lang,
+            )}</pre>`,
+          ),
+        )}
+        <textarea
+          class="editor mono"
+          name="content"
+          id="f-content"
+          aria-label="File contents"
+          spellcheck="false"
+          wrap="off"
+        >
 ${draft.content}</textarea
-      >
+        >
+      </div>
     </div>
     <div
       class="prose editor-preview"
       id="editor-preview"
       data-preview="${base}/preview"
+      data-path="${draft.path}"
       hidden
     ></div>
 
@@ -293,8 +351,16 @@ ${draft.content}</textarea
   </form>`;
 }
 
-function editorPage(ctx: Ctx, scope: RepoScope, draft: Draft): Response {
+async function editorPage(
+  ctx: Ctx,
+  scope: RepoScope,
+  draft: Draft,
+): Promise<Response> {
   const username = ctx.auth.user?.username ?? "edit";
+  const shape = mirrorFor(draft.path, draft.content);
+  // Only an editor that will actually use the tokenizer pays for it — and
+  // only that page relaxes the script CSP to admit a file from this origin.
+  const asset = shape.mirror ? await highlightAsset() : null;
   return page({
     ctx,
     title: `${draft.creating ? "New file" : draft.path} · ${scope.facts.name}`,
@@ -313,10 +379,25 @@ function editorPage(ctx: Ctx, scope: RepoScope, draft: Draft): Response {
           ${icon("alert")}<span>${message}</span>
         </p>`,
     )}
-    ${editorForm(scope, draft, username)}`,
+    ${editorForm(scope, draft, username, {
+      lang: shape.lang,
+      mirror: shape.mirror && asset !== null,
+    })}`,
     scriptJs: editorJs,
+    ...(shape.mirror && asset !== null ? { scriptAsset: asset.path } : {}),
   });
 }
+
+/** The mirror's first paint, rendered by the same code the browser will use. */
+function mirrorHtml(content: string, lang: string): string {
+  return highlightToHtml(content, lang as Parameters<typeof highlightToHtml>[1])
+    .split("\n")
+    .map((line) => `<div class="ml">${line}</div>`)
+    .join("");
+}
+
+const isMarkdownPath = (path: string): boolean =>
+  path === "" || /\.(md|markdown|mdx)$/i.test(path);
 
 /**
  * The repository and the situation an edit route needs, or the refusal. A
@@ -380,7 +461,7 @@ export async function editPage(ctx: Ctx): Promise<Response> {
     );
   }
   const mustBranch = await mustBranchFrom(ctx, scope, ref);
-  return editorPage(ctx, scope, {
+  return await editorPage(ctx, scope, {
     ref,
     path,
     content: new TextDecoder().decode(blob.value.body),
@@ -404,7 +485,7 @@ export async function newFilePage(ctx: Ctx): Promise<Response> {
   const dir = ctx.params.path ?? "";
   if (dir !== "" && !isSafeTreePath(dir)) return notFoundPage(ctx);
   const mustBranch = await mustBranchFrom(ctx, scope, ref);
-  return editorPage(ctx, scope, {
+  return await editorPage(ctx, scope, {
     ref,
     path: dir === "" ? "" : `${dir}/`,
     content: "",
@@ -462,7 +543,7 @@ export async function editSubmit(ctx: Ctx): Promise<Response> {
     creating,
     mustBranch,
   };
-  const refuse = (message: string): Response =>
+  const refuse = (message: string): Promise<Response> =>
     editorPage(ctx, scope, { ...draft, error: message });
 
   if (!isSafeRef(ref)) return notFoundPage(ctx);
