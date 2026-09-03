@@ -167,7 +167,7 @@ describe("the editor buffer", () => {
 
 // ---- the screens ----
 
-describe("editing a file in the terminal", () => {
+describe("editing a file in the terminal workspace", () => {
   let dataDir: string;
   let forge: Forge;
   let alice: User;
@@ -225,15 +225,17 @@ describe("editing a file in the terminal", () => {
     };
   }
 
-  /** Dashboard → the repo → the file browser → `src/main.ts` in the editor. */
-  async function openEditorOn(h: Harness, path: string): Promise<void> {
+  /** Dashboard → the workspace → a tab on the file → editing it in place. */
+  async function openWorkspace(h: Harness): Promise<void> {
     await h.press("/");
     await h.type("workshop");
     await h.press("enter");
     await h.press("enter");
     await h.until("alice/workshop");
-    await h.press("f");
-    await h.settle();
+  }
+
+  async function openEditorOn(h: Harness, path: string): Promise<void> {
+    await openWorkspace(h);
     await h.press("t");
     await h.settle();
     await h.type(path.replace(/[^A-Za-z0-9]/g, ""));
@@ -299,13 +301,14 @@ describe("editing a file in the terminal", () => {
       expect(h.text()).toContain("Commit src/main.ts");
       // The default target is a new branch named for the file, with the
       // subject prefilled — nothing here writes to a default branch by
-      // accident.
+      // accident — and the one file going in is listed and ticked.
       expect(h.text()).toContain("alice/edit-src-main-ts");
       expect(h.text()).toContain("Update src/main.ts");
+      expect(h.text()).toContain("[x] ~ src/main.ts");
 
-      // Tab past the subject and body to the target, keep "new branch",
-      // tab to the branch name, tab to the pull checkbox and tick it.
-      await h.press("tab", "tab", "tab", "tab");
+      // Tab past the subject, the body and the file list to the target, keep
+      // "new branch", tab to the branch name, tab to the pull box and tick it.
+      await h.press("tab", "tab", "tab", "tab", "tab");
       await h.press(" ");
       expect(h.text()).toContain("[x] open a pull request");
       await h.press("ctrl+s");
@@ -332,20 +335,38 @@ describe("editing a file in the terminal", () => {
     }
   });
 
-  test("esc with unsaved changes asks before discarding", async () => {
+  /**
+   * `esc` is not "throw it away" any more, because the buffer is not a screen
+   * any more: it stops typing and goes back to reading the same tab, edits
+   * and all. Losing work now takes `u` (this tab) or `x` (close it), and both
+   * ask first.
+   */
+  test("esc stops typing and keeps the edit; u asks before throwing it away", async () => {
     const h = boot();
     try {
       await h.settle();
       await openEditorOn(h, "README");
       await h.press("end");
-      await h.type("!");
+      await h.type("!!!");
       await h.press("esc");
       await h.settle();
-      expect(h.text()).toContain("Discard changes?");
+      expect(h.text()).toContain("1 modified");
+      expect(h.text()).toContain("# Workshop!!!");
+
+      await h.press("u");
+      await h.settle();
+      expect(h.text()).toContain("Discard changes");
       // Keeping is the default, and it really keeps.
       await h.press("enter");
       await h.settle();
-      expect(h.text()).toContain("modified");
+      expect(h.text()).toContain("# Workshop!!!");
+
+      // And the other answer really discards.
+      await h.press("u");
+      await h.press("right", "enter");
+      await h.until("discarded");
+      expect(h.text()).not.toContain("# Workshop!!!");
+      expect(h.text()).not.toContain("1 modified");
     } finally {
       h.stop();
     }
@@ -372,19 +393,13 @@ describe("editing a file in the terminal", () => {
     }
   });
 
-  test("D deletes a file through editFiles, on a branch", async () => {
+  test("D marks a file for deletion and c commits it, on a branch", async () => {
     const h = boot();
     try {
       await h.settle();
-      await h.press("/");
-      await h.type("workshop");
-      await h.press("enter");
-      await h.press("enter");
-      await h.until("alice/workshop");
-      await h.press("f");
-      await h.settle();
-      // Row 0 is README.md at the root (src/ sorts after it in git's order,
-      // so the cursor may be on either; find the file explicitly).
+      await openWorkspace(h);
+      // Find the file explicitly rather than trusting a row number: the
+      // finder leaves the explorer's cursor on what it opened.
       await h.press("t");
       await h.settle();
       await h.type("README");
@@ -395,8 +410,13 @@ describe("editing a file in the terminal", () => {
       await h.settle();
       expect(h.text()).toContain("Delete file");
       await h.press("right", "enter");
+      await h.until("marked for deletion");
+      // A pending deletion is a change like any other: it waits for `c`.
+      expect(h.text()).toContain("1 deletion pending");
+      await h.press("c");
       await h.settle();
       expect(h.text()).toContain("Delete README.md");
+      expect(h.text()).toContain("[x] - README.md");
       await h.press("ctrl+s");
       await h.until("committed to");
       const dir = join(forge.reposRoot, "alice", "workshop.git");

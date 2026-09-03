@@ -583,6 +583,14 @@ describe("origins in the terminal", () => {
       expect(help).not.toContain("fork");
       expect(help).not.toContain("sync now");
 
+      // Pressing them anyway names the one key that leads somewhere: a live
+      // browse has no bytes of ours to change, and `W` is where the copy that
+      // does live.
+      await h.press("e");
+      expect(h.text()).toContain("W to edit the workbench copy");
+      await h.press("c");
+      expect(h.text()).toContain("W to edit the workbench copy");
+
       // And nothing at all was created here.
       expect(getRepo(forge.db, "alice", "widgets")).toBeUndefined();
     } finally {
@@ -596,21 +604,19 @@ describe("origins in the terminal", () => {
       await openPicker(h);
       await h.press("enter");
       await h.until("gears and things, read live");
-      // Into the tree, which is one more read...
-      await h.press("f");
-      await h.until("src");
-      await h.press("esc");
-      await h.until("gears and things, read live");
+      // The workspace is the tree: opening the repository already listed it
+      // and read a file out of it.
+      await h.until("src/");
 
       // ...and from here on, everything is a cache hit. Back to the picker,
-      // in again, into the tree again: the origin hears nothing.
+      // in again, and every read is answered from the cache: the origin
+      // hears nothing.
       const mark = fake.state.requests.length;
       await h.press("esc");
       await h.until("octo/widgets");
       await h.press("enter");
       await h.until("gears and things, read live");
-      await h.press("f");
-      await h.until("src");
+      await h.until("src/");
       expect(fake.state.requests.length).toBe(mark);
     } finally {
       h.stop();
@@ -653,7 +659,13 @@ describe("origins in the terminal", () => {
         /^● \S+ {2}·  ● workbench \(synced .+\) {2}·  ○ this machine/,
       );
       expect(after).not.toContain("reading live from");
-      expect(after).toContain("mirrored from");
+      // Provenance lives on the about card (`I`) now that the repo's front
+      // door is a workspace rather than a page.
+      await h.press("I");
+      await h.settle();
+      expect(h.text()).toContain("mirrored from");
+      await h.press("esc");
+      await h.settle();
       expect(getRepo(forge.db, "alice", "widgets")).toBeDefined();
 
       // The write keys are here now, and the mirror key is gone.
@@ -717,7 +729,7 @@ describe("origins in the terminal", () => {
       await h.typeText("widgets");
       await h.press("enter");
       await h.press("enter");
-      await h.until("mirrored from");
+      await h.until("workbench (synced");
       // Both places hold the repo, so both wear a filled dot — what says
       // which one you are *reading* is the accent, so that is what is
       // asserted. (The colour, not the glyph: that is the strip's grammar.)
@@ -736,7 +748,7 @@ describe("origins in the terminal", () => {
 
       // And back again, to the copy we hold.
       await h.press("W");
-      await h.until("mirrored from");
+      await h.until("workbench (synced");
       expect(h.text()).not.toContain("reading live from");
     } finally {
       h.stop();
@@ -751,7 +763,7 @@ describe("origins in the terminal", () => {
       await h.typeText("widgets");
       await h.press("enter");
       await h.press("enter");
-      await h.until("mirrored from");
+      await h.until("workbench (synced");
       expect(h.text()).toContain("○ this machine");
 
       await h.press("P");
@@ -788,7 +800,7 @@ describe("origins in the terminal", () => {
       await h.typeText("widgets");
       await h.press("enter");
       await h.press("enter");
-      await h.until("octo/widgets @");
+      await h.until("workbench (synced");
       await h.press("i");
       await h.until("The gear slips");
       // The upstream mark plus the login on the origin, never a local name.

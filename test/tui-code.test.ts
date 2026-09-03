@@ -1,6 +1,10 @@
 /**
- * The code browser, the file finder, branches, counts, the palette's search
- * half, realtime, the local↔origin toggle, and OSC 8.
+ * The file finder, refs, counts, the palette's search half, realtime, the
+ * local↔origin toggle, and OSC 8.
+ *
+ * The workspace itself — explorer, tabs, the inline editor and the commit —
+ * has its own file (`tui-workspace.test.ts`). What is left here is everything
+ * that surrounds it.
  *
  * Everything here is driven headlessly against a real forge — `createApp` in a
  * temp directory, seeded through the actions — and asserted against the cell
@@ -84,7 +88,7 @@ function boot(
   };
 }
 
-describe("the terminal code browser", () => {
+describe("the terminal, around the workspace", () => {
   let dataDir: string;
   let forge: Forge;
   let alice: User;
@@ -161,110 +165,21 @@ describe("the terminal code browser", () => {
     await h.until(`alice/${name}`);
   }
 
-  /** …and on into the file browser. */
+  /** …and with the keys in the explorer rather than in the open file. */
   async function openBrowser(h: Harness): Promise<void> {
     await openRepo(h, "lighthouse");
-    await h.press("f");
+    await h.press("tab");
     await h.settle();
   }
 
-  // ---- explorer and preview ----
-
-  test("the file under the cursor loads into the preview within one settle", async () => {
-    const h = boot(forge, asAlice());
-    try {
-      await h.settle();
-      await openBrowser(h);
-      // Root listing, alphabetical: README.md is not first — docs/ is — so
-      // this also proves the cursor started somewhere sensible and the
-      // preview followed it rather than waiting for a keypress.
-      expect(h.text()).toContain("docs/");
-      expect(h.text()).toContain("README.md");
-
-      // Move to README.md and let the debounce fire. One settle is enough
-      // because the wait and the read are one tracked promise.
-      await h.press("j", "j");
-      expect(h.text()).toContain("A beacon.");
-      // The breadcrumb says all three parts.
-      expect(h.text()).toContain("lighthouse");
-      expect(h.text()).toContain("README.md");
-    } finally {
-      h.stop();
-    }
-  });
-
-  test("a superseded preview never paints over the file you landed on", async () => {
-    const h = boot(forge, asAlice());
-    try {
-      await h.settle();
-      await openBrowser(h);
-      // Walk down past several rows without settling between them: every
-      // intermediate load is superseded by the next keystroke, and only the
-      // last one may reach the screen.
-      for (let i = 0; i < 4; i++)
-        h.app.dispatch({
-          type: "key",
-          key: "j",
-          ctrl: false,
-          alt: false,
-          shift: false,
-        });
-      await h.settle();
-      const shown = h.text();
-      // Whatever row we ended on, the pane shows exactly one file and the
-      // breadcrumb agrees with it — never two files' contents at once.
-      const bodies = ["A beacon.", "export const one", "the lamp", "# Design"];
-      expect(bodies.filter((b) => shown.includes(b)).length).toBeLessThan(2);
-    } finally {
-      h.stop();
-    }
-  });
-
-  test("a directory expands in place, and l/h walk it", async () => {
-    const h = boot(forge, asAlice());
-    try {
-      await h.settle();
-      await openBrowser(h);
-      // `docs/` is the first row; `l` expands it in place rather than
-      // pushing a new screen — the crumb trail is the proof.
-      const crumbs = () => h.text().split("\n")[1] ?? "";
-      const before = crumbs();
-      await h.press("l");
-      expect(h.text()).toContain("DESIGN.md");
-      expect(crumbs()).toBe(before);
-      await h.press("h");
-      await h.settle();
-      // Collapsed again: the child is gone from the explorer.
-      expect(h.text()).not.toContain("DESIGN.md");
-    } finally {
-      h.stop();
-    }
-  });
-
-  test("below 100 columns there is one pane, and tab swaps it", async () => {
-    const h = boot(forge, asAlice(), 80, 24);
-    try {
-      await h.settle();
-      await openBrowser(h);
-      await h.press("j", "j"); // onto README.md
-      // Narrow: the explorer is up, and the file is not.
-      expect(h.text()).toContain("README.md");
-      expect(h.text()).not.toContain("A beacon.");
-      await h.press("tab");
-      expect(h.text()).toContain("A beacon.");
-      await h.press("esc");
-      expect(h.text()).not.toContain("A beacon.");
-    } finally {
-      h.stop();
-    }
-  });
 
   test("y copies the path over OSC 52 and says so", async () => {
     const h = boot(forge, asAlice());
     try {
       await h.settle();
-      await openBrowser(h);
-      await h.press("j", "j");
+      // The workspace arrives with the README open, so `y` in the file pane
+      // has a path to copy without a single move.
+      await openRepo(h, "lighthouse");
       h.terminal.takeOutput();
       await h.press("y");
       const encoded = Buffer.from("README.md", "utf8").toString("base64");
@@ -465,6 +380,7 @@ describe("the terminal code browser", () => {
     try {
       await h.settle();
       await openRepo(h, "lighthouse");
+      await h.press("I");
       await h.until("clone (http)");
       const out = h.terminal.output();
       // The clone URL is a hyperlink: opened with an id, and closed.
@@ -498,6 +414,7 @@ describe("the terminal code browser", () => {
     try {
       await h.settle();
       await openRepo(h, "lighthouse");
+      await h.press("I");
       await h.until("clone (http)");
       const grid = h.app.screen;
       // The last cell of a row and the first of the next are never the same
@@ -516,7 +433,7 @@ describe("the terminal code browser", () => {
     const h = boot(forge, asAlice());
     try {
       await h.settle();
-      await openBrowser(h);
+      await openRepo(h, "lighthouse");
       // A native repo has no origin page, and the screen says so rather than
       // pretending. (The mirrored case is covered in tui-origins.)
       await h.press("O");
@@ -526,7 +443,7 @@ describe("the terminal code browser", () => {
     }
   });
 
-  test("the repo screen refuses W when there is only one side", async () => {
+  test("the workspace refuses W when there is only one side", async () => {
     const h = boot(forge, asAlice());
     try {
       await h.settle();
@@ -538,7 +455,7 @@ describe("the terminal code browser", () => {
     }
   });
 
-  test("a guest cannot reach a private repo through the file browser", async () => {
+  test("a guest cannot reach a private repo through the workspace", async () => {
     const vault = await createRepo(forge, alice, {
       name: "vault",
       visibility: "private",

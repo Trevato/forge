@@ -31,6 +31,17 @@ export interface CommitPlan {
   /** Commit onto a fresh branch instead of the one being browsed. */
   readonly newBranch?: string;
   readonly pull?: { title: string; body?: string };
+  /**
+   * The paths the ticked boxes left in. Empty when the caller offered no
+   * file list at all — a dialog over a single implicit file.
+   */
+  readonly paths: readonly string[];
+}
+
+/** One line of the change list: what is happening to which path. */
+export interface CommitFile {
+  readonly path: string;
+  readonly kind: "add" | "edit" | "delete";
 }
 
 export interface CommitDialogOptions {
@@ -41,11 +52,31 @@ export interface CommitDialogOptions {
   /** Prefills the subject line. */
   readonly subject: string;
   readonly defaultBranchName: string;
+  /**
+   * Everything this commit could carry, ticked on. A workspace hands over
+   * every modified buffer and every pending deletion at once, because that
+   * is what `editFiles` takes — one call, one commit, no half state.
+   */
+  readonly files?: readonly CommitFile[];
   commit(plan: CommitPlan): Promise<Result<EditResult, EditFilesError>>;
   onDone(result: EditResult): void;
 }
 
-type Field = "subject" | "body" | "target" | "branch" | "pull" | "submit";
+type Field =
+  | "subject"
+  | "body"
+  | "files"
+  | "target"
+  | "branch"
+  | "pull"
+  | "submit";
+
+/** `+ src/new.ts`, `~ src/lamp.ts`, `- old.md` — the change, in one column. */
+const KIND_MARK: Record<CommitFile["kind"], string> = {
+  add: "+",
+  edit: "~",
+  delete: "-",
+};
 
 /** `editFiles` errors are a union of bare codes and tagged objects. */
 export function editErrorText(error: EditFilesError): string {
@@ -86,10 +117,14 @@ export function commitScreen(
   let field: Field = "subject";
   let error = "";
   let busy = false;
+  const all = o.files ?? [];
+  const chosen = new Set(all.map((file) => file.path));
+  let fileAt = 0;
 
   const fields = (): Field[] => [
     "subject",
     "body",
+    ...(all.length > 0 ? (["files"] as Field[]) : []),
     "target",
     ...(onNewBranch ? (["branch", "pull"] as Field[]) : []),
     "submit",
@@ -113,9 +148,15 @@ export function commitScreen(
       field = "branch";
       return;
     }
+    if (all.length > 0 && chosen.size === 0) {
+      error = "tick at least one file";
+      field = "files";
+      return;
+    }
     busy = true;
     error = "";
     const plan: CommitPlan = {
+      paths: all.filter((file) => chosen.has(file.path)).map((file) => file.path),
       message: body.isEmpty
         ? subject.trim()
         : `${subject.trim()}\n\n${body.value.trim()}`,
@@ -162,7 +203,17 @@ export function commitScreen(
     render(area, s) {
       parent.render(area, s);
       const c = ctx.theme.c;
-      const r = center(area, Math.min(66, area.w - 4), Math.min(20, area.h));
+      // Tall enough for what is actually in it and no taller: two rows for
+      // the frame, the message block, the change list, the target, and one
+      // spare for the error line.
+      const r = center(
+        area,
+        Math.min(66, area.w - 4),
+        Math.min(
+          all.length === 0 ? 20 : 17 + Math.min(all.length, 6),
+          area.h,
+        ),
+      );
       const inner = card(s, r, c, {
         title: o.title,
         footer: `${o.repo.ownerName}/${o.repo.name}`,
@@ -220,6 +271,30 @@ export function commitScreen(
         );
         y++;
       };
+      // The change itself, ticked on, before the questions about it: what is
+      // going in is the thing to check, and a dialog that hid it behind a
+      // count would be asking somebody to trust a number.
+      if (all.length > 0) {
+        line(
+          `Files · ${chosen.size} of ${all.length}`,
+          false,
+          field === "files" ? c.fg : c.mutedFg,
+        );
+        const room = Math.max(1, rest!.y + rest!.h - y - 5);
+        const from = Math.max(0, Math.min(fileAt - room + 1, all.length - room));
+        for (let i = Math.max(0, from); i < all.length; i++) {
+          const file = all[i]!;
+          if (i >= from + room) {
+            line(`  … ${all.length - i} more`, false, c.faint);
+            break;
+          }
+          line(
+            `[${chosen.has(file.path) ? "x" : " "}] ${KIND_MARK[file.kind]} ${file.path}`,
+            field === "files" && i === fileAt,
+            file.kind === "delete" ? c.danger : c.fg,
+          );
+        }
+      }
       line(
         `${onNewBranch ? "( )" : "(o)"} commit to ${o.branch}`,
         field === "target" && !onNewBranch,
@@ -279,6 +354,21 @@ export function commitScreen(
         // The body is a real textarea, so Enter is a newline there and the
         // only way out is Tab — which is what every commit box does.
         body.key(e);
+        return true;
+      }
+      if (field === "files") {
+        if (e.key === "up" || e.key === "k")
+          fileAt = Math.max(0, fileAt - 1);
+        else if (e.key === "down" || e.key === "j")
+          fileAt = Math.min(all.length - 1, fileAt + 1);
+        else if (e.key === " ") {
+          const file = all[fileAt];
+          if (file !== undefined) {
+            if (chosen.has(file.path)) chosen.delete(file.path);
+            else chosen.add(file.path);
+            error = "";
+          }
+        } else if (e.key === "enter") step(1);
         return true;
       }
       if (field === "target") {
