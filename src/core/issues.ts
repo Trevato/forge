@@ -529,8 +529,8 @@ export function labelsForIssues(
   db: Database,
   issueIds: readonly string[],
 ): Map<string, Label[]> {
+  // Only ids with rows get an entry: an absent id is absent, never a phantom.
   const byIssue = new Map<string, Label[]>();
-  for (const id of issueIds) byIssue.set(id, []);
   for (let i = 0; i < issueIds.length; i += GROUP_CHUNK) {
     const chunk = issueIds.slice(i, i + GROUP_CHUNK);
     if (chunk.length === 0) continue;
@@ -543,11 +543,9 @@ export function labelsForIssues(
       )
       .all(...chunk);
     for (const row of rows) {
-      byIssue.get(row.issue_id)?.push({
-        id: row.id,
-        name: row.name,
-        color: row.color,
-      });
+      const list = byIssue.get(row.issue_id) ?? [];
+      list.push({ id: row.id, name: row.name, color: row.color });
+      byIssue.set(row.issue_id, list);
     }
   }
   return byIssue;
@@ -559,7 +557,6 @@ export function commentCounts(
   issueIds: readonly string[],
 ): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const id of issueIds) counts.set(id, 0);
   for (let i = 0; i < issueIds.length; i += GROUP_CHUNK) {
     const chunk = issueIds.slice(i, i + GROUP_CHUNK);
     if (chunk.length === 0) continue;
@@ -609,61 +606,7 @@ const chunked = <T>(items: readonly T[]): T[][] => {
 const placeholders = (n: number): string =>
   Array.from({ length: n }, (_, i) => `?${i + 1}`).join(",");
 
-/**
- * Every label on every one of these issues, grouped by issue id. An issue
- * with no labels is absent from the map — callers use `?? []`, which is
- * cheaper than materialising empty arrays for a page that mostly has none.
- */
-export function labelsForMany(
-  db: Database,
-  issueIds: readonly string[],
-): Map<string, Label[]> {
-  const out = new Map<string, Label[]>();
-  for (const batch of chunked(issueIds)) {
-    const rows = db
-      .query<
-        { issue_id: string; id: string; name: string; color: string },
-        string[]
-      >(
-        `SELECT issue_label.issue_id, label.id, label.name, label.color
-         FROM issue_label JOIN label ON label.id = issue_label.label_id
-         WHERE issue_label.issue_id IN (${placeholders(batch.length)})
-         ORDER BY issue_label.issue_id, label.name`,
-      )
-      .all(...batch);
-    for (const row of rows) {
-      const list = out.get(row.issue_id);
-      const label: Label = { id: row.id, name: row.name, color: row.color };
-      if (list === undefined) out.set(row.issue_id, [label]);
-      else list.push(label);
-    }
-  }
-  return out;
-}
 
-/**
- * Conversation-comment counts for a page of issues. The counterpart to
- * `countComments`, and the thing a list must use instead of it — or instead
- * of the worse habit of calling `listComments(...).length`, which reads
- * every comment body off disk to arrive at a number.
- */
-export function commentCountsFor(
-  db: Database,
-  issueIds: readonly string[],
-): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const batch of chunked(issueIds)) {
-    const rows = db
-      .query<{ issue_id: string; n: number }, string[]>(
-        `SELECT issue_id, COUNT(*) AS n FROM comment
-         WHERE kind = 'comment' AND issue_id IN (${placeholders(batch.length)})
-         GROUP BY issue_id`,
-      )
-      .all(...batch);
-    for (const row of rows) out.set(row.issue_id, row.n);
-  }
-  return out;
-}
 
 /**
  * Open and closed counts for one repo and kind, in a single pass over the

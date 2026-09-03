@@ -28,13 +28,13 @@ import {
 import { createLabel, createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import {
-  commentCountsFor,
+  commentCounts,
   countComments,
   getIssuesByRef,
   issueCounts,
   issueRefKey,
   labelsFor,
-  labelsForMany,
+  labelsForIssues,
   listIssues,
   searchIssuesVisibleTo,
 } from "../src/core/issues.ts";
@@ -268,15 +268,15 @@ describe("grouped reads answer exactly what the per-row ones did", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("labelsForMany matches labelsFor, row for row", () => {
-    const grouped = labelsForMany(app.db, issueIds);
+  test("labelsForIssues matches labelsFor, row for row", () => {
+    const grouped = labelsForIssues(app.db, issueIds);
     for (const issueId of issueIds) {
       expect(grouped.get(issueId) ?? []).toEqual(labelsFor(app.db, issueId));
     }
   });
 
-  test("commentCountsFor matches countComments, row for row", () => {
-    const grouped = commentCountsFor(app.db, issueIds);
+  test("commentCounts matches countComments, row for row", () => {
+    const grouped = commentCounts(app.db, issueIds);
     for (const issueId of issueIds) {
       expect(grouped.get(issueId) ?? 0).toBe(countComments(app.db, issueId));
     }
@@ -289,8 +289,8 @@ describe("grouped reads answer exactly what the per-row ones did", () => {
       ...issueIds,
       ...Array.from({ length: 1_200 }, (_, i) => `absent-${i}`),
     ];
-    const labels = labelsForMany(app.db, padded);
-    const counts = commentCountsFor(app.db, padded);
+    const labels = labelsForIssues(app.db, padded);
+    const counts = commentCounts(app.db, padded);
     expect(labels.size).toBeGreaterThan(0);
     for (const issueId of issueIds) {
       expect(labels.get(issueId) ?? []).toEqual(labelsFor(app.db, issueId));

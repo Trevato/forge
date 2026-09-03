@@ -10,12 +10,12 @@
 
 import type { App } from "../app.ts";
 import {
-  commentCountsFor,
+  commentCounts,
   countComments,
   getIssue,
   issueCounts,
   labelsFor,
-  labelsForMany,
+  labelsForIssues,
   listComments,
   listIssues,
   listLabels,
@@ -132,8 +132,8 @@ export function localSource(
   /** A whole page of rows, in two queries. */
   const summariesOf = (issues: IssueLike[]): IssueSummary[] => {
     const ids = issues.map((issue) => issue.id);
-    const labels = labelsForMany(app.db, ids);
-    const counts = commentCountsFor(app.db, ids);
+    const labels = labelsForIssues(app.db, ids);
+    const counts = commentCounts(app.db, ids);
     return issues.map((issue) =>
       rowOf(issue, labels.get(issue.id) ?? [], counts.get(issue.id) ?? 0),
     );

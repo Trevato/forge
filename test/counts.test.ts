@@ -249,8 +249,8 @@ describe("counts are grouped, and stay grouped", () => {
     const labels = labelsForIssues(app.db, ids);
     const comments = commentCounts(app.db, ids);
     for (const issueId of ids) {
-      expect(labels.get(issueId)).toEqual(labelsFor(app.db, issueId));
-      expect(comments.get(issueId)).toBe(
+      expect(labels.get(issueId) ?? []).toEqual(labelsFor(app.db, issueId));
+      expect(comments.get(issueId) ?? 0).toBe(
         app.db
           .query<
             { n: number },

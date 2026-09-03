@@ -9,7 +9,7 @@ import { openPull } from "../../actions/pulls.ts";
 import {
   commentCounts,
   issueCounts,
-  labelsForMany,
+  labelsForIssues,
   countComments,
   labelsFor,
   listLabels,
@@ -88,7 +88,7 @@ export function pullsList(ctx: Ctx): Response {
   });
   // Two grouped reads for the page, never two per row.
   const ids = pulls.map((pull) => pull.id);
-  const labels = labelsForMany(db, ids);
+  const labels = labelsForIssues(db, ids);
   const comments = commentCounts(db, ids);
   const rows = pulls.map((pull) => ({
     pull,
