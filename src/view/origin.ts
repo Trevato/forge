@@ -29,7 +29,10 @@ import { getOriginRepo, type Origin } from "../core/origins.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import type { Label } from "../core/issues.ts";
 import type { Diff } from "../git/diff.ts";
-import type { TreeEntry } from "../git/read.ts";
+import type { PathListing, TreeEntry } from "../git/read.ts";
+
+const MAX_PATH_DIRS = 2_000;
+const MAX_PATHS = 50_000;
 import { isSafeOid } from "../git/guard.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "../origins/credential.ts";
@@ -228,6 +231,38 @@ function build(
       );
       if (!entries.ok) return entries;
       return ok(entries.value.map(toTreeEntry));
+    },
+
+    async paths(ref: string): Promise<Result<PathListing, SourceError>> {
+      // No provider gives a flat listing cheaply and consistently, so walk the
+      // cached one-level trees breadth-first. Bounded in directories and in
+      // paths; a hit on either bound reports `truncated` rather than hanging.
+      const key = cacheKey(scope, "paths", ref);
+      const hit = viewCache.get<PathListing>(key);
+      if (hit !== undefined) return ok(hit);
+      {
+        const paths: string[] = [];
+        const queue: string[] = [""];
+        let dirs = 0;
+        let truncated = false;
+        while (queue.length > 0) {
+          if (dirs++ >= MAX_PATH_DIRS || paths.length >= MAX_PATHS) {
+            truncated = true;
+            break;
+          }
+          const dir = queue.shift()!;
+          const entries = await this.tree(ref, dir);
+          if (!entries.ok) return entries;
+          for (const entry of entries.value) {
+            const full = dir === "" ? entry.name : `${dir}/${entry.name}`;
+            if (entry.type === "tree") queue.push(full);
+            else if (entry.type === "blob") paths.push(full);
+          }
+        }
+        const listing: PathListing = { paths, truncated };
+        viewCache.set(key, listing, ttlFor(ref), paths.length * 40);
+        return ok(listing);
+      }
     },
 
     async blob(ref: string, path: string): Promise<Result<Blob, SourceError>> {

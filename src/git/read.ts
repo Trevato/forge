@@ -361,3 +361,31 @@ export async function commitLog(
   }
   return ok(commits);
 }
+
+export interface PathListing {
+  readonly paths: string[];
+  /** True when the cap cut the listing short. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Every blob path under `rev`, for a fuzzy file finder. One `ls-tree -r`;
+ * NUL-separated so a newline in a path cannot split a record. Capped, because
+ * a finder over a 500k-file monorepo needs a different tool.
+ */
+export async function listPaths(
+  dir: string,
+  rev: string,
+  cap = 50_000,
+): Promise<Result<PathListing, GitFailure>> {
+  assertBatchSafe(rev);
+  const result = await runGitRaw(["ls-tree", "-r", "-z", "--name-only", rev], {
+    cwd: dir,
+    timeoutMs: 20_000,
+  });
+  if (!result.ok) return result;
+  const text = new TextDecoder().decode(result.value);
+  const all = text.split("\0");
+  if (all.at(-1) === "") all.pop();
+  return ok({ paths: all.slice(0, cap), truncated: all.length > cap });
+}

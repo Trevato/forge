@@ -34,7 +34,7 @@ import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { App } from "../app.ts";
 import type { Diff } from "../git/diff.ts";
-import type { Commit as GitCommit, TreeEntry } from "../git/read.ts";
+import type { Commit as GitCommit, PathListing, TreeEntry } from "../git/read.ts";
 import type { Origin, Page } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { localSource } from "./local.ts";
@@ -198,6 +198,8 @@ export interface RepoSource {
   tags(): Promise<Result<Tag[], SourceError>>;
   /** One directory level; `path` is "" for the root. */
   tree(ref: string, path: string): Promise<Result<TreeEntry[], SourceError>>;
+  /** Every file path under `ref`, flat, for a fuzzy finder. Capped and cached. */
+  paths(ref: string): Promise<Result<PathListing, SourceError>>;
   blob(ref: string, path: string): Promise<Result<Blob, SourceError>>;
   readme(
     ref: string,

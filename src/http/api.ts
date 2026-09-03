@@ -1688,6 +1688,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", `${BROWSE}/labels`, (ctx) =>
     read(ctx, (s) => s.labels(), json),
   );
+  router.add("GET", `${BROWSE}/paths/:ref`, (ctx) =>
+    read(ctx, (s) => s.paths(ctx.params.ref!), json),
+  );
 
   const treeHandler = (ctx: Ctx): Promise<Response> => {
     const ref = ctx.params.ref!;

@@ -30,6 +30,8 @@ import {
   listRefs,
   listTree,
   type TreeEntry,
+  listPaths,
+  type PathListing,
 } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -144,6 +146,12 @@ export function localSource(
         return err("not_found");
       const entries = await listTree(dir, ref, path);
       return entries.ok ? ok(entries.value) : err("not_found");
+    },
+
+    async paths(ref: string): Promise<Result<PathListing, SourceError>> {
+      if (!isSafeRef(ref)) return err("not_found");
+      const listed = await listPaths(dir, ref);
+      return listed.ok ? ok(listed.value) : err("not_found");
     },
 
     async blob(ref: string, path: string): Promise<Result<Blob, SourceError>> {

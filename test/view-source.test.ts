@@ -650,6 +650,21 @@ describe("RepoSource: one repository, two places to read it from", () => {
     expect(here.where.kind).toBe("local");
     expect(there.where.kind).toBe("origin");
 
+    // Every path, flat — the file finder's feed — agrees in content and order
+    // once sorted, and neither side hit its cap on a small repo.
+    const [herePaths, therePaths] = await Promise.all([
+      here.paths("main"),
+      there.paths("main"),
+    ]);
+    expect(herePaths.ok && therePaths.ok).toBe(true);
+    if (!herePaths.ok || !therePaths.ok) return;
+    expect([...therePaths.value.paths].sort()).toEqual(
+      [...herePaths.value.paths].sort(),
+    );
+    expect(herePaths.value.truncated).toBe(false);
+    expect(therePaths.value.truncated).toBe(false);
+    expect(herePaths.value.paths.length).toBeGreaterThan(0);
+
     // The tree: same names, same kinds, same order.
     const [hereTree, thereTree] = await Promise.all([
       here.tree("main", ""),
