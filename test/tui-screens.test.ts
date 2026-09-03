@@ -271,14 +271,11 @@ describe("the terminal UI, against a real forge", () => {
   test("the issue list shows seeded issues, filters, and counts", async () => {
     const h = boot(forge, asAlice());
     await h.settle();
-    await h.press("enter"); // lighthouse is first (newest repo is vault)
-    let text = h.text();
-    if (!text.includes("lighthouse")) {
-      await h.press("esc", "j", "enter");
-      text = h.text();
-    }
+    // By name, not by row: later tests add repositories, and a test that
+    // depends on which one happened to be first breaks when they do.
+    await openRepo(h, "lighthouse");
     await h.press("i");
-    text = h.text();
+    let text = h.text();
     expect(text).toContain("The lamp flickers");
     expect(text).toContain("Paint is peeling");
     expect(text).toContain("Open 2");

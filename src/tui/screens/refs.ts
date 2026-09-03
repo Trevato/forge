@@ -90,9 +90,10 @@ export function refPickerScreen(
   };
 }
 
-/** A branch as this screen shows it, from either side of a mirror. */
+/** A ref as this screen shows it, from either side of a mirror. */
 interface BranchRow {
   readonly name: string;
+  readonly kind: "branch" | "tag";
   readonly isDefault: boolean;
   readonly protected: boolean;
   readonly ahead: number | null;
@@ -100,8 +101,13 @@ interface BranchRow {
 }
 
 /**
- * The branches screen: what exists, how far each has drifted, and the two
+ * The refs screen: what exists, how far each has drifted, and the two
  * mutations that matter.
+ *
+ * Tags are on it too, below the branches and marked as tags. Somebody
+ * switching a workspace's ref wants one list of everything they could be
+ * looking at, not two screens and the difference between them to remember; a
+ * tag has no drift and cannot be deleted here, and its row says both.
  *
  * Both mutations go through `actions/branches.ts`, which is the only reason
  * this screen is allowed to exist at all: on a mirror the ref is created or
@@ -130,12 +136,16 @@ export function branchesScreen(
   const mirrored = repo?.origin ?? null;
 
   const shown = (): BranchRow[] => rows.filter((r) => filter.matches(r.name));
+  const branchCount = (): number =>
+    rows.filter((r) => r.kind === "branch").length;
+  const tagCount = (): number => rows.filter((r) => r.kind === "tag").length;
 
   const reload = async (): Promise<void> => {
-    const listed = await src.branches();
+    const [listed, tagged] = await Promise.all([src.branches(), src.tags()]);
     const base: BranchRow[] = listed.ok
       ? listed.value.map((b) => ({
           name: b.name,
+          kind: "branch" as const,
           isDefault: b.isDefault,
           protected: b.protected === true,
           ahead: null,
@@ -151,6 +161,21 @@ export function branchesScreen(
           ? -1
           : 1,
     );
+    // Tags after every branch: they are the rarer answer to "what am I
+    // looking at", and a release tag sorted in among the branches reads as
+    // one of them.
+    if (tagged.ok)
+      for (const tag of [...tagged.value].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      ))
+        base.push({
+          name: tag.name,
+          kind: "tag",
+          isDefault: false,
+          protected: false,
+          ahead: null,
+          behind: null,
+        });
     rows = base;
     if (repo !== undefined) {
       const drift = await listBranches(f.dir(repo), repo.defaultBranch);
@@ -160,7 +185,7 @@ export function branchesScreen(
           drift.value.branches.map((b) => [b.name, b] as const),
         );
         rows = base.map((row) => {
-          const hit = byName.get(row.name);
+          const hit = row.kind === "branch" ? byName.get(row.name) : undefined;
           return hit === undefined
             ? row
             : { ...row, ahead: hit.ahead, behind: hit.behind };
@@ -246,7 +271,7 @@ export function branchesScreen(
   };
 
   const screen: Screen = {
-    title: "Branches",
+    title: "Refs",
     get keys() {
       return [
         binding(["j", "k"], "move"),
@@ -271,7 +296,7 @@ export function branchesScreen(
         head!.x,
         head!.y,
         truncate(
-          `${sourceName(src)} · ${plural(rows.length, "branch", "branches")}${compared ? "" : " · too many to compare"}`,
+          `${sourceName(src)} · ${plural(branchCount(), "branch", "branches")}${tagCount() === 0 ? "" : ` · ${plural(tagCount(), "tag")}`}${compared ? "" : " · too many to compare"}`,
           head!.w,
         ),
         style(c.mutedFg, c.bg),
@@ -281,7 +306,7 @@ export function branchesScreen(
       const list = shown();
       if (list.length === 0) {
         emptyState(s, body!, c, {
-          title: loaded ? "No branches" : "Reading…",
+          title: loaded ? "No refs" : "Reading…",
           body: loaded ? "Push one, or press n to create one." : "",
         });
         return;
@@ -293,6 +318,7 @@ export function branchesScreen(
         state,
         list.map((row): ListRow => {
           const marks = [
+            row.kind === "tag" ? "tag" : "",
             row.isDefault ? "default" : "",
             row.protected ? "protected" : "",
             o.current !== undefined && row.name === o.current ? "browsing" : "",
@@ -330,6 +356,13 @@ export function branchesScreen(
         return true;
       }
       if (e.key === "D" && writable && row !== undefined) {
+        // A tag names a commit; it is not a line of work, so deleting one is
+        // not something this screen offers, and saying so beats a dialog that
+        // would only refuse.
+        if (row.kind === "tag") {
+          ctx.toast("tags cannot be deleted here", "attn");
+          return true;
+        }
         remove(row);
         return true;
       }

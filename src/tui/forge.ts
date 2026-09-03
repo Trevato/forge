@@ -27,7 +27,7 @@ import {
 } from "./screens/common.ts";
 import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
-import { blobScreen } from "./screens/tree.ts";
+import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { exploreScreen } from "./screens/explore.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";

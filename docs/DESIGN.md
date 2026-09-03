@@ -399,58 +399,122 @@ The numbers come from grouped reads (`countsForRepos` / `withCounts`,
 `commentCountsFor`) and never from a query per row. `test/counts.test.ts` and
 `test/tui-code.test.ts` both assert that; a list is where N+1 hurts most.
 
-### 6b. Browsing code
+### 6b. The workspace — one screen for a whole repository
 
-The tree and the blob are one screen, not a stack. At **≥100 columns** it is
-two panes — the explorer on the left, the file under the cursor on the right,
-loading as the cursor moves; below 100 it is one pane and `tab`/`esc` swap
-which. The breadcrumb above both is always `owner/name › ref › path`.
+Opening a repository in the terminal opens a **workspace**, not a home page:
+the explorer, a tab bar, the file you are reading, and the one commit that
+carries everything you changed. There is no repo card to leave, no directory
+screen to push, no blob screen under it and no editor screen on top. The four
+screens that used to be there were four escapes deep and lost your place at
+each one.
 
-| key          | in the explorer                     | in the file pane               |
-| ------------ | ----------------------------------- | ------------------------------ |
-| `j` `k`      | move (the preview follows)          | scroll                         |
-| `ctrl+d` `u` | page                                | page                           |
-| `g` `G`      | top / bottom                        | top / bottom                   |
-| `l` `enter`  | expand a directory / focus the file | —                              |
-| `h`          | collapse, or go to the parent       | —                              |
-| `tab`        | focus the file                      | focus the explorer             |
-| `esc`        | back                                | focus the explorer             |
-| `/`          | filter this level                   | search in the file (`n` / `N`) |
-| `t` `ctrl+p` | the fuzzy file finder               | the fuzzy file finder          |
-| `e`          | edit                                | edit                           |
-| `E`          | `$FORGE_EDITOR` over a pty          | same                           |
-| `n` `D`      | new file / delete a file            | —                              |
-| `y`          | copy the path                       | copy the path                  |
-| `b`          | switch ref                          | switch ref                     |
-| `W`          | the other side (local ↔ origin)     | same                           |
-| `O`          | open on the origin                  | same                           |
+```
+ forge                                                                          Ink
+alice › alice/lighthouse
+● workbench  ·  ○ this machine                                              main ▾
+ README.md   src/lamp.ts ●   src/weather.ts                                 3 tabs
+▾ src/            ┃  1 # Lighthouse
+    lamp.ts     ● ┃  2
+    weather.ts    ┃  3 A beacon. Rotates the lamp, logs the weather, warns the ships.
+  package.json    ┃
+▸ README.md       ┃
+ main · 1 modified                                        src/lamp.ts · 22 lines
+  tab focus explorer   e edit   c commit   b switch ref   t find file   i issues
+```
 
-Moving the cursor **schedules** a read 60ms out rather than firing one; every
-read carries a token and a stale one is dropped, so a slow origin answering
-for a file you have moved off cannot paint over the file you are looking at.
-The finder scores with fzf's `--scheme=path` constants plus VS Code's rule
-that any basename match outranks any directory-only match, and it says
+The where strip keeps column zero, exactly as it does on every other
+repository screen, and the ref pill (`main ▾`) takes the right-hand end of the
+same row. At **≥100 columns** the explorer is a column beside the file; below
+that it is the pane `tab` toggles onto, never both at once. A repository opens
+on its **README** — the first file at the root if there is none — with the keys
+already in the file pane, so `j` scrolls it without a keystroke of ceremony.
+
+Four rules hold it together, and each one answers something the old
+arrangement got wrong:
+
+- **Moving the explorer's cursor reads nothing.** `j` moves a cursor over
+  names; `enter` opens a tab. The preview-that-followed-the-cursor it replaces
+  cost a read per keystroke, needed a debounce and a stale-read token to stay
+  honest, and left you unable to scroll the file you were looking at because
+  the selector lived in the other pane.
+- **A tab owns its buffer.** Scroll position, in-file search, undo history and
+  every unsaved edit live in the tab. Switching tabs keeps them; so does going
+  to the issue list and coming back, because the workspace stays on the stack
+  while something is pushed over it.
+- **Editing is a mode, not a screen.** `e` turns the active tab into the
+  buffer from `ui/editor.ts`, in place. `esc` goes back to reading **with the
+  edits still there** — losing work takes `u` (discard this tab) or `x` (close
+  it), and both ask first.
+- **One commit for the whole change.** Every modified tab and every pending
+  deletion goes into a single `editFiles` call.
+
+| key            | in the explorer                  | in the file pane                     |
+| -------------- | -------------------------------- | ------------------------------------ |
+| `j` `k`        | move the cursor (reads nothing)  | scroll                               |
+| `ctrl+d` `u`   | page                             | page                                 |
+| `g` `G`        | top / bottom                     | top / bottom                         |
+| `enter` `l`    | expand a directory / open a tab  | —                                    |
+| `h`            | collapse, or go to the parent    | scroll left (`l` scrolls right)      |
+| `tab`          | focus the file                   | focus the explorer                   |
+| `esc`          | back                             | focus the explorer                   |
+| `/`            | filter this level                | search in the file (`n` / `N`)       |
+| `n` `D`        | new file / mark one for deletion | —                                    |
+| `e`            | open the file and edit it        | edit                                 |
+| `u`            | —                                | discard this tab's changes           |
+
+And the keys the whole workspace answers, from either pane: `]` `[` and `1`–`9`
+move between tabs, `x` / `X` close one or the others, `c` commits, `b` lists
+branches and tags, `B` creates a branch, `t` (or `ctrl+p`) is the fuzzy finder,
+`y` copies the path, `i` / `p` / `C` open issues, pulls and commits, `I` shows
+the about card, `W` swaps to the other side of a mirror, `O` opens the file on
+its origin, `P` pins, `S` syncs, `F` forks, `,` is settings, `r` refreshes and
+`E` hands the file to `$FORGE_EDITOR`.
+
+**The tab bar.** One row above the panes: the path, the active tab bold and
+underlined in the accent, `●` on anything modified, `‹ ›` when there are more
+tabs than fit, and the count on the right. A modified file wears the same `●`
+in the explorer, and one marked for deletion is struck through in the danger
+colour — the same change, said in both places.
+
+**The about card (`I`).** What used to be the repo home page: visibility,
+description, default branch, counts, where a mirror came from and when it was
+last fetched, and the clone URLs (`y` copies one). It is a card rather than a
+screen because it is something you glance at on the way to doing something
+else.
+
+The finder (`t`) scores with fzf's `--scheme=path` constants plus VS Code's
+rule that any basename match outranks any directory-only match, and it says
 "N files (truncated)" honestly when the listing hit its cap.
 
 ### 6c. Editing, and the commit dialog
 
-`e` opens a modeless editor: arrows/Home/End/PgUp/PgDn and word jumps,
-shift-arrows to select, `ctrl+c`/`x`/`v` (which also mirror to _your_
-clipboard over OSC 52), `ctrl+z`/`ctrl+y`, `ctrl+f` find, `ctrl+r` replace,
-horizontal scrolling with no soft wrap, tabs rendered at 4 and kept as tabs.
-The status line is `path · Ln 12, Col 4 · modified`.
+`e` turns the active tab into a modeless editor: arrows/Home/End/PgUp/PgDn and
+word jumps, shift-arrows to select, `ctrl+c`/`x`/`v` (which also mirror to
+_your_ clipboard over OSC 52), `ctrl+z`/`ctrl+y`, `ctrl+f` find, `ctrl+r`
+replace, horizontal scrolling with no soft wrap, tabs rendered at 4 and kept as
+tabs. The status row reads `path · Ln 12, Col 4 · modified`.
 
 Four rules are non-negotiable because this is attached to a git host: CRLF, a
 BOM and the presence or absence of a trailing newline round-trip exactly;
 nothing is normalised silently. Past 1 MB or 50k lines the buffer opens
 read-only and says which, rather than being slow.
 
-`ctrl+s` opens the commit dialog — message (subject, optional body), target
+`c` (or `ctrl+s` from inside the buffer) opens the commit dialog. It lists
+**every** change the workspace is holding — each modified tab and each pending
+deletion, ticked, marked `+` added, `~` edited, `-` deleted — then asks the
+three questions `editFiles` takes: message (subject, optional body), target
 (`current branch` or `new branch`, defaulting to **new**, named
 `<you>/edit-<file>`), and `[ ] open a pull request` with the title prefilled
-from the subject. It calls `editFiles` once: that is the whole edit, so no
-half-finished state (a branch with no commit, a commit with no pull) can be
-invented. `esc` with unsaved changes asks first.
+from the subject. One call: no half-finished state (a branch with no commit, a
+commit with no pull) can be invented. On success the workspace follows the
+commit — the ref pill becomes the new branch and every tab is re-read from it.
+**A refused commit keeps every buffer**, and says why on the dialog: a
+protected branch, a name git will not take, an origin that said no.
+
+Where the source cannot be written — a live origin browse, or a reader without
+write access — `e`, `c`, `n` and `D` say so instead of opening something that
+could never land. On a mirror, `W` is the one key that gets you to the copy you
+can edit.
 
 ### 6d. `$FORGE_EDITOR` — the operator's own editor, over a pty
 
@@ -468,9 +532,11 @@ temp file and one line of explanation; the name is resolved once with
 `Bun.which` and spawned as `[bin, file]` **argv, never a shell** (a name with
 whitespace in it is refused rather than tokenized); and one handoff at a time
 per session, because nested suspends are the wedge behind every "my TUI hung
-after I shelled out" report. Nothing in that path writes to a repository: the
-bytes come back through the commit dialog and reach git the one way anything
-does.
+after I shelled out" report. Nothing in that path writes to a repository: what
+comes back is spliced into the tab's own buffer — one undoable edit, and a
+modified tab like any other — and reaches git only through `c` and `editFiles`,
+the one way anything does. `E` is the escape hatch rather than the tool, so it
+sits last in the binding list and falls off the end of the help bar.
 
 Resume is unconditional and state-independent — the child may have crashed, so
 "undo what we think it did" is exactly the reasoning that leaves a broken
