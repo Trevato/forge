@@ -170,6 +170,60 @@ export async function fetchMirror(
   return ok({ changes: refsChanged(before, after) });
 }
 
+/**
+ * Fetch ONE ref from a remote we are not a mirror of, and say where it
+ * landed.
+ *
+ * The contribute flow needs this: the branch it is about to propose has to
+ * start from the *upstream's* base, and the workbench it commits in is the
+ * mirror of a fork — a different repository, on the same forge, that may be
+ * hundreds of commits behind. `git/merge.ts`'s `fetchInto` does the same job
+ * between two local directories; this is the version that crosses a network
+ * and therefore needs the origin's credential in the environment.
+ *
+ * Nothing is written under `refs/` here. The fetched tip comes back as an
+ * object id and the caller decides what, if anything, to name it — a fetch
+ * that quietly moved a branch would be a push-through the origin never saw.
+ */
+export async function fetchRefFrom(
+  dir: string,
+  cloneUrl: string,
+  srcRef: string,
+  authEnv: Record<string, string>,
+): Promise<Result<string, GitMirrorError>> {
+  const url = safeRemoteUrl(cloneUrl);
+  if (url === undefined)
+    return err({ message: "refusing an unusable clone URL" });
+  if (!isSafeRef(srcRef))
+    return err({ message: `refusing an unsafe ref: ${srcRef}` });
+
+  const run = await runGitCapture(
+    [
+      "fetch",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--quiet",
+      url,
+      // A bare source ref: the objects arrive and FETCH_HEAD names the tip,
+      // without any local ref moving.
+      srcRef,
+    ],
+    { cwd: dir, env: authEnv, timeoutMs: FETCH_TIMEOUT_MS },
+  );
+  if (run.code !== 0) {
+    return err({
+      message:
+        redact(run.stderr.trim(), ...secretsIn(authEnv)) ||
+        `could not fetch ${srcRef}`,
+    });
+  }
+  const tip = await runGitCapture(["rev-parse", "FETCH_HEAD"], { cwd: dir });
+  const oid = tip.stdout.trim();
+  if (tip.code !== 0 || !isSafeOid(oid))
+    return err({ message: `no such ref upstream: ${srcRef}` });
+  return ok(oid);
+}
+
 export interface PushUpdate {
   readonly ref: string;
   /** The oid the origin is expected to hold; zeros for a ref being created. */

@@ -48,6 +48,7 @@ import {
   importIssue,
   importLabels,
   importReviews,
+  importReviewStates,
 } from "./import.ts";
 import type { Provider, ProviderFailure, RemoteIssue } from "./types.ts";
 
@@ -515,6 +516,12 @@ async function importThread(
   if (comments.ok) added += importComments(ctx, issueId, comments.value);
 
   if (remote.pull === undefined) return added;
+
+  // The verdicts first: one request, and the only part of a review that
+  // gates a merge. A failure here is not worth abandoning the comments for.
+  const states = await provider.listReviewStates(fullName, remote.number);
+  if (states.ok) added += importReviewStates(ctx, issueId, states.value);
+
   const reviews = await provider.listReviews(fullName, remote.number);
   if (!reviews.ok || reviews.value.length === 0) return added;
 

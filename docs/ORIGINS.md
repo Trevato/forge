@@ -36,12 +36,18 @@ origin_app    an OAuth application registered on one instance (per user)
 oauth_flow    a connect in flight: a device poll, or a state+PKCE round trip,
               plus a short_code and the sealed target it redirects to
 origin_repo   the origin's repo list, cached for the import picker
+              + fork_of: `owner/name` this remote repo forks (getRepo only)
 origin_cursor per-origin sync watermarks and the next-due / paused-until times
 repo          + origin_id, origin_full_name, origin_remote_id, origin_html_url,
                 last_fetch_at, fetch_error      (origin_id set ⇒ mirrored)
+              + origin_fork_of: the upstream `owner/name` this mirror forks
+              + require_review (0/1): the merge gate                (mig. 13)
 issue/comment + origin_remote_id, origin_author, origin_html_url, synced_at
 label         + origin_remote_id
 pull          + origin_head_repo
+review        a verdict on a pull: state, body, commit_oid, and for an
+              imported one origin_remote_id + origin_author        (mig. 13)
+review_thread (issue, anchor) → resolved_at, resolved_by           (mig. 13)
 pin           (user, repo) — what the local client keeps cloned
 ```
 
@@ -239,10 +245,84 @@ the origin is reconnected.
 here on the next sweep, at once. One that goes public upstream stays as it
 was: widening is the owner's decision to make here, never an origin's.
 
-**Fork-less contributions** (no push rights): v2 — `forkRepo` on the origin,
-push there, open the pull with `owner:branch`. Held back because whether
-Forgejo's `POST /pulls` accepts the `owner:branch` head form is unverified,
-and it gates the whole flow.
+**The fork flow** — contributing to a repository you cannot push to. One
+call, `contribute` (`src/actions/contribute.ts`), because it is one
+intention: *grab their repo, branch, edit, propose it back*. Split across
+five round trips it becomes five half-finished states — a fork with no
+mirror, a mirror with no branch, a branch with no commit, a commit nobody
+proposed.
+
+What it does, in order:
+
+1. **Ask the origin what you may do.** `getRepo(upstream).permissions.push`
+   decides the shape. With push rights nothing is forked: the branch is
+   created on the upstream's own mirror and travels there by push-through,
+   like any other branch on a mirror.
+2. **Find or make your fork.** `forkOrigin` is idempotent: a fork of this
+   upstream the account already has is returned as-is (found through
+   `origin_repo.fork_of`, or by asking for the conventional name and
+   checking its `parent`). GitHub answers a repeat `POST /forks` with the
+   existing fork and Forgejo answers 409, so the check has to be ours for
+   both to behave alike.
+3. **Wait for it.** GitHub creates a fork *asynchronously* and answers 202
+   with a repository that 404s if you ask immediately. `forkOrigin` polls
+   `getRepo` with backoff (250 ms → 3 s) for up to 30 s.
+4. **Mirror your fork.** That is the workbench: you cannot commit into a
+   repository you cannot push to, and the mirror's row remembers the
+   upstream in `origin_fork_of`.
+5. **Start the branch from the UPSTREAM's base**, not the fork's copy of it.
+   A fork made months ago is a snapshot, and committing on top of it
+   proposes a diff full of work somebody already merged. `fetchRefFrom`
+   (`origins/git-mirror.ts`) fetches the upstream's base ref into the fork's
+   mirror with the origin's credential and names no local ref; the branch
+   starts at that commit. This is `git fetch upstream` with the manual step
+   removed.
+6. **Commit, through push-through.** `createBranch` then `editFiles`: the
+   objects are written locally, the origin is asked, and the local ref moves
+   only if it agreed — the ordinary mirror rule, unchanged.
+7. **Open the pull on the UPSTREAM**, with the cross-repository head form
+   `head: "<forkOwner>:<branch>"`. Both forges take it. If we also mirror the
+   upstream, the created pull is imported so there is a local row; if we do
+   not, the number and the origin's URL come back and that is the whole
+   truth there is.
+
+The `owner:branch` form is verified against the fakes in
+`test/fork-flow.test.ts` (both dialects, with real git behind them) and it
+matches both forges' documented shape. **It has not yet been run against a
+live Forgejo instance**, and that is the one thing worth doing before
+leaning on it: Forgejo's `head` is an undocumented plain string, and a real
+instance is the only thing that can settle whether it resolves the owner the
+way GitHub does.
+
+**Review states.** A review is a *verdict* on a pull at one commit —
+`approved`, `changes_requested` or `commented` — stored in `review` beside
+the line comments, which stay in `comment` with `kind='review'`. Two rules
+are mechanical: a verdict that carries authority (approve, request changes)
+takes **write** access, so "require review" cannot be satisfied by anyone who
+can merely read the repo; and **you cannot approve your own** pull.
+
+The gate is `repo.require_review`: `mergePull` refuses `review_required`
+unless there is an approval **of the current head** and no request for
+changes on it. A verdict carries the `commit_oid` it was passed on, so a push
+dismisses it without anything having to remember to — new code is new code.
+A request for changes on the current head blocks a merge whether or not an
+approval was ever required; one passed on an older head does not.
+
+Threads are the resolution unit: every review comment sharing an anchor is
+one conversation, addressed by `anchorId(path, side, line)` — a 16-hex digest,
+because the key itself contains a NUL and a path and belongs in no URL. A
+writer, or anyone who commented in the thread, may resolve or unresolve it.
+
+On a mirror the origin decides all of it. A verdict is submitted there —
+GitHub `POST /pulls/{n}/reviews {event: APPROVE|REQUEST_CHANGES|COMMENT}`,
+Forgejo the same path with its own nouns `{event: APPROVED|REQUEST_CHANGES|
+COMMENT}` — and imported back keyed on the origin's review id. Sync brings in
+everyone else's (`listReviewStates`, one request per changed pull, separate
+from the line-comment walk that costs one request per review). `PENDING` and
+`DISMISSED` are not verdicts and are dropped rather than mapped to one.
+Imported verdicts are collapsed per **origin login**, not per local author id:
+every imported row is attributed locally to the connecting user, so keying on
+that would turn five reviewers into one.
 
 **Pins.** `pin` rows say which repos the user wants on their machine. The
 local client (`src/cli/`) reads them over the API, clones under
@@ -273,6 +353,10 @@ GET    B/commits/:oid                          commit + parsed diff
 GET    B/issues  B/pulls  ?state=&label=&author=&q=&cursor=
 GET    B/issues/:number   B/pulls/:number      + body, comments, pull facts
 
+POST   /api/v1/user/origins/:id/fork           {fullName} → 202
+                                               {remote, existed, job, mirroredAs}
+POST   B/contribute                            the fork flow, from a browse
+POST   /api/v1/repos/:o/:n/contribute          the fork flow, from a mirror
 POST   /api/v1/user/origins/:id/mirror         {fullName, name?} → 202 {job}
 GET    /api/v1/user/origins/:id/mirror/:job    poll one job
 GET    /api/v1/user/origins/:id/mirror/:job/stream   SSE: mirror.<stage>, ends on done
@@ -291,6 +375,34 @@ the browse routes too: they read another forge with this account's
 credential, which is the same authority as spending it. Repo-level sync and
 pins take the ordinary `rw` floor.
 
+A contribute answers 201 with
+`{ via: "fork"|"direct", repo: {owner,name}, forkFullName, branch, commit,
+pull: { number, htmlUrl, local } | null }` — `repo` is where the branch landed
+here, `forkFullName` the fork at the origin (null on the direct path), and
+`pull.local` the imported row when we mirror the upstream too. Its refusals
+are the ordinary origin codes plus `fork_timeout` (504 — the origin took the
+request and the fork has not appeared), `mirror_failed` (502) and the edit
+codes `editFiles` already returns.
+
+Review states and threads, on any repo:
+
+```
+GET    /api/v1/repos/:o/:n/pulls/:n/review-states   the verdicts
+POST   /api/v1/repos/:o/:n/pulls/:n/review-states   {state, body?} → 201
+GET    /api/v1/repos/:o/:n/pulls/:n/threads         anchors + resolution
+POST   /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
+DELETE /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
+PATCH  /api/v1/repos/:o/:n                          {requireReview}
+```
+
+`…/reviews` is unchanged and still the *line comments* — a sibling path
+rather than a mode of the same one, because a comment on a line and a verdict
+on a change are different things with different rules, and one path meaning
+two of them behind a query parameter is the shape that gets called wrong.
+Each line comment now carries `anchor`, the thread it belongs to.
+`GET …/pulls/:number` gains `status.reviews:
+{ approved, changesRequested, required, mergeable }`.
+
 Repo JSON gains `origin: { kind, fullName, htmlUrl, lastFetchAt, fetchError } | null`
 and `pinned: boolean`; issue/comment JSON gain `originAuthor`, `originUrl`;
 pull JSON gains `originHeadRepo`. Errors specific to this surface:
@@ -302,7 +414,10 @@ so a client can tell "the forge said no" from "the origin said no", and
 
 Events added: `origin.connected`, `origin.refreshed`, `origin.needs_reauth`,
 `origin.disconnected`, `origin.app_registered`, `repo.mirrored`,
-`repo.imported`, `repo.pinned`, `repo.unpinned`. Imported activity reuses the
+`repo.imported`, `repo.pinned`, `repo.unpinned`, `repo.forked`
+(`via: "origin"` for a fork made at an origin), `pull.reviewed` (with
+`state` for a verdict, `path`/`line` for a line comment) and
+`pull.thread_resolved`. Imported activity reuses the
 existing kinds (`push`, `issue.opened`, `pull.opened`, `pull.merged`,
 `issue.commented`, …) with `via: "origin"` in the payload. None of them ever
 carries token material, a `state`, or a `code`.
@@ -326,6 +441,17 @@ carries token material, a `state`, or a `code`.
   it wants a spawn path of its own, and "fetching git objects" was worth more
   than that today.
 - **No LFS.** A mirror of an LFS repo has the pointers, not the objects.
+- **The `owner:branch` head form is unverified against a live Forgejo.** It
+  is exercised against the fake in both dialects and matches the documented
+  shape; Forgejo's own `head` is an undocumented plain string. Try it against
+  a real instance before relying on it in anger.
+- **Contributing needs a workbench.** `contribute` mirrors your fork (and, on
+  the push-rights path, the upstream) if it is not mirrored already, so the
+  first contribution to a large repository pays for a clone and an import.
+- **A review's line comments do not travel with its verdict.** Submitting a
+  review through the origin sends the state and the body; anchored comments
+  are still posted one at a time. Both forges accept comments inside the
+  review payload, which is the obvious next step.
 - **Key rotation is not built.** The sealed blob carries a `v1` version tag
   so it can be, but losing `secret.key` today means reconnecting the origins.
 - **DNS rebinding is not closed.** The SSRF policy checks address _literals_;

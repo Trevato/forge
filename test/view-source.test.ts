@@ -320,6 +320,10 @@ describe("RepoSource: one repository, two places to read it from", () => {
       defaultBranch: "main",
     });
 
+    // The origin's own answer to "may I push here?" — the question that
+    // decides between editing through a mirror and contributing via a fork.
+    expect(facts.ok && facts.value.permissions).toEqual({ push: true });
+
     const branches = await source.branches();
     expect(branches.ok && branches.value.map((b) => b.name)).toEqual(["main"]);
     expect(branches.ok && branches.value[0]!.isDefault).toBe(true);
@@ -393,6 +397,10 @@ describe("RepoSource: one repository, two places to read it from", () => {
     // Mergeability is the origin's to decide and it does not say, so we do
     // not guess.
     expect(pull.value.pull?.mergeable).toBeNull();
+    // The verdicts come through the same shape either side answers from;
+    // this origin has none on this pull, and none is an empty list, not a
+    // missing key a surface has to guard.
+    expect(pull.value.pull?.reviews).toEqual([]);
   });
 
   test("a blob past the cap is too_large, with no body held", async () => {
@@ -649,6 +657,17 @@ describe("RepoSource: one repository, two places to read it from", () => {
     const there = live("octo/widgets");
     expect(here.where.kind).toBe("local");
     expect(there.where.kind).toBe("origin");
+
+    // Both sides answer "may I push here?", each from what it knows: the
+    // local source from `canWrite`, the live one from the origin's word.
+    const [hereFacts, thereFacts] = await Promise.all([
+      here.describe(),
+      there.describe(),
+    ]);
+    expect(hereFacts.ok && hereFacts.value.permissions).toEqual({ push: true });
+    expect(thereFacts.ok && thereFacts.value.permissions).toEqual({
+      push: true,
+    });
 
     // Every path, flat — the file finder's feed — agrees in content and order
     // once sorted, and neither side hit its cap on a small repo.

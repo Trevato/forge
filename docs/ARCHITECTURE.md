@@ -186,6 +186,12 @@ Two lessons Forgejo is still paying for, designed in up front:
   blob line _content hash_ alongside file/line, so a force-push either
   re-anchors it exactly or marks it outdated explicitly — never silently lands
   it on the wrong line (Forgejo #21113).
+- **A review verdict anchors to a commit.** An approval says "of *this*
+  code", so `review` stores the `commit_oid` it was passed on and the merge
+  gate counts only verdicts on the current head. A push therefore dismisses a
+  stale approval by construction rather than by a background job somebody has
+  to remember to write — and there is no setting to get wrong, because there
+  is nothing to configure.
 
 ## The web
 
@@ -361,6 +367,51 @@ The centerpiece of code review, built from the distilled state of the art:
   (`content-visibility`), the `+`/`-` marker is a `::before` so copy skips it,
   and files over ~5000 changed lines show a stub instead of rendering.
 
+## Review states, and the gate they open
+
+Code review has two units and they are not the same thing. A **line comment**
+is anchored to a row of a diff (`comment`, `kind='review'`, with the content
+hash above). A **verdict** — `approved`, `changes_requested`, `commented` —
+is anchored to a commit, and it is what decides whether a change may land.
+They are separate tables because they answer separate questions, and because
+the merge gate has to be able to ask "is there an approval *of this head*",
+which only a row carrying a commit id can answer.
+
+Three rules, each mechanical rather than advisory, each with an adversarial
+test behind it (`test/reviews-states.test.ts`):
+
+- **A verdict with authority is a writer's.** Anyone who can read the repo
+  may leave a `commented` review; approving or requesting changes takes write
+  access. Otherwise "require an approval" would be satisfiable by any account
+  that could see the repository.
+- **You cannot approve your own change.** Requiring a review that the author
+  can supply is not requiring a review.
+- **Only the current head counts.** `reviewSummary` reads the latest verdict
+  per reviewer and ignores any passed on an older commit. A request for
+  changes on the head blocks a merge regardless of `require_review`; one on an
+  older head does not, because it was about code that is no longer proposed.
+
+`repo.require_review` turns the approval requirement on. The gate lives
+inside `mergePull` (`core/pulls.ts`), reading the live head — a check
+computed earlier by a caller and handed down is a check that can be skipped —
+and refuses with `review_required`. `pullStatus` exposes the same numbers as
+`reviews: { approved, changesRequested, required, mergeable }`, so a client
+can render the state of play without guessing at it, and `null` when the
+caller did not pass the gate context, because a permissive default is how a
+protection quietly stops protecting.
+
+Resolution hangs off the **thread** — every review comment sharing one
+anchor — rather than off any single comment, because "settled" is a property
+of a conversation. The thread's name is `anchorId(path, side, line)`, a short
+digest, since the key itself carries a NUL and a path and belongs in no URL.
+A writer or anyone who spoke in the thread may resolve it.
+
+On a mirrored repo none of this is ours to decide: the verdict is submitted
+at the origin under the connecting account's credential and imported back,
+and everyone else's verdicts arrive on the next sync. `docs/ORIGINS.md` has
+the dialect details, including the one that bites — GitHub takes the verb
+`APPROVE` and answers with the noun `APPROVED`, and Forgejo takes the noun.
+
 ## Search, and where semantic search would go
 
 Search (`core/search.ts`, `actions/search.ts`, `GET /api/v1/search`) holds no
@@ -402,7 +453,10 @@ with cross-repo pull requests, organizations + teams with membership-based
 permissions, an SSH transport (git and a terminal UI on one port), the
 terminal UI itself, origins — connected GitHub/Forgejo/Gitea accounts,
 mirrored repositories with imported issues and pulls, incremental sync,
-write-through of contributions, and push-through of branches — branches as a
+write-through of contributions, and push-through of branches — the fork flow
+(fork at the origin, branch from the live upstream, commit through the fork,
+propose upstream with `owner:branch`, as one call), review states with a
+merge gate and resolvable review threads, branches as a
 first-class unit (create/delete with git's own leases, ahead/behind, and the
 origin's word first on a mirror), editing files as one action (new branch and
 a pull in the same call), open counts on every repo row through grouped

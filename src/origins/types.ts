@@ -55,6 +55,12 @@ export interface RemoteRepo {
   readonly description: string;
   readonly private: boolean;
   readonly fork: boolean;
+  /**
+   * `owner/name` of the repo this one forks, or null. Both forges report it
+   * on `getRepo` and neither reports it on a list, which is why the cache
+   * keeps the value it already has rather than letting a listing clear it.
+   */
+  readonly parent: string | null;
   readonly defaultBranch: string;
   readonly cloneUrl: string;
   readonly sshUrl: string;
@@ -119,6 +125,22 @@ export interface RemoteIssue {
     readonly mergedAt: string | null;
     readonly draft: boolean;
   };
+}
+
+/**
+ * A verdict on a pull, as the origin states it. Distinct from
+ * `RemoteReview`, which is one *line* comment: both forges model a review as
+ * a state with comments hanging off it, and only the state gates a merge.
+ */
+export interface RemoteReviewState {
+  readonly remoteId: string;
+  readonly author: string;
+  readonly state: "approved" | "changes_requested" | "commented";
+  readonly body: string;
+  /** The head the verdict was passed on; "" when the origin does not say. */
+  readonly commitOid: string;
+  readonly createdAt: string;
+  readonly htmlUrl: string;
 }
 
 export interface RemoteReview {
@@ -305,6 +327,16 @@ export interface Provider {
     fullName: string,
     number: number,
   ): Promise<ProviderResult<readonly RemoteReview[]>>;
+  /**
+   * The verdicts on a pull — approvals and change requests, without their
+   * line comments. Separate from `listReviews` because a merge gate needs
+   * only these, and walking every review's comments to find them is the
+   * most expensive call in the adapter.
+   */
+  listReviewStates(
+    fullName: string,
+    number: number,
+  ): Promise<ProviderResult<readonly RemoteReviewState[]>>;
 
   createIssue(
     fullName: string,
@@ -335,6 +367,20 @@ export interface Provider {
       head: string;
     },
   ): Promise<ProviderResult<RemoteIssue>>;
+  /** Submit a verdict on a pull, under the credential's own identity. */
+  submitReview(
+    fullName: string,
+    number: number,
+    input: {
+      state: "approved" | "changes_requested" | "commented";
+      body: string;
+    },
+  ): Promise<ProviderResult<RemoteReviewState>>;
+  /**
+   * Fork a repo into the credential's account. GitHub creates the fork
+   * *asynchronously* and answers 202 with a repo that does not exist yet, so
+   * a caller must poll `getRepo` until it does (`actions/contribute.ts`).
+   */
   forkRepo(fullName: string): Promise<ProviderResult<RemoteRepo>>;
 
   /**

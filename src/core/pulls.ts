@@ -31,6 +31,7 @@ import {
   type Issue,
   type ListIssuesOptions,
 } from "./issues.ts";
+import { reviewSummary } from "./reviews.ts";
 
 export interface Pull extends Issue {
   readonly baseBranch: string;
@@ -265,8 +266,12 @@ export interface PullDiff {
  * base with the live base branch — the same view the web page, the API, and
  * review anchors all share, so a line means the same thing everywhere.
  */
-export async function pullDiff(dir: string, pull: Pull): Promise<PullDiff> {
-  const status = await pullStatus(dir, pull);
+export async function pullDiff(
+  dir: string,
+  pull: Pull,
+  gate?: ReviewGate,
+): Promise<PullDiff> {
+  const status = await pullStatus(dir, pull, gate);
   const from =
     (await mergeBase(dir, status.baseOid, status.headOid)) ?? status.baseOid;
   const result = await diffRange(dir, from, status.headOid);
@@ -276,6 +281,30 @@ export async function pullDiff(dir: string, pull: Pull): Promise<PullDiff> {
   return { status, from, diff };
 }
 
+/**
+ * Where the review gate stands on this pull, at this head. `mergeable` here
+ * is the *review* verdict alone — git may still refuse the merge — and it is
+ * the same question `actions/pulls.ts` asks before landing anything.
+ */
+export interface PullReviewStatus {
+  readonly approved: number;
+  readonly changesRequested: number;
+  /** Whether this repo demands an approval at all (`repo.requireReview`). */
+  readonly required: boolean;
+  readonly mergeable: boolean;
+}
+
+/**
+ * What `pullStatus` needs to answer the review question: the index, and the
+ * repo's setting. Optional because most callers want the git facts only,
+ * and a status computed without it says `reviews: null` rather than
+ * inventing a permissive answer.
+ */
+export interface ReviewGate {
+  readonly db: Database;
+  readonly requireReview: boolean;
+}
+
 export interface PullStatus {
   /** Live base tip (may differ from the snapshot at creation). */
   readonly baseOid: string;
@@ -283,27 +312,70 @@ export interface PullStatus {
   readonly ahead: number;
   readonly mergeable: boolean;
   readonly conflicts: string[];
+  /** Null when the caller did not pass a `ReviewGate` — never a guess. */
+  readonly reviews: PullReviewStatus | null;
+}
+
+/**
+ * The review verdict at one head: an approval of *this* commit and no
+ * outstanding request for changes on it. A verdict passed on an earlier head
+ * counts for nothing, in either direction — new code is new code.
+ */
+export function reviewGate(
+  gate: ReviewGate,
+  pull: Pull,
+  headOid: string,
+): PullReviewStatus {
+  const summary = reviewSummary(gate.db, pull.id, headOid);
+  return {
+    approved: summary.approvals,
+    changesRequested: summary.changesRequested,
+    required: gate.requireReview,
+    mergeable:
+      summary.changesRequested === 0 &&
+      (!gate.requireReview || summary.approvals > 0),
+  };
 }
 
 /** Recompute mergeability against the live base. The head is the live branch
  * for a same-repo PR, or the snapshot in refs/pull/N/head for a cross-repo one
  * (the fork's tip lives in another repo; we compare against what we fetched). */
-export async function pullStatus(dir: string, pull: Pull): Promise<PullStatus> {
+export async function pullStatus(
+  dir: string,
+  pull: Pull,
+  gate?: ReviewGate,
+): Promise<PullStatus> {
   const baseOid =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? pull.baseOid;
   const headRef = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
   const headOid = (await resolveOid(dir, headRef)) ?? pull.headOid;
+  const reviews =
+    gate === undefined ? null : reviewGate(gate, pull, headOid);
   const ahead = await aheadCount(dir, baseOid, headOid);
   if (ahead === 0) {
-    return { baseOid, headOid, ahead, mergeable: false, conflicts: [] };
+    return {
+      baseOid,
+      headOid,
+      ahead,
+      mergeable: false,
+      conflicts: [],
+      reviews,
+    };
   }
   const check = await mergeable(dir, baseOid, headOid);
   if (check.ok)
-    return { baseOid, headOid, ahead, mergeable: true, conflicts: [] };
+    return {
+      baseOid,
+      headOid,
+      ahead,
+      mergeable: true,
+      conflicts: [],
+      reviews,
+    };
   const conflicts = check.error.kind === "conflict" ? check.error.files : [];
-  return { baseOid, headOid, ahead, mergeable: false, conflicts };
+  return { baseOid, headOid, ahead, mergeable: false, conflicts, reviews };
 }
 
 /**
@@ -316,7 +388,9 @@ export type MergePullError =
   | MergeError
   | "already_merged"
   | "closed"
-  | "mirrored";
+  | "mirrored"
+  /** The repo requires an approval of this head, or a change was requested. */
+  | "review_required";
 
 export async function mergePull(
   db: Database,
@@ -327,12 +401,19 @@ export async function mergePull(
     message: string;
     actorId: string;
     author: { name: string; email: string };
+    /** The review gate. Absent means no review policy applies. */
+    gate?: ReviewGate;
   },
 ): Promise<Result<{ mergeOid: string }, MergePullError>> {
   if (pull.mergedAt !== null) return err("already_merged");
   if (pull.state === "closed") return err("closed");
 
-  const status = await pullStatus(dir, pull);
+  // The gate is read from the live head inside the merge, not passed in by a
+  // caller: a check computed a request earlier and handed down is a check
+  // that can be skipped.
+  const status = await pullStatus(dir, pull, input.gate);
+  if (status.reviews !== null && !status.reviews.mergeable)
+    return err("review_required");
   const landed = await merge(dir, {
     baseBranch: pull.baseBranch,
     baseOid: status.baseOid,

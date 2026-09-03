@@ -149,7 +149,13 @@ export async function updateRepoSettings(
   }
   const updated = writeSettings(app.db, repo, settings);
   const changed = (
-    ["visibility", "description", "protectDefault", "defaultBranch"] as const
+    [
+      "visibility",
+      "description",
+      "protectDefault",
+      "defaultBranch",
+      "requireReview",
+    ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
   app.bus.append({
     kind: "repo.settings_updated",

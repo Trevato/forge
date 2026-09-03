@@ -258,6 +258,12 @@ export interface OriginRepoRow {
   readonly pushedAt: string | null;
   readonly canPush: boolean;
   readonly seenAt: string;
+  /**
+   * `owner/name` of the repo this one forks, when the origin says so. What
+   * lets "contribute to a repo I cannot push to" find the fork I already
+   * have instead of asking the origin for a second one.
+   */
+  readonly forkOf: string | null;
   /** The local repo mirroring this one, when there is one. */
   readonly mirroredAs: string | null;
   /**
@@ -289,6 +295,7 @@ interface RawOriginRepo {
   pushed_at: string | null;
   can_push: number;
   seen_at: string;
+  fork_of: string | null;
   open_issues: number;
   open_pulls: number;
   counts_include_pulls: number;
@@ -308,6 +315,7 @@ const toOriginRepo = (row: RawOriginRepo): OriginRepoRow => ({
   pushedAt: row.pushed_at,
   canPush: row.can_push === 1,
   seenAt: row.seen_at,
+  forkOf: row.fork_of,
   mirroredAs: row.mirrored_id,
   openIssues: row.open_issues,
   openPulls: row.open_pulls,
@@ -322,8 +330,8 @@ const UPSERT_ORIGIN_REPO = `
   INSERT INTO origin_repo
     (origin_id, remote_id, full_name, description, private, fork,
      default_branch, clone_url, html_url, pushed_at, can_push, seen_at,
-     open_issues, open_pulls, counts_include_pulls)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+     open_issues, open_pulls, counts_include_pulls, fork_of)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
   ON CONFLICT (origin_id, remote_id) DO UPDATE SET
     full_name = excluded.full_name,
     description = excluded.description,
@@ -337,7 +345,10 @@ const UPSERT_ORIGIN_REPO = `
     seen_at = excluded.seen_at,
     open_issues = excluded.open_issues,
     open_pulls = excluded.open_pulls,
-    counts_include_pulls = excluded.counts_include_pulls`;
+    counts_include_pulls = excluded.counts_include_pulls,
+    -- A listing that does not report the parent must not forget one we
+    -- already know: listRepos omits it on both forges, getRepo states it.
+    fork_of = COALESCE(excluded.fork_of, origin_repo.fork_of)`;
 
 /** The bound parameters of one `UPSERT_ORIGIN_REPO`, in order. */
 const upsertArgs = (
@@ -360,6 +371,7 @@ const upsertArgs = (
   repo.openIssues,
   repo.openPulls,
   repo.openIssuesIncludesPulls ? 1 : 0,
+  repo.parent,
 ];
 
 /**
@@ -558,4 +570,62 @@ export function listMirrors(
     .all(originId)
     .filter((r) => r.origin_full_name !== null)
     .map((r) => ({ repoId: r.id, fullName: r.origin_full_name! }));
+}
+
+/**
+ * The repo at this origin that forks `upstream`, if the picker's cache knows
+ * of one. Matched on the parent the origin itself reported, never on a name
+ * we guessed — a fork may be renamed, and `octo/gears` forked into
+ * `me/gears-2` is still my fork of it.
+ */
+export function findOriginFork(
+  db: Database,
+  originId: string,
+  upstream: string,
+): OriginRepoRow | undefined {
+  const row = db
+    .query<
+      RawOriginRepo,
+      [string, string]
+    >(`${REPO_SELECT} WHERE origin_repo.origin_id = ?1 AND origin_repo.fork_of = ?2 COLLATE NOCASE ORDER BY origin_repo.full_name LIMIT 1`)
+    .get(originId, upstream);
+  return row ? toOriginRepo(row) : undefined;
+}
+
+/** Remember that this local mirror mirrors *my fork of* `upstream`. */
+export function setRepoForkOf(
+  db: Database,
+  repoId: string,
+  upstream: string,
+): void {
+  db.query("UPDATE repo SET origin_fork_of = ?1 WHERE id = ?2").run(
+    upstream,
+    repoId,
+  );
+}
+
+/** The upstream this mirror's remote is a fork of, as recorded on the row. */
+export function repoForkOf(db: Database, repoId: string): string | null {
+  const row = db
+    .query<
+      { origin_fork_of: string | null },
+      [string]
+    >("SELECT origin_fork_of FROM repo WHERE id = ?1")
+    .get(repoId);
+  return row?.origin_fork_of ?? null;
+}
+
+/** The local mirror of a remote repo at this origin, by `owner/name` there. */
+export function mirrorOf(
+  db: Database,
+  originId: string,
+  fullName: string,
+): string | undefined {
+  const row = db
+    .query<
+      { id: string },
+      [string, string]
+    >("SELECT id FROM repo WHERE origin_id = ?1 AND origin_full_name = ?2 COLLATE NOCASE")
+    .get(originId, fullName);
+  return row?.id;
 }
