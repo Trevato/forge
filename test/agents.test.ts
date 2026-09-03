@@ -19,6 +19,10 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { listEvents } from "../src/core/events.ts";
 import {
+  lookupIdempotent,
+  resetPruneClock,
+} from "../src/core/idempotency.ts";
+import {
   eventStream,
   resetSseDroppedCount,
   sseDroppedCount,
@@ -394,6 +398,40 @@ describe("Idempotency-Key", () => {
     expect(((await refused.json()) as { error: string }).error).toBe(
       "invalid_idempotency_key",
     );
+  });
+
+  test("expired keys are swept on the next store, and never replayed", async () => {
+    const past = new Date(Date.now() - 1_000).toISOString();
+    for (let i = 0; i < 3; i++) {
+      app.db
+        .query(
+          `INSERT INTO idempotency
+             (token_id, key, fingerprint, status, body, content_type, created_at, expires_at)
+           VALUES (?1, ?2, 'fp', 201, '{}', 'application/json', ?3, ?3)`,
+        )
+        .run("some-token", `stale-${i}`, past);
+    }
+    const count = (): number =>
+      app.db
+        .query<{ n: number }, []>(
+          "SELECT COUNT(*) AS n FROM idempotency WHERE key LIKE 'stale-%'",
+        )
+        .get()!.n;
+    expect(count()).toBe(3);
+    // An expired row is not an answer, even under the exact same token.
+    expect(lookupIdempotent(app.db, "some-token", "stale-0")).toBeUndefined();
+
+    // The sweep rides a store, at most once an hour; force the clock.
+    resetPruneClock();
+    const before = issueCount();
+    const response = await post(
+      "/api/v1/repos/bot/retry/issues",
+      { title: "sweeper", body: "" },
+      "sweep-key",
+    );
+    expect(response.status).toBe(201);
+    expect(issueCount()).toBe(before + 1);
+    expect(count()).toBe(0);
   });
 
   test("a GET carrying the header is untouched — only mutations replay", async () => {

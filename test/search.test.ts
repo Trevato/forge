@@ -16,7 +16,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetConnectLimit } from "../src/actions/origins.ts";
-import { search } from "../src/actions/search.ts";
+import { LIVE_BUDGET_MS, search } from "../src/actions/search.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo, listReposVisibleTo } from "../src/core/repos.ts";
 import { searchLocalIssues, MAX_CODE_HITS } from "../src/core/search.ts";
@@ -416,6 +416,144 @@ describe("search: one query, four sources", () => {
     expect(capped.issues).toHaveLength(1);
     expect(capped.truncated.issues).toBe(true);
   });
+
+  test("a path with a colon in it is attributed to the right file and line", async () => {
+    await api("/api/v1/repos/alice/widget-engine/contents", {
+      method: "POST",
+      body: JSON.stringify({
+        branch: "main",
+        message: "colons",
+        files: [
+          {
+            path: "notes/a:1:b.txt",
+            content: "line one\ncolon needle here\n",
+          },
+        ],
+      }),
+    });
+    const results = await find("q=colon+needle&kind=code");
+    expect(results.code).toEqual([
+      {
+        repo: { owner: "alice", name: "widget-engine" },
+        path: "notes/a:1:b.txt",
+        line: 2,
+        text: "colon needle here",
+      },
+    ]);
+  });
+
+  test("a repo with no commits is searched without crashing", async () => {
+    await api("/api/v1/repos", {
+      method: "POST",
+      body: JSON.stringify({ name: "unborn", visibility: "public" }),
+    });
+    const response = await api("/api/v1/search?q=flux&kind=code");
+    expect(response.status).toBe(200);
+    const results = await read<Results>(response);
+    expect(results.code.some((h) => h.path.includes("flux"))).toBe(true);
+    expect(results.code.some((h) => h.repo.name === "unborn")).toBe(false);
+  });
+
+  test("LIKE metacharacters in a query are literal, not wildcards", async () => {
+    await api("/api/v1/repos/alice/widget-engine/issues", {
+      method: "POST",
+      body: JSON.stringify({ title: "100% done_right", body: "" }),
+    });
+    // `%` alone would match every title as a wildcard; escaped, it matches
+    // the one title that contains a percent sign.
+    const percent = await find(`q=${encodeURIComponent("0% d")}&kind=issues`);
+    expect(percent.issues.map((i) => i.title)).toEqual(["100% done_right"]);
+    const underscore = await find(`q=${encodeURIComponent("e_r")}&kind=issues`);
+    expect(underscore.issues.map((i) => i.title)).toEqual(["100% done_right"]);
+    // `_` is a single-character wildcard unescaped: it would match the `-`
+    // in `widget-engine` and the `/` in every cached origin name.
+    const repos = await find(`q=${encodeURIComponent("_")}&kind=repos`);
+    expect(repos.repos).toEqual([]);
+    const backslash = await find(`q=${encodeURIComponent("\\")}&kind=all`);
+    expect(backslash.repos).toEqual([]);
+    expect(backslash.issues).toEqual([]);
+  });
+
+  test("hostile queries are patterns to git grep, never flags, and never crash", async () => {
+    const queries = [
+      "-i",
+      "--",
+      "-e",
+      "-F",
+      "-z",
+      "--max-count=1",
+      "--open-files-in-pager=sh",
+      "-O sh",
+      "  ",
+      // Longer than this and the transport answers 431 before we do.
+      "a".repeat(4_000),
+      "(flux|.*)+$",
+      "[",
+    ];
+    for (const q of queries) {
+      const response = await api(
+        `/api/v1/search?q=${encodeURIComponent(q)}&kind=code`,
+      );
+      expect([q.slice(0, 20), response.status]).toEqual([q.slice(0, 20), 200]);
+      const results = await read<Results>(response);
+      // A regex metacharacter query under -F matches itself or nothing —
+      // never every line.
+      if (q === "(flux|.*)+$" || q === "[") expect(results.code).toEqual([]);
+    }
+    // A 100 KB paste is a paste, not a search: bounded to MAX_QUERY before
+    // git ever sees it, and the NUL bytes in it are flattened.
+    const pasted = await search(app, aliceUser, {
+      q: `${"\u0000".repeat(50)}flux${"a".repeat(100 * 1024)}`,
+      kind: "code",
+    });
+    expect(pasted.code).toEqual([]);
+  });
+
+  test("a hung origin spends the budget alone — the others still answer", async () => {
+    const slow = newFakeState("forgejo", "sloth", "sloth-secret-0001");
+    slow.repos.push({
+      id: 21,
+      fullName: "sloth/slow-flux",
+      description: "never answers in time",
+      cloneUrl: "http://localhost:1/sloth/slow-flux.git",
+      htmlUrl: "https://slow.test/sloth/slow-flux",
+      defaultBranch: "main",
+    });
+    slow.issues.set("sloth/slow-flux", [
+      {
+        id: 950,
+        number: 1,
+        title: "flux from the slow side",
+        user: "sloth",
+        state: "open",
+        updatedAt: "2026-01-03T00:00:00Z",
+      },
+    ]);
+    slow.searchDelayMs = LIVE_BUDGET_MS + 2_000;
+    const slowFake = serveFakeForge(slow);
+    resetConnectLimit();
+    try {
+      const connected = await account("/api/v1/user/origins", {
+        method: "POST",
+        body: JSON.stringify({ host: slowFake.url, token: "sloth-secret-0001" }),
+      });
+      expect(connected.status).toBe(201);
+
+      const started = Date.now();
+      const results = await find("q=flux&kind=issues&live=1");
+      const elapsed = Date.now() - started;
+      // Bounded by the budget, not by the slowest origin…
+      expect(elapsed).toBeLessThan(LIVE_BUDGET_MS + 1_500);
+      // …and the origin that did answer is still in the page.
+      const titles = results.issues
+        .filter((i) => i.source === "origin")
+        .map((i) => i.title);
+      expect(titles).toContain("flux drifts upstream");
+      expect(titles).not.toContain("flux from the slow side");
+    } finally {
+      slowFake.stop();
+    }
+  }, 20_000);
 
   test("the issue search never scans the issue table", () => {
     const repos = listReposVisibleTo(app.db, aliceUser, { limit: 50 });

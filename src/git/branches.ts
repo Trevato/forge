@@ -60,8 +60,16 @@ export function isBranchName(name: string): boolean {
   // A 40-hex name would be indistinguishable from an object id everywhere
   // a rev is accepted — git itself warns about this, we simply refuse.
   if (isSafeOid(name)) return false;
+  // A loose ref is a file; a component past the filesystem's name limit is
+  // an ENAMETOOLONG from git, not a branch. Refuse it as the bad name it is.
+  for (const part of name.split("/")) {
+    if (Buffer.byteLength(part, "utf8") > MAX_COMPONENT_BYTES) return false;
+  }
   return true;
 }
+
+/** The longest single path component every filesystem git runs on takes. */
+const MAX_COMPONENT_BYTES = 255;
 
 /**
  * Create `refs/heads/<name>` at whatever `from` resolves to. Refuses if the

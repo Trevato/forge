@@ -573,6 +573,94 @@ describe("handing the terminal to $EDITOR", () => {
     app.stop();
   });
 
+  test("a session that ends mid-edit hangs up the editor and closes the pty", async () => {
+    // An editor that never exits on its own: the shape of nvim waiting for
+    // a keystroke from a client that has already disconnected.
+    const sleeper = join(scriptDir, "sleeper");
+    await writeFile(
+      sleeper,
+      `#!/bin/sh\n` +
+        `trap 'echo hup > "$1.hup"; exit 0' HUP\n` +
+        `echo started\n` +
+        `while :; do sleep 0.05; done\n`,
+    );
+    await chmod(sleeper, 0o755);
+    const { runEditor } = await import("../src/tui/screens/external.ts");
+
+    const dir = await mkdtemp(join(tmpdir(), "forge-hup-"));
+    try {
+      const file = join(dir, "note.txt");
+      await writeFile(file, "before\n");
+      let seen = "";
+      const host = {
+        write: (bytes: Uint8Array) => {
+          seen += new TextDecoder().decode(bytes);
+        },
+        onData: () => undefined,
+        onResize: () => undefined,
+        cols: 80,
+        rows: 24,
+        term: "xterm-256color",
+        local: false,
+      };
+      const session = new AbortController();
+      const running = runEditor(host, sleeper, file, dir, session.signal);
+      const deadline = Date.now() + 5_000;
+      while (!seen.includes("started") && Date.now() < deadline)
+        await new Promise((r) => setTimeout(r, 10));
+      expect(seen).toContain("started");
+
+      // The client is gone. Without the hangup this promise never settles,
+      // the child holds a pty nobody reads, and the process never exits.
+      session.abort();
+      const code = await Promise.race([
+        running,
+        new Promise<"leaked">((r) => setTimeout(() => r("leaked"), 5_000)),
+      ]);
+      expect(code).not.toBe("leaked");
+      expect(await readFile(`${file}.hup`, "utf8")).toBe("hup\n");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("stopping the TUI mid-handoff aborts the screen the editor was opened from", async () => {
+    // The wiring: the code screen hands its own abort signal to the
+    // external editor, and `App.stop()` aborts every screen on the stack.
+    // A dropped SSH channel is `terminal.onClose` → `stop()`.
+    const terminal = headlessTerminal(80, 24);
+    const { App: LoopApp } = await import("../src/tui/app/app.ts");
+    let signal: AbortSignal | undefined;
+    const app = new LoopApp({
+      terminal,
+      root: () => ({
+        title: "Root",
+        keys: [],
+        render: () => undefined,
+        key: () => false,
+        load: async (s) => {
+          signal = s;
+        },
+      }),
+    });
+    app.start();
+    await settleApp(app);
+    expect(signal?.aborted).toBe(false);
+    let aborted = false;
+    const suspended = app.ctx.suspend(
+      () =>
+        new Promise<number>((resolve) => {
+          signal!.addEventListener("abort", () => {
+            aborted = true;
+            resolve(129);
+          });
+        }),
+    );
+    app.stop();
+    expect(await suspended).toBe(129);
+    expect(aborted).toBe(true);
+  });
+
   test("nvim smoke: a real editor writes through the pty", async () => {
     const nvim = Bun.which("nvim");
     if (nvim === null) return; // not installed here; the fake editor covers the path

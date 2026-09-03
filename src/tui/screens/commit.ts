@@ -59,10 +59,14 @@ export function editErrorText(error: EditFilesError): string {
       return "that commit is too large";
     case "too_many_files":
       return `too many files (${error.count})`;
+    case "duplicate_path":
+      return `${error.path} is named twice in this edit`;
+    case "path_conflict":
+      return `${error.path} collides with a file or directory already there`;
     case "branch_failed":
-      return `the branch could not be created: ${errorText(error.error)}`;
+      return `the branch could not be created: ${errorText(error.reason)}`;
     case "pull_failed":
-      return `committed, but the pull did not open: ${errorText(error.error)}`;
+      return `committed, but the pull did not open: ${errorText(error.reason)}`;
     default:
       return errorText(error.kind);
   }

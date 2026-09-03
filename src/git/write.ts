@@ -23,10 +23,16 @@ export interface FileWrite {
 export type CommitFilesError =
   | { kind: "invalid_branch" }
   | { kind: "invalid_path"; path: string }
+  /** The path is a directory in the tree, or an ancestor of it is a file. */
+  | { kind: "path_conflict"; path: string }
   | { kind: "no_files" }
   | { kind: "branch_moved" }
   | { kind: "land_refused"; message: string }
   | { kind: "git"; message: string };
+
+/** `.git` (in any case git treats as such) anywhere in the path. */
+const hasGitComponent = (path: string): boolean =>
+  path.split("/").some((part) => part.toLowerCase() === ".git");
 
 export interface CommitResult {
   readonly commitOid: string;
@@ -63,7 +69,9 @@ export async function commitFiles(
   }
   if (input.files.length === 0) return err({ kind: "no_files" });
   for (const f of input.files) {
-    if (!isSafeTreePath(f.path))
+    // `.git` as a component is refused by git itself ("Invalid path"), but as
+    // a spawn failure with stderr; it is the caller's mistake, named as such.
+    if (!isSafeTreePath(f.path) || hasGitComponent(f.path))
       return err({ kind: "invalid_path", path: f.path });
   }
 
@@ -115,7 +123,18 @@ export async function commitFiles(
         ],
         { cwd: dir, env },
       );
-      if (!staged.ok) return err({ kind: "git", message: staged.error.stderr });
+      if (!staged.ok) {
+        // update-index (without --replace) refuses to put a file where a
+        // directory is, or under a path that is a file. That is the answer
+        // we want — silently replacing a whole directory with one blob is
+        // how a typo'd path deletes a tree — but it is a caller error with
+        // a name, not a git failure.
+        return /appears as both a file and as a directory/.test(
+          staged.error.stderr,
+        )
+          ? err({ kind: "path_conflict", path: file.path })
+          : err({ kind: "git", message: staged.error.stderr });
+      }
     }
 
     const tree = await runGit(["write-tree"], { cwd: dir, env });

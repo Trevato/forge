@@ -710,6 +710,7 @@ export function codeScreen(
           path,
           body: entry.raw,
           onEdited: (bytes) => openSaved(f, ctx, src, ref, path, bytes),
+          ...(signal === undefined ? {} : { signal }),
         });
         return true;
       }

@@ -27,7 +27,7 @@ import {
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { WriteThroughError } from "../origins/write-through.ts";
 import { requireWriter, type AccessError } from "./access.ts";
-import { createBranch, originPush } from "./branches.ts";
+import { createBranch, deleteBranch, originPush } from "./branches.ts";
 import { openPull as openPullAction } from "./pulls.ts";
 
 /** Per-file ceiling. Anything larger belongs in a push, not a JSON body. */
@@ -74,9 +74,16 @@ export type EditFilesError =
   | { kind: "file_too_large"; path: string; bytes: number }
   | { kind: "commit_too_large"; bytes: number }
   | { kind: "protected_branch"; branch: string }
-  | { kind: "branch_failed"; error: string }
+  /** The same path named twice in one edit — which content was meant? */
+  | { kind: "duplicate_path"; path: string }
+  /**
+   * The branch could not be made; `reason` is the branch action's own code.
+   * (Not `error`: an adapter that spreads this object next to its own
+   * `error` code must not have the stable code overwritten by the detail.)
+   */
+  | { kind: "branch_failed"; reason: string }
   /** The commit landed; only the proposal did not open. */
-  | { kind: "pull_failed"; error: string; commit: CommitResult };
+  | { kind: "pull_failed"; reason: string; commit: CommitResult };
 
 /** The access and write-through codes, which travel as bare strings. */
 const PASSTHROUGH = new Set([
@@ -114,9 +121,15 @@ export async function editFiles(
     return err({ kind: "too_many_files", count: input.files.length });
 
   let total = 0;
+  const seen = new Set<string>();
   for (const file of input.files) {
     if (!isSafeTreePath(file.path))
       return err({ kind: "invalid_path", path: file.path });
+    // Two entries for one path is an ambiguous request, not a last-wins one:
+    // a retrying agent that concatenated two edits must hear about it.
+    if (seen.has(file.path))
+      return err({ kind: "duplicate_path", path: file.path });
+    seen.add(file.path);
     if (file.content === null) continue;
     const bytes = sizeOf(file.content);
     if (bytes > MAX_FILE_BYTES)
@@ -127,10 +140,16 @@ export async function editFiles(
     return err({ kind: "commit_too_large", bytes: total });
 
   // Where the work lands, and where a new branch forks from. `base` is the
-  // fork point and the pull's target; `branch` is the working branch.
+  // fork point and the pull's target; `branch` is the working branch. With
+  // no new branch asked for, a working branch that does not exist yet forks
+  // from the default — never from nothing. A typo in `branch` must not mint
+  // an orphan history with one file in it (the same rule `commitToBranch`
+  // applies); on an empty repo there is no default tip, and the commit is a
+  // root commit exactly as before.
   const working = (input.branch ?? "").trim() || repo.defaultBranch;
-  const base = (input.base ?? "").trim() || working;
   const fresh = (input.newBranch ?? "").trim();
+  const base =
+    (input.base ?? "").trim() || (fresh !== "" ? working : repo.defaultBranch);
   const branch = fresh || working;
 
   // Protection is mechanical: a protected default takes commits from repo
@@ -151,7 +170,7 @@ export async function editFiles(
     if (!created.ok) {
       return PASSTHROUGH.has(created.error)
         ? err(created.error as AccessError | WriteThroughError)
-        : err({ kind: "branch_failed", error: created.error });
+        : err({ kind: "branch_failed", reason: created.error });
     }
   }
 
@@ -186,7 +205,15 @@ export async function editFiles(
           }),
     },
   );
-  if (!committed.ok) return committed;
+  if (!committed.ok) {
+    // The branch was made for this commit and the commit did not land: take
+    // the branch back (upstream too, on a mirror) so a refused edit leaves
+    // no branch behind with nothing on it — the half-finished state this
+    // call exists to prevent. The rollback is best-effort; the edit's own
+    // error is what the caller needs to hear.
+    if (fresh !== "") await deleteBranch(app, writer.value, repo, fresh);
+    return committed;
+  }
 
   // `update-ref` runs no hooks, so the push is announced here — webhooks,
   // SSE and CI see it exactly as they would a `git push`.
@@ -216,7 +243,7 @@ export async function editFiles(
   if (!pull.ok)
     return err({
       kind: "pull_failed",
-      error: pull.error,
+      reason: pull.error,
       commit: committed.value,
     });
   return ok({ commit: committed.value, branch, pull: pull.value });

@@ -156,6 +156,8 @@ export interface FakeState {
   conditionalHits: number;
   /** Refuse the next write with this message. */
   refuseWrite: string;
+  /** Hold every issue-search answer this long before sending it. */
+  searchDelayMs: number;
   nextId: number;
   /** The OAuth endpoints, when a test wants the connect flows. */
   oauth?: FakeOAuth;
@@ -194,6 +196,7 @@ export function newFakeState(
     etagsEnabled: false,
     conditionalHits: 0,
     refuseWrite: "",
+    searchDelayMs: 0,
     nextId: 1000,
   };
 }
@@ -313,7 +316,7 @@ function route(
   url: URL,
   rest: string,
   bodyText: string,
-): Response {
+): Response | Promise<Response> {
   const q = url.searchParams;
   const method = request.method;
 
@@ -342,7 +345,11 @@ function route(
     (rest === "/search/issues" && state.kind === "github") ||
     (rest === "/repos/issues/search" && state.kind !== "github")
   ) {
-    return searchIssuesJson(state, url, q.get("q") ?? "", q);
+    const answer = searchIssuesJson(state, url, q.get("q") ?? "", q);
+    if (state.searchDelayMs <= 0) return answer;
+    return new Promise<Response>((resolve) =>
+      setTimeout(() => resolve(answer), state.searchDelayMs),
+    );
   }
 
   const repoMatch = /^\/repos\/([^/]+)\/([^/]+)(.*)$/.exec(rest);

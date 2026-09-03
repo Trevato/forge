@@ -96,6 +96,13 @@ export interface ExternalEditOptions {
   readonly body: Uint8Array;
   /** Called only when the bytes actually changed. */
   onEdited(bytes: Uint8Array): void;
+  /**
+   * The screen's own abort signal. It fires when the session ends, and a
+   * session that ends mid-edit must take the editor with it: the child owns
+   * a pty nobody is attached to any more, and a live pty refs the event loop
+   * forever. Without this, every dropped SSH connection leaks an nvim.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -127,7 +134,7 @@ export function externalEditor(
         path: o.path,
       });
       const code = await ctx.suspend((host) =>
-        runEditor(host, editor.bin, file, dir),
+        runEditor(host, editor.bin, file, dir, o.signal),
       );
       if (code === undefined) {
         ctx.toast("an editor is already running on this session", "attn");
@@ -149,11 +156,12 @@ export function externalEditor(
 }
 
 /** The pty loop. Returns the editor's real exit code. */
-async function runEditor(
+export async function runEditor(
   host: RawHost,
   bin: string,
   file: string,
   cwd: string,
+  signal?: AbortSignal,
 ): Promise<number> {
   const terminal = new Bun.Terminal({
     cols: Math.max(1, host.cols),
@@ -171,6 +179,18 @@ async function runEditor(
   env["LANG"] = env["LANG"] ?? "en_US.UTF-8";
 
   const proc = Bun.spawn([bin, file], { terminal, env, cwd });
+  // The far end went away: there is nobody to edit for. SIGHUP is what a
+  // closing terminal sends, and every editor treats it as "save-and-leave
+  // what you can, then go"; the pty is closed once the process has.
+  const hangup = (): void => {
+    try {
+      proc.kill("SIGHUP");
+    } catch {
+      /* already gone */
+    }
+  };
+  if (signal?.aborted === true) hangup();
+  else signal?.addEventListener("abort", hangup, { once: true });
   host.onData((chunk) => {
     // A write after close throws rather than no-opping, and client bytes
     // routinely arrive in the window between the editor exiting and us
@@ -198,6 +218,7 @@ async function runEditor(
     // after `close()`, i.e. after this has already resolved.
     return await proc.exited;
   } finally {
+    signal?.removeEventListener("abort", hangup);
     terminal.close();
   }
 }

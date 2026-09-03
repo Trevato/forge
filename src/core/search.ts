@@ -330,6 +330,7 @@ export async function grepRepo(
   const run = await runGitCapture(
     [
       "grep",
+      "-z",
       "-n",
       "-I",
       "-i",
@@ -348,12 +349,14 @@ export async function grepRepo(
   // commits, a killed process) is simply no results from this repo.
   if (run.code !== 0 && run.code !== 1) return [];
 
+  // `-z` makes each record `ref:path NUL line NUL text`, so a path with a
+  // colon in it (`a:1:b.txt`) cannot be split at the wrong colon.
   const prefix = `${ref}:`;
   const hits: { path: string; line: number; text: string }[] = [];
   for (const raw of run.stdout.split("\n")) {
     if (raw === "" || !raw.startsWith(prefix)) continue;
     const rest = raw.slice(prefix.length);
-    const match = /^(.+?):(\d+):([\s\S]*)$/.exec(rest);
+    const match = /^([^\0]+)\0(\d+)\0([\s\S]*)$/.exec(rest);
     if (!match) continue;
     const line = Number(match[2]);
     if (!Number.isSafeInteger(line)) continue;

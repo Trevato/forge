@@ -136,12 +136,16 @@ async function liveIssues(
   const origins = listOrigins(app.db, actor.id).filter((o) => !o.needsReauth);
   if (origins.length === 0) return [];
 
+  // One deadline, shared: every origin that has answered by then
+  // contributes; the one still thinking contributes nothing. Racing the
+  // whole set against the clock would let one hung forge erase the answers
+  // the others already gave.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<"timeout">((resolve) => {
     timer = setTimeout(() => resolve("timeout"), LIVE_BUDGET_MS);
   });
 
-  const asked = origins.map(async (origin) => {
+  const asked = origins.map(async (origin): Promise<IssueHit[]> => {
     const provider = providerForOrigin(app, origin);
     if (!provider.ok) return [];
     const found = await provider.value.searchIssues(q, limit);
@@ -162,11 +166,14 @@ async function liveIssues(
   });
 
   try {
-    const settled = await Promise.race([
-      Promise.all(asked.map((p) => p.catch((): IssueHit[] => []))),
-      deadline,
-    ]);
-    return settled === "timeout" ? [] : settled.flat();
+    const settled = await Promise.all(
+      asked.map((p) =>
+        Promise.race([p.catch((): IssueHit[] => []), deadline]).then((r) =>
+          r === "timeout" ? [] : r,
+        ),
+      ),
+    );
+    return settled.flat();
   } finally {
     clearTimeout(timer);
   }
