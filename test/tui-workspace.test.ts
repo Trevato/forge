@@ -30,10 +30,32 @@ import { setLogLevel } from "../src/kernel/log.ts";
 import { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
-import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import {
+  headlessTerminal,
+  type HeadlessTerminal,
+} from "../src/tui/term/terminal.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
 
 setLogLevel("error");
+
+/**
+ * The colour the first `export` keyword is drawn in. A theme switch has to
+ * change it: the spans in an open tab were built against the old palette, and
+ * "the code kept yesterday's colours" is exactly the bug that hides in a
+ * screenshot.
+ */
+function keywordColour(app: App): number {
+  const screen = app.screen;
+  for (let y = 0; y < screen.rows; y++)
+    for (let x = 0; x < screen.cols - 5; x++)
+      if (screen.textAt(x, y) === "e" && rowText(app, y).includes("export"))
+        return screen.fg[screen.idx(x, y)] ?? -1;
+  return -1;
+}
+
+function rowText(app: App, y: number): string {
+  return app.screen.toText().split("\n")[y] ?? "";
+}
 
 const README = ["# Lighthouse", "", ...longBody()].join("\n");
 
@@ -48,6 +70,7 @@ function longBody(): string[] {
 
 interface Harness {
   app: App;
+  terminal: HeadlessTerminal;
   text(): string;
   press(...keys: string[]): Promise<void>;
   type(text: string): Promise<void>;
@@ -74,8 +97,9 @@ describe("the terminal workspace", () => {
     identity: TuiIdentity = asAlice(),
     cols = 120,
     rows = 40,
+    term?: string,
   ): Harness {
-    const terminal = headlessTerminal(cols, rows);
+    const terminal = headlessTerminal(cols, rows, term);
     const { app } = createForgeApp(forge, identity, {
       terminal,
       exitHooks: false,
@@ -95,6 +119,7 @@ describe("the terminal workspace", () => {
     };
     return {
       app,
+      terminal,
       text: () => app.screen.toText(),
       async press(...keys) {
         for (const key of keys) send(key);
@@ -152,6 +177,12 @@ describe("the terminal workspace", () => {
       message: "seed",
       files: [
         { path: "README.md", content: `${README}\n` },
+        {
+          path: "docs/logo.png",
+          content: new Uint8Array(
+            await Bun.file(join(import.meta.dir, "fixtures", "quads.png")).arrayBuffer(),
+          ),
+        },
         { path: "package.json", content: '{ "name": "lighthouse" }\n' },
         {
           path: "src/lamp.ts",
@@ -592,6 +623,125 @@ describe("the terminal workspace", () => {
       expect(h.text()).toContain("main");
       await h.press("tab");
       expect(h.text()).toContain("Lighthouse");
+    } finally {
+      h.stop();
+    }
+  });
+
+
+  // ---- pictures ----
+
+  test("an image tab draws pixels on a terminal that can show them", async () => {
+    // Ghostty speaks the kitty protocol, and `TERM` is the only thing an SSH
+    // session gets to tell us about the far side.
+    const h = boot(asAlice(), 120, 40, "xterm-ghostty");
+    try {
+      await h.settle();
+      await open(h);
+      h.terminal.takeOutput();
+      await openFile(h, "logo");
+      const out = h.terminal.takeOutput();
+      // The placement goes out *after* the frame, as an APC, and it carries
+      // the transmit-and-display key.
+      expect(out).toContain("\x1b_G");
+      expect(out).toContain("a=T");
+      expect(h.text()).toContain("docs/logo.png");
+      // The status line names what the file is, since the cells are blank.
+      expect(h.text()).toContain("PNG");
+
+      // Switching away takes the picture with it: a kitty placement is
+      // anchored to a cell and would otherwise sit on top of the next file.
+      h.terminal.takeOutput();
+      await h.press("1");
+      const after = h.terminal.takeOutput();
+      expect(after).toContain("\x1b_G");
+      expect(after).toContain("a=d");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("the same image is a card of facts where pixels are impossible", async () => {
+    const h = boot(asAlice(), 120, 40, "xterm-256color");
+    try {
+      await h.settle();
+      await open(h);
+      h.terminal.takeOutput();
+      await openFile(h, "logo");
+      // No escape soup: a placeholder that says what the file is and what
+      // would show it.
+      expect(h.terminal.takeOutput()).not.toContain("\x1b_G");
+      expect(h.text()).toContain("PNG");
+      expect(h.text()).toContain("Ghostty, kitty or WezTerm");
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("v on an image shows what the file is instead", async () => {
+    const h = boot(asAlice(), 120, 40, "xterm-ghostty");
+    try {
+      await h.settle();
+      await open(h);
+      await openFile(h, "logo");
+      await h.press("v");
+      expect(h.text()).toContain("dimensions");
+      expect(h.text()).toContain("format");
+      // And nothing is placed while the facts are up.
+      h.terminal.takeOutput();
+      await h.press("j");
+      expect(h.terminal.takeOutput()).not.toContain("a=T");
+    } finally {
+      h.stop();
+    }
+  });
+
+  // ---- the theme ----
+
+  test("switching theme re-tokenises the open tabs", async () => {
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h);
+      await openFile(h, "srclamp");
+      const before = keywordColour(h.app);
+      // The same path the picker takes. (`t` itself belongs to the finder
+      // while a workspace is open — the picker is reachable from the
+      // screens that do not claim the letter.)
+      h.app.ctx.setTheme("light");
+      await h.settle();
+      const after = keywordColour(h.app);
+      expect(after).not.toBe(-1);
+      expect(after).not.toBe(before);
+    } finally {
+      h.stop();
+    }
+  });
+
+  // ---- coming back ----
+
+  test("re-entering a repository restores its tabs and its cursor", async () => {
+    const h = boot();
+    try {
+      await h.settle();
+      await open(h);
+      await openFile(h, "srclamp");
+      await h.press("e", "end");
+      await h.type(" // kept");
+      await h.press("esc");
+      expect(h.text()).toContain("2 tabs");
+
+      // All the way out to the dashboard, then back in by name. The
+      // dashboard keeps its filter, so clear it before typing another.
+      await h.press("q");
+      await h.settle();
+      expect(h.text()).not.toContain("2 tabs");
+      await h.press("/", "esc");
+      await open(h);
+      // Same tabs, same active one, same uncommitted edit.
+      expect(h.text()).toContain("2 tabs");
+      expect(h.text()).toContain("// kept");
+      expect(h.text()).toContain("1 modified");
     } finally {
       h.stop();
     }

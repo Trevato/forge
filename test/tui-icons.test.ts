@@ -13,7 +13,18 @@
  * from outside the PUA — an emoji, say — the first block catches it.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { signUp } from "../src/actions/users.ts";
+import { createApp, type App as Forge } from "../src/app.ts";
+import { getUserSetting } from "../src/core/settings.ts";
+import type { User } from "../src/core/users.ts";
+import { setLogLevel } from "../src/kernel/log.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import {
   fileIcon,
   icon,
@@ -22,6 +33,9 @@ import {
   type IconName,
 } from "../src/tui/ui/icons.ts";
 import { clusterWidth, clusters, displayWidth } from "../src/tui/term/width.ts";
+import { settleApp, settleUntil } from "./helpers/tui.ts";
+
+setLogLevel("error");
 
 const SETS = ["plain", "nerd"] as const;
 
@@ -201,5 +215,162 @@ describe("fileIcon", () => {
     expect(looksLikeImage("chart.svg")).toBe(true);
     expect(looksLikeImage("main.ts")).toBe(false);
     expect(looksLikeImage("png")).toBe(false);
+  });
+});
+
+/**
+ * The set is a guess about the reader's *font*, made from the one variable an
+ * SSH session carries. These tests are that guess end to end: a Ghostty
+ * session gets the Nerd glyphs, everything else gets the safe set, and the
+ * picker is how somebody whose font disagrees says so — once, durably.
+ */
+describe("the icon set a session actually draws", () => {
+  let dataDir: string;
+  let forge: Forge;
+  let alice: User;
+
+  function boot(term?: string) {
+    const terminal = headlessTerminal(120, 40, term);
+    const { app } = createForgeApp(
+      forge,
+      {
+        sshUsername: "alice",
+        remoteAddress: "127.0.0.1",
+        fingerprint: "SHA256:test",
+        user: alice,
+      },
+      { terminal, exitHooks: false },
+    );
+    app.start();
+    const press = async (...keys: string[]): Promise<void> => {
+      for (const key of keys)
+        app.dispatch({
+          type: "key",
+          key,
+          ctrl: false,
+          alt: false,
+          shift: false,
+        });
+      await settleApp(app);
+    };
+    return {
+      app,
+      press,
+      text: () => app.screen.toText(),
+      settle: () => settleApp(app),
+      until: (what: string) => settleUntil(app, what),
+      stop: () => app.stop(),
+    };
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-tui-icons-"));
+    forge = createApp({ dataDir, port: 0 });
+    const a = await signUp(forge, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: "a-long-passphrase",
+    });
+    if (!a.ok) throw new Error("signup failed");
+    alice = a.value;
+    const made = await createRepo(forge, alice, {
+      name: "lamp",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    await commitToBranch(forge, alice, made.value, {
+      message: "seed",
+      files: [
+        { path: "README.md", content: "# Lamp\n" },
+        { path: "src/main.ts", content: "export const x = 1;\n" },
+      ],
+    });
+  });
+
+  afterAll(async () => {
+    forge.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("Ghostty gets nerd glyphs; a plain xterm does not", async () => {
+    const nerd = boot("xterm-ghostty");
+    try {
+      await nerd.settle();
+      expect(nerd.app.ctx.icons).toBe("nerd");
+      // The repo row wears the repo glyph rather than a shape from the safe
+      // set, and the explorer wears the language marks.
+      expect(nerd.text()).toContain(icon("repo", "nerd"));
+      await nerd.press("enter");
+      await nerd.until("alice/lamp");
+      expect(nerd.text()).toContain(
+        fileIcon("src", "nerd", { directory: true }),
+      );
+    } finally {
+      nerd.stop();
+    }
+
+    const plain = boot("xterm-256color");
+    try {
+      await plain.settle();
+      expect(plain.app.ctx.icons).toBe("plain");
+      expect(plain.text()).not.toContain(icon("repo", "nerd"));
+      await plain.press("enter");
+      await plain.until("alice/lamp");
+      expect(plain.text()).not.toContain(fileIcon("src/main.ts", "nerd"));
+    } finally {
+      plain.stop();
+    }
+  });
+
+  test("the picker previews the set and persists the choice", async () => {
+    const h = boot("xterm-256color");
+    try {
+      await h.settle();
+      await h.press("t");
+      // Three rows the theme list did not have: the two settings, and a line
+      // of real glyphs to look at.
+      expect(h.text()).toContain("Images");
+      expect(h.text()).toContain("Icons");
+      expect(h.text()).toContain("plain glyphs");
+
+      // "dark" is the fourth theme, so four presses reach the Icons row.
+      await h.press("j", "j", "j", "j");
+      await h.press("right");
+      expect(h.app.ctx.icons).toBe("nerd");
+      // The preview changes under the cursor: the whole point of the row.
+      expect(h.text()).toContain(icon("issue", "nerd"));
+      expect(h.text()).toContain("boxes? pick plain");
+      await h.press("esc");
+      await h.settle();
+      // And it is a *setting*, not a mood this session is in.
+      expect(getUserSetting(forge.db, alice.id, "icons")).toBe("nerd");
+
+      // A fresh connection for the same account comes back nerd, even though
+      // its TERM says nothing about fonts.
+      const again = boot("xterm-256color");
+      try {
+        await again.settle();
+        expect(again.app.ctx.icons).toBe("nerd");
+      } finally {
+        again.stop();
+      }
+    } finally {
+      h.stop();
+    }
+  });
+
+  test("the images row says what auto resolved to", async () => {
+    const h = boot("xterm-ghostty");
+    try {
+      await h.settle();
+      await h.press("t", "j", "j", "j");
+      expect(h.text()).toContain("auto (kitty)");
+      await h.press("right");
+      await h.press("esc");
+      await h.settle();
+      expect(getUserSetting(forge.db, alice.id, "graphics")).toBe("kitty");
+    } finally {
+      h.stop();
+    }
   });
 });

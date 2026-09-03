@@ -43,6 +43,7 @@ import {
   Scroll,
   confirmScreen,
   drawLines,
+  hitScroll,
   errorText,
   live,
   plural,
@@ -274,6 +275,7 @@ export function pullScreen(
           lines = threadLines(entries(), Math.max(20, body!.w - 1), c);
         }
         drawLines(s, body!, c, scroll, lines);
+        hitScroll(ctx, body!, scroll, lines.length);
       }
       if (foot > 0) composer.render(s, comp!, c, ctx);
     },

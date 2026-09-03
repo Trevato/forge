@@ -30,6 +30,7 @@ import {
   metaOf,
   drawList,
   errorText,
+  hitList,
   live,
   pickerScreen,
   relTime,
@@ -158,6 +159,23 @@ export function issuesScreen(
     return n === undefined ? text : `${text} ${n}`;
   };
 
+  /**
+   * `enter`, and a click, and the "Load more…" row past the end — one
+   * function, so the pointer cannot open something the keyboard would not.
+   */
+  const openAt = (index: number): void => {
+    const item = shown()[index];
+    if (item === undefined) {
+      loadMore();
+      return;
+    }
+    ctx.push(
+      kind === "pull"
+        ? pullScreen(f, ctx, src, item.number)
+        : issueScreen(f, ctx, src, item.number),
+    );
+  };
+
   const screen: Screen = {
     title: kind === "pull" ? "Pulls" : "Issues",
     get keys() {
@@ -247,12 +265,13 @@ export function issuesScreen(
                 ? item.authorName
                 : `${ORIGIN_MARK} ${item.originAuthor}`
             } ${relTime(item.updatedAt)}`,
-            commentsMeta(item.commentCount),
+            commentsMeta(item.commentCount, ctx.icons),
           ),
         };
       });
       if (more) list.push({ title: "Load more…" });
       drawList(s, body!, c, state, list);
+      hitList(ctx, body!, state, list.length, { open: openAt });
     },
     key(e) {
       if (search.active) {
@@ -298,16 +317,7 @@ export function issuesScreen(
         return true;
       }
       if (e.key === "enter") {
-        const item = shown()[state.index];
-        if (item === undefined) {
-          loadMore();
-          return true;
-        }
-        ctx.push(
-          kind === "pull"
-            ? pullScreen(f, ctx, src, item.number)
-            : issueScreen(f, ctx, src, item.number),
-        );
+        openAt(state.index);
         return true;
       }
       if (e.key === "c" && mayWrite() && repo !== undefined) {

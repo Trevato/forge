@@ -40,8 +40,13 @@ interface Harness {
   text(): string;
   /** Every row of the grid, so a test can find the one it means by content. */
   rows(): string[];
-  /** The row index whose text contains `what`, or -1. */
-  rowOf(what: string): number;
+  /**
+   * The row index whose text contains `what`, or -1. `within` limits the
+   * search to the first N columns — a two-pane screen puts unrelated text on
+   * the same grid row, and "alice/lantern" in the activity feed is not the
+   * repository row a click is aimed at.
+   */
+  rowOf(what: string, within?: number): number;
   click(col: number, row: number, times?: number): Promise<void>;
   wheel(dir: "up" | "down", col: number, row: number): Promise<void>;
   press(...keys: string[]): Promise<void>;
@@ -78,7 +83,10 @@ describe("the pointer", () => {
       terminal,
       text: () => app.screen.toText(),
       rows: grid,
-      rowOf: (what) => grid().findIndex((line) => line.includes(what)),
+      rowOf: (what, within) =>
+        grid().findIndex((line) =>
+          (within === undefined ? line : line.slice(0, within)).includes(what),
+        ),
       async click(col, row, times = 1) {
         for (let i = 0; i < times; i++) {
           // 1-based, as the protocol has it. Press *and* release: a terminal
@@ -205,21 +213,34 @@ describe("the pointer", () => {
     const h = boot();
     try {
       await h.settle();
-      const beacon = h.rowOf("alice/beacon");
-      const lantern = h.rowOf("alice/lantern");
-      expect(beacon).toBeGreaterThan(0);
-      expect(lantern).toBeGreaterThan(0);
+      // Put the cursor on the first row, then aim at the second one — so the
+      // click under test is demonstrably on a row that was *not* selected.
+      await h.press("g");
+      const LEFT = 70; // the repo pane; the feed names repos too
+      const first = Math.min(
+        h.rowOf("alice/beacon", LEFT),
+        h.rowOf("alice/lantern", LEFT),
+      );
+      const second = Math.max(
+        h.rowOf("alice/beacon", LEFT),
+        h.rowOf("alice/lantern", LEFT),
+      );
+      expect(first).toBeGreaterThan(0);
+      expect(second).toBeGreaterThan(first);
+      const target = h.rows()[second]!.slice(0, LEFT).includes("lantern")
+        ? "alice/lantern"
+        : "alice/beacon";
+
       // One click on a row that is not selected only moves the cursor: half
       // of pointing at a row is looking at it.
-      await h.click(4, lantern);
-      expect(h.text()).not.toContain("alice/lantern ›");
-      expect(h.rowOf("alice/lantern")).toBe(lantern);
+      await h.click(4, second);
+      expect(h.rows()[1]).not.toContain(target);
+      expect(h.rowOf(target, LEFT)).toBe(second);
       // The second click on the same row opens it.
-      await h.click(4, lantern);
-      await h.until("alice/lantern");
-      expect(h.text()).toContain("alice/lantern");
-      // And the crumb trail says we actually went somewhere.
-      expect(h.rows()[1]).toContain("alice/lantern");
+      await h.click(4, second);
+      await h.until(target);
+      // The crumb trail says we actually went somewhere.
+      expect(h.rows()[1]).toContain(target);
     } finally {
       h.stop();
     }
@@ -229,10 +250,18 @@ describe("the pointer", () => {
     const h = boot();
     try {
       await h.settle();
-      const lantern = h.rowOf("alice/lantern");
-      await h.click(4, lantern, 2);
-      await h.until("alice/lantern");
-      expect(h.rows()[1]).toContain("alice/lantern");
+      await h.press("g");
+      const LEFT = 70;
+      const second = Math.max(
+        h.rowOf("alice/beacon", LEFT),
+        h.rowOf("alice/lantern", LEFT),
+      );
+      const target = h.rows()[second]!.slice(0, LEFT).includes("lantern")
+        ? "alice/lantern"
+        : "alice/beacon";
+      await h.click(4, second, 2);
+      await h.until(target);
+      expect(h.rows()[1]).toContain(target);
     } finally {
       h.stop();
     }
@@ -248,10 +277,12 @@ describe("the pointer", () => {
       await h.click(h.text().indexOf("Recent activity") % 120, activity + 1);
       await h.settle();
       // Focus moved: the repo list no longer holds the cursor, and `enter`
-      // now opens what the feed is pointing at.
+      // now opens *what the feed row is about* — the issue, not the repo it
+      // happens to be sitting next to.
       await h.press("enter");
       await h.settle();
-      expect(h.rows()[1]).toContain("alice/");
+      expect(h.rows()[1]).toContain("#1");
+      expect(h.text()).toContain("the lamp flickers");
     } finally {
       h.stop();
     }
@@ -350,7 +381,7 @@ describe("the pointer", () => {
     const h = boot();
     try {
       await h.settle();
-      const before = h.rowOf("alice/beacon");
+      const before = h.rowOf("alice/beacon", 70);
       await h.press("?");
       await h.settle();
       expect(h.text()).toContain("shift+drag");
@@ -370,12 +401,13 @@ describe("the pointer", () => {
     try {
       await h.settle();
       // Column zero, row zero: the header, which registers nothing.
-      const first = h.rowOf("alice/beacon");
+      const first = h.rowOf("alice/beacon", 70);
       await h.wheel("down", 0, 0);
       await h.settle();
-      // Three rows of movement in a two-row list clamps to the last row,
-      // which is enough to prove the fallback fired at all.
-      expect(h.rowOf("alice/beacon")).toBe(first);
+      // Three rows of movement in a two-row list clamps to the last row —
+      // the rows do not move, but the cursor must have.
+      expect(h.rowOf("alice/beacon", 70)).toBe(first);
+      expect(h.rows()[first]!.trimStart().startsWith("▸")).toBe(true);
     } finally {
       h.stop();
     }

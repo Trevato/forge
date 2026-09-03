@@ -708,7 +708,7 @@ export class Editor {
               x,
               y,
               text,
-              style(tokColor(c, token.cls), inSel ? c.muted : lineBg),
+              style(tokColor(c, token), inSel ? c.muted : lineBg),
               textX + textW,
             );
           }

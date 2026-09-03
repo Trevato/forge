@@ -1126,8 +1126,10 @@ export class App {
     const s = this.surface;
     const width = Math.min(38, area.w);
     const height = Math.min(this.pickerRows + 4, area.h);
+    // Hard against the right edge: two columns of the card underneath
+    // peeking out past an overlay reads as a rendering fault, not as depth.
     const r = {
-      x: area.x + Math.max(0, area.w - width - 2),
+      x: area.x + Math.max(0, area.w - width),
       y: area.y,
       w: width,
       h: height,

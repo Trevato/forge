@@ -11,7 +11,7 @@
  */
 
 import { THEMES, type Palette, type ThemeName } from "../../design/themes.ts";
-import type { TokenClass } from "../../web/highlight.ts";
+import type { TokenClass, TokenKind } from "../../web/highlight.ts";
 import { rgb, type Color, type ColorDepth } from "../term/style.ts";
 
 export type { ColorDepth };
@@ -42,23 +42,33 @@ export interface Tokens {
   readonly delEdge: Color;
   readonly wdAdd: Color;
   readonly wdDel: Color;
+  /** Syntax colours, keyed by the classes `web/highlight.ts` emits. */
+  readonly tok: Readonly<Record<TokenClass, Color>>;
   /**
-   * Syntax colours, keyed by the classes `web/highlight.ts` emits.
+   * The refinements — `tok-property`, `tok-regex`, `tok-heading` and the
+   * rest — read *generically* out of the palette rather than listed here.
    *
-   * The table is built by *scanning* the palette for `tok-…` keys rather than
-   * by listing the classes here, so a token kind added to `design/themes.ts`
-   * and `web/highlight.ts` is coloured in the terminal the moment it lands —
-   * no third edit, and no chance of the two surfaces disagreeing about what
-   * `tok-regex` means. A class the palette does not name is not an error:
-   * `tokColor` falls back to body text, which is what the web stylesheet does
-   * for `tok-plain` and friends.
+   * That is the whole trick: a kind added to `design/themes.ts` and
+   * `web/highlight.ts` colours itself in the terminal the moment it lands,
+   * with no third edit and no chance of the two surfaces disagreeing about
+   * what `tok-regex` means. Partial because a kind is a refinement: dropping
+   * it must never make a line wrong, only less specific, so anything the
+   * palette does not name simply falls back to its class.
    */
-  readonly tok: Readonly<Record<string, Color>>;
+  readonly tokKind: Readonly<Partial<Record<TokenKind, Color>>>;
 }
 
-/** The colour for one token class, with the body-text fallback. */
-export function tokColor(c: Tokens, cls: TokenClass | string): Color {
-  return c.tok[cls] ?? c.fg;
+/**
+ * The colour for one token: its refinement when the palette names one, its
+ * class otherwise. Every syntax-drawing call site goes through this, so the
+ * precedence rule lives in exactly one place.
+ */
+export function tokColor(
+  c: Tokens,
+  token: { readonly cls: TokenClass; readonly kind?: TokenKind },
+): Color {
+  const refined = token.kind === undefined ? undefined : c.tokKind[token.kind];
+  return refined ?? c.tok[token.cls];
 }
 
 export interface Theme {
@@ -94,26 +104,35 @@ function tokens(p: Palette): Tokens {
     delEdge: rgb(p["del-edge"]),
     wdAdd: rgb(p["wd-add"]),
     wdDel: rgb(p["wd-del"]),
-    tok: tokenColors(p),
+    tok: {
+      keyword: rgb(p["tok-keyword"]),
+      string: rgb(p["tok-string"]),
+      comment: rgb(p["tok-comment"]),
+      number: rgb(p["tok-number"]),
+      function: rgb(p["tok-function"]),
+      type: rgb(p["tok-type"]),
+      constant: rgb(p["tok-constant"]),
+      meta: rgb(p["tok-meta"]),
+      operator: rgb(p["tok-operator"]),
+      punctuation: rgb(p["tok-punctuation"]),
+      // The one class with no palette entry: plain *is* body text.
+      plain: rgb(p.fg),
+    },
+    tokKind: tokenKinds(p),
   };
 }
 
 /**
- * Every `tok-<name>` in the palette becomes a style keyed by `<name>`. The
- * three the web stylesheet deliberately leaves at body colour get muted
- * defaults *unless* the palette names them — a palette that grows a real
- * `tok-operator` wins, which is the whole point of scanning.
+ * Every `tok-<name>` in the palette that is not one of the eleven classes
+ * becomes a kind. Scanned, never listed: the list is `design/themes.ts`, and
+ * a second copy of it here is a second thing to forget to update.
  */
-function tokenColors(p: Palette): Record<string, Color> {
-  const out: Record<string, Color> = {
-    operator: rgb(p["muted-fg"]),
-    punctuation: rgb(p["muted-fg"]),
-    plain: rgb(p.fg),
-  };
+function tokenKinds(p: Palette): Partial<Record<TokenKind, Color>> {
+  const out: Record<string, Color> = {};
   for (const [key, value] of Object.entries(p))
     if (key.startsWith("tok-") && typeof value === "string")
       out[key.slice(4)] = rgb(value);
-  return out;
+  return out as Partial<Record<TokenKind, Color>>;
 }
 
 const cache = new Map<ThemeName, Theme>();

@@ -978,6 +978,11 @@ describe("ssh channel layer", () => {
     expect(h.session?.term).toBe("xterm-256color");
     expect(h.session?.cols).toBe(120);
     expect(h.session?.rows).toBe(40);
+    // The pixel fields most clients send as zeros. When a client does report
+    // them, they are how the TUI learns its cell geometry — 8×16 here — and
+    // a picture drawn to the wrong aspect looks like a rendering fault.
+    expect(h.session?.widthPx).toBe(960);
+    expect(h.session?.heightPx).toBe(640);
 
     let resized: [number, number] | undefined;
     h.session?.onResize((cols, rows) => {
@@ -991,12 +996,15 @@ describe("ssh channel layer", () => {
         .bool(false)
         .u32(100)
         .u32(30)
-        .u32(0)
-        .u32(0)
+        .u32(800)
+        .u32(480)
         .build(),
       3,
     );
     expect(resized).toEqual([100, 30]);
+    // A resize moves the pixel size too, so the cell geometry follows it.
+    expect(h.session?.widthPx).toBe(800);
+    expect(h.session?.heightPx).toBe(480);
     // window-change carries want_reply FALSE: replying would desynchronise
     // the client's reply queue.
     expect(h.types()).toEqual([

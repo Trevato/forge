@@ -232,7 +232,7 @@ function renderLine(
   let used = 0;
   let charIndex = 0;
   for (const token of tokens) {
-    const fg = tokColor(c, token.cls);
+    const fg = tokColor(c, token);
     // Split each syntax token wherever the word-diff background changes:
     // syntax owns the foreground, the diff owns the background, and the two
     // are resolved independently exactly as the web stylesheet composes them.

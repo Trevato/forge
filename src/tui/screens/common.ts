@@ -396,12 +396,20 @@ export function confirmScreen(
     ],
     render(area, s) {
       parent.render(area, s);
-      dialog(s, area, ctx.theme.c, {
+      const buttons = dialog(s, area, ctx.theme.c, {
         title: o.title,
         body: o.body,
         actions: o.actions,
         selected,
       });
+      // Clicking a button *is* choosing it: a dialog has no browsing to do,
+      // so the two-click rule that protects a list would only be in the way.
+      buttons.forEach((rect, index) =>
+        ctx.hit(rect, () => {
+          ctx.pop();
+          o.onChoose(index);
+        }),
+      );
     },
     key(e) {
       if (e.key === "left" || e.key === "h")
@@ -573,6 +581,21 @@ export function pickerScreen(
           ...(item.hint === undefined ? {} : { meta: item.hint }),
         })),
       );
+      hitList(ctx, list!, state, items.length, {
+        open: (index) => {
+          const item = items[index];
+          if (item === undefined) return;
+          // A checkbox list toggles under the pointer and stays open; a
+          // single-choice list is answered by the click that made it.
+          if (o.multi === true) {
+            if (chosen.has(item.id)) chosen.delete(item.id);
+            else chosen.add(item.id);
+            return;
+          }
+          ctx.pop();
+          o.onPick([item.id]);
+        },
+      });
     },
     key(e) {
       const items = shown();

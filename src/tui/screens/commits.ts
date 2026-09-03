@@ -25,6 +25,7 @@ import {
   drawList,
   drawLines,
   errorText,
+  hitList,
   plural,
   relTime,
   runAsync,
@@ -58,6 +59,13 @@ export function commitsScreen(
     }
     loaded = true;
     ctx.invalidate();
+  };
+
+  /** `enter`, a click, and the "Load more…" row — one function for all three. */
+  const openAt = (index: number): void => {
+    const commit = commits[index];
+    if (commit === undefined) runAsync(ctx, page);
+    else ctx.push(commitScreen(f, ctx, src, commit));
   };
 
   const screen: Screen = {
@@ -100,14 +108,13 @@ export function commitsScreen(
       }));
       if (more) rows.push({ title: "Load more…", secondary: "", meta: "" });
       drawList(s, body!, c, state, rows);
+      hitList(ctx, body!, state, rows.length, { open: openAt });
     },
     key(e) {
       const total = commits.length + (more ? 1 : 0);
       if (state.key(e, total)) return true;
       if (e.key === "enter") {
-        const commit = commits[state.index];
-        if (commit === undefined) runAsync(ctx, page);
-        else ctx.push(commitScreen(f, ctx, src, commit));
+        openAt(state.index);
         return true;
       }
       if (e.key === "b") {

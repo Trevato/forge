@@ -204,11 +204,15 @@ function buildLines(
 ): { plain: string[]; lines: Span[][] } {
   const body = text.replace(/\n$/, "");
   const plain = body.split("\n").map((l) => expandTabs(l));
-  const lines = highlightLines(plain.join("\n"), detectLanguage(path)).map(
+  // The first line is handed to the detector too: a `#!/usr/bin/env python3`
+  // with no extension, a `.zshrc`, a vim modeline. The name is the strong
+  // signal and the line is the fallback, which is the detector's own order.
+  const language = detectLanguage(path, plain[0] ?? "");
+  const lines = highlightLines(plain.join("\n"), language).map(
     (tokens): Span[] =>
       tokens.map((t) => ({
         text: t.text,
-        style: style(tokColor(c, t.cls), c.bg),
+        style: style(tokColor(c, t), c.bg),
       })),
   );
   return { plain, lines };

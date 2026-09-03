@@ -645,7 +645,7 @@ export function dialog(
     selected?: number;
     width?: number;
   },
-): void {
+): Rect[] {
   // Dim rather than blank: the user keeps their place in the page behind.
   for (let y = area.y; y < area.y + area.h; y++)
     for (let x = area.x; x < area.x + area.w; x++) {
@@ -675,6 +675,7 @@ export function dialog(
     fill(1),
     ...widths,
   ]);
+  const hits: Rect[] = [];
   o.actions.forEach((a, i) => {
     const slot = slots[i + 1];
     if (!slot) return;
@@ -683,7 +684,12 @@ export function dialog(
       ...(a.variant === undefined ? {} : { variant: a.variant }),
       focused: (o.selected ?? 0) === i,
     });
+    hits[i] = slot;
   });
+  // Where each button landed, so the caller can make it clickable. A dialog
+  // is the one place a pointer user reaches for first, and a "Discard" you
+  // can only reach with `tab` is a dialog that reads as broken.
+  return hits;
 }
 
 /** `toast` / `.toast` — a transient severity-coloured line in the status bar. */

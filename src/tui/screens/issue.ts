@@ -35,6 +35,7 @@ import {
   Scroll,
   ago,
   drawLines,
+  hitScroll,
   errorText,
   live,
   pickerScreen,
@@ -250,7 +251,9 @@ export function issueScreen(
               ],
             ]
           : [];
-      drawLines(s, body!, c, scroll, [...lines, ...hint]);
+      const all = [...lines, ...hint];
+      drawLines(s, body!, c, scroll, all);
+      hitScroll(ctx, body!, scroll, all.length);
       if (foot > 0) composer.render(s, box!, c, ctx);
     },
     paste: (text) => composer.paste(text),
