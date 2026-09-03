@@ -12,6 +12,7 @@ import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
+import { icon } from "../ui/icons.ts";
 import {
   Filter,
   ListState,
@@ -20,6 +21,7 @@ import {
   metaOf,
   drawList,
   errorText,
+  hitList,
   runAsync,
 } from "./common.ts";
 import { ownerScreen } from "./owner.ts";
@@ -87,9 +89,19 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
         });
         return;
       }
-      const counts = countsColumn(rows.map((repo) => repo.counts));
+      const set = ctx.icons;
+      const counts = countsColumn(
+        rows.map((repo) => repo.counts),
+        set,
+      );
       const list = rows.map((repo) => ({
-        title: `${pinned.has(repo.id) ? `${PIN_MARK} ` : ""}${repo.ownerName}/${repo.name}`,
+        title: `${
+          set === "nerd"
+            ? `${icon(pinned.has(repo.id) ? "pin" : "repo", set)} `
+            : pinned.has(repo.id)
+              ? `${PIN_MARK} `
+              : ""
+        }${repo.ownerName}/${repo.name}`,
         secondary: repo.description,
         meta: metaOf(
           repo.visibility === "private" ? "private" : "",
@@ -99,6 +111,13 @@ export function exploreScreen(f: Session, ctx: Ctx): Screen {
       if (more && !filter.on)
         list.push({ title: "Load more…", secondary: "", meta: "" });
       drawList(s, body!, c, state, list);
+      hitList(ctx, body!, state, list.length, {
+        open: (index) => {
+          const repo = rows[index];
+          if (repo) ctx.push(repoScreen(f, ctx, local(f, repo)));
+          else loadMore();
+        },
+      });
     },
     key(e) {
       if (filter.key(e)) {

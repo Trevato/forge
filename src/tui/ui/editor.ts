@@ -38,7 +38,7 @@ import type { KeyEvent } from "../term/input.ts";
 import { G, type Rect, type Screen as Surface } from "../term/screen.ts";
 import { style, BOLD } from "../term/style.ts";
 import { clusters, displayWidth, truncate } from "../term/width.ts";
-import type { Tokens } from "./theme.ts";
+import { tokColor, type Tokens } from "./theme.ts";
 import type { CursorPos } from "./widgets.ts";
 
 /** Past either of these the buffer opens read-only. */
@@ -708,7 +708,7 @@ export class Editor {
               x,
               y,
               text,
-              style(c.tok[token.cls], inSel ? c.muted : lineBg),
+              style(tokColor(c, token.cls), inSel ? c.muted : lineBg),
               textX + textW,
             );
           }

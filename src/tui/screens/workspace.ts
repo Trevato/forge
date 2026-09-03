@@ -60,9 +60,17 @@ import {
   truncate,
 } from "../term/width.ts";
 import { Editor } from "../ui/editor.ts";
+import { fileIcon, looksLikeImage, type IconSet } from "../ui/icons.ts";
+import {
+  drawImage,
+  humanBytes,
+  prepareImage,
+  type TerminalImage,
+} from "../ui/image.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import type { Tokens } from "../ui/theme.ts";
-import { badge, card, emptyState, input, scrollbar } from "../ui/widgets.ts";
+import { renderMarkdown, type Line } from "../ui/markdown.ts";
+import { tokColor, type Tokens } from "../ui/theme.ts";
+import { card, emptyState, input, scrollbar } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import { aboutScreen } from "./about.ts";
 import { commitScreen, suggestBranch, type CommitFile } from "./commit.ts";
@@ -70,12 +78,12 @@ import { commitsScreen } from "./commits.ts";
 import {
   Filter,
   ListState,
-  PIN_MARK,
   Scroll,
-  ago,
   confirmScreen,
   drawFacts,
+  drawLines,
   errorText,
+  hitList,
   live as liveUpdates,
   openLink,
   plural,
@@ -101,10 +109,18 @@ import {
   otherSide,
   otherSideLabel,
   sourceName,
+  whereLayout,
   whereRows,
   whereSpans,
   whereStrip,
 } from "./where.ts";
+
+/**
+ * The mark a rendered markdown tab wears — `README.md ¶`. From the safe set
+ * in `term/screen.ts` (documented in `docs/DESIGN.md`): it is the one glyph
+ * in that set that already means "formatted prose", and `v` takes it off.
+ */
+const PROSE_MARK = G.para;
 
 /** Blobs kept per workspace; a session revisits the same handful. */
 const CACHE_LIMIT = 24;
@@ -190,13 +206,24 @@ function buildLines(
   const plain = body.split("\n").map((l) => expandTabs(l));
   const lines = highlightLines(plain.join("\n"), detectLanguage(path)).map(
     (tokens): Span[] =>
-      tokens.map((t) => ({ text: t.text, style: style(c.tok[t.cls], c.bg) })),
+      tokens.map((t) => ({
+        text: t.text,
+        style: style(tokColor(c, t.cls), c.bg),
+      })),
   );
   return { plain, lines };
 }
 
 type TabMode = "view" | "edit";
 type FindMode = "off" | "find" | "replace";
+/** What a path is, as far as the file pane is concerned. */
+type TabKind = "image" | "markdown" | "code";
+
+/** `README.md`, `NOTES.markdown`, `readme` — the prose a repo opens on. */
+function isMarkdownPath(path: string): boolean {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return /\.(md|markdown)$/i.test(name) || /^readme(\.|$)/i.test(name);
+}
 
 class Tab {
   loading = true;
@@ -220,11 +247,54 @@ class Tab {
   replacement = "";
   replaceField: "find" | "with" = "find";
   hint = "";
+  /**
+   * A picture, when git handed us one. `looksLikeImage` is only an extension
+   * filter, so this stays null for a `.png` that turned out to be text — the
+   * bytes decide, never the name.
+   */
+  image: TerminalImage | null = null;
+  /** `v`: the picture, or the facts about it. */
+  showImage = true;
+  /**
+   * `v` on prose: the rendered document, or the source that made it. Prose
+   * opens rendered because that is what a README is *for*; the source is one
+   * keypress away and is what `e` always edits.
+   */
+  rendered = true;
+  /** The rendered document, and the width it was wrapped for. */
+  doc: Line[] = [];
+  docPlain: string[] = [];
+  docWidth = 0;
 
   constructor(readonly path: string) {}
 
   get name(): string {
     return this.path.slice(this.path.lastIndexOf("/") + 1);
+  }
+
+  get kind(): TabKind {
+    if (this.image !== null) return "image";
+    return isMarkdownPath(this.path) ? "markdown" : "code";
+  }
+
+  /** True when the pane is showing prose rather than the bytes behind it. */
+  get reading(): boolean {
+    return this.kind === "markdown" && this.rendered && this.mode === "view";
+  }
+
+  /** The lines `/` searches and `j` scrolls: whichever view is up. */
+  get body(): string[] {
+    return this.reading ? this.docPlain : this.plain;
+  }
+
+  /** Wrap the markdown for this width, and only when the width moved. */
+  document(width: number, c: Tokens): void {
+    if (this.docWidth === width && this.doc.length > 0) return;
+    this.docWidth = width;
+    this.doc = renderMarkdown(this.plain.join("\n"), Math.max(8, width), c);
+    this.docPlain = this.doc.map((line) =>
+      line.map((span) => span.text).join(""),
+    );
   }
 
   get modified(): boolean {
@@ -261,29 +331,83 @@ class Tab {
     const built = buildLines(new TextDecoder().decode(source), this.path, c);
     this.plain = built.plain;
     this.lines = built.lines;
+    // The rendered document is derived from the same text, so an edit, a
+    // theme switch or a re-read has to throw it away with everything else.
+    this.doc = [];
+    this.docPlain = [];
+    this.docWidth = 0;
     if (this.search.query !== "") this.findHits();
     else this.hits = [];
   }
 
   findHits(): void {
     const q = this.search.query.toLowerCase();
+    const lines = this.body;
     this.hits =
       q === ""
         ? []
-        : this.plain.flatMap((l, i) =>
-            l.toLowerCase().includes(q) ? [i] : [],
-          );
+        : lines.flatMap((l, i) => (l.toLowerCase().includes(q) ? [i] : []));
     this.hit = 0;
-    if (this.hits[0] !== undefined)
-      this.scroll.to(this.hits[0], this.plain.length);
+    if (this.hits[0] !== undefined) this.scroll.to(this.hits[0], lines.length);
   }
 
   step(delta: number): boolean {
     if (this.hits.length === 0) return false;
     this.hit = (this.hit + delta + this.hits.length) % this.hits.length;
-    this.scroll.to(this.hits[this.hit]!, this.plain.length);
+    this.scroll.to(this.hits[this.hit]!, this.body.length);
     return true;
   }
+}
+
+/** One blob, as the workspace keeps it: text, a picture, or a reason. */
+interface CacheEntry {
+  readonly note: string;
+  readonly raw: Uint8Array | null;
+  readonly picture: Uint8Array | null;
+}
+
+// ---- what a workspace remembers between visits ----
+
+/**
+ * Leaving a repository for the issue list and coming back should not cost
+ * you your open files. The stack already gives that for free while the
+ * workspace is *on* it — but popping to the dashboard and re-entering builds
+ * a new screen, and the old one's tabs went with it.
+ *
+ * So a workspace's working set lives on the `Session`, keyed by repository:
+ * one connection is one identity, so nothing here can be reached by another
+ * user, and it dies with the connection. An entry nobody has touched for
+ * half an hour is dropped on the next lookup — a session left open overnight
+ * should not be holding yesterday's buffers.
+ */
+interface Memory {
+  tabs: Tab[];
+  roots: Node[];
+  active: number;
+  ref: string;
+  focus: "explorer" | "file";
+  index: number;
+  offset: number;
+  touched: number;
+}
+
+const MEMORY_IDLE_MS = 30 * 60 * 1000;
+
+/** Which repository this is, on whichever side it was opened from. */
+function memoryKey(src: RepoSource): string {
+  return src.where.kind === "local"
+    ? `repo:${src.where.repo.id}`
+    : `origin:${src.where.origin.id}:${src.where.fullName}`;
+}
+
+function recall(f: Session, key: string): Memory | undefined {
+  const now = Date.now();
+  for (const [k, value] of f.scratch) {
+    const entry = value as Memory;
+    if (now - entry.touched > MEMORY_IDLE_MS) f.scratch.delete(k);
+  }
+  const hit = f.scratch.get(key);
+  return hit === undefined ? undefined : (hit as Memory);
 }
 
 // ---- the screen ----
@@ -305,25 +429,41 @@ export function workspaceScreen(
   src: RepoSource,
   o: WorkspaceOptions = {},
 ): Screen {
-  let ref = o.ref ?? knownDefaultRef(src) ?? "";
+  const key = memoryKey(src);
+  const memory = recall(f, key);
+  // An explicit `open`/`ref` from the caller wins over what we remembered:
+  // arriving from a search hit means "show me *that*", not "show me where I
+  // was". Everything else is restored.
+  let ref = o.ref ?? memory?.ref ?? knownDefaultRef(src) ?? "";
   let facts: RepoFacts | undefined;
-  let roots: Node[] = [];
-  let loadedTree = false;
+  let roots: Node[] = memory?.roots ?? [];
+  let loadedTree = roots.length > 0;
   let pinned = false;
-  let focus: "explorer" | "file" = o.focus ?? "file";
+  let focus: "explorer" | "file" = o.focus ?? memory?.focus ?? "file";
   /** Below two panes the explorer is a pane you toggle onto, never both. */
   const state = new ListState();
+  if (memory !== undefined) {
+    state.index = memory.index;
+    state.offset = memory.offset;
+  }
   const filter = new Filter();
-  const tabs: Tab[] = [];
-  let active = 0;
+  const tabs: Tab[] = memory?.tabs ?? [];
+  let active = memory?.active ?? 0;
+  /** True when the tabs came back from memory and need no re-read. */
+  const restored = memory !== undefined && tabs.length > 0;
   /** Files marked for deletion by `D`, pending the next commit. */
   const pending = new Set<string>();
   /** Superseded reads (a ref switch, a refresh) land stale and are dropped. */
   let gen = 0;
   let signal: AbortSignal | undefined;
+  let subscribed = false;
   let want = o.open ?? "";
   let reveal = o.reveal ?? "";
-  const cache = new Map<string, { note: string; raw: Uint8Array | null }>();
+  const cache = new Map<string, CacheEntry>();
+  /** Placement ids: stable per path, so a redraw replaces rather than stacks. */
+  const imageIds = new Map<string, number>();
+  /** The theme the open tabs were tokenised against. */
+  let tokenisedAs = ctx.theme.name;
 
   const repo = localRepo(src);
   const liveSide = liveOrigin(src);
@@ -338,6 +478,23 @@ export function workspaceScreen(
   };
 
   const tab = (): Tab | undefined => tabs[active];
+  /**
+   * Hand the working set back to the session on the way out of every frame.
+   * The arrays are the live ones, so this is a pointer plus a clock rather
+   * than a copy — the cost of remembering is one `Map.set` a paint.
+   */
+  const remember_ = (): void => {
+    f.scratch.set(key, {
+      tabs,
+      roots,
+      active,
+      ref,
+      focus,
+      index: state.index,
+      offset: state.offset,
+      touched: Date.now(),
+    } satisfies Memory);
+  };
   /** A read is stale when the ref moved under it, or the screen went away. */
   const stale = (mine: number): boolean =>
     mine !== gen || signal?.aborted === true;
@@ -421,10 +578,7 @@ export function workspaceScreen(
     if (index >= 0) state.index = index;
   };
 
-  const remember = (
-    key: string,
-    entry: { note: string; raw: Uint8Array | null },
-  ): void => {
+  const remember = (key: string, entry: CacheEntry): void => {
     cache.set(key, entry);
     if (cache.size > CACHE_LIMIT) {
       const oldest = cache.keys().next().value;
@@ -449,6 +603,7 @@ export function workspaceScreen(
       if (stale(mine)) return;
       let note = "";
       let raw: Uint8Array | null = null;
+      let picture: Uint8Array | null = null;
       if (!read.ok)
         note =
           read.error === "not_found"
@@ -456,16 +611,26 @@ export function workspaceScreen(
             : errorText(read.error);
       else if (read.value.kind === "too_large")
         note = `${formatSize(read.value.size)} — too large to display.`;
-      else if (read.value.kind === "binary")
-        note = `Binary file, ${formatSize(read.value.size)}.`;
-      else raw = read.value.body;
-      entry = { note, raw };
+      else if (read.value.kind === "binary") {
+        // A binary blob whose *name* says picture is the one binary we do
+        // something with. Everything else keeps the honest note: showing
+        // bytes as text is how a terminal ends up beeping at you.
+        if (looksLikeImage(t.path)) picture = read.value.body;
+        else note = `Binary file, ${formatSize(read.value.size)}.`;
+      } else raw = read.value.body;
+      entry = { note, raw, picture };
       remember(key, entry);
     }
     if (stale(mine)) return;
     t.loading = false;
     t.note = entry.note;
     t.raw = entry.raw;
+    t.image =
+      entry.picture === null
+        ? null
+        : prepareImage(entry.picture, imageId(t.path), ctx.caps);
+    t.showImage = true;
+    t.rendered = true;
     t.editor = null;
     t.mode = "view";
     t.find = "off";
@@ -473,6 +638,15 @@ export function workspaceScreen(
     t.left = 0;
     t.rebuild(ctx.theme.c);
     ctx.invalidate();
+  };
+
+  /** One id per path for the life of the workspace. */
+  const imageId = (path: string): number => {
+    const known = imageIds.get(path);
+    if (known !== undefined) return known;
+    const made = imageIds.size + 1;
+    imageIds.set(path, made);
+    return made;
   };
 
   /** `enter` on a file: activate its tab, or make one and stream it in. */
@@ -494,7 +668,7 @@ export function workspaceScreen(
     await loadTab(made);
   };
 
-  const reload = async (): Promise<void> => {
+  const reload = async (arriving = false): Promise<void> => {
     const mine = ++gen;
     readPin();
     const described = await src.describe();
@@ -507,6 +681,11 @@ export function workspaceScreen(
       ctx.toast(errorText(described.error), "danger");
       return;
     }
+    // Coming back to a workspace we remember: the tree and every buffer are
+    // already here, edits included. Re-reading them would be slower *and*
+    // would throw away uncommitted work, so the only thing worth asking git
+    // is what `describe` just answered. `r` is the refresh.
+    if (arriving && restored && want === "" && reveal === "") return;
     roots = await listDir("");
     if (stale(mine)) return;
     loadedTree = true;
@@ -823,7 +1002,11 @@ export function workspaceScreen(
     }
     if (t.raw === null) {
       ctx.toast(
-        t.note === "" ? "that file is not editable here" : t.note,
+        t.image !== null
+          ? "a picture is not something this editor can change"
+          : t.note === ""
+            ? "that file is not editable here"
+            : t.note,
         "attn",
       );
       return;
@@ -834,6 +1017,9 @@ export function workspaceScreen(
       ctx.toast(buffer.readOnlyReason, "attn");
       return;
     }
+    // You edit the bytes, never the rendering of them. Leaving `rendered`
+    // set would put the document back on `esc` with the edits invisible.
+    t.rendered = false;
     t.mode = "edit";
     focus = "file";
     ctx.invalidate();
@@ -898,9 +1084,22 @@ export function workspaceScreen(
         binding(["ctrl+z", "ctrl+y"], "undo / redo"),
         binding(["ctrl+c", "ctrl+x", "ctrl+v"], "copy / cut / paste"),
       ];
+    const two =
+      t !== undefined && (t.image !== null || isMarkdownPath(t.path));
     return [
       binding(["tab"], "focus explorer"),
       binding(["e"], "edit", { disabled: !writable() }),
+      binding(
+        ["v"],
+        t?.image !== null && t !== undefined
+          ? t.showImage
+            ? "file details"
+            : "show the picture"
+          : t?.rendered === true
+            ? "show the source"
+            : "render it",
+        { disabled: !two },
+      ),
       binding(["/", "n", "N"], "search in file"),
       binding(["u"], "discard changes", { disabled: t?.modified !== true }),
     ];
@@ -957,16 +1156,30 @@ export function workspaceScreen(
       return out;
     },
     load(sig) {
+      // `load` is called once per screen today, but the contract does not
+      // promise that, and a second call with a fresh signal would leave the
+      // first subscription live on a screen nobody can see. One flag makes
+      // re-entry idempotent instead of relying on the loop's current shape.
+      const again = subscribed;
       signal = sig;
-      if (repo !== undefined)
+      subscribed = true;
+      if (repo !== undefined && !again)
         liveUpdates(f, sig, { repoId: repo.id }, () => {
           readPin();
           ctx.invalidate();
         });
-      return reload();
+      return reload(!again);
     },
     render(area, s) {
       const c = ctx.theme.c;
+      const set = ctx.icons;
+      // A theme switch changes what every token *is*, and the spans in an
+      // open tab were built against the old palette. Rebuilding here rather
+      // than on the keypress keeps the loop from knowing that tabs exist.
+      if (tokenisedAs !== ctx.theme.name) {
+        tokenisedAs = ctx.theme.name;
+        for (const t of tabs) t.rebuild(c);
+      }
       const stripRows = whereRows(src);
       const [strip, bar, body, status] = split(area, "v", [
         len(stripRows),
@@ -977,9 +1190,18 @@ export function workspaceScreen(
       // The where strip keeps column zero on every repository screen — the
       // grammar is the same everywhere — and the ref pill takes the right
       // hand end of the same row.
-      whereStrip(s, strip!, c, f, src);
-      drawRefPill(s, strip!, c, ref, whereSpans(f, src, c));
-      drawTabBar(s, bar!, c, tabs, active);
+      whereStrip(s, strip!, c, f, src, set);
+      drawRefPill(s, strip!, c, ref, whereSpans(f, src, c, set));
+      for (const place of whereLayout(f, src, strip!, set))
+        ctx.hit(place.rect, () => clickPlace(place.kind));
+      for (const drawn of drawTabBar(s, bar!, c, tabs, active, set)) {
+        ctx.hit(drawn.rect, () => {
+          active = drawn.index;
+          focus = "file";
+        });
+        if (drawn.close !== undefined)
+          ctx.hit(drawn.close, () => closeTab(drawn.index));
+      }
 
       const wide = ctx.twoPane;
       const [leftArea, divider, rightArea] = wide
@@ -1000,13 +1222,27 @@ export function workspaceScreen(
           const caret = filter.render(s, box, c, "filter this level");
           if (focus === "explorer") ctx.setCursor(caret);
         }
-        drawTree(s, list!, c, state, rows(), {
+        const nodes = rows();
+        drawTree(s, list!, c, state, nodes, {
           focused: focus === "explorer",
           openPaths: new Set(tabs.map((t) => t.path)),
           modified: new Set(tabs.filter((t) => t.modified).map((t) => t.path)),
           pending,
           currentPath: tab()?.path ?? "",
           empty: loadedTree ? "Empty repository" : "Reading…",
+          icons: set,
+        });
+        // Click selects; clicking what is already selected opens it, which
+        // for a directory means expand. Exactly what `enter` does, so the
+        // two gestures cannot drift apart.
+        hitList(ctx, list!, state, nodes.length, {
+          select: () => {
+            focus = "explorer";
+          },
+          open: (index) => {
+            focus = "explorer";
+            openNode(nodes[index]);
+          },
         });
       }
       if (divider !== undefined)
@@ -1021,13 +1257,27 @@ export function workspaceScreen(
       // One column of air between the divider and the first line number:
       // code pressed against a rule is the difference between a layout and
       // a dump.
-      if (rightArea !== undefined)
-        drawPane(
-          s,
-          { ...rightArea, x: rightArea.x + 1, w: Math.max(1, rightArea.w - 1) },
-          c,
-        );
+      if (rightArea !== undefined) {
+        const pane = {
+          ...rightArea,
+          x: rightArea.x + 1,
+          w: Math.max(1, rightArea.w - 1),
+        };
+        drawPane(s, pane, c);
+        const t = tab();
+        ctx.hit(pane, {
+          click: () => {
+            focus = "file";
+          },
+          wheel: (delta) => {
+            focus = "file";
+            if (t !== undefined && t.mode === "view")
+              t.scroll.to(t.scroll.top + delta, t.body.length);
+          },
+        });
+      }
       drawStatus(s, status!, c);
+      remember_();
     },
     paste(text) {
       const t = tab();
@@ -1130,6 +1380,10 @@ export function workspaceScreen(
         discard(t);
         return true;
       }
+      if (plain && e.key === "v") {
+        toggleView();
+        return true;
+      }
 
       // ---- the repository ----
       if (plain && e.key === "c") {
@@ -1196,23 +1450,17 @@ export function workspaceScreen(
         swap();
         return true;
       }
-      if (plain && liveKey(f, ctx, e, src, { parent: screen, onDone: openLocal }))
+      if (
+        plain &&
+        liveKey(f, ctx, e, src, { parent: screen, onDone: openLocal })
+      )
         return true;
       if (plain && e.key === "w" && liveSide?.mirroredAs !== undefined) {
         openLocal(liveSide.mirroredAs);
         return true;
       }
-      if (plain && e.key === "P" && f.user && repo !== undefined) {
-        const wanted = !pinned;
-        const done = wanted
-          ? pinRepo(f.app, f.user, repo)
-          : unpinRepo(f.app, f.user, repo);
-        if (!done.ok && wanted) ctx.toast(errorText(done.error), "danger");
-        else {
-          readPin();
-          ctx.invalidate();
-          ctx.toast(wanted ? "pinned" : "unpinned", "success");
-        }
+      if (plain && e.key === "P") {
+        togglePin();
         return true;
       }
       if (
@@ -1275,13 +1523,7 @@ export function workspaceScreen(
         return true;
       }
       if (e.key === "l" || e.key === "right" || e.key === "enter") {
-        if (node === undefined) return true;
-        if (node.type === "tree") {
-          if (node.expanded) node.expanded = false;
-          else runAsync(ctx, () => expand(node));
-          return true;
-        }
-        runAsync(ctx, () => openTab(node.path));
+        openNode(node);
         return true;
       }
       if (e.key === "h" || e.key === "left") {
@@ -1307,6 +1549,58 @@ export function workspaceScreen(
       return false;
     },
   };
+
+  /** `enter` (or a second click) on an explorer row: expand it, or open it. */
+  function openNode(node: Node | undefined): void {
+    if (node === undefined) return;
+    if (node.type === "tree") {
+      if (node.expanded) node.expanded = false;
+      else runAsync(ctx, () => expand(node));
+      return;
+    }
+    runAsync(ctx, () => openTab(node.path));
+  }
+
+  function togglePin(): void {
+    if (f.user === undefined || repo === undefined) return;
+    const wanted = !pinned;
+    const done = wanted
+      ? pinRepo(f.app, f.user, repo)
+      : unpinRepo(f.app, f.user, repo);
+    if (!done.ok && wanted) ctx.toast(errorText(done.error), "danger");
+    else {
+      readPin();
+      ctx.invalidate();
+      ctx.toast(wanted ? "pinned" : "unpinned", "success");
+    }
+  }
+
+  /**
+   * Clicking a place in the where-strip goes there. Each dot already says
+   * whether the repository is at that place; the click is the obvious
+   * follow-up, and it is the same act the keyboard already has a letter for.
+   */
+  function clickPlace(kind: "origin" | "workbench" | "machine"): void {
+    if (kind === "machine") {
+      togglePin();
+      return;
+    }
+    const other = otherSide(f, src);
+    const here =
+      (kind === "workbench" && src.where.kind === "local") ||
+      (kind === "origin" && src.where.kind === "origin");
+    if (here) {
+      ctx.toast("this is where you are reading from", "attn");
+      return;
+    }
+    if (other !== undefined) {
+      swap();
+      return;
+    }
+    const url = originUrl(src);
+    if (url === "") ctx.toast("this repository has no other side", "attn");
+    else openLink(ctx, url);
+  }
 
   function openLocal(next: Repo): void {
     ctx.replace(workspaceScreen(f, ctx, local(f, next)));
@@ -1408,15 +1702,42 @@ export function workspaceScreen(
     }
     if (e.key === "n" && !e.ctrl) return t.step(1);
     if (e.key === "N") return t.step(-1);
-    if (e.key === "l" || e.key === "right") {
+    // Horizontal scrolling belongs to code, which has long lines and a
+    // gutter; prose and pictures are already fitted to the pane.
+    if ((e.key === "l" || e.key === "right") && !t.reading) {
       t.left += 8;
       return true;
     }
-    if (e.key === "h" || e.key === "left") {
+    if ((e.key === "h" || e.key === "left") && !t.reading) {
       t.left = Math.max(0, t.left - 8);
       return true;
     }
-    return t.scroll.key(e, t.plain.length);
+    return t.scroll.key(e, t.body.length);
+  }
+
+  /**
+   * `v` — the same key on both kinds of file that have two ways to be seen.
+   *
+   * A picture toggles between the pixels and what the file *is*; prose
+   * toggles between the rendered document and the source that made it. One
+   * letter, because in both cases the question is the same: "show me the
+   * other view of this".
+   */
+  function toggleView(): void {
+    const t = tab();
+    if (t === undefined) return;
+    if (t.image !== null) {
+      t.showImage = !t.showImage;
+      return;
+    }
+    if (t.kind !== "markdown" || t.mode === "edit") {
+      ctx.toast("nothing else to show for this file", "attn");
+      return;
+    }
+    t.rendered = !t.rendered;
+    t.scroll.top = 0;
+    // The hits were line numbers in the *other* view; recompute or drop them.
+    t.findHits();
   }
 
   function drawPane(s: Surface, r: Rect, c: Tokens): void {
@@ -1431,8 +1752,12 @@ export function workspaceScreen(
       });
       return;
     }
-    if (t.loading && t.lines.length === 0) {
+    if (t.loading && t.lines.length === 0 && t.image === null) {
       emptyState(s, r, c, { title: "Reading…", body: t.path });
+      return;
+    }
+    if (t.image !== null) {
+      drawPicture(s, r, c, t, t.image);
       return;
     }
     if (t.note !== "") {
@@ -1444,7 +1769,50 @@ export function workspaceScreen(
       if (focus === "file") ctx.setCursor(caret);
       return;
     }
+    if (t.reading) {
+      // The README the repository opens on, rendered the way the web
+      // renders it. `v` shows the bytes; `e` edits them, always.
+      t.document(Math.max(8, r.w - 2), c);
+      drawLines(s, r, c, t.scroll, t.doc);
+      return;
+    }
     drawCode(s, r, c, t);
+  }
+
+  /**
+   * A picture, or the facts about one.
+   *
+   * `drawImage` reserves the cells and hands back bytes for the loop to
+   * write after the frame; when the terminal cannot show a picture it draws
+   * its own placeholder card and hands back nothing, which is also exactly
+   * what we want the loop to do about a previous placement — take it away.
+   */
+  function drawPicture(
+    s: Surface,
+    r: Rect,
+    c: Tokens,
+    t: Tab,
+    image: TerminalImage,
+  ): void {
+    if (!t.showImage) {
+      const inner = card(s, r, c, { title: t.name });
+      drawFacts(s, inner, c, [
+        ["format", (image.format ?? "unknown").toUpperCase()],
+        [
+          "dimensions",
+          image.width > 0 ? `${image.width} × ${image.height}` : "unknown",
+        ],
+        ["size", humanBytes(image.byteLength)],
+        ["path", t.path],
+        ["terminal", `${ctx.caps.term ?? "unknown"} · ${ctx.caps.graphics}`],
+        ["cell", `${ctx.caps.cell.width}×${ctx.caps.cell.height}px${
+          ctx.caps.cell.measured ? "" : " (assumed)"
+        }`],
+      ]);
+      return;
+    }
+    const placed = drawImage(s, r, c, image, ctx.caps);
+    if (placed !== undefined) ctx.placeImage(placed);
   }
 
   function drawStatus(s: Surface, r: Rect, c: Tokens): void {
@@ -1531,11 +1899,20 @@ export function workspaceScreen(
         ? ""
         : t.mode === "edit" && t.editor !== null
           ? t.editor.status()
-          : t.note !== ""
-            ? ""
-            : `${t.path} · ${plural(t.plain.length, "line")}${
-                writable() ? "" : " · read only"
-              }`;
+          : t.image !== null
+            ? `${t.path} · ${(t.image.format ?? "image").toUpperCase()} ${
+                t.image.width > 0
+                  ? `${t.image.width}×${t.image.height} `
+                  : ""
+              }· ${humanBytes(t.image.byteLength)}`
+            : t.note !== ""
+              ? ""
+              : `${t.path} · ${plural(
+                  t.reading ? t.doc.length : t.plain.length,
+                  "line",
+                )}${t.reading ? " rendered" : ""}${
+                  writable() ? "" : " · read only"
+                }`;
     if (tail === "") return;
     const shown = truncate(tail, Math.max(0, r.w - 4));
     s.text(
@@ -1607,9 +1984,21 @@ function drawRefPill(
   s.text(x, r.y, label, style(c.accent, c.bg, BOLD), r.x + r.w);
 }
 
+/** Where one tab landed: the whole chip, and the `✗` inside it if it has one. */
+interface TabHit {
+  readonly index: number;
+  readonly rect: Rect;
+  readonly close?: Rect;
+}
+
 /**
  * The tab bar. One row: the paths, the active one bold and underlined in the
- * accent, a dot on anything modified, and `‹ ›` when there are more than fit.
+ * accent, a dot on anything modified, `¶` on prose being read rather than
+ * edited, and `‹ ›` when there are more than fit.
+ *
+ * The active tab wears a `✗`. Only the active one: a close box on every chip
+ * is a row of targets you can hit by accident, and the tab you mean to close
+ * is almost always the one you are looking at.
  */
 function drawTabBar(
   s: Surface,
@@ -1617,19 +2006,29 @@ function drawTabBar(
   c: Tokens,
   tabs: readonly Tab[],
   active: number,
-): void {
-  if (r.w <= 0 || r.h <= 0) return;
+  set: IconSet = "plain",
+): TabHit[] {
+  if (r.w <= 0 || r.h <= 0) return [];
   s.fill(r, " ", style(c.mutedFg, c.bg));
   const right = r.x + r.w;
   if (tabs.length === 0) {
     s.text(r.x + 1, r.y, "no tabs open", style(c.faint, c.bg), right);
-    return;
+    return [];
   }
+  const hits: TabHit[] = [];
   const count = `${plural(tabs.length, "tab")} `;
   const room = Math.max(10, r.w - count.length - 2);
+  // The icon is nerd-only: the plain set's generic file mark before every
+  // path says nothing and costs two columns on the one row that has none.
+  const mark = (t: Tab): string =>
+    set === "nerd" ? `${fileIcon(t.path, set)} ` : "";
   const label = (t: Tab): string =>
-    ` ${truncate(t.path, 30)}${t.modified ? " ●" : ""} `;
-  const widths = tabs.map((t) => displayWidth(label(t)) + 1);
+    ` ${mark(t)}${truncate(t.path, 30)}${t.modified ? " ●" : ""}${
+      t.reading ? ` ${PROSE_MARK}` : ""
+    } `;
+  const widths = tabs.map(
+    (t, i) => displayWidth(label(t)) + (i === active ? 2 : 0) + 1,
+  );
 
   // A window that contains the active tab and fits: grow left from it, then
   // right, so the tab you are on is never the one that scrolled off.
@@ -1661,6 +2060,7 @@ function drawTabBar(
     const t = tabs[i];
     if (t === undefined) break;
     const on = i === active;
+    const from = x;
     x = s.text(
       x,
       r.y,
@@ -1672,10 +2072,21 @@ function drawTabBar(
       ),
       right,
     );
+    let close: Rect | undefined;
+    if (on) {
+      close = { x, y: r.y, w: 2, h: 1 };
+      x = s.text(x, r.y, `${G.cross} `, style(c.faint, c.bg), right);
+    }
+    hits.push({
+      index: i,
+      rect: { x: from, y: r.y, w: x - from, h: 1 },
+      ...(close === undefined ? {} : { close }),
+    });
     x += 1;
   }
   if (last < tabs.length - 1) s.text(x, r.y, "›", style(c.faint, c.bg), right);
   s.text(right - count.length, r.y, count, style(c.faint, c.bg), right);
+  return hits;
 }
 
 interface TreeDrawOpts {
@@ -1685,6 +2096,7 @@ interface TreeDrawOpts {
   readonly pending: ReadonlySet<string>;
   readonly currentPath: string;
   readonly empty: string;
+  readonly icons: IconSet;
 }
 
 /**
@@ -1729,7 +2141,17 @@ function drawTree(
             ? G.caretDown
             : G.caretRight
         : " ";
-    x = s.text(x, y, `${mark} `, style(c.mutedFg, bg), right);
+    // The caret is the expansion state and stays whatever the set. A Nerd
+    // Font adds the *kind* beside it — the plain set does not, because six
+    // shades of `▭` before six filenames is noise, not information.
+    const glyph =
+      o.icons === "nerd"
+        ? `${mark}${fileIcon(node.path, o.icons, {
+            directory: node.type === "tree",
+            open: node.expanded,
+          })} `
+        : `${mark} `;
+    x = s.text(x, y, glyph, style(c.mutedFg, bg), right);
     const doomed = o.pending.has(node.path);
     const dirty = o.modified.has(node.path);
     const current = node.type === "blob" && node.path === o.currentPath;

@@ -41,7 +41,14 @@ export const SYNC_END = "\x1b[?2026l";
 // exact reverse.
 export const PASTE_ON = "\x1b[?2004h";
 export const PASTE_OFF = "\x1b[?2004l";
-export const MOUSE_ON = "\x1b[?1000h\x1b[?1006h";
+/**
+ * Button reporting (1000), button-event tracking (1002), SGR coordinates
+ * (1006). 1002 adds motion-while-pressed: nothing in the forge tracks a drag
+ * and the parser drops motion reports, but without it a press-drag-release
+ * loses its release, and a terminal that believes a button is still down
+ * behaves oddly for the rest of the session.
+ */
+export const MOUSE_ON = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
 export const MOUSE_OFF = "\x1b[?1006l\x1b[?1002l\x1b[?1003l\x1b[?1000l";
 export const FOCUS_OFF = "\x1b[?1004l";
 

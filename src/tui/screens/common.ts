@@ -17,6 +17,7 @@ import { style } from "../term/style.ts";
 import { pad, truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
+import { icon, type IconSet } from "../ui/icons.ts";
 import {
   card,
   dialog,
@@ -229,6 +230,68 @@ export function drawList(
     total: rows.length,
     offset: from,
   });
+}
+
+// ---- the pointer ----
+
+export interface ListHits {
+  /** A click that moved the cursor onto a row it was not already on. */
+  select?(index: number): void;
+  /** A click on the selected row, or a double-click on any row. */
+  open?(index: number): void;
+  /** A wheel notch, in rows. Defaults to moving the cursor. */
+  scroll?(rows: number): void;
+}
+
+/**
+ * Make a list the pointer can drive, with the gesture a file manager taught
+ * everyone: a click selects, and a click on what is already selected — or a
+ * double-click on anything — opens. That is deliberately *not* "one click
+ * opens". A single click has to be safe, because half of pointing at a row is
+ * looking at it, and a list where looking navigates is a list you cannot
+ * browse.
+ *
+ * One region for the whole body rather than one per row: the geometry is
+ * `state.offset + y`, the same arithmetic `drawList` already did to paint it,
+ * so the two cannot disagree about which row is where.
+ */
+export function hitList(
+  ctx: Ctx,
+  r: Rect,
+  state: ListState,
+  count: number,
+  on: ListHits,
+): void {
+  ctx.hit(r, {
+    click: (e) => {
+      const index = state.offset + e.y;
+      if (index < 0 || index >= count) return;
+      if (index === state.index || e.double) {
+        state.index = index;
+        on.open?.(index);
+        return;
+      }
+      state.index = index;
+      on.select?.(index);
+    },
+    wheel: (rows) => {
+      if (on.scroll !== undefined) {
+        on.scroll(rows);
+        return;
+      }
+      state.move(rows, count);
+    },
+  });
+}
+
+/** The same, for a cursorless viewport: the wheel moves the text. */
+export function hitScroll(
+  ctx: Ctx,
+  r: Rect,
+  scroll: Scroll,
+  total: number,
+): void {
+  ctx.hit(r, { wheel: (rows) => scroll.to(scroll.top + rows, total) });
 }
 
 /** Draw pre-styled lines (markdown, a diff) into a scrolled viewport. */
@@ -713,7 +776,10 @@ export const COMMENT_MARK = G.comment;
  */
 export function countsColumn(
   all: readonly (RepoCounts | undefined)[],
+  set: IconSet = "plain",
 ): (counts: RepoCounts | undefined) => string {
+  const issueMark = icon("issue", set);
+  const pullMark = icon("pull", set);
   const width = (pick: (c: RepoCounts) => number): number =>
     all.reduce(
       (max, c) =>
@@ -732,20 +798,20 @@ export function countsColumn(
         ? ""
         : counts.openIssues === 0
           ? " ".repeat(issueW + 2)
-          : `${ISSUE_MARK} ${pad(String(counts.openIssues), issueW, "right")}`;
+          : `${issueMark} ${pad(String(counts.openIssues), issueW, "right")}`;
     const pulls =
       pullW === 0
         ? ""
         : counts.openPulls === 0
           ? " ".repeat(pullW + 2)
-          : `${PULL_MARK} ${pad(String(counts.openPulls), pullW, "right")}`;
+          : `${pullMark} ${pad(String(counts.openPulls), pullW, "right")}`;
     return `${issues}${issues !== "" && pulls !== "" ? "  " : ""}${pulls}`.trimEnd();
   };
 }
 
 /** `\u25ad 4` on a conversation row; nothing at all when nobody has replied. */
-export function commentsMeta(count: number): string {
-  return count > 0 ? `${COMMENT_MARK} ${count}` : "";
+export function commentsMeta(count: number, set: IconSet = "plain"): string {
+  return count > 0 ? `${icon("comment", set)} ${count}` : "";
 }
 
 /** Join a row's meta pieces, dropping the empty ones. */

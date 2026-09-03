@@ -45,6 +45,13 @@ export interface SshSession {
   /** 0 when the client requested no pty. */
   readonly cols: number;
   readonly rows: number;
+  /**
+   * The window in pixels, as `pty-req` and `window-change` report it. Most
+   * clients send zeros; a client that does not hands us an exact cell
+   * geometry, which is what makes a terminal image the right shape.
+   */
+  readonly widthPx: number;
+  readonly heightPx: number;
   write(data: Uint8Array | string): void;
   writeStderr(data: Uint8Array | string): void;
   onData(cb: (data: Uint8Array) => void): void;
@@ -99,6 +106,8 @@ class Channel implements SshSession {
   term: string | undefined;
   cols = 0;
   rows = 0;
+  widthPx = 0;
+  heightPx = 0;
   readonly env: Record<string, string> = {};
 
   private started = false;
@@ -329,8 +338,8 @@ class Channel implements SshSession {
         this.term = r.text();
         this.cols = r.u32();
         this.rows = r.u32();
-        r.u32();
-        r.u32();
+        this.widthPx = r.u32();
+        this.heightPx = r.u32();
         // Terminal modes are parsed only to prove the packet is well formed;
         // we allocate no pty, so there is no termios to apply.
         r.string();
@@ -360,6 +369,8 @@ class Channel implements SshSession {
       case "window-change": {
         this.cols = r.u32();
         this.rows = r.u32();
+        this.widthPx = r.u32();
+        this.heightPx = r.u32();
         const cb = this.resizeCb;
         if (cb) {
           try {

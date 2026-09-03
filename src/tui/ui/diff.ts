@@ -20,7 +20,7 @@ import { wordDiff } from "../../web/worddiff.ts";
 import { G, type Span } from "../term/screen.ts";
 import { BOLD, DIM, style, type Color, type Style } from "../term/style.ts";
 import { displayWidth, expandTabs, pad, truncate } from "../term/width.ts";
-import type { Tokens } from "./theme.ts";
+import { tokColor, type Tokens } from "./theme.ts";
 
 export type Line = Span[];
 
@@ -232,7 +232,7 @@ function renderLine(
   let used = 0;
   let charIndex = 0;
   for (const token of tokens) {
-    const fg = c.tok[token.cls] ?? c.fg;
+    const fg = tokColor(c, token.cls);
     // Split each syntax token wherever the word-diff background changes:
     // syntax owns the foreground, the diff owns the background, and the two
     // are resolved independently exactly as the web stylesheet composes them.

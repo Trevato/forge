@@ -27,7 +27,7 @@ import {
   type Style,
 } from "../term/style.ts";
 import { displayWidth, expandTabs, pad, wrap } from "../term/width.ts";
-import type { Tokens } from "./theme.ts";
+import { tokColor, type Tokens } from "./theme.ts";
 
 export type Line = Span[];
 
@@ -149,7 +149,7 @@ function renderCode(
     let used = 1;
     for (const t of tokens) {
       if (used >= width) break;
-      spans.push({ text: t.text, style: style(c.tok[t.cls], bg) });
+      spans.push({ text: t.text, style: style(tokColor(c, t.cls), bg) });
       used += displayWidth(t.text);
     }
     // Pad the whole row so the code block reads as one surface, not as
@@ -203,7 +203,7 @@ export function inline(text: string, c: Tokens, base: Style): Span[] {
         flush();
         out.push({
           text: text.slice(i + 1, close),
-          style: style(c.tok.string, c.muted),
+          style: style(tokColor(c, "string"), c.muted),
         });
         i = close + 1;
         continue;

@@ -42,8 +42,23 @@ export interface Tokens {
   readonly delEdge: Color;
   readonly wdAdd: Color;
   readonly wdDel: Color;
-  /** Syntax colours, keyed by the classes `web/highlight.ts` emits. */
-  readonly tok: Readonly<Record<TokenClass, Color>>;
+  /**
+   * Syntax colours, keyed by the classes `web/highlight.ts` emits.
+   *
+   * The table is built by *scanning* the palette for `tok-…` keys rather than
+   * by listing the classes here, so a token kind added to `design/themes.ts`
+   * and `web/highlight.ts` is coloured in the terminal the moment it lands —
+   * no third edit, and no chance of the two surfaces disagreeing about what
+   * `tok-regex` means. A class the palette does not name is not an error:
+   * `tokColor` falls back to body text, which is what the web stylesheet does
+   * for `tok-plain` and friends.
+   */
+  readonly tok: Readonly<Record<string, Color>>;
+}
+
+/** The colour for one token class, with the body-text fallback. */
+export function tokColor(c: Tokens, cls: TokenClass | string): Color {
+  return c.tok[cls] ?? c.fg;
 }
 
 export interface Theme {
@@ -79,21 +94,26 @@ function tokens(p: Palette): Tokens {
     delEdge: rgb(p["del-edge"]),
     wdAdd: rgb(p["wd-add"]),
     wdDel: rgb(p["wd-del"]),
-    tok: {
-      keyword: rgb(p["tok-keyword"]),
-      string: rgb(p["tok-string"]),
-      comment: rgb(p["tok-comment"]),
-      number: rgb(p["tok-number"]),
-      function: rgb(p["tok-function"]),
-      type: rgb(p["tok-type"]),
-      constant: rgb(p["tok-constant"]),
-      meta: rgb(p["tok-meta"]),
-      // The web stylesheet leaves these at body colour; so do we.
-      operator: rgb(p["muted-fg"]),
-      punctuation: rgb(p["muted-fg"]),
-      plain: rgb(p.fg),
-    },
+    tok: tokenColors(p),
   };
+}
+
+/**
+ * Every `tok-<name>` in the palette becomes a style keyed by `<name>`. The
+ * three the web stylesheet deliberately leaves at body colour get muted
+ * defaults *unless* the palette names them — a palette that grows a real
+ * `tok-operator` wins, which is the whole point of scanning.
+ */
+function tokenColors(p: Palette): Record<string, Color> {
+  const out: Record<string, Color> = {
+    operator: rgb(p["muted-fg"]),
+    punctuation: rgb(p["muted-fg"]),
+    plain: rgb(p.fg),
+  };
+  for (const [key, value] of Object.entries(p))
+    if (key.startsWith("tok-") && typeof value === "string")
+      out[key.slice(4)] = rgb(value);
+  return out;
 }
 
 const cache = new Map<ThemeName, Theme>();

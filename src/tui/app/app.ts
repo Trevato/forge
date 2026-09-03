@@ -11,17 +11,27 @@
  */
 
 import { defect } from "../../kernel/error.ts";
-import type { InputEvent, KeyEvent } from "../term/input.ts";
+import type { InputEvent, KeyEvent, MouseEvent } from "../term/input.ts";
 import { InputDecoder } from "../term/input.ts";
 import { Renderer, type Cursor } from "../term/render.ts";
-import { Screen as Surface, type Rect } from "../term/screen.ts";
-import { style } from "../term/style.ts";
+import { G, Screen as Surface, type Rect } from "../term/screen.ts";
+import { BOLD, style } from "../term/style.ts";
+import {
+  GRAPHICS_SETTINGS,
+  ICON_SETTINGS,
+  type GraphicsSetting,
+  type IconSet,
+  type IconSetting,
+  type TermCapabilities,
+} from "../term/graphics.ts";
 import {
   TerminalSession,
   copyToTerminal,
   openInBrowser,
+  terminalCapabilities,
   type Terminal,
   type SessionOpts,
+  type TerminalPrefs,
 } from "../term/terminal.ts";
 import {
   colorDepthFor,
@@ -31,18 +41,19 @@ import {
   type Tokens,
 } from "../ui/theme.ts";
 import { THEME_NAMES } from "../../design/themes.ts";
-import { split, len, fill } from "../ui/layout.ts";
+import { split, len, fill, contains } from "../ui/layout.ts";
+import { clearImages } from "../ui/image.ts";
+import { fileIcon, icon } from "../ui/icons.ts";
 import {
   crumbs,
   helpBar,
-  menu,
   spinner,
   toast as drawToast,
   card,
   type Tone,
   type CursorPos,
 } from "../ui/widgets.ts";
-import { binding, find, type Binding } from "./keys.ts";
+import { binding, find, keyFor, type Binding } from "./keys.ts";
 import { Palette, type Command, type PaletteSearch } from "./palette.ts";
 import { truncate } from "../term/width.ts";
 
@@ -65,6 +76,51 @@ export interface Screen {
   paste?(text: string): boolean;
   /** Async load, cancelled by `signal` when the screen is popped. */
   load?(signal: AbortSignal): Promise<void>;
+}
+
+/**
+ * A click, in the coordinates the handler cares about.
+ *
+ * `x`/`y` are *inside* the region — a list that registered one region for its
+ * whole body turns `y` into a row index with no arithmetic at the call site,
+ * which is the reason regions are rectangles rather than cells.
+ */
+export interface HitEvent {
+  /** Cell offset inside the region; 0,0 is its top-left. */
+  readonly x: number;
+  readonly y: number;
+  /** The same cell in screen coordinates. */
+  readonly col: number;
+  readonly row: number;
+  /** A second press on the same region inside `DOUBLE_MS`. */
+  readonly double: boolean;
+  readonly button: 0 | 1 | 2;
+  readonly ctrl: boolean;
+  readonly alt: boolean;
+  readonly shift: boolean;
+}
+
+/**
+ * What a region does when the pointer arrives. A bare function is the common
+ * case (click only); the object form adds the wheel.
+ */
+export interface HitTarget {
+  click?(e: HitEvent): void;
+  /** Wheel notch, in rows: negative up, positive down. */
+  wheel?(rows: number, e: HitEvent): void;
+}
+
+export type Hit = HitTarget | ((e: HitEvent) => void);
+
+/**
+ * An image placed by `ui/image.ts`, structurally — the loop writes the bytes
+ * and never looks inside them, so it does not import the image pipeline's
+ * types to say so.
+ */
+export interface ImagePlacement {
+  readonly id: number;
+  readonly rect: Rect;
+  readonly bytes: readonly Uint8Array[];
 }
 
 export interface Ctx {
@@ -103,6 +159,27 @@ export interface Ctx {
    * every TUI that shells out ends up wedged.
    */
   suspend<T>(run: (host: RawHost) => Promise<T>): Promise<T | undefined>;
+  /**
+   * Claim a rectangle for the pointer, for this frame only.
+   *
+   * The registry is cleared at the top of every paint and rebuilt by the
+   * screens that draw, so a region can never outlive the pixels it stands
+   * for — the bug every retained-mode hit table eventually has. Regions are
+   * searched newest-first, so whatever drew last (an overlay, a dialog) is
+   * what a click reaches, with no z-index to keep in sync.
+   */
+  hit(rect: Rect, on: Hit): void;
+  /**
+   * Show one image this frame, or none. The bytes go out after the frame,
+   * raw; passing null (or simply not calling it) removes whatever the last
+   * frame placed, which is what makes a tab switch, a pop and a resize all
+   * clean up by themselves.
+   */
+  placeImage(p: ImagePlacement | null): void;
+  /** What this terminal can do: graphics protocol, icon set, cell geometry. */
+  readonly caps: TermCapabilities;
+  /** `caps.icons`, said in one word — the argument every icon call takes. */
+  readonly icons: IconSet;
   readonly theme: Theme;
   readonly cols: number;
   readonly rows: number;
@@ -141,6 +218,10 @@ export interface RawHost {
 const FRAME_MS = 16; // ~60fps; a held `j` repeats far faster than a repaint
 const ESC_MS = 25; // idle backstop for Esc-vs-Alt (neovim uses 50)
 const TOAST_MS = 4000;
+/** Two presses on one region inside this are a double-click. */
+const DOUBLE_MS = 450;
+/** One wheel notch, in rows. Three is what every terminal and browser uses. */
+const WHEEL_ROWS = 3;
 /** Local search runs this long after the last keystroke. */
 const PALETTE_DEBOUNCE_MS = 120;
 /** Origins are only asked after a real pause — their rate budget is finite. */
@@ -149,6 +230,17 @@ const PALETTE_LIVE_MS = 400;
 export interface AppOpts extends SessionOpts {
   readonly terminal: Terminal;
   readonly theme?: ThemeName;
+  /** The stored graphics/icons preferences, if this session has an account. */
+  readonly prefs?: TerminalPrefs;
+  /**
+   * Called when the terminal picker settles on new preferences. The loop
+   * knows nothing about persistence; the host does — the same contract
+   * `onTheme` has.
+   */
+  readonly onPrefs?: (prefs: {
+    graphics: GraphicsSetting;
+    icons: IconSetting;
+  }) => void;
   readonly root: (ctx: Ctx) => Screen;
   readonly commands?: (ctx: Ctx) => Command[];
   /** Turns the palette into the global search box. */
@@ -173,6 +265,19 @@ export class App {
   private overlay: "none" | "help" | "palette" | "theme" = "none";
   private palette = new Palette();
   private themeIndex = 0;
+  /** Where the picker's cursor is: a theme row, then graphics, then icons. */
+  private pickerRow = 0;
+  private graphics: GraphicsSetting;
+  private iconSetting: IconSetting;
+  private capabilities: TermCapabilities;
+  /** Cleared and rebuilt every paint; searched newest-first on a click. */
+  private regions: { rect: Rect; on: HitTarget }[] = [];
+  private lastClick: { rect: Rect; at: number } | null = null;
+  /** The image this frame wants, and the one the terminal is holding. */
+  private wanted: ImagePlacement | null = null;
+  private placed: ImagePlacement | null = null;
+  /** Set whenever the renderer is invalidated: the picture must be re-sent. */
+  private imagesStale = false;
   private toastState: { text: string; tone: Tone; until: number } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private escTimer: ReturnType<typeof setTimeout> | null = null;
@@ -238,6 +343,10 @@ export class App {
     this.session = new TerminalSession(opts.terminal, opts);
     this.themeName = opts.theme ?? "dark";
     this.themeIndex = Math.max(0, THEME_NAMES.indexOf(this.themeName));
+    this.pickerRow = this.themeIndex;
+    this.graphics = opts.prefs?.graphics ?? "auto";
+    this.iconSetting = opts.prefs?.icons ?? "auto";
+    this.capabilities = this.readCapabilities();
     this.ctx = this.makeCtx();
     this.commands = opts.commands?.(this.ctx) ?? [];
     this.search = opts.search?.(this.ctx);
@@ -261,6 +370,22 @@ export class App {
       copy: (text) => copyToTerminal(app.opts.terminal, text),
       openUrl: (url) => openInBrowser(app.opts.terminal, url),
       suspend: (run) => app.suspend(run),
+      hit: (rect, on) => {
+        if (rect.w <= 0 || rect.h <= 0) return;
+        app.regions.push({
+          rect,
+          on: typeof on === "function" ? { click: on } : on,
+        });
+      },
+      placeImage: (p) => {
+        app.wanted = p;
+      },
+      get caps() {
+        return app.capabilities;
+      },
+      get icons() {
+        return app.capabilities.icons;
+      },
       get theme() {
         return theme(app.themeName);
       },
@@ -375,6 +500,18 @@ export class App {
       this.toastState !== null ||
       this.stack.some((e) => e.loading)
     );
+  }
+
+  /**
+   * Re-ask the transport what it can do. Cheap arithmetic over `TERM`, the
+   * size and the client's reported pixels — recomputed rather than cached
+   * across a resize, because the pixel size is exactly what a resize moves.
+   */
+  private readCapabilities(): TermCapabilities {
+    return terminalCapabilities(this.opts.terminal, {
+      graphics: this.graphics,
+      icons: this.iconSetting,
+    });
   }
 
   /** The one place the theme changes, so persistence has one hook to sit on. */
@@ -493,7 +630,11 @@ export class App {
     if (cols === this.surface.cols && rows === this.surface.rows) return;
     // A resize invalidates every assumption; never diff across one.
     this.surface = new Surface(Math.max(1, cols), Math.max(1, rows));
+    this.capabilities = this.readCapabilities();
     this.renderer.invalidate();
+    // A kitty placement is anchored to a cell, so after a reflow it is
+    // sitting on top of unrelated text until it is sent again.
+    this.imagesStale = true;
     this.invalidate();
   }
 
@@ -504,16 +645,7 @@ export class App {
       return;
     }
     if (event.type === "mouse") {
-      // The wheel is the only mouse input we accept, and it means exactly
-      // what the arrow keys mean — so it becomes one, and no screen needs to
-      // know the mouse exists.
-      this.dispatch({
-        type: "key",
-        key: event.kind === "wheel-up" ? "up" : "down",
-        ctrl: false,
-        alt: false,
-        shift: false,
-      });
+      this.onMouse(event);
       return;
     }
     if (event.type === "paste") {
@@ -522,6 +654,77 @@ export class App {
       return;
     }
     this.onKey(event);
+  }
+
+  /**
+   * The pointer, resolved against the regions the last frame drew.
+   *
+   * Newest-first is the whole z-order: a screen registers its rows, an
+   * overlay registers a backdrop and then its own rows, and a click walks
+   * back through that list until something takes it. Nothing here reaches a
+   * `Screen.key` — mouse input is not a synthetic keystroke, and a screen
+   * that wants a click says so with `ctx.hit`. The one exception is a wheel
+   * notch nobody claimed, which becomes arrow keys because that is what a
+   * wheel has always meant.
+   */
+  private onMouse(e: MouseEvent): void {
+    if (e.kind === "release") return;
+    const wheel = e.kind === "wheel-up" || e.kind === "wheel-down";
+    for (let i = this.regions.length - 1; i >= 0; i--) {
+      const region = this.regions[i]!;
+      if (!contains(region.rect, e.x, e.y)) continue;
+      const handler = wheel ? region.on.wheel : region.on.click;
+      // A region that does not handle *this* gesture is not in the way of
+      // one that does: a wheel over a clickable row still scrolls the list
+      // the row is in.
+      if (handler === undefined) continue;
+      const hit = this.hitEvent(region.rect, e);
+      this.invalidate();
+      if (wheel)
+        region.on.wheel?.(
+          e.kind === "wheel-up" ? -WHEEL_ROWS : WHEEL_ROWS,
+          hit,
+        );
+      else region.on.click?.(hit);
+      return;
+    }
+    if (!wheel) return;
+    // Nothing claimed the notch: the historical behaviour, which is what a
+    // screen with a plain cursor and no scroll pane wants.
+    for (let i = 0; i < WHEEL_ROWS; i++)
+      this.onKey({
+        type: "key",
+        key: e.kind === "wheel-up" ? "up" : "down",
+        ctrl: false,
+        alt: false,
+        shift: false,
+      });
+  }
+
+  private hitEvent(rect: Rect, e: MouseEvent): HitEvent {
+    const previous = this.lastClick;
+    const same =
+      previous !== null &&
+      previous.rect.x === rect.x &&
+      previous.rect.y === rect.y &&
+      previous.rect.w === rect.w &&
+      previous.rect.h === rect.h;
+    const double = same && Date.now() - previous.at < DOUBLE_MS;
+    if (e.kind === "press")
+      // A double-click must not chain into a triple: the second press
+      // resets the clock rather than extending it.
+      this.lastClick = { rect, at: double ? 0 : Date.now() };
+    return {
+      x: e.x - rect.x,
+      y: e.y - rect.y,
+      col: e.x,
+      row: e.y,
+      double,
+      button: e.button,
+      ctrl: e.ctrl,
+      alt: e.alt,
+      shift: e.shift,
+    };
   }
 
   private onKey(e: KeyEvent): void {
@@ -557,6 +760,7 @@ export class App {
         return;
       case "theme":
         this.overlay = "theme";
+        this.pickerRow = this.themeIndex;
         return;
       case "back":
         if (this.stack.length > 1) this.pop();
@@ -617,40 +821,100 @@ export class App {
       const result = this.palette.key(e);
       if (this.palette.query !== before) this.schedulePaletteSearch();
       if (result === "close") this.overlay = "none";
-      else if (result !== null) {
-        this.overlay = "none";
-        void Promise.resolve(result.run()).catch((err: unknown) =>
-          this.toast(
-            err instanceof Error ? err.message : String(err),
-            "danger",
-          ),
-        );
-      }
+      else if (result !== null) this.run(result);
       return;
     }
     if (this.overlay === "theme") {
-      let chosen = false;
-      if (e.key === "down" || e.key === "j")
-        this.themeIndex = (this.themeIndex + 1) % THEME_NAMES.length;
-      else if (e.key === "up" || e.key === "k")
-        this.themeIndex =
-          (this.themeIndex - 1 + THEME_NAMES.length) % THEME_NAMES.length;
-      else if (
-        e.key === "enter" ||
-        e.key === "esc" ||
-        e.key === "t" ||
-        e.key === "q"
-      ) {
-        this.overlay = "none";
-        chosen = true;
-      }
-      // Live preview: the whole screen repaints in the highlighted theme, so
-      // choosing is a matter of looking rather than remembering. Only the
-      // choice is announced — not every frame of the browse.
-      this.applyTheme(THEME_NAMES[this.themeIndex] ?? this.themeName, chosen);
+      this.pickerKey(e);
       return;
     }
     this.overlay = "none";
+  }
+
+  /** Close the palette and run one of its rows — the click and the Enter. */
+  private runPaletteRow(index: number): void {
+    const chosen = this.palette.items()[index];
+    this.overlay = "none";
+    if (chosen !== undefined) this.run(chosen);
+  }
+
+  private run(command: Command): void {
+    this.overlay = "none";
+    void Promise.resolve(command.run()).catch((err: unknown) =>
+      this.toast(err instanceof Error ? err.message : String(err), "danger"),
+    );
+  }
+
+  // ---- the appearance picker ----
+
+  /** Rows in the picker: every theme, then graphics, then icons. */
+  private get pickerRows(): number {
+    return THEME_NAMES.length + 2;
+  }
+
+  /**
+   * One vertical cursor over three different kinds of choice. A theme row
+   * applies as you pass over it — the whole screen repaints, so choosing is
+   * looking rather than remembering — while the two setting rows cycle on
+   * left/right/enter, because their values are a short ring, not a list.
+   */
+  private pickerKey(e: KeyEvent): void {
+    const rows = this.pickerRows;
+    if (e.key === "down" || e.key === "j")
+      this.selectPickerRow((this.pickerRow + 1) % rows);
+    else if (e.key === "up" || e.key === "k")
+      this.selectPickerRow((this.pickerRow + rows - 1) % rows);
+    else if (this.pickerRow >= THEME_NAMES.length) {
+      const back = e.key === "left" || e.key === "h";
+      if (
+        back ||
+        e.key === "right" ||
+        e.key === "l" ||
+        e.key === "enter" ||
+        e.key === " "
+      )
+        this.cyclePreference(
+          this.pickerRow - THEME_NAMES.length,
+          back ? -1 : 1,
+        );
+      else if (e.key === "esc" || e.key === "t" || e.key === "q")
+        this.overlay = "none";
+    } else if (e.key === "enter" || e.key === "esc" || e.key === "t")
+      this.close();
+    else if (e.key === "q") this.close();
+    this.invalidate();
+  }
+
+  private close(): void {
+    this.overlay = "none";
+    // Only the *choice* is announced, never every frame of the browse.
+    this.applyTheme(THEME_NAMES[this.themeIndex] ?? this.themeName, true);
+  }
+
+  private selectPickerRow(row: number): void {
+    this.pickerRow = row;
+    if (row >= THEME_NAMES.length) return;
+    this.themeIndex = row;
+    this.applyTheme(THEME_NAMES[row] ?? this.themeName, false);
+  }
+
+  /** 0 = graphics, 1 = icons. Both persist through the host's `onPrefs`. */
+  private cyclePreference(which: number, step: number): void {
+    if (which === 0) {
+      const at = GRAPHICS_SETTINGS.indexOf(this.graphics);
+      const next =
+        (at + step + GRAPHICS_SETTINGS.length) % GRAPHICS_SETTINGS.length;
+      this.graphics = GRAPHICS_SETTINGS[next] ?? "auto";
+    } else {
+      const at = ICON_SETTINGS.indexOf(this.iconSetting);
+      const next = (at + step + ICON_SETTINGS.length) % ICON_SETTINGS.length;
+      this.iconSetting = ICON_SETTINGS[next] ?? "auto";
+    }
+    this.capabilities = this.readCapabilities();
+    // A graphics change can strand a placement drawn under the old protocol.
+    this.imagesStale = true;
+    this.opts.onPrefs?.({ graphics: this.graphics, icons: this.iconSetting });
+    this.invalidate();
   }
 
   // ---- rendering ----
@@ -669,6 +933,11 @@ export class App {
     this.dirty = false;
     this.frames++;
     this.cursor = null;
+    // The hit table stands for the pixels that are about to be drawn, so it
+    // is emptied here and rebuilt by whoever draws. A region can never
+    // outlive its frame, which is the bug every retained hit table has.
+    this.regions = [];
+    this.wanted = null;
 
     const c = theme(this.themeName).c;
     const s = this.surface;
@@ -710,11 +979,56 @@ export class App {
     }
 
     this.drawFooter(foot!, c);
-    if (this.overlay === "palette")
-      this.cursor = this.palette.render(s, body!, c);
+    if (this.overlay !== "none") {
+      // Everything under an overlay stops being clickable, and clicking the
+      // dimmed part is how you dismiss it — the gesture people already have
+      // for a modal. Registered before the overlay's own rows, so those win.
+      this.ctx.hit(s.rect(), () => {
+        this.overlay = "none";
+      });
+    }
+    if (this.overlay === "palette") {
+      const drawn = this.palette.render(s, body!, c);
+      this.cursor = drawn.cursor;
+      for (const row of drawn.rows)
+        this.ctx.hit(row.rect, () => this.runPaletteRow(row.index));
+    }
     if (this.overlay === "help") this.drawHelp(body!, c);
     if (this.overlay === "theme") this.drawThemes(body!, c);
     this.flush();
+    this.flushImage();
+  }
+
+  /**
+   * Send the picture, or take it away.
+   *
+   * A placement is only re-sent when it is *new* — a different image, a
+   * different rectangle, or a repaint that invalidated the whole screen.
+   * `drawImage` reserves its cells with the theme ground, so an ordinary
+   * frame emits nothing over them and the pixels underneath survive; re-
+   * sending a megabyte of base64 on every keystroke would be the one thing
+   * that made images unusable over SSH.
+   */
+  private flushImage(): void {
+    const next = this.wanted;
+    const prev = this.placed;
+    const same =
+      prev !== null &&
+      next !== null &&
+      prev.id === next.id &&
+      prev.rect.x === next.rect.x &&
+      prev.rect.y === next.rect.y &&
+      prev.rect.w === next.rect.w &&
+      prev.rect.h === next.rect.h;
+    if (same && !this.imagesStale) return;
+    const out: Uint8Array[] = [];
+    // Anything already on screen goes first: two placements at overlapping
+    // cells is how a "ghost" of the previous file appears behind the new one.
+    if (prev !== null) out.push(...clearImages(this.capabilities));
+    if (next !== null) out.push(...next.bytes);
+    for (const bytes of out) this.opts.terminal.write(bytes);
+    this.placed = next;
+    this.imagesStale = false;
   }
 
   private drawHeader(r: Rect, c: Tokens): void {
@@ -735,7 +1049,17 @@ export class App {
       return;
     }
     const bindings = [...this.top().screen.keys, ...this.globals];
-    helpBar(s, r, c, bindings);
+    // A hint in the bar is a *button*: clicking one presses the key it names,
+    // which is the shortest possible path from "I can see what this does" to
+    // doing it. Disabled hints are drawn and not registered.
+    for (const hint of helpBar(s, r, c, bindings)) {
+      if (hint.binding.disabled === true) continue;
+      const chord = hint.binding.keys[0];
+      if (chord === undefined) continue;
+      const event = keyFor(chord);
+      if (event === undefined) continue;
+      this.ctx.hit(hint.rect, () => this.onKey(event));
+    }
     // Every async boundary shows a spinner in the status bar, never a blank
     // screen and never a modal.
     if (this.stack.some((e) => e.loading))
@@ -748,13 +1072,34 @@ export class App {
       (b) => b.hidden !== true,
     );
     const inner = card(s, area, c, { title: "Keys", focused: true });
-    bindings.forEach((b, i) => {
+    // The mouse note lives here rather than in the bar because it is the one
+    // thing a mouse user cannot discover by clicking: that selecting text
+    // now needs Shift, and why.
+    const rows: { keys: string; help: string; dim: boolean }[] = [
+      ...bindings.map((b) => ({
+        keys: truncate(b.keys.join(" / "), 14),
+        help: b.help,
+        dim: b.disabled === true,
+      })),
+      { keys: "", help: "", dim: true },
+      {
+        keys: "click",
+        help: "select a row; click it again to open",
+        dim: true,
+      },
+      { keys: "wheel", help: "scroll the list under the pointer", dim: true },
+      {
+        keys: "shift+drag",
+        help: "select text (the terminal's own)",
+        dim: true,
+      },
+    ];
+    rows.forEach((b, i) => {
       if (i >= inner.h) return;
-      const keys = truncate(b.keys.join(" / "), 14);
       s.text(
         inner.x,
         inner.y + i,
-        keys,
+        b.keys,
         style(c.accent, c.card),
         inner.x + inner.w,
       );
@@ -762,25 +1107,101 @@ export class App {
         inner.x + 16,
         inner.y + i,
         truncate(b.help, Math.max(0, inner.w - 16)),
-        style(b.disabled === true ? c.faint : c.fg, c.card),
+        style(b.dim ? c.faint : c.fg, c.card),
         inner.x + inner.w,
       );
     });
   }
 
+  /**
+   * Appearance: the theme list, then the two terminal preferences, then a
+   * line of real icons in the set that is currently chosen.
+   *
+   * The preview is the point of the two extra rows. Nerd Font glyphs are a
+   * bet on a font `TERM` cannot tell us about, and the only honest way to
+   * settle that bet is to show the user three of them and let them look. If
+   * they see boxes, one keypress puts it back.
+   */
   private drawThemes(area: Rect, c: Tokens): void {
-    const width = 28;
+    const s = this.surface;
+    const width = Math.min(38, area.w);
+    const height = Math.min(this.pickerRows + 4, area.h);
     const r = {
       x: area.x + Math.max(0, area.w - width - 2),
       y: area.y,
-      w: Math.min(width, area.w),
-      h: Math.min(THEME_NAMES.length + 2, area.h),
+      w: width,
+      h: height,
     };
-    menu(this.surface, r, c, {
-      title: "Theme",
-      items: THEME_NAMES.map((n) => theme(n).label),
-      selected: this.themeIndex,
-    });
+    const inner = card(s, r, c, { title: "Appearance", focused: true });
+    const set = this.capabilities.icons;
+    const line = (
+      i: number,
+      label: string,
+      value: string,
+      on: boolean,
+    ): void => {
+      const y = inner.y + i;
+      if (y >= inner.y + inner.h) return;
+      const st = style(
+        on ? c.fg : c.mutedFg,
+        on ? c.muted : c.card,
+        on ? BOLD : 0,
+      );
+      s.fill({ x: inner.x, y, w: inner.w, h: 1 }, " ", st);
+      s.text(
+        inner.x,
+        y,
+        `${on ? G.caretRight : " "} ${truncate(label, Math.max(0, inner.w - 2))}`,
+        st,
+        inner.x + inner.w,
+      );
+      if (value !== "")
+        s.text(
+          inner.x + inner.w - value.length,
+          y,
+          value,
+          style(on ? c.accent : c.faint, on ? c.muted : c.card),
+          inner.x + inner.w,
+        );
+      this.ctx.hit({ x: inner.x, y, w: inner.w, h: 1 }, () => {
+        // Clicking a setting row that is already current cycles it; clicking
+        // any other row selects it. One gesture, two meanings, and the one it
+        // means is the one that is obvious from where the cursor already is.
+        if (i === this.pickerRow && i >= THEME_NAMES.length)
+          this.cyclePreference(i - THEME_NAMES.length, 1);
+        else this.selectPickerRow(i);
+      });
+    };
+
+    THEME_NAMES.forEach((name, i) =>
+      line(i, theme(name).label, "", i === this.pickerRow),
+    );
+    line(
+      THEME_NAMES.length,
+      "Images",
+      graphicsLabel(this.graphics, this.capabilities),
+      this.pickerRow === THEME_NAMES.length,
+    );
+    line(
+      THEME_NAMES.length + 1,
+      "Icons",
+      `${this.iconSetting}${this.iconSetting === "auto" ? ` (${set})` : ""}`,
+      this.pickerRow === THEME_NAMES.length + 1,
+    );
+    const previewY = inner.y + this.pickerRows + 1;
+    if (previewY < inner.y + inner.h)
+      s.text(
+        inner.x,
+        previewY,
+        truncate(
+          `${fileIcon("main.ts", set)} ${icon("issue", set)} ${icon("branch", set)}  ${
+            set === "nerd" ? "boxes? pick plain" : "plain glyphs"
+          }`,
+          inner.w,
+        ),
+        style(c.mutedFg, c.card),
+        inner.x + inner.w,
+      );
   }
 
   private flush(): void {
@@ -794,4 +1215,18 @@ export class App {
   get screen(): Surface {
     return this.surface;
   }
+}
+
+/**
+ * "auto (kitty)" rather than "auto": the setting and what it resolved to are
+ * two different facts, and a user deciding whether to override a guess needs
+ * both. `none` says why it is none, since "your terminal" and "you turned it
+ * off" call for different next steps.
+ */
+function graphicsLabel(
+  setting: GraphicsSetting,
+  caps: TermCapabilities,
+): string {
+  if (setting !== "auto") return setting;
+  return `auto (${caps.graphics})`;
 }

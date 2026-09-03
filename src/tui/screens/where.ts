@@ -32,8 +32,9 @@ import {
   type Span,
 } from "../term/screen.ts";
 import { style, type Color } from "../term/style.ts";
-import { truncate } from "../term/width.ts";
+import { displayWidth, truncate } from "../term/width.ts";
 import type { Tokens } from "../ui/theme.ts";
+import { icon, type IconName, type IconSet } from "../ui/icons.ts";
 import type { Session } from "../session.ts";
 import { ago } from "./common.ts";
 
@@ -166,9 +167,12 @@ export const whereRows = (src: RepoSource): number =>
   src.where.kind === "origin" ? 2 : 1;
 
 type Mark = "reading" | "present" | "pinned" | "absent";
+/** Which of the three places a row is — what its icon depicts. */
+type PlaceKind = "origin" | "workbench" | "machine";
 
 interface Place {
   readonly mark: Mark;
+  readonly kind: PlaceKind;
   readonly text: string;
 }
 
@@ -177,12 +181,13 @@ export function places(f: Session, src: RepoSource): Place[] {
   const out: Place[] = [];
   if (src.where.kind === "origin") {
     const { origin, mirroredAs } = src.where;
-    out.push({ mark: "reading", text: hostOf(origin.webUrl) });
+    out.push({ mark: "reading", kind: "origin", text: hostOf(origin.webUrl) });
     out.push(
       mirroredAs === undefined
-        ? { mark: "absent", text: "workbench" }
+        ? { mark: "absent", kind: "workbench", text: "workbench" }
         : {
             mark: "present",
+            kind: "workbench",
             text: `workbench (${mirroredAs.ownerName}/${mirroredAs.name})`,
           },
     );
@@ -194,10 +199,12 @@ export function places(f: Session, src: RepoSource): Place[] {
   if (link !== null)
     out.push({
       mark: "present",
+      kind: "origin",
       text: hostOf(link.htmlUrl === "" ? link.fullName : link.htmlUrl),
     });
   out.push({
     mark: "reading",
+    kind: "workbench",
     text:
       link === null
         ? "workbench"
@@ -212,7 +219,11 @@ function machine(f: Session, repo: Repo | undefined): Place {
     repo !== undefined &&
     f.user !== undefined &&
     isPinned(f.db, f.user.id, repo.id);
-  return { mark: pinned ? "pinned" : "absent", text: "this machine" };
+  return {
+    mark: pinned ? "pinned" : "absent",
+    kind: "machine",
+    text: "this machine",
+  };
 }
 
 const glyphOf = (mark: Mark): string =>
@@ -221,8 +232,20 @@ const glyphOf = (mark: Mark): string =>
 const colorOf = (c: Tokens, mark: Mark): Color =>
   mark === "reading" ? c.accent : mark === "absent" ? c.faint : c.success;
 
-/** The strip as spans, so a caller can measure it before it paints. */
-export function whereSpans(f: Session, src: RepoSource, c: Tokens): Span[] {
+/**
+ * The strip as spans, so a caller can measure it before it paints.
+ *
+ * The dot keeps its meaning — accent is where these bytes came from — and a
+ * Nerd Font session gets one more glyph beside it saying *what kind of place*
+ * this is: a globe, a repository, a terminal. That is additive on purpose;
+ * the grammar a reader learned in the plain set is still the grammar.
+ */
+export function whereSpans(
+  f: Session,
+  src: RepoSource,
+  c: Tokens,
+  set: IconSet = "plain",
+): Span[] {
   const spans: Span[] = [];
   places(f, src).forEach((place, i) => {
     if (i > 0) spans.push({ text: "  ·  ", style: style(c.faint, c.bg) });
@@ -230,6 +253,11 @@ export function whereSpans(f: Session, src: RepoSource, c: Tokens): Span[] {
       text: glyphOf(place.mark),
       style: style(colorOf(c, place.mark), c.bg),
     });
+    if (set === "nerd")
+      spans.push({
+        text: ` ${icon(PLACE_ICONS[place.kind], set)}`,
+        style: style(place.mark === "reading" ? c.fg : c.mutedFg, c.bg),
+      });
     spans.push({
       text: ` ${place.text}`,
       style: style(place.mark === "reading" ? c.fg : c.mutedFg, c.bg),
@@ -237,6 +265,36 @@ export function whereSpans(f: Session, src: RepoSource, c: Tokens): Span[] {
   });
   return spans;
 }
+
+/**
+ * Where each place landed, so a screen can make them clickable.
+ *
+ * The arithmetic mirrors `whereSpans` exactly, and it has to: a hit box that
+ * disagrees with the glyph under it is worse than no hit box. Keeping them in
+ * one file, next to each other, is the cheapest way to keep them honest.
+ */
+export function whereLayout(
+  f: Session,
+  src: RepoSource,
+  r: Rect,
+  set: IconSet = "plain",
+): { kind: PlaceKind; rect: Rect }[] {
+  const out: { kind: PlaceKind; rect: Rect }[] = [];
+  let x = r.x;
+  places(f, src).forEach((place, i) => {
+    if (i > 0) x += 5; // "  ·  "
+    const w = 1 + (set === "nerd" ? 2 : 0) + 1 + displayWidth(place.text);
+    out.push({ kind: place.kind, rect: { x, y: r.y, w, h: 1 } });
+    x += w;
+  });
+  return out;
+}
+
+const PLACE_ICONS: Readonly<Record<PlaceKind, IconName>> = {
+  origin: "origin",
+  workbench: "repo",
+  machine: "terminal",
+};
 
 /**
  * The one line a live browse adds. It says the two things a reader needs in
@@ -261,9 +319,10 @@ export function whereStrip(
   c: Tokens,
   f: Session,
   src: RepoSource,
+  set: IconSet = "plain",
 ): void {
   if (r.w <= 0 || r.h <= 0) return;
-  s.spans(r.x, r.y, whereSpans(f, src, c), r.x + r.w);
+  s.spans(r.x, r.y, whereSpans(f, src, c, set), r.x + r.w);
   const banner = liveBanner(src);
   if (banner === "" || r.h < 2) return;
   s.text(

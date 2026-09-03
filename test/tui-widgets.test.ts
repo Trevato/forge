@@ -17,7 +17,7 @@ import {
 } from "../src/tui/ui/layout.ts";
 import { lineText, renderMarkdown } from "../src/tui/ui/markdown.ts";
 import { Textarea } from "../src/tui/ui/textarea.ts";
-import { theme } from "../src/tui/ui/theme.ts";
+import { theme, tokColor } from "../src/tui/ui/theme.ts";
 import {
   badge,
   button,
@@ -477,7 +477,7 @@ describe("markdown", () => {
   test("a fence suppresses inline parsing and takes syntax colours", () => {
     const lines = renderMarkdown("```ts\nconst **x** = 1;\n```", 40, c);
     expect(lineText(lines[0]!).trimEnd()).toBe(" const **x** = 1;");
-    expect(lines[0]![1]!.style.fg).toBe(c.tok.keyword);
+    expect(lines[0]![1]!.style.fg).toBe(tokColor(c, "keyword"));
     expect(lines[0]![0]!.style.bg).toBe(c.muted);
   });
 
@@ -520,7 +520,7 @@ describe("diff", () => {
     for (const span of added.slice(2))
       expect(span.style.bg === c.addBg || span.style.bg === c.wdAdd).toBe(true);
     // …and the keyword still carries its syntax colour.
-    expect(added.some((s) => s.style.fg === c.tok.keyword)).toBe(true);
+    expect(added.some((s) => s.style.fg === tokColor(c, "keyword"))).toBe(true);
   });
 
   test("an intra-line change gets the stronger word-diff tint", () => {

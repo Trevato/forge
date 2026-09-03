@@ -28,10 +28,18 @@ export interface PasteEvent {
   readonly text: string;
 }
 
-/** Wheel only — motion tracking floods an SSH channel and buys us nothing. */
+/**
+ * A wheel notch or a button, in cells. Motion is deliberately *not* here:
+ * drag reporting floods an SSH channel with one packet per pixel-row and the
+ * forge has nothing to drag, so a motion report is consumed and dropped by
+ * the parser rather than carried up into the app.
+ */
 export interface MouseEvent {
   readonly type: "mouse";
-  readonly kind: "wheel-up" | "wheel-down";
+  readonly kind: "wheel-up" | "wheel-down" | "press" | "release";
+  /** 0 left, 1 middle, 2 right. Always 0 for a wheel notch. */
+  readonly button: 0 | 1 | 2;
+  /** Zero-based cell the pointer was over. */
   readonly x: number;
   readonly y: number;
   readonly ctrl: boolean;
@@ -280,25 +288,59 @@ function sanitize(text: string): string {
   return out;
 }
 
-/** SGR mouse (1006): `ESC[<btn;col;rowM` press, `…m` release, 1-based. */
+/**
+ * SGR mouse (1006): `ESC[<btn;col;rowM` press, `…m` release, both 1-based.
+ *
+ * The button byte is a bitfield, not a number: bits 0–1 are which button,
+ * +4/+8/+16 are shift/alt/ctrl, +32 is "this is motion", +64 is "this is a
+ * wheel notch". Reading it as an integer — the classic bug — makes ctrl+click
+ * a middle-click and a drag a right-click.
+ *
+ * Motion (+32) is dropped. We enable 1002 so a press-drag-release still
+ * *ends* where the pointer is, but nothing in the forge tracks a drag, and
+ * one report per row of movement is not a thing to push through an SSH
+ * channel for no one.
+ */
 function parseMouse(body: string, fin: string, n: number): ParseResult {
   if (fin !== "M" && fin !== "m") return { event: null, n };
   const parts = body.split(";").map((p) => Number(p) || 0);
   const btn = parts[0] ?? 0;
-  // +64 is the wheel bit; 64 = up, 65 = down. Everything else (clicks, drag)
-  // is consumed and dropped — this is a keyboard-driven forge.
-  if ((btn & 64) === 0 || fin === "m") return { event: null, n };
+  const x = Math.max(0, (parts[1] ?? 1) - 1);
+  const y = Math.max(0, (parts[2] ?? 1) - 1);
+  const mod = {
+    shift: (btn & 4) !== 0,
+    alt: (btn & 8) !== 0,
+    ctrl: (btn & 16) !== 0,
+  };
+  if ((btn & 64) !== 0) {
+    // 64 = up, 65 = down; 66/67 are horizontal and mean nothing here.
+    const which = btn & 3;
+    if (which > 1 || fin === "m") return { event: null, n };
+    return {
+      event: {
+        type: "mouse",
+        kind: which === 0 ? "wheel-up" : "wheel-down",
+        button: 0,
+        x,
+        y,
+        ...mod,
+      },
+      n,
+    };
+  }
+  if ((btn & 32) !== 0) return { event: null, n }; // motion
   const which = btn & 3;
-  if (which > 1) return { event: null, n };
+  // 3 is "a button was released" in the legacy encoding; 1006 tells us that
+  // with the final byte, so a 3 here is a report we have no button for.
+  if (which > 2) return { event: null, n };
   return {
     event: {
       type: "mouse",
-      kind: which === 0 ? "wheel-up" : "wheel-down",
-      x: Math.max(0, (parts[1] ?? 1) - 1),
-      y: Math.max(0, (parts[2] ?? 1) - 1),
-      shift: (btn & 4) !== 0,
-      alt: (btn & 8) !== 0,
-      ctrl: (btn & 16) !== 0,
+      kind: fin === "M" ? "press" : "release",
+      button: which as 0 | 1 | 2,
+      x,
+      y,
+      ...mod,
     },
     n,
   };

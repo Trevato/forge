@@ -59,6 +59,13 @@ type Row =
       readonly mark: string;
     };
 
+/** What one paint of the palette produced: the caret, and the clickable rows. */
+export interface PaletteFrame {
+  readonly cursor: CursorPos | null;
+  /** One per drawn item row, carrying its index into `items()`. */
+  readonly rows: readonly { index: number; rect: Rect }[];
+}
+
 export interface Match {
   readonly command: Command;
   readonly score: number;
@@ -227,7 +234,8 @@ export class Palette {
     return null;
   }
 
-  render(s: Surface, area: Rect, c: Tokens): CursorPos | null {
+  render(s: Surface, area: Rect, c: Tokens): PaletteFrame {
+    const hits: { index: number; rect: Rect }[] = [];
     const rows = this.rows();
     const height = Math.min(area.h - 4, rows.length + 5);
     const r = center(area, Math.min(76, area.w - 4), Math.max(6, height));
@@ -246,7 +254,7 @@ export class Palette {
             placeholder: "repos, issues, code, or a command",
             focused: true,
           });
-    if (rest === undefined) return cursor;
+    if (rest === undefined) return { cursor, rows: hits };
 
     // Scroll the flat row list so the selection stays visible, counting
     // headers as rows — otherwise a long Repos section hides the cursor.
@@ -276,6 +284,7 @@ export class Palette {
         continue;
       }
       index = rows.slice(0, from + i).filter((x) => x.kind === "item").length;
+      hits.push({ index, rect: { x: rest.x, y, w: rest.w, h: 1 } });
       const sel = index === this.selected;
       const bg = sel ? c.muted : c.card;
       s.fill({ x: rest.x, y, w: rest.w, h: 1 }, " ", style(c.fg, bg));
@@ -306,6 +315,6 @@ export class Palette {
           rest.x + rest.w,
         );
     }
-    return cursor;
+    return { cursor, rows: hits };
   }
 }

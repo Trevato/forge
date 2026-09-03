@@ -361,6 +361,10 @@ export const G = {
   check: "✓",
   cross: "✗",
   ellipsis: "…",
+  // The pilcrow marks prose being *read* rather than edited — a rendered
+  // markdown tab. U+00B6 is Latin-1, so it is in every font that can draw a
+  // box-drawing character at all, and it is width 1 everywhere.
+  para: "¶",
   chevron: "›",
   bar: "▏",
   block: "█",

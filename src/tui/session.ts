@@ -21,6 +21,8 @@ import type { Repo } from "../core/repos.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isThemeName, type ThemeName } from "../design/themes.ts";
+import { GRAPHICS_KEY, ICONS_KEY } from "./term/graphics.ts";
+import { readGraphicsPrefs, type GraphicsPrefs } from "./ui/image.ts";
 
 export interface TuiIdentity {
   /** The login name the client asked for. Decorative: the key decides. */
@@ -90,6 +92,30 @@ export class Session {
   saveTheme(name: ThemeName): void {
     setPreference(this.app, this.user, "theme", name);
   }
+
+  /**
+   * The two terminal preferences, as stored. A guest has none and gets
+   * `auto` for both — the settings exist to override a guess, never to
+   * enable the feature.
+   */
+  terminalPrefs(): GraphicsPrefs {
+    return readGraphicsPrefs(this.db, this.user?.id);
+  }
+
+  savePrefs(prefs: GraphicsPrefs): void {
+    setPreference(this.app, this.user, GRAPHICS_KEY, prefs.graphics);
+    setPreference(this.app, this.user, ICONS_KEY, prefs.icons);
+  }
+
+  /**
+   * Per-connection scratch space a screen keeps between visits — the
+   * workspace's open tabs, keyed by repository.
+   *
+   * It hangs off the *session* and nowhere else, which is the whole security
+   * property: one connection is one identity, so nothing another user opened
+   * can be reached from here, and the memory dies with the connection.
+   */
+  readonly scratch = new Map<string, unknown>();
 
   /**
    * Prove a password, become that user for the rest of this connection, and

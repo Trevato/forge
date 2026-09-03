@@ -60,6 +60,16 @@ export type IconSetting = "auto" | "nerd" | "plain";
 export const GRAPHICS_KEY = "graphics";
 export const ICONS_KEY = "icons";
 
+/** Every value each setting takes, in the order a picker cycles them. */
+export const GRAPHICS_SETTINGS: readonly GraphicsSetting[] = [
+  "auto",
+  "kitty",
+  "sixel",
+  "iterm",
+  "none",
+];
+export const ICON_SETTINGS: readonly IconSetting[] = ["auto", "nerd", "plain"];
+
 export interface CellSize {
   readonly width: number;
   readonly height: number;

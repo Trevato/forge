@@ -43,6 +43,38 @@ export function chord(e: KeyEvent): string {
   return out + e.key;
 }
 
+/**
+ * The inverse of `chord`: the event a spelling stands for.
+ *
+ * This is what makes a help hint clickable — the bar already knows the chord,
+ * so pressing the hint is pressing the key, with no second table mapping
+ * labels to actions that could fall out of step with the bindings. Returns
+ * undefined for a spelling no single keypress produces ("wheel", "click"),
+ * which is exactly the set that must not be clickable.
+ */
+export function keyFor(spelling: string): KeyEvent | undefined {
+  let rest = spelling;
+  let ctrl = false;
+  let alt = false;
+  let shift = false;
+  for (;;) {
+    if (rest.startsWith("ctrl+")) {
+      ctrl = true;
+      rest = rest.slice(5);
+    } else if (rest.startsWith("alt+")) {
+      alt = true;
+      rest = rest.slice(4);
+    } else if (rest.startsWith("shift+")) {
+      shift = true;
+      rest = rest.slice(6);
+    } else break;
+  }
+  if (rest === "") return undefined;
+  // A named key, or exactly one character. Anything else is a label.
+  if ([...rest].length > 1 && !/^[a-z0-9]+$/.test(rest)) return undefined;
+  return { type: "key", key: rest, ctrl, alt, shift };
+}
+
 export function matches(b: Binding, e: KeyEvent): boolean {
   if (b.disabled === true) return false;
   return b.keys.includes(chord(e));

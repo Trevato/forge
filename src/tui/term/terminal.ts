@@ -136,10 +136,15 @@ export function openInBrowser(terminal: Terminal, url: string): boolean {
 
 export interface SessionOpts {
   /**
-   * Mouse reporting is OFF by default and opt-in: enabling it breaks the
-   * terminal's native text selection, which is the single most common
-   * complaint about mouse-enabled TUIs. Shift overrides it in every terminal
-   * that matters, but users do not know that, so we advertise it in help.
+   * Mouse reporting, **on** unless a caller says otherwise.
+   *
+   * It has one real cost: while it is on, the terminal's own text selection
+   * needs Shift held. That is the most common complaint about mouse-enabled
+   * TUIs and the reason this was opt-in for as long as nothing was clickable.
+   * Now that rows, tabs, the where-strip and the help hints all are, the
+   * balance is the other way — a forge you can only drive from memory is
+   * worse than a selection gesture that grew a modifier — so it is on, and
+   * the help overlay says "shift-drag selects text" out loud.
    */
   readonly mouse?: boolean;
   /** Install process-level exit hooks (stdio only; never for a test/SSH). */
@@ -166,6 +171,11 @@ export class TerminalSession {
     private readonly opts: SessionOpts = {},
   ) {}
 
+  /** Reporting is on unless the caller explicitly turned it off. */
+  private get mouse(): boolean {
+    return this.opts.mouse !== false;
+  }
+
   enter(): void {
     if (this.entered) return;
     this.entered = true;
@@ -175,7 +185,7 @@ export class TerminalSession {
         CURSOR_HIDE +
         ERASE_ALL +
         PASTE_ON +
-        (this.opts.mouse ? MOUSE_ON : ""),
+        (this.mouse ? MOUSE_ON : ""),
     );
     if (this.opts.exitHooks) this.installHooks();
   }
@@ -239,7 +249,7 @@ export class TerminalSession {
         CURSOR_SHAPE_RESET +
         KITTY_KEYS_POP +
         PASTE_ON +
-        (this.opts.mouse ? MOUSE_ON : ""),
+        (this.mouse ? MOUSE_ON : ""),
     );
   }
 

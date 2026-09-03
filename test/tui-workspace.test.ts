@@ -180,14 +180,19 @@ describe("the terminal workspace", () => {
       await h.settle();
       await open(h);
       // The README is open in a tab, and the explorer is beside it — one
-      // screen, not a home page you have to leave.
-      expect(h.text()).toContain("# Lighthouse");
+      // screen, not a home page you have to leave. Prose opens *rendered*:
+      // the heading is a heading, not a line starting with a hash.
+      expect(h.text()).toContain("Lighthouse");
+      expect(h.text()).not.toContain("# Lighthouse");
       expect(h.text()).toContain("src/");
       expect(h.text()).toContain("1 tab");
 
+      // `v` shows the bytes behind it, and that view scrolls by line.
+      await h.press("v");
+      expect(h.text()).toContain("# Lighthouse");
+      expect(h.text()).toContain("L01");
       // `j` scrolls the file straight away: no `tab` first, which was the
       // whole complaint about the screen this replaces.
-      expect(h.text()).toContain("L01");
       await h.press("j", "j");
       expect(h.text()).not.toContain("# Lighthouse");
       expect(h.text()).toContain("L01");
@@ -211,7 +216,7 @@ describe("the terminal workspace", () => {
       const after = h.text();
       // Same tab, same file, same scroll position: the cursor is a cursor,
       // not a read.
-      expect(after).toContain("# Lighthouse");
+      expect(after).toContain("Lighthouse");
       expect(after).toContain("1 tab");
       expect(after.includes("L01")).toBe(before.includes("L01"));
     } finally {
@@ -257,7 +262,7 @@ describe("the terminal workspace", () => {
       await h.press("]");
       expect(h.text()).toContain("export const wind");
       await h.press("1");
-      expect(h.text()).toContain("# Lighthouse");
+      expect(h.text()).toContain("Lighthouse");
       await h.press("2");
       expect(h.text()).toContain("the lamp");
     } finally {
@@ -302,7 +307,7 @@ describe("the terminal workspace", () => {
 
       // Another tab, and back.
       await h.press("1");
-      expect(h.text()).toContain("# Lighthouse");
+      expect(h.text()).toContain("Lighthouse");
       await h.press("2");
       expect(h.text()).toContain("// kept");
 
@@ -536,7 +541,7 @@ describe("the terminal workspace", () => {
       expect(h.text()).toContain("copied the clone URL");
       await h.press("esc");
       await h.settle();
-      expect(h.text()).toContain("# Lighthouse");
+      expect(h.text()).toContain("Lighthouse");
     } finally {
       h.stop();
     }
@@ -553,7 +558,7 @@ describe("the terminal workspace", () => {
     try {
       await guest.settle();
       await open(guest);
-      await guest.until("# Lighthouse");
+      await guest.until("Lighthouse");
       // Reading is fine; writing is not offered, and pressing the key says so
       // instead of opening a buffer nothing could ever commit.
       await guest.press("e");
@@ -576,17 +581,17 @@ describe("the terminal workspace", () => {
       await h.settle();
       await open(h);
       // The file fills the width; the explorer is not beside it.
-      expect(h.text()).toContain("# Lighthouse");
+      expect(h.text()).toContain("Lighthouse");
       expect(h.text()).not.toContain("package.json");
       await h.press("tab");
       expect(h.text()).toContain("package.json");
-      expect(h.text()).not.toContain("# Lighthouse");
+      expect(h.text()).not.toContain("Lighthouse\n");
       // The tab bar and the ref stay put through the toggle: they belong to
       // the workspace, not to either pane.
       expect(h.text()).toContain("1 tab");
       expect(h.text()).toContain("main");
       await h.press("tab");
-      expect(h.text()).toContain("# Lighthouse");
+      expect(h.text()).toContain("Lighthouse");
     } finally {
       h.stop();
     }

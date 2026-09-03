@@ -15,6 +15,7 @@ import { sourceFor } from "../view/source.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
 import type { Command, PaletteItem, PaletteSearch } from "./app/palette.ts";
 import { G } from "./term/screen.ts";
+import { fileIcon, icon, type IconName } from "./ui/icons.ts";
 import type { SessionOpts, Terminal } from "./term/terminal.ts";
 import { Session, type TuiIdentity } from "./session.ts";
 import { accountScreen } from "./screens/account.ts";
@@ -187,13 +188,21 @@ function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
     });
     if (signal.aborted) return [];
     const items: PaletteItem[] = [];
+    const set = ctx.icons;
+    // The provenance grammar is the dot: filled means "here", hollow means
+    // "somebody else's". A Nerd Font session gets the *noun* instead — a
+    // repo, an issue, the file's own language mark — because with a real
+    // glyph the kind is the more useful half and the section already says
+    // where things came from.
+    const mark = (nerd: IconName, plain: string): string =>
+      set === "nerd" ? icon(nerd, set) : plain;
 
     for (const hit of found.repos) {
       if (hit.source === "local") {
         items.push({
           id: `repo:${hit.id}`,
           section: "Repos",
-          mark: G.dot,
+          mark: mark("repo", G.dot),
           title: `${hit.owner}/${hit.name}`,
           hint: countsHint(hit.openIssues, hit.openPulls, hit.description),
           run: () => {
@@ -213,7 +222,7 @@ function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
         section: "Repos",
         // A hollow dot: this one is not here. The same grammar the where-strip
         // uses on every repo screen, so the mark means one thing everywhere.
-        mark: G.ring,
+        mark: mark("origin", G.ring),
         title: hit.fullName,
         hint: `${countsHint(hit.openIssues, hit.openPulls, hit.description)}${mirrored}`,
         run: () => {
@@ -238,7 +247,10 @@ function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
       items.push({
         id: `issue:${where}#${hit.number}`,
         section: "Issues & pulls",
-        mark: hit.source === "local" ? G.dot : G.ring,
+        mark:
+          hit.kind === "pull"
+            ? mark("pull", hit.source === "local" ? G.dot : G.ring)
+            : mark("issue", hit.source === "local" ? G.dot : G.ring),
         title: `${where}#${hit.number} ${hit.title}`,
         hint: `${hit.kind} · ${hit.state}`,
         run: () => {
@@ -271,7 +283,7 @@ function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
       items.push({
         id: `code:${where}:${hit.path}:${hit.line}`,
         section: "Code",
-        mark: G.dot,
+        mark: set === "nerd" ? fileIcon(hit.path, set) : G.dot,
         title: `${hit.path}:${hit.line}`,
         hint: `${where} · ${hit.text.trim().slice(0, 60)}`,
         run: () => {
@@ -338,10 +350,12 @@ export function createForgeApp(
   const app = new App({
     ...options,
     theme: session.theme(),
+    prefs: session.terminalPrefs(),
     root: forgeRoot(session),
     commands: forgeCommands(session),
     search: forgeSearch(session),
     onTheme: (name) => session.saveTheme(name),
+    onPrefs: (prefs) => session.savePrefs(prefs),
   });
   return { app, session };
 }

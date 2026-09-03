@@ -674,6 +674,8 @@ function fakeSshSession(): SshSession & {
     exit(code: number) {
       session.exitCode = code;
     },
+    widthPx: 0,
+    heightPx: 0,
     pending: 0,
     drain: () => Promise.resolve(),
     emit(text: string) {

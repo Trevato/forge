@@ -32,7 +32,12 @@ export function sshTerminal(
   onFault: (error: unknown) => void,
 ): Terminal {
   let closed = false;
-  const term: Terminal = {
+  return {
+    // Getters, not a snapshot: `pty-req` may arrive after this object is
+    // built, and `window-change` moves both of these mid-session.
+    get term() {
+      return session.term;
+    },
     write(bytes) {
       if (!closed) session.write(bytes);
     },
@@ -57,6 +62,13 @@ export function sshTerminal(
         rows: session.rows > 0 ? session.rows : 24,
       };
     },
+    // A getter, not a snapshot: `window-change` updates the channel's pixel
+    // fields, and whoever asks next should get the window as it is now.
+    get pixelSize() {
+      return session.widthPx > 0 && session.heightPx > 0
+        ? { width: session.widthPx, height: session.heightPx }
+        : undefined;
+    },
     onResize(cb) {
       session.onResize((cols, rows) => {
         try {
@@ -76,7 +88,6 @@ export function sshTerminal(
       session.exit(0);
     },
   };
-  return session.term === undefined ? term : { ...term, term: session.term };
 }
 
 /** Run the terminal UI for one shell session. */

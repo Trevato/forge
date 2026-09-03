@@ -732,16 +732,30 @@ export function crumbs(
   });
 }
 
-/** `helpBar` — derived entirely from the focused screen's bindings. */
+/** Where one hint was drawn, so the caller can make it clickable. */
+export interface HelpHint {
+  readonly binding: Binding;
+  readonly rect: Rect;
+}
+
+/**
+ * `helpBar` — derived entirely from the focused screen's bindings.
+ *
+ * Returns what it drew and where. The bar is the one place in the interface
+ * that already names every action available *right now*, so it is also the
+ * best surface to click; handing back rectangles is how that happens without
+ * a second table of labels-to-actions to fall out of step with the bindings.
+ */
 export function helpBar(
   s: Screen,
   r: Rect,
   c: Tokens,
   bindings: readonly Binding[],
-): void {
-  if (r.w <= 0 || r.h <= 0) return;
+): HelpHint[] {
+  if (r.w <= 0 || r.h <= 0) return [];
   const right = r.x + r.w;
   s.fill({ x: r.x, y: r.y, w: r.w, h: 1 }, " ", style(c.mutedFg, c.muted));
+  const hints: HelpHint[] = [];
   let x = r.x + 1;
   for (const b of visible(bindings)) {
     const keyText = ` ${b.keys[0] ?? "?"} `;
@@ -749,9 +763,10 @@ export function helpBar(
     // Truncate in priority order: bindings are listed most-useful first.
     if (x + width > right - 1) {
       s.text(right - 2, r.y, G.ellipsis, style(c.faint, c.muted), right);
-      return;
+      return hints;
     }
     const dimmed = b.disabled === true;
+    const from = x;
     x = s.text(
       x,
       r.y,
@@ -766,8 +781,10 @@ export function helpBar(
       style(dimmed ? c.faint : c.mutedFg, c.muted),
       right,
     );
+    hints.push({ binding: b, rect: { x: from, y: r.y, w: x - from, h: 1 } });
     x += 2;
   }
+  return hints;
 }
 
 /** `timelineItem` / `.tl-item` — a comment or an event in an issue thread. */

@@ -200,11 +200,29 @@ describe("bracketed paste", () => {
 });
 
 describe("mouse", () => {
-  test("wheel only; clicks and releases are dropped", () => {
+  test("wheel notches carry their direction and cell", () => {
     expect(keys("\x1b[<64;1;1M")).toEqual(["wheel-up@0,0"]);
     expect(keys("\x1b[<65;80;24M")).toEqual(["wheel-down@79,23"]);
-    expect(keys("\x1b[<0;5;5M\x1b[<0;5;5m")).toEqual([]);
     expect(keys("\x1b[<80;3;3M")[0]).toBe("wheel-up@2,2"); // ctrl+wheel
+    // A wheel "release" is not a thing; 1006 sends `m` for one anyway.
+    expect(keys("\x1b[<64;1;1m")).toEqual([]);
+  });
+
+  test("a press and its release are both reported", () => {
+    expect(keys("\x1b[<0;5;5M\x1b[<0;5;5m")).toEqual([
+      "press@4,4",
+      "release@4,4",
+    ]);
+    expect(keys("\x1b[<2;1;1M")).toEqual(["press@0,0"]); // right button
+  });
+
+  test("the button byte is a bitfield, not a number", () => {
+    // +16 is ctrl, and reading it as an integer would make this button 16.
+    const [event] = decode("\x1b[<16;5;5M");
+    expect(event).toMatchObject({ kind: "press", button: 0, ctrl: true });
+    // +32 is motion: consumed, never carried up. A drag has nothing to drag.
+    expect(keys("\x1b[<32;5;6M")).toEqual([]);
+    expect(keys("\x1b[<35;9;9M")).toEqual([]);
   });
 });
 
