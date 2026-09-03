@@ -113,9 +113,10 @@ export async function createUser(
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
     const taken = db
-      .query<{ username: string }, [string]>(
-        "SELECT username FROM user WHERE username = ?1",
-      )
+      .query<
+        { username: string },
+        [string]
+      >("SELECT username FROM user WHERE username = ?1")
       .get(input.username);
     return err(taken ? "username_taken" : "email_taken");
   }
@@ -124,8 +125,7 @@ export async function createUser(
 
 function isUniqueViolation(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    /UNIQUE constraint failed/.test(error.message)
+    error instanceof Error && /UNIQUE constraint failed/.test(error.message)
   );
 }
 
@@ -134,7 +134,10 @@ export interface ProfilePatch {
   email?: string;
 }
 
-export type UpdateProfileError = "email_taken" | "invalid_email" | "no_such_user";
+export type UpdateProfileError =
+  | "email_taken"
+  | "invalid_email"
+  | "no_such_user";
 
 /** Change the mutable profile fields. Absent keys are left untouched. */
 export function updateProfile(
@@ -225,4 +228,38 @@ export function countUsers(db: Database): number {
     .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user")
     .get();
   return row?.n ?? 0;
+}
+
+/**
+ * Is this a fresh forge? Every caller of `countUsers` so far only wanted to
+ * know whether the number was zero, and `COUNT(*)` answers that by walking
+ * the whole table — on the sign-in screen, which every session paints. This
+ * stops at the first row.
+ */
+export function hasAnyUser(db: Database): boolean {
+  return db.query("SELECT 1 FROM user LIMIT 1").get() !== null;
+}
+
+/**
+ * Several accounts by id, in one query. An activity feed names an actor per
+ * row; asked one at a time that is a query per row for a list of forty.
+ */
+export function getUsersByIds(
+  db: Database,
+  userIds: readonly string[],
+): Map<string, User> {
+  const out = new Map<string, User>();
+  const unique = [...new Set(userIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        UserRow,
+        string[]
+      >(`SELECT * FROM user WHERE id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`)
+      .all(...batch);
+    for (const row of rows) out.set(row.id, toUser(row));
+  }
+  return out;
 }

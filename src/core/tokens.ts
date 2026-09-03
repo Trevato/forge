@@ -41,23 +41,49 @@ export function createToken(
   return { id: tokenId, token };
 }
 
+/**
+ * How stale `last_used_at` is allowed to get.
+ *
+ * Recording it on every request turns every *read* into a write: an agent
+ * fleet polling the API commits one transaction per request for a timestamp
+ * whose only reader is a human glancing at a settings page. At two hundred
+ * agents that is the busiest write in the forge, and it is bookkeeping.
+ *
+ * A minute of resolution answers the only question anyone asks of this field
+ * — "is this token still in use?" — and turns those writes into one per
+ * token per minute.
+ */
+const TOUCH_EVERY_MS = 60_000;
+
 export function verifyToken(
   db: Database,
   presented: string,
 ): Result<{ user: User; scope: TokenScope }, "invalid_token"> {
   const row = db
     .query<
-      { id: string; user_id: string; scope: TokenScope },
+      {
+        id: string;
+        user_id: string;
+        scope: TokenScope;
+        last_used_at: string | null;
+      },
       [string]
-    >("SELECT id, user_id, scope FROM token WHERE token_hash = ?1")
+    >(
+      "SELECT id, user_id, scope, last_used_at FROM token WHERE token_hash = ?1",
+    )
     .get(sha256(presented));
   if (!row) return err("invalid_token");
   const user = getUserById(db, row.user_id);
   if (!user) return err("invalid_token");
-  db.query("UPDATE token SET last_used_at = ?1 WHERE id = ?2").run(
-    new Date().toISOString(),
-    row.id,
-  );
+  const now = Date.now();
+  const seen =
+    row.last_used_at === null ? 0 : Date.parse(row.last_used_at) || 0;
+  if (now - seen >= TOUCH_EVERY_MS) {
+    db.query("UPDATE token SET last_used_at = ?1 WHERE id = ?2").run(
+      new Date(now).toISOString(),
+      row.id,
+    );
+  }
   return ok({ user, scope: row.scope });
 }
 
@@ -72,7 +98,9 @@ export function listTokens(db: Database, userId: string): TokenInfo[] {
         last_used_at: string | null;
       },
       [string]
-    >("SELECT id, name, scope, created_at, last_used_at FROM token WHERE user_id = ?1 ORDER BY id")
+    >(
+      "SELECT id, name, scope, created_at, last_used_at FROM token WHERE user_id = ?1 ORDER BY id",
+    )
     .all(userId);
   return rows.map((r) => ({
     id: r.id,

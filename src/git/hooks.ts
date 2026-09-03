@@ -78,6 +78,9 @@ export function isHookName(value: string | undefined): value is HookName {
  * Exit contract: 0 accepts, 1 rejects (pre-receive); the response body is
  * shown to the pusher verbatim. Never returns.
  */
+/** How long the hook waits on the forge before it gives up. */
+export const HOOK_RELAY_TIMEOUT_MS = 120_000;
+
 export async function runHookClient(hook: HookName): Promise<never> {
   const socket = process.env.FORGE_SOCKET;
   if (!socket) {
@@ -97,6 +100,12 @@ export async function runHookClient(hook: HookName): Promise<never> {
       unix: socket,
       method: "POST",
       headers: { "content-type": "application/json" },
+      // A forge that has stopped answering must not become a push that never
+      // returns. Without a deadline this relay waits forever, and the git
+      // process holding the repo's ref lock waits with it — one wedged forge
+      // turning into a repository nobody can push to. Generous, because a
+      // pre-receive legitimately talks to an origin before it answers.
+      signal: AbortSignal.timeout(HOOK_RELAY_TIMEOUT_MS),
       body: JSON.stringify({
         hook,
         repoId: process.env.FORGE_REPO_ID ?? "",

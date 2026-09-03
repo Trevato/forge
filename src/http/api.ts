@@ -67,6 +67,7 @@ import {
   updateProfile,
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
+import { getReposByIds } from "../core/repos.ts";
 import {
   commentCounts,
   getIssue,
@@ -1872,8 +1873,14 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!ctx.auth.user) return unauthorized();
     const host = ctx.app.config.host ?? ctx.url.hostname;
     const sshPort = ctx.app.config.sshPort;
-    const items = listPinned(ctx.app, ctx.auth.user).flatMap((pin) => {
-      const repo = getRepoById(ctx.app.db, pin.repoId);
+    const pins = listPinned(ctx.app, ctx.auth.user);
+    // One query for every pinned repo, not one per pin.
+    const repos = getReposByIds(
+      ctx.app.db,
+      pins.map((pin) => pin.repoId),
+    );
+    const items = pins.flatMap((pin) => {
+      const repo = repos.get(pin.repoId);
       if (!repo) return [];
       const path = `${encodeURIComponent(repo.ownerName)}/${encodeURIComponent(repo.name)}`;
       return [

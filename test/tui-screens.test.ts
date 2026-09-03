@@ -37,6 +37,7 @@ import { sshTerminal } from "../src/tui/ssh.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { SshSession } from "../src/ssh/channels.ts";
+import { settleApp } from "./helpers/tui.ts";
 
 setLogLevel("error");
 
@@ -68,17 +69,9 @@ function boot(
     exitHooks: false,
   });
   app.start();
-  const settle = async (): Promise<void> => {
-    // Screens load asynchronously (git reads spawn processes). Wait until no
-    // screen reports itself loading, then a few more turns for the
-    // invalidations a finished load schedules.
-    const deadline = Date.now() + 5_000;
-    do {
-      for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 2));
-    } while (app.busy && Date.now() < deadline);
-    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 2));
-    app.frame();
-  };
+  // Quiescence, not a stopwatch — see test/helpers/tui.ts for why the old
+  // sleep-and-hope version was the flake in this file.
+  const settle = (): Promise<void> => settleApp(app);
   const press = async (...keys: string[]): Promise<void> => {
     for (const key of keys)
       app.dispatch({
@@ -405,26 +398,37 @@ describe("the terminal UI, against a real forge", () => {
 
   test("signing in links the presenting key and unlocks the private repo", async () => {
     const h = boot(forge, asGuest());
-    await h.settle();
-    await h.press("s");
-    expect(h.text()).toContain("Sign in");
-    await h.typeText("alice");
-    await h.press("tab");
-    await h.typeText("a-long-passphrase");
-    await h.press("enter");
-    await h.settle();
+    // The key this session presents becomes alice's on success, and the
+    // fingerprint is unique across the forge — so it has to be handed back
+    // however this test ends. It used to be released by a `DELETE FROM
+    // user_key` on the last line, which a failing assertion above it skipped:
+    // the *next* test to sign a guest in then failed with `key_exists`, and
+    // the first failure was buried under a second one that made no sense.
+    try {
+      await h.settle();
+      await h.press("s");
+      expect(h.text()).toContain("Sign in");
+      await h.typeText("alice");
+      await h.press("tab");
+      await h.typeText("a-long-passphrase");
+      await h.press("enter");
+      await h.settle();
 
-    // The key is now alice's, and the same connection is alice.
-    const keys = forge.db
-      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user_key")
-      .get();
-    expect(keys!.n).toBeGreaterThan(0);
-    await h.press("r");
-    expect(h.text()).toContain("alice/vault");
-    h.stop();
-
-    // Reconnecting with that key resolves to alice without a password.
-    forge.db.query("DELETE FROM user_key").run();
+      // The key is now alice's — asked about alice, not as a count of the
+      // whole table, so another test's key can neither satisfy nor break it.
+      const linked = forge.db
+        .query<
+          { n: number },
+          [string]
+        >("SELECT COUNT(*) AS n FROM user_key WHERE user_id = ?1")
+        .get(alice.id);
+      expect(linked!.n).toBe(1);
+      await h.press("r");
+      expect(h.text()).toContain("alice/vault");
+    } finally {
+      h.stop();
+      forge.db.query("DELETE FROM user_key WHERE user_id = ?1").run(alice.id);
+    }
   });
 
   test("a guest whose key is registered arrives as that user", async () => {
@@ -438,10 +442,16 @@ describe("the terminal UI, against a real forge", () => {
       keyId: added.value.id,
       user: bob,
     });
-    await h.settle();
-    expect(h.text()).toContain("bob");
-    expect(h.text()).not.toContain("vault");
-    h.stop();
+    try {
+      await h.settle();
+      expect(h.text()).toContain("bob");
+      expect(h.text()).not.toContain("vault");
+    } finally {
+      h.stop();
+      // Each test hands back exactly what it took, so nothing here depends
+      // on the order the file happens to run in.
+      forge.db.query("DELETE FROM user_key WHERE id = ?1").run(added.value.id);
+    }
   });
 
   test("deleting a repo requires typing its exact name", async () => {

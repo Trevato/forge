@@ -194,7 +194,21 @@ export async function deliverDue(
     .all(nowIso);
 
   for (const row of due) {
-    await deliverOne(db, log, row, now);
+    try {
+      await deliverOne(db, log, row, now);
+    } catch (error) {
+      // One malformed delivery must not take the batch with it. Without
+      // this, a single unsendable row stops every delivery behind it — and
+      // stops them again on the next tick, and the next, because the queue
+      // is ordered and that row is always at the head. A wedged outbox is
+      // the worst failure this file has, so a surprise costs one attempt
+      // and a backoff, exactly like an endpoint that answered 500.
+      log.error("webhook delivery threw", {
+        delivery: row.id,
+        error: String(error),
+      });
+      backOff(db, log, row, 0, now);
+    }
   }
   return due.length;
 }
@@ -225,7 +239,9 @@ async function deliverOne(
         "user-agent": "forge-webhook",
         "x-forge-event": row.kind,
         "x-forge-delivery": row.id,
-        "x-forge-signature-256": `sha256=${signature}`,
+        ...(signature === ""
+          ? {}
+          : { "x-forge-signature-256": `sha256=${signature}` }),
       },
       body,
       signal: AbortSignal.timeout(DELIVER_TIMEOUT_MS),
@@ -246,6 +262,18 @@ async function deliverOne(
     ).run(attempt, status, row.id);
     return;
   }
+  backOff(db, log, row, status, now);
+}
+
+/** Record an attempt and schedule the next one — or give up. */
+function backOff(
+  db: Database,
+  log: Log,
+  row: DueRow,
+  status: number,
+  now: Date,
+): void {
+  const attempt = row.attempts + 1;
   if (attempt >= MAX_ATTEMPTS) {
     db.query(
       "UPDATE webhook_delivery SET state = 'failed', attempts = ?1, last_status = ?2 WHERE id = ?3",
@@ -266,6 +294,12 @@ async function deliverOne(
 }
 
 async function sign(secret: string, body: string): Promise<string> {
+  // WebCrypto refuses a zero-length HMAC key, and a webhook row can carry
+  // one: the column defaults to empty, and a hook restored or inserted
+  // outside `createWebhook` has never been given a secret. An unsigned hook
+  // is a choice somebody made, not a reason to throw inside the worker —
+  // so it goes out with no signature header at all rather than a broken one.
+  if (secret === "") return "";
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -336,12 +370,37 @@ export function recentDeliveries(
   }));
 }
 
+/**
+ * One batch at a time, per forge.
+ *
+ * The timer fires every five seconds; a batch of fifty deliveries to a slow
+ * endpoint takes longer than that, and without this guard the next tick
+ * starts a second batch over the *same* rows — the deliveries are attempted
+ * twice, the backoff arithmetic races, and the queue gets deeper the further
+ * behind it falls. Single-flight turns a slow endpoint into a slow queue
+ * instead of a runaway one.
+ *
+ * Keyed by the database rather than held in a module flag, because one
+ * process can run several forges (every test file does) and one forge's slow
+ * endpoint must not silence another's queue.
+ */
+const delivering = new WeakSet<Database>();
+
+/** For tests and for anyone who wants to know why nothing is being sent. */
+export const deliveryBusy = (db: Database): boolean => delivering.has(db);
+
 /** A never-throwing wrapper for the worker loop's fire-and-forget calls. */
 export function runDelivery(db: Database, log: Log): void {
-  deliverDue(db, log).catch((error) => {
-    // The worker must survive any delivery batch failing — a thrown rejection
-    // here would take the process down (a lesson paid for elsewhere).
-    if (!log) defect("webhook.no_log", "delivery worker missing log");
-    log.error("delivery batch failed", { error: String(error) });
-  });
+  if (delivering.has(db)) return;
+  delivering.add(db);
+  deliverDue(db, log)
+    .catch((error) => {
+      // The worker must survive any delivery batch failing — a thrown rejection
+      // here would take the process down (a lesson paid for elsewhere).
+      if (!log) defect("webhook.no_log", "delivery worker missing log");
+      log.error("delivery batch failed", { error: String(error) });
+    })
+    .finally(() => {
+      delivering.delete(db);
+    });
 }

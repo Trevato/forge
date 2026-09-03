@@ -47,6 +47,25 @@ export function isPinned(
 }
 
 /**
+ * Every repo this user has pinned, as a set.
+ *
+ * A page that renders forty repos and asks `isPinned` for each one issues
+ * forty queries to learn forty booleans about a table with, typically, ten
+ * rows in it. One query answers all of them, and the answer fits in memory
+ * by construction — a pin is a decision a person made by hand.
+ */
+export function pinnedRepoIds(db: Database, userId: string): Set<string> {
+  return new Set(
+    db
+      .query<{ repo_id: string }, [string]>(
+        "SELECT repo_id FROM pin WHERE user_id = ?1",
+      )
+      .all(userId)
+      .map((row) => row.repo_id),
+  );
+}
+
+/**
  * A user's pins, newest first. Repos deleted since pinning are gone by
  * cascade, so every row here names something that still exists.
  */
