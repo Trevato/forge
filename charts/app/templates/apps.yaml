@@ -1,0 +1,21 @@
+# The apps a forge runs are served from its own port by Host, as single
+# labels off the forge's host: `notes--<forge host>` is production,
+# `notes--12--<forge host>` the preview of pull 12. The platform's wildcard
+# DNS and tunnel cover any single label under the apex, so one route with a
+# host pattern carries every app this forge will ever run. The forge decides
+# access per app (a private app answers only to a grant it signed), so no
+# edge middleware sits in front of these hosts.
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ .Release.Name }}-apps
+spec:
+  entryPoints:
+    - web
+    - websecure
+  routes:
+    - match: HostRegexp(`^[a-z0-9-]+--{{ include "forge.host" . | replace "." "\\." }}$`)
+      kind: Rule
+      services:
+        - name: {{ .Release.Name }}
+          port: {{ .Values.service.port }}
