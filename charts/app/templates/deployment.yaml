@@ -43,7 +43,7 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           ports:
             - name: http
-              containerPort: 3000
+              containerPort: 8080
             - name: ssh
               containerPort: 2222
           securityContext:
@@ -53,8 +53,10 @@ spec:
           env:
             - name: FORGE_DATA
               value: /data
+            # 8080 is the port the platform's edge policy admits; the
+            # generated ingress rule names it, so the forge listens there.
             - name: PORT
-              value: "3000"
+              value: "8080"
             - name: FORGE_SSH_PORT
               value: {{ .Values.forge.sshPort | quote }}
             - name: FORGE_URL

@@ -9,7 +9,7 @@ COPY src ./src
 ARG VERSION=dev
 LABEL org.opencontainers.image.version=$VERSION
 # Everything a forge instance is lives under FORGE_DATA — mount a volume there.
-ENV FORGE_DATA=/data PORT=3000 FORGE_SSH_PORT=2222
-EXPOSE 3000 2222
+ENV FORGE_DATA=/data PORT=8080 FORGE_SSH_PORT=2222
+EXPOSE 8080 2222
 USER bun
 CMD ["bun", "src/main.ts"]
