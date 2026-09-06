@@ -201,6 +201,9 @@ export class Filter {
 export interface ListRow {
   readonly title: string;
   readonly state?: "open" | "closed" | "merged" | "draft";
+  /** A status row's lead dot — see `RowOpts.tone`. */
+  readonly tone?: Tone;
+  readonly hollow?: boolean;
   readonly secondary?: string;
   readonly meta?: string;
 }
@@ -515,6 +518,20 @@ export function promptScreen(
   };
 }
 
+/**
+ * Push the next screen of a flow *after* the current modal has popped.
+ *
+ * `promptScreen` calls `onSubmit` before it pops itself, so a screen pushed
+ * synchronously from there is the one the pop removes. Returning this from
+ * `onSubmit` defers the push by one microtask — after the pop, before the
+ * next frame — which is what lets a flow chain prompts and pickers.
+ */
+export function later(ctx: Ctx, next: () => Screen): Promise<void> {
+  return Promise.resolve().then(() => {
+    ctx.push(next());
+  });
+}
+
 export interface PickItem {
   readonly id: string;
   readonly label: string;
@@ -697,8 +714,69 @@ export function openLink(ctx: Ctx, url: string): void {
     ctx.toast("opening in your browser", "success");
     return;
   }
+  // The browser is on the far side of the connection. Copy through the
+  // terminal (OSC 52, for the terminals that honour it) and show the link
+  // where it can be selected the ordinary way, mouse reporting off.
   ctx.copy(url);
-  ctx.toast("copied — cmd-click the link to open it", "success");
+  ctx.push(linkScreen(ctx, url));
+}
+
+/**
+ * A link, shown plain so it can be selected and copied by hand, with mouse
+ * reporting off for as long as it is open — the one thing that makes the
+ * terminal's own drag-to-select work inside a mouse-aware app. `c` copies
+ * through OSC 52 as well; `enter` opens a browser when one is reachable.
+ */
+export function linkScreen(ctx: Ctx, url: string, parent?: Screen): Screen {
+  ctx.mouse(false);
+  return {
+    title: "Link",
+    keys: [
+      binding(["c"], "copy"),
+      binding(["enter"], "open"),
+      binding(["esc", "q"], "close"),
+    ],
+    load(signal) {
+      // Popping is what turns the mouse back on: nothing else has to remember.
+      signal.addEventListener("abort", () => ctx.mouse(true), { once: true });
+      return Promise.resolve();
+    },
+    render(area, s) {
+      parent?.render(area, s);
+      dialog(s, area, ctx.theme.c, {
+        title: "Link",
+        body: [
+          url,
+          "",
+          "Select the address to copy it: the mouse is yours here.",
+          "c copies through the terminal too, when it allows it.",
+        ],
+        actions: [{ label: "Copy" }, { label: "Close" }],
+        selected: 0,
+      });
+    },
+    key(e) {
+      if (e.key === "c") {
+        ctx.copy(url);
+        ctx.toast("copied through the terminal", "success");
+        return true;
+      }
+      if (e.key === "enter") {
+        if (ctx.openUrl(url)) ctx.toast("opening in your browser", "success");
+        else
+          ctx.toast(
+            "no browser on this side of the connection — copy it instead",
+            "attn",
+          );
+        return true;
+      }
+      if (e.key === "esc" || e.key === "q") {
+        ctx.pop();
+        return true;
+      }
+      return false;
+    },
+  };
 }
 
 /** A branch-safe slug of a path: `src/main.ts` → `src-main-ts`. */
@@ -779,6 +857,23 @@ const MESSAGES: Record<string, string> = {
   rate_limited: "too many connect attempts; wait a few minutes",
   no_app: "register an OAuth application on that instance first",
   provider_refused: "the origin refused to start that connect",
+  // Apps, runs and the crew (docs/APPS.md). `checks_required` is the merge
+  // gate refusing, so like `review_required` it names what to do about it.
+  checks_required: "this needs a passing deploy of its current head first",
+  invalid_slug: "a slug is lowercase letters, digits and single hyphens",
+  slug_taken: "that slug is taken by another app",
+  already_app: "this repository is already an app",
+  no_runtime: "apps are off on this forge (FORGE_APPS=0)",
+  no_such_env: "no such environment",
+  nothing_to_deploy: "there is nothing to deploy — the branch is empty",
+  finished: "that run has already finished",
+  no_such_agent: "no such agent",
+  scaffold_failed: "the repository was made, but the app could not be started",
+  assignee_cannot_read: "they cannot see this repository",
+  agent_not_on_crew: "that agent is not on this repository's crew",
+  invalid_model: "that model name is not valid",
+  brief_too_long: "that brief is too long (4000 characters at most)",
+  invalid_budget: "the budget must be between 0 and 100 dollars",
 };
 
 /**

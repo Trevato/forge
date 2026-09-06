@@ -1,0 +1,183 @@
+/**
+ * Where an environment keeps its state, and how a preview gets a copy of
+ * production's.
+ *
+ * Every environment owns exactly one directory and is handed it as
+ * `FORGE_APP_DATA`. Production's lives as long as the app; a preview's is
+ * created when the pull opens and removed when it closes. A preview starts
+ * from a *copy* of production data — never a view of it — taken at the
+ * moment the preview is created: on APFS, XFS and btrfs the copy is
+ * copy-on-write (bytes are shared until either side writes), elsewhere it is
+ * a plain copy. Both are the same guarantee at different speeds.
+ *
+ * SQLite in WAL mode keeps recent writes in a `-wal` file beside the
+ * database. Copying the pair mid-write can produce a database whose WAL
+ * belongs to a different moment, so every SQLite file is checkpointed into
+ * its main file first. The app under test is still running; WAL is designed
+ * for exactly that.
+ */
+
+import { Database } from "bun:sqlite";
+import {
+  constants,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  rmSync,
+  closeSync,
+} from "node:fs";
+import { join } from "node:path";
+import { defect } from "../kernel/error.ts";
+
+/** `production`, or `pull-<n>` for the preview of pull `n`. */
+export type EnvName = "production" | `pull-${number}`;
+
+export const previewEnv = (pullNumber: number): EnvName => `pull-${pullNumber}`;
+
+export function isEnvName(value: string): value is EnvName {
+  return value === "production" || /^pull-[1-9]\d*$/.test(value);
+}
+
+/** The pull a preview environment belongs to, or `undefined` for production. */
+export function envPull(env: EnvName): number | undefined {
+  return env === "production" ? undefined : Number(env.slice(5));
+}
+
+export const appsRoot = (dataDir: string): string => join(dataDir, "apps");
+
+/**
+ * An environment's directory. The names are checked here as well as at
+ * every call site: a path under `<data>/apps` is built from exactly an id
+ * and an environment name, and anything else is a bug, loudly.
+ */
+export function envDir(dataDir: string, appId: string, env: EnvName): string {
+  if (!isEnvName(env) || !/^[0-9a-z]+$/i.test(appId))
+    defect("apps.bad_env_path", `refusing to build a path for ${appId}/${env}`);
+  return join(appsRoot(dataDir), appId, env);
+}
+
+export const envDataDir = (
+  dataDir: string,
+  appId: string,
+  env: EnvName,
+): string => join(envDir(dataDir, appId, env), "data");
+
+export type PreviewData = "copy" | "empty";
+
+export type SeedOutcome = "cloned" | "copied" | "empty";
+
+/**
+ * Create an environment's data directory. A preview with `policy: "copy"`
+ * starts as production's data at this moment; anything else starts empty.
+ * Idempotent: an existing directory is left exactly as it is, because a
+ * redeploy of the same preview must keep the state the reviewer built up.
+ */
+export function ensureEnvData(
+  dataDir: string,
+  appId: string,
+  env: EnvName,
+  policy: PreviewData,
+): SeedOutcome | "kept" {
+  const target = envDataDir(dataDir, appId, env);
+  if (existsSync(target)) return "kept";
+  if (env === "production" || policy === "empty") {
+    mkdirSync(target, { recursive: true });
+    return "empty";
+  }
+  const source = envDataDir(dataDir, appId, "production");
+  if (!existsSync(source)) {
+    mkdirSync(target, { recursive: true });
+    return "empty";
+  }
+  quiesceSqlite(source);
+  mkdirSync(join(target, ".."), { recursive: true });
+  return cloneDir(source, target);
+}
+
+/** Remove an environment entirely: checkouts, data, everything. */
+export function removeEnv(dataDir: string, appId: string, env: EnvName): void {
+  rmSync(envDir(dataDir, appId, env), { recursive: true, force: true });
+}
+
+/** Remove an app's whole directory — every environment with it. */
+export function removeApp(dataDir: string, appId: string): void {
+  rmSync(join(appsRoot(dataDir), appId), { recursive: true, force: true });
+}
+
+/**
+ * Copy a directory, sharing blocks when the filesystem can. `FICLONE_FORCE`
+ * either clones or refuses — it never silently degrades — so a refusal is
+ * the signal to fall back to a byte copy, and the caller learns which
+ * happened.
+ */
+export function cloneDir(source: string, target: string): SeedOutcome {
+  try {
+    cpSync(source, target, {
+      recursive: true,
+      mode: constants.COPYFILE_FICLONE_FORCE,
+    });
+    return "cloned";
+  } catch {
+    rmSync(target, { recursive: true, force: true });
+    cpSync(source, target, { recursive: true });
+    return "copied";
+  }
+}
+
+const SQLITE_MAGIC = "SQLite format 3\0";
+const MAX_FILES = 10_000;
+
+/**
+ * Checkpoint every SQLite database under `dir` so its WAL is folded into the
+ * main file before it is copied. Databases are recognised by their header,
+ * not their name, because an app may call its file anything. Bounded by file
+ * count: a data directory is not a place to walk forever.
+ */
+export function quiesceSqlite(dir: string): void {
+  let seen = 0;
+  const walk = (path: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(path, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (++seen > MAX_FILES) return;
+      const full = join(path, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && isSqlite(full)) checkpoint(full);
+    }
+  };
+  walk(dir);
+}
+
+function isSqlite(path: string): boolean {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    const header = Buffer.alloc(SQLITE_MAGIC.length);
+    const read = readSync(fd, header, 0, header.length, 0);
+    return read === header.length && header.toString("latin1") === SQLITE_MAGIC;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function checkpoint(path: string): void {
+  let db: Database | undefined;
+  try {
+    db = new Database(path, { readwrite: true });
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } catch {
+    // A database another process holds exclusively, or one that is not
+    // really SQLite despite its header: the copy proceeds without it.
+  } finally {
+    db?.close();
+  }
+}

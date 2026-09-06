@@ -39,6 +39,16 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 9. **`not_found` is deliberately ambiguous.** A missing resource and a resource
    you can't see both return `not_found`, so private repos never leak their
    existence. Keep that conflation when you add routes.
+10. **The crew proposes; a person lands.** An agent (`user.kind === "agent"`)
+    never moves the default branch — the pre-receive hook refuses it,
+    protected or not — and `mergePull` refuses an agent actor. Its only grant
+    is `repo_crew` (read + write, never admin); its only credential is a
+    token minted for a run with an expiry, deleted when the run ends. Never
+    give an agent a path around these (`docs/APPS.md`, rule 1 and 6).
+11. **A child inherits nothing it was not handed.** App and agent processes
+    start from `childEnv` (`apps/process.ts`) — an explicit, short
+    environment — never from the forge's own, which carries secrets. A
+    preview's data is a copy of production's, never a path to it.
 
 ## How to work
 
@@ -116,7 +126,32 @@ src/
               vocabulary; screens/* are adapters over actions/; forge.ts is the
               root + palette; ssh.ts is the front door (identity, git exec,
               `serveForgeSsh`); main.ts is the stdio dev runner
+  apps/       a repository that runs (docs/APPS.md): manifest (forge.json,
+              fail-closed), checkout (a commit exported with read-tree +
+              checkout-index), data (per-environment dirs, copy-on-write
+              seeding, SQLite quiesce), process (install/test/start/ready,
+              explicit child env), runtime (environments in memory, rebuilt
+              on boot, serial deploys per env, crash restarts bounded),
+              proxy (Host routing, signed grants for private apps), scaffold
+              (the app a new app starts as), tty (`ssh <slug>@forge`: the
+              app's own terminal on a pty)
+  runs/       log (one file per run, appended live, tailed by listeners)
+  crew/       agents as child processes: brief (the system + task prompts:
+              the golden path, written down), claude (the headless adapter:
+              argv, stream-json, outcome), sandbox (what the agent's shell
+              may reach and read), workdir (where clones live), runner (one
+              run: token, clone, branch, Claude, push, open/update the pull,
+              report, reap leftovers), dispatch (outbox consumer + sweep +
+              worker tick), running (in-flight runs, for cancel)
+  design/     themes, and activity (what an event is called, for both
+              surfaces)
 ```
+
+Three tables carry all of it: `app` (slug, access, preview data policy),
+`run` (kind deploy|agent, state by compare-and-swap, summary, cost) and
+`agent` (model, brief, budget) plus `repo_crew` and `issue.assignee_id`. What
+is _running_ is not state: `AppsRuntime.start` rebuilds every environment
+from the default branch and the open pulls.
 
 Two rules the TUI must keep. `tui/term/` is the transport boundary — no screen,
 widget or loop code reaches past it to `process`, which is what lets one runtime
@@ -176,10 +211,25 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   is the same rule for a commit — objects written, ref held back until the
   origin agrees.
 
+- **Anything a worker records (a run's state, an app's environment):** the
+  worker calls `announceRun` (`actions/runs.ts`) or another action — never
+  `bus.append` itself. `apps/runtime.ts` and `crew/*` are workers, not
+  adapters, and still speak only through actions.
+- **A new reason for an agent to run:** add the trigger in
+  `crew/dispatch.ts`'s `route` (an outbox event → `queueAgentRun`), name the
+  reason in `brief.ts`'s `RunReason` and write what the agent is told for it
+  in `taskPrompt`. Bound it: anything automatic (not a person speaking) must
+  count against a limit the way `check_failed` does.
+- **Something an app process needs to know:** add it to `appEnv`
+  (`apps/process.ts`) and document it in `docs/APPS.md`'s table. Never pass
+  the forge's own environment through.
+
 ## Not yet built (deliberately)
 
-CI runners / a checks API on PRs, a self-describing (OpenAPI) endpoint, and the
-AI build crew. The event outbox and API surface are shaped so these arrive as
-additions, not rewrites. `docs/ARCHITECTURE.md` closes with the
-reasoning. "Forgejo is my harness" is the north star — automation is a
-first-class user, not an afterthought.
+A self-describing (OpenAPI) endpoint, containers around app processes,
+custom domains and websockets through the proxy, and a gate that lands a
+pull on its own once review and checks agree. The event outbox and API
+surface are shaped so these arrive as additions, not rewrites.
+`docs/ARCHITECTURE.md` closes with the reasoning. "Forgejo is my harness"
+is the north star — automation is a first-class user, not an afterthought,
+and `docs/APPS.md` is where that user now lives.

@@ -4,10 +4,7 @@
  * post to its own endpoint. Mobile-first, no JavaScript required.
  */
 
-import {
-  addCommentThrough,
-  openIssueThrough,
-} from "../../actions/issues.ts";
+import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import {
   issueCounts,
   labelsFor,
@@ -53,6 +50,7 @@ import {
   type IconName,
 } from "../ui.ts";
 import {
+  assigneeCard,
   composer,
   conversation,
   labelsCard,
@@ -62,6 +60,7 @@ import {
   threadContext,
   threadFragment,
 } from "./thread.ts";
+import { crewActivityCard } from "./runs.ts";
 
 const PER_PAGE = 25;
 
@@ -343,7 +342,9 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
       ${pager(
         nextCursor === null
           ? {}
-          : { next: withFacet(`${base}/issues`, query, {}, Number(nextCursor)) },
+          : {
+              next: withFacet(`${base}/issues`, query, {}, Number(nextCursor)),
+            },
       )}
     </div>
     ${when(ctx.auth.user !== undefined, () => stickyAction(newIssue))}
@@ -507,7 +508,9 @@ export function issuePage(ctx: Ctx): Response {
         })}
       </div>
       <aside>
+        ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
         ${labelsCard(ctx, repo, issue, applied, all, `${thread}/labels`)}
+        ${crewActivityCard(ctx, repo, issue)}
       </aside>
     </div>
     ${liveMount({
@@ -558,8 +561,7 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   if (!added.ok)
     return flashTo(ctx, dest, {
       tone: "danger",
-      message:
-        originError(added.error) ?? "That comment could not be posted.",
+      message: originError(added.error) ?? "That comment could not be posted.",
     });
   return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
 }

@@ -28,6 +28,7 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
+import { appStrip } from "./apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page } from "../layout.ts";
@@ -772,7 +773,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
   })}
-  ${forkBar(ctx, repo)}
+  ${appStrip(ctx, repo)} ${forkBar(ctx, repo)}
   ${await renderCode(scope, {
     refs,
     ref,

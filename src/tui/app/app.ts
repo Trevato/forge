@@ -11,6 +11,7 @@
  */
 
 import { defect } from "../../kernel/error.ts";
+import { MOUSE_OFF, MOUSE_ON } from "../term/ansi.ts";
 import type { InputEvent, KeyEvent, MouseEvent } from "../term/input.ts";
 import { InputDecoder } from "../term/input.ts";
 import { Renderer, type Cursor } from "../term/render.ts";
@@ -146,6 +147,12 @@ export interface Ctx {
    * say it was sent and never that it arrived.
    */
   copy(text: string): void;
+  /**
+   * Mouse reporting on or off. Off is what lets the terminal's own
+   * selection work — a link dialog turns it off while it is open so a URL
+   * can be dragged over and copied the ordinary way.
+   */
+  mouse(on: boolean): void;
   /**
    * Open a URL in a browser on the machine this terminal runs on. False when
    * there is no such machine to reach — every SSH session — which a screen
@@ -371,6 +378,10 @@ export class App {
       setTheme: (name) => app.applyTheme(name),
       quit: () => app.stop(),
       copy: (text) => copyToTerminal(app.opts.terminal, text),
+      mouse: (on) =>
+        app.opts.terminal.write(
+          new TextEncoder().encode(on ? MOUSE_ON : MOUSE_OFF),
+        ),
       openUrl: (url) => openInBrowser(app.opts.terminal, url),
       suspend: (run) => app.suspend(run),
       hit: (rect, on) => {
@@ -882,7 +893,11 @@ export class App {
         );
       else if (e.key === "esc" || e.key === "q" || (e.ctrl && e.key === "t"))
         this.overlay = "none";
-    } else if (e.key === "enter" || e.key === "esc" || (e.ctrl && e.key === "t"))
+    } else if (
+      e.key === "enter" ||
+      e.key === "esc" ||
+      (e.ctrl && e.key === "t")
+    )
       this.close();
     else if (e.key === "q") this.close();
     this.invalidate();

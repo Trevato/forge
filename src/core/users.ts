@@ -14,8 +14,12 @@ export interface User {
   readonly email: string;
   readonly displayName: string;
   readonly isAdmin: boolean;
-  /** "org" rows own repos and hold teams but can't authenticate. */
-  readonly kind: "user" | "org";
+  /**
+   * "org" rows own repos and hold teams but can't authenticate. "agent"
+   * rows are the crew: no password, no session; they act only through
+   * tokens the forge mints for a run (docs/APPS.md).
+   */
+  readonly kind: "user" | "org" | "agent";
   readonly createdAt: string;
 }
 
@@ -27,6 +31,7 @@ interface UserRow {
   is_admin: number;
   password_hash: string;
   kind: "user" | "org";
+  is_agent: number;
   created_at: string;
 }
 
@@ -37,7 +42,9 @@ function toUser(row: UserRow): User {
     email: row.email,
     displayName: row.display_name,
     isAdmin: row.is_admin === 1,
-    kind: row.kind,
+    // The flag, not the column, decides: see migration 14 for why an agent
+    // is stored as kind 'user' with is_agent set.
+    kind: row.is_agent === 1 ? "agent" : row.kind,
     createdAt: row.created_at,
   };
 }
@@ -66,6 +73,12 @@ export interface CreateUserInput {
    * @default false
    */
   adminIfFirst?: boolean;
+  /**
+   * Create a crew member: no password is stored (`password` is ignored),
+   * so nothing can ever sign in as it. Never admin, never first.
+   * @default false
+   */
+  agent?: boolean;
 }
 
 export async function createUser(
@@ -73,7 +86,9 @@ export async function createUser(
   input: CreateUserInput,
 ): Promise<Result<User, CreateUserError>> {
   if (!isSafeName(input.username)) return err("invalid_username");
-  if (input.password.length < MIN_PASSWORD) return err("weak_password");
+  const agent = input.agent === true;
+  if (!agent && input.password.length < MIN_PASSWORD)
+    return err("weak_password");
 
   const existing = db
     .query<
@@ -90,17 +105,21 @@ export async function createUser(
   }
 
   const userId = id();
-  const hash = await Bun.password.hash(input.password, "argon2id");
+  // An agent's hash is empty, which no verifier accepts: argon2 refuses to
+  // parse it, and verifyPassword refuses the kind besides.
+  const hash = agent ? "" : await Bun.password.hash(input.password, "argon2id");
   // The hash above yielded the event loop, so another sign-up may have landed
   // meanwhile. Uniqueness is settled by the constraint, and "first user" by a
   // subquery in the same statement — neither is a check-then-act.
   try {
     db.query(
-      `INSERT INTO user (id, username, email, password_hash, display_name, is_admin)
+      `INSERT INTO user (id, username, email, password_hash, display_name, is_admin, is_agent)
        VALUES (?1, ?2, ?3, ?4, ?5,
-         CASE WHEN ?6 = 1 THEN 1
+         CASE WHEN ?8 = 1 THEN 0
+              WHEN ?6 = 1 THEN 1
               WHEN ?7 = 1 AND (SELECT COUNT(*) FROM user) = 0 THEN 1
-              ELSE 0 END)`,
+              ELSE 0 END,
+         ?8)`,
     ).run(
       userId,
       input.username,
@@ -109,6 +128,7 @@ export async function createUser(
       input.displayName ?? "",
       input.isAdmin === true ? 1 : 0,
       input.adminIfFirst === true ? 1 : 0,
+      agent ? 1 : 0,
     );
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
@@ -218,9 +238,38 @@ export async function verifyPassword(
     row?.password_hash ??
     "$argon2id$v=19$m=65536,t=2,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   const valid = await Bun.password.verify(password, hash).catch(() => false);
-  // Org rows own repos but never authenticate, whatever their stored hash.
-  if (!valid || !row || row.kind === "org") return err("bad_credentials");
+  // Org rows own repos but never authenticate, whatever their stored hash;
+  // neither does an agent, whose hash is empty besides.
+  if (!valid || !row || row.kind === "org" || row.is_agent === 1)
+    return err("bad_credentials");
   return ok(toUser(row));
+}
+
+/**
+ * People — accounts that are neither orgs nor agents — by name, bounded,
+ * optionally narrowed by a substring. What an assignee picker offers before
+ * the crew; the caller still filters by `canRead` on the repository, since
+ * being an account is not being able to see it.
+ */
+export function listPeople(
+  db: Database,
+  options: { query?: string | undefined; limit?: number | undefined } = {},
+): User[] {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+  const query = options.query?.trim() ?? "";
+  const params: (string | number)[] = [];
+  let where = "kind = 'user' AND is_agent = 0";
+  if (query !== "") {
+    params.push(`%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`);
+    where += ` AND username LIKE ?${params.length} ESCAPE '\\' COLLATE NOCASE`;
+  }
+  params.push(limit);
+  return db
+    .query<UserRow, (string | number)[]>(
+      `SELECT * FROM user WHERE ${where} ORDER BY username COLLATE NOCASE LIMIT ?${params.length}`,
+    )
+    .all(...params)
+    .map(toUser);
 }
 
 export function countUsers(db: Database): number {

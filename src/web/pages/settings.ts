@@ -9,6 +9,17 @@
  */
 
 import {
+  disableApp,
+  enableApp,
+  updateAppSettings,
+} from "../../actions/apps.ts";
+import {
+  addToCrew,
+  listAllAgents,
+  listCrew,
+  removeFromCrew,
+} from "../../actions/crew.ts";
+import {
   createLabel,
   createWebhook,
   deleteLabel,
@@ -17,6 +28,15 @@ import {
   updateLabel,
   updateRepoSettings,
 } from "../../actions/repos.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import type { PreviewData } from "../../apps/data.ts";
+import {
+  getAppByRepo,
+  SLUG_MAX,
+  slugFor,
+  type AppAccess,
+  type AppRecord,
+} from "../../core/apps.ts";
 import { listLabels, type Label } from "../../core/issues.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
@@ -46,11 +66,15 @@ import {
   field as formField,
   labelChip,
   labelCss,
+  listCard,
+  row,
   selectField,
   time,
+  userLink,
 } from "../ui.ts";
+import { crewReadiness } from "./crew.ts";
 
-type Section = "general" | "labels" | "hooks" | "danger";
+type Section = "general" | "app" | "crew" | "labels" | "hooks" | "danger";
 
 /** The repo, but only for someone who administers it. A non-admin is told
  * nothing — the settings tab is not even rendered for them. */
@@ -67,6 +91,18 @@ function sections(base: string, active: Section) {
       href: `${base}/settings`,
       icon: "settings" as const,
       current: active === "general",
+    },
+    {
+      label: "App",
+      href: `${base}/settings/app`,
+      icon: "rocket" as const,
+      current: active === "app",
+    },
+    {
+      label: "Crew",
+      href: `${base}/settings/crew`,
+      icon: "bot" as const,
+      current: active === "crew",
     },
     {
       label: "Labels",
@@ -97,16 +133,20 @@ function settingsPageResponse(
   title: string,
   body: Html,
   styleCss?: string,
+  status = 200,
 ): Response {
-  return page({
-    ctx,
-    title: `${title} · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
-    ...(styleCss !== undefined ? { styleCss } : {}),
-    body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
-    ${settingsLayout(sections(repoBase(repo), active), body)}`,
-  });
+  return page(
+    {
+      ctx,
+      title: `${title} · ${repo.name}`,
+      crumbs: crumbsFor(repo),
+      palette: repoPalette(repo),
+      ...(styleCss !== undefined ? { styleCss } : {}),
+      body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
+      ${settingsLayout(sections(repoBase(repo), active), body)}`,
+    },
+    status,
+  );
 }
 
 /** The gate every settings POST passes: admin, same-origin, admin scope. */
@@ -196,6 +236,20 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="requireChecks"
+            ${repo.requireChecks ? html`checked` : null}
+          />
+          <span
+            >Require a passing deploy before merging — the check is the pull
+            request's preview coming up at the commit that is head <em>now</em>.
+            Read live inside the merge, like the review.</span
+          >
+        </label>
+      </div>
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
@@ -217,6 +271,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     protectDefault: form.get("protect") !== null,
     requireReview: form.get("requireReview") !== null,
+    requireChecks: form.get("requireChecks") !== null,
     ...(branch !== "" ? { defaultBranch: branch } : {}),
   });
   const flash: Flash = updated.ok
@@ -229,6 +284,353 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);
+}
+
+// ---- app ----
+
+interface AppValues {
+  slug: string;
+  access: AppAccess;
+  previewData: PreviewData;
+}
+
+const APP_ERRORS: Record<string, string> = {
+  invalid_slug: `Lowercase letters and digits, single hyphens inside, at most ${SLUG_MAX} characters.`,
+  slug_taken: "Another app already answers to that hostname.",
+  already_app: "This repository is already an app.",
+};
+
+/**
+ * The one form, for both moments: turning a repository into an app and
+ * changing how it is served. Which verb the button wears is the only
+ * difference, because `enableApp` and `updateAppSettings` take the same
+ * three facts.
+ */
+function appSettingsView(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord | undefined,
+  values: AppValues,
+  error?: string,
+): Html {
+  const base = repoBase(repo);
+  const runtime = appsRuntime(ctx.app);
+  const domain = runtime?.options.domain;
+  const form = card(
+    html`${when(
+        record === undefined,
+        () =>
+          html`<p class="muted small mb">
+            A repository that runs. Production follows
+            <span class="mono">${repo.defaultBranch}</span>; every open pull
+            request gets a preview with its own copy of the data. The repository
+            says how to run itself in <span class="mono">forge.json</span>, or
+            with a <span class="mono">start</span> script.
+          </p>`,
+      )}
+      <form method="post" action="${base}/settings/app">
+        ${formField({
+          label: "Slug",
+          name: "slug",
+          value: values.slug,
+          mono: true,
+          required: true,
+          pattern: "[a-z0-9](-?[a-z0-9])*",
+          hint:
+            domain === undefined
+              ? "The label its hostnames are built from."
+              : `Its hostnames: ${values.slug || "<slug>"}.${domain} and ${values.slug || "<slug>"}--<n>.${domain} for the preview of pull #n.`,
+          ...(error ? { error } : {}),
+        })}
+        ${selectField({
+          label: "Access",
+          name: "access",
+          hint: "A private app answers only to someone who can see this repository — the forge vouches for them on the way in.",
+          options: [
+            {
+              value: "private",
+              label: "Private — people who can see this repository",
+              selected: values.access === "private",
+            },
+            {
+              value: "public",
+              label: "Public — anyone with the link",
+              selected: values.access === "public",
+            },
+          ],
+        })}
+        ${selectField({
+          label: "Preview data",
+          name: "previewData",
+          hint: "What a new preview's data directory starts as. A copy is never a window: nothing a preview writes reaches production.",
+          options: [
+            {
+              value: "copy",
+              label: "A copy of production's, taken when the preview starts",
+              selected: values.previewData === "copy",
+            },
+            {
+              value: "empty",
+              label: "Empty",
+              selected: values.previewData === "empty",
+            },
+          ],
+        })}
+        <div class="form-actions">
+          ${btn(record === undefined ? "Run as an app" : "Save changes", {
+            variant: "primary",
+            ...(record === undefined ? { icon: "rocket" as const } : {}),
+          })}
+          ${when(record !== undefined, () =>
+            btn("Environments", {
+              href: `${base}/app`,
+              variant: "ghost",
+              icon: "rocket",
+            }),
+          )}
+        </div>
+      </form>`,
+    {
+      head: html`${icon("rocket")}
+        <h2>${record === undefined ? "Run as an app" : "App"}</h2>`,
+    },
+  );
+  if (record === undefined) return form;
+  return html`${form}
+    <div class="mt">
+      ${card(
+        html`<p>
+            Production and every preview stop, and their data directories and
+            checkouts are removed. The repository and its code are untouched.
+          </p>
+          <div class="form-actions">
+            ${confirmAction({
+              action: `${base}/settings/app/disable`,
+              verb: "Stop running as an app",
+            })}
+          </div>`,
+        {
+          tone: "danger",
+          head: html`${icon("alert")}
+            <h2>Stop running as an app</h2>`,
+        },
+      )}
+    </div>`;
+}
+
+const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
+  slug: record?.slug ?? slugFor(repo.name),
+  access: record?.access ?? repo.visibility,
+  previewData: record?.previewData ?? "copy",
+});
+
+// GET /:owner/:name/settings/app
+export function appSettingsPage(ctx: Ctx): Response {
+  const repo = loadAdminRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  const record = getAppByRepo(ctx.app.db, repo.id);
+  return settingsPageResponse(
+    ctx,
+    repo,
+    "app",
+    "App",
+    appSettingsView(ctx, repo, record, appValues(repo, record)),
+  );
+}
+
+// POST /:owner/:name/settings/app — enable, or change.
+export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const record = getAppByRepo(ctx.app.db, repo.id);
+  const values: AppValues = {
+    slug: field(form, "slug").trim(),
+    access: field(form, "access") === "public" ? "public" : "private",
+    previewData: field(form, "previewData") === "empty" ? "empty" : "copy",
+  };
+  const saved =
+    record === undefined
+      ? enableApp(ctx.app, ctx.auth.user, repo, values)
+      : updateAppSettings(ctx.app, ctx.auth.user, repo, values);
+  if (!saved.ok) {
+    if (saved.error === "not_found") return repoNotFound(ctx);
+    return settingsPageResponse(
+      ctx,
+      repo,
+      "app",
+      "App",
+      appSettingsView(
+        ctx,
+        repo,
+        record,
+        values,
+        APP_ERRORS[saved.error] ?? "Those settings could not be saved.",
+      ),
+      undefined,
+      422,
+    );
+  }
+  const url = appsRuntime(ctx.app)?.urlFor(saved.value, "production");
+  return flashTo(
+    ctx,
+    record === undefined
+      ? `${repoBase(repo)}/app`
+      : `${repoBase(repo)}/settings/app`,
+    {
+      message:
+        record !== undefined
+          ? "App settings saved."
+          : url === undefined
+            ? `${repo.name} is an app, but nothing is serving apps on this forge.`
+            : `${repo.name} is starting at ${url}.`,
+    },
+  );
+}
+
+// POST /:owner/:name/settings/app/disable
+export async function appDisable(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const disabled = disableApp(ctx.app, ctx.auth.user, repo);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    disabled.ok
+      ? {
+          message: `${repo.name} no longer runs as an app. Its code is untouched.`,
+        }
+      : { tone: "danger", message: "This repository is not an app." },
+  );
+}
+
+// ---- crew ----
+
+// GET /:owner/:name/settings/crew
+export function crewSettingsPage(ctx: Ctx): Response {
+  const repo = loadAdminRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  const base = repoBase(repo);
+  const crewListed = listCrew(ctx.app, ctx.auth.user, repo);
+  const crew = crewListed.ok ? crewListed.value : [];
+  const allListed = listAllAgents(ctx.app, ctx.auth.user);
+  const all = allListed.ok ? allListed.value : [];
+  const onCrew = new Set(crew.map((agent) => agent.user.id));
+  const available = all.filter((agent) => !onCrew.has(agent.user.id));
+  const admin = ctx.auth.user?.isAdmin === true;
+
+  const list =
+    crew.length === 0
+      ? empty({
+          icon: "bot",
+          title: "No crew yet",
+          note: "An agent on the crew can read and write this repository, and starts working the moment an issue is assigned to it. It proposes through pull requests; a person merges.",
+        })
+      : listCard(
+          crew.map((agent) =>
+            row({
+              lead: icon("bot"),
+              title: html`${userLink(agent.user.username)}`,
+              meta: html`<span title="${agent.brief}"
+                >${agent.model === ""
+                  ? "default model"
+                  : agent.model}${agent.brief === ""
+                  ? ""
+                  : ` · ${agent.brief}`}</span
+              >`,
+              trail: html`<form
+                class="row-actions"
+                method="post"
+                action="${base}/settings/crew/${encodeURIComponent(
+                  agent.user.username,
+                )}/remove"
+              >
+                ${btn("Remove", { size: "sm", icon: "x" })}
+              </form>`,
+            }),
+          ),
+        );
+
+  const add =
+    available.length > 0
+      ? card(
+          html`<form
+            class="edit-row"
+            method="post"
+            action="${base}/settings/crew"
+          >
+            <label class="sr-only" for="f-agent">Agent</label>
+            <select class="input" id="f-agent" name="agent">
+              ${available.map(
+                (agent) =>
+                  html`<option value="${agent.user.username}">
+                    ${agent.user.username}${agent.model === ""
+                      ? ""
+                      : ` — ${agent.model}`}
+                  </option>`,
+              )}
+            </select>
+            ${btn("Add to crew", {
+              variant: "primary",
+              size: "sm",
+              icon: "plus",
+            })}
+          </form>`,
+          { head: html`<h2>Add an agent</h2>`, pad: false },
+        )
+      : card(
+          all.length === 0
+            ? html`<p class="muted small">
+                No agents on this forge yet.
+                ${admin
+                  ? html`Create one under
+                      <a href="/settings/crew">Settings → Crew</a>, then add it
+                      here.`
+                  : html`An admin can create one under account settings → Crew.`}
+              </p>`
+            : html`<p class="muted small">
+                Every agent on this forge is already on this crew.
+              </p>`,
+          { head: html`<h2>Add an agent</h2>` },
+        );
+
+  const body = html`${crewReadiness(ctx)} ${list}
+    <div class="mt">${add}</div>`;
+  return settingsPageResponse(ctx, repo, "crew", "Crew", body);
+}
+
+// POST /:owner/:name/settings/crew
+export async function crewAdd(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"));
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/crew`,
+    added.ok
+      ? {
+          message: `${added.value.user.username} is on the crew. Assign it an issue and it starts.`,
+        }
+      : { tone: "danger", message: "No such agent on this forge." },
+  );
+}
+
+// POST /:owner/:name/settings/crew/:username/remove
+export async function crewRemove(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const username = ctx.params.username ?? "";
+  const removed = removeFromCrew(ctx.app, ctx.auth.user, repo, username);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/crew`,
+    removed.ok
+      ? { message: `${username} is off the crew.` }
+      : { tone: "danger", message: "No such agent on this forge." },
+  );
 }
 
 // ---- labels ----

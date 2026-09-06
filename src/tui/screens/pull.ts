@@ -37,9 +37,15 @@ import {
   resolveReviewThread,
   submitReview,
 } from "../../actions/pulls.ts";
-import { getIssue } from "../../core/issues.ts";
+import { openEnvUrl } from "../../actions/apps.ts";
+import { listRepoRuns } from "../../actions/runs.ts";
+import { previewEnv } from "../../apps/data.ts";
+import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { getAppByRepo } from "../../core/apps.ts";
+import { getIssue, type Issue } from "../../core/issues.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
+import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import { err, ok } from "../../kernel/result.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import {
@@ -59,11 +65,17 @@ import type {
 } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { G, type Span } from "../term/screen.ts";
-import { BOLD, ITALIC, style } from "../term/style.ts";
+import {
+  G,
+  type Rect,
+  type Screen as Surface,
+  type Span,
+} from "../term/screen.ts";
+import { BOLD, ITALIC, style, type Color } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import { badge, card, tabs } from "../ui/widgets.ts";
+import type { Tokens } from "../ui/theme.ts";
+import { badge, card, dot, tabs, type Tone } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   ORIGIN_MARK,
@@ -74,15 +86,22 @@ import {
   hitScroll,
   errorText,
   live,
+  metaOf,
+  openLink,
   plural,
   relTime,
   runAsync,
 } from "./common.ts";
+import { envTone } from "./apps.ts";
+import { assignPicker, assignedText } from "./assign.ts";
 import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { reviewScreen } from "./review.ts";
+import { runScreen } from "./run.ts";
+import { RunList, runTone } from "./runs.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
+import { openAppTerminal } from "./apptty.ts";
 
 /** One thread on the diff, as this screen holds it. */
 interface Thread {
@@ -130,10 +149,7 @@ export function standingOf(reviews: readonly ReviewFact[]): Standing {
 }
 
 /** `2 approvals · changes requested by bob` — the merge box's second line. */
-export function standingText(
-  standing: Standing,
-  required: boolean,
-): string {
+export function standingText(standing: Standing, required: boolean): string {
   const parts = [
     standing.approvals === 0
       ? required
@@ -148,7 +164,11 @@ export function standingText(
   return parts.join(" · ");
 }
 
-type Tab = 0 | 1;
+/** Conversation, files, and — when agents have worked here — the crew. */
+type Tab = 0 | 1 | 2;
+
+/** The checks on a pull, before any deploy has run. */
+const NO_CHECK: CheckSummary = { state: "none", run: null };
 
 /** What each verdict is called on screen — one wording, every surface. */
 const VERDICT_WORDS: Record<ReviewFact["state"], string> = {
@@ -186,6 +206,17 @@ export function pullScreen(
    * the merge box says without anybody re-entering the screen.
    */
   let requireReview = repo?.requireReview === true;
+  /** The second gate, read the same way: a passing deploy of this head. */
+  let requireChecks = repo?.requireChecks === true;
+  /** The local issue row — who it is assigned to. Undefined on a live browse. */
+  let issueRow: Issue | undefined;
+  /** Whether the repository is an app, and its preview of this pull if so. */
+  let isApp = false;
+  let preview: EnvStatus | undefined;
+  /** The deploy of the *current* head — what the merge box calls the checks. */
+  let check: CheckSummary = NO_CHECK;
+  /** Agent runs about this pull, newest first. */
+  const crew = new RunList(f);
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   scroll.top = keep.top ?? 0;
 
@@ -202,13 +233,38 @@ export function pullScreen(
     // Review comments are anchored rows in *our* database; a live browse has
     // none of them, and neither forge exposes an equivalent we could read.
     const row = repo === undefined ? undefined : getPull(f.db, repo.id, number);
-    requireReview =
-      repo !== undefined && getRepoById(f.db, repo.id)?.requireReview === true;
+    const settings =
+      repo === undefined ? undefined : getRepoById(f.db, repo.id);
+    requireReview = settings?.requireReview === true;
+    requireChecks = settings?.requireChecks === true;
     reviews =
       row === undefined
         ? []
         : withOutdated(listReviewComments(f.db, row.id), diff);
     threads = row === undefined ? [] : readThreads(row);
+    issueRow = repo === undefined ? undefined : getIssue(f.db, repo.id, number);
+    // The app half: the preview environment (in memory, from the runtime),
+    // the checks at the live head (a row), and what the crew has done here.
+    const record = repo === undefined ? undefined : getAppByRepo(f.db, repo.id);
+    isApp = record !== undefined;
+    preview =
+      record === undefined
+        ? undefined
+        : appsRuntime(f.app)?.envStatus(record, previewEnv(number));
+    check =
+      row === undefined
+        ? NO_CHECK
+        : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
+    const runs =
+      repo === undefined || row === undefined
+        ? undefined
+        : listRepoRuns(f.app, f.user, repo, {
+            kind: "agent",
+            issueId: row.id,
+            limit: 50,
+          });
+    crew.set(runs !== undefined && runs.ok ? runs.value : []);
+    if (tab === 2 && crew.runs.length === 0) tab = 0;
     view.setFiles(diff.files);
     view.setNotes(threadNotes());
     width = 0;
@@ -334,7 +390,10 @@ export function pullScreen(
         kind: "comment" as const,
         actor: review.author,
         at: review.createdAt,
-        body: review.body === "" ? `_${VERDICT_WORDS[review.state]}._` : review.body,
+        body:
+          review.body === ""
+            ? `_${VERDICT_WORDS[review.state]}._`
+            : review.body,
         badge: {
           text: VERDICT_WORDS[review.state],
           // A verdict a push has dismissed is muted, not green and not red:
@@ -369,6 +428,50 @@ export function pullScreen(
     const now = standing();
     return now.blocking.length > 0 || (requireReview && now.approvals === 0);
   };
+
+  /**
+   * The checks gate: with `require_checks` on, the current head's deploy
+   * must be `ok`. Rendered here; `mergePull` reads the row live and refuses
+   * `checks_required` on its own.
+   */
+  const checksGated = (): boolean =>
+    repo !== undefined && requireChecks && check.state !== "ok";
+
+  /** `O` — the preview, through a grant when the app is private. */
+  // Production beside the preview: comparing the two is the review.
+  const openProduction = (): void => {
+    if (repo === undefined || !isApp) return;
+    const url = openEnvUrl(f.app, f.user, repo, "production");
+    if (!url.ok) {
+      ctx.toast(errorText(url.error), "danger");
+      return;
+    }
+    openLink(ctx, url.value);
+  };
+
+  const openPreview = (): void => {
+    if (repo === undefined || !isApp) return;
+    const url = openEnvUrl(f.app, f.user, repo, previewEnv(number));
+    if (!url.ok) {
+      ctx.toast(errorText(url.error), "danger");
+      return;
+    }
+    if (preview === undefined || preview.state !== "running")
+      ctx.toast(
+        `the preview is ${preview?.state ?? "not running"}; the page will say so`,
+        "attn",
+      );
+    openLink(ctx, url.value);
+  };
+
+  /** `a` — hand the pull to a person, an agent, or nobody. */
+  const assign = (): void => {
+    if (repo === undefined || issueRow === undefined) return;
+    assignPicker(f, ctx, screen, repo, issueRow, () => runAsync(ctx, reload));
+  };
+
+  /** The tabs that exist right now: the crew's only once it has worked here. */
+  const tabCount = (): number => (crew.runs.length > 0 ? 3 : 2);
 
   const submit = (): void => {
     if (repo === undefined) return;
@@ -433,7 +536,10 @@ export function pullScreen(
           });
           if (!sent.ok) return err(errorText(String(sent.error)));
           await reload();
-          ctx.toast(`review submitted: ${VERDICT_WORDS[input.state]}`, "success");
+          ctx.toast(
+            `review submitted: ${VERDICT_WORDS[input.state]}`,
+            "success",
+          );
           return ok(sent.value);
         },
       }),
@@ -481,18 +587,30 @@ export function pullScreen(
 
   const mirrored = (): boolean => repo === undefined || repo.origin !== null;
   const state = (): MergeState =>
-    mergeState(detail?.issue, facts, mirrored(), gated());
+    mergeState(detail?.issue, facts, mirrored(), gated(), checksGated());
 
   const screen: Screen = {
     title: `#${number}`,
     get keys() {
       return [
-        binding(["tab"], "conversation/files"),
-        ...(tab === 1 ? view.keys : [binding(["j", "k"], "scroll")]),
+        binding(["tab"], tabCount() === 3 ? "next tab" : "conversation/files"),
+        ...(tab === 1
+          ? view.keys
+          : tab === 2
+            ? [binding(["j", "k"], "move"), binding(["enter"], "open the run")]
+            : [binding(["j", "k"], "scroll")]),
+        ...(isApp && preview !== undefined
+          ? [binding(["O"], "open the preview")]
+          : []),
+        ...(isApp ? [binding(["P"], "open production")] : []),
+        ...(isApp && preview !== undefined
+          ? [binding(["T"], "the preview's terminal")]
+          : []),
         ...(mayWrite()
           ? [
               binding(["c"], tab === 1 ? "review line" : "comment"),
               binding(["R"], "review"),
+              binding(["a"], "assign"),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
@@ -519,21 +637,30 @@ export function pullScreen(
       if (!detail) return;
       const issue = detail.issue;
       const foot = composer.height();
-      // Four rows when there are verdicts to report, three when there are
-      // none: the box is exactly as tall as what is in it.
-      const boxH = standingText(standing(), requireReview) === ""
-        ? 3
-        : 4;
-      const [strip, head, boxRow, tabRow, body, comp] = split(area, "v", [
-        len(whereRows(src)),
-        len(1),
-        len(boxH),
-        len(2),
-        fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 10 - whereRows(src)))),
-      ]);
+      // The box is exactly as tall as what is in it: the state, then a row
+      // for the verdicts when there are any, then a row for the checks when
+      // a deploy has run or the gate demands one.
+      const checksLine = checksText(check, requireChecks, isApp);
+      const boxH =
+        3 +
+        (standingText(standing(), requireReview) === "" ? 0 : 1) +
+        (checksLine === "" ? 0 : 1);
+      const [strip, head, previewRow, boxRow, tabRow, body, comp] = split(
+        area,
+        "v",
+        [
+          len(whereRows(src)),
+          len(2),
+          len(isApp ? 1 : 0),
+          len(boxH),
+          len(2),
+          fill(1),
+          len(Math.min(foot, Math.max(0, area.h - 13 - whereRows(src)))),
+        ],
+      );
       whereStrip(s, strip!, c, f, src);
-      // Same head as an issue: the number is a locator, the title is the page.
+      // Same head as an issue: the number is a locator, the title is the page,
+      // and the second row says who opened it and who is on it.
       const edge = head!.x + head!.w;
       const after = s.text(
         head!.x,
@@ -549,8 +676,28 @@ export function pullScreen(
         style(c.fg, c.bg, BOLD),
         edge,
       );
+      const closed = issue.state !== "open";
+      const x1 = dot(s, head!.x, head!.y + 1, c, {
+        tone:
+          facts?.mergedAt != null ? "merged" : closed ? "danger" : "success",
+      });
+      s.text(
+        x1,
+        head!.y + 1,
+        truncate(
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}`,
+          Math.max(0, edge - x1),
+        ),
+        style(c.mutedFg, c.bg),
+        edge,
+      );
+      if (isApp && previewRow!.h > 0)
+        drawPreviewLine(s, previewRow!, c, preview);
       drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored(), {
         gated: gated(),
+        checksGated: checksGated(),
+        check,
+        checksLine,
         standing: standing(),
         required: requireReview,
       });
@@ -561,10 +708,17 @@ export function pullScreen(
             count: conversation().length + reviews.length + verdicts().length,
           },
           { label: "Files", count: diff.files.length },
+          ...(crew.runs.length > 0
+            ? [{ label: "Crew", count: crew.runs.length }]
+            : []),
         ],
         active: tab,
       });
-      if (tab === 1) {
+      if (tab === 2) {
+        crew.render(s, body!, c, ctx, true, (run) => {
+          if (repo !== undefined) ctx.push(runScreen(f, ctx, repo, run.id));
+        });
+      } else if (tab === 1) {
         // The thread count is a section header, not a badge on the tab: how
         // many conversations are still open is the question a reviewer opens
         // this tab to answer, and it deserves a line.
@@ -612,12 +766,38 @@ export function pullScreen(
         return true;
       }
       if (e.key === "tab") {
-        tab = tab === 0 ? 1 : 0;
+        tab = ((tab + 1) % tabCount()) as Tab;
         return true;
       }
       if (e.key === "R" && mayWrite()) {
         review();
         return true;
+      }
+      if (e.key === "O" && isApp && preview !== undefined) {
+        openPreview();
+        return true;
+      }
+      if (e.key === "P" && isApp) {
+        openProduction();
+        return true;
+      }
+      if (e.key === "T" && isApp && preview !== undefined && repo) {
+        void openAppTerminal(f, ctx, repo, previewEnv(number));
+        return true;
+      }
+      if (e.key === "a" && mayWrite()) {
+        assign();
+        return true;
+      }
+      // The crew tab is a list: the cursor moves, enter opens the run.
+      if (tab === 2) {
+        if (crew.state.key(e, crew.runs.length)) return true;
+        if (e.key === "enter") {
+          const run = crew.selected;
+          if (run !== undefined && repo !== undefined)
+            ctx.push(runScreen(f, ctx, repo, run.id));
+          return true;
+        }
       }
       // A thread the cursor is standing in owns `x` and `enter` before the
       // screen does: settling a conversation is the act on offer there, and
@@ -664,6 +844,10 @@ export function pullScreen(
         );
         return true;
       }
+      if (e.key === "m" && mayWrite() && state() === "checks_required") {
+        ctx.toast(checksRefusal(check), "attn");
+        return true;
+      }
       if (
         e.key === "m" &&
         mayWrite() &&
@@ -692,6 +876,18 @@ export function pullScreen(
             },
           }),
         );
+        return true;
+      }
+      // `o` on an open pull with a preview opens the preview; on a closed
+      // one it reopens the pull, as it always has. Nothing is lost: the
+      // "reopen" reading only ever meant something on a closed pull.
+      if (
+        e.key === "o" &&
+        isApp &&
+        preview !== undefined &&
+        detail?.issue.state === "open"
+      ) {
+        openPreview();
         return true;
       }
       if (
@@ -733,6 +929,7 @@ export function pullScreen(
         })
       )
         return true;
+      if (tab === 2) return true;
       return tab === 1 ? view.key(e, ctx) : scroll.key(e, lines.length);
     },
   };
@@ -747,8 +944,119 @@ export type MergeState =
   | "empty"
   /** The verdicts do not let this land yet — `mergePull` refuses it too. */
   | "review_required"
+  /** The head's deploy is not green yet — `mergePull` refuses it too. */
+  | "checks_required"
   | "ready"
   | "unknown";
+
+/**
+ * The preview, in one line: a dot in the environment's tone, the word, the
+ * URL as a link, and the error when there is one — never "failed" alone.
+ */
+function drawPreviewLine(
+  s: Surface,
+  r: Rect,
+  c: Tokens,
+  preview: EnvStatus | undefined,
+): void {
+  const right = r.x + r.w;
+  const tone = preview === undefined ? undefined : envTone(preview.state);
+  let x = dot(s, r.x, r.y, c, {
+    ...(tone === undefined ? { hollow: true } : { tone }),
+  });
+  x = s.text(x + 1, r.y, "preview ", style(c.mutedFg, c.bg), right);
+  if (preview === undefined) {
+    s.text(
+      x,
+      r.y,
+      "none — a preview runs while the pull is open",
+      style(c.faint, c.bg),
+      right,
+    );
+    return;
+  }
+  const words =
+    preview.state === "failed"
+      ? `failed: ${preview.error ?? "the deploy did not finish"}`
+      : preview.state === "running"
+        ? `running${preview.since === undefined ? "" : ` since ${ago(preview.since)}`}`
+        : preview.state === "deploying"
+          ? `deploying ${preview.commitOid.slice(0, 7)}`
+          : "stopped";
+  x = s.text(
+    x,
+    r.y,
+    truncate(words, Math.max(0, right - x)),
+    style(tone === undefined ? c.mutedFg : toneColor(c, tone), c.bg),
+    right,
+  );
+  if (preview.state !== "failed")
+    s.linkText(
+      x + 2,
+      r.y,
+      truncate(preview.url, Math.max(0, right - x - 2)),
+      style(c.mutedFg, c.bg),
+      preview.url,
+      right,
+    );
+}
+
+function toneColor(c: Tokens, tone: Tone): Color {
+  return tone === "success"
+    ? c.success
+    : tone === "danger"
+      ? c.danger
+      : tone === "attn"
+        ? c.attn
+        : tone === "merged"
+          ? c.merged
+          : c.mutedFg;
+}
+
+/**
+ * The checks row of the merge box: what the current head's deploy did.
+ * Empty when nothing has deployed and nothing demands it — a box row that
+ * says "no checks" on a repository that is not an app is noise.
+ */
+export function checksText(
+  check: CheckSummary,
+  required: boolean,
+  isApp: boolean,
+): string {
+  if (check.state === "none")
+    return required
+      ? "checks: none yet — a deploy of this head is required"
+      : isApp
+        ? "checks: no deploy of this head yet"
+        : "";
+  const run = check.run;
+  const summary = run === null || run.summary === "" ? "" : ` · ${run.summary}`;
+  switch (check.state) {
+    case "ok":
+      return `checks: passed${summary}`;
+    case "failed":
+      return `checks: failed${summary}`;
+    case "running":
+      return "checks: deploying this head";
+    case "queued":
+      return "checks: a deploy of this head is queued";
+    case "cancelled":
+      return `checks: the deploy was cancelled${summary}`;
+  }
+}
+
+/** Why `m` is refused by the checks gate, in words a person can act on. */
+export function checksRefusal(check: CheckSummary): string {
+  switch (check.state) {
+    case "failed":
+      return `the deploy of this head failed${check.run?.summary ? `: ${check.run.summary}` : ""}`;
+    case "running":
+    case "queued":
+      return "wait for the deploy of this head to pass";
+    default:
+      return errorText("checks_required");
+  }
+}
 
 /**
  * What the merge box says, from what the source could tell us.
@@ -761,6 +1069,7 @@ export function mergeState(
   pull: PullFacts | null | undefined,
   mirrored = false,
   gated = false,
+  checksGated = false,
 ): MergeState {
   if (issue === undefined || pull === null || pull === undefined)
     return "unknown";
@@ -774,7 +1083,9 @@ export function mergeState(
   if (!pull.mergeable) return "conflicts";
   // Git could take it; the reviewers have not. Said after the conflict check
   // because a conflict is the more urgent of the two and only one line fits.
-  return gated ? "review_required" : "ready";
+  // The checks come after the reviewers for the same reason: a person's
+  // objection outranks a machine's.
+  return gated ? "review_required" : checksGated ? "checks_required" : "ready";
 }
 
 function drawMergeBox(
@@ -785,9 +1096,17 @@ function drawMergeBox(
   pull: PullFacts | null,
   summary: string,
   mirrored: boolean,
-  o: { gated: boolean; standing: Standing; required: boolean },
+  o: {
+    gated: boolean;
+    checksGated: boolean;
+    check: CheckSummary;
+    /** The checks row, already worded; "" draws none. */
+    checksLine: string;
+    standing: Standing;
+    required: boolean;
+  },
 ): void {
-  const state = mergeState(issue, pull, mirrored, o.gated);
+  const state = mergeState(issue, pull, mirrored, o.gated, o.checksGated);
   const tone =
     state === "merged"
       ? "merged"
@@ -795,7 +1114,9 @@ function drawMergeBox(
         ? "success"
         : state === "conflicts" || state === "closed"
           ? "danger"
-          : state === "mirrored" || state === "review_required"
+          : state === "mirrored" ||
+              state === "review_required" ||
+              state === "checks_required"
             ? "attn"
             : "default";
   // Where it is going belongs on the frame, not on a body row: the box is
@@ -824,9 +1145,20 @@ function drawMergeBox(
                 ? o.standing.blocking.length > 0
                   ? `Changes requested by ${o.standing.blocking.join(", ")}`
                   : "Needs an approval of this head before it can merge"
-                : `Ready to merge · ${summary}`;
+                : state === "checks_required"
+                  ? o.check.state === "failed"
+                    ? "The deploy of this head failed; it cannot merge until one passes"
+                    : o.check.state === "running" || o.check.state === "queued"
+                      ? "Waiting for the deploy of this head to pass"
+                      : "Needs a passing deploy of this head before it can merge"
+                  : `Ready to merge · ${summary}`;
   const x = badge(s, inner.x, inner.y, c, {
-    text: state === "review_required" ? "review" : state,
+    text:
+      state === "review_required"
+        ? "review"
+        : state === "checks_required"
+          ? "checks"
+          : state,
     variant: tone as "success",
   });
   s.text(
@@ -840,13 +1172,32 @@ function drawMergeBox(
   // something to say — a box with an empty second line reads as a box that
   // lost something.
   const verdicts = standingText(o.standing, o.required);
-  if (verdicts !== "" && inner.h > 1)
+  let y = inner.y + 1;
+  if (verdicts !== "" && y < inner.y + inner.h) {
     s.text(
       inner.x,
-      inner.y + 1,
+      y,
       truncate(verdicts, inner.w),
       style(o.standing.blocking.length > 0 ? c.danger : c.mutedFg, c.card),
       inner.x + inner.w,
     );
+    y++;
+  }
+  // The checks, under the verdicts: a deploy's outcome in the tone a run
+  // wears everywhere else, with its summary — the failed one names why.
+  if (o.checksLine !== "" && y < inner.y + inner.h) {
+    const checkTone = runTone(
+      o.check.state === "none" ? "queued" : o.check.state,
+    );
+    s.text(
+      inner.x,
+      y,
+      truncate(o.checksLine, inner.w),
+      style(
+        checkTone === undefined ? c.mutedFg : toneColor(c, checkTone),
+        c.card,
+      ),
+      inner.x + inner.w,
+    );
+  }
 }
-

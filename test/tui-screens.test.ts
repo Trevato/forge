@@ -461,7 +461,8 @@ describe("the terminal UI, against a real forge", () => {
     await h.settle();
     await openRepo(h, "doomed");
     await h.press(",");
-    await h.press("tab", "tab", "tab"); // General → Labels → Webhooks → Danger
+    // General → Labels → Webhooks → App → Crew → Danger
+    await h.press("tab", "tab", "tab", "tab", "tab");
     expect(h.text()).toContain("Danger");
     await h.press("X");
     await h.typeText("wrong");

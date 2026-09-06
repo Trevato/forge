@@ -133,6 +133,42 @@ import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { listBranches } from "../git/branches.ts";
+import {
+  appView,
+  disableApp,
+  enableApp,
+  newApp,
+  openEnvUrl,
+  redeployEnv,
+  stopEnv,
+  updateAppSettings,
+  type AppSettingsInput,
+} from "../actions/apps.ts";
+import {
+  cancelRepoRun,
+  getRepoRun,
+  listRepoRuns,
+  runLog,
+} from "../actions/runs.ts";
+import {
+  addToCrew,
+  createAgent,
+  deleteAgent,
+  getAgentView,
+  listAllAgents,
+  listCrew,
+  removeFromCrew,
+  updateAgent,
+} from "../actions/crew.ts";
+import { assignIssue } from "../actions/issues.ts";
+import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
+import { isEnvName } from "../apps/data.ts";
+import type { Agent } from "../core/agents.ts";
+import { listApps, type AppRecord } from "../core/apps.ts";
+import { listAssignedTo } from "../core/issues.ts";
+import { checksForHead, getRun, isTerminal, type Run } from "../core/runs.ts";
+import { resolveOid } from "../git/merge.ts";
+import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Result } from "../kernel/result.ts";
@@ -550,6 +586,52 @@ function repoQuery(ctx: Ctx) {
   };
 }
 
+/** An app as the API returns it, with what is running when a runtime is up. */
+function appJson(
+  record: AppRecord,
+  repo: Repo,
+  runtime: AppsRuntime | undefined,
+) {
+  return {
+    ...record,
+    repo: { owner: repo.ownerName, name: repo.name },
+    url: runtime?.urlFor(record, "production") ?? null,
+    serving: runtime !== undefined,
+    environments: runtime?.status(record) ?? [],
+  };
+}
+
+function appPatch(input: Record<string, unknown>): AppSettingsInput {
+  return {
+    ...(typeof input.slug === "string" ? { slug: input.slug } : {}),
+    ...(input.access === "public" || input.access === "private"
+      ? { access: input.access }
+      : {}),
+    ...(input.previewData === "copy" || input.previewData === "empty"
+      ? { previewData: input.previewData }
+      : {}),
+  };
+}
+
+function agentJson(agent: Agent) {
+  return {
+    username: agent.user.username,
+    displayName: agent.user.displayName,
+    model: agent.model,
+    brief: agent.brief,
+    budgetUsd: agent.budgetUsd,
+    createdAt: agent.createdAt,
+  };
+}
+
+/** The live head of a pull — the branch tip, or the snapshot for a fork's. */
+async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
+  const ref = pull.crossRepo
+    ? `refs/pull/${pull.number}/head`
+    : `refs/heads/${pull.headBranch}`;
+  return (await resolveOid(dirOf(ctx, repo), ref)) ?? pull.headOid;
+}
+
 function positiveInt(raw: string | undefined): number | undefined {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : undefined;
@@ -962,6 +1044,9 @@ export function apiRoutes(router: Router<Handler>): void {
         : {}),
       ...(typeof input.requireReview === "boolean"
         ? { requireReview: input.requireReview }
+        : {}),
+      ...(typeof input.requireChecks === "boolean"
+        ? { requireChecks: input.requireChecks }
         : {}),
       ...(typeof input.description === "string"
         ? { description: input.description }
@@ -2240,6 +2325,407 @@ export function apiRoutes(router: Router<Handler>): void {
     const pinned = pinRepo(ctx.app, ctx.auth.user, repo);
     if (!pinned.ok) return respondAccess(pinned.error, 404);
     return json({ pinned: true });
+  });
+
+  // ---- apps, runs, and the crew (docs/APPS.md) ----
+
+  router.add("GET", "/api/v1/apps", (ctx) => {
+    const records = listApps(ctx.app.db);
+    const repos = getReposByIds(
+      ctx.app.db,
+      records.map((a) => a.repoId),
+    );
+    const runtime = appsRuntime(ctx.app);
+    const items = [];
+    for (const record of records) {
+      const repo = repos.get(record.repoId);
+      if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
+      items.push(appJson(record, repo, runtime));
+    }
+    return json({ items, next_cursor: null });
+  });
+
+  router.add("POST", "/api/v1/apps", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const made = await newApp(ctx.app, ctx.auth.user, {
+      name: str(input.name),
+      ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
+      ...(typeof input.description === "string"
+        ? { description: input.description }
+        : {}),
+      ...(input.visibility === "public" || input.visibility === "private"
+        ? { visibility: input.visibility }
+        : {}),
+      ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
+    });
+    if (!made.ok) return respondAccess(made.error, 422);
+    return json(
+      {
+        repo: repoJson(ctx, made.value.repo),
+        app: appJson(made.value.app, made.value.repo, appsRuntime(ctx.app)),
+        issue: made.value.issue ? withLabels(ctx, made.value.issue) : null,
+      },
+      201,
+    );
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/app", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const view = appView(ctx.app, ctx.auth.user, repo);
+    if (!view.ok) return notFound();
+    return json(appJson(view.value.app, repo, appsRuntime(ctx.app)));
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/app", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const enabled = enableApp(ctx.app, ctx.auth.user, repo, appPatch(input));
+    if (!enabled.ok) return respondAccess(enabled.error, 422);
+    return json(appJson(enabled.value, repo, appsRuntime(ctx.app)), 201);
+  });
+
+  router.add("PATCH", "/api/v1/repos/:owner/:name/app", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const updated = updateAppSettings(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      appPatch(input),
+    );
+    if (!updated.ok) return respondAccess(updated.error, 422);
+    return json(appJson(updated.value, repo, appsRuntime(ctx.app)));
+  });
+
+  router.add("DELETE", "/api/v1/repos/:owner/:name/app", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const disabled = disableApp(ctx.app, ctx.auth.user, repo);
+    if (!disabled.ok) return respondAccess(disabled.error, 422);
+    return json({}, 200);
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/app/:env/redeploy",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const queued = await redeployEnv(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.env ?? "",
+      );
+      if (!queued.ok) return respondAccess(queued.error, 422);
+      return json({ run: queued.value ?? null }, 202);
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/app/:env/stop",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const stopped = await stopEnv(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.env ?? "",
+      );
+      if (!stopped.ok) return respondAccess(stopped.error, 422);
+      return json({}, 200);
+    },
+  );
+
+  // The URL to open an environment at. For a private app it carries a
+  // grant, so the answer is for the caller alone and is not cached.
+  router.add("GET", "/api/v1/repos/:owner/:name/app/:env/open", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const link = openEnvUrl(ctx.app, ctx.auth.user, repo, ctx.params.env ?? "");
+    if (!link.ok) return respondAccess(link.error, 422);
+    return json({ url: link.value });
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const q = ctx.url.searchParams;
+    const kind = q.get("kind");
+    const env = q.get("env");
+    const limit = Math.min(Math.max(Number(q.get("limit")) || 50, 1), 200);
+    const runs = listRepoRuns(ctx.app, ctx.auth.user, repo, {
+      ...(kind === "deploy" || kind === "agent" ? { kind } : {}),
+      ...(env !== null && isEnvName(env) ? { env } : {}),
+      ...(q.get("cursor") ? { cursor: q.get("cursor")! } : {}),
+      limit,
+    });
+    if (!runs.ok) return notFound();
+    return json(paged(runs.value, limit, (r) => r.id));
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+    return run.ok ? json(run.value) : notFound();
+  });
+
+  // The log: text, or a live tail as server-sent events (`?follow=1`, or
+  // an `Accept: text/event-stream`). Lines already written come first,
+  // then each new one as it lands; `done` carries the finished run.
+  router.add("GET", "/api/v1/repos/:owner/:name/runs/:id/log", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
+    if (!found.ok) return notFound();
+    const follow =
+      ctx.url.searchParams.get("follow") === "1" ||
+      (ctx.request.headers.get("accept") ?? "").includes("text/event-stream");
+    if (!follow) {
+      return new Response(`${found.value.lines.join("\n")}\n`, {
+        headers: {
+          "content-type": "text/plain; charset=utf-8",
+          "cache-control": "no-store",
+        },
+      });
+    }
+    const run = found.value.run;
+    return eventStream(ctx.request, (emit, close) => {
+      const controller = new AbortController();
+      // Subscribe, then read: both are synchronous, so no line can land in
+      // between — the tail is exact, not approximate.
+      subscribeRunLog(run.id, (line) => emit("line", line), controller.signal);
+      for (const line of readRunLog(ctx.app.config.dataDir, run.id).lines)
+        emit("line", line);
+      const finish = (final: Run): void => {
+        emit("done", final, final.id);
+        close();
+      };
+      const unsubscribe = ctx.app.bus.subscribe((event) => {
+        if (event.kind !== "run.finished" || event.payload["runId"] !== run.id)
+          return;
+        finish(getRun(ctx.app.db, run.id) ?? run);
+      });
+      if (isTerminal(run.state)) finish(run);
+      return () => {
+        controller.abort();
+        unsubscribe();
+      };
+    });
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/runs/:id/cancel", (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const cancelled = cancelRepoRun(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      ctx.params.id ?? "",
+    );
+    if (!cancelled.ok) return respondAccess(cancelled.error, 409);
+    return json(cancelled.value);
+  });
+
+  // The checks on a pull: the deploy runs at its current head.
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/pulls/:number/checks",
+    async (ctx) => {
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const head = await pullHeadOid(ctx, found.repo, found.pull);
+      const runs = checksForHead(ctx.app.db, found.pull.id, head);
+      const latest = runs[0];
+      return json({
+        head,
+        state: latest?.state ?? "none",
+        required: found.repo.requireChecks,
+        run: latest ?? null,
+        runs,
+      });
+    },
+  );
+
+  for (const kind of ["issues", "pulls"]) {
+    router.add(
+      "PUT",
+      `/api/v1/repos/:owner/:name/${kind}/:number/assignee`,
+      async (ctx) => {
+        const denied = requireScope(ctx, "rw");
+        if (denied) return denied;
+        const found = loadConversation(ctx);
+        if ("error" in found) return found.error;
+        const input = await body(ctx.request);
+        const name = input.assignee;
+        if (name !== null && typeof name !== "string")
+          return apiError(
+            "invalid_assignee",
+            422,
+            "assignee must be a username or null",
+          );
+        const assignee =
+          name === null || name === "" ? null : getUserByName(ctx.app.db, name);
+        if (assignee === undefined)
+          return apiError("no_such_user", 422, `no account named ${name}`);
+        const assigned = assignIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          found.issue,
+          assignee,
+        );
+        if (!assigned.ok) return respondAccess(assigned.error, 422);
+        return json(withLabels(ctx, assigned.value));
+      },
+    );
+  }
+
+  // What is on the caller: open issues and pulls assigned to them, anywhere.
+  router.add("GET", "/api/v1/user/assigned", (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const user = ctx.auth.user!;
+    const issues = listAssignedTo(ctx.app.db, user.id);
+    const repos = getReposByIds(
+      ctx.app.db,
+      issues.map((i) => i.repoId),
+    );
+    const items = [];
+    for (const issue of issues) {
+      const repo = repos.get(issue.repoId);
+      if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+      items.push({
+        ...issue,
+        repo: { owner: repo.ownerName, name: repo.name },
+      });
+    }
+    return json({ items, next_cursor: null });
+  });
+
+  router.add("GET", "/api/v1/agents", (ctx) => {
+    const agents = listAllAgents(ctx.app, ctx.auth.user);
+    if (!agents.ok) return respondAccess(agents.error, 401);
+    return json({ items: agents.value.map(agentJson), next_cursor: null });
+  });
+
+  router.add("POST", "/api/v1/agents", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const made = await createAgent(ctx.app, ctx.auth.user, {
+      username: str(input.username),
+      ...(typeof input.displayName === "string"
+        ? { displayName: input.displayName }
+        : {}),
+      ...(typeof input.model === "string" ? { model: input.model } : {}),
+      ...(typeof input.brief === "string" ? { brief: input.brief } : {}),
+      ...(typeof input.budgetUsd === "number"
+        ? { budgetUsd: input.budgetUsd }
+        : {}),
+    });
+    if (!made.ok) return respondAccess(made.error, 422);
+    return json(agentJson(made.value), 201);
+  });
+
+  router.add("GET", "/api/v1/agents/:username", (ctx) => {
+    const agent = getAgentView(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username ?? "",
+    );
+    if (!agent.ok) return respondAccess(agent.error, 404);
+    return json(agentJson(agent.value));
+  });
+
+  router.add("PATCH", "/api/v1/agents/:username", async (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const updated = updateAgent(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username ?? "",
+      {
+        ...(typeof input.model === "string" ? { model: input.model } : {}),
+        ...(typeof input.brief === "string" ? { brief: input.brief } : {}),
+        ...(typeof input.budgetUsd === "number"
+          ? { budgetUsd: input.budgetUsd }
+          : {}),
+      },
+    );
+    if (!updated.ok) return respondAccess(updated.error, 422);
+    return json(agentJson(updated.value));
+  });
+
+  router.add("DELETE", "/api/v1/agents/:username", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const removed = deleteAgent(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username ?? "",
+    );
+    if (!removed.ok) return respondAccess(removed.error, 404);
+    return json({}, 200);
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const crew = listCrew(ctx.app, ctx.auth.user, repo);
+    if (!crew.ok) return notFound();
+    return json({ items: crew.value.map(agentJson), next_cursor: null });
+  });
+
+  router.add("PUT", "/api/v1/repos/:owner/:name/crew/:username", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const added = addToCrew(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      ctx.params.username ?? "",
+    );
+    if (!added.ok) return respondAccess(added.error, 422);
+    return json(agentJson(added.value));
+  });
+
+  router.add("DELETE", "/api/v1/repos/:owner/:name/crew/:username", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const removed = removeFromCrew(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      ctx.params.username ?? "",
+    );
+    if (!removed.ok) return respondAccess(removed.error, 422);
+    return json({}, 200);
   });
 
   router.add("DELETE", "/api/v1/user/pins/:owner/:name", (ctx) => {

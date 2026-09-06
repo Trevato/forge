@@ -11,14 +11,22 @@
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
-import { getIssuesByRef, listIssues } from "../../core/issues.ts";
+import {
+  getIssuesByRef,
+  listAssignedTo,
+  listOpenAgentPullsVisibleTo,
+  type Issue,
+} from "../../core/issues.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins, pinnedRepoIds } from "../../core/pins.ts";
 import {
+  canRead,
   getReposByIds,
   listReposVisibleTo,
+  writableRepoIds,
   type Repo,
 } from "../../core/repos.ts";
+import { latestRunsForIssues } from "../../core/runs.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import {
   getUsersByIds,
@@ -32,6 +40,11 @@ import { hostOf, notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
+import {
+  eventActor,
+  eventVerb,
+  isTransientEvent,
+} from "../../design/activity.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -44,9 +57,12 @@ import {
   pager,
   repoCounts,
   row,
+  runStateBadge,
   selectField,
   time,
+  userTag,
 } from "../ui.ts";
+import { appsCard } from "./apps.ts";
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
@@ -119,47 +135,9 @@ function eventIcon(kind: string): IconName {
   if (kind.startsWith("team.") || kind.startsWith("org.")) return "users";
   if (kind.startsWith("token.") || kind.startsWith("key.")) return "key";
   if (kind.startsWith("settings.")) return "settings";
+  if (kind.startsWith("app.") || kind === "run.finished") return "rocket";
+  if (kind.startsWith("crew.")) return "bot";
   return "activity";
-}
-
-/**
- * Plain English for an event kind. The rail is read, not parsed, so this is
- * the *verb phrase alone* — the repository and the thing acted on go on the
- * second line, where they have room to be a link and to be truncated at the
- * end rather than mid-word.
- */
-function eventVerb(kind: string): string {
-  const words: Record<string, string> = {
-    push: "pushed",
-    "issue.opened": "opened an issue",
-    "issue.closed": "closed an issue",
-    "issue.reopened": "reopened an issue",
-    "issue.commented": "commented on an issue",
-    "issue.labeled": "labelled an issue",
-    "pull.opened": "opened a pull request",
-    "pull.merged": "merged a pull request",
-    "pull.closed": "closed a pull request",
-    "pull.reopened": "reopened a pull request",
-    "pull.commented": "commented on a pull request",
-    "pull.reviewed": "reviewed a pull request",
-    "repo.created": "created a repository",
-    "repo.forked": "forked a repository",
-    "repo.settings_updated": "changed repository settings",
-    "label.created": "added a label",
-    "label.updated": "edited a label",
-    "label.deleted": "removed a label",
-    "webhook.created": "added a webhook",
-    "webhook.deleted": "removed a webhook",
-    "repo.mirrored": "mirrored a repository",
-    "repo.imported": "imported issues and pulls",
-    "repo.pinned": "pinned a repository",
-    "repo.unpinned": "unpinned a repository",
-    "pull.labeled": "labelled a pull request",
-    "origin.connected": "connected an origin",
-    "origin.disconnected": "disconnected an origin",
-    "origin.needs_reauth": "needs to reconnect an origin",
-  };
-  return words[kind] ?? "acted on this repository";
 }
 
 /** Which conversation, if any, an event is about — for one grouped read. */
@@ -189,7 +167,7 @@ function eventSubject(
     const issue = issues.get(issueKey(ref.repoId, ref.number));
     return issue ? `#${ref.number} ${issue.title}` : `#${ref.number}`;
   }
-  for (const key of ["name", "url", "parent"] as const) {
+  for (const key of ["name", "url", "parent", "summary"] as const) {
     const value = event.payload[key];
     if (typeof value === "string" && value !== "") return value;
   }
@@ -218,7 +196,11 @@ function activityRail(
   // The visibility rule lives in the query, so this is the twelve most recent
   // things *this viewer* can see — not the twelve newest events in the forge
   // filtered down to however few of them happened to be visible.
-  const events = listEventsVisibleTo(db, user, { limit: 12 });
+  // A run being queued or started is a moment, not a fact; the rail shows
+  // what came of it. Read a little past twelve so the cut keeps its size.
+  const events = listEventsVisibleTo(db, user, { limit: 24 })
+    .filter((e: ForgeEvent) => !isTransientEvent(e.kind))
+    .slice(0, 12);
   const byId = getReposByIds(
     db,
     events.map((e: ForgeEvent) => e.repoId ?? "").filter(Boolean),
@@ -266,6 +248,8 @@ function activityRail(
         // someone doing it here. The glyph is the only honest way to say so
         // without a second line of prose on every row.
         const viaOrigin = event.payload["via"] === "origin";
+        // A deploy with no actor is the forge's own doing, and says so.
+        const who = eventActor(event, actor?.username);
         return row({
           href: `/${where}`,
           lead: icon(
@@ -273,10 +257,9 @@ function activityRail(
               ? repo.origin.kind
               : eventIcon(event.kind),
           ),
-          title: html`<strong>${actor?.username ?? "someone"}</strong>
-            ${eventVerb(event.kind)}`,
+          title: html`<strong>${who}</strong> ${eventVerb(event)}`,
           meta: html`${where}${subject !== "" ? html` · ${subject}` : null}`,
-          titleAttr: `${actor?.username ?? "someone"} ${eventVerb(event.kind)}`,
+          titleAttr: `${who} ${eventVerb(event)}`,
           trail: time(event.createdAt),
         });
       })}
@@ -380,6 +363,121 @@ function downloadsCard(ctx: Ctx, user: User): Html {
     ],
     { head },
   );
+}
+
+/**
+ * The inbox (docs/APPS.md): pulls the crew opened that are waiting on a
+ * person, and whatever is assigned to the viewer. Both are absent when
+ * empty — a card saying "nothing" is a zero drawn, and the absence carries
+ * the same information — so a quiet forge opens on its repositories.
+ */
+function inbox(ctx: Ctx, user: User): Html {
+  const needs = needsYouCard(ctx, user);
+  const mine = onYouCard(ctx, user);
+  if (needs === undefined && mine === undefined) return html``;
+  return html`<div class="stack mb">${needs ?? null} ${mine ?? null}</div>`;
+}
+
+const threadPath = (repo: Repo, issue: Issue): string =>
+  `/${repo.ownerName}/${repo.name}/${issue.kind === "pull" ? "pulls" : "issues"}/${issue.number}`;
+
+/**
+ * Open pulls the crew opened, in repositories the viewer can write — the
+ * ones waiting on a review only a person can give. Visibility is in the
+ * query; write access is checked once per distinct repository here. The
+ * check beside each is the latest deploy of that pull, one grouped read.
+ */
+function needsYouCard(ctx: Ctx, user: User): Html | undefined {
+  const db = ctx.app.db;
+  const pulls = listOpenAgentPullsVisibleTo(db, user, 25);
+  if (pulls.length === 0) return undefined;
+  const repos = getReposByIds(
+    db,
+    pulls.map((pull) => pull.repoId),
+  );
+  // Write access for every repository at once — one query, like visibility.
+  const mayWrite = writableRepoIds(db, user, [...repos.keys()]);
+  const writable = new Map<string, Repo>();
+  for (const repo of repos.values())
+    if (mayWrite.has(repo.id)) writable.set(repo.id, repo);
+  const mine = pulls.filter((pull) => writable.has(pull.repoId)).slice(0, 10);
+  if (mine.length === 0) return undefined;
+  const checks = latestRunsForIssues(
+    db,
+    mine.map((pull) => pull.id),
+  );
+  return listCard(
+    mine.map((pull) => {
+      const repo = writable.get(pull.repoId)!;
+      const check = checks.get(pull.id);
+      return row({
+        href: threadPath(repo, pull),
+        nav: true,
+        state: "open",
+        lead: icon("pull"),
+        title: pull.title,
+        titleAttr: pull.title,
+        meta: html`${repo.ownerName}/${repo.name} #${pull.number} ·
+        ${userTag(pull.authorName)} opened ${time(pull.createdAt)}`,
+        trail: html`${check === undefined
+          ? html`<span class="badge verdict-stale"
+              >${icon("clock")}No checks</span
+            >`
+          : runStateBadge(check.state, check.kind)}`,
+      });
+    }),
+    {
+      head: html`${icon("eye")}
+        <h2>Needs you</h2>
+        <span class="muted small"
+          >pull requests from the crew, waiting on a review</span
+        >`,
+    },
+  );
+}
+
+/** Open issues and pulls assigned to the viewer, anywhere they can see. */
+function onYouCard(ctx: Ctx, user: User): Html | undefined {
+  const db = ctx.app.db;
+  const assigned = listAssignedTo(db, user.id, 20);
+  if (assigned.length === 0) return undefined;
+  const repos = getReposByIds(
+    db,
+    assigned.map((issue) => issue.repoId),
+  );
+  // `listAssignedTo` has no visibility filter of its own (an assignment can
+  // outlive the access that made it), so each repo needs a real `canRead`.
+  // Checking it straight would cost one query per row for any repo the
+  // viewer does not own outright — `canRead` resolves org ownership from
+  // the database. `listReposVisibleTo` answers the common case with one
+  // query for the whole page; `canRead` only runs for the rare repo it
+  // did not reach (its own cap), so the cost stays flat as rows grow.
+  const visible = new Set(
+    listReposVisibleTo(db, user, { limit: 200 }).map((repo) => repo.id),
+  );
+  const rows: Html[] = [];
+  for (const issue of assigned) {
+    const repo = repos.get(issue.repoId);
+    if (!repo) continue;
+    if (!visible.has(repo.id) && !canRead(db, repo, user)) continue;
+    rows.push(
+      row({
+        href: threadPath(repo, issue),
+        nav: true,
+        state: "open",
+        lead: icon(issue.kind === "pull" ? "pull" : "issue"),
+        title: issue.title,
+        titleAttr: issue.title,
+        meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
+        ${time(issue.updatedAt)}`,
+      }),
+    );
+  }
+  if (rows.length === 0) return undefined;
+  return listCard(rows, {
+    head: html`${icon("user")}
+      <h2>On you</h2>`,
+  });
 }
 
 function orgsCard(ctx: Ctx, user: User): Html {
@@ -502,6 +600,7 @@ function dashboard(ctx: Ctx, user: User): Html {
 
   return html`<div class="dash">
     <div>
+      ${inbox(ctx, user)}
       ${pageHead("Your repositories", {
         actions: btn("New repository", {
           href: "/new",
@@ -520,7 +619,8 @@ function dashboard(ctx: Ctx, user: User): Html {
       })}
     </div>
     <aside class="stack">
-      ${rail.body} ${downloadsCard(ctx, user)} ${orgsCard(ctx, user)}
+      ${appsCard(ctx)} ${rail.body} ${downloadsCard(ctx, user)}
+      ${orgsCard(ctx, user)}
     </aside>
     ${liveMount({
       repo: rail.watch[0] ?? "",

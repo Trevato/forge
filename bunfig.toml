@@ -1,0 +1,4 @@
+# The suite lives in test/. Without a root, `bun test` also walks `data/` —
+# where a running forge keeps the crew's clones, each with its own tests.
+[test]
+root = "test"

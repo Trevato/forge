@@ -8,16 +8,24 @@
  * is what makes a long thread skimmable.
  */
 
+import { listCrew } from "../../actions/crew.ts";
 import {
+  assignIssue,
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { listEvents } from "../../core/events.ts";
 import type { Issue, Label } from "../../core/issues.ts";
 import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
-import { canWrite, type Repo } from "../../core/repos.ts";
+import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import type { IconName as Glyph } from "../icons.ts";
-import { getUsersByIds } from "../../core/users.ts";
+import {
+  getUserById,
+  getUserByName,
+  getUsersByIds,
+  listPeople,
+  type User,
+} from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { field, readForm } from "../form.ts";
@@ -401,6 +409,145 @@ export function labelsCard(
         <h2>Labels</h2>`,
     },
   );
+}
+
+// ---- assignee ----
+
+/**
+ * Who could be put on this thread: nobody, then the people on this forge
+ * who can see the repository, then the crew — which is exactly the set of
+ * agents `assignIssue` will accept. People are read bounded and by name;
+ * the author and whoever is on it now are offered whatever the bound, so
+ * the select can never fail to show the current answer. Each candidate is
+ * checked with `canRead`, the same rule the action applies.
+ */
+function assigneeCandidates(ctx: Ctx, repo: Repo, issue: Issue): User[] {
+  const db = ctx.app.db;
+  const seen = new Map<string, User>();
+  const offer = (user: User | undefined): void => {
+    if (
+      user !== undefined &&
+      user.kind !== "org" &&
+      !seen.has(user.id) &&
+      canRead(db, repo, user)
+    )
+      seen.set(user.id, user);
+  };
+  for (const person of listPeople(db, { limit: 200 })) offer(person);
+  offer(getUserById(db, issue.authorId));
+  if (issue.assigneeId !== null) offer(getUserById(db, issue.assigneeId));
+  const crew = listCrew(ctx.app, ctx.auth.user, repo);
+  if (crew.ok) for (const agent of crew.value) offer(agent.user);
+  return [...seen.values()].sort((a, b) =>
+    a.kind === b.kind
+      ? a.username.localeCompare(b.username)
+      : a.kind === "agent"
+        ? 1
+        : -1,
+  );
+}
+
+/**
+ * The assignee rail: who is on it, and — for a writer — the select that
+ * changes that. Assigning an agent is what starts it working
+ * (docs/APPS.md), so the agents are listed last and marked, never mixed in
+ * with people as though the choice were the same kind of choice.
+ */
+export function assigneeCard(
+  ctx: Ctx,
+  repo: Repo,
+  issue: Issue,
+  action: string,
+): Html {
+  const mayEdit = canWrite(ctx.app.db, repo, ctx.auth.user);
+  const current =
+    issue.assigneeName === null
+      ? html`<p class="muted small">Nobody yet.</p>`
+      : html`<p class="bar">
+          ${when(issue.assigneeIsAgent, () => icon("bot"))}
+          ${userLink(issue.assigneeName)}
+        </p>`;
+  if (!mayEdit)
+    return card(current, {
+      head: html`${icon("user")}
+        <h2>Assignee</h2>`,
+    });
+  const candidates = assigneeCandidates(ctx, repo, issue);
+  return card(
+    html`${current}
+      <form method="post" action="${action}" class="edit-row mt">
+        <label class="sr-only" for="f-assignee">Assign to</label>
+        <select class="input" id="f-assignee" name="assignee">
+          <option
+            value=""
+            ${issue.assigneeId === null ? raw("selected") : null}
+          >
+            Nobody
+          </option>
+          ${candidates.map(
+            (user) =>
+              html`<option
+                value="${user.username}"
+                ${user.id === issue.assigneeId ? raw("selected") : null}
+              >
+                ${user.username}${user.kind === "agent" ? " (agent)" : ""}
+              </option>`,
+          )}
+        </select>
+        ${btn("Assign", { size: "sm" })}
+      </form>`,
+    {
+      head: html`${icon("user")}
+        <h2>Assignee</h2>`,
+    },
+  );
+}
+
+/** POST …/:number/assignee — put someone on it, or take them off. */
+export async function assigneeSubmit(
+  ctx: Ctx,
+  kind: "issue" | "pull",
+): Promise<Response> {
+  const found = threadContext(ctx, kind);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+
+  const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const name = field(form, "assignee").trim();
+  const assignee = name === "" ? null : getUserByName(ctx.app.db, name);
+  if (assignee === undefined)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: `There is no account named ${name}.`,
+    });
+  const assigned = assignIssue(
+    ctx.app,
+    ctx.auth.user,
+    found.repo,
+    found.issue,
+    assignee,
+  );
+  if (!assigned.ok) {
+    const words: Record<string, string> = {
+      assignee_cannot_read: `${name} cannot see this repository, so cannot be assigned to it.`,
+      agent_not_on_crew: `${name} is not on this repository's crew. Add it under Settings → Crew first.`,
+      forbidden: "You need write access to assign.",
+    };
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: words[assigned.error] ?? "That could not be assigned.",
+    });
+  }
+  return flashTo(ctx, dest, {
+    message:
+      assignee === null
+        ? "Unassigned."
+        : assignee.kind === "agent"
+          ? `Assigned to ${assignee.username}. It starts working on it now.`
+          : `Assigned to ${assignee.username}.`,
+  });
 }
 
 // ---- shared mutations ----

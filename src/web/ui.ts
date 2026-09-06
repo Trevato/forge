@@ -10,6 +10,8 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
+import type { EnvState } from "../apps/runtime.ts";
+import type { RunKind, RunState } from "../core/runs.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
 
@@ -198,6 +200,54 @@ export function verdictBadge(
       >${icon(look.icon)}${look.label}</span
     >`;
   return badge(look.label, { icon: look.icon, tone: look.tone });
+}
+
+/**
+ * A run's state (docs/APPS.md): the one badge a check wears on a pull, a
+ * row wears in a list, and a log page wears in its head. A finished deploy
+ * "passed" because it is a check; a finished agent run is simply "done".
+ */
+export function runStateBadge(state: RunState, kind: RunKind = "deploy"): Html {
+  switch (state) {
+    case "queued":
+      return badge("Queued", { icon: "clock", variant: "secondary" });
+    case "running":
+      return badge("Running", { icon: "loader", tone: "attn" });
+    case "ok":
+      return badge(kind === "agent" ? "Done" : "Passed", {
+        icon: "check",
+        tone: "success",
+      });
+    case "failed":
+      return badge("Failed", { icon: "x", tone: "danger" });
+    case "cancelled":
+      return badge("Cancelled", { icon: "ban", variant: "outline" });
+  }
+}
+
+/** An environment's state: what production, or a preview, is doing now. */
+export function envStateBadge(state: EnvState): Html {
+  switch (state) {
+    case "stopped":
+      return badge("Stopped", { icon: "square", variant: "outline" });
+    case "deploying":
+      return badge("Deploying", { icon: "loader", tone: "attn" });
+    case "running":
+      return badge("Running", { icon: "play", tone: "success" });
+    case "failed":
+      return badge("Failed", { icon: "alert", tone: "danger" });
+  }
+}
+
+/** The tone an environment's state gives a `dot()` — a list's one-glance answer. */
+export function envTone(state: EnvState | undefined): Tone {
+  return state === "running"
+    ? "success"
+    : state === "deploying"
+      ? "attn"
+      : state === "failed"
+        ? "danger"
+        : "default";
 }
 
 export interface LabelLike {

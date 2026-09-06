@@ -42,9 +42,7 @@ export function liveMount(config: LiveConfig): Html {
       id="live"
       hidden
       data-repo="${config.repo}"
-      data-repos="${(config.repos ?? [])
-        .slice(0, MAX_LIVE_STREAMS)
-        .join(" ")}"
+      data-repos="${(config.repos ?? []).slice(0, MAX_LIVE_STREAMS).join(" ")}"
       data-thread="${config.thread ?? ""}"
       data-number="${config.number ?? ""}"
       data-last="${config.lastCommentId ?? ""}"
@@ -85,6 +83,14 @@ export const liveClientJs = /* js */ `
 
   function relevant(data) {
     if (!thread || !data || !data.payload) return false;
+    // A run's payload carries the environment it deployed ('pull-<n>' or
+    // 'production'), never the pull's own 'number' field, so the generic
+    // check below never fires for it. A pull's checks are the deploy runs
+    // of its own preview, so match on that instead — and only that, so a
+    // run on a different pull (or on production) never flips this page.
+    if (thread === 'pull' && data.kind.indexOf('run.') === 0) {
+      return data.payload.env === 'pull-' + number;
+    }
     if (String(data.payload.number) !== String(number)) return false;
     return data.kind.indexOf(thread) === 0;
   }
@@ -128,6 +134,9 @@ export const liveClientJs = /* js */ `
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
     'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
+    'run.queued', 'run.started', 'run.finished',
+    'app.created', 'app.updated', 'app.deleted', 'app.stopped',
+    'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
   ];
   var extra = (cfg.getAttribute('data-repos') || '').split(' ').filter(Boolean);
   var watching = [repo].concat(extra).filter(function (r, i, all) {

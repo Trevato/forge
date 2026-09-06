@@ -38,6 +38,7 @@ import {
   ago,
   runAsync,
 } from "./common.ts";
+import { crewScreen } from "./crew.ts";
 import { originsScreen } from "./origins.ts";
 
 const TABS = ["Profile", "Tokens", "SSH keys"] as const;
@@ -58,6 +59,9 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
   const screen: Screen = {
     title: "Account",
     get keys() {
+      // The crew is a forge admin's to manage, so the key is only there for
+      // one — a non-admin would land on a screen that says no to everything.
+      const crew = f.user?.isAdmin === true ? [binding(["c"], "crew")] : [];
       if (tab === 0)
         return [
           binding(["tab"], "next tab"),
@@ -65,6 +69,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           binding(["e"], "email"),
           binding(["p"], "password"),
           binding(["o"], "origins"),
+          ...crew,
         ];
       if (tab === 1)
         return [
@@ -72,12 +77,14 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           binding(["n"], "new token"),
           binding(["D"], "revoke"),
           binding(["o"], "origins"),
+          ...crew,
         ];
       return [
         binding(["tab"], "next tab"),
         binding(["n"], "add key"),
         binding(["D"], "delete key"),
         binding(["o"], "origins"),
+        ...crew,
       ];
     },
     load() {
@@ -97,7 +104,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           ["username", f.user.username],
           ["display name", f.user.displayName || "(none)"],
           ["email", f.user.email],
-          ["role", f.user.isAdmin ? "site admin" : "user"],
+          ["role", f.user.isAdmin ? "site admin — c manages the crew" : "user"],
           ["joined", ago(f.user.createdAt)],
         ]);
         return;
@@ -145,6 +152,10 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
       // hang off this screen from every tab rather than becoming a fourth.
       if (e.key === "o") {
         ctx.push(originsScreen(f, ctx));
+        return true;
+      }
+      if (e.key === "c" && f.user?.isAdmin === true) {
+        ctx.push(crewScreen(f, ctx));
         return true;
       }
       if (tab === 0) return profileKey(e);

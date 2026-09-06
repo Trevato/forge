@@ -15,6 +15,7 @@ import {
   resolveReviewThread,
   submitReview,
 } from "../../actions/pulls.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import {
   pullDiff,
@@ -24,6 +25,7 @@ import {
   type PullStatus,
 } from "../../core/pulls.ts";
 import { getPull } from "../../core/pulls.ts";
+import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
   byAnchor,
@@ -79,6 +81,7 @@ import {
   type Tone,
 } from "../ui.ts";
 import {
+  assigneeCard,
   composer,
   conversation,
   labelsCard,
@@ -88,7 +91,9 @@ import {
   threadFragment,
   type Entry,
 } from "./thread.ts";
+import { previewCard } from "./apps.ts";
 import { pullState } from "./pulls.ts";
+import { crewActivityCard } from "./runs.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -193,10 +198,54 @@ function reviewsChip(
   </p>`;
 }
 
+// ---- the checks ----
+
+/**
+ * The checks line: where the deploy of this head stands (docs/APPS.md, rule
+ * 4). Rendered whenever the repository runs as an app or requires checks —
+ * a repository with neither has no checks, and should not grow furniture
+ * for them. A run is named so the reader can go and look at its log.
+ */
+function checksLine(
+  base: string,
+  check: CheckSummary,
+  required: boolean,
+  isApp: boolean,
+): Html {
+  if (!isApp && !required && check.state === "none") return html``;
+  const run = check.run;
+  const link =
+    run === null
+      ? null
+      : html`<span class="where-sep" aria-hidden="true">·</span
+          ><a href="${base}/runs/${run.id}"
+            >deploy ${run.commitOid.slice(0, 7)}</a
+          >`;
+  const body =
+    check.state === "ok"
+      ? html`<span class="ok">${icon("check")}Checks passed</span>${link}`
+      : check.state === "failed"
+        ? html`<span class="bad">${icon("x")}Checks failed</span>${link}`
+        : check.state === "running" || check.state === "queued"
+          ? html`<span class="now">${icon("loader")}Checks ${check.state}</span
+              >${link}`
+          : check.state === "cancelled"
+            ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
+            : html`<span>${icon("clock")}No checks on this head yet</span>`;
+  return html`<p class="checks-line">
+    ${body}${when(
+      required,
+      () =>
+        html`<span class="where-sep" aria-hidden="true">·</span
+          ><span>a passing deploy is required</span>`,
+    )}
+  </p>`;
+}
+
 // ---- the merge box ----
 
 /**
- * Five states, five cards. Every one names the situation, gives the reason,
+ * Six states, six cards. Every one names the situation, gives the reason,
  * and offers exactly the actions that are actually available.
  */
 function mergeBox(
@@ -206,8 +255,11 @@ function mergeBox(
   status: PullStatus,
   mayMerge: boolean,
   by: readonly Standing[],
+  check: CheckSummary,
+  isApp: boolean,
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
+  const checks = checksLine(repoBase(repo), check, repo.requireChecks, isApp);
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}
@@ -301,7 +353,7 @@ function mergeBox(
         <div class="grow">
           <div class="merge-headline">Can't merge.</div>
           <p class="merge-sub">${reason}</p>
-          ${reviewsChip(status.reviews, by)}
+          ${reviewsChip(status.reviews, by)} ${checks}
         </div>`,
       { tone: "danger", extra: "merge-box" },
     );
@@ -327,7 +379,7 @@ function mergeBox(
         <div class="grow">
           <div class="merge-headline">Waiting on review.</div>
           <p class="merge-sub">${why}</p>
-          ${reviewsChip(status.reviews, by)}
+          ${reviewsChip(status.reviews, by)} ${checks}
         </div>
         ${when(
           mayMerge,
@@ -338,6 +390,45 @@ function mergeBox(
                 icon: "merge",
                 disabled: true,
                 title: "An approving review of this head is required first",
+              })}</span
+            >`,
+        )}`,
+      { tone: "attn", extra: "merge-box" },
+    );
+  }
+
+  // The check gate, `mergePull`'s `checks_required`: the deploy of the
+  // commit that is head right now must have passed. Read live here so the
+  // button is honest — the refusal itself happens in the merge.
+  if (repo.requireChecks && check.state !== "ok") {
+    const why =
+      check.state === "failed"
+        ? html`The deploy of this head failed. Push a fix — a passing deploy is
+          required before merging.`
+        : check.state === "running" || check.state === "queued"
+          ? html`This head is still deploying. The merge unlocks when the check
+            passes.`
+          : check.state === "cancelled"
+            ? html`The deploy of this head was cancelled. Redeploy the preview,
+              or push again.`
+            : html`There is no deploy of this head yet. Nothing merges until one
+              passes.`;
+    return card(
+      html`${icon("loader")}
+        <div class="grow">
+          <div class="merge-headline">Waiting on checks.</div>
+          <p class="merge-sub">${why}</p>
+          ${reviewsChip(status.reviews, by)} ${checks}
+        </div>
+        ${when(
+          mayMerge,
+          () =>
+            html`<span class="merge-form"
+              >${btn("Merge pull request", {
+                variant: "primary",
+                icon: "merge",
+                disabled: true,
+                title: "A passing deploy of this head is required first",
               })}</span
             >`,
         )}`,
@@ -356,7 +447,7 @@ function mergeBox(
           ${status.ahead} commit${status.ahead === 1 ? "" : "s"} will land on
           <span class="mono">${pull.baseBranch}</span>.
         </p>
-        ${reviewsChip(status.reviews, by)}
+        ${reviewsChip(status.reviews, by)} ${checks}
       </div>
       ${mayMerge
         ? html`<span class="merge-form">
@@ -585,6 +676,10 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const allLabels = listLabels(ctx.app.db, repo.id);
   const verdicts = listReviews(ctx.app.db, pull.id);
   const by = standings(ctx.app.db, pull, status.headOid);
+  // The checks are the deploy runs of the live head, read here for the same
+  // reason the review gate is: the box and the merge answer one question.
+  const check = checkSummary(ctx.app.db, pull.id, status.headOid);
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const threads = pullThreads(ctx.app, pull);
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -676,7 +771,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
         ${when(pull.crossRepo, () => badge("fork", { icon: "fork" }))}
       </div>
     </div>
-    ${mergeBox(ctx, repo, pull, status, mayMerge, by)}
+    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
     <div class="split">
       <div>
         ${talk.node}
@@ -690,8 +785,11 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>
       <aside>
+        ${when(isApp, () => previewCard(ctx, repo, pull))}
+        ${assigneeCard(ctx, repo, pull, `${thread}/assignee`)}
         ${labelsCard(ctx, repo, pull, applied, allLabels, `${thread}/labels`)}
         <div class="mt">${commitsCard}</div>
+        ${crewActivityCard(ctx, repo, pull)}
       </aside>
     </div>
     <div class="files-head">
@@ -841,6 +939,8 @@ function mergeFailure(error: AccessError | MergePullError): string {
   // dismissed a second later, or a reviewer asked for changes in between.
   if (error === "review_required")
     return "This pull request needs an approving review of its current head, and does not have one. Nothing was merged.";
+  if (error === "checks_required")
+    return "This pull request needs a passing deploy of its current head, and does not have one yet. Nothing was merged.";
   if (error === "forbidden" || error === "unauthorized")
     return "You do not have write access to this repository.";
   return "That pull request is no longer here.";

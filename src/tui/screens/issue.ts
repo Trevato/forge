@@ -19,7 +19,8 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
-import { getIssue, type Label } from "../../core/issues.ts";
+import { listRepoRuns } from "../../actions/runs.ts";
+import { getIssue, type Issue, type Label } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { IssueDetail, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -28,7 +29,7 @@ import type { Span } from "../term/screen.ts";
 import { BOLD, style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
-import { dot, labelChip } from "../ui/widgets.ts";
+import { card, dot, labelChip } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   ORIGIN_MARK,
@@ -42,9 +43,15 @@ import {
   plural,
   runAsync,
 } from "./common.ts";
+import { assignPicker, assignedText } from "./assign.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
+import { runScreen } from "./run.ts";
+import { RunList } from "./runs.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
+
+/** The crew card shows this many runs before it scrolls. */
+const CREW_ROWS = 4;
 
 export function issueScreen(
   f: Session,
@@ -60,6 +67,12 @@ export function issueScreen(
   const scroll = new Scroll();
   const composer = new Composer();
   const repo = localRepo(src);
+  /** The local row — who it is assigned to. Undefined on a live browse. */
+  let issueRow: Issue | undefined;
+  /** What the crew has done here, newest first; a card when there is any. */
+  const crew = new RunList(f);
+  /** Which pane `j`/`k`/`enter` belong to; `tab` moves between them. */
+  let focus: "thread" | "crew" = "thread";
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
   scroll.top = keep.top ?? 0;
 
@@ -71,10 +84,33 @@ export function issueScreen(
       return;
     }
     detail = read.value;
+    issueRow = repo === undefined ? undefined : getIssue(f.db, repo.id, number);
+    const runs =
+      repo === undefined || issueRow === undefined
+        ? undefined
+        : listRepoRuns(f.app, f.user, repo, {
+            kind: "agent",
+            issueId: issueRow.id,
+            limit: 50,
+          });
+    crew.set(runs !== undefined && runs.ok ? runs.value : []);
+    if (crew.runs.length === 0) focus = "thread";
     width = 0;
     ctx.invalidate();
     const listed = await src.labels();
     labels = listed.ok ? listed.value : [];
+  };
+
+  /** `a` — hand the issue to a person, an agent, or nobody. */
+  const assign = (): void => {
+    if (repo === undefined || issueRow === undefined) return;
+    assignPicker(f, ctx, screen, repo, issueRow, () => runAsync(ctx, reload));
+  };
+
+  const openRun = (): void => {
+    const run = crew.selected;
+    if (run !== undefined && repo !== undefined)
+      ctx.push(runScreen(f, ctx, repo, run.id));
   };
 
   /** The core row a write needs. Only ever reached on a local source. */
@@ -155,10 +191,16 @@ export function issueScreen(
     title: `#${number}`,
     get keys() {
       return [
-        binding(["j", "k"], "scroll"),
+        ...(crew.runs.length > 0
+          ? [binding(["tab"], "conversation/crew")]
+          : []),
+        focus === "crew"
+          ? binding(["enter"], "open the run")
+          : binding(["j", "k"], "scroll"),
         ...(mayWrite()
           ? [
               binding(["c"], "comment"),
+              binding(["a"], "assign"),
               binding(["x"], "close", {
                 disabled: detail?.issue.state === "closed",
               }),
@@ -184,11 +226,15 @@ export function issueScreen(
       const foot = composer.height();
       // The where-strip, then three rows of head: the title, the summary
       // line, and one blank so the first entry is not glued to the metadata.
-      const [strip, head, body, box] = split(area, "v", [
+      // Then the crew card, only when an agent has worked here.
+      const crewH =
+        crew.runs.length === 0 ? 0 : Math.min(crew.runs.length, CREW_ROWS) + 2;
+      const [strip, head, crewRow, body, box] = split(area, "v", [
         len(whereRows(src)),
         len(3),
+        len(crewH),
         fill(1),
-        len(Math.min(foot, Math.max(0, area.h - 7 - whereRows(src)))),
+        len(Math.min(foot, Math.max(0, area.h - 7 - crewH - whereRows(src)))),
       ]);
       whereStrip(s, strip!, c, f, src);
       const right = head!.x + head!.w;
@@ -214,7 +260,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),
@@ -229,6 +275,16 @@ export function issueScreen(
           { text: label.name, color: label.color },
           right,
         );
+      if (crewH > 0) {
+        const inner = card(s, crewRow!, c, {
+          title: `Crew · ${plural(crew.runs.length, "run")}`,
+          focused: focus === "crew",
+        });
+        crew.render(s, inner, c, ctx, focus === "crew", (run) => {
+          focus = "crew";
+          if (repo !== undefined) ctx.push(runScreen(f, ctx, repo, run.id));
+        });
+      }
 
       if (width !== body!.w) {
         width = body!.w;
@@ -262,6 +318,21 @@ export function issueScreen(
         const out = composer.key(e);
         if (out === "submit") submit();
         else if (out === "cancel") composer.close();
+        return true;
+      }
+      if (e.key === "tab" && crew.runs.length > 0) {
+        focus = focus === "thread" ? "crew" : "thread";
+        return true;
+      }
+      if (focus === "crew") {
+        if (crew.state.key(e, crew.runs.length)) return true;
+        if (e.key === "enter") {
+          openRun();
+          return true;
+        }
+      }
+      if (e.key === "a" && mayWrite()) {
+        assign();
         return true;
       }
       if (e.key === "c" && mayWrite()) {

@@ -44,11 +44,11 @@ type Section = "profile" | "password" | "tokens" | "keys";
 
 // The section list lives beside the newest page that joins it, so adding one
 // cannot leave the others pointing at a nav that has forgotten it.
-const sections = (current: Section): SettingsSection[] =>
-  accountSections(current);
+const sections = (ctx: Ctx, current: Section): SettingsSection[] =>
+  accountSections(current, { admin: ctx.auth.user?.isAdmin === true });
 
 /** One account page: the shared shell, the section nav, and this section. */
-function accountShell(
+export function accountShell(
   ctx: Ctx,
   current: Section,
   title: string,
@@ -60,7 +60,7 @@ function accountShell(
       ctx,
       title,
       body: html`<div class="page-head"><h1>${title}</h1></div>
-        ${settingsLayout(sections(current), body, "Account settings")}`,
+        ${settingsLayout(sections(ctx, current), body, "Account settings")}`,
     },
     status,
   );

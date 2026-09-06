@@ -12,6 +12,9 @@ import { isHookName, runHookClient } from "./git/hooks.ts";
 import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
+import { AppsRuntime } from "./apps/runtime.ts";
+import { startCrew } from "./crew/dispatch.ts";
+import { pruneTokens } from "./core/tokens.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -41,16 +44,67 @@ const servers = await serve(app);
 const ssh =
   sshPort > 0 ? await serveForgeSsh(app, { port: sshPort }) : undefined;
 
+// Apps and the crew (docs/APPS.md). Both are on unless FORGE_APPS=0: an app
+// is served by Host on the same port, and the crew runs agents as child
+// processes. The public URL is what apps and agents are told about the
+// forge; FORGE_URL when the operator set one, the host and port otherwise.
+const host = app.config.host ?? "localhost";
+const forgeUrl =
+  process.env.FORGE_URL?.replace(/\/+$/, "") ??
+  `http://${host}:${servers.port}`;
+const publicUrl = new URL(forgeUrl);
+const appsOn = process.env.FORGE_APPS !== "0";
+const apps = appsOn
+  ? new AppsRuntime(app, {
+      domain: process.env.FORGE_APP_DOMAIN ?? publicUrl.hostname,
+      scheme: publicUrl.protocol === "https:" ? "https" : "http",
+      publicPort:
+        publicUrl.port === ""
+          ? publicUrl.protocol === "https:"
+            ? 443
+            : 80
+          : Number(publicUrl.port),
+      forgeUrl,
+      concurrency: positive(process.env.FORGE_APPS_CONCURRENCY, 2),
+    })
+  : undefined;
+await apps?.start();
+const crew = appsOn
+  ? await startCrew(app, {
+      forgeUrl,
+      localUrl: servers.url,
+      binary: process.env.FORGE_CLAUDE ?? "claude",
+      concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, 2),
+      budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
+      runTimeoutMs: positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000,
+      allowHosts: (process.env.FORGE_CREW_ALLOW_HOSTS ?? "")
+        .split(",")
+        .map((h) => h.trim())
+        .filter((h) => h !== ""),
+      ...(process.env.FORGE_CLAUDE_CONFIG_DIR === undefined
+        ? {}
+        : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
+    })
+  : undefined;
+
 // The webhook delivery worker: poll the outbox for due deliveries. The event
 // row is the source of truth, so a missed tick only delays delivery, never
 // loses it. runDelivery never throws into the timer.
-// Expired sessions ride the same tick: a cheap DELETE, never worth a worker.
+// Expired sessions and run tokens ride the same tick: cheap DELETEs, never
+// worth a worker.
 const deliveryTimer = setInterval(() => {
   runDelivery(app.db, app.log);
   pruneSessions(app.db);
+  pruneTokens(app.db);
 }, 5_000);
 runDelivery(app.db, app.log); // sweep anything queued while we were down
 pruneSessions(app.db);
+pruneTokens(app.db);
+
+function positive(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 // The origin sync worker, on its own slower tick. Mirrors are polled, not
 // pushed to: an origin is due every ten minutes by default, and the tick only
@@ -60,6 +114,18 @@ const syncTimer = setInterval(() => runSync(app), 60_000);
 runSync(app); // one pass on boot: a forge that was down has fetching to do
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
+if (apps)
+  app.log.info("apps are up", {
+    domain: apps.options.domain,
+    example: apps.urlFor(
+      { slug: "hello" } as Parameters<typeof apps.urlFor>[0],
+      "production",
+    ),
+  });
+if (crew)
+  app.log.info(crew.ready ? "crew is ready" : "crew is not ready", {
+    detail: crew.detail,
+  });
 if (ssh)
   // The host key fingerprint on boot is what an operator compares against the
   // one their client prints on first connect.
@@ -75,8 +141,14 @@ function shutdown(): void {
   app.log.info("forge shutting down");
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
-  ssh?.stop();
-  servers.stop();
-  app.close();
-  process.exit(0);
+  // Apps and agents are child processes: stop them before the listeners,
+  // so nothing is left running with nowhere to be reached.
+  Promise.all([crew?.stop(), apps?.stop()])
+    .catch(() => {})
+    .finally(() => {
+      ssh?.stop();
+      servers.stop();
+      app.close();
+      process.exit(0);
+    });
 }

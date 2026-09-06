@@ -79,6 +79,16 @@ const PATHS = {
   github: `<path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/>`,
   forgejo: `<circle cx="6.5" cy="5" r="2.5"/><circle cx="17.5" cy="5" r="2.5"/><circle cx="12" cy="19" r="2.5"/><path d="M17.5 7.5v1.75a3 3 0 0 1-3 3h-2a2 2 0 0 0-2 2v2.25"/><path d="M6.5 7.5v6"/>`,
   gitea: `<path d="M3 8h12v7a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/><path d="M15 10h2.5a3 3 0 0 1 0 6H15"/><path d="M7 5V2.5"/><path d="M11 5V2.5"/>`,
+  // Apps, runs and the crew (docs/APPS.md).
+  rocket: `<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>`,
+  bot: `<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>`,
+  play: `<path d="M6 3 20 12 6 21 6 3z"/>`,
+  square: `<rect width="18" height="18" x="3" y="3" rx="2"/>`,
+  loader: `<path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/>`,
+  clock: `<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>`,
+  ban: `<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>`,
+  circleX: `<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>`,
+  terminal: `<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>`,
 } as const;
 
 export type IconName = keyof typeof PATHS;

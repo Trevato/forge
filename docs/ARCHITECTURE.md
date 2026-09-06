@@ -186,7 +186,7 @@ Two lessons Forgejo is still paying for, designed in up front:
   blob line _content hash_ alongside file/line, so a force-push either
   re-anchors it exactly or marks it outdated explicitly — never silently lands
   it on the wrong line (Forgejo #21113).
-- **A review verdict anchors to a commit.** An approval says "of *this*
+- **A review verdict anchors to a commit.** An approval says "of _this_
   code", so `review` stores the `commit_oid` it was passed on and the merge
   gate counts only verdicts on the current head. A push therefore dismisses a
   stale approval by construction rather than by a background job somebody has
@@ -374,7 +374,7 @@ is anchored to a row of a diff (`comment`, `kind='review'`, with the content
 hash above). A **verdict** — `approved`, `changes_requested`, `commented` —
 is anchored to a commit, and it is what decides whether a change may land.
 They are separate tables because they answer separate questions, and because
-the merge gate has to be able to ask "is there an approval *of this head*",
+the merge gate has to be able to ask "is there an approval _of this head_",
 which only a row carrying a commit id can answer.
 
 Three rules, each mechanical rather than advisory, each with an adversarial
@@ -411,6 +411,74 @@ at the origin under the connecting account's credential and imported back,
 and everyone else's verdicts arrive on the next sync. `docs/ORIGINS.md` has
 the dialect details, including the one that bites — GitHub takes the verb
 `APPROVE` and answers with the noun `APPROVED`, and Forgejo takes the noun.
+
+## Apps, runs, and the crew
+
+`docs/APPS.md` is the contract; this is why it is shaped as it is.
+
+An **app** is a repository that runs, on the forge's own port, by `Host`:
+`<slug>.<domain>` is production (the default branch), `<slug>--<n>.<domain>`
+the preview of pull `n`. The runtime (`apps/runtime.ts`) holds every
+environment in memory and rebuilds them all on boot from the default branch
+and the open pulls — a process is not state, and the same instinct that
+makes `core/reconcile.ts` rebuild the index from git makes a restart the
+recovery path rather than a special case. The app row holds what git cannot
+say (slug, access, the preview-data policy); how the app runs is
+`forge.json` at the deployed commit, read from the tree and never cached in
+a row, so a pull that changes how the app starts is previewed as it will
+run.
+
+Three decisions carry the previews. **A preview lives exactly as long as
+its pull is open**, and its data directory is created when the pull opens
+and removed when it closes — there is no orphan state to garbage-collect
+because the set of previews _is_ the set of open pulls. **Preview data is a
+copy of production's, never a view of it**: `cpSync` with `FICLONE_FORCE`
+clones blocks on APFS/XFS/btrfs and falls back to a byte copy elsewhere,
+after every SQLite database under the directory has been checkpointed (the
+pair `db` + `db-wal` copied mid-write would be two moments stitched
+together). And **a failed deploy leaves the previous deployment serving**:
+the new process must answer on its health path before the proxy switches
+to it, so a broken push never takes production down.
+
+A **run** is the durable record of work on a commit — a deploy, or an agent
+working an issue — with a log file the surfaces tail live and a row claimed
+`queued` → `running` by compare-and-swap. A deploy run _is_ the check on a
+pull; with `require_checks` on, `mergePull` reads the head's latest deploy
+run inside the merge, exactly as it reads the review verdict, and refuses
+`checks_required`. There is no separate checks table to drift from the
+runs that produced it.
+
+The **crew** is agents as users. An agent is a user with `is_agent` set (a
+flag beside `kind`, because `kind`'s CHECK cannot be widened without
+rebuilding `user` under every table that references it, and `toUser` reads
+it as `kind: "agent"` so nothing above the row knows): no password (an empty
+hash that no verifier accepts), no session, and one grant — `repo_crew`,
+read and write, never admin. Its credential is a token minted for a run
+with an expiry and deleted when the run ends; `verifyToken` checks the
+expiry on every use so a late sweep is never a late-working token. Two
+refusals make the guardrail mechanical: the pre-receive hook refuses an
+agent's push to the default branch whether or not it is protected, and
+`mergePull` refuses an agent actor. Everything the agent can do, it does
+through a pull a person merges.
+
+Work reaches an agent off the outbox with a sweep behind it, like every
+other consumer: an assignment starts a run; a person's comment, verdict, or
+line comment on the agent's pull starts a follow-up that resumes the same
+Claude Code session in the same clone; a failed deploy starts a bounded
+follow-up. The runner does the bookkeeping the agent should never have to
+get right — it pushes what was committed, opens the pull with the agent's
+last message as the description, or updates the one that exists — so the
+golden path is a property of the harness, not of the prompt. The prompt
+still writes it down (`crew/brief.ts`), because prompting the golden path
+and enforcing its edges are both cheaper than recovering from a detour.
+
+Claude Code runs as a child process the way git does — a binary on the
+host, spawned with an explicit environment (`childEnv`: path, home, the
+operator's user, a locale; never the forge's own variables), file tools
+confined to the clone, permissions passed as settings, no prompts, a spend
+budget, a deadline. Containment is the forge's, not the agent's; the agent
+is trusted to work, and the forge is built so that trust costs at most one
+run.
 
 ## Search, and where semantic search would go
 
@@ -463,6 +531,13 @@ a pull in the same call), open counts on every repo row through grouped
 queries, and one search across local repos, cached origin repos, issues and
 code.
 
-Not in v1: CI runners (the events + API surface is designed so a runner
-integrates without core changes), an AI build crew (the harness — it drives the
-API and events already built), federation, package registry.
+Shipped since: apps (a repository that runs — production on the default
+branch, a preview per open pull with its own copy of the data, served by
+hostname from the forge's own port), runs (every deploy a durable, logged
+run, and the run the check a pull's merge can require), and the crew
+(agents as accounts with nothing but a run-scoped token, dispatched off the
+outbox, working in Claude Code and proposing through pulls a person merges).
+
+Not yet: containers around app processes, custom domains and websockets
+through the proxy, a gate that lands a pull on its own once review and
+checks agree, federation, package registry.

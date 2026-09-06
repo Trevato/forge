@@ -409,6 +409,14 @@ export function card(s: Screen, r: Rect, c: Tokens, o: CardOpts = {}): Rect {
 export interface RowOpts {
   readonly title: string;
   readonly state?: RowState;
+  /**
+   * The lead dot's tone when the row is not a conversation — an environment
+   * that is running, a run that failed. `state` wins when both are given,
+   * so a pull row can never be recoloured by accident.
+   */
+  readonly tone?: Tone;
+  /** A hollow lead dot: queued, stopped, not started yet. */
+  readonly hollow?: boolean;
   readonly secondary?: string;
   readonly meta?: string;
   readonly selected?: boolean;
@@ -441,8 +449,21 @@ export function row(s: Screen, r: Rect, c: Tokens, o: RowOpts): void {
     style(c.accent, bg),
     right,
   );
-  if (o.state !== undefined)
-    x = dot(s, x, r.y, c, { tone: ROW_TONE[o.state], bg }, right) + 1;
+  const lead = o.state !== undefined ? ROW_TONE[o.state] : o.tone;
+  if (lead !== undefined || o.hollow === true)
+    x =
+      dot(
+        s,
+        x,
+        r.y,
+        c,
+        {
+          bg,
+          ...(lead === undefined ? {} : { tone: lead }),
+          ...(o.hollow === true ? { hollow: true } : {}),
+        },
+        right,
+      ) + 1;
 
   const meta = o.meta ?? "";
   const metaW = meta === "" ? 0 : displayWidth(meta) + 1;

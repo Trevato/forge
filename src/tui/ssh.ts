@@ -21,10 +21,17 @@ import { repoDir } from "../git/repos.ts";
 import { parseGitCommand, runGitService } from "../git/smart-ssh.ts";
 import { serveSsh, type SshServer, type SshSession } from "../ssh/server.ts";
 import { createForgeApp } from "./forge.ts";
+import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import type { Terminal } from "./term/terminal.ts";
 import type { TuiIdentity } from "./session.ts";
 
 const CRLF = "\r\n";
+
+/** Whether an address is this machine talking to itself. */
+export function isLoopback(address: string): boolean {
+  const a = address.replace(/^\[|\]$/g, "").replace(/^::ffff:/, "");
+  return a === "::1" || a === "localhost" || a.startsWith("127.");
+}
 
 /** A `Terminal` over an SSH channel — the whole SSH-specific surface. */
 export function sshTerminal(
@@ -33,6 +40,10 @@ export function sshTerminal(
 ): Terminal {
   let closed = false;
   return {
+    // A peer on this machine is looking at this machine's screen: `o` can
+    // open a browser for real, exactly as the stdio runner can. Any other
+    // peer gets the link and the clipboard, and honest words.
+    local: isLoopback(session.remoteAddress),
     // Getters, not a snapshot: `pty-req` may arrive after this object is
     // built, and `window-change` moves both of these mid-session.
     get term() {
@@ -149,7 +160,12 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
     try {
       const identity = identityFor(forge, session);
       if (session.kind === "shell") {
-        attachTui(forge, session, identity);
+        // The login name is decorative for the forge — any name opens the
+        // terminal UI — unless it names an app, in which case it opens
+        // that app's own terminal (docs/APPS.md).
+        const app = appForLogin(forge, session.username);
+        if (app !== undefined) attachAppTty(forge, session, identity.user, app);
+        else attachTui(forge, session, identity);
         return;
       }
       void serveGitCommand(forge, session, identity.user).catch(

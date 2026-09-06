@@ -8,6 +8,7 @@
  */
 
 import type { ForgeEvent } from "../../core/events.ts";
+import { eventVerb, isTransientEvent } from "../../design/activity.ts";
 
 export interface EventSubject {
   /** The actor's username, or a stand-in when the actor is gone. */
@@ -37,8 +38,19 @@ export interface FeedLine {
  * not something anyone reads a dashboard to find out.
  */
 function isNoise(kind: string): boolean {
-  return kind.startsWith("user.") || kind.startsWith("token.");
+  return (
+    kind.startsWith("user.") ||
+    kind.startsWith("token.") ||
+    isTransientEvent(kind)
+  );
 }
+
+/** Kinds whose words live in the shared vocabulary (docs/APPS.md events). */
+const shared = (kind: string): boolean =>
+  kind.startsWith("run.") ||
+  kind.startsWith("app.") ||
+  kind.startsWith("crew.") ||
+  kind.endsWith(".assigned");
 
 const THING: Record<string, string> = { issue: "issue", pull: "pull" };
 
@@ -88,6 +100,19 @@ export function describeEvent(
   const detail = [subject.repo ?? "", object]
     .filter((part) => part !== "")
     .join(" · ");
+
+  // Deploys, crew runs, assignments and crew changes are named once, for
+  // both surfaces; the summary a run carries is the second line.
+  if (shared(event.kind)) {
+    const summary = payload["summary"];
+    const trail =
+      typeof summary === "string" && summary !== "" ? summary : object;
+    return {
+      headline: `${who} ${eventVerb(event)}`,
+      detail: [subject.repo ?? "", trail].filter((p) => p !== "").join(" · "),
+      subject: trail,
+    };
+  }
 
   const [concept, verb] = split(event.kind);
   const noun = THING[concept];

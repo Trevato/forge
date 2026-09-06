@@ -48,6 +48,7 @@ export type IconName =
   | "milestone"
   // people and places
   | "person"
+  | "bot"
   | "org"
   | "star"
   | "pin"
@@ -99,6 +100,10 @@ const ICONS: Readonly<Record<IconName, Pair>> = {
   diff: { plain: G.comment, nerd: "\u{f440}" }, // nf-oct-diff
   milestone: { plain: G.diamond, nerd: "\u{f45d}" }, // nf-oct-milestone
   person: { plain: G.ring, nerd: "\u{f415}" }, // nf-oct-person
+  // The crew. A plain session marks an agent with the same hollow ring a
+  // person wears and says "agent" in words beside it; a Nerd Font session
+  // gets the robot, which is the one glyph that needs no caption.
+  bot: { plain: G.ring, nerd: "\u{f06a9}" }, // nf-md-robot
   org: { plain: G.diamond, nerd: "\u{f42b}" }, // nf-oct-organization
   star: { plain: G.diamond, nerd: "\u{f41e}" }, // nf-oct-star
   pin: { plain: G.dot, nerd: "\u{f435}" }, // nf-oct-pin

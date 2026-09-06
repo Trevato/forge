@@ -20,7 +20,7 @@ import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
-import { REPO_VISIBLE } from "./visibility.ts";
+import { REPO_VISIBLE, REPO_WRITABLE } from "./visibility.ts";
 import { accessAllows, orgAccess, type Access } from "./orgs.ts";
 import { getUserById, type User } from "./users.ts";
 
@@ -65,6 +65,11 @@ export interface Repo {
    * Mechanical, not advisory: `mergePull` refuses `review_required`.
    */
   readonly requireReview: boolean;
+  /**
+   * Whether a pull's current head must have a passing deploy run before it
+   * merges. Read live inside `mergePull`, like `requireReview`.
+   */
+  readonly requireChecks: boolean;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
   /** The origin this mirrors, or null for a native repo. */
@@ -87,6 +92,7 @@ interface RepoRow {
   default_branch: string;
   protect_default: number;
   require_review: number;
+  require_checks: number;
   fork_parent_id: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
@@ -114,6 +120,7 @@ function toRepo(row: RepoRow): Repo {
     defaultBranch: row.default_branch,
     protectDefault: row.protect_default === 1,
     requireReview: row.require_review === 1,
+    requireChecks: row.require_checks === 1,
     forkParentId: row.fork_parent_id,
     origin:
       row.origin_id !== null && row.origin_kind !== null
@@ -480,10 +487,24 @@ export async function deleteRepo(
 }
 
 // Permissions. A personal repo is governed by ownership; an org's repo by the
-// caller's team access in that org. Site admins see and do everything.
+// caller's team access in that org. Site admins see and do everything. An
+// agent on a repo's crew reads and writes it — and only that: the crew
+// grant stops at write, so administration stays with people.
 
 function personalOrDirect(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
+}
+
+function onCrew(db: Database, repo: Repo, user: User | undefined): boolean {
+  if (user === undefined || user.kind !== "agent") return false;
+  return (
+    db
+      .query<
+        { n: number },
+        [string, string]
+      >("SELECT 1 AS n FROM repo_crew WHERE repo_id = ?1 AND user_id = ?2")
+      .get(repo.id, user.id) !== null
+  );
 }
 
 /** Resolve org access for an org-owned repo, or "none" for a personal repo. */
@@ -504,6 +525,7 @@ export function canRead(
 ): boolean {
   if (repo.visibility === "public") return true;
   if (personalOrDirect(repo, user)) return true;
+  if (onCrew(db, repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "read");
 }
 
@@ -513,7 +535,37 @@ export function canWrite(
   user: User | undefined,
 ): boolean {
   if (personalOrDirect(repo, user)) return true;
+  if (onCrew(db, repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
+}
+
+/**
+ * Which of these repositories the user may write — `canWrite` for many rows
+ * in one query per chunk, through `REPO_WRITABLE`. The dashboard's inbox
+ * asks this for every crew pull it shows; asked per row that was a
+ * permission check, and a user lookup, per pull.
+ */
+export function writableRepoIds(
+  db: Database,
+  user: User | undefined,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  if (user === undefined) return out;
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string }, string[]>(
+        `SELECT repo.id FROM repo
+         WHERE repo.id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+           AND ${REPO_WRITABLE}`,
+      )
+      .all(user.id, ...batch);
+    for (const row of rows) out.add(row.id);
+  }
+  return out;
 }
 
 /** Admin over a repo (settings, delete, webhooks, protection). */
@@ -532,6 +584,8 @@ export interface RepoSettings {
   protectDefault?: boolean;
   /** Require an approval of a pull's current head before it may merge. */
   requireReview?: boolean;
+  /** Require a passing deploy of a pull's current head before it may merge. */
+  requireChecks?: boolean;
   /** The caller must have pointed git HEAD at this branch first. */
   defaultBranch?: string;
 }
@@ -544,7 +598,7 @@ export function updateRepoSettings(
 ): Repo {
   db.query(
     `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
-       default_branch = ?4, require_review = ?5 WHERE id = ?6`,
+       default_branch = ?4, require_review = ?5, require_checks = ?7 WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
     settings.description ?? repo.description,
@@ -552,6 +606,7 @@ export function updateRepoSettings(
     settings.defaultBranch ?? repo.defaultBranch,
     (settings.requireReview ?? repo.requireReview) ? 1 : 0,
     repo.id,
+    (settings.requireChecks ?? repo.requireChecks) ? 1 : 0,
   );
   return getRepoById(db, repo.id)!;
 }

@@ -43,6 +43,7 @@ import {
   confirmScreen,
   drawList,
   errorText,
+  later,
   openLink,
   promptScreen,
   runAsync,
@@ -62,12 +63,6 @@ import { local } from "./where.ts";
  * push by a microtask, which is exactly the ordering wanted: prompt closes,
  * next screen opens.
  */
-function later(ctx: Ctx, next: () => Screen): Promise<void> {
-  return Promise.resolve().then(() => {
-    ctx.push(next());
-  });
-}
-
 /** `codeberg.org` from `https://codeberg.org` — what a person calls a forge. */
 export function hostLabel(url: string): string {
   return URL.parse(url)?.host ?? url;

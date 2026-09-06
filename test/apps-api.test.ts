@@ -1,0 +1,451 @@
+/**
+ * The apps, runs and crew routes of the JSON API, driven the way an agent
+ * or a script drives them: tokens with scopes, JSON in and out, the log as
+ * text and as a live tail, and every floor holding.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch } from "../src/actions/repos.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { getUserByName } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
+
+describe("apps, runs and the crew over the API", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let crew: CrewHandle;
+  let admin = "";
+  let rw = "";
+
+  const api = (
+    path: string,
+    init: RequestInit & { token?: string | null } = {},
+  ) => {
+    const headers = new Headers(init.headers);
+    if (init.body !== undefined && typeof init.body === "string")
+      headers.set("content-type", "application/json");
+    const token = init.token === undefined ? admin : init.token;
+    if (token) headers.set("authorization", `Bearer ${token}`);
+    return fetch(`${servers.url}${path}`, { ...init, headers });
+  };
+  const post = (path: string, body: unknown, token?: string | null) =>
+    api(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      ...(token === undefined ? {} : { token }),
+    });
+
+  async function untilRun(where: (run: Record<string, unknown>) => boolean) {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const runs = (await (
+        await api("/api/v1/repos/alice/hello/runs")
+      ).json()) as { items: Record<string, unknown>[] };
+      const run = runs.items.find(where);
+      if (run && ["ok", "failed", "cancelled"].includes(String(run.state)))
+        return run;
+      await Bun.sleep(100);
+    }
+    throw new Error("run did not settle");
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-apps-api-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: "apps.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+    });
+    await runtime.start();
+    // A crew whose Claude Code does not exist: dispatch and the runner's
+    // bookkeeping run for real, and the run fails in words, not silence.
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: join(dataDir, "no-such-claude"),
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    await post(
+      "/api/v1/users",
+      {
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+      },
+      null,
+    );
+    const mint = async (scope: string) =>
+      (
+        (await (
+          await post(
+            "/api/v1/tokens",
+            {
+              username: "alice",
+              password: "a-good-passphrase",
+              name: scope,
+              scope,
+            },
+            null,
+          )
+        ).json()) as { token: string }
+      ).token;
+    admin = await mint("admin");
+    rw = await mint("rw");
+  }, 30_000);
+
+  afterAll(async () => {
+    await crew.stop();
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("agents: admin creates, anyone signed in lists, rw cannot create", async () => {
+    const refused = await post("/api/v1/agents", { username: "bot" }, rw);
+    expect(refused.status).toBe(403);
+    const made = await post("/api/v1/agents", {
+      username: "bot",
+      brief: "Be brief.",
+      budgetUsd: 1,
+    });
+    expect(made.status).toBe(201);
+    const agent = (await made.json()) as {
+      username: string;
+      budgetUsd: number;
+    };
+    expect(agent.username).toBe("bot");
+    expect(agent.budgetUsd).toBe(1);
+    const listed = (await (
+      await api("/api/v1/agents", { token: rw })
+    ).json()) as { items: { username: string }[] };
+    expect(listed.items.map((a) => a.username)).toEqual(["bot"]);
+    expect((await api("/api/v1/agents", { token: null })).status).toBe(401);
+    // The agent is a user of kind agent, with no way to sign in.
+    expect(getUserByName(app.db, "bot")?.kind).toBe("agent");
+    const login = await post(
+      "/api/v1/tokens",
+      { username: "bot", password: "", name: "x", scope: "rw" },
+      null,
+    );
+    expect(login.status).toBe(401);
+  });
+
+  test("POST /apps makes the app, puts the agent on the crew, assigns the first issue", async () => {
+    const made = await post(
+      "/api/v1/apps",
+      {
+        name: "hello",
+        description: "Keep notes",
+        visibility: "public",
+        agent: "bot",
+      },
+      rw,
+    );
+    expect(made.status).toBe(201);
+    const body = (await made.json()) as {
+      app: { slug: string; url: string };
+      issue: { number: number; assigneeName: string };
+    };
+    expect(body.app.slug).toBe("hello");
+    expect(body.app.url).toBe(`http://hello.apps.test:${servers.port}`);
+    expect(body.issue.number).toBe(1);
+    expect(body.issue.assigneeName).toBe("bot");
+    const crewList = (await (
+      await api("/api/v1/repos/alice/hello/crew")
+    ).json()) as { items: { username: string }[] };
+    expect(crewList.items.map((a) => a.username)).toEqual(["bot"]);
+    const apps = (await (
+      await api("/api/v1/apps", { token: null })
+    ).json()) as { items: { slug: string }[] };
+    expect(apps.items.map((a) => a.slug)).toEqual(["hello"]);
+    // The assignment dispatched an agent run. With no Claude Code to run,
+    // it cloned, branched, and failed with the reason — never silently.
+    expect(crew.ready).toBe(false);
+    const run = await untilRun((r) => r.kind === "agent");
+    expect(run.reason).toBe("assigned");
+    expect(run.state).toBe("failed");
+    expect(String(run.summary)).toContain("failed");
+    const text = await (
+      await api(`/api/v1/repos/alice/hello/runs/${run.id}/log`)
+    ).text();
+    expect(text).toContain("branch bot/1-build-hello from");
+    // The run's credential is gone with it.
+    const tokens = app.db
+      .query<
+        { n: number },
+        []
+      >("SELECT COUNT(*) AS n FROM token WHERE name LIKE 'run:%'")
+      .get();
+    expect(tokens?.n ?? 0).toBe(0);
+  }, 60_000);
+
+  test("the production run, its log as text and as a live tail", async () => {
+    const run = await untilRun((r) => r.env === "production");
+    expect(run.state).toBe("ok");
+    const view = (await (
+      await api("/api/v1/repos/alice/hello/app")
+    ).json()) as {
+      environments: { env: string; state: string; port?: number }[];
+    };
+    expect(view.environments[0]!.env).toBe("production");
+    expect(view.environments[0]!.state).toBe("running");
+    expect(view.environments[0]!.port).toBeUndefined; // never exposed as a number a client can dial past the proxy
+    const text = await (
+      await api(`/api/v1/repos/alice/hello/runs/${run.id}/log`)
+    ).text();
+    expect(text).toContain("ready:");
+    const tail = await api(
+      `/api/v1/repos/alice/hello/runs/${run.id}/log?follow=1`,
+    );
+    expect(tail.headers.get("content-type")).toContain("text/event-stream");
+    const events = await tail.text(); // the run is finished, so the stream closes after `done`
+    expect(events).toContain("event: line");
+    expect(events).toContain("event: done");
+    const one = (await (
+      await api(`/api/v1/repos/alice/hello/runs/${run.id}`)
+    ).json()) as { id: string };
+    expect(one.id).toBe(String(run.id));
+    // Cancelling a finished run is a conflict, not a silent no-op.
+    expect(
+      (await post(`/api/v1/repos/alice/hello/runs/${run.id}/cancel`, {}, rw))
+        .status,
+    ).toBe(409);
+  });
+
+  test("open, access, redeploy and stop", async () => {
+    const open = (await (
+      await api("/api/v1/repos/alice/hello/app/production/open", {
+        token: null,
+      })
+    ).json()) as { url: string };
+    expect(open.url).toBe(`http://hello.apps.test:${servers.port}`);
+    expect((await api("/api/v1/repos/alice/hello/app/nope/open")).status).toBe(
+      422,
+    );
+
+    const patched = await api("/api/v1/repos/alice/hello/app", {
+      method: "PATCH",
+      body: JSON.stringify({ access: "private" }),
+    });
+    expect(patched.status).toBe(200);
+    expect(
+      (
+        await api("/api/v1/repos/alice/hello/app", {
+          method: "PATCH",
+          body: JSON.stringify({ access: "public" }),
+          token: rw,
+        })
+      ).status,
+    ).toBe(403);
+    const anon = await api("/api/v1/repos/alice/hello/app/production/open", {
+      token: null,
+    });
+    expect(anon.status).toBe(401);
+    const granted = (await (
+      await api("/api/v1/repos/alice/hello/app/production/open")
+    ).json()) as { url: string };
+    expect(granted.url).toContain("/__forge/grant?t=");
+
+    const stopped = await post(
+      "/api/v1/repos/alice/hello/app/production/stop",
+      {},
+      rw,
+    );
+    expect(stopped.status).toBe(200);
+    const redeployed = await post(
+      "/api/v1/repos/alice/hello/app/production/redeploy",
+      {},
+      rw,
+    );
+    expect(redeployed.status).toBe(202);
+    const again = await untilRun((r) => r.reason === "redeploy");
+    expect(again.state).toBe("ok");
+  }, 90_000);
+
+  test("assignee: people and crew, and the crew grant is the only way in for an agent", async () => {
+    const cleared = await api("/api/v1/repos/alice/hello/issues/1/assignee", {
+      method: "PUT",
+      body: JSON.stringify({ assignee: null }),
+      token: rw,
+    });
+    expect(cleared.status).toBe(200);
+    expect(
+      ((await cleared.json()) as { assigneeName: string | null }).assigneeName,
+    ).toBeNull();
+    const nobody = await api("/api/v1/repos/alice/hello/issues/1/assignee", {
+      method: "PUT",
+      body: JSON.stringify({ assignee: "ghost" }),
+      token: rw,
+    });
+    expect(nobody.status).toBe(422);
+    expect(((await nobody.json()) as { error: string }).error).toBe(
+      "no_such_user",
+    );
+    expect(
+      (
+        await api("/api/v1/repos/alice/hello/crew/bot", {
+          method: "DELETE",
+          token: rw,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await api("/api/v1/repos/alice/hello/crew/bot", { method: "DELETE" }))
+        .status,
+    ).toBe(200);
+    const off = await api("/api/v1/repos/alice/hello/issues/1/assignee", {
+      method: "PUT",
+      body: JSON.stringify({ assignee: "bot" }),
+      token: rw,
+    });
+    expect(off.status).toBe(422);
+    expect(((await off.json()) as { error: string }).error).toBe(
+      "agent_not_on_crew",
+    );
+    expect(
+      (await api("/api/v1/repos/alice/hello/crew/bot", { method: "PUT" }))
+        .status,
+    ).toBe(200);
+    const on = await api("/api/v1/repos/alice/hello/issues/1/assignee", {
+      method: "PUT",
+      body: JSON.stringify({ assignee: "bot" }),
+      token: rw,
+    });
+    expect(on.status).toBe(200);
+    const mine = await api("/api/v1/repos/alice/hello/issues/1/assignee", {
+      method: "PUT",
+      body: JSON.stringify({ assignee: "alice" }),
+      token: rw,
+    });
+    expect(((await mine.json()) as { assigneeName: string }).assigneeName).toBe(
+      "alice",
+    );
+    const assigned = (await (
+      await api("/api/v1/user/assigned", { token: rw })
+    ).json()) as { items: { number: number; repo: { name: string } }[] };
+    expect(assigned.items.map((i) => `${i.repo.name}#${i.number}`)).toEqual([
+      "hello#1",
+    ]);
+  });
+
+  test("checks on a pull, and require_checks in the repo's settings", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const repo = getRepo(app.db, "alice", "hello")!;
+    const committed = await commitToBranch(app, alice, repo, {
+      branch: "change",
+      base: repo.defaultBranch,
+      message: "A change",
+      files: [{ path: "NOTE.md", content: "note\n" }],
+    });
+    expect(committed.ok).toBe(true);
+    const pull = await openPull(app, alice, repo, {
+      title: "A change",
+      baseBranch: repo.defaultBranch,
+      headBranch: "change",
+    });
+    expect(pull.ok).toBe(true);
+    if (!pull.ok || !committed.ok) return;
+    const run = await untilRun((r) => r.env === `pull-${pull.value.number}`);
+    expect(run.state).toBe("ok");
+    const checks = (await (
+      await api(`/api/v1/repos/alice/hello/pulls/${pull.value.number}/checks`)
+    ).json()) as {
+      head: string;
+      state: string;
+      required: boolean;
+      runs: unknown[];
+    };
+    expect(checks.head).toBe(committed.value.commitOid);
+    expect(checks.state).toBe("ok");
+    expect(checks.required).toBe(false);
+    const settings = await api("/api/v1/repos/alice/hello", {
+      method: "PATCH",
+      body: JSON.stringify({ requireChecks: true }),
+    });
+    expect(
+      ((await settings.json()) as { requireChecks: boolean }).requireChecks,
+    ).toBe(true);
+    expect(
+      (
+        (await (
+          await api(
+            `/api/v1/repos/alice/hello/pulls/${pull.value.number}/checks`,
+          )
+        ).json()) as { required: boolean }
+      ).required,
+    ).toBe(true);
+  }, 90_000);
+
+  test("a private repo's app is not_found to strangers; disabling removes it", async () => {
+    await api("/api/v1/repos/alice/hello", {
+      method: "PATCH",
+      body: JSON.stringify({ visibility: "private" }),
+    });
+    expect(
+      (await api("/api/v1/repos/alice/hello/app", { token: null })).status,
+    ).toBe(404);
+    expect((await api("/api/v1/apps", { token: null })).ok).toBe(true);
+    expect(
+      (
+        (await (await api("/api/v1/apps", { token: null })).json()) as {
+          items: unknown[];
+        }
+      ).items.length,
+    ).toBe(0);
+    expect(
+      (
+        await api("/api/v1/repos/alice/hello/app", {
+          method: "DELETE",
+          token: rw,
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (await api("/api/v1/repos/alice/hello/app", { method: "DELETE" })).status,
+    ).toBe(200);
+    expect((await api("/api/v1/repos/alice/hello/app")).status).toBe(404);
+    const deadline = Date.now() + 5_000;
+    while (
+      (await fetch(`${servers.url}/`, { headers: { host: "hello.apps.test" } }))
+        .status !== 404 &&
+      Date.now() < deadline
+    )
+      await Bun.sleep(50);
+    expect(
+      (await fetch(`${servers.url}/`, { headers: { host: "hello.apps.test" } }))
+        .status,
+    ).toBe(404);
+  });
+
+  test("agents: update and retire", async () => {
+    const patched = await api("/api/v1/agents/bot", {
+      method: "PATCH",
+      body: JSON.stringify({ budgetUsd: 2, model: "sonnet" }),
+    });
+    expect(
+      ((await patched.json()) as { budgetUsd: number; model: string }).model,
+    ).toBe("sonnet");
+    expect(
+      (await api("/api/v1/agents/bot", { method: "DELETE", token: rw })).status,
+    ).toBe(403);
+    expect((await api("/api/v1/agents/bot", { method: "DELETE" })).status).toBe(
+      200,
+    );
+    expect((await api("/api/v1/agents/bot")).status).toBe(404);
+  });
+});

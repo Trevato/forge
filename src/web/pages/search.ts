@@ -114,8 +114,8 @@ function issueHitRow(hit: IssueHit): Html {
     lead: icon(hit.kind === "issue" ? "issue" : "pull"),
     title: hit.title,
     titleAttr: hit.title,
-    meta: html`${where} #${hit.number} · updated ${time(hit.updatedAt)}${hit.source ===
-    "origin"
+    meta: html`${where} #${hit.number} · updated
+    ${time(hit.updatedAt)}${hit.source === "origin"
       ? html` · <span class="muted">on the origin</span>`
       : null}`,
     trail: stateBadge(hit.state),
@@ -147,7 +147,12 @@ export function markMatch(text: string, query: string): Html {
 function codeHitRow(hit: CodeHit, query: string): Html {
   const at = `/${hit.repo.owner}/${hit.repo.name}`;
   return html`<li>
-    <a class="row code-hit" data-nav tabindex="-1" href="${at}/blob/HEAD/${hit.path}#L${hit.line}">
+    <a
+      class="row code-hit"
+      data-nav
+      tabindex="-1"
+      href="${at}/blob/HEAD/${hit.path}#L${hit.line}"
+    >
       <span class="row-lead">${icon("code")}</span>
       <span class="row-main">
         <span class="row-title mono"
@@ -169,11 +174,7 @@ const KINDS: { value: SearchKind; label: string }[] = [
   { value: "code", label: "Code" },
 ];
 
-function searchHref(
-  query: string,
-  kind: SearchKind,
-  live: boolean,
-): string {
+function searchHref(query: string, kind: SearchKind, live: boolean): string {
   const params = new URLSearchParams({ q: query });
   if (kind !== "all") params.set("kind", kind);
   if (live) params.set("live", "1");
@@ -184,7 +185,13 @@ function section(
   title: string,
   kind: SearchKind,
   rows: Html[],
-  o: { truncated: boolean; emptyIcon: Parameters<typeof icon>[0]; emptyText: string; query: string; live: boolean },
+  o: {
+    truncated: boolean;
+    emptyIcon: Parameters<typeof icon>[0];
+    emptyText: string;
+    query: string;
+    live: boolean;
+  },
 ): Html {
   return html`<h2 class="mt" id="${kind}">
       ${title}${rows.length === 0
@@ -203,7 +210,9 @@ function section(
       () =>
         html`<p class="muted small mt">
           More matched than fit here.
-          <a href="${searchHref(o.query, kind, o.live)}">Show only ${title.toLowerCase()}</a>.
+          <a href="${searchHref(o.query, kind, o.live)}"
+            >Show only ${title.toLowerCase()}</a
+          >.
         </p>`,
     )}`;
 }
@@ -242,8 +251,9 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       autofocus
       data-search-input
     />
-    ${when(kind !== "all", () =>
-      html`<input type="hidden" name="kind" value="${kind}" />`,
+    ${when(
+      kind !== "all",
+      () => html`<input type="hidden" name="kind" value="${kind}" />`,
     )}
     ${when(live, () => html`<input type="hidden" name="live" value="1" />`)}
     <button class="btn" data-variant="primary" data-size="sm" type="submit">
@@ -303,49 +313,44 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   const wants = (which: SearchKind) => kind === "all" || kind === which;
 
   const body = html`${pageHead(html`Results for “${query}”`)} ${form} ${chips}
-    ${liveToggle}
-    ${when(wants("repos"), () =>
-      section(
-        "Repositories",
-        "repos",
-        found.repos.map(repoHitRow),
-        {
-          truncated: found.truncated.repos,
-          emptyIcon: "repo",
-          emptyText: "No repository matches",
-          query,
-          live,
-        },
-      ),
-    )}
-    ${when(wants("issues"), () =>
-      section(
-        "Issues and pull requests",
-        "issues",
-        found.issues.map(issueHitRow),
-        {
-          truncated: found.truncated.issues,
-          emptyIcon: "issue",
-          emptyText: "No issue or pull request matches",
-          query,
-          live,
-        },
-      ),
-    )}
-    ${when(wants("code"), () =>
-      section(
-        "Code",
-        "code",
-        found.code.map((hit) => codeHitRow(hit, query)),
-        {
-          truncated: found.truncated.code,
-          emptyIcon: "code",
-          emptyText: "No line of code matches",
-          query,
-          live,
-        },
-      ),
-    )}`;
+  ${liveToggle}
+  ${when(wants("repos"), () =>
+    section("Repositories", "repos", found.repos.map(repoHitRow), {
+      truncated: found.truncated.repos,
+      emptyIcon: "repo",
+      emptyText: "No repository matches",
+      query,
+      live,
+    }),
+  )}
+  ${when(wants("issues"), () =>
+    section(
+      "Issues and pull requests",
+      "issues",
+      found.issues.map(issueHitRow),
+      {
+        truncated: found.truncated.issues,
+        emptyIcon: "issue",
+        emptyText: "No issue or pull request matches",
+        query,
+        live,
+      },
+    ),
+  )}
+  ${when(wants("code"), () =>
+    section(
+      "Code",
+      "code",
+      found.code.map((hit) => codeHitRow(hit, query)),
+      {
+        truncated: found.truncated.code,
+        emptyIcon: "code",
+        emptyText: "No line of code matches",
+        query,
+        live,
+      },
+    ),
+  )}`;
   return page({ ctx, title: `Search · ${query}`, body });
 }
 
@@ -440,6 +445,26 @@ const DESTRUCTIVE: {
       verb: "Delete team",
       title: "Delete this team?",
       detail: `Its members lose whatever access it granted them in ${m[1]}. The accounts themselves are untouched.`,
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/disable$/,
+    describe: (m) => ({
+      verb: "Stop running as an app",
+      title: `Stop running ${m[1]}/${m[2]} as an app?`,
+      detail:
+        "Production and every preview stop, and their data directories and checkouts are removed from disk. The repository and its code are untouched. Run it as an app again later and it starts from empty data.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/settings\/crew\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Retire agent",
+      title: `Retire ${decodeURIComponent(m[1] ?? "")}?`,
+      detail:
+        "Its tokens are destroyed and it leaves every crew it is on, so nothing can act as it again. Pull requests and comments it wrote stay, under its name. This cannot be undone.",
       phrase: "",
     }),
   },

@@ -21,6 +21,23 @@ export const REPO_VISIBLE = `(
     SELECT team.org_id FROM team
     JOIN team_member ON team_member.team_id = team.id
     WHERE team_member.user_id = ?1)
+  OR repo.id IN (SELECT repo_crew.repo_id FROM repo_crew WHERE repo_crew.user_id = ?1)
+  OR EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
+)`;
+
+/**
+ * Repos `?1` may write, as a boolean expression over a `repo` row — the SQL
+ * twin of `canWrite`, for the lists that must answer "which of these can I
+ * push to" for fifty rows without fifty permission checks. Ownership, site
+ * admin, a team with write or admin in the owning org, or the crew grant.
+ */
+export const REPO_WRITABLE = `(
+  repo.owner_id = ?1
+  OR repo.owner_id IN (
+    SELECT team.org_id FROM team
+    JOIN team_member ON team_member.team_id = team.id
+    WHERE team_member.user_id = ?1 AND team.permission IN ('write','admin'))
+  OR repo.id IN (SELECT repo_crew.repo_id FROM repo_crew WHERE repo_crew.user_id = ?1)
   OR EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
 )`;
 

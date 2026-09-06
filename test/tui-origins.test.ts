@@ -461,7 +461,12 @@ describe("origins in the terminal", () => {
       expect(h.terminal.takeOutput()).toContain(
         `]52;c;${Buffer.from("https://example.invalid/device", "utf8").toString("base64")}`,
       );
-      expect(h.text()).toContain("copied — cmd-click the link to open it");
+      // …and the link dialog shows the address plain, mouse released, so it
+      // can be selected by hand where OSC 52 is not honoured.
+      expect(h.text()).toContain("Link");
+      expect(h.text()).toContain("https://example.invalid/device");
+      await h.press("esc");
+      expect(h.text()).not.toContain("Select the address");
       await h.press("esc");
     } finally {
       delete process.env.FORGE_GITHUB_CLIENT_ID;

@@ -36,6 +36,15 @@ export interface Issue {
   readonly originAuthor: string | null;
   /** The canonical URL at the origin, for "view at source". */
   readonly originUrl: string | null;
+  /**
+   * Who is on it — one person or agent, or nobody. Assigning an agent is
+   * what starts it working (docs/APPS.md), so this is a dispatch, not a
+   * decoration.
+   */
+  readonly assigneeId: string | null;
+  readonly assigneeName: string | null;
+  /** Whether the assignee is a crew member. */
+  readonly assigneeIsAgent: boolean;
 }
 
 interface IssueRow {
@@ -53,11 +62,16 @@ interface IssueRow {
   closed_at: string | null;
   origin_author: string | null;
   origin_html_url: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  assignee_is_agent: number | null;
 }
 
 const SELECT = `
-  SELECT issue.*, user.username AS author_name
-  FROM issue JOIN user ON user.id = issue.author_id`;
+  SELECT issue.*, user.username AS author_name,
+         assignee.username AS assignee_name, assignee.is_agent AS assignee_is_agent
+  FROM issue JOIN user ON user.id = issue.author_id
+  LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
 
 function toIssue(row: IssueRow): Issue {
   return {
@@ -75,7 +89,93 @@ function toIssue(row: IssueRow): Issue {
     closedAt: row.closed_at,
     originAuthor: row.origin_author,
     originUrl: row.origin_html_url,
+    assigneeId: row.assignee_id,
+    assigneeName: row.assignee_name,
+    assigneeIsAgent: row.assignee_is_agent === 1,
   };
+}
+
+/**
+ * Set or clear the assignee. Returns the issue as it now stands, or
+ * undefined when it already stood that way — a no-op is not an event.
+ */
+export function setAssignee(
+  db: Database,
+  issueId: string,
+  assigneeId: string | null,
+): Issue | undefined {
+  const changed = db
+    .query(
+      `UPDATE issue SET assignee_id = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE id = ?1 AND assignee_id IS NOT ?2`,
+    )
+    .run(issueId, assigneeId).changes;
+  return changed > 0 ? getIssueById(db, issueId) : undefined;
+}
+
+/**
+ * Several conversations by id, in one query per chunk — what a run list
+ * needs to name the pull each run is about without a read per row.
+ */
+export function getIssuesByIds(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, Issue> {
+  const out = new Map<string, Issue>();
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        IssueRow,
+        string[]
+      >(`${SELECT} WHERE issue.id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`)
+      .all(...batch);
+    for (const row of rows) out.set(row.id, toIssue(row));
+  }
+  return out;
+}
+
+/**
+ * Open pulls the crew has proposed, in repositories the viewer can see,
+ * newest activity first — the "needs you" inbox, as one bounded query. The
+ * caller narrows to repositories the viewer can *write* if it wants only
+ * what they may merge; visibility is the part that must be in SQL.
+ */
+export function listOpenAgentPullsVisibleTo(
+  db: Database,
+  viewer: { id: string },
+  limit = 25,
+): Issue[] {
+  return db
+    .query<IssueRow, [string, number]>(
+      `${SELECT} JOIN repo ON repo.id = issue.repo_id
+       WHERE issue.kind = 'pull' AND issue.state = 'open' AND user.is_agent = 1
+         AND ${repoVisible(true)}
+       ORDER BY issue.updated_at DESC LIMIT ?2`,
+    )
+    .all(viewer.id, Math.min(Math.max(limit, 1), 200))
+    .map(toIssue);
+}
+
+/**
+ * Open conversations assigned to one account, across every repository —
+ * the "on you" list. An assignee can always see what is assigned to them:
+ * assigning needs write access, and write implies read.
+ */
+export function listAssignedTo(
+  db: Database,
+  userId: string,
+  limit = 50,
+): Issue[] {
+  return db
+    .query<
+      IssueRow,
+      [string, number]
+    >(`${SELECT} WHERE issue.assignee_id = ?1 AND issue.state = 'open' ORDER BY issue.updated_at DESC LIMIT ?2`)
+    .all(userId, limit)
+    .map(toIssue);
 }
 
 /** Atomically hand out the next issue number for a repo. */
@@ -184,6 +284,8 @@ export interface ListIssuesOptions {
   label?: string;
   /** Only issues opened by this username. */
   author?: string;
+  /** Only issues assigned to this username. */
+  assignee?: string;
   /** Case-insensitive substring of the title — the list page's search box. */
   query?: string;
   /** Page size. @default LIST_LIMIT (max LIST_LIMIT_MAX) */
@@ -212,6 +314,10 @@ export function listIssues(
   if (options.author !== undefined) {
     params.push(options.author);
     where += ` AND user.username = ?${params.length} COLLATE NOCASE`;
+  }
+  if (options.assignee !== undefined) {
+    params.push(options.assignee);
+    where += ` AND assignee.username = ?${params.length} COLLATE NOCASE`;
   }
   if (options.label !== undefined) {
     params.push(options.label);
@@ -605,8 +711,6 @@ const chunked = <T>(items: readonly T[]): T[][] => {
 
 const placeholders = (n: number): string =>
   Array.from({ length: n }, (_, i) => `?${i + 1}`).join(",");
-
-
 
 /**
  * Open and closed counts for one repo and kind, in a single pass over the

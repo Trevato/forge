@@ -61,12 +61,35 @@ import {
   type IconName,
 } from "../ui.ts";
 
-/** The settings sidebar, with Origins on it. Kept here so the account pages
- * and this one cannot drift apart in either direction. */
+export type AccountSection =
+  | "profile"
+  | "password"
+  | "tokens"
+  | "keys"
+  | "origins"
+  | "crew";
+
+/**
+ * The settings sidebar, with Origins on it. Kept here so the account pages
+ * and this one cannot drift apart in either direction. Crew is a forge
+ * admin's section — an agent is an account that acts — so it is on the nav
+ * only for one, the way the repo header hides Settings from a non-admin.
+ */
 export function accountSections(
-  current: "profile" | "password" | "tokens" | "keys" | "origins",
+  current: AccountSection,
+  o: { admin?: boolean } = {},
 ): SettingsSection[] {
   return [
+    ...(o.admin
+      ? [
+          {
+            label: "Crew",
+            href: "/settings/crew",
+            icon: "bot" as const,
+            current: current === "crew",
+          },
+        ]
+      : []),
     {
       label: "Profile",
       href: "/settings",
@@ -535,7 +558,7 @@ function shell(ctx: Ctx, body: Html, status = 200): Response {
       ctx,
       title: "Origins",
       body: html`<div class="page-head"><h1>Origins</h1></div>
-        ${settingsLayout(accountSections("origins"), body, "Account settings")}`,
+        ${settingsLayout(accountSections("origins", { admin: ctx.auth.user?.isAdmin === true }), body, "Account settings")}`,
     },
     status,
   );

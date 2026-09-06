@@ -5,7 +5,12 @@
  */
 
 import type { App } from "../app.ts";
-import { getIssueById, type BodyError } from "../core/issues.ts";
+import {
+  getIssueById,
+  setAssignee,
+  type BodyError,
+  type Issue,
+} from "../core/issues.ts";
 import {
   createPull,
   getPull,
@@ -138,14 +143,31 @@ export async function openPull(
     },
   );
   if (!created.ok) return created;
+  // A pull the crew opens is the crew's to see through: it starts assigned
+  // to the agent, so "who is on it" is legible without a second step (an
+  // agent cannot assign, so this is the one place it happens).
+  const assigned =
+    user.value.kind === "agent"
+      ? setAssignee(app.db, created.value.id, user.value.id)
+      : undefined;
   app.bus.append({
     kind: "pull.opened",
     repoId: baseRepo.id,
     actorId: user.value.id,
-    payload: { number: created.value.number },
+    payload: {
+      number: created.value.number,
+      ...(assigned ? { assignee: user.value.username } : {}),
+    },
   });
-  return created;
+  return assigned ? ok({ ...created.value, ...assigneeOf(assigned) }) : created;
 }
+
+/** The assignee fields of an issue row, for folding into a pull. */
+const assigneeOf = (issue: Issue) => ({
+  assigneeId: issue.assigneeId,
+  assigneeName: issue.assigneeName,
+  assigneeIsAgent: issue.assigneeIsAgent,
+});
 
 /**
  * Bring `refs/pull/N/head` up to date with the fork it came from.
@@ -261,6 +283,9 @@ export async function mergePull(
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   if (pull.repoId !== repo.id) return err("not_found");
+  // Rule 1 in docs/APPS.md: the crew proposes, a person lands. An agent on
+  // the crew can write the repository and still may not merge into it.
+  if (writer.value.kind === "agent") return err("forbidden");
   // Merging on a mirror is not offered. A local merge would rewrite the base
   // branch here and then be overwritten by the next fetch; a merge through
   // the API would have to reproduce the origin's merge strategy, protected
@@ -276,7 +301,11 @@ export async function mergePull(
     repoDir(app.reposRoot, repo.ownerName, repo.name),
     pull,
     {
-      gate: { db: app.db, requireReview: repo.requireReview },
+      gate: {
+        db: app.db,
+        requireReview: repo.requireReview,
+        requireChecks: repo.requireChecks,
+      },
       strategy,
       message:
         strategy === "squash"

@@ -107,6 +107,7 @@ function themeMenu(active: ThemeName | undefined): Html {
 
 function newMenu(): Html {
   const items: MenuItem[] = [
+    { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
   ];
@@ -123,11 +124,15 @@ function userMenu(user: User): Html {
   const items: MenuItem[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
+    { label: "Apps", href: "/apps", icon: "rocket" },
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
     { label: "Origins", href: "/settings/origins", icon: "globe" },
+    ...(user.isAdmin
+      ? [{ label: "Crew", href: "/settings/crew", icon: "bot" as const }]
+      : []),
     { separator: true, label: "" },
     { label: "Sign out", post: "/logout", icon: "signOut" },
   ];
@@ -182,6 +187,8 @@ function helpButton(): Html {
 
 const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go" },
+  { t: "Apps", h: "/apps", c: "Go" },
+  { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
   { t: "Search", h: "/search", c: "Go" },
@@ -423,7 +430,8 @@ export function fragment(body: Html, status = 200): Response {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      "content-security-policy": "default-src 'none'; style-src 'none'; sandbox",
+      "content-security-policy":
+        "default-src 'none'; style-src 'none'; sandbox",
       "cache-control": "no-store",
     },
   });

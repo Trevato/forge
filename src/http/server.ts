@@ -71,7 +71,33 @@ import {
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
-import { labelsSubmit, stateSubmit } from "../web/pages/thread.ts";
+import {
+  assigneeSubmit,
+  labelsSubmit,
+  stateSubmit,
+} from "../web/pages/thread.ts";
+import {
+  appOpen,
+  appPage,
+  appRedeploy,
+  appsList,
+  appStop,
+  newAppPage,
+  newAppSubmit,
+} from "../web/pages/apps.ts";
+import {
+  runCancel,
+  runPage,
+  runRedirect,
+  runsList,
+} from "../web/pages/runs.ts";
+import {
+  agentCreate,
+  agentDelete,
+  agentPage,
+  agentUpdate,
+  crewPage,
+} from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
 import {
   pullCommentSubmit,
@@ -83,6 +109,12 @@ import {
   threadResolveSubmit,
 } from "../web/pages/pull.ts";
 import {
+  appDisable,
+  appSettingsPage,
+  appSettingsUpdate,
+  crewAdd,
+  crewRemove,
+  crewSettingsPage,
   dangerPage,
   hooksPage,
   labelCreate,
@@ -169,6 +201,9 @@ import {
 } from "../core/idempotency.ts";
 import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
+import { getUserById } from "../core/users.ts";
+import { appsRuntime } from "../apps/runtime.ts";
+import { proxyApp, resolveAppHost } from "../apps/proxy.ts";
 
 // ---- auth ----
 
@@ -282,6 +317,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/new", newRepoSubmit);
   router.add("GET", "/organizations/new", newOrgPage);
   router.add("POST", "/organizations/new", newOrgSubmit);
+  // Apps and the crew (docs/APPS.md): the list, the golden path's first
+  // step, and the short door to a run the proxy's "not running" page opens.
+  router.add("GET", "/apps", appsList);
+  router.add("GET", "/apps/new", newAppPage);
+  router.add("POST", "/apps/new", newAppSubmit);
+  router.add("GET", "/runs/:id", runRedirect);
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
   router.add("GET", "/settings/password", passwordPage);
@@ -289,6 +330,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  // The crew: a forge admin's section, hidden from everyone else.
+  router.add("GET", "/settings/crew", crewPage);
+  router.add("POST", "/settings/crew", agentCreate);
+  router.add("GET", "/settings/crew/:username", agentPage);
+  router.add("POST", "/settings/crew/:username", agentUpdate);
+  router.add("POST", "/settings/crew/:username/delete", agentDelete);
   // Where an OAuth authorization comes back to. Deliberately a plain route
   // and not an API one: it is a browser redirect, possibly from a phone, and
   // the only thing it carries is a `state` this forge issued minutes ago.
@@ -449,6 +496,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
   );
+  router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
+    assigneeSubmit(ctx, "issue"),
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   router.add("GET", "/:owner/:name/pulls", pullsList);
@@ -481,6 +531,19 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/labels", (ctx) =>
     labelsSubmit(ctx, "pull"),
   );
+  router.add("POST", "/:owner/:name/pulls/:number/assignee", (ctx) =>
+    assigneeSubmit(ctx, "pull"),
+  );
+
+  // The app a repository runs as, and the runs it produced. Opening an
+  // environment goes through the forge so a private app gets its grant.
+  router.add("GET", "/:owner/:name/app", appPage);
+  router.add("GET", "/:owner/:name/app/:env/open", appOpen);
+  router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
+  router.add("POST", "/:owner/:name/app/:env/stop", appStop);
+  router.add("GET", "/:owner/:name/runs", runsList);
+  router.add("GET", "/:owner/:name/runs/:id", runPage);
+  router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
 
   // Live event stream for a repo the viewer can read.
   router.add("GET", "/:owner/:name/stream", (ctx) => {
@@ -539,6 +602,16 @@ export function buildRouter(): Router<Handler> {
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
+  router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
+  router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
+  router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("GET", "/:owner/:name/settings/crew", crewSettingsPage);
+  router.add("POST", "/:owner/:name/settings/crew", crewAdd);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/crew/:username/remove",
+    crewRemove,
+  );
   router.add("GET", "/:owner/:name/settings/labels", labelsPage);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
   router.add("POST", "/:owner/:name/settings/labels/:id", labelUpdate);
@@ -758,12 +831,27 @@ async function handleHook(app: App, request: Request): Promise<Response> {
   if (!repo) return new Response("unknown repository", { status: 400 });
 
   if (input.hook === "pre-receive") {
+    const actor = input.actorId
+      ? getUserById(app.db, input.actorId)
+      : undefined;
     for (const update of input.updates) {
       // The pull namespace belongs to the forge, never to pushers.
       if (update.ref.startsWith("refs/pull/")) {
         return new Response(`${update.ref}: refs/pull/* is reserved`, {
           status: 403,
         });
+      }
+      // Rule 1 in docs/APPS.md: the crew proposes, a person lands. An agent
+      // never moves the default branch — protected or not — so production
+      // changes only through a pull someone merged.
+      if (
+        actor?.kind === "agent" &&
+        update.ref === `refs/heads/${repo.defaultBranch}`
+      ) {
+        return new Response(
+          `${repo.defaultBranch}: agents propose through pulls; a person merges`,
+          { status: 403 },
+        );
       }
       if (
         repo.protectDefault &&
@@ -871,6 +959,15 @@ export async function serve(app: App): Promise<Servers> {
     port: app.config.port ?? 3000,
     idleTimeout: 120,
     async fetch(request) {
+      // An app's hostname is answered before any route: `hello.<domain>` is
+      // the app, whatever its path, and the forge's own routes never apply.
+      const runtime = appsRuntime(app);
+      if (runtime !== undefined) {
+        const target = resolveAppHost(app, runtime.options.domain, request);
+        if (target === "unknown")
+          return new Response("not found", { status: 404 });
+        if (target !== undefined) return proxyApp(runtime, request, target);
+      }
       const url = new URL(request.url);
       const matched = router.match(request.method, url.pathname);
       if (!matched) return noRoute(request.method, url.pathname);

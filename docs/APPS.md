@@ -1,0 +1,299 @@
+# Apps, runs, and the crew
+
+A forge holds repositories. An **app** is a repository that runs — here, on
+the forge's own port, with a production and a preview for every open pull —
+and the **crew** is the set of agents who work on it while you are elsewhere.
+This document is the contract between the two halves and the rest of the
+forge: what the words mean, which rules are mechanical, and where the state
+lives. `docs/ARCHITECTURE.md` explains the foundation these sit on.
+
+The shape is Vercel's — you have apps, apps have previews, git decides what
+is production and protects it — with one deliberate difference. The person
+using it need not be a developer. They know what an app is, they can hold
+"production data" and "preview data" apart in their head, and the golden path
+asks nothing more of them than that. Developers and agents use the same
+primitives underneath; nobody gets a second system.
+
+## Vocabulary
+
+- **App** — a repository that runs. A repository becomes an app explicitly
+  (`New app`, or `Run as an app` on an existing one), the same way a
+  repository is mirrored explicitly: a choice you can see and reverse. An
+  app has a **slug**, the label its hostnames are built from.
+- **Environment** — one place an app runs. `production` is the default
+  branch. A **preview** is one open pull. Every environment owns a data
+  directory, and nothing else does.
+- **Deployment** — an environment at one commit: a checkout, a process, a
+  port, a log. An environment routes to its _current_ deployment; a newer
+  one takes over only once it answers.
+- **Run** — a durable record of work the forge did on a commit. A `deploy`
+  run installs, builds, tests, starts and waits for the app to answer. An
+  `agent` run is an agent working on an issue or a pull. Runs are the
+  **checks** on a pull.
+- **Agent** — an account of kind `agent`. No password, no session; it acts
+  only through tokens the forge mints for a run and destroys after it. It
+  is a user in every other respect: it owns nothing you did not give it, it
+  is granted access the way a person is (collaborator or team), and its
+  name appears on the pull it opened.
+- **Crew** — the agents with write access to a repository.
+
+## Rules that are mechanical
+
+Each rule below is enforced in a code path with a test that tries to get
+around it. None is advisory.
+
+1. **Production is the default branch, and agents cannot move it.** The only
+   way code reaches production is the default branch moving. The
+   pre-receive hook refuses an agent's push to the default branch outright —
+   protected or not — and `mergePull` refuses an agent actor. An agent
+   proposes; a person lands. (A merge gate that lands on its own once a
+   review and the checks agree is a setting to add, not a rule to loosen.)
+   Two corollaries keep an agent from starting a chain: an agent cannot
+   assign anyone (assigning an agent is what spends money, and only a
+   person may), and an agent cannot create a repository (it owns nothing it
+   was not given; it may fork to contribute).
+2. **A preview lives exactly as long as its pull is open.** Opened: deployed.
+   Pushed: redeployed at the new head. Closed or merged: stopped, and its
+   data deleted. There is no orphan state; the sweep on boot rebuilds the
+   set of previews from the set of open pulls.
+3. **Preview data is a copy, never a window.** When a preview is created its
+   data directory is cloned from production's at that moment (copy-on-write
+   where the filesystem offers it — APFS, XFS, btrfs — a plain copy
+   otherwise, and `empty` is a per-app choice). A preview process is handed
+   its own `FORGE_APP_DATA` and nothing that names production's. Merging a
+   pull moves code; it never touches data.
+4. **A deployment is a check.** Every deploy is a run; the run's state is
+   what the pull shows. With `require_checks` on, `mergePull` refuses
+   `checks_required` until the head's deploy run is `ok`, read live inside
+   the merge — never from a status a caller computed earlier.
+5. **A private app answers only to someone the forge vouches for.** An app's
+   `access` is `public` or `private` (defaulting to the repository's
+   visibility). A private environment sets no cookie of its own; a visitor
+   is sent through the forge, which checks `canRead` on the repository and
+   returns them with a signed, short-lived grant. Guessing the hostname
+   yields the forge's own "not found".
+6. **A run's credential dies with the run.** An agent run gets a token
+   scoped `rw` (no settings, no tokens, no administration) with an expiry,
+   and the token is deleted when the run ends however it ends. It never
+   appears in argv or a URL; git receives it through `http.extraHeader`,
+   the same channel origins and the local client use.
+7. **Runs are bounded.** Every run has a spend budget and a wall-clock
+   limit. A pull gets a fixed number of automatic follow-up runs (a failed
+   check, a request for changes) before the forge stops and says so; a
+   person speaking on the pull resets the count. Nothing loops unattended.
+8. **A child process inherits nothing it was not handed.** The forge's own
+   environment holds secrets (an API key, an OAuth client secret). App and
+   agent processes are started with an explicit environment — `PATH`,
+   `HOME`, a locale, and the variables this document names — never the
+   forge's.
+
+## The golden path
+
+What a person sees, in order:
+
+1. **New app.** A name, and — optionally — a sentence about what it should
+   do. The forge creates the repository with a small working app in it,
+   makes it an app, and starts production. Seconds later there is a URL.
+   If a sentence was given, it becomes the first issue, assigned to an agent
+   on the crew, and the agent starts.
+2. **A pull appears**, opened by the agent, with a preview. Open the preview
+   (a link, or a QR code from a phone), use it. Leave feedback as review
+   comments and a verdict. Request changes and the agent picks it up in the
+   background; the preview updates when it pushes.
+3. **Approve, merge.** Production redeploys from the default branch. The
+   production data directory is untouched — the notes you took, the rows
+   your app wrote, are all still there. The preview and its copied data are
+   gone.
+4. **Drop in whenever.** The dashboard lists apps with what is running, and
+   **Needs you** — pulls waiting on a review — is the inbox. Everything
+   else runs without you.
+
+Nothing above required a terminal. Everything above is also reachable from
+one, and from the JSON API, because each step is an action.
+
+## How an app is declared
+
+The repository says how to run itself, in `forge.json` at its root:
+
+```json
+{
+  "app": {
+    "run": "bun run src/server.ts",
+    "install": "bun install",
+    "test": "bun test",
+    "health": "/",
+    "ready": 30,
+    "tty": "bun run src/tty.ts"
+  }
+}
+```
+
+Only `run` is required, and even it defaults: a `package.json` with a `start`
+script is enough. `install` defaults to `bun install` when a `package.json`
+exists and to nothing otherwise; `test` defaults to nothing; `health` is the
+path polled until it answers; `ready` is the number of seconds to wait for
+that before the deploy fails; `tty` is the app's terminal interface (below). The file is read from the commit being
+deployed, never from the database — a pull that changes how the app runs is
+previewed the way it will run.
+
+The forge starts the app with:
+
+| variable           | value                                                                    |
+| ------------------ | ------------------------------------------------------------------------ |
+| `PORT`             | the port to listen on, chosen by the forge                               |
+| `HOST`             | `127.0.0.1` — only the forge's proxy reaches it                          |
+| `FORGE_APP_ENV`    | `production` or `preview`                                                |
+| `FORGE_APP_DATA`   | this environment's data directory, created for it                        |
+| `FORGE_APP_URL`    | the public URL this environment is served at                             |
+| `FORGE_APP_COMMIT` | the commit being run                                                     |
+| `FORGE_APP_PULL`   | the pull number, on a preview                                            |
+| `FORGE_APP_SSH`    | the exact `ssh …` that opens this environment's terminal, when SSH is on |
+| `FORGE_URL`        | the forge's own base URL                                                 |
+
+A terminal session (`tty`) gets the same variables plus `FORGE_APP_TTY=1`
+and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
+
+An app that keeps its state under `FORGE_APP_DATA` gets production and
+preview data for free. The scaffold does exactly that with `bun:sqlite`.
+
+## A terminal for every app
+
+The forge's own port answers `ssh`, and the login name picks what opens:
+any name opens the forge's terminal UI, and an app's slug opens **that
+app's terminal** — `ssh -p 2222 notes@forge` runs the app's `tty` command
+on a real pty, in the deployed checkout, with the environment's own
+variables (`FORGE_APP_DATA` and the rest, plus `FORGE_APP_TTY=1` and
+`FORGE_APP_USER`, the forge account at the keyboard or empty for a guest).
+`notes--12@forge` is the preview of pull 12's. The key still decides who
+you are: a private app's terminal answers only to a key the forge knows
+that can read the repository; a public app's answers to anyone, as its web
+page does. Resizes pass through; closing the connection sends the program
+`SIGHUP`.
+
+The scaffold ships a small one (`src/tty.ts`, plain ANSI, no dependencies)
+over the same SQLite file the web page uses, so a new app is reachable two
+ways from its first minute. An app without a `tty` says so, in words, when
+someone tries.
+
+## Hostnames and the proxy
+
+Apps are served from the forge's port by `Host`. With `FORGE_APP_DOMAIN`
+(default: the forge's own host), production is `<slug>.<domain>` and the
+preview of pull 12 is `<slug>--12.<domain>`. `--` cannot occur inside a slug,
+so the two never collide. Browsers resolve every `*.localhost` name to
+loopback, which is what makes a laptop forge work with no configuration at
+all: `http://hello.localhost:3000`.
+
+The proxy is a `fetch` to the deployment's loopback port, streamed back.
+Headers are forwarded with the usual `X-Forwarded-*` additions. An
+environment that is not running gets a page from the forge that says so and
+links the run — never a bare gateway error. Websockets are not proxied yet.
+
+## Where state lives
+
+Git is truth for code. The app's serving configuration (slug, access, the
+preview-data policy) is forge state, like a webhook. Everything else is
+either derived or ephemeral:
+
+```
+<data>/apps/<app id>/production/data          production data — lives forever
+<data>/apps/<app id>/production/<commit7>/    a checkout, one per deployment
+<data>/apps/<app id>/pull-<n>/data            preview data — dies with the pull
+<data>/apps/<app id>/pull-<n>/<commit7>/      the preview's checkout
+<data>/runs/<run id>.log                      every run's log, appended live
+<data>/crew/<agent>/<repo id>/<issue n>/      an agent's clone, kept while its pull is open
+```
+
+Rows: `app` (repo, slug, access, preview_data), `run` (repo, kind, issue,
+commit, state, summary, cost, timings), `agent` (user, model, brief, budget),
+and `issue.assignee_id`. The current deployment of each environment is in
+memory only: a process is not state, and a restart rebuilds every
+environment from the default branch and the open pulls, exactly as
+`core/reconcile.ts` rebuilds the index from git.
+
+## Runs
+
+A run row is created `queued`, claimed with a compare-and-swap into
+`running` (two workers cannot both take it), and finishes `ok`, `failed` or
+`cancelled` with a one-line summary. Its log is a file the surfaces tail live
+through an in-process listener; the file is the truth, the listener is the
+optimization. `run.queued`, `run.started` and `run.finished` ride the event
+outbox like every other state change, so webhooks and the SSE stream see
+them.
+
+On a pull, the runs for the current head are its checks. A deploy run that
+fails — install, build, test, or the app never answering — fails the check
+and the preview shows the log where it stopped. A push makes new runs;
+older ones are history, not status.
+
+## The crew
+
+An agent is created once (`New agent`: a name, a model, a brief) and given
+access like anyone else. Work reaches it three ways, all off the event
+outbox with a sweep behind the wake-up:
+
+- **Assignment.** An issue assigned to an agent starts a run. The agent
+  clones the repository, works on a branch named after the issue, and
+  pushes. The forge opens the pull on its behalf — the agent's closing
+  message is the description — so the bookkeeping is never the agent's to
+  get wrong. Assigning a pull re-engages the agent on that pull.
+- **Feedback.** A review that requests changes, or a comment on the
+  agent's pull that addresses it, starts a follow-up run that resumes the
+  agent's session with the feedback quoted.
+- **A failed check.** A deploy that fails on the agent's pull starts a
+  follow-up with the log's tail. Bounded by rule 7.
+
+An agent may decline. A last message that starts with `DECLINED:` ends the
+run as failed with that reason, posted on the issue or pull, and nothing it
+touched is pushed — a mis-scoped task parks with an explanation instead of
+becoming an empty or wrong pull.
+
+The agent runs Claude Code headless in its clone, with a prompt the forge
+composes: who it is, what the task is, how to finish, and what will be
+refused. Permissions are the forge's, passed as settings: file tools
+confined to the clone, no prompts (anything that would ask is denied), a
+spend budget, and Claude Code's own sandbox around the shell — seatbelt on
+macOS, bubblewrap on Linux where it is installed — with a policy the forge
+writes per run (`crew/sandbox.ts`): the network is the forge and the
+package registry (plus `FORGE_CREW_ALLOW_HOSTS`); writes stay in the clone
+and the temp dir; reads are refused for the forge's repositories, its
+index and key, every other agent's clone, and the operator's own
+credentials (`~/.ssh`, `~/.aws`, and their kin). The repository's own
+`AGENTS.md` is read the way Claude Code always reads it, so a repository
+can steer its crew without touching the forge.
+
+The forge asks the host for one more binary than before: `claude`, found on
+`PATH` or at `FORGE_CLAUDE`. Authentication is the operator's — an
+`ANTHROPIC_API_KEY` in the forge's environment is handed to the run, or the
+machine's own Claude Code login is used when there is none. When neither
+works the crew page says so, in words, before anyone assigns anything.
+
+## Configuration
+
+| variable                  | default                         | meaning                                           |
+| ------------------------- | ------------------------------- | ------------------------------------------------- |
+| `FORGE_APPS`              | `1`                             | `0` runs no apps and no crew                      |
+| `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | the domain app hostnames hang off                 |
+| `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
+| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once                                |
+| `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
+| `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
+| `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
+| `FORGE_CLAUDE`            | `claude` on `PATH`              | the Claude Code binary                            |
+| `FORGE_CLAUDE_CONFIG_DIR` | Claude Code's own               | a `CLAUDE_CONFIG_DIR` for runs, when wanted       |
+| `ANTHROPIC_API_KEY`       | —                               | handed to agent runs when set                     |
+
+The public URL apps and agents are told about the forge is `FORGE_URL` when
+set, else `http://<FORGE_HOST>:<PORT>`; its scheme and port are what app
+URLs are built with, so a forge behind TLS on a wildcard domain sets
+`FORGE_URL=https://forge.example` and `FORGE_APP_DOMAIN=apps.example`.
+
+## What is deliberately not here
+
+Containers. An app runs as the forge's own user, in its own directory, and
+nothing more separates it from the host than that. On the machine one
+person owns this is the honest, fast answer; a sandboxed runtime is the
+next layer, and the process boundary here is where it will attach. Custom
+domains, TLS termination, websocket proxying, and an approve-and-land gate
+are additions of the same kind: the shapes above hold, and a new column or
+listener carries each of them.

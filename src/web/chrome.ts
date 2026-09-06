@@ -8,6 +8,7 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { getAppByRepo } from "../core/apps.ts";
 import { canAdmin, canRead, getRepo, getRepoById } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -83,6 +84,7 @@ export type RepoTab =
   | "pulls"
   | "commits"
   | "branches"
+  | "app"
   | "settings";
 
 export interface RepoHeaderOptions {
@@ -180,6 +182,16 @@ export function scopeHeader(
       shortcut: "g b",
     },
   ];
+  // A repository that runs gets an App tab; one that does not has no such
+  // page, and a tab that 404s is a lie about what is there.
+  if (repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined)
+    items.push({
+      label: "App",
+      href: `${base}/app`,
+      icon: "rocket",
+      current: active === "app",
+      shortcut: "g a",
+    });
   if (admin)
     items.push({
       label: "Settings",
@@ -255,6 +267,7 @@ export function repoPalette(repo: Repo): PaletteItem[] {
     { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
     { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
+    { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
     { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
   ];
 }

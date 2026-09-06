@@ -83,7 +83,6 @@ way in you get is a property of the forge, not a preference:
   the code on whatever device has a browser, and the forge does the polling.
   This is the flow that works over SSH with no browser on the server. Setting
   it up is three steps, once, for everyone on the forge:
-
   1. Create an OAuth App at <https://github.com/settings/developers>. Name it
      anything, set the homepage to your forge's URL, set the authorization
      callback URL to `https://your.forge/settings/origins/callback`, and tick
@@ -93,6 +92,7 @@ way in you get is a property of the forge, not a preference:
      disconnecting revokes the grant on GitHub too.
   3. The GitHub button appears. Until it does, both surfaces print these three
      steps rather than naming an environment variable and leaving you to it.
+
 - **Forgejo / Gitea** — authorization code with PKCE. They implement no device
   grant, and every instance needs its own OAuth application, so you paste a
   client id once per host. The page gives you the exact redirect URI to enter
@@ -109,7 +109,7 @@ way in you get is a property of the forge, not a preference:
 Both connect screens hand the job to whatever device has a browser: a **QR
 code** to point a camera at, a **short link** (`https://your.forge/go/<10
 characters>`, live for ten minutes and gone once used) short enough to type by
-hand, and — in the terminal — `c` to put the link on *your* clipboard through
+hand, and — in the terminal — `c` to put the link on _your_ clipboard through
 your own terminal (OSC 52, so it works over SSH; iTerm2, Ghostty, kitty and
 WezTerm honour it, Apple Terminal does not). `o` opens a browser only when the
 forge's terminal is the one in front of you; over SSH it says so rather than
@@ -123,7 +123,7 @@ choose is not a feature.
 A mirrored repo wears its origin in the header (`mirrored from owner/name @
 host`), shows its last fetch and any fetch error in the About rail, and syncs
 on a worker tick or on demand. Imported issues and comments show the login on
-the *origin*, with that forge's mark, and link back to the canonical thread.
+the _origin_, with that forge's mark, and link back to the canonical thread.
 Merging a pull happens on the origin: the merge box says so and links there,
 and the next sync brings back the merge commit it actually made. Pushes go
 through too — the pre-receive hook forwards the push upstream first, so a push
@@ -188,6 +188,64 @@ something in the 60–110 MB range; `dist/` is gitignored and binaries are never
 committed). Until you build it, `bun run src/cli/main.ts …` is the same
 program.
 
+## Apps
+
+A repository that runs. Press **New app**, give it a name and — if you like —
+a sentence about what it should do. Seconds later it is serving at
+`http://<name>.<your forge's host>` from a small, real app (notes in a SQLite
+file), and if you named an agent, the sentence became issue #1, assigned.
+
+- **Production is the default branch.** The only way code reaches it is that
+  branch moving, and an agent cannot move it: the crew proposes through
+  pulls, a person merges.
+- **Every open pull gets a preview** at `<name>--<pull number>.<host>`,
+  redeployed on each push and gone when the pull closes. Its data starts as
+  a copy of production's — copy-on-write where the filesystem can — and
+  never writes back. Merging moves code and touches no data.
+- **Every deploy is a run**, and the run is the check on the pull. Turn on
+  **require checks** and a pull cannot merge until its head is green.
+- A **private** app answers only to someone the forge has vouched for
+  (`canRead` on the repository, then a signed grant); a public one to anyone.
+- **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
+  `tty` command from `forge.json` on a real pty over the environment's own
+  data; `<name>--<pull>@<forge>` opens a preview's. The scaffold ships one.
+
+The repository says how it runs in `forge.json` (`run`, and optionally
+`install`, `test`, `health`, `ready`); a `package.json` with a `start` script
+is enough on its own. The forge hands the process `PORT`, `FORGE_APP_DATA`
+(this environment's directory — keep state there), `FORGE_APP_ENV`,
+`FORGE_APP_URL` and `FORGE_APP_COMMIT`, and nothing from its own
+environment. Browsers resolve `*.localhost` to loopback, so a laptop forge
+needs no DNS at all; elsewhere point a wildcard at it and set
+`FORGE_APP_DOMAIN`.
+
+## The crew
+
+An **agent** is an account of kind `agent`: no password, no session, and it
+acts only through a token the forge mints for a run and destroys after it.
+An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a
+model, a brief in its own voice and a spend budget; a repository admin puts it
+on the repository's **crew**, which is the one grant an agent can hold — it
+reads and writes that repository and administers nothing.
+
+Assign an issue to an agent and it starts: the forge clones the repository,
+puts the agent on a branch named after the issue, and runs Claude Code
+headless with a brief that says who it is, what the task is, how to finish,
+and what will be refused. When it stops, the forge pushes what it committed,
+opens the pull (the agent's last message is the description), and the
+preview comes up. Leave feedback on the pull — a comment, a request for
+changes, a line comment — and the agent picks it up in the background,
+resuming its session. A failed check re-engages it too, a bounded number of
+times before a person must speak.
+
+The forge asks the host for one more binary: `claude`, on `PATH` or at
+`FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
+forge's environment is handed to runs; the machine's own Claude Code login
+works when there is none). `FORGE_CREW_CONCURRENCY` (2) and
+`FORGE_CREW_BUDGET_USD` (5) bound it; `FORGE_APPS=0` turns apps and crew off.
+`docs/APPS.md` is the contract: the vocabulary, and the rules that are
+mechanical rather than advisory.
+
 ## Develop
 
 ```sh
@@ -212,6 +270,11 @@ src/
   tui/        the terminal UI: runtime, widgets, screens, the ssh front door,
               and local/ — the same runtime over your own working trees
   cli/        `forge` on your machine: login, sync, status, pins
+  apps/       a repository that runs: manifest, checkout, process, data,
+              the runtime (environments), the proxy by Host
+  runs/       run logs, appended live
+  crew/       agents as child processes: the brief, Claude Code headless,
+              the runner, dispatch off the outbox
 ```
 
 Read `docs/ARCHITECTURE.md` for the principles and the reasoning behind them.
@@ -252,10 +315,16 @@ work here.
 - **Automation** — a JSON API covering repos, issues, forks, and orgs (the
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
   delivery with retry).
+- **Apps** — a repository that runs: production on the default branch, a
+  preview per open pull with its own copy of the data, served by hostname
+  from the forge's own port, every deploy a run and every run a check.
+- **The crew** — agents as accounts with nothing but a run-scoped token,
+  working issues in the background with Claude Code and proposing through
+  pulls a person merges.
 
 Pages render without a line of JavaScript and are designed thumb-first. Six
 premade themes (from warm paper to polar night) switch instantly and persist in
 a cookie — even that works script-free. Still **zero runtime dependencies**.
 
-Not yet: CI runners and an AI build crew. The event outbox and API surface are
-shaped so these arrive as additions, not rewrites.
+Not yet: containers around apps, custom domains, websockets through the
+proxy, and a gate that lands a pull on its own once review and checks agree.

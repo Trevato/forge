@@ -83,6 +83,9 @@ export async function createRepo(
 ): Promise<Result<Repo, CreateRepoActionError>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  // An agent owns nothing it was not given (docs/APPS.md): it works on the
+  // repositories whose crew it is on, and cannot make itself a new one.
+  if (user.value.kind === "agent") return err("forbidden_owner");
   const ownerId = resolveOwner(app, user.value, input.owner ?? "");
   if (ownerId === undefined) return err("forbidden_owner");
   const created = await initRepo(app.db, app.reposRoot, {
@@ -155,6 +158,7 @@ export async function updateRepoSettings(
       "protectDefault",
       "defaultBranch",
       "requireReview",
+      "requireChecks",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
   app.bus.append({

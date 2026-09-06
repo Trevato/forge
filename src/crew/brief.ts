@@ -1,0 +1,222 @@
+/**
+ * What an agent is told. Two texts: a system prompt appended to Claude
+ * Code's own — who the agent is, where it is, how to finish, what will be
+ * refused — and the task itself, which differs by why the run exists: an
+ * assignment, feedback on a pull, or a check that failed. The golden path
+ * is written down here so it is prompted, not hoped for; the mechanical
+ * rules (docs/APPS.md) hold whether or not the agent reads them.
+ */
+
+import type { Agent } from "../core/agents.ts";
+import type { Comment, Issue } from "../core/issues.ts";
+import type { Pull } from "../core/pulls.ts";
+import type { Repo } from "../core/repos.ts";
+import type { Review, ReviewComment } from "../core/reviews.ts";
+
+export type RunReason = "assigned" | "feedback" | "check_failed";
+
+export interface BriefInput {
+  readonly agent: Agent;
+  readonly repo: Repo;
+  /** The task: the issue, or the pull when the run is about a pull. */
+  readonly issue: Issue;
+  readonly pull?: Pull | undefined;
+  readonly branch: string;
+  readonly forgeUrl: string;
+  readonly isApp: boolean;
+  readonly previewUrl?: string | undefined;
+  /** Whether a session is being continued (the task was already given). */
+  readonly resuming: boolean;
+}
+
+export function systemPrompt(input: BriefInput): string {
+  const { agent, repo } = input;
+  const lines = [
+    `You are ${agent.user.displayName || agent.user.username} (@${agent.user.username}), an agent on the crew of ${repo.ownerName}/${repo.name} on a forge at ${input.forgeUrl}.`,
+    agent.brief.trim() === "" ? "" : `\n${agent.brief.trim()}\n`,
+    `You are working in a clone of the repository on the branch \`${input.branch}\`. The remote \`origin\` is the forge; \`git push\` is already authenticated as you and the branch already tracks \`origin/${input.branch}\`. Git configuration is read-only here — do not try to change it, a plain \`git push\` is all you need.`,
+    "",
+    "How to finish:",
+    "- Commit your work with clear messages and push: `git push`.",
+    "- The forge opens the pull request for you, or updates the one that exists. Your last message is used verbatim as its description, so write it as one: what changed and what to look at, in a few sentences — no preamble, no status report, nothing addressed to a person.",
+    "- Do not open the pull yourself, and do not merge anything.",
+    "",
+    "What is refused, mechanically:",
+    `- Pushing to \`${repo.defaultBranch}\`. Agents propose through pulls; a person merges.`,
+    "- Force pushes, repository settings, tokens, and administration.",
+    "",
+    "The forge's JSON API is available for reading the repository, its issues and pulls:",
+    `  curl -sH "authorization: Bearer $FORGE_TOKEN" "$FORGE_URL/api/v1/repos/${repo.ownerName}/${repo.name}/issues/${input.issue.number}"`,
+    "Prefer the working tree for code; use the API for conversation.",
+  ];
+  if (input.isApp) {
+    lines.push(
+      "",
+      "This repository is an app the forge runs. Production follows the default branch; every open pull gets a preview deployed from its branch each time you push.",
+      "- `forge.json` says how the app runs; keep it working.",
+      "- Keep state under `FORGE_APP_DATA`. Never write elsewhere at runtime.",
+      "- The app's terminal (`tty` in forge.json) is reached with the exact command in `FORGE_APP_SSH` (for example `ssh -p 2222 notes@localhost`: the app is the login name, the forge is the host). When a page or the terminal tells people how to connect, print that variable verbatim and never invent a form like `you@app.host`; when it is unset, say the terminal is off.",
+      "- Run the tests (`bun test`, or whatever `forge.json` names) before you push: the deploy runs them, and a failing test fails the preview.",
+      ...(input.previewUrl === undefined
+        ? []
+        : [
+            `- The preview of your pull is at ${input.previewUrl} once it is up.`,
+          ]),
+    );
+  }
+  lines.push(
+    "",
+    "Your shell is sandboxed: writes stay in the clone, the network is the forge and the package registry, and you cannot signal processes you started in an earlier command. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
+    "",
+    "Work carefully and finish. If the task is unclear, impossible, or not something you should do, do not guess: make your last message start with `DECLINED:` followed by exactly why. Nothing is pushed then, and a person reads it.",
+  );
+  return lines.filter((l) => l !== undefined).join("\n");
+}
+
+export interface TaskInput extends BriefInput {
+  readonly reason: RunReason;
+  /** Conversation on the issue or pull, oldest first. */
+  readonly comments: readonly Comment[];
+  /** Verdicts on the pull, oldest first. */
+  readonly reviews: readonly Review[];
+  /** Line comments on the pull's diff. */
+  readonly reviewComments: readonly ReviewComment[];
+  /** Only comments, reviews and line comments after this instant are news. */
+  readonly since: string;
+  /** For a failed check: the tail of the deploy log. */
+  readonly checkLog?: readonly string[] | undefined;
+  readonly checkSummary?: string | undefined;
+}
+
+export function taskPrompt(input: TaskInput): string {
+  const { issue } = input;
+  const out: string[] = [];
+  const isAgent = (name: string): boolean => name === input.agent.user.username;
+
+  if (input.reason === "assigned" && !input.resuming) {
+    if (input.pull !== undefined) {
+      out.push(
+        `You have been assigned pull request #${issue.number}: ${issue.title}`,
+        "",
+        issue.body || "(no description)",
+      );
+    } else {
+      out.push(
+        `Issue #${issue.number}: ${issue.title}`,
+        "",
+        issue.body || "(no description)",
+      );
+    }
+    const talk = input.comments.filter((c) => !isAgent(c.authorName));
+    if (talk.length > 0) {
+      out.push("", "Discussion so far:");
+      for (const c of talk) out.push(quote(c.authorName, c.body));
+    }
+    out.push(
+      "",
+      `Work it on the branch \`${input.branch}\` and push when done.`,
+    );
+    return out.join("\n");
+  }
+
+  if (input.reason === "check_failed") {
+    out.push(
+      `The preview deploy of your pull #${issue.number} failed${input.checkSummary ? `: ${input.checkSummary}` : "."}`,
+    );
+    if (input.checkLog !== undefined && input.checkLog.length > 0) {
+      out.push(
+        "",
+        "The end of the deploy log:",
+        "```",
+        ...input.checkLog,
+        "```",
+      );
+    }
+    out.push("", "Fix the cause, make sure the tests pass, and push again.");
+    return out.join("\n");
+  }
+
+  // feedback
+  const news = {
+    comments: input.comments.filter(
+      (c) => c.createdAt > input.since && !isAgent(c.authorName),
+    ),
+    reviews: input.reviews.filter(
+      (r) => r.createdAt > input.since && !isAgent(r.authorName),
+    ),
+    lines: input.reviewComments.filter(
+      (c) => c.createdAt > input.since && !isAgent(c.authorName),
+    ),
+  };
+  out.push(
+    input.pull !== undefined
+      ? `There is feedback on your pull #${issue.number} (${issue.title}).`
+      : `There is a new message on issue #${issue.number} (${issue.title}).`,
+  );
+  for (const r of news.reviews) {
+    const verdict =
+      r.state === "changes_requested"
+        ? "requested changes"
+        : r.state === "approved"
+          ? "approved"
+          : "commented";
+    out.push(
+      "",
+      `@${r.authorName} ${verdict}${r.body.trim() === "" ? "." : ":"}`,
+    );
+    if (r.body.trim() !== "") out.push(indent(r.body));
+  }
+  if (news.lines.length > 0) {
+    out.push("", "Line comments:");
+    for (const c of news.lines)
+      out.push(`- ${c.path}:${c.line} — @${c.authorName}: ${oneLine(c.body)}`);
+  }
+  for (const c of news.comments) out.push("", quote(c.authorName, c.body));
+  if (news.comments.length + news.reviews.length + news.lines.length === 0) {
+    out.push(
+      "",
+      "(The feedback was not captured in words; read the pull's conversation through the API.)",
+    );
+  }
+  out.push(
+    "",
+    input.pull !== undefined
+      ? "Address it on the same branch and push again. If you disagree with something, say why in your last message."
+      : `Take it into account, work on the branch \`${input.branch}\`, and push when done.`,
+  );
+  return out.join("\n");
+}
+
+const quote = (author: string, body: string): string =>
+  `@${author}:\n${indent(body)}`;
+const indent = (text: string): string =>
+  text
+    .split("\n")
+    .map((l) => `    ${l}`)
+    .join("\n");
+const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** `<agent>/<issue number>-<slug>`: a branch name that says whose and what for. */
+export function branchFor(agent: Agent, issue: Issue): string {
+  const slug = issue.title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/, "");
+  return `${agent.user.username}/${issue.number}${slug === "" ? "" : `-${slug}`}`;
+}
+
+/** The issue number a crew branch was made for, if it was one. */
+export function issueOfBranch(
+  agent: Agent,
+  branch: string,
+): number | undefined {
+  const match = new RegExp(
+    `^${escapeRegExp(agent.user.username)}/(\\d+)(?:-|$)`,
+  ).exec(branch);
+  return match === null ? undefined : Number(match[1]);
+}
+
+const escapeRegExp = (s: string): string =>
+  s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

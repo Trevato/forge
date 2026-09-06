@@ -532,6 +532,52 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .files-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .files-head h2 { margin-bottom: 0; }
 
+/* ---- apps, runs, and the crew ---- */
+/* The strip a repo home wears when it runs: state, commit, URL, previews,
+   and the way to the App page — one line, in the repo header's own voice. */
+.app-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 12px; padding: 8px 12px; font-size: 13px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.app-strip > .ico { color: var(--muted-fg); flex: none; }
+.app-strip .app-url {
+  min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.app-strip .spacer { flex: 1; }
+/* One environment: name and state in the head, the facts and the reason it
+   failed in the body, its buttons in the foot. A card rather than a row so a
+   deploy error has a whole line to be read on. */
+.env-card .card-head { gap: 10px; }
+.env-card .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); }
+.env-card .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
+.env-card .card-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.env-card .card-foot form { display: inline-flex; }
+/* The checks line inside the merge box, in the reviews chip's voice. */
+.checks-line {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 6px; font-size: 13px; color: var(--muted-fg);
+}
+.checks-line .ico { width: 14px; height: 14px; }
+.checks-line .ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
+.checks-line .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
+.checks-line .now { display: inline-flex; align-items: center; gap: 4px; color: var(--attn); }
+/* A run's log: monospace, wrapped so a phone never scrolls sideways, and
+   bounded in height so the page head stays reachable. */
+.run-log {
+  margin: 0; padding: 12px 14px; max-height: 70dvh; overflow: auto;
+  background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4;
+  font-variant-ligatures: none; min-height: 3.1em;
+}
+.run-summary { margin: 10px 0 0; text-wrap: pretty; }
+.run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
+.run-actions form { display: inline-flex; }
+.table .truncate { max-width: 34ch; display: inline-block; vertical-align: bottom; }
+.agent-brief { white-space: pre-wrap; font-size: 13px; color: var(--muted-fg); max-height: 6.5em; overflow: hidden; }
+
 /* ---- proposing a change ---- */
 /* The editor's commit block, when the commit is a contribution: the whole
    outcome in one sentence before anybody types. */

@@ -32,6 +32,7 @@ import {
   type ListIssuesOptions,
 } from "./issues.ts";
 import { reviewSummary } from "./reviews.ts";
+import { checkSummary } from "./runs.ts";
 
 export interface Pull extends Issue {
   readonly baseBranch: string;
@@ -303,6 +304,11 @@ export interface PullReviewStatus {
 export interface ReviewGate {
   readonly db: Database;
   readonly requireReview: boolean;
+  /**
+   * Whether the head must also have a passing deploy run (`repo.requireChecks`).
+   * Read live inside the merge like the review verdict. @default false
+   */
+  readonly requireChecks?: boolean;
 }
 
 export interface PullStatus {
@@ -351,8 +357,7 @@ export async function pullStatus(
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
   const headOid = (await resolveOid(dir, headRef)) ?? pull.headOid;
-  const reviews =
-    gate === undefined ? null : reviewGate(gate, pull, headOid);
+  const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
   const ahead = await aheadCount(dir, baseOid, headOid);
   if (ahead === 0) {
     return {
@@ -390,7 +395,9 @@ export type MergePullError =
   | "closed"
   | "mirrored"
   /** The repo requires an approval of this head, or a change was requested. */
-  | "review_required";
+  | "review_required"
+  /** The repo requires a passing deploy of this head, and there is none yet. */
+  | "checks_required";
 
 export async function mergePull(
   db: Database,
@@ -414,6 +421,13 @@ export async function mergePull(
   const status = await pullStatus(dir, pull, input.gate);
   if (status.reviews !== null && !status.reviews.mergeable)
     return err("review_required");
+  // The check is the latest deploy run of *this* head. Read here, not
+  // handed in, for the same reason as the review verdict above.
+  if (
+    input.gate?.requireChecks === true &&
+    checkSummary(input.gate.db, pull.id, status.headOid).state !== "ok"
+  )
+    return err("checks_required");
   const landed = await merge(dir, {
     baseBranch: pull.baseBranch,
     baseOid: status.baseOid,

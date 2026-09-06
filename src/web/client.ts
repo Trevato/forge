@@ -103,6 +103,67 @@ export const mirrorJs = /* js */ `
 `;
 
 /**
+ * A run's log, live. The page renders every line already written and, for
+ * a run still going, refreshes itself without a script; this replaces that
+ * poll with the log's own event stream, so a line lands the moment it is
+ * written and the page never reloads under a reader. The stream replays
+ * what the page already shows, so the first line clears the pre and the
+ * tail is exact. Auto-scroll follows the bottom until the reader scrolls
+ * up, and resumes when they come back down.
+ */
+export const runLogJs = /* js */ `
+(function () {
+  var log = document.getElementById('run-log');
+  if (!log || typeof EventSource === 'undefined') return;
+  var url = log.getAttribute('data-stream');
+  if (!url) return;
+  var meta = document.querySelector('meta[http-equiv="refresh"]');
+  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
+
+  var state = document.getElementById('run-state');
+  var summary = document.getElementById('run-summary');
+  var cancel = document.getElementById('run-cancel');
+  var follow = true;
+  var seeded = false;
+  log.addEventListener('scroll', function () {
+    follow = log.scrollTop + log.clientHeight >= log.scrollHeight - 12;
+  });
+
+  var words = {
+    queued: ['Queued', 'secondary'], running: ['Running', 'attn'],
+    ok: ['Passed', 'success'], failed: ['Failed', 'danger'], cancelled: ['Cancelled', 'outline'],
+  };
+  function paint(run) {
+    if (state) {
+      var look = words[run.state];
+      var badge = state.querySelector('.badge') || state;
+      if (look) {
+        badge.setAttribute('data-variant', look[1]);
+        badge.textContent = run.state === 'ok' && run.kind === 'agent' ? 'Done' : look[0];
+      }
+    }
+    if (summary && run.summary) summary.textContent = run.summary;
+    if (cancel) cancel.hidden = true;
+  }
+
+  var source = new EventSource(url);
+  var empty = document.getElementById('run-empty');
+  source.addEventListener('line', function (event) {
+    if (!seeded) { log.textContent = ''; seeded = true; if (empty) empty.hidden = true; }
+    log.appendChild(document.createTextNode(event.data + '\\n'));
+    if (follow) log.scrollTop = log.scrollHeight;
+  });
+  source.addEventListener('done', function (event) {
+    source.close();
+    var run;
+    try { run = JSON.parse(event.data); } catch (err) { return; }
+    paint(run);
+  });
+  source.addEventListener('error', function () { /* a reload shows the log as written */ });
+})();
+`;
+
+/**
  * The code browser: the explorer column, the preview it paints beside itself,
  * and the fuzzy file finder.
  *

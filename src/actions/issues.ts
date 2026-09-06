@@ -26,6 +26,7 @@ import {
   getLabel,
   labelsFor,
   listComments,
+  setAssignee,
   setIssueLabels as writeLabels,
   setIssueState as writeState,
   type Comment,
@@ -36,7 +37,7 @@ import {
   type TitleError,
 } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
-import { canWrite, type Repo } from "../core/repos.ts";
+import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import {
   applyLabelNames,
@@ -86,6 +87,46 @@ export function openIssue(
     payload: { number: created.value.number },
   });
   return created;
+}
+
+/**
+ * Put someone on an issue or a pull, or take them off (`null`). A writer's
+ * call. The assignee must be able to see the repository, and an agent must
+ * be able to write it — assigning an agent is what starts it working
+ * (docs/APPS.md), and an agent that cannot push has nothing to start.
+ */
+export function assignIssue(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  assignee: User | null,
+): Result<Issue, AccessError | "assignee_cannot_read" | "agent_not_on_crew"> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  if (issue.repoId !== repo.id) return err("not_found");
+  // Assigning an agent starts a run that costs money; only a person may
+  // do that. An agent that could assign agents could start a chain of them.
+  if (writer.value.kind === "agent") return err("forbidden");
+  if (assignee !== null) {
+    if (assignee.kind === "org") return err("assignee_cannot_read");
+    if (!canRead(app.db, repo, assignee)) return err("assignee_cannot_read");
+    if (assignee.kind === "agent" && !canWrite(app.db, repo, assignee))
+      return err("agent_not_on_crew");
+  }
+  const updated = setAssignee(app.db, issue.id, assignee?.id ?? null);
+  if (!updated) return ok(issue);
+  app.bus.append({
+    kind: `${issue.kind}.assigned`,
+    repoId: repo.id,
+    actorId: writer.value.id,
+    payload: {
+      number: issue.number,
+      assignee: assignee?.username ?? null,
+      agent: assignee?.kind === "agent",
+    },
+  });
+  return ok(updated);
 }
 
 /** Comment on an issue or a pull; anyone who can see it may speak. */
@@ -212,8 +253,7 @@ export async function openIssueThrough(
   if (!user.ok) return user;
   const through = writeThroughFor(app, user.value, repo);
   if (!through.ok) return through;
-  if (through.value === undefined)
-    return openIssue(app, actor, repo, input);
+  if (through.value === undefined) return openIssue(app, actor, repo, input);
 
   const title = input.title.trim();
   if (title === "") return err("empty_title");
