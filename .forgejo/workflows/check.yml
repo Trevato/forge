@@ -1,0 +1,43 @@
+name: check
+# The gate: zero type errors and a green suite, on every push to main and
+# every pull request, before release.yml ever builds an image. Runs on the
+# platform's isolated, unprivileged runner pool (host mode: bun + git baked
+# in, no docker daemon).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: isolated
+    env:
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
+    steps:
+      - name: derive owner + app
+        run: |
+          set -eu
+          echo "OWNER=${GITHUB_REPOSITORY%%/*}" >> "$GITHUB_ENV"
+          echo "APP=${GITHUB_REPOSITORY##*/}"   >> "$GITHUB_ENV"
+
+      - name: clone source at this ref
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git clone "http://x-access-token:$TOKEN@$REGISTRY/$OWNER/$APP.git" src
+          cd src
+          git checkout -q "$GITHUB_SHA"
+          echo "checked out $(git rev-parse --short HEAD)"
+
+      - name: install dev dependencies (types + tsc)
+        working-directory: src
+        run: bun install --frozen-lockfile
+
+      - name: typecheck
+        working-directory: src
+        run: bun x tsc --noEmit
+
+      - name: test
+        working-directory: src
+        run: bun test

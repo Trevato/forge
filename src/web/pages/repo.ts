@@ -494,7 +494,8 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
             html`<p class="mt small muted">Clone over SSH</p>
               <span class="clone"
                 ><span class="clone-text" id="clone-ssh"
-                  >ssh://git@${ctx.url
+                  >ssh://git@${ctx.app.config.host ??
+                  ctx.url
                     .hostname}:${sshPort}/${repo.ownerName}/${repo.name}.git</span
                 ></span
               >`,

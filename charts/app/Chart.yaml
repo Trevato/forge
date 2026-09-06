@@ -1,0 +1,8 @@
+apiVersion: v2
+name: forge
+description: git hosting, code review and a terminal UI in one Bun process
+type: application
+# Both versions are set at package time by the release workflow
+# (`helm package --version --app-version`); the values here are placeholders.
+version: 0.0.0
+appVersion: "0.0.0"

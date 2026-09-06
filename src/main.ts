@@ -28,12 +28,17 @@ if (process.argv[2] === "hook") {
 // add-on. `FORGE_SSH_PORT=0` turns the listener off entirely.
 const sshPort = Number(process.env.FORGE_SSH_PORT ?? 2222);
 
+// FORGE_URL is the address people reach the forge at when a proxy in front
+// terminates TLS. Parsed once here so a typo fails the boot, not a request.
+const publicUrl = (process.env.FORGE_URL ?? "").trim();
+
 const app = createApp({
   dataDir: process.env.FORGE_DATA ?? "data",
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
     ? {}
     : { host: process.env.FORGE_HOST }),
+  ...(publicUrl === "" ? {} : { url: new URL(publicUrl).origin }),
 });
 
 await reconcile(app);

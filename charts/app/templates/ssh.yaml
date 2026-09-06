@@ -1,0 +1,36 @@
+# SSH is a raw TCP surface: the terminal UI and git-over-ssh share it. The
+# platform's edge terminates HTTPS and proxies web traffic; SSH instead rides
+# a Traefik TCP entrypoint straight to the pod. Two objects wire it up: the
+# route that binds the entrypoint to this Service, and the network policy
+# that lets the edge reach the pod's ssh port (the platform's generated
+# policy admits the edge on the web ports only).
+apiVersion: traefik.io/v1alpha1
+kind: IngressRouteTCP
+metadata:
+  name: {{ .Release.Name }}-ssh
+spec:
+  entryPoints:
+    - {{ .Values.ssh.entryPoint }}
+  routes:
+    - match: HostSNI(`*`)
+      services:
+        - name: {{ .Release.Name }}
+          port: {{ .Values.forge.sshPort }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-allow-ingress-ssh
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      ports:
+        - protocol: TCP
+          port: {{ .Values.forge.sshPort }}

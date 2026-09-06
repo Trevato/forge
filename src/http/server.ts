@@ -155,7 +155,13 @@ import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
-import { cookieValue, type Auth, type Ctx, type Handler } from "./context.ts";
+import {
+  cookieValue,
+  publicUrl,
+  type Auth,
+  type Ctx,
+  type Handler,
+} from "./context.ts";
 import { apiError, json, noRoute, notFound } from "./respond.ts";
 import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
 import {
@@ -871,7 +877,7 @@ export async function serve(app: App): Promise<Servers> {
     port: app.config.port ?? 3000,
     idleTimeout: 120,
     async fetch(request) {
-      const url = new URL(request.url);
+      const url = publicUrl(request, app.config.url);
       const matched = router.match(request.method, url.pathname);
       if (!matched) return noRoute(request.method, url.pathname);
       const auth = await resolveAuth(app, request);

@@ -22,6 +22,15 @@ export interface ForgeConfig {
   /** The hostname clone URLs are built from. @default "localhost" */
   host?: string;
   /**
+   * The canonical public origin, when the forge is served through a proxy
+   * that terminates TLS. Inside the deployment a request arrives as plain
+   * HTTP on an internal name, but the browser sent its Origin for THIS
+   * address, cookies need `Secure` here, and every URL shown to a person
+   * must point here — so each request's URL is rebuilt on it. Undefined
+   * means the request's own scheme and host are the truth.
+   */
+  url?: string;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.

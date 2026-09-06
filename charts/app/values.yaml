@@ -1,0 +1,49 @@
+# The platform's HelmRelease overlay sets `image.repository`, `service.type`,
+# `userEnvRev` and `extraEnvFrom` (and the app version through the chart's
+# appVersion). Everything else is this chart's own.
+
+image:
+  repository: git.open-platform.sh/trevato-apps/forge
+  # Empty = the chart's appVersion, which the release workflow sets to the tag.
+  tag: ""
+
+imagePullSecrets:
+  - name: forgejo-registry
+
+service:
+  type: ClusterIP
+  # The platform's Ingress sends web traffic to this port.
+  port: 80
+
+# One volume holds the whole forge: the SQLite index, the bare repos and the
+# SSH host key. Tar it up and it moves.
+persistence:
+  size: 10Gi
+  storageClassName: local-path
+
+forge:
+  # FORGE_URL — the canonical public origin. Browsers, cookies and clone URLs
+  # all describe this address; TLS is terminated ahead of the pod.
+  url: https://forge-trevato-apps.open-platform.sh
+  # FORGE_HOST — the hostname in ssh:// clone URLs. SSH cannot ride the HTTPS
+  # edge, so it has its own DNS name, pointed at the platform's TCP relay.
+  sshHost: ssh.forge-trevato-apps.open-platform.sh
+  sshPort: 2222
+
+ssh:
+  # The platform edge's raw-TCP entrypoint this forge claims. Plain SSH has
+  # no SNI, so an entrypoint fronts exactly one backend.
+  entryPoint: ssh
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi
+
+# Appended by the platform: self-serve secrets, and whatever else it grants.
+extraEnvFrom: []
+# Bumped by the platform when self-serve secrets change, to roll the pod.
+userEnvRev: "init"
