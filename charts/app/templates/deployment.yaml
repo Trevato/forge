@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+  annotations:
+    # One process owns the data directory: SQLite in WAL mode and bare repos
+    # on one ReadWriteOnce volume. A release stops the old pod before the new
+    # one starts; this annotation is the platform's opt-out from the fleet's
+    # surge rollout policy.
+    plat.sh/rollout: recreate
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+        role: web
+      annotations:
+        plat.sh/user-env-rev: {{ .Values.userEnvRev | default "init" | quote }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # PodSecurity `restricted`. The image runs as uid 1000 (`bun`); fsGroup
+      # makes the volume writable by it.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: forge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          ports:
+            - name: http
+              containerPort: 8080
+            {{- if include "forge.ssh" . }}
+            - name: ssh
+              containerPort: 2222
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: FORGE_DATA
+              value: /data
+            # 8080 is the port the platform's edge policy admits; the
+            # generated ingress rule names it, so the forge listens there.
+            - name: PORT
+              value: "8080"
+            - name: FORGE_URL
+              value: {{ include "forge.url" . | quote }}
+            {{- if include "forge.ssh" . }}
+            - name: FORGE_SSH_PORT
+              value: {{ .Values.forge.sshPort | quote }}
+            - name: FORGE_HOST
+              value: {{ .Values.forge.sshHost | quote }}
+            {{- else }}
+            # A preview is web-only: the edge's SSH entrypoint belongs to prod.
+            - name: FORGE_SSH_PORT
+              value: "0"
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # `/` answers 200 for anyone; it is the landing page. Boot reconciles
+          # the index from git first, which grows with the number of repos.
+          startupProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 3
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data

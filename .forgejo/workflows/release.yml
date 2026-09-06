@@ -1,0 +1,86 @@
+name: release
+# A version tag ships: build the image from the Dockerfile, sign it, push the
+# chart. Flux rolls the new chart version to prod once the platform pins it.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    runs-on: isolated
+    env:
+      # In-cluster http registry — helm chart push + cosign signature write.
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
+    steps:
+      - name: derive owner + app + version + endpoints
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          OWNER="${GITHUB_REPOSITORY%%/*}"; APP="${GITHUB_REPOSITORY##*/}"
+          echo "OWNER=$OWNER" >> $GITHUB_ENV
+          echo "APP=$APP"     >> $GITHUB_ENV
+          echo "V=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+          # Images push to the platform's public registry base (git.<domain>),
+          # derived from the repo's html_url; the runner's own server url is
+          # the internal http endpoint, which buildkit cannot push to.
+          BASE=$(curl -fsS -H "Authorization: token $TOKEN" \
+            "http://$REGISTRY/api/v1/repos/$OWNER/$APP" \
+            | sed -n "s#.*\"html_url\":\"\(https\{0,1\}://[^\"/]*\)/$OWNER/$APP\".*#\1#p")
+          [ -n "$BASE" ] || { echo "FATAL: could not derive public registry base"; exit 1; }
+          REG_PUB=$(printf '%s' "$BASE" | sed -E 's#^https?://##; s#/$##')
+          echo "REG_PUB=$REG_PUB" >> $GITHUB_ENV
+          echo "public registry: $REG_PUB"
+
+      - name: write registry auth
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -eu
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s:%s' "$OWNER" "$TOKEN" | base64 -w0 2>/dev/null || printf '%s:%s' "$OWNER" "$TOKEN" | base64 | tr -d '\n')
+          cat > ~/.docker/config.json <<JSON
+          {"auths":{"$REG_PUB":{"auth":"$AUTH"},"$REGISTRY":{"auth":"$AUTH"}}}
+          JSON
+
+      - name: clone source at tag
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git clone --depth 1 --branch "$GITHUB_REF_NAME" \
+            "http://x-access-token:$TOKEN@$REGISTRY/$OWNER/$APP.git" src
+
+      - name: build & push image (rootless buildkit)
+        run: |
+          set -eu
+          buildctl --addr "$BUILDKIT_HOST" build \
+            --frontend dockerfile.v0 \
+            --local context=src --local dockerfile=src \
+            --opt build-arg:VERSION="$V" \
+            --output type=image,name=$REG_PUB/$OWNER/$APP:$V,push=true \
+            --metadata-file /tmp/md.json
+          DIGEST=$(grep -o '"containerimage.digest":[^,]*' /tmp/md.json | grep -o 'sha256:[a-f0-9]\{64\}' | head -1)
+          [ -n "$DIGEST" ] || { echo "FATAL: no pushed digest"; exit 1; }
+          echo "DIGEST=$DIGEST" >> $GITHUB_ENV
+          echo "pushed $REG_PUB/$OWNER/$APP:$V @ $DIGEST"
+
+      - name: sign image (cosign)
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
+            echo "cosign key not provisioned; skipping signing"
+            exit 0
+          fi
+          cosign sign --yes --tlog-upload=false --key env://COSIGN_PRIVATE_KEY "$REG_PUB/$OWNER/$APP@$DIGEST"
+
+      - name: package & push helm chart
+        working-directory: src
+        run: |
+          set -eu
+          sed -i "s/^name:.*/name: $APP/" charts/app/Chart.yaml
+          helm package charts/app --version "$V" --app-version "$V"
+          helm push "$APP-$V.tgz" "oci://$REGISTRY/$OWNER/charts" --plain-http

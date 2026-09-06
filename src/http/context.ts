@@ -29,6 +29,25 @@ export interface Ctx {
 export type Handler = (ctx: Ctx) => Response | Promise<Response>;
 
 /**
+ * The URL a request was made to, as the public sees it. Bun reports the
+ * scheme and host of the socket it accepted; behind a proxy that terminates
+ * TLS that is plain HTTP on an internal name, while the browser's Origin,
+ * the cookies' `Secure` flag and every clone URL describe the public
+ * address. When the operator declared that address (`FORGE_URL`) the URL is
+ * rebuilt on it, keeping the request's own path and query. No forwarded
+ * header is consulted: a header is a claim, the configuration is a fact.
+ */
+export function publicUrl(request: Request, base: string | undefined): URL {
+  const url = new URL(request.url);
+  if (base === undefined) return url;
+  const canonical = new URL(base);
+  url.protocol = canonical.protocol;
+  url.hostname = canonical.hostname;
+  url.port = canonical.port;
+  return url;
+}
+
+/**
  * Browser CSRF: a session-cookie mutation must originate from this forge.
  * Browsers always send Origin on cross-site requests; a missing Origin
  * means a non-browser client, which cookies alone cannot impersonate.
