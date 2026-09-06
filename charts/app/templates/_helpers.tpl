@@ -22,3 +22,8 @@ it) without any per-env values.
 {{- define "forge.ssh" -}}
 {{- if eq (include "forge.env" .) "prod" -}}true{{- end -}}
 {{- end -}}
+
+{{/* The forge's public host for this env, without scheme. */}}
+{{- define "forge.host" -}}
+{{- regexReplaceAll "^https://" (include "forge.url" .) "" -}}
+{{- end -}}

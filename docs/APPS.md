@@ -180,7 +180,11 @@ someone tries.
 Apps are served from the forge's port by `Host`. With `FORGE_APP_DOMAIN`
 (default: the forge's own host), production is `<slug>.<domain>` and the
 preview of pull 12 is `<slug>--12.<domain>`. `--` cannot occur inside a slug,
-so the two never collide. Browsers resolve every `*.localhost` name to
+so the two never collide. Where only single-label hosts are routable (a
+wildcard certificate covers one label), give the attachment itself:
+`FORGE_APP_DOMAIN=--forge.example` serves `notes--forge.example` and
+`notes--12--forge.example`; a value that starts with a separator is used
+whole, a bare domain gets the dot. Browsers resolve every `*.localhost` name to
 loopback, which is what makes a laptop forge work with no configuration at
 all: `http://hello.localhost:3000`.
 
@@ -264,8 +268,9 @@ can steer its crew without touching the forge.
 
 The forge asks the host for one more binary than before: `claude`, found on
 `PATH` or at `FORGE_CLAUDE`. Authentication is the operator's — an
-`ANTHROPIC_API_KEY` in the forge's environment is handed to the run, or the
-machine's own Claude Code login is used when there is none. When neither
+`ANTHROPIC_API_KEY` or a `CLAUDE_CODE_OAUTH_TOKEN` in the forge's environment
+is handed to the run, or the machine's own Claude Code login is used when
+there is neither. When neither
 works the crew page says so, in words, before anyone assigns anything.
 
 ## Configuration
@@ -273,7 +278,7 @@ works the crew page says so, in words, before anyone assigns anything.
 | variable                  | default                         | meaning                                           |
 | ------------------------- | ------------------------------- | ------------------------------------------------- |
 | `FORGE_APPS`              | `1`                             | `0` runs no apps and no crew                      |
-| `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | the domain app hostnames hang off                 |
+| `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
 | `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once                                |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
@@ -282,6 +287,7 @@ works the crew page says so, in words, before anyone assigns anything.
 | `FORGE_CLAUDE`            | `claude` on `PATH`              | the Claude Code binary                            |
 | `FORGE_CLAUDE_CONFIG_DIR` | Claude Code's own               | a `CLAUDE_CONFIG_DIR` for runs, when wanted       |
 | `ANTHROPIC_API_KEY`       | —                               | handed to agent runs when set                     |
+| `CLAUDE_CODE_OAUTH_TOKEN` | —                               | handed to agent runs when set                     |
 
 The public URL apps and agents are told about the forge is `FORGE_URL` when
 set, else `http://<FORGE_HOST>:<PORT>`; its scheme and port are what app

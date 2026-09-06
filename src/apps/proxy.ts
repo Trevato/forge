@@ -11,6 +11,7 @@
  * directory — so guessing a hostname yields the forge's own "not found".
  */
 
+import { appHostSuffix } from "./host.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
@@ -33,7 +34,7 @@ export function parseAppHost(
   domain: string,
 ): { slug: string; env: EnvName } | undefined {
   const host = hostHeader.toLowerCase().replace(/:\d+$/, "");
-  const suffix = `.${domain.toLowerCase().replace(/:\d+$/, "")}`;
+  const suffix = appHostSuffix(domain.toLowerCase().replace(/:\d+$/, ""));
   if (!host.endsWith(suffix)) return undefined;
   const label = host.slice(0, -suffix.length);
   if (label === "" || label.includes(".")) return undefined;

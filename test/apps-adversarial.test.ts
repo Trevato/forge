@@ -7,6 +7,7 @@
  * edges: stale state, races, forged input, and the boundary of a bound.
  */
 
+import { appHostSuffix } from "../src/apps/host.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -90,6 +91,34 @@ async function sh(args: string[], cwd: string) {
 // ---------------------------------------------------------------------------
 // Pure units: no server, no filesystem beyond what the function itself does.
 // ---------------------------------------------------------------------------
+
+describe("host routing: a single-label attachment", () => {
+  // Where a wildcard covers one label, the attachment is given whole and the
+  // same rule builds and reads the hostname.
+  const DOM = "--forge.example";
+
+  test("production and preview hang off the forge's own label", () => {
+    expect(parseAppHost("notes--forge.example", DOM)).toEqual({
+      slug: "notes",
+      env: "production",
+    });
+    expect(parseAppHost("notes--12--forge.example:443", DOM)).toEqual({
+      slug: "notes",
+      env: "pull-12",
+    });
+  });
+
+  test("the dotted form is not an app under an undotted attachment, and vice versa", () => {
+    expect(parseAppHost("notes.forge.example", DOM)).toBeUndefined();
+    expect(parseAppHost("notes--forge.example", "forge.example")).toBeUndefined();
+  });
+
+  test("a bare domain attaches with a dot; a separator is taken whole", () => {
+    expect(appHostSuffix("forge.example")).toBe(".forge.example");
+    expect(appHostSuffix("--forge.example")).toBe("--forge.example");
+    expect(appHostSuffix(".forge.example")).toBe(".forge.example");
+  });
+});
 
 describe("host routing: parseAppHost", () => {
   const DOM = "apps.test";

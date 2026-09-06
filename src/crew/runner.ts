@@ -316,6 +316,9 @@ async function work(
       ...(process.env["ANTHROPIC_API_KEY"] === undefined
         ? {}
         : { ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"] }),
+      ...(process.env["CLAUDE_CODE_OAUTH_TOKEN"] === undefined
+        ? {}
+        : { CLAUDE_CODE_OAUTH_TOKEN: process.env["CLAUDE_CODE_OAUTH_TOKEN"] }),
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),

@@ -61,6 +61,11 @@ spec:
               value: "8080"
             - name: FORGE_URL
               value: {{ include "forge.url" . | quote }}
+            # Apps hang off the forge's own host as single labels
+            # (`notes--<forge host>`), the only shape the platform's wildcard
+            # DNS and certificate cover; the IngressRoute below routes them.
+            - name: FORGE_APP_DOMAIN
+              value: {{ printf "--%s" (include "forge.host" .) | quote }}
             {{- if include "forge.ssh" . }}
             - name: FORGE_SSH_PORT
               value: {{ .Values.forge.sshPort | quote }}

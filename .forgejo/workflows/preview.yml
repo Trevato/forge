@@ -1,0 +1,116 @@
+name: preview
+# Every pull request gets its own web-only forge at
+# https://pr-<N>-forge-trevato-apps.open-platform.sh with its own volume;
+# closing the PR tears it down. Same build as release.yml, tagged for the PR.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  preview:
+    runs-on: isolated
+    env:
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
+      MCP: http://mcp.mcp.svc.cluster.local
+    steps:
+      - name: derive owner + app + pr + endpoints
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          OWNER="${GITHUB_REPOSITORY%%/*}"; APP="${GITHUB_REPOSITORY##*/}"
+          echo "OWNER=$OWNER" >> $GITHUB_ENV
+          echo "APP=$APP"     >> $GITHUB_ENV
+          echo "PR=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          HEADSHA="${{ github.event.pull_request.head.sha }}"
+          echo "HEADSHA=$HEADSHA" >> $GITHUB_ENV
+          echo "TAG=0.0.0-pr.${{ github.event.pull_request.number }}.$(echo "$HEADSHA" | cut -c1-7)" >> $GITHUB_ENV
+          BASE=$(curl -fsS -H "Authorization: token $TOKEN" \
+            "http://$REGISTRY/api/v1/repos/$OWNER/$APP" \
+            | sed -n "s#.*\"html_url\":\"\(https\{0,1\}://[^\"/]*\)/$OWNER/$APP\".*#\1#p")
+          [ -n "$BASE" ] || { echo "FATAL: could not derive public registry base"; exit 1; }
+          REG_PUB=$(printf '%s' "$BASE" | sed -E 's#^https?://##; s#/$##')
+          echo "REG_PUB=$REG_PUB" >> $GITHUB_ENV
+
+      - name: teardown
+        if: ${{ github.event.action == 'closed' }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            "$MCP/ci/preview" \
+            -d "{\"action\":\"delete\",\"owner\":\"$OWNER\",\"name\":\"$APP\",\"pr\":$PR}")
+          cat /tmp/out.json; echo
+          [ "$code" = "200" ] || { echo "FATAL: teardown failed (HTTP $code)"; exit 1; }
+
+      - name: write registry auth
+        if: ${{ github.event.action != 'closed' }}
+        env:
+          TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -eu
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s:%s' "$OWNER" "$TOKEN" | base64 -w0 2>/dev/null || printf '%s:%s' "$OWNER" "$TOKEN" | base64 | tr -d '\n')
+          cat > ~/.docker/config.json <<JSON
+          {"auths":{"$REG_PUB":{"auth":"$AUTH"},"$REGISTRY":{"auth":"$AUTH"}}}
+          JSON
+
+      - name: clone PR branch
+        if: ${{ github.event.action != 'closed' }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git clone --depth 1 --branch "$GITHUB_HEAD_REF" \
+            "http://x-access-token:$TOKEN@$REGISTRY/$OWNER/$APP.git" src
+
+      - name: build & push PR image (rootless buildkit)
+        if: ${{ github.event.action != 'closed' }}
+        run: |
+          set -eu
+          buildctl --addr "$BUILDKIT_HOST" build \
+            --frontend dockerfile.v0 \
+            --local context=src --local dockerfile=src \
+            --opt build-arg:VERSION="$TAG" \
+            --output type=image,name=$REG_PUB/$OWNER/$APP:$TAG,push=true \
+            --metadata-file /tmp/md.json
+          DIGEST=$(grep -o '"containerimage.digest":[^,]*' /tmp/md.json | grep -o 'sha256:[a-f0-9]\{64\}' | head -1)
+          [ -n "$DIGEST" ] || { echo "FATAL: no pushed digest"; exit 1; }
+          echo "DIGEST=$DIGEST" >> $GITHUB_ENV
+
+      - name: sign image (cosign)
+        if: ${{ github.event.action != 'closed' }}
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${COSIGN_PRIVATE_KEY:-}" ]; then
+            echo "cosign key not provisioned; skipping signing"
+            exit 0
+          fi
+          cosign sign --yes --tlog-upload=false --key env://COSIGN_PRIVATE_KEY "$REG_PUB/$OWNER/$APP@$DIGEST"
+
+      - name: package & push helm chart
+        if: ${{ github.event.action != 'closed' }}
+        working-directory: src
+        run: |
+          set -eu
+          sed -i "s/^name:.*/name: $APP/" charts/app/Chart.yaml
+          helm package charts/app --version "$TAG" --app-version "$TAG"
+          helm push "$APP-$TAG.tgz" "oci://$REGISTRY/$OWNER/charts" --plain-http
+
+      - name: provision preview
+        if: ${{ github.event.action != 'closed' }}
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            "$MCP/ci/preview" \
+            -d "{\"action\":\"create\",\"owner\":\"$OWNER\",\"name\":\"$APP\",\"pr\":$PR,\"previewSha\":\"$HEADSHA\"}")
+          cat /tmp/out.json; echo
+          [ "$code" = "200" ] || { echo "FATAL: provision failed (HTTP $code)"; exit 1; }

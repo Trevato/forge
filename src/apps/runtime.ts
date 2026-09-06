@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -144,7 +145,7 @@ export class AppsRuntime {
 
   hostFor(slug: string, env: EnvName): string {
     const label = env === "production" ? slug : `${slug}--${env.slice(5)}`;
-    return `${label}.${this.options.domain}`;
+    return `${label}${appHostSuffix(this.options.domain)}`;
   }
 
   /**

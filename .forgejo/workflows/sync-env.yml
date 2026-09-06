@@ -1,0 +1,50 @@
+name: sync-env
+# Self-serve secrets: everything in this repo's Actions secrets is sealed into
+# the platform's `forge-user-env` Secret and lands in the pod's environment
+# (the crew's Claude credential lives here). Runs on every push to main and
+# on demand.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+jobs:
+  sync-env:
+    runs-on: isolated
+    env:
+      MCP: http://mcp.mcp.svc.cluster.local
+    steps:
+      - name: sync secrets -> sealed forge-user-env Secret
+        env:
+          TOKEN: ${{ github.token }}
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          APP_ENV: ${{ secrets.APP_ENV }}
+          PLAT_DEV: ${{ vars.PLAT_DEV }}
+          PLAT_ACTOR: ${{ github.actor }}
+          PLAT_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PLAT_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          trap 'rm -f /tmp/body.json' EXIT
+          python3 - <<'PY'
+          import json, os
+          owner, name = os.environ["GITHUB_REPOSITORY"].split("/", 1)
+          json.dump({
+              "owner": owner,
+              "name": name,
+              "allSecrets": os.environ.get("ALL_SECRETS", ""),
+              "appEnv": os.environ.get("APP_ENV", ""),
+              "platDev": os.environ.get("PLAT_DEV", ""),
+              "actor": {
+                  "login": os.environ.get("PLAT_ACTOR", ""),
+                  "runId": os.environ.get("GITHUB_RUN_ID", ""),
+                  "runUrl": os.environ.get("PLAT_RUN_URL", ""),
+                  "sha": os.environ.get("PLAT_SHA", ""),
+              },
+          }, open("/tmp/body.json", "w"))
+          PY
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' -X POST \
+            -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
+            "$MCP/ci/sync-env" --data-binary @/tmp/body.json)
+          cat /tmp/out.json; echo
+          [ "$code" = "200" ] || { echo "FATAL: sync-env failed (HTTP $code)"; exit 1; }

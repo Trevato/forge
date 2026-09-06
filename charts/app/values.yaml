@@ -35,13 +35,15 @@ ssh:
   # no SNI, so an entrypoint fronts exactly one backend.
   entryPoint: ssh
 
+# Apps and agent runs are child processes of this one pod, so it is sized
+# like a small machine rather than a web handler.
 resources:
   requests:
-    cpu: 100m
-    memory: 256Mi
-  limits:
-    cpu: "1"
+    cpu: 500m
     memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
 
 # Appended by the platform: self-serve secrets, and whatever else it grants.
 extraEnvFrom: []
