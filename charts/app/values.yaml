@@ -36,15 +36,15 @@ ssh:
   entryPoint: ssh
 
 # Apps and agent runs are child processes of this one pod, so it is sized
-# like a small machine rather than a web handler. The platform's standard
-# tier caps one container at 1 CPU / 1Gi; a higher tier lifts that.
+# like a small machine rather than a web handler. The org runs on the
+# platform's plus tier, which caps one container at 2 CPU / 2Gi.
 resources:
   requests:
     cpu: 500m
-    memory: 512Mi
-  limits:
-    cpu: "1"
     memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 2Gi
 
 # Appended by the platform: self-serve secrets, and whatever else it grants.
 extraEnvFrom: []
