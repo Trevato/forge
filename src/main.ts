@@ -30,7 +30,7 @@ const sshPort = Number(process.env.FORGE_SSH_PORT ?? 2222);
 
 // FORGE_URL is the address people reach the forge at when a proxy in front
 // terminates TLS. Parsed once here so a typo fails the boot, not a request.
-const publicUrl = (process.env.FORGE_URL ?? "").trim();
+const canonicalUrl = (process.env.FORGE_URL ?? "").trim();
 
 const app = createApp({
   dataDir: process.env.FORGE_DATA ?? "data",
@@ -38,7 +38,7 @@ const app = createApp({
   ...(process.env.FORGE_HOST === undefined
     ? {}
     : { host: process.env.FORGE_HOST }),
-  ...(publicUrl === "" ? {} : { url: new URL(publicUrl).origin }),
+  ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
 });
 
 await reconcile(app);
