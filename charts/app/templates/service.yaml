@@ -11,6 +11,8 @@ spec:
     - name: http
       port: {{ .Values.service.port }}
       targetPort: http
+    {{- if include "forge.ssh" . }}
     - name: ssh
       port: {{ .Values.forge.sshPort }}
       targetPort: ssh
+    {{- end }}

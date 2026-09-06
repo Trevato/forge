@@ -44,8 +44,10 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            {{- if include "forge.ssh" . }}
             - name: ssh
               containerPort: 2222
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -57,12 +59,18 @@ spec:
             # generated ingress rule names it, so the forge listens there.
             - name: PORT
               value: "8080"
+            - name: FORGE_URL
+              value: {{ include "forge.url" . | quote }}
+            {{- if include "forge.ssh" . }}
             - name: FORGE_SSH_PORT
               value: {{ .Values.forge.sshPort | quote }}
-            - name: FORGE_URL
-              value: {{ .Values.forge.url | quote }}
             - name: FORGE_HOST
               value: {{ .Values.forge.sshHost | quote }}
+            {{- else }}
+            # A preview is web-only: the edge's SSH entrypoint belongs to prod.
+            - name: FORGE_SSH_PORT
+              value: "0"
+            {{- end }}
           {{- with .Values.extraEnvFrom }}
           envFrom:
             {{- toYaml . | nindent 12 }}
