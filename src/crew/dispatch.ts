@@ -262,7 +262,7 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  * starts reads the whole conversation, so nothing a person said is lost.
  */
 function requeueInterrupted(app: App): void {
-  for (const run of listQueued(app.db, "agent", 100)) {
+  for (const run of listActive(app.db, "agent")) {
     if (run.state !== "running" || run.issueId === null) continue;
     cancelRun(app.db, run.id, "interrupted by a restart; queued again");
     const issue = getIssueById(app.db, run.issueId);
