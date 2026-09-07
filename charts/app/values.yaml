@@ -32,6 +32,10 @@ forge:
   # Origins registered by the operator, `host=client id` comma-separated: the
   # platform's own Forgejo, so connecting it is one click.
   originClients: "git.open-platform.sh=d9b50fa1-a56a-483d-9fbc-b3c44ec726b5"
+  # Agent runs and app deploys at once. Two runs used a fifth of the pod's
+  # memory; four is comfortable on the plus tier.
+  crewConcurrency: 4
+  appsConcurrency: 3
 
 ssh:
   # The platform edge's raw-TCP entrypoint this forge claims. Plain SSH has

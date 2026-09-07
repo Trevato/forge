@@ -82,6 +82,10 @@ spec:
             # private CA; trusting it lets this forge talk to them (origins).
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/plat-ca/tls.crt
+            - name: FORGE_CREW_CONCURRENCY
+              value: {{ .Values.forge.crewConcurrency | quote }}
+            - name: FORGE_APPS_CONCURRENCY
+              value: {{ .Values.forge.appsConcurrency | quote }}
             {{- with .Values.forge.originClients }}
             # Origins the operator registered once, for everyone.
             - name: FORGE_ORIGIN_CLIENT_ID
