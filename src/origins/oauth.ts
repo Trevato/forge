@@ -744,7 +744,8 @@ export function deleteApp(
  * registered one, otherwise the operator's for github.com. GitHub is the
  * only forge where one client id can serve every user of a forge — every
  * Forgejo instance needs its own registration, which is why the user pastes
- * a client id once per host.
+ * a client id once per host, or the operator registers the host once for
+ * everyone (`FORGE_ORIGIN_CLIENT_ID`).
  */
 export function appFor(
   db: Database,
@@ -776,6 +777,18 @@ export function appFor(
     });
   }
 
+  // The operator can register a host once, for everyone on this forge.
+  const registered = operatorClientId(env, target.apiUrl);
+  if (registered !== undefined) {
+    return ok({
+      kind: target.kind,
+      apiUrl: target.apiUrl,
+      webUrl: target.webUrl,
+      clientId: registered,
+      clientSecret: "",
+    });
+  }
+
   const clientId = (env.FORGE_GITHUB_CLIENT_ID ?? "").trim();
   if (target.kind === "github" && clientId !== "") {
     return ok({
@@ -787,6 +800,34 @@ export function appFor(
     });
   }
   return err("no_app");
+}
+
+/**
+ * `FORGE_ORIGIN_CLIENT_ID` is `host=client id`, comma-separated: the
+ * operator registering an origin's OAuth application once, for every user of
+ * this forge, instead of each person pasting the id. A public client (PKCE)
+ * needs no secret. Matched on the origin's hostname.
+ */
+export function operatorClientId(
+  env: Record<string, string | undefined>,
+  apiUrl: string,
+): string | undefined {
+  const raw = (env.FORGE_ORIGIN_CLIENT_ID ?? "").trim();
+  if (raw === "") return undefined;
+  let host: string;
+  try {
+    host = new URL(apiUrl).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  for (const entry of raw.split(",")) {
+    const at = entry.indexOf("=");
+    if (at === -1) continue;
+    const name = entry.slice(0, at).trim().toLowerCase();
+    const id = entry.slice(at + 1).trim();
+    if (name === host && id !== "") return id;
+  }
+  return undefined;
 }
 
 // ---- scopes we ask for ----

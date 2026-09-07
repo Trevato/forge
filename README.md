@@ -98,8 +98,11 @@ way in you get is a property of the forge, not a preference:
 
 - **Forgejo / Gitea** — authorization code with PKCE. They implement no device
   grant, and every instance needs its own OAuth application, so you paste a
-  client id once per host. The page gives you the exact redirect URI to enter
-  (`https://your.forge/settings/origins/callback`); a public client is fine.
+  client id once per host — or the operator registers the host once for
+  everyone, `FORGE_ORIGIN_CLIENT_ID=git.example=<client id>` (comma-separated
+  for more), and Connect is one click. The page gives you the exact redirect
+  URI to enter (`https://your.forge/settings/origins/callback`); a public
+  client is fine.
   This flow needs the forge to know its own public URL, since that URL is
   registered with the other forge and a `Host` header is not evidence: set
   **`FORGE_URL`** to the canonical base URL (`FORGE_HOST` and loopback are the

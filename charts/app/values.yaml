@@ -29,6 +29,9 @@ forge:
   # edge, so it has its own DNS name, pointed at the platform's TCP relay.
   sshHost: ssh.forge-trevato-apps.open-platform.sh
   sshPort: 2222
+  # Origins registered by the operator, `host=client id` comma-separated: the
+  # platform's own Forgejo, so connecting it is one click.
+  originClients: "git.open-platform.sh=d9b50fa1-a56a-483d-9fbc-b3c44ec726b5"
 
 ssh:
   # The platform edge's raw-TCP entrypoint this forge claims. Plain SSH has

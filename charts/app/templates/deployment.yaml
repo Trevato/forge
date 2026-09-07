@@ -74,6 +74,15 @@ spec:
                   name: plat-edge-token
                   key: token
                   optional: true
+            # Inside the cluster the platform's own hosts answer with its
+            # private CA; trusting it lets this forge talk to them (origins).
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/plat-ca/tls.crt
+            {{- with .Values.forge.originClients }}
+            # Origins the operator registered once, for everyone.
+            - name: FORGE_ORIGIN_CLIENT_ID
+              value: {{ . | quote }}
+            {{- end }}
             {{- if include "forge.ssh" . }}
             - name: FORGE_SSH_PORT
               value: {{ .Values.forge.sshPort | quote }}
@@ -91,6 +100,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: plat-ca
+              mountPath: /etc/plat-ca
+              readOnly: true
           # `/` answers 200 for anyone; it is the landing page. Boot reconciles
           # the index from git first, which grows with the number of repos.
           startupProbe:
@@ -110,3 +122,7 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-data
+        - name: plat-ca
+          secret:
+            secretName: plat-local-ca-tls
+            optional: true
