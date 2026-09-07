@@ -38,6 +38,12 @@ export interface ForgeConfig {
    */
   edgeToken?: string;
   /**
+   * The SSH host key's fingerprint, once the listener is up — what a person
+   * compares against the one their client prints on first connect. Written
+   * back by `serveForgeSsh` beside `sshPort`.
+   */
+  sshHostKey?: string;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.

@@ -37,6 +37,7 @@ import {
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
+import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -530,10 +531,22 @@ function landing(ctx: Ctx): Html {
               size: "lg",
             })}
       </div>
+      ${when(
+        sshCommand(ctx.app),
+        (ssh) =>
+          html`<p class="hero-terminal">
+            <code class="mono">${ssh}</code>
+            <span class="muted"
+              >the whole forge in your terminal — your key is your identity</span
+            >
+          </p>`,
+      )}
       <div class="hero-points">
         ${card(
-          html`<strong>Real git</strong>Clone, fetch and push over HTTPS. Branch
-            protection is enforced by the pre-receive hook, not by convention.`,
+          html`<strong>Real git, and a real terminal</strong>Clone, fetch and
+            push over HTTPS or SSH; the same port opens the forge as a
+            keyboard-driven app. Branch protection is enforced by the
+            pre-receive hook, not by convention.`,
         )}
         ${card(
           html`<strong>Issues and review</strong>Threads, labels, and pull
@@ -554,6 +567,23 @@ function landing(ctx: Ctx): Html {
           ${listCard(publicRepos.map((repo) => repoRow(repo)))}
         </div>`,
     )}`;
+}
+
+/** The terminal is a front door, not a footnote: the command, on the dashboard. */
+function terminalCard(ctx: Ctx): Html {
+  const ssh = sshCommand(ctx.app);
+  if (ssh === undefined) return html``;
+  return card(
+    html`<div class="terminal-line">
+      <code class="mono">${ssh}</code>
+      <a class="small" href="/settings/keys">SSH keys</a>
+    </div>
+    ${when(
+      ctx.app.config.sshHostKey,
+      (fp) => html`<p class="muted small mt">host key ${fp}</p>`,
+    )}`,
+    { head: html`<h2>Terminal</h2>` },
+  );
 }
 
 function dashboard(ctx: Ctx, user: User): Html {
@@ -626,7 +656,8 @@ function dashboard(ctx: Ctx, user: User): Html {
       })}
     </div>
     <aside class="stack">
-      ${appsCard(ctx)} ${rail.body} ${downloadsCard(ctx, user)}
+      ${terminalCard(ctx)} ${appsCard(ctx)} ${rail.body}
+      ${downloadsCard(ctx, user)}
       ${orgsCard(ctx, user)}
     </aside>
     ${liveMount({

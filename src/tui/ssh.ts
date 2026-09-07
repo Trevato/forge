@@ -275,5 +275,6 @@ export async function serveForgeSsh(
   });
   // One answer for "what port is ssh on", which the web reads for clone URLs.
   forge.config.sshPort = server.port;
+  forge.config.sshHostKey = server.hostKey.fingerprint;
   return server;
 }

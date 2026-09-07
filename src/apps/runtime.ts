@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -153,12 +154,9 @@ export class AppsRuntime {
    * login, the forge is the host — or undefined when SSH is off.
    */
   sshFor(record: AppRecord, env: EnvName): string | undefined {
-    const port = this.app.config.sshPort;
-    if (port === undefined) return undefined;
-    const host = this.app.config.host ?? "localhost";
     const login =
       env === "production" ? record.slug : `${record.slug}--${env.slice(5)}`;
-    return `ssh${port === 22 ? "" : ` -p ${port}`} ${login}@${host}`;
+    return sshCommand(this.app, login);
   }
 
   urlFor(record: AppRecord, env: EnvName): string {

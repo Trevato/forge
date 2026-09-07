@@ -10,6 +10,7 @@
  * mistake worth preventing before it is made (docs/APPS.md).
  */
 
+import { MODELS } from "../../crew/models.ts";
 import {
   createAgent,
   deleteAgent,
@@ -181,6 +182,31 @@ export function crewScreen(f: Session, ctx: Ctx): Screen {
         ],
         onPick: ([field]) => {
           if (field === undefined) return;
+          if (field === "model") {
+            ctx.push(
+              pickerScreen(ctx, screen, {
+                title: `${name} · model`,
+                items: MODELS.map((m) => ({
+                  id: m.id === "" ? "default" : m.id,
+                  label: m.label,
+                  hint: m.id === agent.model ? "current" : "",
+                })),
+                onPick: ([id]) => {
+                  if (id === undefined) return;
+                  const done = updateAgent(f.app, f.user, name, {
+                    model: id === "default" ? "" : id,
+                  });
+                  if (!done.ok) {
+                    ctx.toast(errorText(done.error), "danger");
+                    return;
+                  }
+                  ctx.toast(`${name} updated`, "success");
+                  reload();
+                },
+              }),
+            );
+            return;
+          }
           ctx.push(
             promptScreen(ctx, screen, {
               title: `${name} · ${field}`,

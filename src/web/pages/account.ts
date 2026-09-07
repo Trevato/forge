@@ -20,6 +20,7 @@ import {
 import { listKeys } from "../../core/keys.ts";
 import { listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
+import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
   signInFirst,
@@ -381,7 +382,18 @@ function keysView(
   values: { name: string; key: string; error?: string },
 ): Html {
   const keys = listKeys(ctx.app.db, ctx.auth.user!.id);
-  return html`<p class="muted small mb">
+  return html`${when(
+      sshCommand(ctx.app),
+      (ssh) =>
+        html`<p class="mb terminal-line">
+          <code class="mono">${ssh}</code>
+          ${when(
+            ctx.app.config.sshHostKey,
+            (fp) => html`<span class="muted small">host key ${fp}</span>`,
+          )}
+        </p>`,
+    )}
+    <p class="muted small mb">
       Keys that sign you in over SSH. Paste a public key (<span class="mono"
         >~/.ssh/id_ed25519.pub</span
       >) — ed25519, ecdsa, or rsa (2048 bits or more).

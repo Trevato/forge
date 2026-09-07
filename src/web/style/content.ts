@@ -258,6 +258,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .hero { max-width: 620px; margin: 12dvh auto 0; text-align: center; }
 .hero h1 { font-size: clamp(30px, 7vw, 44px); letter-spacing: -0.04em; line-height: 1.05; }
 .hero p { margin: 12px 0 24px; font-size: 16px; color: var(--muted-fg); text-wrap: pretty; }
+.hero-terminal { display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 6px 14px; margin: -8px 0 28px; font-size: 14px; }
+.hero-terminal .mono { font-size: 15px; }
+.terminal-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 .hero .bar { justify-content: center; }
 .hero-points {
   display: grid; gap: 12px; margin-top: 40px; text-align: left;

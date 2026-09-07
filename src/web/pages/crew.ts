@@ -20,6 +20,7 @@ import {
   type Agent,
 } from "../../core/agents.ts";
 import { crewFor } from "../../crew/dispatch.ts";
+import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -33,6 +34,7 @@ import {
   icon,
   time,
   field as uiField,
+  selectField,
   userLink,
 } from "../ui.ts";
 import { accountSections } from "./origins.ts";
@@ -111,12 +113,15 @@ const AGENT_ERRORS: Record<string, string> = {
 };
 
 function agentFields(values: AgentValues, error?: string): Html {
-  return html`${uiField({
+  return html`${selectField({
     label: "Model",
     name: "model",
-    value: values.model,
-    mono: true,
-    hint: "A Claude Code model alias or id. Empty means the runner's default.",
+    options: MODELS.map((m) => ({
+      value: m.id,
+      label: m.label,
+      selected: m.id === values.model,
+    })),
+    hint: "An alias names the newest of its line, so the choice does not age.",
     ...(error !== undefined && error.startsWith("A model") ? { error } : {}),
   })}
   ${uiField({
