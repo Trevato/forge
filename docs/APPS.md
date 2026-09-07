@@ -262,7 +262,9 @@ outbox with a sweep behind the wake-up:
   get wrong. Assigning a pull re-engages the agent on that pull.
 - **Feedback.** A review that requests changes, or a comment on the
   agent's pull that addresses it, starts a follow-up run that resumes the
-  agent's session with the feedback quoted.
+  agent's session with the feedback quoted. A follow-up that begins after
+  the pull was merged works on a fresh branch from the default branch and
+  lands as a new pull that names the one it continues.
 - **A failed check.** A deploy that fails on the agent's pull starts a
   follow-up with the log's tail. Bounded by rule 7.
 

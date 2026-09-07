@@ -181,9 +181,11 @@ export function taskPrompt(input: TaskInput): string {
   }
   out.push(
     "",
-    input.pull !== undefined
-      ? "Address it on the same branch and push again. If you disagree with something, say why in your last message."
-      : `Take it into account, work on the branch \`${input.branch}\`, and push when done.`,
+    input.pull === undefined
+      ? `Take it into account, work on the branch \`${input.branch}\`, and push when done.`
+      : input.pull.mergedAt !== null
+        ? `Pull #${issue.number} has been merged, so this goes on the branch \`${input.branch}\` from \`${input.repo.defaultBranch}\` and lands as a new pull. If you disagree with something, say why in your last message.`
+        : "Address it on the same branch and push again. If you disagree with something, say why in your last message.",
   );
   return out.join("\n");
 }

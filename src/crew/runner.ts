@@ -204,14 +204,29 @@ async function work(
       state: "failed",
       summary: "this pull's branch lives in a fork the agent cannot push to",
     };
-  const branch = pull?.headBranch ?? (run.branch || branchFor(agent, issue));
+  // A pull the conversation outlived. Closed without a merge, the proposal
+  // was declined and there is nothing to continue. Merged before the run
+  // began, its branch is spent: the follow-up starts a fresh branch from the
+  // default branch and lands as a pull of its own, in the same session.
+  if (pull !== undefined && pull.state !== "open" && pull.mergedAt === null)
+    return {
+      state: "failed",
+      summary: `pull #${pull.number} was closed before the run began`,
+    };
+  const continuing = pull !== undefined && pull.mergedAt !== null;
+  const branch =
+    pull !== undefined && !continuing
+      ? pull.headBranch
+      : run.branch || branchFor(agent, issue);
   if (!isSafeRef(branch))
     return { state: "failed", summary: `unsafe branch name ${branch}` };
   noteRunProgress(app.db, run.id, { branch });
+  // The task spans the issue and the pull opened for it, and a pull that
+  // continues a merged one: its branch names the issue the session began on.
   const taskNumber =
     pull === undefined
       ? issue.number
-      : (issueOfBranch(agent, branch) ?? issue.number);
+      : (issueOfBranch(agent, pull.headBranch) ?? issue.number);
   const dir = workdirFor(app.config.dataDir, agent, repo, taskNumber);
   write(
     `${agent.user.username} on ${repo.ownerName}/${repo.name}#${issue.number} (${reason}), branch ${branch}`,
@@ -269,7 +284,7 @@ async function work(
     const record = getAppByRepo(app.db, repo.id);
     const runtime = appsRuntime(app);
     const previewUrl =
-      record && runtime && pull
+      record && runtime && pull && !continuing
         ? runtime.urlFor(record, previewEnv(pull.number))
         : undefined;
     const brief = {
@@ -397,7 +412,7 @@ async function work(
       repo,
       agent,
       issue,
-      pull,
+      continuing ? undefined : pull,
       branch,
       dir,
       bare,
@@ -597,7 +612,13 @@ async function landWork(
       summary: `updated pull #${existing.number} (${remote?.slice(0, 7)})${committedForIt ? ", committing its leftover changes" : ""}`,
     };
   }
-  const body = `${report === "" ? "" : `${report}\n\n`}Closes #${issue.number}`;
+  // No pull to update and yet the task is one: the pull it continues was
+  // merged, and this one follows it rather than closing it.
+  const trailer =
+    issue.kind === "pull"
+      ? `Continues #${issue.number}`
+      : `Closes #${issue.number}`;
+  const body = `${report === "" ? "" : `${report}\n\n`}${trailer}`;
   const opened = await openPull(app, agent.user, repo, {
     title: issue.title,
     body,

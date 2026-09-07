@@ -19,11 +19,16 @@ import {
   openIssue,
   setIssueState,
 } from "../src/actions/issues.ts";
+import { mergePull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
+import {
+  queueAgentRun,
+  startCrew,
+  type CrewHandle,
+} from "../src/crew/dispatch.ts";
 import { workdirFor } from "../src/crew/runner.ts";
 import { getAgentByName } from "../src/core/agents.ts";
-import { listComments } from "../src/core/issues.ts";
+import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -201,10 +206,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(pull.body).toContain(`Closes #${issueNumber}`);
     // The run's credential is gone; the clone stays for the follow-up.
     const tokens = app.db
-      .query<
-        { n: number },
-        []
-      >("SELECT COUNT(*) AS n FROM token WHERE name LIKE 'run:%'")
+      .query<{ n: number }, []>(
+        "SELECT COUNT(*) AS n FROM token WHERE name LIKE 'run:%'",
+      )
       .get();
     expect(tokens?.n).toBe(0);
     expect(
@@ -300,4 +304,72 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     await Bun.sleep(300);
     expect(listRuns(app.db, repo.id, { kind: "agent" }).length).toBe(before);
   }, 30_000);
+
+  test("a pull merged before its run begins: the follow-up branches from the default branch and lands as a new pull", async () => {
+    const issue = openIssue(app, alice, repo, {
+      title: "Prune roses",
+      body: "Before spring.",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const built = await settled(
+      (r) => r.issueId === issue.value.id && r.reason === "assigned",
+    );
+    expect(built.summary).toMatch(/^opened pull #\d+/);
+    const pull = listPulls(app.db, repo.id, { state: "open" }).find(
+      (p) => p.headBranch === `bot/${issue.value.number}-prune-roses`,
+    )!;
+    expect(pull).toBeDefined();
+    const merged = await mergePull(app, alice, repo, pull, "merge");
+    expect(merged.ok).toBe(true);
+
+    // The race: feedback queued while the pull was open, begun after the
+    // merge. The branch is spent; the work goes on a fresh one from the
+    // default branch, in the same session, and lands as a pull of its own.
+    const pullIssue = getIssue(app.db, repo.id, pull.number)!;
+    const agent = getAgentByName(app.db, "bot")!;
+    const queued = queueAgentRun(
+      app,
+      repo,
+      pullIssue,
+      agent,
+      "feedback",
+      alice.id,
+    );
+    expect(queued).toBeDefined();
+    const run = await settled((r) => r.id === queued!.id);
+    expect(run.state).toBe("ok");
+    expect(run.summary).toMatch(/^opened pull #\d+/);
+    expect(run.branch).toBe(`bot/${pull.number}-prune-roses`);
+    expect(readFileSync(promptFile, "utf8")).toContain(
+      `Pull #${pull.number} has been merged`,
+    );
+    expect(readFileSync(argsFile, "utf8")).toContain("--resume\nfake-1");
+    const next = listPulls(app.db, repo.id, { state: "open" }).find(
+      (p) => p.headBranch === run.branch,
+    )!;
+    expect(next).toBeDefined();
+    expect(next.baseBranch).toBe(repo.defaultBranch);
+    expect(next.body).toContain(`Continues #${pull.number}`);
+    expect(next.body).not.toContain("Closes #");
+
+    // Closed without a merge, the proposal was declined: nothing to continue.
+    const closed = listPulls(app.db, repo.id, { state: "closed" }).find(
+      (p) => p.mergedAt === null,
+    )!;
+    expect(closed).toBeDefined();
+    const dead = queueAgentRun(
+      app,
+      repo,
+      getIssue(app.db, repo.id, closed.number)!,
+      agent,
+      "feedback",
+      alice.id,
+    )!;
+    const outcome = await settled((r) => r.id === dead.id);
+    expect(outcome.state).toBe("failed");
+    expect(outcome.summary).toBe(
+      `pull #${closed.number} was closed before the run began`,
+    );
+  }, 90_000);
 });
