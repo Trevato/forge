@@ -50,9 +50,10 @@ import {
   issueOfBranch,
   systemPrompt,
   taskPrompt,
+  wrapUpPrompt,
   type RunReason,
 } from "./brief.ts";
-import { runClaude } from "./claude.ts";
+import { BUDGET_REACHED, runClaude } from "./claude.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 import { workdirFor } from "./workdir.ts";
@@ -76,6 +77,23 @@ export interface CrewOptions {
 }
 
 export { crewRoot, workdirFor } from "./workdir.ts";
+
+/** The share of a run's budget held back for finishing. */
+const RESERVE = 0.15;
+/** ...and never less than this: a wrap-up that cannot run a test is none. */
+const RESERVE_FLOOR_USD = 0.5;
+
+/**
+ * What a run keeps for its wrap-up: fifteen percent of the budget, at
+ * least fifty cents, never more than half — a budget too small to split
+ * is not made worse by splitting it.
+ */
+export function wrapUpReserve(budgetUsd: number): number {
+  return Math.min(
+    Math.max(budgetUsd * RESERVE, RESERVE_FLOOR_USD),
+    budgetUsd / 2,
+  );
+}
 
 /** Claim and execute a queued agent run. Never throws. */
 export async function executeAgentRun(
@@ -323,35 +341,51 @@ async function work(
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
     };
+    // The budget in two parts: the work, and a reserve for landing it. An
+    // agent cut off mid-task otherwise leaves a tree the forge commits blind
+    // and a pull whose description is the error.
     const budget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
+    const reserve = wrapUpReserve(budget);
     const sandbox = sandboxPolicy({
       dataDir: app.config.dataDir,
       agentName: agent.user.username,
       urls: [options.localUrl, options.forgeUrl],
       extraHosts: options.allowHosts,
     });
-    const invoke = (resume: string | undefined) =>
+    // One deadline for the run, whatever it takes to get there: the token
+    // dies ten minutes after it, so a second invocation gets what is left.
+    const deadline = Date.now() + options.runTimeoutMs;
+    const invoke = (
+      prompt: string,
+      budgetUsd: number,
+      resume: string | undefined,
+    ) =>
       runClaude({
         binary: options.binary,
         cwd: dir,
         prompt,
         appendSystemPrompt: systemPrompt(brief),
         model: agent.model || undefined,
-        budgetUsd: budget,
+        budgetUsd,
         resume,
         env,
         sandbox,
-        timeoutMs: options.runTimeoutMs,
+        timeoutMs: Math.max(deadline - Date.now(), 0),
         log: write,
         signal,
       });
     write(
-      `claude: budget $${budget.toFixed(2)}${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
+      `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
-    let result = await invoke(brief.resuming ? previous?.sessionId : undefined);
+    const working = budget - reserve;
+    let result = await invoke(
+      prompt,
+      working,
+      brief.resuming ? previous?.sessionId : undefined,
+    );
     if (!result.ok && brief.resuming && result.turns === 0 && !signal.aborted) {
       write("the session could not be resumed; starting fresh");
-      result = await invoke(undefined);
+      result = await invoke(prompt, working, undefined);
     }
     noteRunProgress(app.db, run.id, {
       sessionId: result.sessionId,
@@ -360,6 +394,30 @@ async function work(
     write(
       `claude: ${result.reason}, ${result.turns} turns, $${result.costUsd.toFixed(2)}`,
     );
+
+    // The reserve: the same session gets one more turn, to land what exists
+    // rather than to keep working. Its ending is the run's ending, with the
+    // whole spend; the pull says where the work stopped.
+    let stoppedAt: number | undefined;
+    if (
+      result.reason === BUDGET_REACHED &&
+      result.sessionId !== "" &&
+      !signal.aborted &&
+      Date.now() < deadline
+    ) {
+      stoppedAt = result.costUsd;
+      write(`claude: wrapping up with the reserve, $${reserve.toFixed(2)}`);
+      const wrapped = await invoke(wrapUpPrompt(), reserve, result.sessionId);
+      write(
+        `claude: ${wrapped.reason}, ${wrapped.turns} turns, $${wrapped.costUsd.toFixed(2)}`,
+      );
+      result = {
+        ...wrapped,
+        sessionId: wrapped.sessionId || result.sessionId,
+        costUsd: result.costUsd + wrapped.costUsd,
+      };
+      noteRunProgress(app.db, run.id, { costUsd: result.costUsd });
+    }
     if (signal.aborted)
       return {
         state: "failed",
@@ -403,6 +461,9 @@ async function work(
       bare,
       { ...gitAuth, ...identity },
       result.result,
+      stoppedAt === undefined
+        ? undefined
+        : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
       write,
     );
     return {
@@ -490,7 +551,8 @@ async function prepareClone(
 
 /**
  * After the agent stops: push what it committed if it did not, open the
- * pull if there is none, and report on the conversation.
+ * pull if there is none, and report on the conversation — the agent's
+ * last message, and the forge's note under it when there is one.
  */
 async function landWork(
   app: App,
@@ -504,6 +566,7 @@ async function landWork(
   bare: string,
   env: Record<string, string>,
   message: string,
+  note: string | undefined,
   write: (line: string) => void,
 ): Promise<{ pushed: boolean; summary: string }> {
   // Work left in the tree is committed on the agent's behalf: a proposal a
@@ -565,7 +628,9 @@ async function landWork(
     remote !== undefined && base !== undefined
       ? await aheadCount(bare, base, remote)
       : 0;
-  const report = message.trim();
+  const report = [message.trim(), note]
+    .filter((part): part is string => part !== undefined && part !== "")
+    .join("\n\n");
 
   if (proposed === 0) {
     write(

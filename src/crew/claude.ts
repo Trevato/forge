@@ -43,6 +43,9 @@ export interface ClaudeOutcome {
   readonly reason: string;
 }
 
+/** The run spent its budget and Claude Code stopped it. */
+export const BUDGET_REACHED = "max_budget_reached";
+
 /**
  * The tools an agent has. Enough to read, change, run and push code; no
  * subagents (a run is one agent), no web (the task is in the clone and the
@@ -166,8 +169,16 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
         typeof e["total_cost_usd"] === "number" ? e["total_cost_usd"] : 0;
       turns = typeof e["num_turns"] === "number" ? e["num_turns"] : 0;
       const terminal = e["terminal_reason"];
-      reason =
-        typeof terminal === "string"
+      // Claude Code names the budget ending twice (`error_max_budget_usd`
+      // as the subtype, `budget_exhausted` as the terminal reason); the
+      // forge keeps one word, so the runner and the summary do not follow
+      // a rename.
+      const budget =
+        e["subtype"] === "error_max_budget_usd" ||
+        terminal === "budget_exhausted";
+      reason = budget
+        ? BUDGET_REACHED
+        : typeof terminal === "string"
           ? terminal
           : ok
             ? "completed"

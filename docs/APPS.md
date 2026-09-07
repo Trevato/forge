@@ -271,6 +271,13 @@ run as failed with that reason, posted on the issue or pull, and nothing it
 touched is pushed — a mis-scoped task parks with an explanation instead of
 becoming an empty or wrong pull.
 
+A run's budget is not spent to the last cent on the task. The end of it —
+fifteen percent, at least fifty cents, never more than half — is held
+back, and an agent that spends the rest gets one short turn in the same
+session to land what exists: run the tests, drop what is half-done, commit,
+push, and write the description anyway. The pull says where the work
+stopped and at what spend.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools
