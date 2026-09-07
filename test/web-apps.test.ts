@@ -22,6 +22,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAgentByName, listCrew } from "../src/core/agents.ts";
+import { listAppEnvNames } from "../src/core/app_env.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -342,6 +343,90 @@ describe("apps, runs and the crew on the web", () => {
     expect(open.headers.get("location")).toBe(
       `http://hello.${DOMAIN}:${servers.port}`,
     );
+  });
+
+  test("Environment: names on the page, values write-only, admin only, same-origin only", async () => {
+    const secret = "s3cret-value-for-the-page-7b2e";
+    const before = words(
+      await (await web(alice, "/alice/hello/settings/app")).text(),
+    );
+    expect(before).toContain("Environment");
+    expect(before).toContain("never shown again");
+    expect(before).toContain('type="password"');
+
+    const set = await web(alice, "/alice/hello/settings/app/env", {
+      form: { name: "API_KEY", value: secret },
+    });
+    expect(set.status).toBe(303);
+    expect(set.headers.get("location")).toBe("/alice/hello/settings/app");
+    expect(flashOf(set)).toContain("API_KEY is set");
+    expect(flashOf(set)).not.toContain(secret);
+    const page = await bodyOf(alice, "/alice/hello/settings/app");
+    expect(page).toContain("API_KEY");
+    expect(page).toContain("/alice/hello/settings/app/env/API_KEY/delete");
+    expect(page).not.toContain(secret);
+    expect(
+      listAppEnvNames(app.db, getAppByRepo(app.db, hello.id)!.id).map(
+        (v) => v.name,
+      ),
+    ).toEqual(["API_KEY"]);
+
+    // A refused name says why, and changes nothing.
+    const reserved = await web(alice, "/alice/hello/settings/app/env", {
+      form: { name: "PORT", value: "1" },
+    });
+    expect(reserved.status).toBe(303);
+    expect(flashOf(reserved)).toContain("PORT, HOST, PATH");
+    const lower = await web(alice, "/alice/hello/settings/app/env", {
+      form: { name: "not-a-name", value: "1" },
+    });
+    expect(flashOf(lower)).toContain("capital letters");
+
+    // Not for a non-admin — the one 404 — and not from another origin.
+    expect(
+      (
+        await web(bob, "/alice/hello/settings/app/env", {
+          form: { name: "STOLEN", value: "x" },
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await web(alice, "/alice/hello/settings/app/env", {
+          form: { name: "STOLEN", value: "x" },
+          origin: "https://evil.example",
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await web(bob, "/alice/hello/settings/app/env/API_KEY/delete", {
+          form: {},
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      listAppEnvNames(app.db, getAppByRepo(app.db, hello.id)!.id).map(
+        (v) => v.name,
+      ),
+    ).toEqual(["API_KEY"]);
+
+    const removed = await web(
+      alice,
+      "/alice/hello/settings/app/env/API_KEY/delete",
+      { form: {} },
+    );
+    expect(removed.status).toBe(303);
+    expect(flashOf(removed)).toContain("API_KEY is removed");
+    expect(await bodyOf(alice, "/alice/hello/settings/app")).not.toContain(
+      "API_KEY",
+    );
+    const missing = await web(
+      alice,
+      "/alice/hello/settings/app/env/API_KEY/delete",
+      { form: {} },
+    );
+    expect(flashOf(missing)).toContain("No variable by that name");
   });
 
   test("a plain repository becomes an app from its settings, and stops being one", async () => {

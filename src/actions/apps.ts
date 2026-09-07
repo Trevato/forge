@@ -27,6 +27,13 @@ import {
   type CreateAppError,
   type UpdateAppError,
 } from "../core/apps.ts";
+import {
+  deleteAppEnv,
+  listAppEnvNames,
+  setAppEnv,
+  type AppEnvError,
+  type AppEnvName,
+} from "../core/app_env.ts";
 import { addCrew, getAgentByName } from "../core/agents.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
@@ -103,6 +110,85 @@ export function updateAppSettings(
     payload: { slug: updated.value.slug, access: updated.value.access },
   });
   return ok(updated.value);
+}
+
+// ---- the app's environment ----
+
+/** The names set, for an admin. Never a value: those are write-only. */
+export function listAppEnv(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Result<AppEnvName[], "not_found"> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return err("not_found");
+  return ok(listAppEnvNames(app.db, record.id));
+}
+
+/**
+ * Set a variable and redeploy every environment with it. The event names
+ * the variable and nothing else; the value is sealed in the row and goes
+ * nowhere but into the app's process.
+ */
+export async function setAppEnvVar(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  name: string,
+  value: string,
+): Promise<Result<AppEnvName, "not_found" | AppEnvError>> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return err("not_found");
+  const set = setAppEnv(app.db, app.config.dataDir, record.id, name, value);
+  if (!set.ok) return set;
+  app.bus.append({
+    kind: "app.env_set",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { name },
+  });
+  await redeployAll(app, record, repo);
+  return set;
+}
+
+/** Remove a variable and redeploy every environment without it. */
+export async function deleteAppEnvVar(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  name: string,
+): Promise<Result<void, "not_found" | "no_such_var">> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  const record = getAppByRepo(app.db, repo.id);
+  if (!record) return err("not_found");
+  if (!deleteAppEnv(app.db, record.id, name)) return err("no_such_var");
+  app.bus.append({
+    kind: "app.env_deleted",
+    repoId: repo.id,
+    actorId: admin.value.id,
+    payload: { name },
+  });
+  await redeployAll(app, record, repo);
+  return ok();
+}
+
+/**
+ * A process reads its environment once, at start: a change reaches the
+ * app only through a new process. `redeploy` is what steps past the
+ * same-commit guard, and reconciling — production and every open pull —
+ * is what makes a preview see what production sees.
+ */
+async function redeployAll(
+  app: App,
+  record: AppRecord,
+  repo: Repo,
+): Promise<void> {
+  await appsRuntime(app)?.reconcileApp(record, repo, "redeploy");
 }
 
 /** Stop serving the repository as an app. Data and checkouts are removed. */

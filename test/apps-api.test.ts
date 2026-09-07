@@ -277,6 +277,173 @@ describe("apps, runs and the crew over the API", () => {
     expect(again.state).toBe("ok");
   }, 90_000);
 
+  test("the app's environment: write-only values, handed to the process, admin only", async () => {
+    // Public again, so the proxy answers without a grant.
+    expect(
+      (
+        await api("/api/v1/repos/alice/hello/app", {
+          method: "PATCH",
+          body: JSON.stringify({ access: "public" }),
+        })
+      ).status,
+    ).toBe(200);
+    const alice = getUserByName(app.db, "alice")!;
+    const repo = getRepo(app.db, "alice", "hello")!;
+    // An app that prints one variable, and nothing else.
+    const committed = await commitToBranch(app, alice, repo, {
+      message: "Print a variable",
+      files: [
+        {
+          path: "forge.json",
+          content: JSON.stringify({ app: { run: "bun run src/server.ts" } }),
+        },
+        {
+          path: "src/server.ts",
+          content: [
+            "Bun.serve({",
+            '  port: Number(process.env["PORT"]),',
+            '  hostname: "127.0.0.1",',
+            "  fetch(request) {",
+            '    return new URL(request.url).pathname === "/env"',
+            '      ? new Response(process.env["GREETING"] ?? "unset")',
+            '      : new Response("ok");',
+            "  },",
+            "});",
+            "",
+          ].join("\n"),
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const pushed = await untilRun(
+      (r) =>
+        r.env === "production" && r.commitOid === committed.value.commitOid,
+    );
+    expect(pushed.state).toBe("ok");
+    const viaApp = (path: string) =>
+      fetch(`${servers.url}${path}`, { headers: { host: "hello.apps.test" } });
+    expect(await (await viaApp("/env")).text()).toBe("unset");
+    /** The newest redeploy after `after`, once it has settled. */
+    const redeployAfter = (after: unknown) =>
+      untilRun((r) => r.reason === "redeploy" && String(r.id) > String(after));
+
+    const env = "/api/v1/repos/alice/hello/app/env";
+    const put = (name: string, value: unknown, token?: string | null) =>
+      api(`${env}/${name}`, {
+        method: "PUT",
+        body: JSON.stringify({ value }),
+        ...(token === undefined ? {} : { token }),
+      });
+
+    // Nothing set yet, and the floors hold: admin scope, and admin over
+    // the repository — a stranger with an admin token is not told the app
+    // has an environment at all.
+    expect(
+      ((await (await api(env)).json()) as { items: unknown[] }).items,
+    ).toEqual([]);
+    expect((await api(env, { token: rw })).status).toBe(403);
+    expect((await api(env, { token: null })).status).toBe(401);
+    expect((await put("GREETING", "x", rw)).status).toBe(403);
+    expect((await put("GREETING", "x", null)).status).toBe(401);
+    await post(
+      "/api/v1/users",
+      {
+        username: "mallory",
+        email: "mallory@forge.local",
+        password: "a-good-passphrase",
+      },
+      null,
+    );
+    const mallory = (
+      (await (
+        await post(
+          "/api/v1/tokens",
+          {
+            username: "mallory",
+            password: "a-good-passphrase",
+            name: "admin",
+            scope: "admin",
+          },
+          null,
+        )
+      ).json()) as { token: string }
+    ).token;
+    expect((await api(env, { token: mallory })).status).toBe(404);
+    expect((await put("GREETING", "x", mallory)).status).toBe(404);
+    expect(
+      (await api(`${env}/GREETING`, { method: "DELETE", token: mallory }))
+        .status,
+    ).toBe(404);
+
+    // Refusals name their reason.
+    for (const [name, error] of [
+      ["lower", "invalid_name"],
+      ["PORT", "reserved_name"],
+      ["FORGE_APP_DATA", "reserved_name"],
+    ] as const) {
+      const refused = await put(name, "x");
+      expect(refused.status).toBe(422);
+      expect(((await refused.json()) as { error: string }).error).toBe(error);
+    }
+    expect(
+      ((await (await put("GREETING", "")).json()) as { error: string }).error,
+    ).toBe("invalid_value");
+
+    // Set: the answer, the listing, the row and the event carry the name
+    // and never the value.
+    const secret = "hello-from-the-operator-9f1c";
+    const set = await put("GREETING", secret);
+    expect(set.status).toBe(200);
+    const answer = await set.text();
+    expect(answer).toContain('"name":"GREETING"');
+    expect(answer).not.toContain(secret);
+    const listed = await (await api(env)).text();
+    expect(listed).toContain('"name":"GREETING"');
+    expect(listed).not.toContain(secret);
+    const row = app.db
+      .query<{ value_enc: string }, []>("SELECT value_enc FROM app_env")
+      .get();
+    expect(row?.value_enc).toStartWith("v1:");
+    expect(row?.value_enc).not.toContain(secret);
+    const event = app.db
+      .query<
+        { payload: string },
+        []
+      >("SELECT payload FROM event WHERE kind = 'app.env_set' ORDER BY id DESC")
+      .get();
+    expect(event?.payload).toBe('{"name":"GREETING"}');
+
+    // The redeploy that follows is what hands it to the app — and its log
+    // does not repeat it.
+    const redeployed = await redeployAfter(pushed.id);
+    expect(redeployed.state).toBe("ok");
+    expect(await (await viaApp("/env")).text()).toBe(secret);
+    const log = await (
+      await api(`/api/v1/repos/alice/hello/runs/${redeployed.id}/log`)
+    ).text();
+    expect(log).not.toContain(secret);
+
+    // Remove: admin only, exact, and the next process is without it.
+    expect(
+      (await api(`${env}/GREETING`, { method: "DELETE", token: rw })).status,
+    ).toBe(403);
+    expect((await api(`${env}/GREETING`, { method: "DELETE" })).status).toBe(
+      200,
+    );
+    const gone = await api(`${env}/GREETING`, { method: "DELETE" });
+    expect(gone.status).toBe(422);
+    expect(((await gone.json()) as { error: string }).error).toBe(
+      "no_such_var",
+    );
+    expect(
+      ((await (await api(env)).json()) as { items: unknown[] }).items,
+    ).toEqual([]);
+    const without = await redeployAfter(redeployed.id);
+    expect(without.state).toBe("ok");
+    expect(await (await viaApp("/env")).text()).toBe("unset");
+  }, 120_000);
+
   test("assignee: people and crew, and the crew grant is the only way in for an agent", async () => {
     const cleared = await api("/api/v1/repos/alice/hello/issues/1/assignee", {
       method: "PUT",

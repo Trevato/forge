@@ -12,6 +12,7 @@
 import type { AppManifest } from "./manifest.ts";
 import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
+import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 export interface ProcessHandle {
@@ -33,6 +34,8 @@ export interface StartInput {
   readonly forgeUrl: string;
   /** The `ssh …` that opens this environment's terminal, when SSH is on. */
   readonly ssh?: string | undefined;
+  /** The operator's variables for this app (`core/app_env.ts`). */
+  readonly vars?: Record<string, string> | undefined;
   readonly log: (line: string) => void;
   /** Aborting cancels whatever step is in flight and fails the start. */
   readonly signal: AbortSignal;
@@ -79,28 +82,48 @@ export function appEnv(input: {
   forgeUrl: string;
   /** The exact `ssh …` that opens this environment's terminal, if any. */
   ssh?: string | undefined;
+  /** The operator's variables: an admin password, an API key. */
+  vars?: Record<string, string> | undefined;
 }): Record<string, string> {
   const pull = envPull(input.env);
+  // The operator's variables go underneath everything the forge names, so
+  // a stored `PORT` or `FORGE_APP_DATA` can never redirect the app. The
+  // write path refuses those names; this is the same rule kept where it
+  // matters, in case that path is ever bypassed.
+  const env = {
+    ...operatorVars(input.vars),
+    ...childEnv({
+      PORT: String(input.port),
+      HOST: "127.0.0.1",
+      NODE_ENV: "production",
+      FORGE_APP_ENV: input.env === "production" ? "production" : "preview",
+      FORGE_APP_DATA: input.dataDir,
+      FORGE_APP_URL: input.url,
+      FORGE_APP_COMMIT: input.commitOid,
+      FORGE_URL: input.forgeUrl,
+      ...(pull === undefined ? {} : { FORGE_APP_PULL: String(pull) }),
+      // Printed verbatim by an app that tells people how to reach its
+      // terminal; a guessed form (`you@app.host`) reaches the forge instead.
+      ...(input.ssh === undefined ? {} : { FORGE_APP_SSH: input.ssh }),
+    }),
+  };
   // The operator's login name is for the keychain (an agent's Claude Code
   // needs it); an app has no business knowing it, and a guest in a chat
   // should not be greeted by it.
-  const env = childEnv({
-    PORT: String(input.port),
-    HOST: "127.0.0.1",
-    NODE_ENV: "production",
-    FORGE_APP_ENV: input.env === "production" ? "production" : "preview",
-    FORGE_APP_DATA: input.dataDir,
-    FORGE_APP_URL: input.url,
-    FORGE_APP_COMMIT: input.commitOid,
-    FORGE_URL: input.forgeUrl,
-    ...(pull === undefined ? {} : { FORGE_APP_PULL: String(pull) }),
-    // Printed verbatim by an app that tells people how to reach its
-    // terminal; a guessed form (`you@app.host`) reaches the forge instead.
-    ...(input.ssh === undefined ? {} : { FORGE_APP_SSH: input.ssh }),
-  });
   delete env["USER"];
   delete env["LOGNAME"];
   return env;
+}
+
+/** The operator's variables minus any name the forge owns. */
+function operatorVars(
+  vars: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(vars ?? {})) {
+    if (!isReservedAppEnvName(name)) out[name] = value;
+  }
+  return out;
 }
 
 /**
@@ -201,6 +224,7 @@ export async function startProcess(
       commitOid: input.commitOid,
       forgeUrl: input.forgeUrl,
       ssh: input.ssh,
+      vars: input.vars,
     }),
     stdin: "ignore",
     stdout: "pipe",

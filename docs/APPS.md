@@ -156,6 +156,25 @@ and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
 An app that keeps its state under `FORGE_APP_DATA` gets production and
 preview data for free. The scaffold does exactly that with `bun:sqlite`.
 
+### Environment
+
+What an app needs that the repository must not carry — an admin password,
+a payment key — an admin of the repository sets under **Settings → App →
+Environment** (or `PUT /api/v1/repos/:owner/:name/app/env/:name` with a
+`{ "value" }` body). A name is `ADMIN_PASSWORD`-shaped: capital letters,
+digits and underscores; the names the forge sets itself (`PORT`, `HOST`,
+`PATH`, `FORGE_*` and their kin) are refused, and the forge's own values
+win regardless. Values are write-only: set one, and it is never shown
+again — the page, the API and the event outbox carry the name and when it
+was set, nothing more. At rest each value is sealed with the data
+directory's key (`kernel/secret.ts`), bound to the app and the name.
+
+The variables are handed to every environment: production, and every
+preview, which inherits the current set the way it inherits a copy of the
+data. A process reads its environment once, at start, so setting or
+removing a variable redeploys production and every open preview at their
+current commits. The install and test steps do not see them.
+
 ## A terminal for every app
 
 The forge's own port answers `ssh`, and the login name picks what opens:
@@ -208,9 +227,9 @@ either derived or ephemeral:
 <data>/crew/<agent>/<repo id>/<issue n>/      an agent's clone, kept while its pull is open
 ```
 
-Rows: `app` (repo, slug, access, preview_data), `run` (repo, kind, issue,
-commit, state, summary, cost, timings), `agent` (user, model, brief, budget),
-and `issue.assignee_id`. The current deployment of each environment is in
+Rows: `app` (repo, slug, access, preview_data), `app_env` (name, sealed
+value), `run` (repo, kind, issue, commit, state, summary, cost, timings),
+`agent` (user, model, brief, budget), and `issue.assignee_id`. The current deployment of each environment is in
 memory only: a process is not state, and a restart rebuilds every
 environment from the default branch and the open pulls, exactly as
 `core/reconcile.ts` rebuilds the index from git.

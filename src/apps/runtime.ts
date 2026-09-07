@@ -19,6 +19,7 @@ import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
+import { resolveAppEnv } from "../core/app_env.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
@@ -619,6 +620,13 @@ export class AppsRuntime {
       commitOid: run.commitOid,
       forgeUrl: this.options.forgeUrl,
       ssh: this.sshFor(state.app, state.env),
+      // Read at start, never cached: a change is a redeploy, and the
+      // process that comes up is the one that sees it.
+      vars: resolveAppEnv(
+        this.app.db,
+        this.app.config.dataDir,
+        state.app.id,
+      ),
       log: write,
       signal,
     });

@@ -149,7 +149,8 @@ src/
 
 Three tables carry all of it: `app` (slug, access, preview data policy),
 `run` (kind deploy|agent, state by compare-and-swap, summary, cost) and
-`agent` (model, brief, budget) plus `repo_crew` and `issue.assignee_id`. What
+`agent` (model, brief, budget) plus `repo_crew`, `app_env` (the operator's
+variables, sealed, write-only) and `issue.assignee_id`. What
 is _running_ is not state: `AppsRuntime.start` rebuilds every environment
 from the default branch and the open pulls.
 

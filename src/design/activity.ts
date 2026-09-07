@@ -53,6 +53,13 @@ export function eventVerb(event: ForgeEvent): string {
       : `took ${who} off the crew`;
   }
   if (kind === "app.stopped") return `stopped ${environment(payload["env"])}`;
+  if (kind === "app.env_set" || kind === "app.env_deleted") {
+    const name = payload["name"];
+    const which = typeof name === "string" ? name : "a variable";
+    return kind === "app.env_set"
+      ? `set ${which} in the app's environment`
+      : `removed ${which} from the app's environment`;
+  }
   return WORDS[kind] ?? "acted on this repository";
 }
 

@@ -135,11 +135,14 @@ import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { listBranches } from "../git/branches.ts";
 import {
   appView,
+  deleteAppEnvVar,
   disableApp,
   enableApp,
+  listAppEnv,
   newApp,
   openEnvUrl,
   redeployEnv,
+  setAppEnvVar,
   stopEnv,
   updateAppSettings,
   type AppSettingsInput,
@@ -2418,6 +2421,54 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!disabled.ok) return respondAccess(disabled.error, 422);
     return json({}, 200);
   });
+
+  // The app's environment: names in, names out, and never a value back.
+  // `:var`, not `:name` — `:name` is the repository's.
+  router.add("GET", "/api/v1/repos/:owner/:name/app/env", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const listed = listAppEnv(ctx.app, ctx.auth.user, repo);
+    if (!listed.ok) return notFound();
+    return json({ items: listed.value, next_cursor: null });
+  });
+
+  router.add("PUT", "/api/v1/repos/:owner/:name/app/env/:var", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const set = await setAppEnvVar(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      ctx.params.var ?? "",
+      str(input.value),
+    );
+    if (!set.ok) return respondAccess(set.error, 422);
+    return json(set.value);
+  });
+
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/app/env/:var",
+    async (ctx) => {
+      const denied = requireScope(ctx, "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const removed = await deleteAppEnvVar(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.var ?? "",
+      );
+      if (!removed.ok) return respondAccess(removed.error, 422);
+      return json({}, 200);
+    },
+  );
 
   router.add(
     "POST",

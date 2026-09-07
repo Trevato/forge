@@ -9,10 +9,17 @@
  */
 
 import {
+  deleteAppEnvVar,
   disableApp,
   enableApp,
+  setAppEnvVar,
   updateAppSettings,
 } from "../../actions/apps.ts";
+import {
+  listAppEnvNames,
+  NAME_MAX,
+  type AppEnvName,
+} from "../../core/app_env.ts";
 import {
   addToCrew,
   listAllAgents,
@@ -398,6 +405,9 @@ function appSettingsView(
   if (record === undefined) return form;
   return html`${form}
     <div class="mt">
+      ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
+    </div>
+    <div class="mt">
       ${card(
         html`<p>
             Production and every preview stop, and their data directories and
@@ -416,6 +426,74 @@ function appSettingsView(
         },
       )}
     </div>`;
+}
+
+/**
+ * The app's environment: the names that are set, and a form for one more.
+ * Values are write-only — the page shows a name and when it was set, and
+ * the value input forgets what was typed the moment the form is sent.
+ */
+function appEnvView(base: string, names: AppEnvName[]): Html {
+  const rows = names.map((v) =>
+    row({
+      lead: icon("key"),
+      title: html`<span class="mono">${v.name}</span>`,
+      meta: html`set ${time(v.updatedAt)}`,
+      trail: html`<form
+        class="row-actions"
+        method="post"
+        action="${base}/settings/app/env/${encodeURIComponent(v.name)}/delete"
+      >
+        ${btn("Remove", { size: "sm", icon: "x" })}
+      </form>`,
+    }),
+  );
+  return card(
+    html`<div class="card-body">
+        <p class="muted small">
+          What the app reads from its environment at start-up — an admin
+          password, an API key. Values are write-only: set one, and it is never
+          shown again. Production and every preview get them; changing one
+          redeploys.
+        </p>
+      </div>
+      ${when(
+        rows.length > 0,
+        () =>
+          html`<ul class="list">
+            ${rows}
+          </ul>`,
+      )}
+      <form class="edit-row" method="post" action="${base}/settings/app/env">
+        <input
+          class="input mono"
+          type="text"
+          name="name"
+          placeholder="NAME"
+          aria-label="Variable name"
+          pattern="[A-Z][A-Z0-9_]*"
+          maxlength="${String(NAME_MAX)}"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        />
+        <input
+          class="input"
+          type="password"
+          name="value"
+          placeholder="Value"
+          aria-label="Value"
+          autocomplete="off"
+          required
+        />
+        ${btn("Set", { variant: "primary", size: "sm", icon: "plus" })}
+      </form>`,
+    {
+      head: html`${icon("key")}
+        <h2>Environment</h2>`,
+      pad: false,
+    },
+  );
 }
 
 const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
@@ -503,6 +581,67 @@ export async function appDisable(ctx: Ctx): Promise<Response> {
         }
       : { tone: "danger", message: "This repository is not an app." },
   );
+}
+
+const APP_ENV_ERRORS: Record<string, string> = {
+  invalid_name: `A name is capital letters, digits and underscores, starting with a letter — ADMIN_PASSWORD, STRIPE_SECRET_KEY — and at most ${NAME_MAX} characters.`,
+  reserved_name:
+    "That name is the forge's own (PORT, HOST, PATH, FORGE_…); the app is already told it.",
+  invalid_value: "A value is one line or many, never empty and under 64 KiB.",
+};
+
+// POST /:owner/:name/settings/app/env — set one variable.
+export async function appEnvSet(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const name = field(form, "name").trim();
+  const set = await setAppEnvVar(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    name,
+    field(form, "value"),
+  );
+  if (!set.ok && set.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    set.ok
+      ? {
+          message: `${set.value.name} is set.${redeploying(ctx, "with it")}`,
+        }
+      : {
+          tone: "danger",
+          message:
+            APP_ENV_ERRORS[set.error] ?? "That variable could not be set.",
+        },
+  );
+}
+
+// POST /:owner/:name/settings/app/env/:var/delete — `:var`, because
+// `:name` is the repository's.
+export async function appEnvDelete(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const name = ctx.params.var ?? "";
+  const removed = await deleteAppEnvVar(ctx.app, ctx.auth.user, repo, name);
+  if (!removed.ok && removed.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    removed.ok
+      ? { message: `${name} is removed.${redeploying(ctx, "without it")}` }
+      : { tone: "danger", message: "No variable by that name." },
+  );
+}
+
+/** What a change to the environment sets in motion — when anything serves. */
+function redeploying(ctx: Ctx, how: string): string {
+  return appsRuntime(ctx.app) === undefined
+    ? ""
+    : ` Production and every preview are starting again ${how}.`;
 }
 
 // ---- crew ----

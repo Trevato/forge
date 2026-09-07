@@ -111,6 +111,8 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appEnvDelete,
+  appEnvSet,
   appSettingsPage,
   appSettingsUpdate,
   crewAdd,
@@ -624,6 +626,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("POST", "/:owner/:name/settings/app/env", appEnvSet);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/app/env/:var/delete",
+    appEnvDelete,
+  );
   router.add("GET", "/:owner/:name/settings/crew", crewSettingsPage);
   router.add("POST", "/:owner/:name/settings/crew", crewAdd);
   router.add(

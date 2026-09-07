@@ -19,6 +19,7 @@
 
 import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
+import { resolveAppEnv } from "../core/app_env.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -146,6 +147,9 @@ export async function runAppTty(
     commitOid: live.commitOid,
     forgeUrl: runtime.options.forgeUrl,
     ssh: runtime.sshFor(target.app, target.env),
+    // The terminal is the app too: it opens the same database with the
+    // same secrets, so it is handed the same environment.
+    vars: resolveAppEnv(forge.db, forge.config.dataDir, target.app.id),
   });
   env["TERM"] = host.term;
   env["COLORTERM"] = "truecolor";

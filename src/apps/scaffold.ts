@@ -124,6 +124,8 @@ preview at its own address, deployed from your branch as you push.
   the first sign-in needs a secret only the operator holds — a password from
   the environment, or a one-time token printed to the run log and the app's
   terminal — and a generated password is shown there once, never on a page.
+- Secrets come from the environment: the app's Settings → Environment
+  (write-only), read at start-up; never the repository.
 - Speed: the first paint is server-rendered HTML; JavaScript is small, in
   files under \`static/\` named by content and cached for a year; no layout
   shift; the common request answers in milliseconds; work that can wait is
