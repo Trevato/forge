@@ -120,6 +120,9 @@ preview at its own address, deployed from your branch as you push.
   (keep it, extend it); a POST that is not same-origin is refused; secrets
   come from the environment, never the repository; no \`eval\`, no shell
   built from user text; a private thing needs a session in an HttpOnly cookie.
+  Every request body is capped by the bytes actually read (\`readBody\` in
+  \`src/server.ts\`) — never by a Content-Length, which a chunked request does
+  not have and a lie does not honour. \`HEAD\` answers like \`GET\`.
   An app with an owner or admin is never claimed by whoever visits first:
   the first sign-in needs a secret only the operator holds — a password from
   the environment, or a one-time token printed to the run log and the app's
@@ -191,6 +194,55 @@ const sameOrigin = (request: Request): boolean => {
   return origin === null || origin === publicOrigin;
 };
 
+// A request body is read up to a cap and no further, counting the bytes as
+// they arrive. A declared Content-Length is a claim: a chunked request has
+// none, and a lie is free. Undefined means "too large" — refuse it. Past the
+// cap the rest is drained and dropped so the connection stays usable for
+// the next request; past eight times the cap it is cut off instead.
+const BODY_MAX = 64 * 1024;
+async function readBody(request: Request, max = BODY_MAX): Promise<Uint8Array | undefined> {
+  const reader = request.body?.getReader();
+  if (reader === undefined) return new Uint8Array();
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) return undefined;
+        size += next.value.byteLength;
+        if (size > max * 8) {
+          await reader.cancel();
+          return undefined;
+        }
+      }
+    }
+    parts.push(value);
+  }
+  const body = new Uint8Array(size);
+  let at = 0;
+  for (const part of parts) {
+    body.set(part, at);
+    at += part.byteLength;
+  }
+  return body;
+}
+
+// The form fields of a capped body, decoded the way the browser sent them
+// (a plain form or a multipart one), by handing the bytes back to a Request.
+async function readForm(request: Request): Promise<FormData | undefined> {
+  const body = await readBody(request);
+  if (body === undefined) return undefined;
+  return new Request(request.url, {
+    method: "POST",
+    headers: { "content-type": request.headers.get("content-type") ?? "" },
+    body,
+  }).formData();
+}
+
 function page(): string {
   const notes = db
     .query<{ id: number; body: string; created_at: string }, []>(
@@ -236,12 +288,20 @@ export const server = Bun.serve({
     if (request.method === "POST" && !sameOrigin(request))
       return new Response("forbidden", { status: 403 });
     if (request.method === "POST" && url.pathname === "/notes") {
-      const form = await request.formData();
+      const form = await readForm(request);
+      if (form === undefined)
+        return new Response("too large", { status: 413, headers: SECURITY });
       const body = String(form.get("body") ?? "").trim().slice(0, 500);
       if (body) db.query("INSERT INTO note (body) VALUES (?1)").run(body);
       return Response.redirect("/", 303);
     }
-    if (url.pathname === "/") return html(page());
+    // HEAD is GET without the body: a health check sees the app up.
+    if (url.pathname === "/" && (request.method === "GET" || request.method === "HEAD")) {
+      const full = html(page());
+      return request.method === "HEAD"
+        ? new Response(null, { status: full.status, headers: full.headers })
+        : full;
+    }
     // Files under ./static are served as they are, cached for a year: name
     // them by content (app.3f2a9c.js) and a change is a new name, never a
     // stale cache. The path is confined to the directory.
@@ -373,17 +433,31 @@ test("stands on the security floor", async () => {
 });
 
 test("a bug answers with the floor, not the runtime's page", async () => {
-  // A body that claims to be a form and is not makes formData() throw.
+  // A percent-escape that is not one makes the search params throw.
   const response = await fetch(base + "/notes", {
     method: "POST",
-    headers: { "content-type": "multipart/form-data; boundary=none" },
-    body: "not a form",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "body=%E0%A4%A",
   });
-  expect(response.status).toBe(500);
+  expect(response.status).toBe(200);
   expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
-  const body = await response.text();
-  expect(body).toContain("Something went wrong");
-  expect(body).not.toContain("server.ts");
+});
+
+test("a body is capped by the bytes read, whatever it claims", async () => {
+  // The cap counts bytes as they arrive and never reads Content-Length, so
+  // a chunked body with no length is refused the same way this one is.
+  const response = await fetch(base + "/notes", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "body=" + "x".repeat(1024 * 1024),
+  });
+  expect(response.status).toBe(413);
+});
+
+test("HEAD sees the app up", async () => {
+  const response = await server.fetch(new Request(base + "/", { method: "HEAD" }));
+  expect(response.status).toBe(200);
+  expect(await response.text()).toBe("");
 });
 
 test("refuses a cross-site post", async () => {

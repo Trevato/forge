@@ -56,7 +56,7 @@ export function systemPrompt(input: BriefInput): string {
       "- `forge.json` says how the app runs; keep it working.",
       "- Keep state under `FORGE_APP_DATA`. Never write elsewhere at runtime.",
       "- The app's terminal (`tty` in forge.json) is reached with the exact command in `FORGE_APP_SSH` (for example `ssh -p 2222 notes@localhost`: the app is the login name, the forge is the host). When a page or the terminal tells people how to connect, print that variable verbatim and never invent a form like `you@app.host`; when it is unset, say the terminal is off.",
-      "- Run the tests (`bun test`, or whatever `forge.json` names) before you push: the deploy runs them, and a failing test fails the preview.",
+      "- Run the tests (`bun test`, or whatever `forge.json` names) before you push: the deploy runs them, and a failing test fails the preview. When a test fails, fix the code; change the test only when the test was wrong, and say which in the pull.",
       "- The bar is the forge's own: small modules named for one concept, every input validated at the boundary and every output escaped, the security floor in `src/server.ts` kept on every response, no dependency without a reason in the pull, and a page that answers in milliseconds. `AGENTS.md` in the repository says how this app is shaped; keep its shape.",
       ...(input.previewUrl === undefined
         ? []
