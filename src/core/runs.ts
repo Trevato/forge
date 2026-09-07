@@ -399,3 +399,54 @@ export function automaticRunsSince(
     .get(issueId, since);
   return row?.n ?? 0;
 }
+
+/** What an agent has done, in totals: the number a person weighs a crew by. */
+export interface AgentTotals {
+  readonly runs: number;
+  readonly ok: number;
+  readonly failed: number;
+  readonly spentUsd: number;
+  /** Mean wall-clock of finished runs, in seconds; null before the first. */
+  readonly meanSeconds: number | null;
+}
+
+/** Totals of agent runs, keyed by the agent's user id. */
+export function agentTotals(db: Database): Map<string, AgentTotals> {
+  const rows = db
+    .query<
+      {
+        actor_id: string;
+        runs: number;
+        ok: number;
+        failed: number;
+        spent: number;
+        mean_seconds: number | null;
+      },
+      []
+    >(
+      `SELECT actor_id,
+              COUNT(*) AS runs,
+              SUM(state = 'ok') AS ok,
+              SUM(state = 'failed') AS failed,
+              SUM(cost_usd) AS spent,
+              AVG(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
+                       THEN (julianday(finished_at) - julianday(started_at)) * 86400 END)
+                AS mean_seconds
+         FROM run
+        WHERE kind = 'agent' AND actor_id IS NOT NULL
+        GROUP BY actor_id`,
+    )
+    .all();
+  return new Map(
+    rows.map((r) => [
+      r.actor_id,
+      {
+        runs: r.runs,
+        ok: r.ok,
+        failed: r.failed,
+        spentUsd: r.spent,
+        meanSeconds: r.mean_seconds,
+      },
+    ]),
+  );
+}

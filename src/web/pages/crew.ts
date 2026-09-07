@@ -19,6 +19,7 @@ import {
   MODEL_MAX,
   type Agent,
 } from "../../core/agents.ts";
+import { agentTotals, type AgentTotals } from "../../core/runs.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -158,9 +159,32 @@ const budgetOf = (form: Form): number | undefined => {
 
 // ---- the list ----
 
+/** Runs, what they cost, how long they take — or a quiet dash before any. */
+function totalsCells(t: AgentTotals | undefined): Html {
+  if (t === undefined || t.runs === 0)
+    return html`<td class="num muted">—</td>
+      <td class="num muted">—</td>
+      <td class="num muted">—</td>`;
+  const mean =
+    t.meanSeconds === null
+      ? "—"
+      : t.meanSeconds < 90
+        ? `${Math.round(t.meanSeconds)}s`
+        : `${Math.round(t.meanSeconds / 60)}m`;
+  return html`<td class="num">
+      ${t.runs}
+      <span class="muted small"
+        >${t.ok} ok${t.failed > 0 ? html`, ${t.failed} failed` : null}</span
+      >
+    </td>
+    <td class="num">$${t.spentUsd.toFixed(2)}</td>
+    <td class="num">${mean}</td>`;
+}
+
 function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const listed = listAllAgents(ctx.app, ctx.auth.user);
   const agents = listed.ok ? listed.value : [];
+  const totals = agentTotals(ctx.app.db);
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   return html`${crewReadiness(ctx)}
@@ -178,6 +202,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
                 <th>Agent</th>
                 <th>Model</th>
                 <th>Budget</th>
+                <th>Runs</th>
+                <th>Spent</th>
+                <th>Mean</th>
                 <th>Created</th>
                 <th></th>
               </tr>
@@ -219,6 +246,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
                         ? html`<span class="muted">default</span>`
                         : `$${agent.budgetUsd.toFixed(2)}`}
                     </td>
+                    ${totalsCells(totals.get(agent.user.id))}
                     <td class="muted">${time(agent.createdAt)}</td>
                     <td>
                       <span class="bar">
