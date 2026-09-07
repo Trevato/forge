@@ -332,5 +332,5 @@ Pages render without a line of JavaScript and are designed thumb-first. Six
 premade themes (from warm paper to polar night) switch instantly and persist in
 a cookie — even that works script-free. Still **zero runtime dependencies**.
 
-Not yet: containers around apps, custom domains, websockets through the
-proxy, and a gate that lands a pull on its own once review and checks agree.
+Not yet: containers around apps, custom domains, and a gate that lands a
+pull on its own once review and checks agree.

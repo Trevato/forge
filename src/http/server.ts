@@ -212,7 +212,7 @@ import { sseStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { proxyApp, resolveAppHost } from "../apps/proxy.ts";
+import { appWebSocket, proxyApp, resolveAppHost } from "../apps/proxy.ts";
 
 // ---- auth ----
 
@@ -985,7 +985,10 @@ export async function serve(app: App): Promise<Servers> {
   const web = Bun.serve({
     port: app.config.port ?? 3000,
     idleTimeout: 120,
-    async fetch(request) {
+    // The only sockets the forge holds are an app's, carried through the
+    // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
+    websocket: appWebSocket,
+    async fetch(request, server) {
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const runtime = appsRuntime(app);
@@ -993,7 +996,8 @@ export async function serve(app: App): Promise<Servers> {
         const target = resolveAppHost(app, runtime.options.domain, request);
         if (target === "unknown")
           return new Response("not found", { status: 404 });
-        if (target !== undefined) return proxyApp(runtime, request, target);
+        if (target !== undefined)
+          return proxyApp(runtime, request, target, server);
       }
       const url = publicUrl(request, app.config.url);
       const matched = router.match(request.method, url.pathname);

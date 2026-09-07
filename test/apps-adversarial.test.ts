@@ -1148,7 +1148,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     expect(strangerOnPublicRepo.ok).toBe(true);
   }, 60_000);
 
-  test("the proxy: hop-by-hop headers are stripped, an upstream that dies mid-request yields a clean error, websocket upgrades get 501", async () => {
+  test("the proxy: hop-by-hop headers are stripped, an upstream that dies mid-request yields a clean error, a claimed upgrade is a request", async () => {
     const made = await newApp(app, alice, {
       name: "proxytest",
       visibility: "public",
@@ -1173,11 +1173,14 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     expect(upperCase.status).toBe(200);
     expect(await upperCase.text()).toBe(await page.text());
 
-    // A websocket upgrade is refused cleanly, not proxied.
+    // A request that says `Upgrade: websocket` without a handshake key is
+    // not a handshake: it is fetched as a request, the hop-by-hop headers
+    // stripped, and the app answers it as one. Real sockets are
+    // test/apps-ws.test.ts.
     const ws = await viaHost(`proxytest.${DOMAIN}`, "/", {
       headers: { upgrade: "websocket", connection: "Upgrade" },
     });
-    expect(ws.status).toBe(501);
+    expect(ws.status).toBe(200);
 
     // Stop the live process out from under the proxy (simulating a crash
     // mid-request) and confirm the *next* request gets the forge's own
