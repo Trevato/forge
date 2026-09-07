@@ -938,8 +938,8 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       false,
     );
     const stillGone = await viaHost(`resurrect--${pull.number}.${DOMAIN}`);
-    expect(stillGone.status).toBe(502);
-    expect(await stillGone.text()).toContain("is not running");
+    expect(stillGone.status).toBe(404);
+    expect(await stillGone.text()).toContain("is gone");
     const resurrectionRuns = listRuns(app.db, repo.id, {
       env: `pull-${pull.number}`,
     }).filter((r) => r.reason === "restart");
@@ -998,7 +998,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       false,
     );
     expect((await viaHost(`midclose--${pull.number}.${DOMAIN}`)).status).toBe(
-      502,
+      404,
     );
   }, 60_000);
 

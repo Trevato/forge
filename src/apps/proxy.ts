@@ -254,13 +254,19 @@ function unavailable(
       : `the preview of pull #${target.env.slice(5)}`;
   const state = status?.state ?? "stopped";
   const deploying = state === "deploying";
+  // A preview the forge no longer knows is gone, not broken: its pull closed
+  // and its data went with it. That is a 404, which also lets this page
+  // through an edge that replaces every 5xx with one of its own.
+  const gone = status === undefined && target.env !== "production";
   const message =
     reason ??
     (deploying
       ? "A new version is starting."
       : state === "failed"
         ? (status?.error ?? "The last deploy failed.")
-        : "Nothing is running here yet.");
+        : gone
+          ? "This preview is gone: its pull was closed, and its data with it."
+          : "Nothing is running here yet.");
   const runLink =
     status?.runId === undefined
       ? ""
@@ -269,7 +275,7 @@ function unavailable(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
-<title>${escape(name)} — ${deploying ? "starting" : "not running"}</title>
+<title>${escape(name)} — ${deploying ? "starting" : gone ? "gone" : "not running"}</title>
 <style>
   :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
   body { max-width: 34rem; margin: 20vh auto; padding: 0 1.5rem; }
@@ -277,13 +283,13 @@ ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
   p { margin: .5rem 0; opacity: .85; }
   code { font-size: .9em; }
 </style>
-<h1>${escape(name)} ${deploying ? "is starting" : "is not running"}</h1>
+<h1>${escape(name)} ${deploying ? "is starting" : gone ? "is gone" : "is not running"}</h1>
 <p>This is ${escape(where)}. ${escape(message)}</p>
 ${deploying ? "<p>This page refreshes on its own.</p>" : ""}
 ${runLink}
 `;
   return new Response(html, {
-    status: deploying ? 503 : 502,
+    status: deploying ? 503 : gone ? 404 : 502,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",

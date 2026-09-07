@@ -278,8 +278,8 @@ describe("apps: production, previews, data, gates, crew", () => {
       false,
     );
     const gone = await viaHost(`hello--${pull.number}.${DOMAIN}`);
-    expect(gone.status).toBe(502);
-    expect(await gone.text()).toContain("is not running");
+    expect(gone.status).toBe(404);
+    expect(await gone.text()).toContain("is gone");
     // Production kept its data across the redeploy.
     expect(await (await viaHost(`hello.${DOMAIN}`)).text()).toContain(
       "first note in production",
