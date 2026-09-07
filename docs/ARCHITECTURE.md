@@ -538,6 +538,6 @@ run, and the run the check a pull's merge can require), and the crew
 (agents as accounts with nothing but a run-scoped token, dispatched off the
 outbox, working in Claude Code and proposing through pulls a person merges).
 
-Not yet: containers around app processes, custom domains and websockets
-through the proxy, a gate that lands a pull on its own once review and
-checks agree, federation, package registry.
+Not yet: containers around app processes, custom domains, a gate that
+lands a pull on its own once review and checks agree, federation, package
+registry.

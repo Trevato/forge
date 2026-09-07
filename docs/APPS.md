@@ -210,7 +210,24 @@ all: `http://hello.localhost:3000`.
 The proxy is a `fetch` to the deployment's loopback port, streamed back.
 Headers are forwarded with the usual `X-Forwarded-*` additions. An
 environment that is not running gets a page from the forge that says so and
-links the run — never a bare gateway error. Websockets are not proxied yet.
+links the run — never a bare gateway error.
+
+A websocket handshake (`Upgrade: websocket` with a key) goes through the
+same gate — the private app's grant cookie, then a live port — and then the
+forge opens its own socket to the app first, carrying the path, the query,
+the cookie, `X-Forwarded-*` and the offered subprotocols. Only once the app
+has accepted does the browser's side upgrade, with the subprotocol the app
+chose; frames then pass both ways as they were sent, text as text and
+binary as binary, and a close on either side reaches the other with its
+code. A handshake the app does not accept, or an app that is not there,
+gets the same "not running" page as a request would (502), never a socket
+that opens and shuts. The limits: a frame is at most 16 MiB in either
+direction; at most 16 MiB may wait for a browser that has stopped reading
+before the socket is closed rather than the memory kept (the forge buffers
+nothing of its own); and a socket that has sent nothing and answered no
+ping for 120 seconds is dropped. The app's own 101 response headers are
+not carried — a cookie an app sets on the handshake does not reach the
+browser.
 
 ## Where state lives
 
@@ -328,6 +345,6 @@ Containers. An app runs as the forge's own user, in its own directory, and
 nothing more separates it from the host than that. On the machine one
 person owns this is the honest, fast answer; a sandboxed runtime is the
 next layer, and the process boundary here is where it will attach. Custom
-domains, TLS termination, websocket proxying, and an approve-and-land gate
-are additions of the same kind: the shapes above hold, and a new column or
-listener carries each of them.
+domains, TLS termination, and an approve-and-land gate are additions of
+the same kind: the shapes above hold, and a new column or listener carries
+each of them.

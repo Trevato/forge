@@ -1,7 +1,10 @@
 /**
  * Apps on the forge's own port, by `Host`. `<slug>.<domain>` is production,
  * `<slug>--<n>.<domain>` the preview of pull `n`; the request is fetched
- * from the deployment's loopback port and streamed back.
+ * from the deployment's loopback port and streamed back. A websocket
+ * handshake is the same request until the app accepts it — then the forge
+ * holds one socket to the browser and one to the app and carries frames
+ * between them, and nothing else.
  *
  * A private app answers only to a visitor the forge has vouched for. The
  * app's host sets no cookie of its own; the forge sends the visitor to
@@ -15,6 +18,7 @@ import { appHostSuffix } from "./host.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
@@ -131,18 +135,17 @@ const HOP_BY_HOP = [
   "upgrade",
 ];
 
-/** Serve a request addressed to an app. */
-export async function proxyApp(
+/**
+ * What a request addressed to an app must pass before anything is served:
+ * a private app's grant, then a live port. One gate for both the request
+ * that is fetched and the one that becomes a socket — the answer when a
+ * gate refuses is the response to send instead.
+ */
+function admit(
   runtime: AppsRuntime,
   request: Request,
   target: AppTarget,
-): Promise<Response> {
-  const url = new URL(request.url);
-  const status = runtime.envStatus(target.app, target.env);
-
-  if (url.pathname === "/__forge/grant") {
-    return grant(runtime, request, url, target);
-  }
+): Result<{ status: EnvStatus; port: number }, Response> {
   if (target.app.access === "private") {
     const cookie = cookieValue(request, GRANT_COOKIE);
     if (
@@ -150,26 +153,56 @@ export async function proxyApp(
       !verifyGrant(runtime.app.config.dataDir, cookie, target)
     ) {
       // The same answer the forge gives for a repository you cannot see.
-      return new Response("not found", { status: 404 });
+      return err(new Response("not found", { status: 404 }));
     }
   }
+  const status = runtime.envStatus(target.app, target.env);
   if (status === undefined || status.port === undefined) {
-    return unavailable(runtime, target, status);
+    return err(unavailable(runtime, target, status));
   }
-  if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
-    return new Response("websockets are not proxied to apps yet", {
-      status: 501,
-    });
+  return ok({ status, port: status.port });
+}
+
+/**
+ * Serve a request addressed to an app. `undefined` means the request became
+ * a websocket: the response was the handshake, and `appWebSocket` now owns
+ * the connection.
+ */
+export async function proxyApp(
+  runtime: AppsRuntime,
+  request: Request,
+  target: AppTarget,
+  server: Bun.Server<AppSocket>,
+): Promise<Response | undefined> {
+  const url = new URL(request.url);
+  if (url.pathname === "/__forge/grant") {
+    return grant(runtime, request, url, target);
   }
+  const admitted = admit(runtime, request, target);
+  if (!admitted.ok) return admitted.error;
+  const { status, port } = admitted.value;
 
   const upstream = new URL(url);
   upstream.protocol = "http:";
   upstream.hostname = "127.0.0.1";
-  upstream.port = String(status.port);
+  upstream.port = String(port);
   const headers = new Headers(request.headers);
   for (const name of HOP_BY_HOP) headers.delete(name);
   headers.set("x-forwarded-host", request.headers.get("host") ?? "");
   headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+
+  if (isWebSocketHandshake(request)) {
+    return proxyWebSocket(
+      runtime,
+      server,
+      request,
+      target,
+      status,
+      upstream,
+      headers,
+    );
+  }
+
   let response: Response;
   try {
     response = await fetch(upstream, {
@@ -195,6 +228,217 @@ export async function proxyApp(
     headers: out,
   });
 }
+
+// ---- websockets ----
+
+/**
+ * The forge's end of a proxied websocket: the app's side of it, and
+ * nothing else. Everything the connection knows lives here, on the socket,
+ * so a forge with a thousand of them has no table to keep in step.
+ */
+export interface AppSocket {
+  readonly upstream: WebSocket;
+}
+
+/**
+ * The most one frame may carry, in either direction. The browser's side is
+ * enforced by Bun before a frame reaches us; the app's side is checked
+ * here, because the client Bun gives us has no ceiling of its own. It is
+ * also how much may queue for a browser that has stopped reading — past
+ * it the socket is closed rather than the memory kept, and the forge never
+ * buffers a frame on its own account.
+ */
+const WS_MAX_MESSAGE = 16 * 1024 * 1024;
+/**
+ * Seconds a socket may go without a frame or a pong before it is dropped.
+ * Bun pings on its own at half this, so a quiet tab that is still there
+ * stays connected; only a peer that has stopped answering is let go.
+ */
+const WS_IDLE_SECONDS = 120;
+
+/**
+ * A handshake is a GET that asks to upgrade and carries a key. A request
+ * that merely says `Upgrade: websocket` is an ordinary request, and is
+ * fetched as one with the hop-by-hop headers stripped, as it always was.
+ */
+const isWebSocketHandshake = (request: Request): boolean =>
+  request.method === "GET" &&
+  request.headers.get("upgrade")?.toLowerCase() === "websocket" &&
+  request.headers.has("sec-websocket-key");
+
+/** The subprotocols a handshake offers, in the order it offers them. */
+const offeredProtocols = (request: Request): string[] =>
+  (request.headers.get("sec-websocket-protocol") ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+
+/**
+ * Open the app's side first, and only then answer the browser: a handshake
+ * the app does not accept is an HTTP failure, with the forge's own page,
+ * never a socket that opens and shuts.
+ */
+async function proxyWebSocket(
+  runtime: AppsRuntime,
+  server: Bun.Server<AppSocket>,
+  request: Request,
+  target: AppTarget,
+  status: EnvStatus,
+  upstreamUrl: URL,
+  forwarded: Headers,
+): Promise<Response | undefined> {
+  const url = new URL(upstreamUrl);
+  url.protocol = "ws:";
+  const headers: Record<string, string> = {};
+  forwarded.forEach((value, name) => {
+    // The client writes its own handshake; the browser's key, version and
+    // extensions belong to the hop that is ending here.
+    if (!name.startsWith("sec-websocket-")) headers[name] = value;
+  });
+  const opened = await connectUpstream(url, headers, offeredProtocols(request));
+  if (!opened.ok) {
+    return unavailable(runtime, target, status, opened.error);
+  }
+  const upstream = opened.value;
+  const upgraded = server.upgrade(request, {
+    data: { upstream },
+    // The app's choice of subprotocol is what the browser hears; without
+    // one Bun echoes the first the browser offered, which is what the app
+    // itself would have done on Bun.
+    ...(upstream.protocol === ""
+      ? {}
+      : { headers: { "sec-websocket-protocol": upstream.protocol } }),
+  });
+  if (upgraded) return undefined;
+  upstream.close(1000);
+  return new Response("bad websocket handshake", { status: 400 });
+}
+
+/**
+ * A client socket to the app, resolved once it is open. A refusal is a
+ * sentence for the "not running" page: the app was not listening, or it
+ * answered the handshake with something other than a socket.
+ */
+function connectUpstream(
+  url: URL,
+  headers: Record<string, string>,
+  protocols: string[],
+): Promise<Result<WebSocket, string>> {
+  return new Promise((resolve) => {
+    const socket = new WebSocket(url, { headers, protocols });
+    socket.binaryType = "arraybuffer";
+    socket.addEventListener("open", () => resolve(ok(socket)), { once: true });
+    socket.addEventListener(
+      "close",
+      (event) =>
+        resolve(
+          err(
+            // 1002 is Bun's word for a handshake the app answered with a
+            // status other than 101 — a path it does not upgrade.
+            event.code === 1002
+              ? "the app did not accept a websocket at this path"
+              : "the app stopped answering",
+          ),
+        ),
+      { once: true },
+    );
+    // The close that follows carries the verdict; an error on its own has
+    // nothing to add and must not go unhandled.
+    socket.addEventListener("error", () => {});
+  });
+}
+
+/**
+ * Whether a close code survives the trip. 1005 (none given), 1006 (lost)
+ * and 1015 (TLS) are only ever reported, never sent, and Bun's client
+ * turns 1012–1014 and 3000–3999 into a dropped connection rather than a
+ * frame. What is left is carried as it is; the rest becomes 1000 with the
+ * reason kept — though toward the app that same client (Bun 1.3) delivers
+ * a reason of one byte and drops a longer one. The code always arrives.
+ */
+const sendable = (code: number): boolean =>
+  (code >= 1000 && code <= 1003) ||
+  (code >= 1007 && code <= 1011) ||
+  (code >= 4000 && code <= 4999);
+
+/** Close both ends with one verdict. */
+function closeBoth(
+  ws: Bun.ServerWebSocket<AppSocket>,
+  code: number,
+  reason: string,
+): void {
+  ws.close(code, reason);
+  ws.data.upstream.close(code, reason);
+}
+
+/**
+ * The forge's `websocket` handler: frames through, both ways, and the
+ * close of one side carried to the other. Text stays text and binary
+ * stays binary; the forge reads neither.
+ */
+export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
+  maxPayloadLength: WS_MAX_MESSAGE,
+  backpressureLimit: WS_MAX_MESSAGE,
+  closeOnBackpressureLimit: true,
+  idleTimeout: WS_IDLE_SECONDS,
+
+  open(ws) {
+    const { upstream } = ws.data;
+    // No frame from the app can get here first. Its `open` event resolved
+    // `connectUpstream`, and the microtask checkpoint after that callback
+    // runs `proxyWebSocket` to completion — `server.upgrade` calls this
+    // handler synchronously — before the loop dispatches the next event,
+    // so a greeting the app sent the moment its socket opened, even one
+    // corked into the same write as its 101, still finds this listener.
+    // test/apps-ws.test.ts holds the app to exactly that.
+    upstream.addEventListener("message", (event: MessageEvent) => {
+      const data: unknown = event.data;
+      const size =
+        typeof data === "string"
+          ? Buffer.byteLength(data)
+          : (data as ArrayBuffer).byteLength;
+      if (size > WS_MAX_MESSAGE) {
+        closeBoth(ws, 1009, "message too big");
+        return;
+      }
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const sent =
+        typeof data === "string" ? ws.send(data) : ws.send(data as ArrayBuffer);
+      // 0 is a frame Bun dropped, because more than the limit was already
+      // waiting on a browser that is not reading. A stream with a hole in
+      // it is not a stream; end it rather than let the app keep talking.
+      if (sent === 0 && ws.readyState === WebSocket.OPEN) {
+        closeBoth(ws, 1008, "not reading");
+      }
+    });
+    upstream.addEventListener("close", (event: CloseEvent) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      // The app went away without a word: a crash, a redeploy, a stop.
+      if (event.code === 1006) ws.close(1001, "the app stopped answering");
+      else ws.close(sendable(event.code) ? event.code : 1000, event.reason);
+    });
+    // Opened a moment ago, and nothing has run since — but a socket that
+    // is somehow already shut would otherwise leave this one hanging.
+    if (upstream.readyState !== WebSocket.OPEN) {
+      ws.close(1001, "the app stopped answering");
+    }
+  },
+
+  message(ws, message) {
+    const { upstream } = ws.data;
+    // A closing app has its close on the way to the browser already.
+    if (upstream.readyState !== WebSocket.OPEN) return;
+    upstream.send(message);
+  },
+
+  close(ws, code, reason) {
+    const { upstream } = ws.data;
+    if (upstream.readyState === WebSocket.CLOSED) return;
+    // 1006 here is the browser gone without a close frame.
+    if (code === 1006) upstream.close(1001, "the browser went away");
+    else upstream.close(sendable(code) ? code : 1000, reason);
+  },
+};
 
 function grant(
   runtime: AppsRuntime,

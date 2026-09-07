@@ -228,9 +228,9 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
 ## Not yet built (deliberately)
 
 A self-describing (OpenAPI) endpoint, containers around app processes,
-custom domains and websockets through the proxy, and a gate that lands a
-pull on its own once review and checks agree. The event outbox and API
-surface are shaped so these arrive as additions, not rewrites.
-`docs/ARCHITECTURE.md` closes with the reasoning. "Forgejo is my harness"
-is the north star — automation is a first-class user, not an afterthought,
-and `docs/APPS.md` is where that user now lives.
+custom domains, and a gate that lands a pull on its own once review and
+checks agree. The event outbox and API surface are shaped so these arrive
+as additions, not rewrites. `docs/ARCHITECTURE.md` closes with the
+reasoning. "Forgejo is my harness" is the north star — automation is a
+first-class user, not an afterthought, and `docs/APPS.md` is where that
+user now lives.
