@@ -133,6 +133,9 @@ preview at its own address, deployed from your branch as you push.
   files under \`static/\` named by content and cached for a year; no layout
   shift; the common request answers in milliseconds; work that can wait is
   done after the response.
+- A phone is a first-class client: the page works at 360px wide with no
+  horizontal scroll, every control is at least 44px on a side, and the
+  keyboard reaches everything a mouse does.
 - Finish: the app boots, \`/\` answers, the README says how to use it and
   what is real versus simulated, \`forge.json\` says how to run it.
 `;
