@@ -257,6 +257,22 @@ describe("apps: websockets through the proxy", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("a greeting the app sends the moment its socket opens reaches the browser, in order, before the browser has said anything", async () => {
+    // The echo app sends two frames synchronously in its own `open` — they
+    // ride out with the 101 in the same write — so this is the earliest a
+    // frame can exist. The browser sends nothing until both have arrived.
+    const client = connect("/ws");
+    expect(await client.opened).toBe(true);
+    expect(bytes(await client.next())).toEqual([1, 2, 3]);
+    const second = await client.next();
+    expect(typeof second).toBe("string");
+    expect(second).toStartWith("seen:");
+    // And only then does anything of the browser's come back.
+    client.ws.send("after the greeting");
+    expect(await client.next()).toBe("after the greeting");
+    client.ws.close();
+  });
+
   test("frames go both ways as they were sent, and the app sees the handshake it would have seen", async () => {
     const client = connect("/ws?room=1", {
       protocols: ["a", "b"],

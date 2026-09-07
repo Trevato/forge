@@ -384,6 +384,13 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
 
   open(ws) {
     const { upstream } = ws.data;
+    // No frame from the app can get here first. Its `open` event resolved
+    // `connectUpstream`, and the microtask checkpoint after that callback
+    // runs `proxyWebSocket` to completion — `server.upgrade` calls this
+    // handler synchronously — before the loop dispatches the next event,
+    // so a greeting the app sent the moment its socket opened, even one
+    // corked into the same write as its 101, still finds this listener.
+    // test/apps-ws.test.ts holds the app to exactly that.
     upstream.addEventListener("message", (event: MessageEvent) => {
       const data: unknown = event.data;
       const size =
