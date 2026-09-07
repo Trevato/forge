@@ -158,12 +158,19 @@ const escape = (s: string): string =>
 // The security floor every response stands on. Scripts and styles come from
 // this origin (inline styles allowed, inline scripts not), nothing frames us,
 // browsers never guess a content type, and referrers stay on this site.
+// The app's public address is what the forge told us, never the socket's.
+const publicOrigin = new URL(process.env.FORGE_APP_URL ?? "http://localhost").origin;
+
 const SECURITY = {
   "content-security-policy":
     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "x-content-type-options": "nosniff",
   "referrer-policy": "strict-origin-when-cross-origin",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
+  // Once served over https, always: browsers remember for a year.
+  ...(publicOrigin.startsWith("https:")
+    ? { "strict-transport-security": "max-age=31536000" }
+    : {}),
 };
 const html = (body: string, status = 200): Response =>
   new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...SECURITY } });
@@ -171,8 +178,6 @@ const html = (body: string, status = 200): Response =>
 // A browser on another site can make a person's browser POST here; it cannot
 // make that request look same-origin. Browsers say where a request came from
 // (Sec-Fetch-Site, or Origin); a request that names another site is refused.
-// The app's public address is what the forge told us, never the socket's.
-const publicOrigin = new URL(process.env.FORGE_APP_URL ?? "http://localhost").origin;
 const sameOrigin = (request: Request): boolean => {
   const site = request.headers.get("sec-fetch-site");
   if (site !== null) return site === "same-origin" || site === "none";
