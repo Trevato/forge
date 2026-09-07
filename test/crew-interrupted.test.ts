@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { claimRun, createRun, getRun, listQueued } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -89,4 +90,69 @@ describe("a run the last forge left running", () => {
     expect(queued[0]!.reason).toBe("feedback");
     expect(queued[0]!.actorId).toBe(bot.id);
   });
+
+  test("a run in flight when the crew stops goes back on the queue", async () => {
+    await crew?.stop();
+    crew = undefined;
+    const created = await createRepo(app, alice, {
+      name: "orchard",
+      visibility: "private",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# orchard\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const issued = openIssue(app, alice, repo, { title: "Prune", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    // A stand-in that never finishes on its own.
+    const slow = join(dataDir, "slow-claude");
+    writeFileSync(
+      slow,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+cat > /dev/null &
+echo '{"type":"system","subtype":"init","session_id":"slow-1","model":"fake"}'
+sleep 120
+`,
+    );
+    chmodSync(slow, 0o755);
+    const queuedRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "feedback",
+    });
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: slow,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    const deadline = Date.now() + 20_000;
+    while (
+      getRun(app.db, queuedRun.id)?.state !== "running" &&
+      Date.now() < deadline
+    )
+      await Bun.sleep(100);
+    expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
+
+    await crew.stop();
+    crew = undefined;
+
+    const ended = getRun(app.db, queuedRun.id)!;
+    expect(ended.state === "cancelled" || ended.state === "failed").toBe(true);
+    const again = listQueued(app.db, "agent").filter(
+      (r) => r.issueId === issue.id && r.state === "queued",
+    );
+    expect(again).toHaveLength(1);
+    expect(again[0]!.reason).toBe("feedback");
+  }, 40_000);
 });

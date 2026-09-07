@@ -103,8 +103,15 @@ export async function startCrew(
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      // What is in flight goes back on the queue once it has stopped: the
+      // forge is restarting, not the person's request.
+      const interrupted = [...inFlight.keys()]
+        .map((runId) => getRun(app.db, runId))
+        .filter((run): run is Run => run !== undefined);
       for (const runId of inFlight.keys()) abortAgentRun(runId);
       await Promise.all(inFlight.values());
+      for (const run of interrupted)
+        requeue(app, run, "stopped for a restart; queued again");
       handles.delete(app);
     },
   };
@@ -263,19 +270,25 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  */
 function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
-    if (run.state !== "running" || run.issueId === null) continue;
-    cancelRun(app.db, run.id, "interrupted by a restart; queued again");
-    const issue = getIssueById(app.db, run.issueId);
-    const repo = getRepoById(app.db, run.repoId);
-    const agent = run.actorId ? getAgent(app.db, run.actorId) : undefined;
-    if (!issue || !repo || !agent || issue.state !== "open") continue;
-    const reason: RunReason =
-      run.reason === "feedback" || run.reason === "check_failed"
-        ? run.reason
-        : "assigned";
-    queueAgentRun(app, repo, issue, agent, reason);
-    log.info("interrupted run queued again", { run: run.id, reason });
+    if (run.state === "running")
+      requeue(app, run, "interrupted by a restart; queued again");
   }
+}
+
+/** End a run that cannot go on, and put its task back on the queue. */
+function requeue(app: App, run: Run, why: string): void {
+  if (run.issueId === null) return;
+  cancelRun(app.db, run.id, why);
+  const issue = getIssueById(app.db, run.issueId);
+  const repo = getRepoById(app.db, run.repoId);
+  const agent = run.actorId ? getAgent(app.db, run.actorId) : undefined;
+  if (!issue || !repo || !agent || issue.state !== "open") return;
+  const reason: RunReason =
+    run.reason === "feedback" || run.reason === "check_failed"
+      ? run.reason
+      : "assigned";
+  queueAgentRun(app, repo, issue, agent, reason);
+  log.info("run queued again", { run: run.id, reason, why });
 }
 
 /**
