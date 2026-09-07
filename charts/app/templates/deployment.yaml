@@ -36,6 +36,10 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        # Set the volume's owner once, on first mount, and then leave it: the
+        # default rewrites every file's mode on every start, which turns the
+        # forge's 0600 secret key into 0660 and the forge refuses it.
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
