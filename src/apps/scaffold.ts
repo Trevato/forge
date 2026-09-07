@@ -254,6 +254,13 @@ export const server = Bun.serve({
     }
     return new Response("not found", { status: 404, headers: SECURITY });
   },
+  // A bug answers with the floor and nothing else: never the runtime's own
+  // error page, which carries source and paths, and never without the
+  // headers. The detail goes to the log, where it belongs.
+  error(error) {
+    console.error(error);
+    return html("<h1>Something went wrong</h1>", 500);
+  },
 });
 
 console.log(\`${escape(title)} listening on http://\${server.hostname}:\${server.port} (\${env})\`);
@@ -363,6 +370,20 @@ test("stands on the security floor", async () => {
   const response = await fetch(base + "/");
   expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+test("a bug answers with the floor, not the runtime's page", async () => {
+  // A body that claims to be a form and is not makes formData() throw.
+  const response = await fetch(base + "/notes", {
+    method: "POST",
+    headers: { "content-type": "multipart/form-data; boundary=none" },
+    body: "not a form",
+  });
+  expect(response.status).toBe(500);
+  expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
+  const body = await response.text();
+  expect(body).toContain("Something went wrong");
+  expect(body).not.toContain("server.ts");
 });
 
 test("refuses a cross-site post", async () => {
