@@ -25,6 +25,7 @@ import { listReviews } from "../core/reviews.ts";
 import {
   activeRunFor,
   automaticRunsSince,
+  cancelRun,
   createRun,
   getRun,
   listActive,
@@ -91,6 +92,7 @@ export async function startCrew(
   const timer = setInterval(() => {
     if (!stopped) pump(app, options, inFlight);
   }, TICK_MS);
+  requeueInterrupted(app);
   sweep(app);
   pump(app, options, inFlight);
 
@@ -251,6 +253,29 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
     recursive: true,
     force: true,
   });
+}
+
+/**
+ * A run the last forge left `running` was cut off by its restart: the
+ * process that was working died with it. Each ends here as cancelled, and
+ * the same task goes back on the queue under the same reason — the run that
+ * starts reads the whole conversation, so nothing a person said is lost.
+ */
+function requeueInterrupted(app: App): void {
+  for (const run of listQueued(app.db, "agent", 100)) {
+    if (run.state !== "running" || run.issueId === null) continue;
+    cancelRun(app.db, run.id, "interrupted by a restart; queued again");
+    const issue = getIssueById(app.db, run.issueId);
+    const repo = getRepoById(app.db, run.repoId);
+    const agent = run.actorId ? getAgent(app.db, run.actorId) : undefined;
+    if (!issue || !repo || !agent || issue.state !== "open") continue;
+    const reason: RunReason =
+      run.reason === "feedback" || run.reason === "check_failed"
+        ? run.reason
+        : "assigned";
+    queueAgentRun(app, repo, issue, agent, reason);
+    log.info("interrupted run queued again", { run: run.id, reason });
+  }
 }
 
 /**
