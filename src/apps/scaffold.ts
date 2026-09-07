@@ -92,18 +92,40 @@ You are one of the crew on this repository. The forge runs the app for you:
 production follows the default branch, and every pull you open gets a
 preview at its own address, deployed from your branch as you push.
 
+## The rules
+
 - Work on the branch you were given. You cannot move the default branch;
   a person merges your pull once it is reviewed.
 - Keep state under \`FORGE_APP_DATA\`. Never write elsewhere at runtime.
-- Run \`bun test\` before you push. It is the check the pull shows.
+- Run \`bun test\` before you push. It is the check the pull shows, and every
+  behaviour you add gets a test that would fail without it.
 - \`src/tty.ts\` is the app's terminal interface. The exact command that
   reaches it is \`FORGE_APP_SSH\` at runtime; print that verbatim wherever the
   app tells people how to connect. Keep it working and keep it useful: what
   a person can do on the web page they should be able to do here too.
 - Keep it dependency-free unless a dependency is clearly worth it, and say
-  why in the pull.
+  why in the pull. A dependency is code you now maintain.
 - When you are done, push and stop. Your last message becomes the pull's
-  description: say what changed and what to look at in the preview.
+  description: say what changed, what you chose not to do, and what to look
+  at in the preview.
+
+## The bar
+
+- Shape: small modules named after one concept, plain data in and out. When
+  \`src/server.ts\` stops fitting in one read, split it — \`src/db.ts\` for
+  the schema and queries, \`src/pages/<page>.ts\` for rendering,
+  \`src/routes.ts\` for the table of paths — and keep the pattern you find.
+- Security: every input is validated at the boundary and every output is
+  escaped; every response carries the security floor in \`src/server.ts\`
+  (keep it, extend it); a POST that is not same-origin is refused; secrets
+  come from the environment, never the repository; no \`eval\`, no shell
+  built from user text; a private thing needs a session in an HttpOnly cookie.
+- Speed: the first paint is server-rendered HTML; JavaScript is small, in
+  files under \`static/\` named by content and cached for a year; no layout
+  shift; the common request answers in milliseconds; work that can wait is
+  done after the response.
+- Finish: the app boots, \`/\` answers, the README says how to use it and
+  what is real versus simulated, \`forge.json\` says how to run it.
 `;
 
 const server = (title: string, description: string): string => `/**
@@ -132,6 +154,31 @@ const commit = (process.env.FORGE_APP_COMMIT ?? "").slice(0, 7);
 
 const escape = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
+
+// The security floor every response stands on. Scripts and styles come from
+// this origin (inline styles allowed, inline scripts not), nothing frames us,
+// browsers never guess a content type, and referrers stay on this site.
+const SECURITY = {
+  "content-security-policy":
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "permissions-policy": "camera=(), microphone=(), geolocation=()",
+};
+const html = (body: string, status = 200): Response =>
+  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", ...SECURITY } });
+
+// A browser on another site can make a person's browser POST here; it cannot
+// make that request look same-origin. Browsers say where a request came from
+// (Sec-Fetch-Site, or Origin); a request that names another site is refused.
+// The app's public address is what the forge told us, never the socket's.
+const publicOrigin = new URL(process.env.FORGE_APP_URL ?? "http://localhost").origin;
+const sameOrigin = (request: Request): boolean => {
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin" || site === "none";
+  const origin = request.headers.get("origin");
+  return origin === null || origin === publicOrigin;
+};
 
 function page(): string {
   const notes = db
@@ -175,18 +222,26 @@ export const server = Bun.serve({
   hostname: process.env.HOST ?? "127.0.0.1",
   async fetch(request) {
     const url = new URL(request.url);
+    if (request.method === "POST" && !sameOrigin(request))
+      return new Response("forbidden", { status: 403 });
     if (request.method === "POST" && url.pathname === "/notes") {
       const form = await request.formData();
       const body = String(form.get("body") ?? "").trim().slice(0, 500);
       if (body) db.query("INSERT INTO note (body) VALUES (?1)").run(body);
       return Response.redirect("/", 303);
     }
-    if (url.pathname === "/") {
-      return new Response(page(), {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
+    if (url.pathname === "/") return html(page());
+    // Files under ./static are served as they are, cached for a year: name
+    // them by content (app.3f2a9c.js) and a change is a new name, never a
+    // stale cache. The path is confined to the directory.
+    if (url.pathname.startsWith("/static/") && !url.pathname.includes("..")) {
+      const file = Bun.file(join(import.meta.dir, "..", url.pathname.slice(1)));
+      if (await file.exists())
+        return new Response(file, {
+          headers: { "cache-control": "public, max-age=31536000, immutable", ...SECURITY },
+        });
     }
-    return new Response("not found", { status: 404 });
+    return new Response("not found", { status: 404, headers: SECURITY });
   },
 });
 
@@ -291,5 +346,24 @@ test("keeps a note", async () => {
   const posted = await fetch(base + "/notes", { method: "POST", body: form, redirect: "manual" });
   expect(posted.status).toBe(303);
   expect(await (await fetch(base + "/")).text()).toContain("hello from a test");
+});
+
+test("stands on the security floor", async () => {
+  const response = await fetch(base + "/");
+  expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
+  expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+test("refuses a cross-site post", async () => {
+  const form = new FormData();
+  form.set("body", "from another site");
+  const posted = await fetch(base + "/notes", {
+    method: "POST",
+    body: form,
+    redirect: "manual",
+    headers: { origin: "https://evil.example", "sec-fetch-site": "cross-site" },
+  });
+  expect(posted.status).toBe(403);
+  expect(await (await fetch(base + "/")).text()).not.toContain("from another site");
 });
 `;
