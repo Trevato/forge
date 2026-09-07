@@ -40,6 +40,7 @@ export function systemPrompt(input: BriefInput): string {
     "- Commit your work with clear messages and push: `git push`.",
     "- The forge opens the pull request for you, or updates the one that exists. Your last message is used verbatim as its description, so write it as one: what changed and what to look at, in a few sentences — no preamble, no status report, nothing addressed to a person.",
     "- Do not open the pull yourself, and do not merge anything.",
+    "- Your run has a spend budget; when it runs out you get one short wrap-up turn to land what exists, so keep the app working as you go and commit as you go.",
     "",
     "What is refused, mechanically:",
     `- Pushing to \`${repo.defaultBranch}\`. Agents propose through pulls; a person merges.`,
@@ -188,6 +189,18 @@ export function taskPrompt(input: TaskInput): string {
         : "Address it on the same branch and push again. If you disagree with something, say why in your last message.",
   );
   return out.join("\n");
+}
+
+/**
+ * The turn after the budget runs out, in the same session: nothing new,
+ * what exists made to land well, and the description written anyway.
+ */
+export function wrapUpPrompt(): string {
+  return [
+    "You are out of budget for this task. Do not start anything new.",
+    "Make what exists land well: run the tests and fix only what is quick; remove anything half-done that would break the app; commit and push.",
+    "Then write your last message as the pull description: what is done, what is not, and what a person should look at.",
+  ].join("\n");
 }
 
 const quote = (author: string, body: string): string =>

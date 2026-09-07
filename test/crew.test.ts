@@ -164,7 +164,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     const args = readFileSync(argsFile, "utf8");
     expect(args).toContain("--append-system-prompt");
     expect(args).toContain("--restricted");
-    expect(args).toContain("--max-budget-usd\n1.00");
+    // Half of the $1 budget; the other half is held back for the wrap-up.
+    expect(args).toContain("--max-budget-usd\n0.50");
     expect(args).not.toContain("--resume");
     // The sandbox policy: the forge reachable, the forge's data not readable,
     // the agent's own clone not among the denials.
