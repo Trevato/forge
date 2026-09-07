@@ -62,7 +62,11 @@ export type CreateUserError =
 export interface CreateUserInput {
   username: string;
   email: string;
-  password: string;
+  /**
+   * Absent, no password is stored and none ever verifies: the account is
+   * signed in by something that vouches for it — the platform edge.
+   */
+  password?: string;
   /** @default "" */
   displayName?: string;
   /** @default false */
@@ -87,7 +91,8 @@ export async function createUser(
 ): Promise<Result<User, CreateUserError>> {
   if (!isSafeName(input.username)) return err("invalid_username");
   const agent = input.agent === true;
-  if (!agent && input.password.length < MIN_PASSWORD)
+  const password = agent ? undefined : input.password;
+  if (password !== undefined && password.length < MIN_PASSWORD)
     return err("weak_password");
 
   const existing = db
@@ -105,9 +110,11 @@ export async function createUser(
   }
 
   const userId = id();
-  // An agent's hash is empty, which no verifier accepts: argon2 refuses to
-  // parse it, and verifyPassword refuses the kind besides.
-  const hash = agent ? "" : await Bun.password.hash(input.password, "argon2id");
+  // An account without a password has an empty hash, which no verifier
+  // accepts: argon2 refuses to parse it (and verifyPassword refuses an agent
+  // besides).
+  const hash =
+    password === undefined ? "" : await Bun.password.hash(password, "argon2id");
   // The hash above yielded the event loop, so another sign-up may have landed
   // meanwhile. Uniqueness is settled by the constraint, and "first user" by a
   // subquery in the same statement — neither is a check-then-act.
@@ -219,6 +226,28 @@ export function getUserByName(
     >("SELECT * FROM user WHERE username = ?1 COLLATE NOCASE")
     .get(username);
   return row ? toUser(row) : undefined;
+}
+
+/**
+ * The person behind an identity the platform edge vouched for: found by
+ * name, or made on first sight — with no password, because the edge is how
+ * they sign in, and a noreply address until they set one. The first account
+ * on a fresh forge is the admin, exactly as at sign-up. A name that is an
+ * organization or a crew member here is nobody's login.
+ */
+export async function ensureEdgeUser(
+  db: Database,
+  login: string,
+  host: string,
+): Promise<User | undefined> {
+  const existing = getUserByName(db, login);
+  if (existing) return existing.kind === "user" ? existing : undefined;
+  const made = await createUser(db, {
+    username: login,
+    email: `${login}@users.noreply.${host}`,
+    adminIfFirst: true,
+  });
+  return made.ok ? made.value : undefined;
 }
 
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */

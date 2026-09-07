@@ -75,14 +75,21 @@ export async function body(request: Request): Promise<Record<string, unknown>> {
 
 export const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
-/** Session mutations must be same-origin; token mutations must carry scope. */
+/**
+ * Browser identities — a session cookie, or the platform edge's cookie
+ * behind its headers — are what a cross-site page could ride.
+ */
+function browserAuth(ctx: Ctx): boolean {
+  return ctx.auth.via === "session" || ctx.auth.via === "edge";
+}
+
+/** Browser mutations must be same-origin; token mutations must carry scope. */
 export function requireScope(
   ctx: Ctx,
   needed: TokenScope,
 ): Response | undefined {
   if (!ctx.auth.user || ctx.auth.scope === undefined) return unauthorized();
-  if (ctx.auth.via === "session" && crossOrigin(ctx.request, ctx.url))
-    return forbidden();
+  if (browserAuth(ctx) && crossOrigin(ctx.request, ctx.url)) return forbidden();
   if (!scopeAllows(ctx.auth.scope, needed)) return forbidden();
   return undefined;
 }
@@ -98,7 +105,7 @@ export function requireAccount(
   options: { adminToken?: boolean } = {},
 ): Response | undefined {
   if (!ctx.auth.user) return unauthorized();
-  if (ctx.auth.via === "session")
+  if (browserAuth(ctx))
     return crossOrigin(ctx.request, ctx.url) ? forbidden() : undefined;
   if (ctx.auth.via === "password") return undefined;
   if (

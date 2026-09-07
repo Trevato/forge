@@ -34,6 +34,9 @@ const sshPort = Number(process.env.FORGE_SSH_PORT ?? 2222);
 // FORGE_URL is the address people reach the forge at when a proxy in front
 // terminates TLS. Parsed once here so a typo fails the boot, not a request.
 const canonicalUrl = (process.env.FORGE_URL ?? "").trim();
+// FORGE_EDGE_TOKEN is the platform edge's secret: with it, the edge's
+// identity headers sign people in; without it they are ignored.
+const edgeToken = (process.env.FORGE_EDGE_TOKEN ?? "").trim();
 
 const app = createApp({
   dataDir: process.env.FORGE_DATA ?? "data",
@@ -42,6 +45,7 @@ const app = createApp({
     ? {}
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
+  ...(edgeToken === "" ? {} : { edgeToken }),
 });
 
 await reconcile(app);

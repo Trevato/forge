@@ -66,6 +66,14 @@ spec:
             # DNS and certificate cover; the IngressRoute below routes them.
             - name: FORGE_APP_DOMAIN
               value: {{ printf "--%s" (include "forge.host" .) | quote }}
+            # The platform edge signs people in and vouches for them with this
+            # secret; the forge trusts its identity headers only alongside it.
+            - name: FORGE_EDGE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: plat-edge-token
+                  key: token
+                  optional: true
             {{- if include "forge.ssh" . }}
             - name: FORGE_SSH_PORT
               value: {{ .Values.forge.sshPort | quote }}

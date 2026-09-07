@@ -31,6 +31,13 @@ export interface ForgeConfig {
    */
   url?: string;
   /**
+   * The secret a platform edge in front of the forge sends with every
+   * request it authenticated (`X-Plat-Edge-Token`), alongside the person's
+   * name (`X-Plat-User`). Set, it makes such a request that person, signed
+   * in by the platform. Unset, those headers are a claim and are ignored.
+   */
+  edgeToken?: string;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.

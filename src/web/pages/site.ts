@@ -36,6 +36,7 @@ import {
 } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
 import { hostOf, notFoundPage, pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -516,12 +517,18 @@ function landing(ctx: Ctx): Html {
         zero runtime dependencies.
       </p>
       <div class="bar">
-        ${btn("Create an account", {
-          href: "/signup",
-          variant: "primary",
-          size: "lg",
-        })}
-        ${btn("Sign in", { href: "/signin", size: "lg" })}
+        ${ctx.app.config.edgeToken === undefined
+          ? html`${btn("Create an account", {
+                href: "/signup",
+                variant: "primary",
+                size: "lg",
+              })}
+              ${btn("Sign in", { href: "/signin", size: "lg" })}`
+          : btn("Sign in", {
+              href: edgeLoginUrl("/"),
+              variant: "primary",
+              size: "lg",
+            })}
       </div>
       <div class="hero-points">
         ${card(

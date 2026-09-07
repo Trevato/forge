@@ -832,7 +832,10 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/tokens", async (ctx) => {
     const input = await body(ctx.request);
     let user: User | undefined;
-    if (ctx.auth.via === "session" && ctx.auth.user) {
+    if (
+      (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
+      ctx.auth.user
+    ) {
       if (crossOrigin(ctx.request, ctx.url)) return forbidden();
       user = ctx.auth.user;
     } else {

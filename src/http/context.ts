@@ -10,10 +10,11 @@ import type { ThemeName } from "../design/themes.ts";
 
 export interface Auth {
   readonly user: User | undefined;
-  /** Sessions and password (Basic) act with full authority; tokens carry
-   * their stored scope. */
+  /** Sessions, the platform edge and password (Basic) act with full
+   * authority; tokens carry their stored scope. */
   readonly scope: TokenScope | undefined;
-  readonly via: "session" | "token" | "password" | "none";
+  /** `edge`: the platform in front of the forge signed this person in. */
+  readonly via: "session" | "edge" | "token" | "password" | "none";
 }
 
 export interface Ctx {

@@ -63,7 +63,10 @@ Configuration is environment variables, all with defaults: `FORGE_DATA`
 `FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
-`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Everything a forge
+`FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
+platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
+is the edge's secret: a request carrying it and `X-Plat-User` is that person,
+signed in by the platform, with an account made on first sight. Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 

@@ -9,7 +9,8 @@ import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
-import { verifyPassword } from "../core/users.ts";
+import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
+import { edgeIdentity } from "./edge.ts";
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -216,6 +217,18 @@ import { proxyApp, resolveAppHost } from "../apps/proxy.ts";
 const NO_AUTH: Auth = { user: undefined, scope: undefined, via: "none" };
 
 async function resolveAuth(app: App, request: Request): Promise<Auth> {
+  // The platform edge, when there is one, has already signed this person
+  // in; its word outranks a cookie of ours.
+  const login = edgeIdentity(request, app.config.edgeToken);
+  if (login !== undefined) {
+    const host =
+      app.config.url !== undefined
+        ? new URL(app.config.url).hostname
+        : (app.config.host ?? "localhost");
+    const user = await ensureEdgeUser(app.db, login, host);
+    if (user) return { user, scope: "admin", via: "edge" };
+  }
+
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
     const user = sessionUser(app.db, session);

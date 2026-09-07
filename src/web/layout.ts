@@ -10,6 +10,7 @@
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
+import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { secret } from "../kernel/id.ts";
 import {
   metaThemeColor,
@@ -120,7 +121,7 @@ function newMenu(): Html {
   });
 }
 
-function userMenu(user: User): Html {
+function userMenu(user: User, signOut: MenuItem): Html {
   const items: MenuItem[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
@@ -134,7 +135,7 @@ function userMenu(user: User): Html {
       ? [{ label: "Crew", href: "/settings/crew", icon: "bot" as const }]
       : []),
     { separator: true, label: "" },
-    { label: "Sign out", post: "/logout", icon: "signOut" },
+    signOut,
   ];
   return menu({
     trigger: html`${icon("user")}<span class="hide-sm">${user.username}</span>`,
@@ -357,8 +358,22 @@ export function page(options: PageOptions, status = 200): Response {
           <span class="topbar-tools">
             ${searchBar()}${helpButton()}${themeMenu(theme)}
             ${user
-              ? html`${newMenu()}${userMenu(user)}`
-              : btn("Sign in", { href: "/signin" })}
+              ? html`${newMenu()}${userMenu(
+                  user,
+                  ctx.auth.via === "edge"
+                    ? {
+                        label: "Sign out",
+                        href: edgeLogoutUrl("/"),
+                        icon: "signOut",
+                      }
+                    : { label: "Sign out", post: "/logout", icon: "signOut" },
+                )}`
+              : btn("Sign in", {
+                  href:
+                    ctx.app.config.edgeToken === undefined
+                      ? "/signin"
+                      : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
+                })}
           </span>
         </header>
         <main class="shell" id="main">
