@@ -1,0 +1,114 @@
+/**
+ * A run the provider turned away — a rate limit, a session's usage window,
+ * an overloaded model — has nothing wrong with it. The forge pauses it,
+ * clone and session intact, and starts it again when the provider says
+ * it will listen; the person who asked never has to press anything.
+ */
+
+import type { ClaudeOutcome } from "./claude.ts";
+
+/** How many times one task may be paused before the forge gives up on it. */
+export const MAX_PAUSES = 6;
+
+/** When the provider gives no time, try again after this long. */
+const DEFAULT_WAIT_MS = 15 * 60_000;
+/** A moment past the reset, so the first request lands inside the new window. */
+const SLACK_MS = 60_000;
+
+/**
+ * Whether an outcome is the provider's refusal rather than the agent's
+ * failure. Claude Code ends such a run with `api_error`; the message names
+ * the limit, and is checked too in case the ending is named differently.
+ */
+export function isRateLimited(outcome: ClaudeOutcome): boolean {
+  if (outcome.ok) return false;
+  return (
+    outcome.reason === "api_error" ||
+    /rate[ _-]?limit|session limit|usage limit|overloaded|too many requests|\b(?:429|529)\b/i.test(
+      outcome.result,
+    )
+  );
+}
+
+/**
+ * When to try again. Claude Code says `resets 7:20am (UTC)` or
+ * `resets 2:20am (America/Chicago)`; that clock time in that zone, next
+ * occurring, plus a minute. Anything else waits the default.
+ */
+export function resumeAt(message: string, now: Date): Date {
+  const match =
+    /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i.exec(
+      message,
+    );
+  if (match === null) return new Date(now.getTime() + DEFAULT_WAIT_MS);
+  const [, h, m, meridiem, zone] = match;
+  const hour = (Number(h) % 12) + (meridiem!.toLowerCase() === "pm" ? 12 : 0);
+  const minute = Number(m ?? "0");
+  const at = nextWallTime(now, hour, minute, zone!);
+  if (at === undefined) return new Date(now.getTime() + DEFAULT_WAIT_MS);
+  return new Date(at.getTime() + SLACK_MS);
+}
+
+/** `12:04 UTC` — how a resume time reads on a card. */
+export function whenText(at: Date): string {
+  return `${at.toISOString().slice(11, 16)} UTC`;
+}
+
+/**
+ * The next instant at which a clock in `zone` reads `hour:minute`, strictly
+ * after `now`. The zone's offset is taken from the runtime's own tables,
+ * so daylight time is right without a list of rules here.
+ */
+function nextWallTime(
+  now: Date,
+  hour: number,
+  minute: number,
+  zone: string,
+): Date | undefined {
+  let parts: Intl.DateTimeFormat;
+  try {
+    parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+    });
+  } catch {
+    return undefined; // not a zone the runtime knows
+  }
+  const wall = (date: Date): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const p of parts.formatToParts(date))
+      if (p.type !== "literal") out[p.type] = Number(p.value);
+    return out;
+  };
+  // The instant whose wall clock in `zone` is `y-m-d hour:minute`: start
+  // from the UTC reading and correct by the zone's offset at that instant.
+  const instantOf = (y: number, mo: number, d: number): Date => {
+    let guess = new Date(Date.UTC(y, mo - 1, d, hour, minute));
+    for (let i = 0; i < 2; i++) {
+      const w = wall(guess);
+      const asUtc = Date.UTC(
+        w["year"]!,
+        w["month"]! - 1,
+        w["day"]!,
+        w["hour"]!,
+        w["minute"]!,
+        w["second"]!,
+      );
+      const want = Date.UTC(y, mo - 1, d, hour, minute);
+      guess = new Date(guess.getTime() + (want - asUtc));
+    }
+    return guess;
+  };
+  const today = wall(now);
+  const candidate = instantOf(today["year"]!, today["month"]!, today["day"]!);
+  if (candidate.getTime() > now.getTime()) return candidate;
+  const tomorrow = new Date(candidate.getTime() + 36 * 3_600_000);
+  const t = wall(tomorrow);
+  return instantOf(t["year"]!, t["month"]!, t["day"]!);
+}

@@ -297,6 +297,15 @@ session to land what exists: run the tests, drop what is half-done, commit,
 push, and write the description anyway. The pull says where the work
 stopped and at what spend.
 
+A run the provider turns away — a rate limit, a usage window that has
+closed, an overloaded model — has nothing wrong with it, so it is not
+failed. It pauses: the run ends cancelled with a `paused:` summary, its
+clone is kept exactly as the agent left it, and its task is queued again
+for a minute after the reset the provider named (fifteen minutes on, when
+it named none). The run that starts then resumes the same session in that
+clone and is told to carry on. A task is paused at most six times before
+the forge stops waiting on it.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools

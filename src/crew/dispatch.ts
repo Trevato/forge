@@ -36,7 +36,13 @@ import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
-import { executeAgentRun, workdirFor, type CrewOptions } from "./runner.ts";
+import { whenText } from "./limits.ts";
+import {
+  executeAgentRun,
+  workdirFor,
+  type CrewOptions,
+  type Pause,
+} from "./runner.ts";
 import { abortAgentRun } from "./running.ts";
 
 const log = createLog("crew");
@@ -127,6 +133,7 @@ export function queueAgentRun(
   agent: Agent,
   reason: RunReason,
   actorId?: string,
+  again?: { notBefore: string; attempt: number; summary: string },
 ): Run | undefined {
   const active = activeRunFor(app.db, "agent", issue.id);
   // One queued follow-up is enough: the run that eventually starts reads
@@ -142,6 +149,7 @@ export function queueAgentRun(
     issueId: issue.id,
     actorId: agent.user.id,
     reason,
+    ...again,
   });
   announceRun(app, run, actorId);
   return run;
@@ -277,18 +285,57 @@ function requeueInterrupted(app: App): void {
 
 /** End a run that cannot go on, and put its task back on the queue. */
 function requeue(app: App, run: Run, why: string): void {
-  if (run.issueId === null) return;
   cancelRun(app.db, run.id, why);
+  const task = taskOf(app, run);
+  if (task === undefined) return;
+  queueAgentRun(app, task.repo, task.issue, task.agent, task.reason);
+  log.info("run queued again", { run: run.id, reason: task.reason, why });
+}
+
+/**
+ * A paused run's task goes back on the queue for the moment the provider
+ * said its limit lifts; the run that starts then resumes the session in
+ * the clone the paused one left.
+ */
+function resumeLater(app: App, run: Run, pause: Pause): void {
+  const task = taskOf(app, run);
+  if (task === undefined) return;
+  const queued = queueAgentRun(
+    app,
+    task.repo,
+    task.issue,
+    task.agent,
+    task.reason,
+    undefined,
+    {
+      notBefore: pause.resumeAt,
+      attempt: pause.attempt,
+      summary: `paused on the provider's limit; resumes ${whenText(new Date(pause.resumeAt))}`,
+    },
+  );
+  log.info("run paused", {
+    run: run.id,
+    until: pause.resumeAt,
+    attempt: pause.attempt,
+    queued: queued?.id,
+  });
+}
+
+/** The still-open task a run was about, and the reason to queue it under again. */
+function taskOf(
+  app: App,
+  run: Run,
+): { issue: Issue; repo: Repo; agent: Agent; reason: RunReason } | undefined {
+  if (run.issueId === null) return undefined;
   const issue = getIssueById(app.db, run.issueId);
   const repo = getRepoById(app.db, run.repoId);
   const agent = run.actorId ? getAgent(app.db, run.actorId) : undefined;
-  if (!issue || !repo || !agent || issue.state !== "open") return;
+  if (!issue || !repo || !agent || issue.state !== "open") return undefined;
   const reason: RunReason =
     run.reason === "feedback" || run.reason === "check_failed"
       ? run.reason
       : "assigned";
-  queueAgentRun(app, repo, issue, agent, reason);
-  log.info("run queued again", { run: run.id, reason, why });
+  return { issue, repo, agent, reason };
 }
 
 /**
@@ -338,6 +385,9 @@ function pump(
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);
     const running = executeAgentRun(app, fresh, options)
+      .then((pause) => {
+        if (pause !== undefined) resumeLater(app, fresh, pause);
+      })
       .catch((error) =>
         log.error("agent run failed to execute", {
           run: queued.id,

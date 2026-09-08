@@ -36,6 +36,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { readRunLog } from "../src/runs/log.ts";
 
 describe("the crew, with a stand-in Claude Code", () => {
   let dataDir: string;
@@ -82,6 +83,15 @@ if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 printf '%s\\n' "$@" > "${argsFile}"
 cat > "${promptFile}"
 echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
+if grep -q LIMIT-ME "${promptFile}" && [ ! -f PAUSED.md ]; then
+  echo "half-done" > PAUSED.md
+  echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You\u2019ve hit your session limit \u00b7 resets 7:20am (UTC)","total_cost_usd":0.02,"num_turns":2,"session_id":"fake-1","terminal_reason":"api_error"}'
+  exit 0
+fi
+if grep -q "Carry on from where you stopped" "${promptFile}"; then
+  if [ -f PAUSED.md ]; then kept=yes; else kept=no; fi
+  echo '{"type":"assistant","message":{"content":[{"type":"text","text":"PAUSED.md present: '"$kept"'"}]}}'
+fi
 if grep -q DECLINE-ME "${promptFile}"; then
   echo "half-done edit" > SHOULD-NOT-LAND.md
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
@@ -372,5 +382,59 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(outcome.summary).toBe(
       `pull #${closed.number} was closed before the run began`,
     );
+  }, 90_000);
+
+  test("a run the provider turns away pauses, and carries on in its clone when the limit lifts", async () => {
+    const issue = openIssue(app, alice, repo, {
+      title: "Water the ferns",
+      body: "LIMIT-ME: once a day, before noon.",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const paused = await settled(
+      (r) => r.issueId === issue.value.id && r.attempt === 0,
+    );
+    expect(paused.state).toBe("cancelled");
+    expect(paused.summary).toMatch(/^paused: You.ve hit your session limit/);
+    expect(paused.summary).toContain("resumes 07:21 UTC");
+    expect(paused.sessionId).toBe("fake-1");
+    // Nothing landed: no branch pushed, no pull.
+    expect(
+      listPulls(app.db, repo.id, { state: "open" }).some(
+        (p) => p.headBranch === `bot/${issue.value.number}-water-the-ferns`,
+      ),
+    ).toBe(false);
+    // The task waits for the reset, once.
+    const waiting = listRuns(app.db, repo.id, { kind: "agent" }).find(
+      (r) => r.issueId === issue.value.id && r.state === "queued",
+    )!;
+    expect(waiting).toBeDefined();
+    expect(waiting.attempt).toBe(1);
+    expect(waiting.reason).toBe("assigned");
+    expect(new Date(waiting.notBefore!).getTime()).toBeGreaterThan(Date.now());
+    expect(waiting.summary).toContain("resumes 07:21 UTC");
+    // The half-done work is still in the clone.
+    const dir = workdirFor(
+      dataDir,
+      getAgentByName(app.db, "bot")!,
+      repo,
+      issue.value.number,
+    );
+    expect(existsSync(join(dir, "PAUSED.md"))).toBe(true);
+
+    // The limit lifts. (The forge waits for the clock; the test does not.)
+    app.db
+      .query("UPDATE run SET not_before = NULL WHERE id = ?1")
+      .run(waiting.id);
+    const resumed = await settled((r) => r.id === waiting.id);
+    expect(resumed.state).toBe("ok");
+    expect(resumed.summary).toMatch(/^opened pull #\d+/);
+    expect(readFileSync(argsFile, "utf8")).toContain("--resume\nfake-1");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("Carry on from where you stopped");
+    expect(prompt).toContain(`Issue #${issue.value.number}: Water the ferns`);
+    const log = readRunLog(dataDir, resumed.id).lines.join("\n");
+    expect(log).toContain("clone kept as it was left");
+    expect(log).toContain("PAUSED.md present: yes");
   }, 90_000);
 });

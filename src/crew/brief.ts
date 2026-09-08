@@ -85,17 +85,36 @@ export interface TaskInput extends BriefInput {
   readonly reviewComments: readonly ReviewComment[];
   /** Only comments, reviews and line comments after this instant are news. */
   readonly since: string;
+  /** The run was paused on the provider's limit and carries on in its clone. */
+  readonly paused?: boolean | undefined;
   /** For a failed check: the tail of the deploy log. */
   readonly checkLog?: readonly string[] | undefined;
   readonly checkSummary?: string | undefined;
 }
 
+/**
+ * The task, as the message that starts the turn. A run resumed after a
+ * pause is told so first: the same session, the same clone, nothing lost.
+ */
 export function taskPrompt(input: TaskInput): string {
+  const body = taskBody(input);
+  if (input.paused !== true) return body;
+  return [
+    "Your last turn stopped when the provider's usage limit was reached; nothing you did was lost. This is the same session, and the clone is as you left it, uncommitted changes included. Carry on from where you stopped.",
+    "",
+    body,
+  ].join("\n");
+}
+
+function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
   const isAgent = (name: string): boolean => name === input.agent.user.username;
 
-  if (input.reason === "assigned" && !input.resuming) {
+  if (
+    input.reason === "assigned" &&
+    (!input.resuming || input.paused === true)
+  ) {
     if (input.pull !== undefined) {
       out.push(
         `You have been assigned pull request #${issue.number}: ${issue.title}`,
@@ -174,7 +193,10 @@ export function taskPrompt(input: TaskInput): string {
       out.push(`- ${c.path}:${c.line} — @${c.authorName}: ${oneLine(c.body)}`);
   }
   for (const c of news.comments) out.push("", quote(c.authorName, c.body));
-  if (news.comments.length + news.reviews.length + news.lines.length === 0) {
+  if (
+    news.comments.length + news.reviews.length + news.lines.length === 0 &&
+    input.paused !== true
+  ) {
     out.push(
       "",
       "(The feedback was not captured in words; read the pull's conversation through the API.)",

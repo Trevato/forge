@@ -31,6 +31,7 @@ import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviewComments, listReviews } from "../core/reviews.ts";
 import {
+  cancelRun,
   checkSummary,
   claimRun,
   finishRun,
@@ -54,6 +55,7 @@ import {
   type RunReason,
 } from "./brief.ts";
 import { BUDGET_REACHED, runClaude } from "./claude.ts";
+import { isRateLimited, MAX_PAUSES, resumeAt, whenText } from "./limits.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 import { workdirFor } from "./workdir.ts";
@@ -95,14 +97,18 @@ export function wrapUpReserve(budgetUsd: number): number {
   );
 }
 
-/** Claim and execute a queued agent run. Never throws. */
+/**
+ * Claim and execute a queued agent run. Never throws. A run the provider
+ * turned away ends cancelled with a `paused:` summary and returns when its
+ * task should be queued again; every other run returns nothing.
+ */
 export async function executeAgentRun(
   app: App,
   run: Run,
   options: CrewOptions,
-): Promise<void> {
+): Promise<Pause | undefined> {
   const claimed = claimRun(app.db, run.id);
-  if (!claimed) return;
+  if (!claimed) return undefined;
   const controller = new AbortController();
   trackAgentRun(run.id, controller);
   const write = (line: string): void =>
@@ -124,6 +130,16 @@ export async function executeAgentRun(
   // try something — ends with the run. The sandbox refuses it `kill`, so the
   // forge does the tidying, by the directory the process is working in.
   await reapOrphans(app, run, write);
+  if (outcome.state === "paused") {
+    write(outcome.summary);
+    noteRunProgress(app.db, run.id, {
+      sessionId: outcome.sessionId,
+      costUsd: outcome.costUsd,
+    });
+    const paused = cancelRun(app.db, run.id, outcome.summary);
+    if (paused) announceRun(app, paused);
+    return { resumeAt: outcome.resumeAt, attempt: run.attempt + 1 };
+  }
   write(
     outcome.state === "ok"
       ? `done: ${outcome.summary}`
@@ -136,6 +152,7 @@ export async function executeAgentRun(
     costUsd: outcome.costUsd,
   });
   if (done) announceRun(app, done);
+  return undefined;
 }
 
 /**
@@ -184,11 +201,26 @@ async function reapOrphans(
   }
 }
 
-interface Outcome {
-  readonly state: "ok" | "failed";
-  readonly summary: string;
-  readonly sessionId?: string | undefined;
-  readonly costUsd?: number | undefined;
+type Outcome =
+  | {
+      readonly state: "ok" | "failed";
+      readonly summary: string;
+      readonly sessionId?: string | undefined;
+      readonly costUsd?: number | undefined;
+    }
+  | {
+      /** The provider turned the run away; it goes on again at `resumeAt`. */
+      readonly state: "paused";
+      readonly summary: string;
+      readonly resumeAt: string;
+      readonly sessionId: string;
+      readonly costUsd: number;
+    };
+
+/** What a paused run hands back: when its task may start again, and the count. */
+export interface Pause {
+  readonly resumeAt: string;
+  readonly attempt: number;
 }
 
 async function work(
@@ -276,6 +308,7 @@ async function work(
 
   try {
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    // A run that was paused carries on in the clone it left, changes and all.
     const prepared = await prepareClone(
       app,
       options,
@@ -285,6 +318,7 @@ async function work(
       { ...gitAuth, ...identity },
       write,
       signal,
+      run.attempt > 0,
     );
     if (!prepared.ok) return { state: "failed", summary: prepared.error };
 
@@ -327,6 +361,7 @@ async function work(
     const prompt = taskPrompt({
       ...brief,
       reason,
+      paused: run.attempt > 0,
       comments: listComments(app.db, issue.id, { kind: "comment" }),
       reviews: pull ? listReviews(app.db, pull.id) : [],
       reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
@@ -398,7 +433,13 @@ async function work(
       working,
       brief.resuming ? previous?.sessionId : undefined,
     );
-    if (!result.ok && brief.resuming && result.turns === 0 && !signal.aborted) {
+    if (
+      !result.ok &&
+      brief.resuming &&
+      result.turns === 0 &&
+      !signal.aborted &&
+      !isRateLimited(result)
+    ) {
       write("the session could not be resumed; starting fresh");
       result = await invoke(prompt, working, undefined);
     }
@@ -409,6 +450,26 @@ async function work(
     write(
       `claude: ${result.reason}, ${result.turns} turns, $${result.costUsd.toFixed(2)}`,
     );
+
+    // The provider's refusal, not the agent's failure: the run pauses with
+    // its clone and session as they are, and goes on when the limit lifts.
+    // A limit that never lifts is not waited on forever.
+    if (isRateLimited(result) && !signal.aborted) {
+      const said = (
+        result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
+      ).slice(0, 160);
+      if (run.attempt < MAX_PAUSES) {
+        const at = resumeAt(result.result, new Date());
+        return {
+          state: "paused",
+          summary: `paused: ${said}; resumes ${whenText(at)}`,
+          resumeAt: at.toISOString(),
+          sessionId: result.sessionId,
+          costUsd: result.costUsd,
+        };
+      }
+      write(`paused ${MAX_PAUSES} times already; not waiting again`);
+    }
 
     // The reserve: the same session gets one more turn, to land what exists
     // rather than to keep working. Its ending is the run's ending, with the
@@ -502,6 +563,7 @@ async function prepareClone(
   env: Record<string, string>,
   write: (line: string) => void,
   signal: AbortSignal,
+  keep = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const url = `${options.localUrl}/${repo.ownerName}/${repo.name}.git`;
   if (signal.aborted) return { ok: false, error: "cancelled" };
@@ -528,6 +590,19 @@ async function prepareClone(
         ok: false,
         error: `fetch failed: ${fetched.error.stderr.slice(0, 200)}`,
       };
+    // A paused run resumes in the tree it left — its uncommitted work is
+    // part of the session that is about to continue — so long as the clone
+    // is still on its branch.
+    if (keep) {
+      const head = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], {
+        cwd: dir,
+        env,
+      });
+      if (head.ok && head.value.trim() === branch) {
+        write(`clone kept as it was left, on ${branch}`);
+        return { ok: true };
+      }
+    }
   }
   const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const remote = await resolveOid(bare, `refs/heads/${branch}`);

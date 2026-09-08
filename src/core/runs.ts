@@ -39,6 +39,10 @@ export interface Run {
   /** The agent session to resume for a follow-up, when there is one. */
   readonly sessionId: string;
   readonly costUsd: number;
+  /** A queued run that must not start before this instant: paused on a limit. */
+  readonly notBefore: string | null;
+  /** How many times this task has been paused and queued again. */
+  readonly attempt: number;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
@@ -58,6 +62,8 @@ interface RunRow {
   reason: string;
   session_id: string;
   cost_usd: number;
+  not_before: string | null;
+  attempt: number;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -77,6 +83,8 @@ const toRun = (r: RunRow): Run => ({
   reason: r.reason,
   sessionId: r.session_id,
   costUsd: r.cost_usd,
+  notBefore: r.not_before,
+  attempt: r.attempt,
   createdAt: r.created_at,
   startedAt: r.started_at,
   finishedAt: r.finished_at,
@@ -91,13 +99,19 @@ export interface CreateRunInput {
   branch?: string | undefined;
   actorId?: string | undefined;
   reason?: string | undefined;
+  /** For a run queued again after a pause: when it may start, and the count. */
+  notBefore?: string | undefined;
+  attempt?: number | undefined;
+  /** What the card says while it waits. */
+  summary?: string | undefined;
 }
 
 export function createRun(db: Database, input: CreateRunInput): Run {
   const runId = id();
   db.query(
-    `INSERT INTO run (id, repo_id, kind, issue_id, env, commit_oid, branch, actor_id, reason)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+    `INSERT INTO run (id, repo_id, kind, issue_id, env, commit_oid, branch, actor_id, reason,
+                      not_before, attempt, summary)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
   ).run(
     runId,
     input.repoId,
@@ -108,6 +122,9 @@ export function createRun(db: Database, input: CreateRunInput): Run {
     input.branch ?? "",
     input.actorId ?? null,
     input.reason ?? "",
+    input.notBefore ?? null,
+    input.attempt ?? 0,
+    input.summary ?? "",
   );
   return getRun(db, runId)!;
 }
@@ -281,23 +298,24 @@ export function listRuns(
 }
 
 /** Queued runs of one kind, oldest first — what a worker takes from. */
+/** Queued runs that may start now: a paused one waits for its moment. */
 export function listQueued(db: Database, kind: RunKind, limit = 10): Run[] {
   return db
-    .query<
-      RunRow,
-      [RunKind, number]
-    >("SELECT * FROM run WHERE state = 'queued' AND kind = ?1 ORDER BY id LIMIT ?2")
-    .all(kind, limit)
+    .query<RunRow, [RunKind, string, number]>(
+      `SELECT * FROM run WHERE state = 'queued' AND kind = ?1
+         AND (not_before IS NULL OR not_before <= ?2)
+       ORDER BY id LIMIT ?3`,
+    )
+    .all(kind, new Date().toISOString(), limit)
     .map(toRun);
 }
 
 /** Runs of one kind not yet finished, for concurrency and "is one on it?". */
 export function listActive(db: Database, kind: RunKind): Run[] {
   return db
-    .query<
-      RunRow,
-      [RunKind]
-    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 ORDER BY id")
+    .query<RunRow, [RunKind]>(
+      "SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 ORDER BY id",
+    )
     .all(kind)
     .map(toRun);
 }
@@ -309,10 +327,9 @@ export function activeRunFor(
   issueId: string,
 ): Run | undefined {
   const row = db
-    .query<
-      RunRow,
-      [RunKind, string]
-    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1")
+    .query<RunRow, [RunKind, string]>(
+      "SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1",
+    )
     .get(kind, issueId);
   return row ? toRun(row) : undefined;
 }
@@ -328,10 +345,9 @@ export function checksForHead(
   headOid: string,
 ): Run[] {
   return db
-    .query<
-      RunRow,
-      [string, string]
-    >("SELECT * FROM run WHERE kind = 'deploy' AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC")
+    .query<RunRow, [string, string]>(
+      "SELECT * FROM run WHERE kind = 'deploy' AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC",
+    )
     .all(issueId, headOid)
     .map(toRun);
 }
