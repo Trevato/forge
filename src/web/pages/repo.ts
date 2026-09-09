@@ -10,7 +10,7 @@
 
 import type { Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
-import { syncFork } from "../../actions/forks.ts";
+import { forkDrift, syncFork, type ForkDrift } from "../../actions/forks.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
@@ -74,6 +74,40 @@ export { crumbsFor, loadRepo, repoBase };
 export { pathCrumbs, refMenu, refSet, refSetFrom } from "./refs.ts";
 
 // ---- fork ----
+
+/** The repository this one was forked from, while that parent is still here. */
+function forkParent(ctx: Ctx, repo: Repo): Repo | undefined {
+  return repo.forkParentId === null
+    ? undefined
+    : getRepoById(ctx.app.db, repo.forkParentId);
+}
+
+/**
+ * How far the fork has slipped from its parent, in a phrase. A fork with
+ * commits of its own says so: an update would be refused, so the sentence
+ * has to explain the missing button.
+ */
+function driftNote(drift: ForkDrift | undefined): string | undefined {
+  if (drift === undefined || drift.ahead === null || drift.behind === null)
+    return undefined;
+  const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
+  const { ahead, behind } = drift;
+  if (ahead === 0)
+    return behind === 0 ? "up to date" : `${commits(behind)} behind`;
+  if (behind === 0) return `${commits(ahead)} of its own`;
+  return `${commits(ahead)} of its own, ${behind} behind — merge by hand`;
+}
+
+/**
+ * Offer the update only when it would fast-forward: something to take, and
+ * nothing of the fork's own in the way. Unknown drift keeps the button, since
+ * the action itself is the thing that decides.
+ */
+function updatable(drift: ForkDrift | undefined): boolean {
+  if (drift === undefined || drift.ahead === null || drift.behind === null)
+    return true;
+  return drift.behind > 0 && drift.ahead === 0;
+}
 
 /** The "forked from …" lineage line and a Fork button, for the repo home. */
 function forkBar(ctx: Ctx, repo: Repo): Html {
@@ -407,16 +441,21 @@ export function codeBar(
  * now, and where a push actually lands. Those four facts used to be spread
  * across three parts of the card, which is how someone ends up pushing to a
  * mirror without knowing the origin gets the last word.
+ *
+ * `drift` is how far the fork has slipped from its parent, read by the caller
+ * (git, so asynchronous); `undefined` on anything that is not a native fork.
  */
-function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
+function aboutCard(
+  ctx: Ctx,
+  repo: Repo,
+  refs: RefSet,
+  drift?: ForkDrift,
+): Html {
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   // An SSH listener is not built yet; when a deployment configures one, the
   // second clone line appears with no further change here.
   const sshPort = (ctx.app.config as { sshPort?: number }).sshPort;
-  const parent =
-    repo.forkParentId !== null
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
+  const parent = forkParent(ctx, repo);
   const origin = repo.origin;
   // A fork made at the origin has no `forkParentId` — its parent is a
   // repository on another forge — so the lineage row reads it off the link
@@ -492,7 +531,12 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
                     >${p.ownerName}/${p.name}</a
                   >
                   ${when(
-                    canWrite(ctx.app.db, repo, ctx.auth.user),
+                    driftNote(drift),
+                    (note) => html`<span class="small muted">${note}</span>`,
+                  )}
+                  ${when(
+                    canWrite(ctx.app.db, repo, ctx.auth.user) &&
+                      updatable(drift),
                     () =>
                       html`<form
                         method="post"
@@ -809,6 +853,11 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
         : refs.branches[0]!;
   const entries = await scope.source.tree(ref, "");
   const tree = entries.ok ? entries.value : [];
+  // A fork's rail says how far its default branch is from its parent's; the
+  // count is git's, so it is read here rather than inside the card.
+  const parent = forkParent(ctx, repo);
+  const drift =
+    parent === undefined ? undefined : await forkDrift(ctx.app, repo, parent);
 
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
@@ -819,7 +868,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
     ref,
     path: "",
     entries: tree,
-    rail: aboutCard(ctx, repo, refs),
+    rail: aboutCard(ctx, repo, refs, drift),
   })}
   ${codeMount(scope, ref)} ${finderDialog()}`;
   return page({
