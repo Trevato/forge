@@ -9,6 +9,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { migrations } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
+import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
 import { createLog, type Log } from "./kernel/log.ts";
@@ -78,6 +79,9 @@ export function createApp(config: ForgeConfig): App {
   // sends them. Listener throws are swallowed by the bus, so this can never
   // break the action that produced the event.
   bus.subscribe((event) => enqueueForEvent(db, event));
+  // What a push moves besides its own branch: the pulls it heads elsewhere,
+  // and the forks whose default branch is still a copy of this one's.
+  follow({ db, reposRoot, bus });
 
   return {
     config: { ...config, dataDir },

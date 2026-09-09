@@ -385,6 +385,11 @@ async function work(
       reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
       since,
       checkSummary: failedCheck?.run?.summary,
+      checkKind:
+        failedCheck?.run?.kind === "check" ||
+        failedCheck?.run?.kind === "deploy"
+          ? failedCheck.run.kind
+          : undefined,
       checkLog: failedCheck?.run
         ? readRunLog(
             app.config.dataDir,

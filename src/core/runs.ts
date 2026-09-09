@@ -11,7 +11,9 @@
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 
-export type RunKind = "deploy" | "agent";
+export type RunKind = "deploy" | "agent" | "check";
+/** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
+export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
 export type RunState = "queued" | "running" | "ok" | "failed" | "cancelled";
 
 export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
@@ -313,9 +315,10 @@ export function listQueued(db: Database, kind: RunKind, limit = 10): Run[] {
 /** Runs of one kind not yet finished, for concurrency and "is one on it?". */
 export function listActive(db: Database, kind: RunKind): Run[] {
   return db
-    .query<RunRow, [RunKind]>(
-      "SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 ORDER BY id",
-    )
+    .query<
+      RunRow,
+      [RunKind]
+    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 ORDER BY id")
     .all(kind)
     .map(toRun);
 }
@@ -327,9 +330,10 @@ export function activeRunFor(
   issueId: string,
 ): Run | undefined {
   const row = db
-    .query<RunRow, [RunKind, string]>(
-      "SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1",
-    )
+    .query<
+      RunRow,
+      [RunKind, string]
+    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1")
     .get(kind, issueId);
   return row ? toRun(row) : undefined;
 }
@@ -345,9 +349,10 @@ export function checksForHead(
   headOid: string,
 ): Run[] {
   return db
-    .query<RunRow, [string, string]>(
-      "SELECT * FROM run WHERE kind = 'deploy' AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC",
-    )
+    .query<
+      RunRow,
+      [string, string]
+    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC")
     .all(issueId, headOid)
     .map(toRun);
 }
@@ -376,21 +381,22 @@ export function checkSummary(
 export function latestRunsForIssues(
   db: Database,
   issueIds: readonly string[],
-  kind: RunKind = "deploy",
+  kinds: readonly RunKind[] = CHECK_KINDS,
 ): Map<string, Run> {
   const out = new Map<string, Run>();
   const unique = [...new Set(issueIds)];
   const CHUNK = 400;
+  const kindList = kinds.map((k) => `'${k}'`).join(",");
   for (let i = 0; i < unique.length; i += CHUNK) {
     const batch = unique.slice(i, i + CHUNK);
     const rows = db
       .query<RunRow, string[]>(
         `SELECT run.* FROM run
          JOIN (SELECT issue_id, MAX(id) AS id FROM run
-               WHERE kind = ?1 AND issue_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+               WHERE kind IN (${kindList}) AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
                GROUP BY issue_id) latest ON latest.id = run.id`,
       )
-      .all(kind, ...batch);
+      .all(...batch);
     for (const row of rows) if (row.issue_id) out.set(row.issue_id, toRun(row));
   }
   return out;

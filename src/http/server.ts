@@ -6,7 +6,6 @@
  */
 
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
-import { followHeadPushes } from "../actions/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
@@ -936,9 +935,6 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     actorId: input.actorId || undefined,
     payload: { updates: input.updates },
   });
-  // A branch that heads a pull elsewhere (a fork's, proposed upstream)
-  // moves that pull's snapshot too.
-  await followHeadPushes(app, repo, input.updates, input.actorId || undefined);
   return new Response("");
 }
 

@@ -28,6 +28,7 @@ import {
   type CrewHandle,
 } from "../src/crew/dispatch.ts";
 import { workdirFor } from "../src/crew/runner.ts";
+import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { getAgentByName } from "../src/core/agents.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
@@ -44,6 +45,7 @@ describe("the crew, with a stand-in Claude Code", () => {
   let app: App;
   let servers: Servers;
   let crew: CrewHandle;
+  let checks: ChecksHandle;
   let alice: User;
   let bot: User;
   let repo: Repo;
@@ -98,6 +100,7 @@ if grep -q DECLINE-ME "${promptFile}"; then
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
   exit 0
 fi
+if grep -q "The check on your pull" "${promptFile}"; then echo "daffodils" >> CREW.md; fi
 echo "work by the crew $(date +%s%N)" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Added CREW.md."},{"type":"tool_use","name":"Bash","input":{"command":"git push"}}]}}'
@@ -105,6 +108,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
 `,
     );
     chmodSync(fake, 0o755);
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     crew = await startCrew(app, {
       forgeUrl: servers.url,
       localUrl: servers.url,
@@ -143,6 +147,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
 
   afterAll(async () => {
     await crew.stop();
+    await checks.stop();
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -487,4 +492,70 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(log).toContain("clone kept as it was left");
     expect(log).toContain("PAUSED.md present: yes");
   }, 90_000);
+
+  test("a failing check on the agent's pull comes back to it, and it fixes it", async () => {
+    const made = await createRepo(app, alice, {
+      name: "orchard",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const orchard = made.value;
+    const seeded = await commitToBranch(app, alice, orchard, {
+      message: "Start",
+      files: [
+        { path: "README.md", content: "# orchard\n" },
+        {
+          path: "forge.json",
+          content:
+            '{"check": {"run": "grep -q daffodils CREW.md", "install": ""}}\n',
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, orchard, "bot").ok).toBe(true);
+    const issue = openIssue(app, alice, orchard, {
+      title: "Plant daffodils",
+      body: "Along the wall.",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, orchard, issue.value, bot).ok).toBe(true);
+    const runs = (kind: "agent" | "check") =>
+      listRuns(app.db, orchard.id, { kind, limit: 50 });
+    const until = async <T>(
+      find: () => T | undefined,
+      timeoutMs = 60_000,
+    ): Promise<T> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const found = find();
+        if (found !== undefined) return found;
+        await Bun.sleep(100);
+      }
+      throw new Error("did not happen in time");
+    };
+    const built = await until(() =>
+      runs("agent").find((r) => r.reason === "assigned" && r.state === "ok"),
+    );
+    expect(built.summary).toMatch(/^opened pull #\d+/);
+    // The forge checks the pull: no daffodils yet.
+    const failed = await until(() =>
+      runs("check").find((r) => r.state === "failed"),
+    );
+    expect(failed.summary).toBe("check failed: check exited with code 1");
+    // …and the agent hears about it, with the log, and answers.
+    const fixed = await until(() =>
+      runs("agent").find(
+        (r) => r.reason === "check_failed" && r.state === "ok",
+      ),
+    );
+    expect(fixed.summary).toMatch(/^updated pull #\d+/);
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("The check on your pull #");
+    expect(prompt).toContain("check exited with code 1");
+    expect(prompt).toContain("The end of the check log:");
+    const passed = await until(() =>
+      runs("check").find((r) => r.state === "ok"),
+    );
+    expect(passed.summary).toMatch(/^check passed/);
+  }, 120_000);
 });

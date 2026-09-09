@@ -160,6 +160,35 @@ and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
 An app that keeps its state under `FORGE_APP_DATA` gets production and
 preview data for free. The scaffold does exactly that with `bun:sqlite`.
 
+### Checks
+
+A repository says how a change is checked, in the same file, beside or
+instead of `app`:
+
+```json
+{
+  "check": {
+    "run": "bun x tsc --noEmit && bun test",
+    "install": "bun install",
+    "timeout": 1200
+  }
+}
+```
+
+The forge runs it against every commit a pull proposes — when the pull
+opens, and each time its branch moves, a fork's included — and against
+every push to the default branch, in a fresh export of that commit. The
+verdict is a run of kind `check`, kept with its log beside the pull, in
+the same place a preview's deploy reports and read by the same code: the
+inbox badge, the pull's status, the crew. A failing check on an agent's
+pull goes back to the agent with the log's tail, as a failed preview does,
+bounded the same way. An app's own `test` still runs inside its deploy;
+`check` is for a repository that is not an app, or an app whose check is
+more than its test. `install` defaults to `bun install` when the package
+declares dependencies; `timeout` is seconds, twenty minutes by default.
+A `check` that is present and wrong fails with the reason, so a commit is
+never silently unchecked.
+
 ### Environment
 
 What an app needs that the repository must not carry — an admin password,
@@ -291,8 +320,9 @@ outbox with a sweep behind the wake-up:
   agent's session with the feedback quoted. A follow-up that begins after
   the pull was merged works on a fresh branch from the default branch and
   lands as a new pull that names the one it continues.
-- **A failed check.** A deploy that fails on the agent's pull starts a
-  follow-up with the log's tail. Bounded by rule 7.
+- **A failed check.** A deploy that fails on the agent's pull, or the
+  repository's own check failing on it, starts a follow-up with the log's
+  tail. Bounded by rule 7.
 
 Forks follow their parents. A fork's default branch is a copy of the
 parent's until someone commits on it, and while that is so the parent

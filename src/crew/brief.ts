@@ -38,6 +38,7 @@ export function systemPrompt(input: BriefInput): string {
     "",
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
+    "- If `forge.json` declares a `check`, the forge runs it against every push to your pull; a failing check comes back to you with its log. Run the same command yourself before you push.",
     "- The forge opens the pull request for you, or updates the one that exists. Your last message is used verbatim as its description, so write it as one: what changed and what to look at, in a few sentences — no preamble, no status report, nothing addressed to a person.",
     "- Do not open the pull yourself, and do not merge anything.",
     "- Your run has a spend budget; when it runs out you get one short wrap-up turn to land what exists, so keep the app working as you go and commit as you go.",
@@ -90,6 +91,8 @@ export interface TaskInput extends BriefInput {
   /** For a failed check: the tail of the deploy log. */
   readonly checkLog?: readonly string[] | undefined;
   readonly checkSummary?: string | undefined;
+  /** What failed: the preview's deploy, or the repository's own check. */
+  readonly checkKind?: "deploy" | "check" | undefined;
 }
 
 /**
@@ -142,12 +145,12 @@ function taskBody(input: TaskInput): string {
 
   if (input.reason === "check_failed") {
     out.push(
-      `The preview deploy of your pull #${issue.number} failed${input.checkSummary ? `: ${input.checkSummary}` : "."}`,
+      `${input.checkKind === "check" ? "The check on" : "The preview deploy of"} your pull #${issue.number} failed${input.checkSummary ? `: ${input.checkSummary}` : "."}`,
     );
     if (input.checkLog !== undefined && input.checkLog.length > 0) {
       out.push(
         "",
-        "The end of the deploy log:",
+        `The end of the ${input.checkKind === "check" ? "check" : "deploy"} log:`,
         "```",
         ...input.checkLog,
         "```",

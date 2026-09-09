@@ -12,11 +12,7 @@
  */
 
 import { cancelRepoRun, listRepoRuns, runLog } from "../../actions/runs.ts";
-import {
-  getIssueById,
-  getIssuesByIds,
-  type Issue,
-} from "../../core/issues.ts";
+import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
@@ -138,7 +134,8 @@ export function runTitleFrom(
   return runTitle(run, actor?.username, issue);
 }
 
-const kindIcon = (kind: RunKind) => icon(kind === "agent" ? "bot" : "rocket");
+const kindIcon = (kind: RunKind) =>
+  icon(kind === "agent" ? "bot" : kind === "check" ? "check" : "rocket");
 
 // ---- rows ----
 
@@ -214,7 +211,9 @@ export function runsList(ctx: Ctx): Response {
   const q = ctx.url.searchParams;
   const kindRaw = q.get("kind");
   const kind: RunKind | undefined =
-    kindRaw === "deploy" || kindRaw === "agent" ? kindRaw : undefined;
+    kindRaw === "deploy" || kindRaw === "agent" || kindRaw === "check"
+      ? kindRaw
+      : undefined;
   const cursor = q.get("cursor") ?? "";
 
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
@@ -246,8 +245,10 @@ export function runsList(ctx: Ctx): Response {
               ? "No agent runs yet"
               : kind === "deploy"
                 ? "No deploys yet"
-                : "No runs yet",
-          note: "A run is a deploy of an environment or an agent working an issue. Each one keeps its log here.",
+                : kind === "check"
+                  ? "No checks yet"
+                  : "No runs yet",
+          note: "A run is a deploy of an environment, a check of a commit, or an agent working an issue. Each one keeps its log here.",
         })
       : listCard(shown.map((run) => runRow(base, run, actors, issues)));
 
@@ -256,6 +257,7 @@ export function runsList(ctx: Ctx): Response {
       ${seg([
         { label: "All", href: href(undefined), current: kind === undefined },
         { label: "Deploys", href: href("deploy"), current: kind === "deploy" },
+        { label: "Checks", href: href("check"), current: kind === "check" },
         { label: "Crew", href: href("agent"), current: kind === "agent" },
       ])}
     </div>
@@ -308,8 +310,12 @@ export function runPage(ctx: Ctx): Response {
           >${runStateBadge(run.state, run.kind)}</span
         >
         <span
-          >${run.kind === "agent" ? "agent run" : "deploy"} ·
-          ${reasonWords(run.reason)}</span
+          >${run.kind === "agent"
+            ? "agent run"
+            : run.kind === "check"
+              ? "check"
+              : "deploy"}
+          · ${reasonWords(run.reason)}</span
         >
         ${when(run.commitOid !== "", () =>
           sha(run.commitOid, `${base}/commit/${run.commitOid}`),
@@ -424,4 +430,3 @@ export async function runCancel(ctx: Ctx): Promise<Response> {
   }
   return flashTo(ctx, dest, { message: "Run cancelled." });
 }
-

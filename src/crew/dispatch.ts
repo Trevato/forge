@@ -201,8 +201,11 @@ function route(app: App, event: ForgeEvent): void {
       return;
     }
     case "run.finished": {
+      // A preview that failed to deploy, or a check that failed: either
+      // is the agent's to look at.
       if (
-        event.payload["kind"] !== "deploy" ||
+        (event.payload["kind"] !== "deploy" &&
+          event.payload["kind"] !== "check") ||
         event.payload["state"] !== "failed"
       )
         return;
