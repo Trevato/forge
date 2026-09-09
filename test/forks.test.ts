@@ -17,6 +17,10 @@ const gitEnv = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_SYSTEM: "/dev/null",
+  // The same reason the two above are neutered: an ambient GIT_CONFIG_COUNT
+  // (a crew run hands git an `http.extraHeader` for *its* forge) would send
+  // someone else's credential to the test server instead of the URL's.
+  GIT_CONFIG_COUNT: "0",
 };
 
 describe("forks", () => {
@@ -244,6 +248,64 @@ describe("forks", () => {
         )
       ).trim(),
     ).toBe(bobBefore);
+  });
+
+  test("the About rail says how far a fork is from its parent", async () => {
+    const as = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    });
+    async function signIn(username: string): Promise<string> {
+      const res = await fetch(`${base}/signin`, {
+        method: "POST",
+        body: new URLSearchParams({ username, password: "fork-me-please" }),
+        redirect: "manual",
+      });
+      return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+    }
+    async function rail(path: string, cookie: string): Promise<string> {
+      const res = await fetch(`${base}${path}`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      return await res.text();
+    }
+
+    // Dan forks alice/app as it stands, so his copy starts level with it:
+    // nothing to take, and nothing offered.
+    const danToken = await mkUser("dan");
+    const danCookie = await signIn("dan");
+    expect(
+      (
+        await fetch(`${base}/api/v1/repos/alice/app/forks`, {
+          method: "POST",
+          headers: as(danToken),
+          body: "{}",
+        })
+      ).status,
+    ).toBe(201);
+    const current = await rail("/dan/app", danCookie);
+    expect(current).toContain("up to date");
+    expect(current).not.toContain("Update from parent");
+
+    // Alice moves on with nothing following her, which is how a fork ends up
+    // behind: the page counts the commit it is missing and offers the update.
+    unfollow();
+    const dir = join(work, "app");
+    await Bun.write(join(dir, "LATER.md"), "later\n");
+    await gitOk(["add", "."], dir);
+    await gitOk(["commit", "-m", "alice again"], dir);
+    await gitOk(["push", "origin", "main"], dir);
+    unfollow = followParents(app);
+
+    const behind = await rail("/dan/app", danCookie);
+    expect(behind).toContain("1 commit behind");
+    expect(behind).toContain("Update from parent");
+
+    // Bob committed on his fork and alice pushed twice since: an update would
+    // be refused, so the page says why instead of offering one.
+    const diverged = await rail("/bob/app", await signIn("bob"));
+    expect(diverged).toContain("1 commit of its own");
+    expect(diverged).toContain("2 behind");
+    expect(diverged).not.toContain("Update from parent");
   });
 
   test("a stranger cannot fork a private repo", async () => {
