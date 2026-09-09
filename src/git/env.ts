@@ -11,10 +11,14 @@
  * difference between "the forge got busy" and "the forge fell over".
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** Base env for all server-side git. Nothing from the host leaks in. */
 export function gitEnv(extra?: Record<string, string>): Record<string, string> {
+  const trust = trustedCaBundle();
   return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: "/dev/null",
@@ -22,8 +26,53 @@ export function gitEnv(extra?: Record<string, string>): Record<string, string> {
     GIT_CONFIG_SYSTEM: "/dev/null",
     GIT_TERMINAL_PROMPT: "0",
     LC_ALL: "C",
+    ...(trust === undefined ? {} : { GIT_SSL_CAINFO: trust }),
     ...extra,
   };
+}
+
+/** Where a system keeps the certificates it trusts, by distribution. */
+const SYSTEM_CA_BUNDLES = [
+  "/etc/ssl/certs/ca-certificates.crt",
+  "/etc/ssl/cert.pem",
+  "/etc/pki/tls/certs/ca-bundle.crt",
+];
+
+const bundles = new Map<string, string | undefined>();
+
+/**
+ * What git trusts over https: the runtime's extra certificate authority —
+ * `NODE_EXTRA_CA_CERTS`, the platform's private one inside a cluster — on
+ * top of the system's bundle, in one file, because git trusts one file and
+ * the two it needs are separate. Built once per authority; nothing when
+ * there is no extra authority, or no system bundle to add it to.
+ */
+export function trustedCaBundle(
+  extra = process.env["NODE_EXTRA_CA_CERTS"] ?? "",
+): string | undefined {
+  if (extra === "") return undefined;
+  const known = bundles.get(extra);
+  if (known !== undefined || bundles.has(extra)) return known;
+  let built: string | undefined;
+  const system = SYSTEM_CA_BUNDLES.find((path) => existsSync(path));
+  if (system !== undefined && existsSync(extra)) {
+    try {
+      const path = join(
+        tmpdir(),
+        `forge-ca-${process.pid}-${bundles.size}.crt`,
+      );
+      writeFileSync(
+        path,
+        `${readFileSync(system, "utf8").trimEnd()}\n${readFileSync(extra, "utf8")}`,
+        { mode: 0o644 },
+      );
+      built = path;
+    } catch {
+      built = undefined;
+    }
+  }
+  bundles.set(extra, built);
+  return built;
 }
 
 // ---- the spawn limit ----
