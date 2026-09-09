@@ -1,0 +1,6 @@
+{
+  "check": {
+    "run": "bun x tsc --noEmit && bun test --timeout 60000 test/crew.test.ts test/crew-wrapup.test.ts test/crew-limits.test.ts test/checks.test.ts test/forks.test.ts test/fork-flow.test.ts test/cross-repo-pull.test.ts test/pulls.test.ts test/repos.test.ts test/apps.test.ts test/apps-adversarial.test.ts test/web.test.ts test/git-trust.test.ts",
+    "timeout": 1800
+  }
+}
