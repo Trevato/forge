@@ -16,6 +16,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
 import { openPull } from "../actions/pulls.ts";
+import { forkRepo } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -28,7 +29,7 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { getForkOf, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviewComments, listReviews } from "../core/reviews.ts";
 import {
   cancelRun,
@@ -45,6 +46,7 @@ import { isSafeRef } from "../git/guard.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
 import {
   branchFor,
@@ -249,10 +251,19 @@ async function work(
 
   const pull =
     issue.kind === "pull" ? getPull(app.db, repo.id, issue.number) : undefined;
-  if (pull?.crossRepo)
+  // The crew works from forks. An agent on the crew reads the repository
+  // and writes only its own copy of it: the branch lives there, and the
+  // pull proposes it back. A pull whose branch lives anywhere else is not
+  // the agent's to move.
+  const fork = await forkFor(app, agent, repo, write);
+  if (!fork.ok) return { state: "failed", summary: fork.error };
+  if (pull !== undefined && pull.headRepoId !== fork.value.id)
     return {
       state: "failed",
-      summary: "this pull's branch lives in a fork the agent cannot push to",
+      summary:
+        pull.headRepoId === repo.id
+          ? `pull #${pull.number}'s branch lives in the repository itself; the crew works from forks now — close it and assign the issue again`
+          : "this pull's branch lives in a fork the agent cannot push to",
     };
   // A pull the conversation outlived. Closed without a merge, the proposal
   // was declined and there is nothing to continue. Merged before the run
@@ -308,11 +319,17 @@ async function work(
 
   try {
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const forkBare = repoDir(
+      app.reposRoot,
+      fork.value.ownerName,
+      fork.value.name,
+    );
     // A run that was paused carries on in the clone it left, changes and all.
     const prepared = await prepareClone(
       app,
       options,
       repo,
+      fork.value,
       branch,
       dir,
       { ...gitAuth, ...identity },
@@ -355,7 +372,8 @@ async function work(
         ? checkSummary(
             app.db,
             pull.id,
-            (await resolveOid(bare, `refs/heads/${branch}`)) ?? pull.headOid,
+            (await resolveOid(forkBare, `refs/heads/${branch}`)) ??
+              pull.headOid,
           )
         : undefined;
     const prompt = taskPrompt({
@@ -532,8 +550,10 @@ async function work(
       agent,
       issue,
       continuing ? undefined : pull,
+      fork.value,
       branch,
       dir,
+      forkBare,
       bare,
       { ...gitAuth, ...identity },
       result.result,
@@ -553,11 +573,48 @@ async function work(
   }
 }
 
-/** A clone on `branch`, matching what the forge holds. */
+/**
+ * The agent's fork of the repository it is working on, made on first use.
+ * One fork per agent per repository; a name already taken by something
+ * else of the agent's gets the owner's name in front.
+ */
+async function forkFor(
+  app: App,
+  agent: Agent,
+  repo: Repo,
+  write: (line: string) => void,
+): Promise<Result<Repo, string>> {
+  const existing = getForkOf(app.db, agent.user.id, repo.id);
+  if (existing !== undefined) return ok(existing);
+  let made = await forkRepo(app, agent.user, repo);
+  if (!made.ok && made.error === "name_taken")
+    made = await forkRepo(
+      app,
+      agent.user,
+      repo,
+      `${repo.ownerName}-${repo.name}`,
+    );
+  if (!made.ok)
+    return err(
+      `could not fork ${repo.ownerName}/${repo.name} for ${agent.user.username}: ${String(made.error)}`,
+    );
+  write(
+    `forked ${repo.ownerName}/${repo.name} as ${made.value.ownerName}/${made.value.name}`,
+  );
+  return ok(made.value);
+}
+
+/**
+ * A clone on `branch`, matching what the forge holds. The clone is the
+ * triangle git was built for: it fetches from the repository and pushes to
+ * the agent's fork, so a plain `git push` lands where the agent may write
+ * and nowhere else.
+ */
 async function prepareClone(
   app: App,
   options: CrewOptions,
   repo: Repo,
+  fork: Repo,
   branch: string,
   dir: string,
   env: Record<string, string>,
@@ -566,6 +623,7 @@ async function prepareClone(
   keep = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const url = `${options.localUrl}/${repo.ownerName}/${repo.name}.git`;
+  const forkUrl = `${options.localUrl}/${fork.ownerName}/${fork.name}.git`;
   if (signal.aborted) return { ok: false, error: "cancelled" };
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(dir, { recursive: true });
@@ -604,8 +662,27 @@ async function prepareClone(
       }
     }
   }
-  const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  const remote = await resolveOid(bare, `refs/heads/${branch}`);
+  await runGit(["config", "remote.origin.pushurl", forkUrl], { cwd: dir, env });
+  // The branch, if it exists, lives in the fork; its tracking ref is fetched
+  // from there so the checkout starts at what the agent last pushed.
+  const forkBare = repoDir(app.reposRoot, fork.ownerName, fork.name);
+  const remote = await resolveOid(forkBare, `refs/heads/${branch}`);
+  if (remote !== undefined) {
+    const fetched = await runGit(
+      [
+        "fetch",
+        "--quiet",
+        forkUrl,
+        `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+      ],
+      { cwd: dir, env, timeoutMs: 2 * 60_000 },
+    );
+    if (!fetched.ok)
+      return {
+        ok: false,
+        error: `fetch from the fork failed: ${fetched.error.stderr.slice(0, 200)}`,
+      };
+  }
   const start =
     remote === undefined ? `origin/${repo.defaultBranch}` : `origin/${branch}`;
   // A leftover from a cut-off run is discarded: the remote is truth.
@@ -651,8 +728,10 @@ async function landWork(
   agent: Agent,
   issue: Issue,
   pull: Pull | undefined,
+  fork: Repo,
   branch: string,
   dir: string,
+  forkBare: string,
   bare: string,
   env: Record<string, string>,
   message: string,
@@ -693,7 +772,9 @@ async function landWork(
     env,
   });
   const local = head.ok ? head.value.trim() : undefined;
-  let remote = await resolveOid(bare, `refs/heads/${branch}`);
+  // The branch is the fork's; the base it is measured against is the
+  // repository's own default branch.
+  let remote = await resolveOid(forkBare, `refs/heads/${branch}`);
   const base = await resolveOid(bare, `refs/heads/${repo.defaultBranch}`);
   if (local !== undefined && local !== remote) {
     // Ahead of what the forge holds: the branch if it exists there, the
@@ -711,12 +792,14 @@ async function landWork(
       );
       if (!pushed.ok)
         write(`push refused: ${pushed.error.stderr.slice(0, 300)}`);
-      remote = await resolveOid(bare, `refs/heads/${branch}`);
+      remote = await resolveOid(forkBare, `refs/heads/${branch}`);
     }
   }
+  // Counted in the fork, which sees the repository's objects through its
+  // alternates and its own on top.
   const proposed =
     remote !== undefined && base !== undefined
-      ? await aheadCount(bare, base, remote)
+      ? await aheadCount(forkBare, base, remote)
       : 0;
   const report = [message.trim(), note]
     .filter((part): part is string => part !== undefined && part !== "")
@@ -743,7 +826,7 @@ async function landWork(
   const existing =
     pull ??
     listPulls(app.db, repo.id, { state: "open", limit: 200 }).find(
-      (p) => !p.crossRepo && p.headBranch === branch,
+      (p) => p.headRepoId === fork.id && p.headBranch === branch,
     );
   if (existing !== undefined) {
     if (report !== "") addComment(app, agent.user, repo, existing, report);
@@ -764,6 +847,7 @@ async function landWork(
     body,
     baseBranch: repo.defaultBranch,
     headBranch: branch,
+    headRepo: fork,
   });
   if (!opened.ok) {
     write(`could not open the pull: ${JSON.stringify(opened.error)}`);

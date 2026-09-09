@@ -10,8 +10,14 @@
 
 import type { Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
+import { syncFork } from "../../actions/forks.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
-import { canAdmin, getRepoById, listForks } from "../../core/repos.ts";
+import {
+  canAdmin,
+  canWrite,
+  getRepoById,
+  listForks,
+} from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -131,6 +137,25 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
+  // A native fork syncs from its parent; a mirror from its origin.
+  if (repo.origin === null && repo.forkParentId !== null) {
+    const followed = await syncFork(ctx.app, ctx.auth.user, repo);
+    if (!followed.ok)
+      return flashTo(ctx, repoBase(repo), {
+        tone: "danger",
+        message:
+          followed.error === "diverged"
+            ? `${repo.defaultBranch} has commits of its own; merge the parent's by hand.`
+            : followed.error === "not_a_fork"
+              ? "This repository has no parent to follow."
+              : "You need write access to update this fork.",
+      });
+    return flashTo(ctx, repoBase(repo), {
+      message: followed.value.updated
+        ? `Updated ${repo.defaultBranch} to ${followed.value.to.slice(0, 7)}.`
+        : "Already up to date with the parent.",
+    });
+  }
   const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
   if (!synced.ok)
     return flashTo(ctx, repoBase(repo), {
@@ -466,6 +491,20 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
                   <a href="/${p.ownerName}/${p.name}"
                     >${p.ownerName}/${p.name}</a
                   >
+                  ${when(
+                    canWrite(ctx.app.db, repo, ctx.auth.user),
+                    () =>
+                      html`<form
+                        method="post"
+                        action="${repoBase(repo)}/sync"
+                        class="inline"
+                      >
+                        ${btn("Update from parent", {
+                          size: "sm",
+                          icon: "sync",
+                        })}
+                      </form>`,
+                  )}
                 </dd>`,
           )}
           ${when(

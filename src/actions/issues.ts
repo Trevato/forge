@@ -19,6 +19,7 @@
  */
 
 import type { App } from "../app.ts";
+import { isCrew } from "../core/agents.ts";
 import {
   addComment as insertComment,
   createIssue,
@@ -111,7 +112,9 @@ export function assignIssue(
   if (assignee !== null) {
     if (assignee.kind === "org") return err("assignee_cannot_read");
     if (!canRead(app.db, repo, assignee)) return err("assignee_cannot_read");
-    if (assignee.kind === "agent" && !canWrite(app.db, repo, assignee))
+    // An agent is assignable when it is on the crew: it reads the
+    // repository and works from its own fork, so write is not the test.
+    if (assignee.kind === "agent" && !isCrew(app.db, repo.id, assignee.id))
       return err("agent_not_on_crew");
   }
   const updated = setAssignee(app.db, issue.id, assignee?.id ?? null);

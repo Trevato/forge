@@ -18,6 +18,7 @@ import { newApp, openEnvUrl, updateAppSettings } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
+import { forkRepo } from "../src/actions/repos.ts";
 import {
   commitToBranch,
   createRepo,
@@ -26,6 +27,8 @@ import {
 import type { AppRecord } from "../src/core/apps.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { resolveOid } from "../src/git/merge.ts";
+import { repoDir } from "../src/git/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -421,7 +424,9 @@ describe("apps: production, previews, data, gates, crew", () => {
     expect(owned.ok).toBe(false);
     if (!owned.ok) expect(owned.error).toBe("forbidden_owner");
 
-    // As the agent, over git: a branch lands, the default branch is refused.
+    // As the agent, over git: the repository itself takes nothing from it —
+    // the crew works from forks. Its branch lands in its own fork, and the
+    // pull proposes it back.
     const token = createToken(app.db, bot.id, "test", "rw");
     const remote = `${servers.url.replace("://", `://bot:${token.token}@`)}/${repo.ownerName}/${repo.name}.git`;
     const clone = join(work, "bot-clone");
@@ -436,30 +441,66 @@ describe("apps: production, previews, data, gates, crew", () => {
     expect((await sh(["git", "commit", "-qm", "bot work"], clone)).code).toBe(
       0,
     );
-    expect(
-      (await sh(["git", "push", "-q", "origin", "bot/1-thing"], clone)).code,
-    ).toBe(0);
-    const toMain = await sh(
-      ["git", "push", "-q", "origin", `bot/1-thing:${repo.defaultBranch}`],
+    const toRepo = await sh(
+      ["git", "push", "-q", "origin", "bot/1-thing"],
       clone,
     );
-    expect(toMain.code).not.toBe(0);
-    expect(toMain.err).toContain("agents propose through pulls");
+    expect(toRepo.code).not.toBe(0);
+    const forked = await forkRepo(app, bot, repo);
+    expect(forked.ok).toBe(true);
+    if (!forked.ok) return;
+    const fork = forked.value;
+    expect(fork.ownerName).toBe("bot");
+    const forkRemote = `${servers.url.replace("://", `://bot:${token.token}@`)}/${fork.ownerName}/${fork.name}.git`;
+    expect(
+      (await sh(["git", "push", "-q", forkRemote, "bot/1-thing"], clone)).code,
+    ).toBe(0);
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, repo.ownerName, repo.name),
+        "refs/heads/bot/1-thing",
+      ),
+    ).toBeUndefined();
 
-    // As the agent, a pull opens; merging it is not the agent's to do.
+    // As the agent, a pull opens from the fork; merging it is not the
+    // agent's to do.
     const proposed = await openPull(app, bot, repo, {
       title: "Bot work",
       baseBranch: repo.defaultBranch,
       headBranch: "bot/1-thing",
+      headRepo: fork,
     });
     expect(proposed.ok).toBe(true);
     if (!proposed.ok) return;
+    expect(proposed.value.crossRepo).toBe(true);
     const refused = await mergePull(app, bot, repo, proposed.value, "merge");
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.error).toBe("forbidden");
-    // Its preview came up like anyone's.
+    // Its preview came up like anyone's, from the base's snapshot of the fork's branch.
     const run = await settled(latest(`pull-${proposed.value.number}`));
     expect(run.state).toBe("ok");
+    expect(run.commitOid).toBe(proposed.value.headOid);
+
+    // The agent pushes again, to its fork: the base's snapshot follows, and
+    // so does the preview.
+    await Bun.write(join(clone, "BOT.md"), "made by bot, twice\n");
+    expect((await sh(["git", "commit", "-qam", "bot again"], clone)).code).toBe(
+      0,
+    );
+    expect(
+      (await sh(["git", "push", "-q", forkRemote, "bot/1-thing"], clone)).code,
+    ).toBe(0);
+    const again = (await sh(["git", "rev-parse", "HEAD"], clone)).out.trim();
+    const redeployed = await settled(
+      (r) => r.env === `pull-${proposed.value.number}` && r.commitOid === again,
+    );
+    expect(redeployed.state).toBe("ok");
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, repo.ownerName, repo.name),
+        `refs/pull/${proposed.value.number}/head`,
+      ),
+    ).toBe(again);
   }, 120_000);
 
   test("a restart rebuilds production and the open previews from git", async () => {

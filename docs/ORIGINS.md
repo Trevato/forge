@@ -247,7 +247,7 @@ was: widening is the owner's decision to make here, never an origin's.
 
 **The fork flow** — contributing to a repository you cannot push to. One
 call, `contribute` (`src/actions/contribute.ts`), because it is one
-intention: *grab their repo, branch, edit, propose it back*. Split across
+intention: _grab their repo, branch, edit, propose it back_. Split across
 five round trips it becomes five half-finished states — a fork with no
 mirror, a mirror with no branch, a branch with no commit, a commit nobody
 proposed.
@@ -264,7 +264,7 @@ What it does, in order:
    checking its `parent`). GitHub answers a repeat `POST /forks` with the
    existing fork and Forgejo answers 409, so the check has to be ours for
    both to behave alike.
-3. **Wait for it.** GitHub creates a fork *asynchronously* and answers 202
+3. **Wait for it.** GitHub creates a fork _asynchronously_ and answers 202
    with a repository that 404s if you ask immediately. `forkOrigin` polls
    `getRepo` with backoff (250 ms → 3 s) for up to 30 s.
 4. **Mirror your fork.** That is the workbench: you cannot commit into a
@@ -286,6 +286,25 @@ What it does, in order:
    not, the number and the origin's URL come back and that is the whole
    truth there is.
 
+**A fork of a mirror** — refining work here before it goes out. A mirror
+is the origin's; every push through it lands upstream at once. A native
+fork of a mirror (`Fork` on the mirror's page) is the opposite: git is
+truth in it and nothing done there reaches the origin. That makes it a
+workbench in front of the outside world: the crew forks _it_ and proposes
+into it, the person merges there — as many pulls as it takes — and then
+proposes the result to the mirror as one pull. Opening that pull
+(`headRepo` = the fork, base = the mirror) carries the fork's branch to
+the origin first, under the connecting account's credential with the lease
+the mirror holds for that branch, exactly as a push through would
+(`carryBranchThrough` in `src/origins/push-through.ts`); the origin opens
+the pull from the branch it now holds, and the mirror's own copy of the
+branch follows. The fork's default branch is refused as a head: carried
+up, it would land on the origin's default branch itself, a push rather
+than a proposal — propose a branch made for it. Meanwhile the fork follows
+the mirror: each sync that moves the mirror's default branch fast-forwards
+the fork's, so long as nothing was committed on it directly (`docs/APPS.md`,
+"Forks follow their parents").
+
 The `owner:branch` form is verified against the fakes in
 `test/fork-flow.test.ts` (both dialects, with real git behind them) and it
 matches both forges' documented shape. **It has not yet been run against a
@@ -294,7 +313,7 @@ leaning on it: Forgejo's `head` is an undocumented plain string, and a real
 instance is the only thing that can settle whether it resolves the owner the
 way GitHub does.
 
-**Review states.** A review is a *verdict* on a pull at one commit —
+**Review states.** A review is a _verdict_ on a pull at one commit —
 `approved`, `changes_requested` or `commented` — stored in `review` beside
 the line comments, which stay in `comment` with `kind='review'`. Two rules
 are mechanical: a verdict that carries authority (approve, request changes)
@@ -395,7 +414,7 @@ DELETE /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
 PATCH  /api/v1/repos/:o/:n                          {requireReview}
 ```
 
-`…/reviews` is unchanged and still the *line comments* — a sibling path
+`…/reviews` is unchanged and still the _line comments_ — a sibling path
 rather than a mode of the same one, because a comment on a line and a verdict
 on a change are different things with different rules, and one path meaning
 two of them behind a query parameter is the shape that gets called wrong.

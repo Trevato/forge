@@ -31,10 +31,12 @@ import { mergePull, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
   createRepo,
+  forkRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import {
   activeRunFor,
@@ -110,7 +112,9 @@ describe("host routing: a single-label attachment", () => {
 
   test("the dotted form is not an app under an undotted attachment, and vice versa", () => {
     expect(parseAppHost("notes.forge.example", DOM)).toBeUndefined();
-    expect(parseAppHost("notes--forge.example", "forge.example")).toBeUndefined();
+    expect(
+      parseAppHost("notes--forge.example", "forge.example"),
+    ).toBeUndefined();
   });
 
   test("a bare domain attaches with a dot; a separator is taken whole", () => {
@@ -1294,11 +1298,11 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     expect(previewHtml).not.toContain("production-only note");
   }, 60_000);
 
-  test("rule 1: an agent's push to the default branch is refused with protectDefault off, on, and after a rename; other branches succeed", async () => {
+  test("rule 1: the repository takes no push from the crew; the agent's fork takes branches but never its default branch, protected or not, renamed or not", async () => {
     const madeRepo = await createRepo(app, alice, { name: "rule1-repo" });
     expect(madeRepo.ok).toBe(true);
     if (!madeRepo.ok) return;
-    let repo = madeRepo.value;
+    const repo = madeRepo.value;
     await commitToBranch(app, alice, repo, {
       message: "seed",
       files: [{ path: "README.md", content: "hi\n" }],
@@ -1318,52 +1322,74 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     expect(
       (await sh(["git", "clone", "--quiet", remote, clone], work)).code,
     ).toBe(0);
-
-    // protectDefault OFF: still refused, because rule 1 is unconditional.
     await Bun.write(join(clone, "A.md"), "a\n");
     await sh(["git", "add", "A.md"], clone);
     await sh(["git", "commit", "-qm", "a"], clone);
-    const refusedOff = await sh(
+
+    // The repository itself: crew membership is read. Neither the default
+    // branch nor any other takes a push, and the refusal hides nothing it
+    // would not hide from any non-writer.
+    const toDefault = await sh(
       ["git", "push", "-q", "origin", `HEAD:${repo.defaultBranch}`],
+      clone,
+    );
+    expect(toDefault.code).not.toBe(0);
+    const toOther = await sh(
+      ["git", "push", "-q", "origin", "HEAD:refs/heads/some-branch"],
+      clone,
+    );
+    expect(toOther.code).not.toBe(0);
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, repo.ownerName, repo.name),
+        "refs/heads/some-branch",
+      ),
+    ).toBeUndefined();
+
+    // The agent's fork takes its branches…
+    const forked = await forkRepo(app, bot, repo);
+    expect(forked.ok).toBe(true);
+    if (!forked.ok) return;
+    let fork = forked.value;
+    const forkRemote = `${servers.url.replace("://", `://rule1bot:${token.token}@`)}/${fork.ownerName}/${fork.name}.git`;
+    const otherOk = await sh(
+      ["git", "push", "-q", forkRemote, "HEAD:refs/heads/some-branch"],
+      clone,
+    );
+    expect(otherOk.code).toBe(0);
+
+    // …but never its default branch: rule 1 is unconditional, protectDefault
+    // off or on — an agent can't even fast-forward it.
+    const refusedOff = await sh(
+      ["git", "push", "-q", forkRemote, `HEAD:${fork.defaultBranch}`],
       clone,
     );
     expect(refusedOff.code).not.toBe(0);
     expect(refusedOff.err).toContain("agents propose through pulls");
-
-    // protectDefault ON: still refused, for the same reason (not force-push
-    // logic — an agent can't even fast-forward it).
-    await updateRepoSettings(app, alice, repo, { protectDefault: true });
+    await updateRepoSettings(app, alice, fork, { protectDefault: true });
     const refusedOn = await sh(
-      ["git", "push", "-q", "origin", `HEAD:${repo.defaultBranch}`],
+      ["git", "push", "-q", forkRemote, `HEAD:${fork.defaultBranch}`],
       clone,
     );
     expect(refusedOn.code).not.toBe(0);
     expect(refusedOn.err).toContain("agents propose through pulls");
 
-    // A push to any OTHER branch succeeds even with the same token.
-    const otherOk = await sh(
-      ["git", "push", "-q", "origin", "HEAD:refs/heads/some-branch"],
-      clone,
-    );
-    expect(otherOk.code).toBe(0);
-
-    // Rename the default branch, then confirm a push to the NEW name is
-    // still refused (the hook must read the live default branch, not a
+    // Rename the fork's default branch, then confirm a push to the NEW name
+    // is still refused (the hook must read the live default branch, not a
     // cached name).
     await sh(["git", "checkout", "-q", "-b", "renamed-main"], clone);
-    await sh(["git", "push", "-q", "-u", "origin", "renamed-main"], clone);
-    const renamed = await updateRepoSettings(app, alice, repo, {
+    await sh(["git", "push", "-q", forkRemote, "renamed-main"], clone);
+    const renamed = await updateRepoSettings(app, alice, fork, {
       defaultBranch: "renamed-main",
     });
     expect(renamed.ok).toBe(true);
-    repo = getRepoById(app.db, repo.id)!;
-    expect(repo.defaultBranch).toBe("renamed-main");
+    fork = getRepoById(app.db, fork.id)!;
+    expect(fork.defaultBranch).toBe("renamed-main");
     await Bun.write(join(clone, "B.md"), "b\n");
-    await sh(["git", "checkout", "-q", "renamed-main"], clone);
     await sh(["git", "add", "B.md"], clone);
     await sh(["git", "commit", "-qm", "b"], clone);
     const refusedRenamed = await sh(
-      ["git", "push", "-q", "origin", "HEAD:renamed-main"],
+      ["git", "push", "-q", forkRemote, "HEAD:renamed-main"],
       clone,
     );
     expect(refusedRenamed.code).not.toBe(0);

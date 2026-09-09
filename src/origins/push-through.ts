@@ -29,6 +29,7 @@ import type { App } from "../app.ts";
 import { originForRepo } from "../core/origins.ts";
 import type { Repo } from "../core/repos.ts";
 import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
+import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { providerForOrigin } from "./credential.ts";
@@ -55,6 +56,108 @@ export async function pushThrough(
   hookEnv: Record<string, string>,
   actorId: string,
 ): Promise<Result<void, PushThroughRefusal>> {
+  // refs/pull/* is refused outright by the hook before we get here; this is
+  // the second half of the same rule, so nothing forge-internal travels.
+  const forwarded = updates.filter((u) => !u.ref.startsWith("refs/pull/"));
+  const way = await wayThrough(app, repo, actorId);
+  if (!way.ok) return way;
+  if (way.value === undefined || forwarded.length === 0) return ok();
+  const { link, authEnv } = way.value;
+  const pushed = await pushToOrigin(
+    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    link.cloneUrl,
+    forwarded.map((u) => ({
+      ref: u.ref,
+      oldOid: u.oldOid,
+      newOid: u.newOid,
+    })),
+    authEnv,
+    { env: quarantineEnv(hookEnv), timeoutMs: TIMEOUT_MS },
+  );
+  if (!pushed.ok) return err(refusedBy(link, pushed.error.message, authEnv));
+  return ok();
+}
+
+/**
+ * A branch of a native fork, carried to the mirror's origin so a pull can
+ * open from it there. It travels under the connecting account's credential
+ * with the lease the mirror holds for that branch, exactly as a push through
+ * the mirror would; the mirror's own copy of the branch then follows, so
+ * what the origin holds is what the forge shows. Answers the new tip.
+ */
+export async function carryBranchThrough(
+  app: App,
+  mirror: Repo,
+  fork: Repo,
+  branch: string,
+  actorId: string,
+): Promise<Result<string, PushThroughRefusal>> {
+  const way = await wayThrough(app, mirror, actorId);
+  if (!way.ok) return way;
+  if (way.value === undefined)
+    return err({ message: "this repository does not mirror an origin" });
+  const { link, authEnv } = way.value;
+  const forkDir = repoDir(app.reposRoot, fork.ownerName, fork.name);
+  const mirrorDir = repoDir(app.reposRoot, mirror.ownerName, mirror.name);
+  const ref = `refs/heads/${branch}`;
+  const tip = await resolveOid(forkDir, ref);
+  if (tip === undefined)
+    return err({
+      message: `${fork.ownerName}/${fork.name} has no branch ${branch}`,
+    });
+  const held = (await resolveOid(mirrorDir, ref)) ?? ZERO_OID_STRING;
+  const pushed = await pushToOrigin(
+    forkDir,
+    link.cloneUrl,
+    [{ ref, oldOid: held, newOid: tip }],
+    authEnv,
+    { timeoutMs: TIMEOUT_MS },
+  );
+  if (!pushed.ok) return err(refusedBy(link, pushed.error.message, authEnv));
+  const fetched = await fetchInto(mirrorDir, forkDir, ref);
+  if (fetched !== undefined) await writeRef(mirrorDir, ref, fetched);
+  return ok(tip);
+}
+
+const ZERO_OID_STRING = "0".repeat(40);
+
+/** The origin's refusal, in its words, with the credential kept out of them. */
+function refusedBy(
+  link: NonNullable<ReturnType<typeof originForRepo>>,
+  message: string,
+  authEnv: Record<string, string>,
+): PushThroughRefusal {
+  // The pusher is a local writer; the credential is the owner's. The
+  // origin's message is shown verbatim, so an origin that quotes the
+  // token back (a hostile one, or a hook that prints its environment)
+  // must not turn a refusal into a disclosure. The generic scrub in
+  // git-mirror.ts cannot know the token; this one does.
+  return {
+    message: redact(
+      `${link.fullName} on ${link.origin.webUrl} refused this push: ${message}`,
+      ...secretsIn(authEnv),
+    ),
+  };
+}
+
+/**
+ * The way through for a repository: nothing for a native one, the origin
+ * link and a credential for a mirror, or the reason there is none.
+ */
+async function wayThrough(
+  app: App,
+  repo: Repo,
+  actorId: string,
+): Promise<
+  Result<
+    | {
+        link: NonNullable<ReturnType<typeof originForRepo>>;
+        authEnv: Record<string, string>;
+      }
+    | undefined,
+    PushThroughRefusal
+  >
+> {
   const link = originForRepo(app.db, repo.id);
   if (!link) {
     // A mirror whose origin was disconnected keeps its provenance but has
@@ -66,7 +169,7 @@ export async function pushThrough(
         message:
           "this repository mirrors an origin that was disconnected; reconnect the origin before pushing",
       });
-    return ok();
+    return ok(undefined);
   }
   // The push travels under the connecting user's credential, so only they
   // may send it — the same rule write-through applies. Anyone else would
@@ -80,11 +183,6 @@ export async function pushThrough(
       message: "this mirror has no upstream clone URL; re-mirror it",
     });
 
-  // refs/pull/* is refused outright by the hook before we get here; this is
-  // the second half of the same rule, so nothing forge-internal travels.
-  const forwarded = updates.filter((u) => !u.ref.startsWith("refs/pull/"));
-  if (forwarded.length === 0) return ok();
-
   const provider = providerForOrigin(app, link.origin);
   if (!provider.ok)
     return err({
@@ -96,32 +194,7 @@ export async function pushThrough(
     return err({
       message: `${link.origin.webUrl}: this origin needs to be reconnected`,
     });
-
-  const pushed = await pushToOrigin(
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
-    link.cloneUrl,
-    forwarded.map((u) => ({
-      ref: u.ref,
-      oldOid: u.oldOid,
-      newOid: u.newOid,
-    })),
-    authEnv,
-    { env: quarantineEnv(hookEnv), timeoutMs: TIMEOUT_MS },
-  );
-  if (!pushed.ok) {
-    // The pusher is a local writer; the credential is the owner's. The
-    // origin's message is shown verbatim, so an origin that quotes the
-    // token back (a hostile one, or a hook that prints its environment)
-    // must not turn a refusal into a disclosure. The generic scrub in
-    // git-mirror.ts cannot know the token; this one does.
-    return err({
-      message: redact(
-        `${link.fullName} on ${link.origin.webUrl} refused this push: ${pushed.error.message}`,
-        ...secretsIn(authEnv),
-      ),
-    });
-  }
-  return ok();
+  return ok({ link, authEnv });
 }
 
 /**
@@ -143,9 +216,10 @@ function quarantineEnv(
 /** Provenance without a live origin row: `origin_id` is null, the name remains. */
 function detachedMirror(app: App, repo: Repo): boolean {
   const row = app.db
-    .query<{ n: string | null }, [string]>(
-      "SELECT origin_full_name AS n FROM repo WHERE id = ?1",
-    )
+    .query<
+      { n: string | null },
+      [string]
+    >("SELECT origin_full_name AS n FROM repo WHERE id = ?1")
     .get(repo.id);
   return row?.n !== null && row?.n !== undefined && row.n !== "";
 }

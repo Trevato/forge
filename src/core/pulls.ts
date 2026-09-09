@@ -26,6 +26,7 @@ import {
   createIssue,
   getIssue,
   getIssueById,
+  getIssuesByIds,
   listIssues,
   setIssueState,
   type Issue,
@@ -173,6 +174,26 @@ export function getPull(
   const issue = getIssue(db, repoId, number);
   if (!issue || issue.kind !== "pull") return undefined;
   return join(db, issue);
+}
+
+/**
+ * Open pulls, in any repository, whose head is this branch of this one:
+ * what a push to a fork moves.
+ */
+export function listOpenPullsFromHead(
+  db: Database,
+  headRepoId: string,
+  branch: string,
+): Pull[] {
+  const ids = db
+    .query<{ issue_id: string }, [string, string]>(
+      `SELECT pull.issue_id FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE pull.head_repo_id = ?1 AND pull.head_branch = ?2 AND issue.state = 'open'
+       ORDER BY pull.issue_id`,
+    )
+    .all(headRepoId, branch)
+    .map((r) => r.issue_id);
+  return joinMany(db, [...getIssuesByIds(db, ids).values()]);
 }
 
 export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;

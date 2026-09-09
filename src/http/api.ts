@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { syncFork } from "../actions/forks.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -2279,6 +2280,15 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    // A native fork follows its parent; a mirror its origin.
+    if (repo.origin === null && repo.forkParentId !== null) {
+      const followed = await syncFork(ctx.app, ctx.auth.user, repo);
+      if (!followed.ok)
+        return followed.error === "diverged" || followed.error === "not_a_fork"
+          ? json({ error: followed.error }, 409)
+          : respondAccess(followed.error, 404);
+      return json(followed.value);
+    }
     const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
     if (!synced.ok) return respondAccess(synced.error, 404);
     return json(synced.value);

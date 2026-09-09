@@ -13,6 +13,7 @@ import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
+import { followParents } from "./actions/forks.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { pruneTokens } from "./core/tokens.ts";
 
@@ -78,6 +79,8 @@ const apps = appsOn
     })
   : undefined;
 await apps?.start();
+// Forks follow their parents as pushes land — a mirror's sync included.
+const unfollow = followParents(app);
 const crew = appsOn
   ? await startCrew(app, {
       forgeUrl,
@@ -150,6 +153,7 @@ function shutdown(): void {
   app.log.info("forge shutting down");
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
+  unfollow();
   // Apps and agents are child processes: stop them before the listeners,
   // so nothing is left running with nowhere to be reached.
   Promise.all([crew?.stop(), apps?.stop()])

@@ -692,6 +692,90 @@ describe("the fork flow", () => {
     expect((await read<{ error: string }>(refused)).error).toBe("mirrored");
   });
 
+  test("a native fork of a mirror proposes upstream through it", async () => {
+    // Alice's mirror of me/own — a repository `me` can push to — is the
+    // workbench. Bob forks it here, natively: git is truth in his copy and
+    // nothing he does there reaches the origin.
+    const repos = await read<{
+      items: {
+        ownerName: string;
+        name: string;
+        origin: { fullName: string } | null;
+      }[];
+    }>(await api("/api/v1/users/alice/repos"));
+    const mirror = repos.items.find(
+      (r) => r.origin?.fullName === `${ORIGIN_LOGIN}/own`,
+    )!;
+    expect(mirror).toBeDefined();
+    const forked = await api(
+      `/api/v1/repos/${mirror.ownerName}/${mirror.name}/forks`,
+      { method: "POST", body: "{}", token: bobToken },
+    );
+    expect(forked.status).toBe(201);
+    const fork = await read<{
+      ownerName: string;
+      name: string;
+      origin: unknown;
+    }>(forked);
+    expect(fork.origin).toBeNull();
+    const committed = await api(
+      `/api/v1/repos/${fork.ownerName}/${fork.name}/contents`,
+      {
+        method: "POST",
+        token: bobToken,
+        body: JSON.stringify({
+          branch: "refined",
+          message: "refine",
+          files: [{ path: "e.txt", content: "five\n" }],
+        }),
+      },
+    );
+    expect(committed.status).toBe(201);
+    const { commitOid } = await read<{ commitOid: string }>(committed);
+    const propose = (token: string) =>
+      api(`/api/v1/repos/${mirror.ownerName}/${mirror.name}/pulls`, {
+        method: "POST",
+        token,
+        body: JSON.stringify({
+          title: "refined",
+          base: "main",
+          head: "refined",
+          headRepo: `${fork.ownerName}/${fork.name}`,
+        }),
+      });
+    // The branch travels under the connecting account's credential, so
+    // only that account may send it.
+    expect((await propose(bobToken)).status).toBe(403);
+    const proposed = await propose(aliceToken);
+    expect(proposed.status).toBe(201);
+    const pull = await read<{ number: number }>(proposed);
+
+    // The branch is on the upstream's own git, at bob's commit…
+    const branches = await read<{ name: string; oid: string }[]>(
+      await fetch(
+        `${originServers.url}/api/v1/repos/${ORIGIN_LOGIN}/own/branches`,
+      ),
+    );
+    expect(branches.find((b) => b.name === "refined")?.oid).toBe(commitOid);
+    // …the pull was opened there from it, as a bare branch…
+    const opened = forgejo.state.requests.filter(
+      (r) =>
+        r.method === "POST" && r.path.endsWith(`/${ORIGIN_LOGIN}/own/pulls`),
+    );
+    const sent = JSON.parse(opened.at(-1)!.body) as Record<string, unknown>;
+    expect(sent.head).toBe("refined");
+    expect(sent.base).toBe("main");
+    // …and the mirror shows both the branch and the pull.
+    const local = await read<{ name: string; oid: string }[]>(
+      await api(`/api/v1/repos/${mirror.ownerName}/${mirror.name}/branches`),
+    );
+    expect(local.find((b) => b.name === "refined")?.oid).toBe(commitOid);
+    const listed = await read<{ items: { number: number }[] }>(
+      await api(`/api/v1/repos/${mirror.ownerName}/${mirror.name}/pulls`),
+    );
+    expect(listed.items.map((p) => p.number)).toContain(pull.number);
+  });
+
   test("a native repo has no upstream to contribute to", async () => {
     await api("/api/v1/repos", {
       method: "POST",

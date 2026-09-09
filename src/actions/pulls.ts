@@ -5,6 +5,7 @@
  */
 
 import type { App } from "../app.ts";
+import { isCrew } from "../core/agents.ts";
 import {
   getIssueById,
   setAssignee,
@@ -14,6 +15,7 @@ import {
 import {
   createPull,
   getPull,
+  listOpenPullsFromHead,
   mergePull as landPull,
   pullDiff,
   pullStatus,
@@ -59,6 +61,7 @@ import {
   type AccessError,
 } from "./access.ts";
 import { canWrite } from "../core/repos.ts";
+import { carryBranchThrough } from "../origins/push-through.ts";
 
 export interface OpenPullInput {
   title: string;
@@ -91,6 +94,30 @@ export async function openPull(
   if (through.value !== undefined) {
     const title = input.title.trim();
     if (title === "") return err("empty_title");
+    // A native fork of this mirror proposing upstream: its branch is
+    // carried to the origin first, under the connecting account's
+    // credential like any push through, and the origin opens the pull
+    // from the branch it now holds.
+    const head = input.headRepo;
+    if (head !== undefined && head.id !== baseRepo.id) {
+      if (
+        !canRead(app.db, head, user.value) ||
+        head.forkParentId !== baseRepo.id
+      )
+        return err("not_found");
+      // The fork's copy of the base branch carried up would land on the
+      // origin's base branch itself — a push, not a proposal. Propose a
+      // branch made for it.
+      if (input.headBranch === input.baseBranch) return err("same_branch");
+      const carried = await carryBranchThrough(
+        app,
+        baseRepo,
+        head,
+        input.headBranch,
+        user.value.id,
+      );
+      if (!carried.ok) return err(refusal(carried.error.message));
+    }
     const created = await through.value.provider.createPull(
       through.value.fullName,
       {
@@ -216,6 +243,37 @@ export async function refreshPullHead(
     tip,
   );
   return tip;
+}
+
+/**
+ * After a push lands: every open pull headed by a pushed branch — in this
+ * repository's parent, or wherever it was proposed — has its snapshot in
+ * the base brought up to the new tip, and the base hears `pull.pushed` so a
+ * preview can follow. Best-effort, like the refresh it is built on.
+ */
+export async function followHeadPushes(
+  app: App,
+  headRepo: Repo,
+  updates: readonly { ref: string; newOid: string }[],
+  actorId: string | undefined,
+): Promise<void> {
+  for (const update of updates) {
+    if (!update.ref.startsWith("refs/heads/") || /^0+$/.test(update.newOid))
+      continue;
+    const branch = update.ref.slice("refs/heads/".length);
+    for (const pull of listOpenPullsFromHead(app.db, headRepo.id, branch)) {
+      const base = getRepoById(app.db, pull.repoId);
+      if (base === undefined) continue;
+      const tip = await refreshPullHead(app, base, pull);
+      if (tip === undefined) continue;
+      app.bus.append({
+        kind: "pull.pushed",
+        repoId: base.id,
+        actorId,
+        payload: { number: pull.number, headOid: tip, branch },
+      });
+    }
+  }
 }
 
 export interface ReviewInput {
@@ -386,8 +444,14 @@ export async function submitReview(
   if (!participant.ok) return participant;
   const user = participant.value;
   if (pull.repoId !== repo.id) return err("not_found");
-  // A verdict that gates a merge is a writer's; a comment is anyone's.
-  if (input.state !== "commented" && !canWrite(app.db, repo, user))
+  // A verdict that gates a merge is a writer's, or the crew's — a
+  // reviewer on the crew requests changes and the builder answers, while
+  // the merge itself stays a person's; a comment is anyone's.
+  if (
+    input.state !== "commented" &&
+    !canWrite(app.db, repo, user) &&
+    !(user.kind === "agent" && isCrew(app.db, repo.id, user.id))
+  )
     return err("forbidden");
 
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);

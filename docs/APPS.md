@@ -43,15 +43,19 @@ Each rule below is enforced in a code path with a test that tries to get
 around it. None is advisory.
 
 1. **Production is the default branch, and agents cannot move it.** The only
-   way code reaches production is the default branch moving. The
-   pre-receive hook refuses an agent's push to the default branch outright —
-   protected or not — and `mergePull` refuses an agent actor. An agent
-   proposes; a person lands. (A merge gate that lands on its own once a
-   review and the checks agree is a setting to add, not a rule to loosen.)
-   Two corollaries keep an agent from starting a chain: an agent cannot
-   assign anyone (assigning an agent is what spends money, and only a
-   person may), and an agent cannot create a repository (it owns nothing it
-   was not given; it may fork to contribute).
+   way code reaches production is the default branch moving. The crew
+   works from forks: being on a repository's crew grants an agent read and
+   the right to be assigned, nothing more, so the repository itself takes
+   no push from it at all. Its branch lives in its own fork of the
+   repository, made on first use, and the pull proposes it back;
+   `mergePull` refuses an agent actor. An agent proposes; a person lands.
+   (A merge gate that lands on its own once a review and the checks agree
+   is a setting to add, not a rule to loosen.) Two corollaries keep an
+   agent from starting a chain: an agent cannot assign anyone (assigning an
+   agent is what spends money, and only a person may), and an agent cannot
+   create a repository (it owns nothing it was not given; it may fork to
+   contribute). A reviewer on the crew may still pass a verdict — request
+   changes, approve — since a verdict gates nothing an agent could do.
 2. **A preview lives exactly as long as its pull is open.** Opened: deployed.
    Pushed: redeployed at the new head. Closed or merged: stopped, and its
    data deleted. There is no orphan state; the sweep on boot rebuilds the
@@ -274,9 +278,14 @@ outbox with a sweep behind the wake-up:
 
 - **Assignment.** An issue assigned to an agent starts a run. The agent
   clones the repository, works on a branch named after the issue, and
-  pushes. The forge opens the pull on its behalf — the agent's closing
-  message is the description — so the bookkeeping is never the agent's to
-  get wrong. Assigning a pull re-engages the agent on that pull.
+  pushes. The clone is the triangle git was built for: it fetches from the
+  repository and pushes to the agent's fork, so a plain `git push` lands
+  where the agent may write and nowhere else. The forge opens the pull on
+  its behalf, from the fork — the agent's closing message is the
+  description — so the bookkeeping is never the agent's to get wrong.
+  Assigning a pull re-engages the agent on that pull. A push to the fork
+  moves the pull: the repository's snapshot of the branch and the preview
+  built from it follow.
 - **Feedback.** A review that requests changes, or a comment on the
   agent's pull that addresses it, starts a follow-up run that resumes the
   agent's session with the feedback quoted. A follow-up that begins after
@@ -284,6 +293,15 @@ outbox with a sweep behind the wake-up:
   lands as a new pull that names the one it continues.
 - **A failed check.** A deploy that fails on the agent's pull starts a
   follow-up with the log's tail. Bounded by rule 7.
+
+Forks follow their parents. A fork's default branch is a copy of the
+parent's until someone commits on it, and while that is so the parent
+moving is the fork moving — fast-forward only, as pushes land, a mirror's
+sync included. A fork with commits of its own on that branch is left as it
+is; `Update from parent` on its page (or `POST …/sync`) says so. This is
+what lets one person's fork stand between the crew and the outside world:
+the crew proposes into it, the person merges there, and proposes the
+result onward as one pull (see `docs/ORIGINS.md`, "a fork of a mirror").
 
 An agent may decline. A last message that starts with `DECLINED:` ends the
 run as failed with that reason, posted on the issue or pull, and nothing it

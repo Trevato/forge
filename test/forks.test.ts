@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { followParents } from "../src/actions/forks.ts";
 import { createApp, type App } from "../src/app.ts";
 import { deleteRepo, getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -19,6 +20,7 @@ const gitEnv = {
 };
 
 describe("forks", () => {
+  let unfollow: () => void;
   let dataDir: string;
   let work: string;
   let app: App;
@@ -81,6 +83,7 @@ describe("forks", () => {
     work = await mkdtemp(join(tmpdir(), "forge-fork-work-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    unfollow = followParents(app);
     base = servers.url;
     aliceToken = await mkUser("alice");
     bobToken = await mkUser("bob");
@@ -104,6 +107,7 @@ describe("forks", () => {
   });
 
   afterAll(async () => {
+    unfollow();
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -164,6 +168,82 @@ describe("forks", () => {
       work,
     );
     expect(aliceLog).not.toContain("bob feature");
+  });
+
+  test("a fork follows its parent's default branch, fast-forward only", async () => {
+    const carolToken = await mkUser("carol");
+    const as = (token: string) => ({
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    });
+    const forked = await fetch(`${base}/api/v1/repos/alice/app/forks`, {
+      method: "POST",
+      headers: as(carolToken),
+      body: "{}",
+    });
+    expect(forked.status).toBe(201);
+    const repos = join(dataDir, "repos");
+
+    // Alice moves main; carol's untouched fork follows on its own.
+    const dir = join(work, "app");
+    await Bun.write(join(dir, "NEWS.md"), "moved\n");
+    await gitOk(["add", "."], dir);
+    await gitOk(["commit", "-m", "alice moves on"], dir);
+    await gitOk(["push", "origin", "main"], dir);
+    const aliceTip = (
+      await gitOk(
+        ["-C", repoDir(repos, "alice", "app"), "rev-parse", "main"],
+        work,
+      )
+    ).trim();
+    const deadline = Date.now() + 5_000;
+    let carolTip = "";
+    while (Date.now() < deadline) {
+      carolTip = (
+        await gitOk(
+          ["-C", repoDir(repos, "carol", "app"), "rev-parse", "main"],
+          work,
+        )
+      ).trim();
+      if (carolTip === aliceTip) break;
+      await Bun.sleep(50);
+    }
+    expect(carolTip).toBe(aliceTip);
+    // Asked by hand, there is nothing left to do.
+    const again = await fetch(`${base}/api/v1/repos/carol/app/sync`, {
+      method: "POST",
+      headers: as(carolToken),
+      body: "{}",
+    });
+    expect(again.status).toBe(200);
+    const answer = (await again.json()) as { updated: boolean; to: string };
+    expect(answer.updated).toBe(false);
+    expect(answer.to).toBe(aliceTip);
+
+    // Bob committed on his fork's main: it is his to reconcile, and he is told.
+    const bobBefore = (
+      await gitOk(
+        ["-C", repoDir(repos, "bob", "app"), "rev-parse", "main"],
+        work,
+      )
+    ).trim();
+    const refused = await fetch(`${base}/api/v1/repos/bob/app/sync`, {
+      method: "POST",
+      headers: as(bobToken),
+      body: "{}",
+    });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as { error: string }).error).toBe(
+      "diverged",
+    );
+    expect(
+      (
+        await gitOk(
+          ["-C", repoDir(repos, "bob", "app"), "rev-parse", "main"],
+          work,
+        )
+      ).trim(),
+    ).toBe(bobBefore);
   });
 
   test("a stranger cannot fork a private repo", async () => {

@@ -20,6 +20,7 @@ import {
   setIssueState,
 } from "../src/actions/issues.ts";
 import { mergePull } from "../src/actions/pulls.ts";
+import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
   queueAgentRun,
@@ -32,7 +33,7 @@ import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { getForkOf, type Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -213,13 +214,33 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(pull.authorName).toBe("bot");
     expect(pull.headBranch).toBe("bot/1-plant-tulips");
     expect(pull.title).toBe("Plant tulips");
+    // The crew works from forks: the branch lives in the agent's own copy
+    // and proposes back; the repository itself gained no branch.
+    const fork = getForkOf(app.db, bot.id, repo.id)!;
+    expect(fork).toBeDefined();
+    expect(fork.name).toBe("garden");
+    expect(pull.crossRepo).toBe(true);
+    expect(pull.headRepoId).toBe(fork.id);
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, repo.ownerName, repo.name),
+        "refs/heads/bot/1-plant-tulips",
+      ),
+    ).toBeUndefined();
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, fork.ownerName, fork.name),
+        "refs/heads/bot/1-plant-tulips",
+      ),
+    ).toBe(pull.headOid);
     expect(pull.body).toContain("Added CREW.md as asked.");
     expect(pull.body).toContain(`Closes #${issueNumber}`);
     // The run's credential is gone; the clone stays for the follow-up.
     const tokens = app.db
-      .query<{ n: number }, []>(
-        "SELECT COUNT(*) AS n FROM token WHERE name LIKE 'run:%'",
-      )
+      .query<
+        { n: number },
+        []
+      >("SELECT COUNT(*) AS n FROM token WHERE name LIKE 'run:%'")
       .get();
     expect(tokens?.n).toBe(0);
     expect(
@@ -262,14 +283,22 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       (c) => c.authorName === "bot",
     );
     expect(comments.map((c) => c.body)).toContain("Added CREW.md as asked.");
-    // The branch moved on the forge (the pull row keeps its opening snapshot;
-    // the live head is git's).
+    // The branch moved in the fork (the pull row keeps its opening snapshot;
+    // the live head is git's), and the base's snapshot of it followed.
+    const fork = getForkOf(app.db, bot.id, repo.id)!;
     const tip = await resolveOid(
-      repoDir(app.reposRoot, repo.ownerName, repo.name),
+      repoDir(app.reposRoot, fork.ownerName, fork.name),
       `refs/heads/${pull.headBranch}`,
     );
     expect(tip).toBeDefined();
     expect(tip).not.toBe(pull.headOid);
+    await Bun.sleep(300);
+    expect(
+      await resolveOid(
+        repoDir(app.reposRoot, repo.ownerName, repo.name),
+        `refs/pull/${pull.number}/head`,
+      ),
+    ).toBe(tip);
   }, 60_000);
 
   test("an agent may decline: nothing lands, the reason is posted", async () => {
@@ -383,6 +412,27 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       `pull #${closed.number} was closed before the run began`,
     );
   }, 90_000);
+
+  test("a pull whose branch lives in the repository itself is not the crew's to move", async () => {
+    // A branch a person pushed to the repository, proposed the old way.
+    const seeded = await commitToBranch(app, alice, repo, {
+      branch: "alice/hedge",
+      message: "A hedge",
+      files: [{ path: "HEDGE.md", content: "# hedge\n" }],
+    });
+    expect(seeded.ok).toBe(true);
+    const opened = await openPull(app, alice, repo, {
+      title: "A hedge",
+      baseBranch: repo.defaultBranch,
+      headBranch: "alice/hedge",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect(assignIssue(app, alice, repo, opened.value, bot).ok).toBe(true);
+    const run = await settled((r) => r.issueId === opened.value.id);
+    expect(run.state).toBe("failed");
+    expect(run.summary).toContain("lives in the repository itself");
+    expect(run.costUsd).toBe(0);
+  }, 30_000);
 
   test("a run the provider turns away pauses, and carries on in its clone when the limit lifts", async () => {
     const issue = openIssue(app, alice, repo, {

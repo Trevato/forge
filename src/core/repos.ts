@@ -317,6 +317,21 @@ export async function forkRepo(
 }
 
 /** Repos forked directly from this one. */
+/** The fork of `parentId` that `ownerId` holds, if any: one per owner. */
+export function getForkOf(
+  db: Database,
+  ownerId: string,
+  parentId: string,
+): Repo | undefined {
+  const row = db
+    .query<
+      RepoRow,
+      [string, string]
+    >(`${SELECT} WHERE repo.owner_id = ?1 AND repo.fork_parent_id = ?2`)
+    .get(ownerId, parentId);
+  return row ? toRepo(row) : undefined;
+}
+
 export function listForks(db: Database, repoId: string): Repo[] {
   return db
     .query<
@@ -488,8 +503,9 @@ export async function deleteRepo(
 
 // Permissions. A personal repo is governed by ownership; an org's repo by the
 // caller's team access in that org. Site admins see and do everything. An
-// agent on a repo's crew reads and writes it — and only that: the crew
-// grant stops at write, so administration stays with people.
+// agent on a repo's crew reads it — and only that: the crew works from
+// forks, so an agent writes what it owns and proposes the rest, and
+// everything from write up stays with people.
 
 function personalOrDirect(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
@@ -535,7 +551,6 @@ export function canWrite(
   user: User | undefined,
 ): boolean {
   if (personalOrDirect(repo, user)) return true;
-  if (onCrew(db, repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
 }
 

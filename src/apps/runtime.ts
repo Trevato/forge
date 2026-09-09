@@ -388,6 +388,22 @@ export class AppsRuntime {
         }
         return;
       }
+      case "pull.pushed": {
+        // A fork's branch moved: the base's snapshot followed, and so
+        // does the preview.
+        const number = event.payload["number"];
+        const headOid = event.payload["headOid"];
+        if (typeof number !== "number" || typeof headOid !== "string") return;
+        this.requestDeploy(
+          record,
+          repo,
+          previewEnv(number),
+          headOid,
+          "push",
+          event.actorId ?? undefined,
+        );
+        return;
+      }
       case "pull.opened":
       case "pull.reopened": {
         const pull = this.pullFromEvent(repo, event);
@@ -622,11 +638,7 @@ export class AppsRuntime {
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
-      vars: resolveAppEnv(
-        this.app.db,
-        this.app.config.dataDir,
-        state.app.id,
-      ),
+      vars: resolveAppEnv(this.app.db, this.app.config.dataDir, state.app.id),
       log: write,
       signal,
     });
