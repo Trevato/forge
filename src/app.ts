@@ -12,6 +12,7 @@ import { EventBus } from "./core/events.ts";
 import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
+import { id } from "./kernel/id.ts";
 import { createLog, type Log } from "./kernel/log.ts";
 import { closeReadersUnder } from "./git/read.ts";
 
@@ -94,7 +95,9 @@ export function createApp(config: ForgeConfig): App {
     bus,
     log: createLog("forge"),
     reposRoot,
-    socketPath: join(dataDir, "forge.sock"),
+    // This process's own: two forges share a data directory for the length
+    // of a release, and each spawns git with its own socket in the env.
+    socketPath: join(dataDir, `forge-${id()}.sock`),
     close: () => {
       // The pooled `cat-file` readers for this forge's repos are processes,
       // and processes outlive a closed database unless somebody says

@@ -37,6 +37,18 @@ const HOME_SECRETS = [
   ".claude",
 ];
 
+const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
+
+function socketsIn(data: string): string[] {
+  try {
+    return readdirSync(data)
+      .filter((name) => SOCKET_FILE.test(name))
+      .map((name) => join(data, name));
+  } catch {
+    return [join(data, "forge.sock")];
+  }
+}
+
 export function sandboxPolicy(input: {
   dataDir: string;
   agentName: string;
@@ -67,7 +79,9 @@ export function sandboxPolicy(input: {
     join(data, "forge.db-wal"),
     join(data, "forge.db-shm"),
     join(data, "secret.key"),
-    join(data, "forge.sock"),
+    // Every forge's hook socket in the directory: this one's, and an old
+    // one's still draining beside it. A hook's authority is the forge's.
+    ...socketsIn(data),
     join(data, "ssh"),
     join(data, "apps"),
     join(data, "runs"),

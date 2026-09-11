@@ -85,6 +85,66 @@ describe("reconcile refreshes hooks (H-1)", () => {
   });
 });
 
+describe("two forges on one data directory", () => {
+  test("a socket another forge still answers on is left alone, and this forge boots beside it", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-harden-share-"));
+    const app = createApp({ dataDir, port: 0 });
+    const other = join(dataDir, "forge-other.sock");
+    // A forge that is still alive — a release's old process, draining.
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `Bun.serve({unix:${JSON.stringify(other)},fetch:()=>new Response("x")});setInterval(()=>{},1e9)`,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    );
+    for (
+      let i = 0;
+      i < 50 &&
+      !(await lstat(other).then(
+        () => true,
+        () => false,
+      ));
+      i++
+    ) {
+      await Bun.sleep(20);
+    }
+    let servers: Servers | undefined;
+    try {
+      servers = await serve(app);
+      expect((await fetch(`${servers.url}/`)).status).toBe(200);
+      // Theirs is untouched; ours is its own file.
+      expect(
+        await lstat(other).then(
+          () => true,
+          () => false,
+        ),
+      ).toBe(true);
+      expect(app.socketPath).not.toBe(other);
+      expect(
+        await lstat(app.socketPath).then(
+          () => true,
+          () => false,
+        ),
+      ).toBe(true);
+    } finally {
+      servers?.stop();
+      child.kill("SIGKILL");
+      await child.exited;
+      app.close();
+      // Ours went with us.
+      expect(
+        await lstat(app.socketPath).then(
+          () => true,
+          () => false,
+        ),
+      ).toBe(false);
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("stale socket recovery (H-2)", () => {
   test("a real SIGKILL-orphaned socket inode does not block boot", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-harden-sock-"));

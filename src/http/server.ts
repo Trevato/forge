@@ -21,8 +21,9 @@ import {
   serviceRpc,
   type GitService,
 } from "../git/smart-http.ts";
-import { lstat, rm } from "node:fs/promises";
-import { defect } from "../kernel/error.ts";
+import { lstat, readdir, rm } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { css } from "../web/style.ts";
@@ -947,38 +948,52 @@ export interface Servers {
   stop(): void;
 }
 
+/** The hook sockets a data directory may hold: this forge's, and others'. */
+const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
+
 /**
- * A leftover socket file from an unclean shutdown would make `Bun.serve`
- * fail with EADDRINUSE forever. Probe it: if something answers, another
- * forge owns this data dir and we must not steal it; if nothing does, the
- * file is a corpse and we remove it.
+ * Every forge has a socket of its own in the data directory, so two can
+ * share it for the length of a release — the old one draining beside the
+ * new. A socket somebody still answers on is theirs and is left alone; one
+ * nobody answers on is a corpse from an unclean exit, and is removed so it
+ * cannot pile up or, if it is ours by name, block `Bun.serve` with
+ * EADDRINUSE forever.
  */
-async function clearStaleSocket(app: App): Promise<void> {
-  // lstat, not Bun.file().exists() — a socket is not a regular file and
-  // Bun.file reports it as absent, which would leave a real corpse in place.
-  const present = await lstat(app.socketPath).then(
-    () => true,
-    () => false,
-  );
-  if (!present) return;
+async function clearStaleSockets(app: App): Promise<void> {
+  const dir = app.config.dataDir;
+  let names: string[];
   try {
-    await fetch("http://forge/internal/ping", {
-      unix: app.socketPath,
-      signal: AbortSignal.timeout(500),
-    });
+    names = (await readdir(dir)).filter((name) => SOCKET_FILE.test(name));
   } catch {
-    await rm(app.socketPath, { force: true });
     return;
   }
-  defect(
-    "forge.socket_in_use",
-    `another forge is already live on ${app.socketPath}`,
-  );
+  for (const name of names) {
+    const path = join(dir, name);
+    // lstat, not Bun.file().exists() — a socket is not a regular file and
+    // Bun.file reports it as absent, which would leave a real corpse in place.
+    const present = await lstat(path).then(
+      () => true,
+      () => false,
+    );
+    if (!present) continue;
+    try {
+      await fetch("http://forge/internal/ping", {
+        unix: path,
+        signal: AbortSignal.timeout(500),
+      });
+      if (path !== app.socketPath)
+        app.log.info("sharing the data directory with a live forge", {
+          socket: name,
+        });
+    } catch {
+      await rm(path, { force: true });
+    }
+  }
 }
 
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
-  await clearStaleSocket(app);
+  await clearStaleSockets(app);
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
@@ -1059,6 +1074,8 @@ export async function serve(app: App): Promise<Servers> {
     stop() {
       web.stop(true);
       internal.stop(true);
+      // Our socket goes with us; a corpse is only ever an unclean exit's.
+      rmSync(app.socketPath, { force: true });
     },
   };
 }
