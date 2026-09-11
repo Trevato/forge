@@ -47,6 +47,9 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
+    ? {}
+    : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),
 });
 
 await reconcile(app);

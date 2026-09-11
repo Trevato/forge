@@ -144,20 +144,42 @@ export async function forkOrigin(
 
   if (remote === undefined) {
     const asked = await provider.value.forkRepo(upstream.value.fullName);
-    if (!asked.ok)
-      return err(
-        asked.error.error === "unreachable" ||
-          asked.error.error === "rate_limited"
-          ? "origin_unreachable"
-          : "origin_refused",
+    if (!asked.ok) {
+      // An origin that forks in the request itself can take longer than we
+      // wait for an answer, and still have done it. Before calling that a
+      // failure, look for the fork under its conventional name.
+      const name = upstream.value.fullName.split("/")[1] ?? "";
+      const late =
+        asked.error.error === "unreachable" &&
+        name !== "" &&
+        origin.login !== ""
+          ? await awaitFork(
+              provider.value,
+              `${origin.login}/${name}`,
+              options.waitMs ?? FORK_DEADLINE_MS,
+            )
+          : undefined;
+      if (
+        late === undefined ||
+        !late.ok ||
+        !sameRepo(late.value.parent, upstream.value.fullName)
+      )
+        return err(
+          asked.error.error === "unreachable" ||
+            asked.error.error === "rate_limited"
+            ? "origin_unreachable"
+            : "origin_refused",
+        );
+      remote = late.value;
+    } else {
+      const ready = await awaitFork(
+        provider.value,
+        asked.value.fullName,
+        options.waitMs ?? FORK_DEADLINE_MS,
       );
-    const ready = await awaitFork(
-      provider.value,
-      asked.value.fullName,
-      options.waitMs ?? FORK_DEADLINE_MS,
-    );
-    if (!ready.ok) return ready;
-    remote = ready.value;
+      if (!ready.ok) return ready;
+      remote = ready.value;
+    }
     existed = false;
   }
 
@@ -450,7 +472,9 @@ async function contributeViaFork(
   // months ago would otherwise propose a diff full of merged work.
   let startPoint = input.base;
   if (upstream.cloneUrl !== "") {
-    const authEnv = await adapterFor(app, origin)?.gitAuthEnv(upstream.cloneUrl);
+    const authEnv = await adapterFor(app, origin)?.gitAuthEnv(
+      upstream.cloneUrl,
+    );
     if (authEnv !== undefined && Object.keys(authEnv).length > 0) {
       const tip = await fetchRefFrom(
         dir,

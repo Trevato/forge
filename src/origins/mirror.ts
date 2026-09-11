@@ -59,6 +59,14 @@ export interface MirrorResult {
  * `internal` Forgejo repo has no local analogue and becomes private: never
  * silently widen a visibility on import.
  */
+/**
+ * How long to wait between tries of a new mirror's first fetch. Mutable so a
+ * test that wants a failure now can have it now; the forge keeps the default.
+ */
+export const firstFetchRetry = {
+  ms: [2_000, 5_000, 10_000] as readonly number[],
+};
+
 export async function mirrorRepo(
   app: App,
   actor: User,
@@ -138,16 +146,30 @@ export async function mirrorRepo(
   // The first pass is the import: one summary event, not one per row. Its
   // stages are the job's stages — there is only one place that knows how far
   // an import has got, and it is the import.
-  const report = await syncOrigin(app, origin, {
-    initial: true,
-    onlyRepoId: created.value.id,
-    ...(job === undefined
-      ? {}
-      : {
-          onProgress: (stageName, detail) =>
-            stage({ stage: stageName, detail }),
-        }),
-  });
+  const sync = () =>
+    syncOrigin(app, origin, {
+      initial: true,
+      onlyRepoId: created.value.id,
+      ...(job === undefined
+        ? {}
+        : {
+            onProgress: (stageName, detail) =>
+              stage({ stage: stageName, detail }),
+          }),
+    });
+  let report = await sync();
+  // A repository the origin has only just made — a fork, most often — can
+  // exist in its API before its git answers. The first fetch is tried again
+  // a few times before it is called a failure, and the job says so.
+  for (const wait of firstFetchRetry.ms) {
+    if (report.error === "") break;
+    stage({
+      stage: "fetching",
+      detail: `the origin has not finished making it; trying again in ${Math.round(wait / 1000)}s`,
+    });
+    await new Promise((resolve) => setTimeout(resolve, wait));
+    report = await sync();
+  }
 
   await adoptDefaultBranch(dir, defaultBranch);
 
@@ -210,7 +232,11 @@ export function startMirror(
           stage: "failed",
           detail: "",
           repo: result.value.repo,
-          error: redact(result.value.error),
+          error: `Fetching from the origin failed: ${
+            redact(result.value.error)
+              .split("\n")
+              .find((l) => l.trim() !== "") ?? "no reason given"
+          }`,
         });
         return;
       }

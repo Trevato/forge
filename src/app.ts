@@ -39,6 +39,11 @@ export interface ForgeConfig {
    */
   edgeToken?: string;
   /**
+   * What the platform edge is called where a person signs in — the name on
+   * the button that sends them to it. Unset, it is "the platform".
+   */
+  edgeName?: string;
+  /**
    * The SSH host key's fingerprint, once the listener is up — what a person
    * compares against the one their client prints on first connect. Written
    * back by `serveForgeSsh` beside `sshPort`.

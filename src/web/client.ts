@@ -94,8 +94,10 @@ export const mirrorJs = /* js */ `
         source.close();
         location.href = '/' + job.repo.ownerName + '/' + job.repo.name;
       } else if (job.stage === 'failed') {
+        // The page for a failed job carries the reason and a way to retry,
+        // and does not stream — so this loads it once, and stops.
         source.close();
-        location.reload();
+        location.replace(location.pathname + location.search);
       }
     });
   });

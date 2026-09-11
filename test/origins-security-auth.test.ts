@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -133,6 +134,8 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
       .length;
 
   beforeAll(async () => {
+    // A fetch that fails should say so now, not after the forge's patience.
+    firstFetchRetry.ms = [50];
     dataDir = await mkdtemp(join(tmpdir(), "forge-sec-code-"));
     const state = newFakeState("forgejo", LOGIN, ORIGIN_TOKEN);
     oauth = newFakeOAuth(CLIENT_ID);

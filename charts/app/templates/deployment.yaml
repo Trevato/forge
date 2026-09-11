@@ -72,6 +72,8 @@ spec:
               value: {{ printf "--%s" (include "forge.host" .) | quote }}
             # The platform edge signs people in and vouches for them with this
             # secret; the forge trusts its identity headers only alongside it.
+            - name: FORGE_EDGE_NAME
+              value: {{ .Values.forge.edgeName | default "open-platform.sh" | quote }}
             - name: FORGE_EDGE_TOKEN
               valueFrom:
                 secretKeyRef:

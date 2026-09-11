@@ -1,6 +1,7 @@
 name: check
-# The gate: zero type errors and a green suite, on every push to main and
-# every pull request, before release.yml ever builds an image. Runs on the
+# The gate: the check forge.json declares — zero type errors and a green
+# suite — on every push to main and every pull request, before release.yml
+# ever builds an image. Runs on the
 # platform's isolated, unprivileged runner pool (host mode: bun + git baked
 # in, no docker daemon).
 on:
@@ -34,10 +35,12 @@ jobs:
         working-directory: src
         run: bun install --frozen-lockfile
 
-      - name: typecheck
+      # The same check the forge runs on its own pulls, read from the same
+      # place, so what is green here is green there and nowhere else decides.
+      - name: check, as the forge itself does
         working-directory: src
-        run: bun x tsc --noEmit
-
-      - name: test
-        working-directory: src
-        run: bun test
+        run: |
+          set -eu
+          CHECK=$(bun -e 'const f = JSON.parse(await Bun.file("forge.json").text()); console.log(f.check.run)')
+          echo "$ $CHECK"
+          sh -c "$CHECK"
