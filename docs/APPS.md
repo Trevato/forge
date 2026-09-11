@@ -262,6 +262,19 @@ ping for 120 seconds is dropped. The app's own 101 response headers are
 not carried — a cookie an app sets on the handshake does not reach the
 browser.
 
+## A release does not drop a session
+
+The forge is one process on one volume, and a release replaces it. The new
+process comes up beside the old one and takes everything new once it is
+ready; the old one drains: it stops its crew (their tasks go back on the
+queue), its apps and its checks, says so on `/healthz`, and keeps serving
+whoever is connected over SSH until they leave — for up to an hour — and
+only then goes. SQLite in WAL mode carries two processes for that window.
+Each running run carries a lease its process renews every fifteen seconds;
+a forge coming up fails only runs whose lease has lapsed, so the old
+process's live work is never mistaken for a crash's leftovers, and a real
+crash is still cleaned up within a minute or two.
+
 ## Where state lives
 
 Git is truth for code. The app's serving configuration (slug, access, the

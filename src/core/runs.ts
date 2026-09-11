@@ -45,6 +45,8 @@ export interface Run {
   readonly notBefore: string | null;
   /** How many times this task has been paused and queued again. */
   readonly attempt: number;
+  /** When the process working this run last said it still was. */
+  readonly heartbeatAt: string | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
@@ -66,6 +68,7 @@ interface RunRow {
   cost_usd: number;
   not_before: string | null;
   attempt: number;
+  heartbeat_at: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -87,6 +90,7 @@ const toRun = (r: RunRow): Run => ({
   costUsd: r.cost_usd,
   notBefore: r.not_before,
   attempt: r.attempt,
+  heartbeatAt: r.heartbeat_at,
   createdAt: r.created_at,
   startedAt: r.started_at,
   finishedAt: r.finished_at,
@@ -146,7 +150,8 @@ export function getRun(db: Database, runId: string): Run | undefined {
 export function claimRun(db: Database, runId: string): Run | undefined {
   const changes = db
     .query(
-      `UPDATE run SET state = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      `UPDATE run SET state = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'queued'`,
     )
     .run(runId).changes;
@@ -241,18 +246,40 @@ export function lastAgentRun(
   return row ? toRun(row) : undefined;
 }
 
+/** The process working these runs says it still is. */
+export function heartbeatRuns(db: Database, runIds: readonly string[]): void {
+  if (runIds.length === 0) return;
+  db.query(
+    `UPDATE run SET heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE state = 'running' AND id IN (${runIds.map((_, n) => `?${n + 1}`).join(",")})`,
+  ).run(...runIds);
+}
+
 /**
- * Runs a process found on boot still marked running belong to a process
- * that no longer exists. Fail them honestly rather than leave a spinner.
+ * Running runs nobody has renewed for `staleMs` belong to a process that
+ * no longer exists — a forge that died with them. Fail them honestly rather
+ * than leave a spinner. A run a live process is still working, an old
+ * forge finishing beside a new one, is left alone: its lease says so.
  */
-export function failOrphanedRuns(db: Database): number {
+export function failAbandonedRuns(db: Database, staleMs: number): number {
+  const cutoff = new Date(Date.now() - staleMs).toISOString();
   return db
     .query(
-      `UPDATE run SET state = 'failed', summary = 'the forge restarted while this was running',
+      `UPDATE run SET state = 'failed', summary = 'the forge that was running this went away',
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE state = 'running'`,
+       WHERE state = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?1)`,
     )
-    .run().changes;
+    .run(cutoff).changes;
+}
+
+/** Whether a running run's lease has lapsed. */
+export function leaseLapsed(
+  run: Run,
+  staleMs: number,
+  now = Date.now(),
+): boolean {
+  if (run.heartbeatAt === null) return true;
+  return new Date(run.heartbeatAt).getTime() < now - staleMs;
 }
 
 export interface ListRunsOptions {

@@ -7,7 +7,14 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { claimRun, createRun, getRun, listQueued } from "../src/core/runs.ts";
+import {
+  cancelRun,
+  claimRun,
+  createRun,
+  getRun,
+  listQueued,
+} from "../src/core/runs.ts";
+import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -69,6 +76,23 @@ describe("a run the last forge left running", () => {
     });
     claimRun(app.db, orphan.id);
     expect(getRun(app.db, orphan.id)?.state).toBe("running");
+    // …and its lease lapsed with it: nobody has renewed it since.
+    app.db
+      .query("UPDATE run SET heartbeat_at = ?2 WHERE id = ?1")
+      .run(
+        orphan.id,
+        new Date(Date.now() - STALE_AFTER_MS - 1_000).toISOString(),
+      );
+    // A run whose lease is fresh is another forge's live work — the old
+    // process of a release, finishing beside this one — and is left to it.
+    const alive = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "feedback",
+    });
+    claimRun(app.db, alive.id);
 
     // Concurrency 0: the crew boots, tidies, and starts nothing.
     crew = await startCrew(app, {
@@ -89,6 +113,9 @@ describe("a run the last forge left running", () => {
     expect(queued).toHaveLength(1);
     expect(queued[0]!.reason).toBe("feedback");
     expect(queued[0]!.actorId).toBe(bot.id);
+    expect(getRun(app.db, alive.id)?.state).toBe("running");
+    // The other forge finishes it; here, it is simply out of the way.
+    cancelRun(app.db, alive.id, "finished elsewhere");
   });
 
   test("a run in flight when the crew stops goes back on the queue", async () => {

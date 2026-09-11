@@ -5,15 +5,22 @@ metadata:
   labels:
     app: {{ .Release.Name }}
   annotations:
-    # One process owns the data directory: SQLite in WAL mode and bare repos
-    # on one ReadWriteOnce volume. A release stops the old pod before the new
-    # one starts; this annotation is the platform's opt-out from the fleet's
-    # surge rollout policy.
-    plat.sh/rollout: recreate
+    # A release does not drop a session. The new pod comes up beside the old
+    # one (both on the volume's node — local-path storage is node-bound, so
+    # ReadWriteOnce still holds), takes everything new once ready, and the
+    # old one drains: it stops its crew, apps and checks, fails readiness,
+    # and keeps serving whoever is connected over SSH until they leave, up to
+    # the grace period below. SQLite in WAL mode carries two processes for
+    # that window; run leases keep the new pod from mistaking the old pod's
+    # live work for a crash's leftovers.
+    plat.sh/rollout: surge
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: {{ .Release.Name }}
@@ -25,6 +32,9 @@ spec:
       annotations:
         plat.sh/user-env-rev: {{ .Values.userEnvRev | default "init" | quote }}
     spec:
+      # An hour for an SSH session to end on its own before the old pod is
+      # killed anyway.
+      terminationGracePeriodSeconds: 3600
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -119,9 +129,10 @@ spec:
             httpGet: { path: /, port: http }
             periodSeconds: 3
             failureThreshold: 60
+          # Readiness is the forge's own word: 503 once it is draining.
           readinessProbe:
-            httpGet: { path: /, port: http }
-            periodSeconds: 10
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
           livenessProbe:
             httpGet: { path: /, port: http }
             periodSeconds: 15

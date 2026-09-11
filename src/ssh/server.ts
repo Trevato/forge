@@ -48,6 +48,13 @@ export interface SshServer {
   readonly port: number;
   readonly hostKey: SshPublicKey;
   stop(): void;
+  /** How many connections are open right now. */
+  sessions(): number;
+  /**
+   * Stop answering new connections and resolve once every open one has
+   * ended on its own: a release's old process, letting people finish.
+   */
+  drain(): Promise<void>;
 }
 
 type Socket = Bun.Socket<Connection | undefined>;
@@ -248,7 +255,12 @@ class Connection {
 export function serveSsh(options: SshServerOptions): Promise<SshServer> {
   const hostKey = loadOrCreateHostKey(options.hostKeyDir);
   const connections = new Set<Connection>();
-  const drop = (connection: Connection) => connections.delete(connection);
+  // Whoever is waiting for the last connection to leave, once draining.
+  const drained: (() => void)[] = [];
+  const drop = (connection: Connection) => {
+    connections.delete(connection);
+    if (connections.size === 0) for (const done of drained.splice(0)) done();
+  };
 
   const listener = Bun.listen<Connection | undefined>({
     hostname: options.hostname ?? "0.0.0.0",
@@ -284,6 +296,14 @@ export function serveSsh(options: SshServerOptions): Promise<SshServer> {
   return Promise.resolve({
     port: listener.port,
     hostKey: hostKey.publicKey,
+    sessions: () => connections.size,
+    drain(): Promise<void> {
+      // Nothing new is answered; whoever is connected keeps their session
+      // until they end it, and this resolves when the last one has.
+      listener.stop(false);
+      if (connections.size === 0) return Promise.resolve();
+      return new Promise((resolve) => drained.push(resolve));
+    },
     stop(): void {
       for (const connection of [...connections]) connection.close();
       listener.stop(true);

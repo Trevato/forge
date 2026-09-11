@@ -11,6 +11,7 @@ import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
+import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -1000,6 +1001,7 @@ export async function serve(app: App): Promise<Servers> {
           return proxyApp(runtime, request, target, server);
       }
       const url = publicUrl(request, app.config.url);
+      if (url.pathname === "/healthz") return healthResponse();
       const matched = router.match(request.method, url.pathname);
       if (!matched) return noRoute(request.method, url.pathname);
       const auth = await resolveAuth(app, request);

@@ -28,6 +28,7 @@ import {
   cancelRun,
   createRun,
   getRun,
+  leaseLapsed,
   listActive,
   listQueued,
   type Run,
@@ -43,6 +44,7 @@ import {
   type CrewOptions,
   type Pause,
 } from "./runner.ts";
+import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { abortAgentRun } from "./running.ts";
 
 const log = createLog("crew");
@@ -274,14 +276,17 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
 }
 
 /**
- * A run the last forge left `running` was cut off by its restart: the
- * process that was working died with it. Each ends here as cancelled, and
- * the same task goes back on the queue under the same reason — the run that
- * starts reads the whole conversation, so nothing a person said is lost.
+ * A run a dead forge left `running` was cut off with it: its lease has
+ * lapsed. Each ends here as cancelled, and the same task goes back on the
+ * queue under the same reason — the run that starts reads the whole
+ * conversation, so nothing a person said is lost. A run whose lease is
+ * fresh is being worked by a forge still alive beside this one — the old
+ * process of a release, finishing — and is left to it: that forge queues
+ * the task again itself when it stops.
  */
 function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
-    if (run.state === "running")
+    if (run.state === "running" && leaseLapsed(run, STALE_AFTER_MS))
       requeue(app, run, "interrupted by a restart; queued again");
   }
 }

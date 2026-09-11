@@ -377,6 +377,46 @@ afterAll(() => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
+describe("ssh drain", () => {
+  test("a draining server keeps who is connected, answers nobody new, and ends when the last leaves", async () => {
+    const server = await start({ onSession: () => {} });
+    const opened = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: { data() {}, open() {}, close() {}, error() {} },
+    });
+    // The connection is counted the moment it opens.
+    const deadline = Date.now() + 2_000;
+    while (server.sessions() === 0 && Date.now() < deadline)
+      await Bun.sleep(10);
+    expect(server.sessions()).toBe(1);
+
+    let ended = false;
+    const drained = server.drain().then(() => {
+      ended = true;
+    });
+    await Bun.sleep(50);
+    // Still here: the open connection is kept, and the drain waits on it.
+    expect(server.sessions()).toBe(1);
+    expect(ended).toBe(false);
+    // Nobody new is answered.
+    const refused = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: { data() {}, open() {}, close() {}, error() {} },
+    }).then(
+      () => "connected",
+      () => "refused",
+    );
+    expect(refused).toBe("refused");
+    // The last one leaves, and the drain is done.
+    opened.end();
+    await drained;
+    expect(ended).toBe(true);
+    expect(server.sessions()).toBe(0);
+  });
+});
+
 describe("ssh exec sessions", () => {
   test("runs a command, returns output and an exit status", async () => {
     let seen: SshSession | undefined;

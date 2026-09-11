@@ -47,6 +47,7 @@ import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { holdLease } from "../runs/lease.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
 import {
   branchFor,
@@ -111,6 +112,7 @@ export async function executeAgentRun(
 ): Promise<Pause | undefined> {
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
+  const lease = holdLease(app.db, run.id);
   const controller = new AbortController();
   trackAgentRun(run.id, controller);
   const write = (line: string): void =>
@@ -127,6 +129,7 @@ export async function executeAgentRun(
     };
   } finally {
     untrackAgentRun(run.id);
+    lease();
   }
   // Whatever the agent left running in its clone — a server it started to
   // try something — ends with the run. The sandbox refuses it `kill`, so the

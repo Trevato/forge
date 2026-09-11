@@ -14,6 +14,9 @@ import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { startChecks } from "./checks/service.ts";
+import { failAbandonedRuns } from "./core/runs.ts";
+import { health } from "./http/health.ts";
+import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { pruneTokens } from "./core/tokens.ts";
 
@@ -155,18 +158,47 @@ if (ssh)
     hostKey: ssh.hostKey.fingerprint,
   });
 
+// A run whose forge died is failed by whichever forge notices, on boot and
+// on the way: an old process finishing beside a new one keeps its runs alive
+// by renewing their leases, so only a lapsed lease is a death.
+const leaseTimer = setInterval(
+  () => failAbandonedRuns(app.db, STALE_AFTER_MS),
+  30_000,
+);
+
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+let draining = false;
+
+/**
+ * A release does not drop a session. On SIGTERM this process stops taking
+ * new work — readiness says so, and the platform already routes new
+ * connections to the process that replaced it — stops the crew (their runs
+ * go back on the queue), the apps and the checks, and then keeps serving
+ * whoever is connected over SSH until they leave. Only then does it go.
+ */
 function shutdown(): void {
-  app.log.info("forge shutting down");
+  if (draining) return;
+  draining = true;
+  health.draining = true;
+  const sessions = ssh?.sessions() ?? 0;
+  app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
-  // Apps and agents are child processes: stop them before the listeners,
-  // so nothing is left running with nowhere to be reached.
+  clearInterval(leaseTimer);
   Promise.all([crew?.stop(), apps?.stop(), checks?.stop()])
     .catch(() => {})
+    .then(() => {
+      if (sessions > 0)
+        app.log.info("forge waiting for ssh sessions to end", {
+          sshSessions: sessions,
+        });
+      return ssh?.drain();
+    })
+    .catch(() => {})
     .finally(() => {
+      app.log.info("forge shutting down");
       ssh?.stop();
       servers.stop();
       app.close();

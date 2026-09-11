@@ -30,6 +30,7 @@ import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import { holdLease } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
@@ -127,11 +128,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     try {
       const claimed = claimRun(app.db, run.id);
       if (!claimed) return;
+      const lease = holdLease(app.db, run.id);
       announceRun(app, claimed);
       const write = (line: string): void =>
         appendRunLog(app.config.dataDir, run.id, line);
       const started = Date.now();
-      const outcome = await check(claimed, repo, write, signal);
+      const outcome = await check(claimed, repo, write, signal).finally(lease);
       const seconds = Math.round((Date.now() - started) / 1000);
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
