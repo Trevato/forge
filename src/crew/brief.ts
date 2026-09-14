@@ -103,7 +103,7 @@ export function taskPrompt(input: TaskInput): string {
   const body = taskBody(input);
   if (input.paused !== true) return body;
   return [
-    "Your last turn stopped when the provider's usage limit was reached; nothing you did was lost. This is the same session, and the clone is as you left it, uncommitted changes included. Carry on from where you stopped.",
+    "Your last turn was cut short — the provider's usage limit, or the forge restarting — and nothing you did was lost. This is the same session, and the clone is as you left it, uncommitted changes included. Carry on from where you stopped.",
     "",
     body,
   ].join("\n");

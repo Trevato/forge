@@ -181,5 +181,75 @@ sleep 120
     );
     expect(again).toHaveLength(1);
     expect(again[0]!.reason).toBe("feedback");
+    // …and carries on where it stopped: the clone is kept, the session resumed.
+    expect(again[0]!.attempt).toBe(1);
+    expect(again[0]!.summary).toContain("carries on");
+  }, 40_000);
+
+  test("a draining crew lets a run in flight finish and land; nothing is queued again", async () => {
+    await crew?.stop();
+    crew = undefined;
+    const created = await createRepo(app, alice, {
+      name: "grove",
+      visibility: "private",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# grove\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const issued = openIssue(app, alice, repo, { title: "Water", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    // A stand-in that takes its time, then finishes properly.
+    const brief = join(dataDir, "brief-claude");
+    writeFileSync(
+      brief,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+cat > /dev/null &
+echo '{"type":"system","subtype":"init","session_id":"brief-1","model":"fake"}'
+sleep 2
+echo "drained work" >> CREW.md
+git add -A && git commit -qm "drained" && git push -q -u origin HEAD
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while draining.","total_cost_usd":0.01,"num_turns":2,"session_id":"brief-1","terminal_reason":"completed"}'
+`,
+    );
+    chmodSync(brief, 0o755);
+    const queuedRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "assigned",
+    });
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: brief,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    const deadline = Date.now() + 20_000;
+    while (
+      getRun(app.db, queuedRun.id)?.state !== "running" &&
+      Date.now() < deadline
+    )
+      await Bun.sleep(100);
+    expect(getRun(app.db, queuedRun.id)?.state).toBe("running");
+
+    await crew.stop({ drain: true, drainMs: 30_000 });
+    crew = undefined;
+
+    const ended = getRun(app.db, queuedRun.id)!;
+    expect(ended.state).toBe("ok");
+    expect(ended.summary).toMatch(/^opened pull #\d+/);
+    expect(
+      listQueued(app.db, "agent").filter((r) => r.issueId === issue.id),
+    ).toHaveLength(0);
   }, 40_000);
 });

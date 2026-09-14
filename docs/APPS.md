@@ -270,10 +270,13 @@ browser.
 
 The forge is one process on one volume, and a release replaces it. The new
 process comes up beside the old one and takes everything new once it is
-ready; the old one drains: it stops its crew (their tasks go back on the
-queue), its apps and its checks, says so on `/healthz`, and keeps serving
+ready; the old one drains: it starts no new crew runs and lets the ones in
+flight finish and land (a run cut short is a person's money spent twice),
+stops its apps and its checks, says so on `/healthz`, and keeps serving
 whoever is connected over SSH until they leave — for up to an hour — and
-only then goes. SQLite in WAL mode carries two processes for that window.
+only then goes. A run that does have to be cut short, by a crash or the
+hour running out, is queued again to carry on in the clone it left, in the
+same session. SQLite in WAL mode carries two processes for that window.
 Each running run carries a lease its process renews every fifteen seconds;
 a forge coming up fails only runs whose lease has lapsed, so the old
 process's live work is never mistaken for a crash's leftovers, and a real

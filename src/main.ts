@@ -174,8 +174,8 @@ let draining = false;
 /**
  * A release does not drop a session. On SIGTERM this process stops taking
  * new work — readiness says so, and the platform already routes new
- * connections to the process that replaced it — stops the crew (their runs
- * go back on the queue), the apps and the checks, and then keeps serving
+ * connections to the process that replaced it — lets the crew's runs in
+ * flight finish and land, stops the apps and the checks, and keeps serving
  * whoever is connected over SSH until they leave. Only then does it go.
  */
 function shutdown(): void {
@@ -187,7 +187,7 @@ function shutdown(): void {
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
   clearInterval(leaseTimer);
-  Promise.all([crew?.stop(), apps?.stop(), checks?.stop()])
+  Promise.all([crew?.stop({ drain: true }), apps?.stop(), checks?.stop()])
     .catch(() => {})
     .then(() => {
       if (sessions > 0)
