@@ -14,6 +14,7 @@ import { syncFork } from "../../actions/forks.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
+  canRead,
   canWrite,
   getRepoById,
   listForks,
@@ -29,6 +30,7 @@ import {
   loadRepo,
   notFoundPage,
   repoBase,
+  repoHeader,
   scopeHeader,
   signInFirst,
 } from "../chrome.ts";
@@ -75,6 +77,42 @@ export { pathCrumbs, refMenu, refSet, refSetFrom } from "./refs.ts";
 
 // ---- fork ----
 
+/**
+ * GET /:owner/:name/forks — every fork of this repository the viewer may
+ * see, newest first. The count on the repository page is the way in.
+ */
+export function forksPage(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  const forks = listForks(ctx.app.db, repo.id).filter((fork) =>
+    canRead(ctx.app.db, fork, ctx.auth.user),
+  );
+  const body = html`${repoHeader(ctx, repo, "code")}
+    <div class="page-head mt">
+      <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
+    </div>
+    ${forks.length === 0
+      ? empty({
+          icon: "fork",
+          title: "No forks yet",
+          note: "A fork is a copy under another name that can propose changes back here.",
+        })
+      : listCard(
+          forks.map((fork) =>
+            row({
+              href: `/${fork.ownerName}/${fork.name}`,
+              nav: true,
+              lead: icon("fork"),
+              title: `${fork.ownerName}/${fork.name}`,
+              meta: html`${fork.description === ""
+                ? null
+                : html`${fork.description} · `}${fork.visibility}`,
+            }),
+          ),
+        )}`;
+  return page({ ctx, title: `Forks · ${repo.ownerName}/${repo.name}`, body });
+}
+
 /** The "forked from …" lineage line and a Fork button, for the repo home. */
 function forkBar(ctx: Ctx, repo: Repo): Html {
   const canFork =
@@ -85,8 +123,8 @@ function forkBar(ctx: Ctx, repo: Repo): Html {
     ${when(
       forkCount > 0,
       () =>
-        html`<span class="muted small"
-          >${icon("fork")} ${forkCount} fork${forkCount === 1 ? "" : "s"}</span
+        html`<a class="muted small" href="${repoBase(repo)}/forks"
+          >${icon("fork")} ${forkCount} fork${forkCount === 1 ? "" : "s"}</a
         >`,
     )}
     <span class="spacer"></span>

@@ -324,6 +324,38 @@ describe("apps: production, previews, data, gates, crew", () => {
       `/__forge/grant?t=${record.id}.production.9999999999999.AAAA`,
     );
     expect(forged.status).toBe(404);
+
+    // A person arriving by the link is sent to the forge to sign in and be
+    // vouched for; a script gets the flat answer.
+    const arrived = await viaHost(`hello.${DOMAIN}`, "/notes?x=1", {
+      headers: { accept: "text/html,*/*" },
+    });
+    expect(arrived.status).toBe(303);
+    const sentTo = new URL(arrived.headers.get("location") ?? "");
+    expect(sentTo.pathname).toBe("/apps/open");
+    expect(sentTo.searchParams.get("host")).toBe(`hello.${DOMAIN}`);
+    expect(sentTo.searchParams.get("to")).toBe("/notes?x=1");
+    expect(
+      (await viaHost(`hello.${DOMAIN}`, "/", { headers: { accept: "*/*" } }))
+        .status,
+    ).toBe(404);
+    // At the forge: a stranger is asked to sign in; a reader is sent back
+    // with a grant for the page they wanted; someone who cannot see the
+    // repository gets not found.
+    const open = `${servers.url}${sentTo.pathname}${sentTo.search}`;
+    const anonymous = await fetch(open, { redirect: "manual" });
+    expect(anonymous.status).toBe(303);
+    expect(anonymous.headers.get("location") ?? "").toContain("/signin");
+    const token = createToken(app.db, alice.id, "open", "rw");
+    const vouched = await fetch(open, {
+      redirect: "manual",
+      headers: { authorization: `Bearer ${token.token}` },
+    });
+    expect(vouched.status).toBe(302);
+    const back = new URL(vouched.headers.get("location") ?? "");
+    expect(back.host).toBe(`hello.${DOMAIN}:${servers.port}`);
+    expect(back.pathname).toBe("/__forge/grant");
+    expect(back.searchParams.get("to")).toBe("/notes?x=1");
     updateAppSettings(app, alice, repo, { access: "public" });
   });
 

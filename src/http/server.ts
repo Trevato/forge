@@ -43,6 +43,7 @@ import {
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import {
   blobPage,
+  forksPage,
   forkSubmit,
   pathsJson,
   pinSubmit,
@@ -81,6 +82,7 @@ import {
 } from "../web/pages/thread.ts";
 import {
   appOpen,
+  appsOpen,
   appPage,
   appRedeploy,
   appsList,
@@ -562,6 +564,8 @@ export function buildRouter(): Router<Handler> {
   // environment goes through the forge so a private app gets its grant.
   router.add("GET", "/:owner/:name/app", appPage);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
+  // Where a private app sends a person who arrived by its link.
+  router.add("GET", "/apps/open", appsOpen);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/runs", runsList);
@@ -596,6 +600,7 @@ export function buildRouter(): Router<Handler> {
 
   // Branches: the list, and the two verbs a branch list exists for. Both
   // mutations go through actions/branches.ts, so a mirror asks its origin.
+  router.add("GET", "/:owner/:name/forks", forksPage);
   router.add("GET", "/:owner/:name/branches", branchesPage);
   router.add("POST", "/:owner/:name/branches", branchCreate);
   router.add("POST", "/:owner/:name/branches/:branch/delete", branchDelete);

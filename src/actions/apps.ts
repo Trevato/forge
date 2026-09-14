@@ -358,6 +358,7 @@ export function openEnvUrl(
   actor: User | undefined,
   repo: Repo,
   env: string,
+  path = "/",
 ): Result<string, EnvError | "unauthorized"> {
   const reader = requireReader(app, actor, repo);
   if (!reader.ok) return reader;
@@ -370,9 +371,9 @@ export function openEnvUrl(
     // A grant names a person; anonymous visitors get the same answer a
     // private repo gives them.
     if (actor === undefined) return err("unauthorized");
-    return ok(grantUrl(runtime, { app: record, env }));
+    return ok(grantUrl(runtime, { app: record, env }, path));
   }
-  return ok(runtime.urlFor(record, env));
+  return ok(`${runtime.urlFor(record, env)}${path === "/" ? "" : path}`);
 }
 
 /** Deploy an environment again at its current commit. */

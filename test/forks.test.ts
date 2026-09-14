@@ -242,6 +242,16 @@ describe("forks", () => {
     ).toBe(bobBefore);
   });
 
+  test("the fork count on the repository page opens the list of forks", async () => {
+    const home = await (await fetch(`${base}/alice/app`)).text();
+    expect(home).toContain('href="/alice/app/forks"');
+    expect(home).toContain("2 forks");
+    const listed = await (await fetch(`${base}/alice/app/forks`)).text();
+    expect(listed).toContain("2 forks");
+    expect(listed).toContain('href="/bob/app"');
+    expect(listed).toContain('href="/carol/app"');
+  });
+
   test("a stranger cannot fork a private repo", async () => {
     await fetch(`${base}/api/v1/repos`, {
       method: "POST",

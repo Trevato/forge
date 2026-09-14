@@ -352,7 +352,10 @@ function appSettingsView(
         ${selectField({
           label: "Access",
           name: "access",
-          hint: "A private app answers only to someone who can see this repository — the forge vouches for them on the way in.",
+          hint:
+            values.access === "public"
+              ? `Right now anyone with the link can open it, signed in or not. The code stays as ${repo.visibility} as the repository is: the two are set separately.`
+              : `Right now a visitor is asked to sign in and let through only if they can see this repository${repo.visibility === "private" ? " — its collaborators, since the repository is private" : " — anyone signed in, since the repository is public"}. Everyone else sees not found. Choose Public to share it with people who cannot see the code.`,
           options: [
             {
               value: "private",

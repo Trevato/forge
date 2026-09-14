@@ -72,10 +72,14 @@ around it. None is advisory.
    the merge — never from a status a caller computed earlier.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
-   visibility). A private environment sets no cookie of its own; a visitor
-   is sent through the forge, which checks `canRead` on the repository and
-   returns them with a signed, short-lived grant. Guessing the hostname
-   yields the forge's own "not found".
+   visibility), and it is set apart from the repository's own: the code can
+   be private while the app is public, or the other way round. A private
+   environment sets no cookie of its own; a person arriving by its link is
+   sent to the forge to sign in, which checks `canRead` on the repository
+   and returns them with a signed, short-lived grant for the page they
+   wanted. Someone who cannot see the repository, and anything that is not
+   a person navigating, gets the forge's own "not found". Guessing the
+   hostname yields the same.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
