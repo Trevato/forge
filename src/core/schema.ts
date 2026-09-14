@@ -680,4 +680,9 @@ export const migrations: readonly string[] = [
   `
   ALTER TABLE run ADD COLUMN heartbeat_at TEXT;
   `,
+
+  // 19 — how many turns an agent's run took, beside what it cost.
+  `
+  ALTER TABLE run ADD COLUMN turns INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

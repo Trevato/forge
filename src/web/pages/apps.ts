@@ -50,6 +50,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import {
   badge,
   btn,
@@ -542,8 +543,8 @@ export function appPage(ctx: Ctx): Response {
           runs.map((run) => runRow(base, run, actors, issues)),
           { head: runsHead },
         );
-  // Something is still moving: refresh without a script, and the live pill
-  // says so with one.
+  // Something still moving is news the live pill announces; the page is
+  // never pulled out from under a reader.
   const moving =
     envs.some((env) => env.state === "deploying") ||
     runs.some((run) => !isTerminal(run.state));
@@ -642,7 +643,8 @@ export function appPage(ctx: Ctx): Response {
         <div class="mt">${runsCard}</div>
       </div>
       <aside>${about} ${crewCard}</aside>
-    </div>`;
+    </div>
+    ${when(moving, () => liveMount({ repo: base }))}`;
 
   return page({
     ctx,
@@ -650,7 +652,7 @@ export function appPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(repo),
     body,
-    ...(moving ? { refresh: { seconds: 5 } } : {}),
+    scriptJs: liveClientJs,
   });
 }
 

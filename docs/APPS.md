@@ -311,6 +311,15 @@ optimization. `run.queued`, `run.started` and `run.finished` ride the event
 outbox like every other state change, so webhooks and the SSE stream see
 them.
 
+A run's page draws the log line by line as it is written — the tools the
+agent reached for, the forge's own words, the agent speaking — with the
+clock running and, at the end, what the run cost in money and turns. The
+stream numbers every line, so a browser that reconnects hears only what
+followed; nothing on the page reloads under a reader. Each agent's row on
+the crew page carries the numbers that say how it is doing: runs and how
+many landed, pulls a person merged, spend, and the mean cost, time and
+turns of a run.
+
 On a pull, the runs for the current head are its checks. A deploy run that
 fails — install, build, test, or the app never answering — fails the check
 and the preview shows the log where it stopped. A push makes new runs;

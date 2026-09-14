@@ -155,6 +155,7 @@ export async function executeAgentRun(
     summary: outcome.summary,
     sessionId: outcome.sessionId,
     costUsd: outcome.costUsd,
+    turns: outcome.turns,
   });
   if (done) announceRun(app, done);
   return undefined;
@@ -212,6 +213,7 @@ type Outcome =
       readonly summary: string;
       readonly sessionId?: string | undefined;
       readonly costUsd?: number | undefined;
+      readonly turns?: number | undefined;
     }
   | {
       /** The provider turned the run away; it goes on again at `resumeAt`. */
@@ -517,6 +519,7 @@ async function work(
         ...wrapped,
         sessionId: wrapped.sessionId || result.sessionId,
         costUsd: result.costUsd + wrapped.costUsd,
+        turns: result.turns + wrapped.turns,
       };
       noteRunProgress(app.db, run.id, { costUsd: result.costUsd });
     }
@@ -526,6 +529,7 @@ async function work(
         summary: "cancelled",
         sessionId: result.sessionId,
         costUsd: result.costUsd,
+        turns: result.turns,
       };
 
     // The decline contract: an agent that should not do the task says so
@@ -547,6 +551,7 @@ async function work(
         summary: `declined: ${(why.split("\n")[0] ?? "").slice(0, 200)}`,
         sessionId: result.sessionId,
         costUsd: result.costUsd,
+        turns: result.turns,
       };
     }
 
@@ -575,6 +580,7 @@ async function work(
       summary: landed.summary + (result.ok ? "" : ` (${result.reason})`),
       sessionId: result.sessionId,
       costUsd: result.costUsd,
+      turns: result.turns,
     };
   } finally {
     deleteToken(app.db, agent.user.id, token.id);

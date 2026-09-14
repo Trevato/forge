@@ -47,6 +47,8 @@ export interface Run {
   readonly attempt: number;
   /** When the process working this run last said it still was. */
   readonly heartbeatAt: string | null;
+  /** For an agent run: how many turns the model took. */
+  readonly turns: number;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
@@ -69,6 +71,7 @@ interface RunRow {
   not_before: string | null;
   attempt: number;
   heartbeat_at: string | null;
+  turns: number;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -91,6 +94,7 @@ const toRun = (r: RunRow): Run => ({
   notBefore: r.not_before,
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
+  turns: r.turns,
   createdAt: r.created_at,
   startedAt: r.started_at,
   finishedAt: r.finished_at,
@@ -171,12 +175,14 @@ export function finishRun(
     summary: string;
     sessionId?: string | undefined;
     costUsd?: number | undefined;
+    turns?: number | undefined;
   },
 ): Run | undefined {
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3,
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
+         turns = COALESCE(?6, turns),
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'running'`,
     )
@@ -186,6 +192,7 @@ export function finishRun(
       outcome.summary.slice(0, 500),
       outcome.sessionId ?? null,
       outcome.costUsd ?? null,
+      outcome.turns ?? null,
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
@@ -457,6 +464,11 @@ export interface AgentTotals {
   readonly spentUsd: number;
   /** Mean wall-clock of finished runs, in seconds; null before the first. */
   readonly meanSeconds: number | null;
+  /** Mean cost of a finished run, and mean turns, over runs that reported them. */
+  readonly meanCostUsd: number | null;
+  readonly meanTurns: number | null;
+  /** Pulls this agent opened that a person merged. */
+  readonly merged: number;
 }
 
 /** Totals of agent runs, keyed by the agent's user id. */
@@ -470,6 +482,9 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
         failed: number;
         spent: number;
         mean_seconds: number | null;
+        mean_cost: number | null;
+        mean_turns: number | null;
+        merged: number;
       },
       []
     >(
@@ -480,7 +495,13 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
               SUM(cost_usd) AS spent,
               AVG(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
                        THEN (julianday(finished_at) - julianday(started_at)) * 86400 END)
-                AS mean_seconds
+                AS mean_seconds,
+              AVG(CASE WHEN state IN ('ok','failed') AND cost_usd > 0 THEN cost_usd END)
+                AS mean_cost,
+              AVG(CASE WHEN turns > 0 THEN turns END) AS mean_turns,
+              (SELECT COUNT(*) FROM pull JOIN issue ON issue.id = pull.issue_id
+                WHERE issue.author_id = run.actor_id AND pull.merged_at IS NOT NULL)
+                AS merged
          FROM run
         WHERE kind = 'agent' AND actor_id IS NOT NULL
         GROUP BY actor_id`,
@@ -495,6 +516,9 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
         failed: r.failed,
         spentUsd: r.spent,
         meanSeconds: r.mean_seconds,
+        meanCostUsd: r.mean_cost,
+        meanTurns: r.mean_turns,
+        merged: r.merged,
       },
     ]),
   );

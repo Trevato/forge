@@ -213,6 +213,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(prompt).toContain("Along the fence.");
     expect(prompt).toContain("bot/1-plant-tulips");
 
+    // What the run cost in turns is kept beside what it cost in money.
+    expect(run.turns).toBe(3);
     const pulls = listPulls(app.db, repo.id, { state: "open" });
     expect(pulls.length).toBe(1);
     const pull = pulls[0]!;

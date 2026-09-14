@@ -94,6 +94,36 @@ export const reasonWords = (reason: string): string =>
 export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
 
 /** `12s`, `3m 4s`, `1h 2m` — how long a run took, or has taken so far. */
+/**
+ * What kind of line a run wrote: a tool the agent reached for (`→ Bash …`),
+ * a word from the forge itself (cloning, pushing, what the model cost), or
+ * the agent speaking. The script that appends live lines sorts them the
+ * same way, so a page and its stream look alike.
+ */
+export type LineKind = "tool" | "forge" | "say";
+
+const FORGE_LINE =
+  /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+
+export function lineKind(line: string): LineKind {
+  if (line.startsWith("→ ")) return "tool";
+  if (FORGE_LINE.test(line)) return "forge";
+  return "say";
+}
+
+/** One line of a run's log, as the page draws it. */
+export function logLine(line: string): Html {
+  const kind = lineKind(line);
+  if (kind === "tool") {
+    const rest = line.slice(2);
+    const at = rest.indexOf(" ");
+    const tool = at === -1 ? rest : rest.slice(0, at);
+    const args = at === -1 ? "" : rest.slice(at + 1);
+    return html`<div class="ln ln-tool"><b>${tool}</b> ${args}</div>`;
+  }
+  return html`<div class="ln ln-${kind}">${line}</div>`;
+}
+
 export function durationText(run: Run): string | undefined {
   if (run.startedAt === null) return undefined;
   const end = run.finishedAt === null ? Date.now() : Date.parse(run.finishedAt);
@@ -297,7 +327,6 @@ export function runPage(ctx: Ctx): Response {
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   const duration = durationText(run);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
-  const text = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 
   const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
@@ -334,15 +363,21 @@ export function runPage(ctx: Ctx): Response {
               >#${i.number} ${i.title}</a
             >`,
         )}
-        ${when(
-          run.kind === "agent" && run.costUsd > 0,
-          () => html`<span class="num">${costText(run.costUsd)} spent</span>`,
-        )}
+        <span class="num" id="run-cost" ${run.costUsd > 0 ? null : html`hidden`}
+          >${costText(run.costUsd)} spent</span
+        >
+        <span class="num" id="run-turns" ${run.turns > 0 ? null : html`hidden`}
+          >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
+        >
         <span>queued ${time(run.createdAt)}</span>
         ${when(
           duration,
           (d) =>
-            html`<span class="num"
+            html`<span
+              class="num"
+              id="run-elapsed"
+              data-started="${run.startedAt ?? ""}"
+              data-finished="${run.finishedAt ?? ""}"
               >${run.finishedAt === null ? "running for" : "took"} ${d}</span
             >`,
         )}
@@ -376,13 +411,13 @@ export function runPage(ctx: Ctx): Response {
           Nothing has been logged yet.
         </p>`,
     )}
-    <pre
+    <div
       class="run-log mt"
       id="run-log"
       ${unfinished ? html`data-stream="${stream}"` : null}
     >
-${text}</pre
-    >`;
+      ${lines.map(logLine)}
+    </div>`;
 
   return page({
     ctx,
