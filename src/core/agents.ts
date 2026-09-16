@@ -247,3 +247,70 @@ export function deleteAgent(db: Database, userId: string): boolean {
   }
   return true;
 }
+
+// ---- roles on a crew ----
+
+/**
+ * What a crew member is for on one repository: a builder takes what is
+ * ready, a planner turns a direction into a map, a reviewer looks at what
+ * landed. Per repository, because the same agent may plan one and build
+ * another.
+ */
+export type CrewRole = "builder" | "planner" | "reviewer";
+export const CREW_ROLES: readonly CrewRole[] = [
+  "builder",
+  "planner",
+  "reviewer",
+];
+export const isCrewRole = (value: unknown): value is CrewRole =>
+  (CREW_ROLES as readonly unknown[]).includes(value);
+
+export function crewRole(
+  db: Database,
+  repoId: string,
+  userId: string,
+): CrewRole | undefined {
+  const row = db
+    .query<
+      { role: string },
+      [string, string]
+    >("SELECT role FROM repo_crew WHERE repo_id = ?1 AND user_id = ?2")
+    .get(repoId, userId);
+  return row && isCrewRole(row.role) ? row.role : row ? "builder" : undefined;
+}
+
+export function setCrewRole(
+  db: Database,
+  repoId: string,
+  userId: string,
+  role: CrewRole,
+): boolean {
+  return (
+    db
+      .query(
+        "UPDATE repo_crew SET role = ?3 WHERE repo_id = ?1 AND user_id = ?2",
+      )
+      .run(repoId, userId, role).changes > 0
+  );
+}
+
+/** The crew with each member's role, by name. */
+export function listCrewRoles(
+  db: Database,
+  repoId: string,
+): { agent: Agent; role: CrewRole }[] {
+  const roles = new Map(
+    db
+      .query<{ user_id: string; role: string }, [string]>(
+        "SELECT user_id, role FROM repo_crew WHERE repo_id = ?1",
+      )
+      .all(repoId)
+      .map(
+        (r) => [r.user_id, isCrewRole(r.role) ? r.role : "builder"] as const,
+      ),
+  );
+  return listCrew(db, repoId).map((agent) => ({
+    agent,
+    role: roles.get(agent.user.id) ?? "builder",
+  }));
+}

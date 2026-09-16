@@ -121,8 +121,11 @@ import {
   appEnvSet,
   appSettingsPage,
   appSettingsUpdate,
+  autonomySettingsPage,
+  autonomySettingsUpdate,
   crewAdd,
   crewRemove,
+  crewRoleUpdate,
   crewSettingsPage,
   dangerPage,
   hooksPage,
@@ -655,6 +658,13 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/settings/crew/:username/remove",
     crewRemove,
   );
+  router.add(
+    "POST",
+    "/:owner/:name/settings/crew/:username/role",
+    crewRoleUpdate,
+  );
+  router.add("GET", "/:owner/:name/settings/autonomy", autonomySettingsPage);
+  router.add("POST", "/:owner/:name/settings/autonomy", autonomySettingsUpdate);
   router.add("GET", "/:owner/:name/settings/labels", labelsPage);
   router.add("POST", "/:owner/:name/settings/labels", labelCreate);
   router.add("POST", "/:owner/:name/settings/labels/:id", labelUpdate);

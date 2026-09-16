@@ -34,6 +34,7 @@ import {
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { icon } from "../ui.ts";
+import { autonomyStatus } from "../../crew/autonomy.ts";
 
 // ---- layout ----
 
@@ -339,6 +340,25 @@ export const mapCss = /* css */ `
 .map-legend i.crit { border: 2px solid var(--accent); background: transparent; }
 `;
 
+/** One line on how the repository runs itself, when it does. */
+function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
+  if (repo.autonomy === "off") return null;
+  const s = autonomyStatus(ctx.app, repo);
+  const paused =
+    s.paused === "ceiling"
+      ? " · paused at the ceiling until 00:00 UTC"
+      : s.paused === "no crew"
+        ? " · paused: no crew"
+        : s.paused === "nobody"
+          ? " · paused: nobody to act as"
+          : "";
+  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused}`;
+  return html`<p class="small map-autonomy">
+    ${icon("play")} ${line} ·
+    <a href="${repoBase(repo)}/settings/autonomy">settings</a>
+  </p>`;
+}
+
 /** GET /:owner/:name/map */
 export function mapPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
@@ -355,6 +375,7 @@ export function mapPage(ctx: Ctx): Response {
         What waits for what. The left edge is ready now; the emphasised chain is
         the least work that still has to happen in order.
       </p>
+      ${autonomyLine(ctx, repo)}
     </div>
     <div class="map-wrap">
       <div>

@@ -38,6 +38,7 @@ import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { sandboxAvailable } from "./sandbox.ts";
+import { AUTONOMY_TICK_MS, autonomyTick, landIfGreen } from "./autonomy.ts";
 import { whenText } from "./limits.ts";
 import {
   executeAgentRun,
@@ -119,9 +120,16 @@ export async function startCrew(
       });
     }
   });
+  // Repositories that run on their own take a turn once a minute, on the
+  // same clock as the pump, so a pick becomes a run on the next tick.
+  let lastAutonomy = 0;
   const timer = setInterval(() => {
     if (stopped) return;
     requeueInterrupted(app);
+    if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
+      lastAutonomy = Date.now();
+      autonomyTick(app);
+    }
     pump(app, ready, inFlight);
   }, TICK_MS);
   requeueInterrupted(app);
@@ -240,18 +248,31 @@ function route(app: App, event: ForgeEvent): void {
       return;
     }
     case "run.finished": {
-      // A preview that failed to deploy, or a check that failed: either
-      // is the agent's to look at.
       if (
-        (event.payload["kind"] !== "deploy" &&
-          event.payload["kind"] !== "check") ||
-        event.payload["state"] !== "failed"
+        event.payload["kind"] !== "deploy" &&
+        event.payload["kind"] !== "check"
       )
         return;
       const issueId = event.payload["issueId"];
       if (typeof issueId !== "string") return;
       const issue = getIssueById(app.db, issueId);
       if (!issue || issue.kind !== "pull" || issue.state !== "open") return;
+      // Green, in a repository that ships on green: land it.
+      if (event.payload["state"] === "ok") {
+        if (repo.autonomy !== "autonomous") return;
+        const pull = getPull(app.db, repo.id, issue.number);
+        if (!pull) return;
+        landIfGreen(app, repo, pull).catch((error) =>
+          log.error("landing on green failed", {
+            pull: issue.number,
+            error: String(error),
+          }),
+        );
+        return;
+      }
+      if (event.payload["state"] !== "failed") return;
+      // A preview that failed to deploy, or a check that failed: either
+      // is the agent's to look at.
       const agent = agentFor(app, issue);
       if (!agent) return;
       // Bounded: after a few failed checks in a row the agent stops and a

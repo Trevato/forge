@@ -64,3 +64,48 @@ on this forge — turns a direction into a map that way; a builder that finds
 a task too big for one run splits it into linked issues instead of leaving
 half of it. Either way the plan is where everyone can see it, and closing
 an issue is what frees the next.
+
+## A repository on its own
+
+A repository has one setting for how much the crew does without being
+asked, under **Settings → Autonomy**:
+
+- **Off.** Every run starts because a person assigned, commented, or a
+  check failed. The default.
+- **Assisted.** Once a minute, for as many free slots as the repository
+  allows, the top of the ready list is assigned to a builder. Every green
+  pull waits for a person's look.
+- **Autonomous.** The same, and a pull whose head has a passing check and
+  a passing deploy lands as the person who turned autonomy on — with their
+  review and check requirements still enforced inside the merge. When
+  nothing is ready and nothing is in flight, the map has run dry: the
+  planner is given the direction.
+
+Everything it does, it does as that person, through the same actions they
+would take by hand — an assignment, a merge — so every run and every
+landing is credited and bounded exactly as theirs would be.
+
+**The crew's roles.** Each crew member has a role on the repository, set
+under **Settings → Crew**: a _builder_ takes what is ready; a _planner_
+turns the direction into a map; a _reviewer_ is for the look-back. Which
+builder takes an issue is one fixed-choice function: the issue's own
+assignee when it is a builder here, else the builder with the least in
+flight, then by name — the place a faster or wiser decider plugs in later.
+
+**The direction** is one or two sentences on the settings page. When the
+map runs dry the forge opens an issue titled _Direction: …_ that carries
+it, assigns the planner, and the planner's brief says the rest: open
+issues each small enough for one run, link what waits for what, assign
+nobody, push nothing. The direction issue stays open, is never picked as
+work, and the planner is not asked again for six hours unless its run
+ended.
+
+**What holds it.** The ceiling is dollars of agent spend per UTC day; at
+the ceiling the crew stops picking until midnight, and nothing in flight is
+cut. Slots are runs at once — the WIP limit — and a repository never
+starts more than that, whatever the forge-wide concurrency allows. A
+failing check on an agent's pull goes back to the agent as ever, and after
+the same bounded number of tries the crew stops and waits for a person:
+autonomy re-queues nothing a person must decide. The map page says how it
+stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why it is
+paused when it is.

@@ -20,7 +20,7 @@ import { forkRepo } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { getAgent, type Agent } from "../core/agents.ts";
+import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   getIssue,
@@ -375,6 +375,7 @@ async function work(
       isApp: record !== undefined,
       previewUrl,
       resuming: previous?.sessionId !== undefined && previous.sessionId !== "",
+      role: crewRole(app.db, repo.id, agent.user.id),
     };
     const failedCheck =
       reason === "check_failed" && pull
