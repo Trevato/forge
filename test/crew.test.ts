@@ -22,6 +22,7 @@ import {
 import { mergePull } from "../src/actions/pulls.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { sandboxAvailable } from "../src/crew/sandbox.ts";
 import {
   queueAgentRun,
   startCrew,
@@ -194,7 +195,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
         filesystem: { denyRead: string[] };
       };
     };
-    expect(settings.sandbox.enabled).toBe(true);
+    // Enforced where this host can hold a run to it; switched off, and said
+    // so, where it cannot (a locked-down container has no bubblewrap).
+    expect(settings.sandbox.enabled).toBe((await sandboxAvailable()).ok);
     expect(settings.sandbox.network.allowedDomains).toContain("localhost");
     expect(settings.sandbox.network.allowedDomains).toContain(
       "registry.npmjs.org",
