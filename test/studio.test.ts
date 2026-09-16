@@ -29,7 +29,7 @@ describe("the studio", () => {
 
   const get = (path: string, extra: Record<string, string> = {}) =>
     fetch(`${base}${path}`, {
-      headers: { cookie, ...extra },
+      headers: { cookie: `${cookie}; forge_mode=studio`, ...extra },
       redirect: "manual",
     });
   const post = (path: string, body: Record<string, string>, extra = "") =>
@@ -100,7 +100,11 @@ describe("the studio", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("home is the studio by default and the repositories in dev; the switch is a cookie", async () => {
+  test("home is the studio with the cookie and the repositories without; the switch is a cookie", async () => {
+    const plain = await (
+      await fetch(`${base}/`, { headers: { cookie } })
+    ).text();
+    expect(plain).not.toContain("<h1>Studio</h1>");
     const home = await (await get("/")).text();
     expect(home).toContain("Studio");
     expect(home).toContain("notes");
