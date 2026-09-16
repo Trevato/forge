@@ -30,6 +30,12 @@ export async function readForm(
   try {
     return await ctx.request.formData();
   } catch {
+    // A form with no fields — a bare button, or a client that sent no body
+    // at all — is an empty form, not a malformed one.
+    const type = ctx.request.headers.get("content-type");
+    const length = ctx.request.headers.get("content-length");
+    if (type === null || length === "0")
+      return new FormData() as unknown as Form;
     return new Response("bad request", { status: 400 });
   }
 }

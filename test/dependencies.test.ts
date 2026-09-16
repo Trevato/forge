@@ -222,6 +222,31 @@ describe("dependencies", () => {
     expect(removeDependency(app.db, issue(7).id, issue(5).id)).toBe(false);
   });
 
+  test("a repository with no issues has one empty state on its map, not two", async () => {
+    const cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const bare = await createRepo(app, alice, {
+      name: "bare",
+      visibility: "private",
+    });
+    if (!bare.ok) throw new Error(String(bare.error));
+    const map = await (
+      await fetch(`${base}/alice/bare/map`, { headers: { cookie } })
+    ).text();
+    expect(map).toContain("No open issues to map");
+    expect(map).not.toContain("Nothing is ready");
+  });
+
   test("a stranger reads nothing and links nothing", async () => {
     const b = await createUser(app.db, {
       username: "bob",

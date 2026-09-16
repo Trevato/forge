@@ -183,12 +183,23 @@ describe("the studio", () => {
     });
     claimRun(app.db, check.id);
     finishRun(app.db, check.id, { state: "ok", summary: "check passed in 1s" });
-    const shipped = await post(`/alice/notes/pulls/${pull.number}/ship`, {});
+    // A bare POST — a button with no fields, or a client that sent no body
+    // at all — ships too: an empty form is not a bad request.
+    const shipped = await fetch(
+      `${base}/alice/notes/pulls/${pull.number}/ship`,
+      {
+        method: "POST",
+        headers: { cookie: `${cookie}; forge_mode=studio`, origin: base },
+        redirect: "manual",
+      },
+    );
     expect(shipped.status).toBe(303);
     expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
     expect(getIssue(app.db, repo.id, 1)?.state).toBe("closed");
     const page = await (await get("/alice/notes")).text();
     expect(page).toContain("shipped");
+    // What was told and then shipped is not still "waiting" in Now.
+    expect(page).not.toContain(">waiting<");
     expect(getUserByName(app.db, "scout")).toBeDefined();
   });
 });

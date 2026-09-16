@@ -391,16 +391,18 @@ export function mapPage(ctx: Ctx): Response {
         </div>
       </div>
       <aside>
-        ${rankedList(
-          repo,
-          "Ready now",
-          ready,
-          (r) =>
-            r.holdsUp === 0
-              ? "holds nothing up"
-              : `finishing it frees ${r.holdsUp}`,
-          "Nothing is ready: everything open waits for something.",
-        )}
+        ${graph.issues.length === 0
+          ? null
+          : rankedList(
+              repo,
+              "Ready now",
+              ready,
+              (r) =>
+                r.holdsUp === 0
+                  ? "holds nothing up"
+                  : `finishing it frees ${r.holdsUp}`,
+              "Nothing is ready: everything open waits for something.",
+            )}
         ${rankedList(
           repo,
           "Blocked on",
