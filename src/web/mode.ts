@@ -1,9 +1,10 @@
 /**
- * Two ways of seeing one forge. Studio is the default: apps are the unit,
- * and a person tells the crew, looks at what it made, and decides when it
- * asks. Dev shows the git underneath — code, commits, branches, runs —
- * unchanged. The choice is a cookie on this browser, like the theme; the
- * URLs are the same in both, so a link works whichever way its reader sees.
+ * Two ways of seeing one forge. Dev is the forge as it has always been —
+ * code, commits, branches, runs. Studio makes apps the unit: a person tells
+ * the crew, looks at what it made, and decides when it asks. The choice is
+ * a cookie on this browser, like the theme; the URLs are the same in both,
+ * so a link works whichever way its reader sees. Dev is the default until
+ * the studio has earned the front door.
  */
 
 export type Mode = "studio" | "dev";
@@ -11,7 +12,7 @@ export type Mode = "studio" | "dev";
 export const isMode = (value: unknown): value is Mode =>
   value === "studio" || value === "dev";
 
-export const DEFAULT_MODE: Mode = "studio";
+export const DEFAULT_MODE: Mode = "dev";
 
 export function modeCookie(mode: Mode | undefined, secure: boolean): string {
   const flags = `Path=/; SameSite=Lax; HttpOnly${secure ? "; Secure" : ""}`;
