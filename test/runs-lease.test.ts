@@ -66,6 +66,9 @@ describe("run leases", () => {
     expect(leaseLapsed(getRun(app.db, fresh.id)!, STALE_AFTER_MS)).toBe(false);
     expect(leaseLapsed(getRun(app.db, stale.id)!, STALE_AFTER_MS)).toBe(true);
 
+    // Narrowed to deploys, a lapsed check is not this sweep's to fail.
+    expect(failAbandonedRuns(app.db, STALE_AFTER_MS, ["deploy"])).toBe(0);
+    expect(getRun(app.db, stale.id)?.state).toBe("running");
     expect(failAbandonedRuns(app.db, STALE_AFTER_MS)).toBe(1);
     expect(getRun(app.db, fresh.id)?.state).toBe("running");
     expect(getRun(app.db, stale.id)?.state).toBe("failed");

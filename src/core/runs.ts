@@ -14,6 +14,7 @@ import { id } from "../kernel/id.ts";
 export type RunKind = "deploy" | "agent" | "check";
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
+export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
 export type RunState = "queued" | "running" | "ok" | "failed" | "cancelled";
 
 export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
@@ -267,16 +268,23 @@ export function heartbeatRuns(db: Database, runIds: readonly string[]): void {
  * no longer exists — a forge that died with them. Fail them honestly rather
  * than leave a spinner. A run a live process is still working, an old
  * forge finishing beside a new one, is left alone: its lease says so.
+ * `kinds` narrows it: a forge with a crew leaves agent runs to the crew,
+ * which queues them again rather than failing them.
  */
-export function failAbandonedRuns(db: Database, staleMs: number): number {
+export function failAbandonedRuns(
+  db: Database,
+  staleMs: number,
+  kinds: readonly RunKind[] = RUN_KINDS,
+): number {
   const cutoff = new Date(Date.now() - staleMs).toISOString();
   return db
     .query(
       `UPDATE run SET state = 'failed', summary = 'the forge that was running this went away',
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE state = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?1)`,
+       WHERE state = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?1)
+         AND kind IN (SELECT value FROM json_each(?2))`,
     )
-    .run(cutoff).changes;
+    .run(cutoff, JSON.stringify(kinds)).changes;
 }
 
 /** Whether a running run's lease has lapsed. */
