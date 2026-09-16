@@ -212,6 +212,32 @@ data. A process reads its environment once, at start, so setting or
 removing a variable redeploys production and every open preview at their
 current commits. The install and test steps do not see them.
 
+### The forge as an app of itself
+
+The forge's own repository declares an app, so a forge can host the forge:
+production runs `main`, and every pull gets a preview forge of its own —
+the place to try a change that might not earn its keep, with the data it
+would run against. The manifest is the whole trick:
+
+```json
+"app": {
+  "run": "env FORGE_DATA=\"$FORGE_APP_DATA\" FORGE_URL=\"$FORGE_APP_URL\" FORGE_APPS=0 FORGE_SSH_PORT=0 FORGE_CHECKS=0 bun run src/main.ts",
+  "install": "",
+  "health": "/healthz",
+  "ready": 90
+}
+```
+
+The inner forge keeps its state under the app's data directory, so a
+preview made with **copy** starts as a copy of the hosted one — the same
+accounts, repositories and history, disposable. It answers at the app's
+URL and nowhere else: no SSH listener, no apps and no crew of its own
+(the outer proxy routes one label of hostname, not two), no checks. It is
+handed none of the outer forge's secrets — an app's environment is only
+what `Environment` above lists — so its first sign-up is its admin, as on
+any fresh forge. `install` is empty because the forge has no dependencies
+to fetch; `ready` is generous because the first boot migrates.
+
 ## A terminal for every app
 
 The forge's own port answers `ssh`, and the login name picks what opens:
