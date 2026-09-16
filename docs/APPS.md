@@ -429,7 +429,12 @@ writes per run (`crew/sandbox.ts`): the network is the forge and the
 package registry (plus `FORGE_CREW_ALLOW_HOSTS`); writes stay in the clone
 and the temp dir; reads are refused for the forge's repositories, its
 index and key, every other agent's clone, and the operator's own
-credentials (`~/.ssh`, `~/.aws`, and their kin). The repository's own
+credentials (`~/.ssh`, `~/.aws`, and their kin). The crew probes once at
+start whether the host can hold a run to that — bubblewrap, socat and a
+user namespace it is allowed to make — and where it cannot, as in a
+locked-down container, the sandbox is handed over switched off and every
+run's log says so in one line, rather than warning on each command and
+running anyway. The repository's own
 `AGENTS.md` is read the way Claude Code always reads it, so a repository
 can steer its crew without touching the forge.
 

@@ -63,7 +63,7 @@ export function claudeSettings(
 ): Record<string, unknown> {
   return {
     sandbox: {
-      enabled: true,
+      enabled: sandbox.enforced,
       autoAllowBashIfSandboxed: true,
       network: {
         allowedDomains: [...sandbox.allowHosts],

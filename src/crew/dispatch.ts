@@ -37,6 +37,7 @@ import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
+import { sandboxAvailable } from "./sandbox.ts";
 import { whenText } from "./limits.ts";
 import {
   executeAgentRun,
@@ -88,6 +89,18 @@ export async function startCrew(
       claude: detected.version,
       concurrency: options.concurrency,
     });
+  // The shell sandbox is policy, not decoration: where the host cannot
+  // hold a run to it, the runs say so instead of warning on every command.
+  const sandbox = await sandboxAvailable();
+  if (!sandbox.ok)
+    log.warn("agent sandbox not available here; runs are unrestricted", {
+      reason: sandbox.reason,
+    });
+  const ready: CrewOptions = {
+    ...options,
+    sandboxEnforced: sandbox.ok,
+    ...(sandbox.ok ? {} : { sandboxNote: sandbox.reason }),
+  };
 
   let stopped = false;
   // Runs `pump` has started and not yet seen finish. `stop()` aborts each
@@ -109,11 +122,11 @@ export async function startCrew(
   const timer = setInterval(() => {
     if (stopped) return;
     requeueInterrupted(app);
-    pump(app, options, inFlight);
+    pump(app, ready, inFlight);
   }, TICK_MS);
   requeueInterrupted(app);
   sweep(app);
-  pump(app, options, inFlight);
+  pump(app, ready, inFlight);
 
   const handle: CrewHandle = {
     ready: detected.ok,

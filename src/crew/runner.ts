@@ -79,6 +79,10 @@ export interface CrewOptions {
   readonly configDir?: string | undefined;
   /** Hosts an agent's shell may reach beyond the forge and the registry. */
   readonly allowHosts?: readonly string[] | undefined;
+  /** Whether this host can enforce the shell sandbox (`sandboxAvailable`). */
+  readonly sandboxEnforced?: boolean | undefined;
+  /** Why it cannot, when it cannot — said once in every run's log. */
+  readonly sandboxNote?: string | undefined;
 }
 
 export { crewRoot, workdirFor } from "./workdir.ts";
@@ -429,6 +433,7 @@ async function work(
       agentName: agent.user.username,
       urls: [options.localUrl, options.forgeUrl],
       extraHosts: options.allowHosts,
+      enforced: options.sandboxEnforced,
     });
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
@@ -455,6 +460,10 @@ async function work(
     write(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
+    if (!sandbox.enforced)
+      write(
+        `sandbox: off here${options.sandboxNote === undefined ? "" : ` — ${options.sandboxNote}`}; the shell runs unrestricted`,
+      );
     const working = budget - reserve;
     let result = await invoke(
       prompt,
