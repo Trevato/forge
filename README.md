@@ -252,6 +252,9 @@ works when there is none). `FORGE_CREW_CONCURRENCY` (2) and
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 
+`docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
+what "ready now" means to a person and to the crew.
+
 ## Develop
 
 ```sh

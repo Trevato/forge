@@ -165,6 +165,9 @@ import {
   updateAgent,
 } from "../actions/crew.ts";
 import { assignIssue } from "../actions/issues.ts";
+import { linkIssue, unlinkIssue } from "../actions/dependencies.ts";
+import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
+import { mapJson } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import type { Agent } from "../core/agents.ts";
@@ -217,6 +220,13 @@ function publicKey(key: UserKey) {
     lastUsedAt: key.lastUsedAt,
   };
 }
+
+const dependencyWords: Record<string, string> = {
+  self: "an issue cannot wait for itself",
+  cycle: "that would make a loop",
+  cross_repo: "dependencies stay inside one repository",
+  not_an_issue: "only issues can depend on issues",
+};
 
 function withLabels(ctx: Ctx, issue: Issue) {
   return { ...issue, labels: labelsFor(ctx.app.db, issue.id) };
@@ -1450,6 +1460,96 @@ export function apiRoutes(router: Router<Handler>): void {
       ...withLabels(ctx, found.issue),
       comments: listComments(ctx.app.db, found.issue.id),
     });
+  });
+
+  // What an issue waits for, and what waits for it.
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/issues/:number/dependencies",
+    (ctx) => {
+      const found = loadIssue(ctx);
+      if ("error" in found) return found.error;
+      const deps = dependenciesOf(ctx.app.db, found.issue.id);
+      const brief = (i: Issue) => ({
+        number: i.number,
+        title: i.title,
+        state: i.state,
+      });
+      return json({
+        blockedBy: deps.blockedBy.map(brief),
+        blocks: deps.blocks.map(brief),
+      });
+    },
+  );
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/issues/:number/dependencies",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadIssue(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const number = Number(input.blockedBy);
+      const blocker =
+        Number.isInteger(number) && number > 0
+          ? getIssue(ctx.app.db, found.repo.id, number)
+          : undefined;
+      if (!blocker)
+        return apiError(
+          "no_such_issue",
+          422,
+          `no issue #${String(input.blockedBy)}`,
+        );
+      const linked = linkIssue(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.issue,
+        blocker,
+      );
+      if (!linked.ok)
+        return ["self", "cycle", "cross_repo", "not_an_issue"].includes(
+          linked.error,
+        )
+          ? apiError(linked.error, 422, dependencyWords[linked.error] ?? "")
+          : respondAccess(linked.error, 422);
+      return json(
+        { issue: found.issue.number, blockedBy: blocker.number },
+        201,
+      );
+    },
+  );
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/issues/:number/dependencies/:blocker",
+    (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadIssue(ctx);
+      if ("error" in found) return found.error;
+      const number = positiveInt(ctx.params.blocker);
+      const blocker =
+        number === undefined
+          ? undefined
+          : getIssue(ctx.app.db, found.repo.id, number);
+      if (!blocker) return notFound();
+      const unlinked = unlinkIssue(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.issue,
+        blocker,
+      );
+      if (!unlinked.ok) return respondAccess(unlinked.error, 422);
+      return new Response(null, { status: 204 });
+    },
+  );
+  // The map as data: ready now, blocked on, the critical path, every edge.
+  router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(mapJson(repo, repoGraph(ctx.app.db, repo.id)));
   });
 
   router.add(
