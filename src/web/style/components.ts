@@ -678,4 +678,11 @@ a.row:hover .row-title { color: var(--accent); }
 .live-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 }
+
+/* Studio or dev: two buttons in the topbar, the chosen one filled. */
+.mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; height: 28px; align-self: center; }
+.mode-toggle form { display: contents; }
+.mode-toggle button { font: inherit; font-size: 12px; padding: 0 10px; border: 0; background: transparent; color: var(--fg); cursor: pointer; line-height: 26px; }
+.mode-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.mode-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 `;

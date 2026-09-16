@@ -30,6 +30,7 @@ import {
   automaticRunsSince,
   latestAgentRunsForRepos,
   latestRunsForIssues,
+  listActiveRuns,
   listRuns,
   type Run,
 } from "../../core/runs.ts";
@@ -51,7 +52,18 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
-import { btn, icon, time } from "../ui.ts";
+import {
+  btn,
+  card,
+  dot,
+  empty,
+  icon,
+  listCard,
+  pill,
+  row,
+  time,
+  type Tone,
+} from "../ui.ts";
 import { onYouCard } from "./site.ts";
 
 // ---- decisions: what asks a person ----
@@ -139,76 +151,73 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
   return out;
 }
 
-function decisionCard(ctx: Ctx, d: Decision): Html {
+function decisionOptions(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const pull = d.pull;
   const preview =
     pull === undefined
       ? undefined
-      : (() => {
-          const record = getAppByRepo(ctx.app.db, d.repo.id);
-          return record === undefined
-            ? undefined
-            : `${base}/app/pull-${pull.number}/open`;
-        })();
-  const options =
-    d.kind === "stopped" && pull
-      ? html`<form
-            method="post"
-            action="${base}/pulls/${pull.number}/say"
-            class="studio-say"
-          >
-            <label class="sr-only" for="say-${pull.number}">What to try</label>
-            <input
-              class="input"
-              id="say-${pull.number}"
-              name="text"
-              placeholder="Tell ${d.who} what to try"
-              required
-            />
-            ${btn("Send", { size: "sm", variant: "primary" })}
-          </form>
-          <form method="post" action="${base}/pulls/${pull.number}/state">
-            <input type="hidden" name="state" value="closed" />
-            ${btn("Close it", { size: "sm" })}
-          </form>
-          ${btn("See the change", {
-            href: `${base}/pulls/${pull.number}`,
-            size: "sm",
-          })}`
-      : d.kind === "look" && pull
-        ? html`${when(preview, (href) =>
-              btn("Open the preview", { href, size: "sm" }),
-            )}
-            <form method="post" action="${base}/pulls/${pull.number}/ship">
-              ${btn("Ship it", { size: "sm", variant: "primary" })}
-            </form>
-            <form
-              method="post"
-              action="${base}/pulls/${pull.number}/say"
-              class="studio-say"
-            >
-              <label class="sr-only" for="say-${pull.number}"
-                >What is off</label
-              >
-              <input
-                class="input"
-                id="say-${pull.number}"
-                name="text"
-                placeholder="Not like this — say what is off"
-                required
-              />
-              ${btn("Send", { size: "sm" })}
-            </form>`
-        : html`${btn("Settings", {
-            href: `${base}/settings/autonomy`,
-            size: "sm",
-          })}`;
+      : getAppByRepo(ctx.app.db, d.repo.id) === undefined
+        ? undefined
+        : `${base}/app/pull-${pull.number}/open`;
+  if (d.kind === "stopped" && pull)
+    return html`<form
+        method="post"
+        action="${base}/pulls/${pull.number}/say"
+        class="studio-say"
+      >
+        <label class="sr-only" for="say-${pull.number}">What to try</label>
+        <input
+          class="input"
+          id="say-${pull.number}"
+          name="text"
+          placeholder="Tell ${d.who} what to try"
+          required
+        />
+        ${btn("Send", { size: "sm", variant: "primary" })}
+      </form>
+      <form method="post" action="${base}/pulls/${pull.number}/state">
+        <input type="hidden" name="state" value="closed" />
+        ${btn("Close it", { size: "sm" })}
+      </form>
+      ${btn("See the change", {
+        href: `${base}/pulls/${pull.number}`,
+        size: "sm",
+      })}`;
+  if (d.kind === "look" && pull)
+    return html`${when(preview, (href) =>
+        btn("Open the preview", { href, size: "sm" }),
+      )}
+      <form method="post" action="${base}/pulls/${pull.number}/ship">
+        ${btn("Ship it", { size: "sm", variant: "primary" })}
+      </form>
+      <form
+        method="post"
+        action="${base}/pulls/${pull.number}/say"
+        class="studio-say"
+      >
+        <label class="sr-only" for="say-${pull.number}">What is off</label>
+        <input
+          class="input"
+          id="say-${pull.number}"
+          name="text"
+          placeholder="Not like this — say what is off"
+          required
+        />
+        ${btn("Send", { size: "sm" })}
+      </form>`;
+  return html`${btn("Settings", {
+    href: `${base}/settings/autonomy`,
+    size: "sm",
+  })}`;
+}
+
+function decisionCard(ctx: Ctx, d: Decision): Html {
   return html`<div class="studio-decision" data-kind="${d.kind}">
     <p class="studio-decision-says">
       <strong>${d.repo.name}</strong> · ${d.says}
     </p>
-    <div class="studio-decision-options">${options}</div>
+    <div class="studio-decision-options">${decisionOptions(ctx, d)}</div>
   </div>`;
 }
 
@@ -502,6 +511,13 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
 
 // ---- the studio home ----
 
+/**
+ * The home in the studio: what asks you first, then every app as one row
+ * that carries a real signal — live or not, what the crew last did there,
+ * how many things wait on you — and beside it what is happening right now
+ * across all of them, and what a person put on you. Built from the same
+ * rows and cards as the rest of the forge, so it reads as the forge.
+ */
 export function studioHome(ctx: Ctx, user: User): Response {
   const db = ctx.app.db;
   const repos = listReposVisibleTo(db, user, { limit: 200 });
@@ -523,79 +539,131 @@ export function studioHome(ctx: Ctx, user: User): Response {
       .map((r) => r.actorId)
       .filter((id): id is string => id !== null),
   );
-  const apps = appRepos.map((repo) => {
+  const decisions = decisionsFor(ctx, appRepos);
+  const asksByRepo = new Map<string, number>();
+  for (const d of decisions)
+    asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
+
+  const appRows = appRepos.map((repo) => {
     const record = records.get(repo.id)!;
     const envs = runtime === undefined ? [] : runtime.status(record);
     const production = envs.find((e) => e.env === "production");
+    const state = production?.state ?? "stopped";
     const latest = latestRuns.get(repo.id);
-    return { repo, record, production, latest };
+    const word = latest === undefined ? undefined : wordFor(latest);
+    const who =
+      latest?.actorId == null
+        ? undefined
+        : actors.get(latest.actorId)?.username;
+    const asks = asksByRepo.get(repo.id) ?? 0;
+    const tone: Tone =
+      state === "running"
+        ? "success"
+        : state === "failed"
+          ? "danger"
+          : "default";
+    const happening =
+      latest === undefined || word === undefined
+        ? html`<span class="muted">quiet — tell the crew something</span>`
+        : html`<span class="studio-word" data-word="${word.word}"
+              >${word.word}</span
+            >
+            ${who ? html`· ${who}` : null}
+            ${word.word === "working"
+              ? html`· now`
+              : html`· ${time(latest.finishedAt ?? latest.createdAt)}`}`;
+    return row({
+      href: repoBase(repo),
+      nav: true,
+      lead: dot(tone),
+      title: repo.name,
+      titleAttr: repo.description || repo.name,
+      meta: html`${repo.description
+        ? html`${repo.description} · `
+        : null}${happening}`,
+      trail: html`${asks > 0 ? pill(`${asks} asks you`, "accent") : null}
+        <span class="badge" data-tone="${tone}"
+          >${state === "running"
+            ? "live"
+            : state === "stopped"
+              ? "not running"
+              : state}</span
+        >`,
+    });
   });
-  const decisions = decisionsFor(
-    ctx,
-    apps.map((a) => a.repo),
-  );
-  const body = html`<div class="studio-home">
-    <div class="page-head">
-      <h1>Studio</h1>
-      <p class="muted">Your apps, what the crew is doing, and what asks you.</p>
-      <span class="spacer"></span>
-      ${btn("New app", {
-        href: "/apps/new",
-        variant: "primary",
-        icon: "rocket",
-      })}
-    </div>
-    ${when(
-      decisions.length > 0,
-      () =>
-        html`<section class="studio-asks">
+
+  const apps =
+    appRows.length === 0
+      ? empty({
+          icon: "rocket",
+          title: "No apps yet",
+          note: "Make one, tell the crew what it is, and watch it come up.",
+          action: btn("New app", { href: "/apps/new", variant: "primary" }),
+        })
+      : listCard(appRows, {
+          head: html`${icon("rocket")}
+            <h2>Your apps</h2>
+            <span class="spacer"></span>
+            ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`,
+        });
+
+  const asks = when(decisions.length > 0, () =>
+    listCard(
+      decisions.map((d) => decisionRow(ctx, d)),
+      {
+        head: html`${icon("alert")}
           <h2>Asks you</h2>
-          ${decisions.map((d) => decisionCard(ctx, d))}
-        </section>`,
-    )}
-    ${onYouCard(ctx, user) ?? null}
-    ${apps.length === 0
-      ? html`<div class="studio-empty">
-          ${icon("rocket", 20)}
-          <p>
-            No apps yet. Make one, tell the crew what it is, and watch it come
-            up.
-          </p>
-          ${btn("New app", { href: "/apps/new", variant: "primary" })}
-        </div>`
-      : html`<div class="studio-apps">
-          ${apps.map(({ repo, production, latest }) => {
-            const state = production?.state ?? "stopped";
-            const word = latest === undefined ? undefined : wordFor(latest);
+          <span class="muted small">decide, and the crew carries on</span>`,
+      },
+    ),
+  );
+
+  // Happening now: every run in flight across the apps, one read.
+  const running = listActiveRuns(
+    db,
+    appRepos.map((r) => r.id),
+  );
+  const runActors = getUsersByIds(
+    db,
+    running.map((r) => r.actorId).filter((id): id is string => id !== null),
+  );
+  const byId = new Map(appRepos.map((r) => [r.id, r]));
+  const now =
+    running.length === 0
+      ? card(html`<p class="muted small">Nobody is working right now.</p>`, {
+          head: html`${icon("activity")}
+            <h2>Happening now</h2>`,
+        })
+      : listCard(
+          running.map((r) => {
+            const repo = byId.get(r.repoId)!;
             const who =
-              latest?.actorId == null
-                ? undefined
-                : getUserById(db, latest.actorId)?.username;
-            return html`<a class="studio-app" href="${repoBase(repo)}">
-              <div class="studio-app-head">
-                <span class="studio-app-name">${repo.name}</span>
-                <span class="studio-live" data-state="${state}"
-                  >${state === "running" ? "live" : state}</span
-                >
-              </div>
-              <p class="muted small">
-                ${repo.description || "no description yet"}
-              </p>
-              ${word
-                ? html`<p class="small studio-app-now" data-word="${word.word}">
-                    ${icon(WORD_ICON[word.word])} ${who ?? "crew"} ·
-                    ${word.word}
-                    ${word.word === "working"
-                      ? ""
-                      : html` · ${time(latest!.finishedAt ?? latest!.createdAt)}`}
-                  </p>`
-                : html`<p class="small muted">quiet</p>`}
-            </a>`;
-          })}
-        </div>`}
-    <p class="muted small studio-foot">
-      <a href="/apps">Every app</a> · <a href="/?mode=dev">Repositories</a>
-    </p>
+              r.actorId === null
+                ? "crew"
+                : (runActors.get(r.actorId)?.username ?? "crew");
+            return row({
+              href: `${repoBase(repo)}/runs/${r.id}`,
+              nav: true,
+              lead: icon(r.state === "running" ? "loader" : "clock"),
+              title: html`${who} · ${repo.name}`,
+              meta: html`${r.state === "running"
+                ? "working"
+                : "waiting"}${r.startedAt
+                ? html` since ${time(r.startedAt)}`
+                : null}`,
+            });
+          }),
+          {
+            head: html`${icon("activity")}
+              <h2>Happening now</h2>`,
+          },
+        );
+
+  const body = html`<div class="dash">
+    <div class="dash-main stack">${asks} ${apps}</div>
+    <aside class="dash-rail stack">
+      ${now} ${onYouCard(ctx, user) ?? null}
+    </aside>
   </div>`;
   return page({
     ctx,
@@ -604,6 +672,18 @@ export function studioHome(ctx: Ctx, user: User): Response {
     styleCss: studioCss,
     scriptJs: liveClientJs,
   });
+}
+
+/** One decision as a row: what it says, and the options in place. */
+function decisionRow(ctx: Ctx, d: Decision): Html {
+  return html`<div class="row studio-decision" data-kind="${d.kind}">
+    <div class="row-body">
+      <p class="studio-decision-says">
+        <strong>${d.repo.name}</strong> · ${d.says}
+      </p>
+      <div class="studio-decision-options">${decisionOptions(ctx, d)}</div>
+    </div>
+  </div>`;
 }
 
 // ---- actions ----
@@ -740,10 +820,12 @@ export const studioCss = /* css */ `
 .studio-list li svg { vertical-align: -3px; }
 .studio-who { font-weight: 600; }
 .studio-word { font-family: var(--mono); font-size: 11.5px; opacity: .8; white-space: nowrap; }
+.row-meta .studio-word { font-family: inherit; font-size: inherit; opacity: 1; font-weight: 560; }
 .studio-list li[data-word="working"] .studio-word { color: var(--accent); opacity: 1; }
 .studio-list li[data-word="look"] .studio-word { color: var(--merged); opacity: 1; }
 .studio-list li[data-word="stopped"] .studio-word { color: var(--danger, #c33); opacity: 1; }
-.studio-decision { border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 12px 14px; display: grid; gap: 10px; margin-bottom: 10px; background: var(--bg); }
+.studio-decision { display: grid; gap: 10px; padding: 12px 14px; border-left: 3px solid var(--accent); }
+.studio-asks .studio-decision { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; background: var(--bg); }
 .studio-decision[data-kind="stopped"] { border-left-color: var(--danger, #c33); }
 .studio-decision[data-kind="paused"] { border-left-color: var(--border); }
 .studio-decision-says { margin: 0; font-size: 14.5px; }
@@ -756,16 +838,4 @@ export const studioCss = /* css */ `
 .studio-crew li { display: grid; grid-template-columns: 74px 1fr; gap: 8px; }
 .studio-crew li b { font-weight: 600; }
 .studio-crew li span { opacity: .85; }
-.studio-home { display: grid; gap: 20px; }
-.studio-apps { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
-.studio-app { display: grid; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; text-decoration: none; color: inherit; background: var(--bg); }
-.studio-app:hover { border-color: var(--fg); text-decoration: none; }
-.studio-app-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.studio-app-name { font-weight: 600; font-size: 15px; }
-.studio-app-now svg { vertical-align: -3px; }
-.studio-empty { display: grid; justify-items: center; gap: 10px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); text-align: center; }
-.studio-foot { margin-top: 8px; }
-.mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
-.mode-toggle button { font: inherit; font-family: var(--mono); font-size: 11.5px; padding: 3px 10px; border: 0; background: transparent; color: inherit; cursor: pointer; }
-.mode-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 `;

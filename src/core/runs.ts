@@ -554,3 +554,23 @@ export function latestAgentRunsForRepos(
   }
   return out;
 }
+
+/** Agent runs queued or running across many repositories, newest first. */
+export function listActiveRuns(
+  db: Database,
+  repoIds: readonly string[],
+): Run[] {
+  const unique = [...new Set(repoIds)];
+  if (unique.length === 0) return [];
+  return db
+    .query<RunRow, string[]>(
+      `SELECT * FROM run WHERE kind = 'agent' AND state IN ('queued','running')
+         AND repo_id IN (${unique
+           .slice(0, 400)
+           .map((_, n) => `?${n + 1}`)
+           .join(",")})
+       ORDER BY created_at DESC LIMIT 50`,
+    )
+    .all(...unique.slice(0, 400))
+    .map(toRun);
+}
