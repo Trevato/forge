@@ -125,7 +125,7 @@ describe("the studio", () => {
   test("an app's home is the app in the studio, and the code in dev", async () => {
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toContain("Tell the crew");
-    expect(studio).toContain("Crew on this app");
+    expect(studio).toContain("<h2>Crew</h2>");
     expect(studio).toContain(">Studio<");
     expect(studio).not.toContain(">Commits<");
     const dev = await (
