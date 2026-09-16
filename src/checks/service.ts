@@ -58,6 +58,9 @@ export interface ChecksHandle {
   stop(): Promise<void>;
 }
 
+/** How often queued checks another forge left are looked for. */
+const TICK_MS = 5_000;
+
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
@@ -106,6 +109,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       ...(actorId === undefined ? {} : { actorId }),
     });
     announceRun(app, run, actorId);
+    start(run, repo);
+    return run;
+  }
+
+  /** Run a queued check here, whichever forge queued it. */
+  function start(run: Run, repo: Repo): void {
+    if (inFlight.has(run.id)) return;
     const abort = new AbortController();
     const promise = execute(run, repo, abort.signal)
       .catch((error) =>
@@ -116,7 +126,19 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       )
       .finally(() => inFlight.delete(run.id));
     inFlight.set(run.id, { promise, abort });
-    return run;
+  }
+
+  /**
+   * Queued checks are whichever forge's picks them up: one the forge before
+   * this one never reached, or one a forge stopping beside this one handed
+   * back. Claiming is what decides, so two forges never run the same one.
+   */
+  function pickUp(): void {
+    for (const run of listActive(app.db, "check")) {
+      if (run.state !== "queued" || inFlight.has(run.id)) continue;
+      const repo = getRepoById(app.db, run.repoId);
+      if (repo) start(run, repo);
+    }
   }
 
   async function execute(
@@ -126,6 +148,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   ): Promise<void> {
     const release = await gate.acquire();
     try {
+      // A slot that opens while this forge is stopping is not taken: the run
+      // stays queued for the forge that carries on.
+      if (stopped) return;
       const claimed = claimRun(app.db, run.id);
       if (!claimed) return;
       const lease = holdLease(app.db, run.id);
@@ -134,6 +159,25 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         appendRunLog(app.config.dataDir, run.id, line);
       const started = Date.now();
       const outcome = await check(claimed, repo, write, signal).finally(lease);
+      if (!outcome.ok && stopped && signal.aborted) {
+        // Cut off by this forge stopping, not by the check: the same check
+        // goes back on the queue, and the forge that carries on runs it.
+        const why = "interrupted by a restart; queued again";
+        cancelRun(app.db, run.id, why);
+        write(why);
+        const again = createRun(app.db, {
+          repoId: run.repoId,
+          kind: "check",
+          env: run.env,
+          commitOid: run.commitOid,
+          reason: run.reason,
+          attempt: run.attempt + 1,
+          ...(run.issueId === null ? {} : { issueId: run.issueId }),
+          ...(run.actorId === null ? {} : { actorId: run.actorId }),
+        });
+        announceRun(app, again, run.actorId ?? undefined);
+        return;
+      }
       const seconds = Math.round((Date.now() - started) / 1000);
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
@@ -313,10 +357,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
   }
 
+  const timer = setInterval(() => {
+    if (!stopped) pickUp();
+  }, TICK_MS);
+  pickUp();
+
   return {
     request,
     stop: async () => {
       stopped = true;
+      clearInterval(timer);
       unsubscribe();
       for (const { abort } of inFlight.values()) abort.abort();
       await Promise.all([...inFlight.values()].map((f) => f.promise));

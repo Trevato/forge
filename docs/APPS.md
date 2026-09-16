@@ -191,7 +191,8 @@ bounded the same way. An app's own `test` still runs inside its deploy;
 more than its test. `install` defaults to `bun install` when the package
 declares dependencies; `timeout` is seconds, twenty minutes by default.
 A `check` that is present and wrong fails with the reason, so a commit is
-never silently unchecked.
+never silently unchecked. A check under way when the forge restarts is
+queued again, and the forge that carries on runs it from the start.
 
 ### Environment
 
