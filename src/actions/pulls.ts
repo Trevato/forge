@@ -11,8 +11,11 @@ import {
   setAssignee,
   type BodyError,
   type Issue,
+  getIssue,
+  setIssueState as setIssueStateCore,
 } from "../core/issues.ts";
 import {
+  closesFromBody,
   createPull,
   getPull,
   mergePull as landPull,
@@ -314,6 +317,20 @@ export async function mergePull(
       mergeOid: merged.value.mergeOid,
     },
   });
+  // What the pull said it closes, closes: the issue is done when the change
+  // lands, as the person who landed it — which is what frees the map.
+  for (const n of closesFromBody(pull.body)) {
+    const issue = getIssue(app.db, repo.id, n);
+    if (!issue || issue.kind !== "issue" || issue.state !== "open") continue;
+    const closed = setIssueStateCore(app.db, issue.id, "closed");
+    if (!closed) continue;
+    app.bus.append({
+      kind: "issue.closed",
+      repoId: repo.id,
+      actorId: writer.value.id,
+      payload: { number: issue.number, by: "merge", pull: pull.number },
+    });
+  }
   return merged;
 }
 

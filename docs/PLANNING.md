@@ -100,6 +100,16 @@ nobody, push nothing. The direction issue stays open, is never picked as
 work, and the planner is not asked again for six hours unless its run
 ended.
 
+**What counts as done and as taken.** A pull that says _Closes #12_
+closes #12 when it lands, as the person who landed it; that is what frees
+the map, on any repository, autonomous or not. An open pull that closes an
+issue means the issue is proposed, neither ready nor done, and the tick
+leaves it alone. An issue a builder ran on and left without a pull is
+stalled: the clock never picks it again, because running it again blind is
+the loop autonomy refuses. A person's comment on it is a feedback run like
+any other. On every tick, green pulls that have not landed — a check that
+passed before autonomy was on — land, so nothing green waits on chance.
+
 **What holds it.** The ceiling is dollars of agent spend per UTC day; at
 the ceiling the crew stops picking until midnight, and nothing in flight is
 cut. Slots are runs at once — the WIP limit — and a repository never

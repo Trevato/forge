@@ -18,8 +18,14 @@ import { mergePull } from "../actions/pulls.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
 import { readyNow, repoGraph } from "../core/dependencies.ts";
 import { getIssueById, type Issue } from "../core/issues.ts";
-import { getPull, type Pull } from "../core/pulls.ts";
 import {
+  getPull,
+  listPulls,
+  openPullsClosing,
+  type Pull,
+} from "../core/pulls.ts";
+import {
+  getRepoById,
   listAutonomousRepos,
   setDirectionIssue,
   type Repo,
@@ -154,17 +160,27 @@ export function driveRepo(app: App, repo: Repo, now = new Date()): Drove {
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
   const graph = repoGraph(app.db, repo.id);
+  const proposed = openPullsClosing(app.db, repo.id);
   const ready = readyNow(graph).filter(
     (r) =>
       r.issue.id !== repo.directionIssueId &&
       !busyIssues.has(r.issue.id) &&
-      (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)),
+      !proposed.has(r.issue.number) &&
+      (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
+      !stalled(app, r.issue),
   );
   const next = ready[0];
   if (next !== undefined) {
     const builder = pickBuilder(next.issue, builders, inFlight);
     if (!builder) return "paused";
-    const assigned = assignIssue(app, by, repo, next.issue, builder.user);
+    // Assigning is the event that starts a run. An issue already carrying
+    // the builder's name is assigned afresh so the event fires once more.
+    if (next.issue.assigneeId === builder.user.id) {
+      const cleared = assignIssue(app, by, repo, next.issue, null);
+      if (!cleared.ok) return "idle";
+    }
+    const current = getIssueById(app.db, next.issue.id) ?? next.issue;
+    const assigned = assignIssue(app, by, repo, current, builder.user);
     if (!assigned.ok) {
       log.warn("could not assign the next ready issue", {
         repo: `${repo.ownerName}/${repo.name}`,
@@ -221,6 +237,37 @@ export function driveRepo(app: App, repo: Repo, now = new Date()): Drove {
 }
 
 /**
+ * An issue a builder already ran on and left without a pull — declined, or
+ * cut short — is not picked again by the clock: running it again blind is
+ * the loop autonomy refuses. It waits for a person's word, which is a
+ * feedback run like any other.
+ */
+function stalled(app: App, issue: Issue): boolean {
+  const last = app.db
+    .query<{ state: string; summary: string }, [string]>(
+      `SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent'
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(issue.id);
+  if (last === null || last === undefined) return false;
+  if (last.state === "queued" || last.state === "running") return true;
+  return !/opened pull #|updated pull #/.test(last.summary);
+}
+
+/**
+ * Green pulls that have not landed — a check that passed before autonomy
+ * was turned on, or one the event missed — land on the tick, so nothing
+ * green waits on chance.
+ */
+export async function sweepGreen(app: App, repo: Repo): Promise<number> {
+  if (repo.autonomy !== "autonomous") return 0;
+  let landed = 0;
+  for (const pull of listPulls(app.db, repo.id, { state: "open", limit: 50 }))
+    if (await landIfGreen(app, repo, pull)) landed++;
+  return landed;
+}
+
+/**
  * The issue the planner works from: the direction, as an open issue the
  * run can be about. Made once, kept, and never counted as work.
  */
@@ -243,10 +290,11 @@ function ensureDirectionIssue(
 }
 
 /** Every repository that runs on its own, one turn each. */
-export function autonomyTick(app: App, now = new Date()): void {
+export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   for (const repo of listAutonomousRepos(app.db)) {
     try {
-      const did = driveRepo(app, repo, now);
+      await sweepGreen(app, repo);
+      const did = driveRepo(app, getRepoById(app.db, repo.id) ?? repo, now);
       if (did === "picked" || did === "planned")
         log.info("tick", { repo: `${repo.ownerName}/${repo.name}`, did });
     } catch (error) {

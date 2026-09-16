@@ -128,7 +128,9 @@ export async function startCrew(
     requeueInterrupted(app);
     if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
       lastAutonomy = Date.now();
-      autonomyTick(app);
+      autonomyTick(app).catch((error) =>
+        log.error("autonomy tick failed", { error: String(error) }),
+      );
     }
     pump(app, ready, inFlight);
   }, TICK_MS);
