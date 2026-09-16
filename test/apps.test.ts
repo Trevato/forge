@@ -305,7 +305,7 @@ describe("apps: production, previews, data, gates, crew", () => {
     const granted = await viaHost(url.host, `${url.pathname}${url.search}`);
     expect(granted.status).toBe(303);
     const cookie = granted.headers.get("set-cookie") ?? "";
-    expect(cookie).toContain("forge_grant=");
+    expect(cookie).toContain("forge_grant_");
     const page = await viaHost(`hello.${DOMAIN}`, "/", {
       headers: { cookie: cookie.split(";")[0]! },
     });
