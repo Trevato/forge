@@ -104,10 +104,12 @@ describe("host routing: a single-label attachment", () => {
     expect(parseAppHost("notes--forge.example", DOM)).toEqual({
       slug: "notes",
       env: "production",
+      nested: false,
     });
     expect(parseAppHost("notes--12--forge.example:443", DOM)).toEqual({
       slug: "notes",
       env: "pull-12",
+      nested: false,
     });
   });
 
@@ -117,10 +119,12 @@ describe("host routing: a single-label attachment", () => {
     expect(parseAppHost("cs--lab--forge.example", DOM)).toEqual({
       slug: "lab",
       env: "production",
+      nested: true,
     });
     expect(parseAppHost("cs--3--lab--14--forge.example", DOM)).toEqual({
       slug: "lab",
       env: "pull-14",
+      nested: true,
     });
     expect(parseAppHost("--lab--forge.example", DOM)).toBeUndefined();
     expect(parseAppHost("cs----lab--forge.example", DOM)).toBeUndefined();
@@ -144,6 +148,7 @@ describe("host routing: parseAppHost", () => {
     expect(parseAppHost("hello.apps.test:3000", DOM)).toEqual({
       slug: "hello",
       env: "production",
+      nested: false,
     });
   });
 
@@ -151,6 +156,7 @@ describe("host routing: parseAppHost", () => {
     expect(parseAppHost("HELLO.APPS.TEST", DOM)).toEqual({
       slug: "hello",
       env: "production",
+      nested: false,
     });
   });
 
@@ -171,10 +177,12 @@ describe("host routing: parseAppHost", () => {
     expect(parseAppHost("a--b--12.apps.test", DOM)).toEqual({
       slug: "b",
       env: "pull-12",
+      nested: true,
     });
     expect(parseAppHost("a--b.apps.test", DOM)).toEqual({
       slug: "b",
       env: "production",
+      nested: true,
     });
   });
 
@@ -199,6 +207,7 @@ describe("host routing: parseAppHost", () => {
     expect(parseAppHost("hello.apps.test:3000", "apps.test:3000")).toEqual({
       slug: "hello",
       env: "production",
+      nested: false,
     });
   });
 
