@@ -450,9 +450,23 @@ describe("ensureEnvData path safety", () => {
         "kept",
       );
       expect(existsSync(join(target, "app.sock"))).toBe(false);
+      expect(existsSync(`${target}.copying`)).toBe(false);
     } finally {
       server.close();
     }
+  });
+
+  test("a copy that fails part-way leaves no half a data directory", () => {
+    // Root reads anything, so there is no unreadable file to trip on there.
+    if (process.getuid?.() === 0) return;
+    const source = join(dataDir, "with-locked");
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, "a.db"), "state");
+    writeFileSync(join(source, "locked"), "secret", { mode: 0o000 });
+    const target = join(dataDir, "half");
+    expect(() => cloneDir(source, target)).toThrow();
+    expect(existsSync(target)).toBe(false);
+    expect(existsSync(`${target}.copying`)).toBe(false);
   });
 });
 
