@@ -96,7 +96,13 @@ export function resolveAppHostname(
     : "unknown";
 }
 
-const GRANT_COOKIE = "forge_grant";
+/**
+ * The grant cookie is named for the app it admits to. Two forges can set
+ * grants on one hostname — this one, and a forge it hosts, for an app of
+ * that forge's own — and each must find its own cookie beside the other's.
+ */
+const grantCookieName = (target: AppTarget): string =>
+  `forge_grant_${target.app.id.slice(-8)}`;
 const GRANT_URL_TTL_MS = 2 * 60_000;
 const GRANT_COOKIE_TTL_MS = 12 * 60 * 60_000;
 
@@ -180,7 +186,7 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number }, Response> {
   if (target.app.access === "private") {
-    const cookie = cookieValue(request, GRANT_COOKIE);
+    const cookie = cookieValue(request, grantCookieName(target));
     if (
       cookie === undefined ||
       !verifyGrant(runtime.app.config.dataDir, cookie, target)
@@ -526,7 +532,7 @@ function grant(
     status: 303,
     headers: {
       location: path,
-      "set-cookie": `${GRANT_COOKIE}=${cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(GRANT_COOKIE_TTL_MS / 1000)}${secure ? "; Secure" : ""}`,
+      "set-cookie": `${grantCookieName(target)}=${cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(GRANT_COOKIE_TTL_MS / 1000)}${secure ? "; Secure" : ""}`,
       "cache-control": "no-store",
     },
   });

@@ -421,7 +421,7 @@ describe("apps: websockets through the proxy", () => {
       const granted = await viaHost(url.host, `${url.pathname}${url.search}`);
       expect(granted.status).toBe(303);
       const cookie = (granted.headers.get("set-cookie") ?? "").split(";")[0]!;
-      expect(cookie).toStartWith("forge_grant=");
+      expect(cookie).toStartWith("forge_grant_");
       const admitted = connect("/ws", { headers: { cookie } });
       expect(await admitted.opened).toBe(true);
       await seenBy(admitted.next);
