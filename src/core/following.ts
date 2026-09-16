@@ -110,6 +110,11 @@ export async function refreshPullHead(
   );
   if (tip === undefined) return undefined;
   await writeRef(baseDir, `refs/pull/${pull.number}/head`, tip);
+  // The row says where the head is too, so a reader of the pull — the API,
+  // a page — sees the same tip the ref holds.
+  forge.db
+    .query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1")
+    .run(pull.id, tip);
   return tip;
 }
 

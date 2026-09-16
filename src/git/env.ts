@@ -11,7 +11,7 @@
  * difference between "the forge got busy" and "the forge fell over".
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -66,6 +66,8 @@ export function trustedCaBundle(
         `${readFileSync(system, "utf8").trimEnd()}\n${readFileSync(extra, "utf8")}`,
         { mode: 0o644 },
       );
+      // The file is this process's: it goes when the process does.
+      process.on("exit", () => rmSync(path, { force: true }));
       built = path;
     } catch {
       built = undefined;
