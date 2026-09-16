@@ -22,6 +22,7 @@ import {
   constants,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -111,20 +112,28 @@ export function removeApp(dataDir: string, appId: string): void {
  * Copy a directory, sharing blocks when the filesystem can. `FICLONE_FORCE`
  * either clones or refuses — it never silently degrades — so a refusal is
  * the signal to fall back to a byte copy, and the caller learns which
- * happened.
+ * happened. Only what a copy can carry comes along: directories, files and
+ * links. A socket or a pipe an app left in its data belongs to the process
+ * that made it, not to the data, and opening one to copy it is an error.
  */
 export function cloneDir(source: string, target: string): SeedOutcome {
   try {
     cpSync(source, target, {
       recursive: true,
       mode: constants.COPYFILE_FICLONE_FORCE,
+      filter: copyable,
     });
     return "cloned";
   } catch {
     rmSync(target, { recursive: true, force: true });
-    cpSync(source, target, { recursive: true });
+    cpSync(source, target, { recursive: true, filter: copyable });
     return "copied";
   }
+}
+
+function copyable(path: string): boolean {
+  const stat = lstatSync(path);
+  return stat.isDirectory() || stat.isFile() || stat.isSymbolicLink();
 }
 
 const SQLITE_MAGIC = "SQLite format 3\0";

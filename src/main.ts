@@ -14,7 +14,7 @@ import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { startChecks } from "./checks/service.ts";
-import { failAbandonedRuns } from "./core/runs.ts";
+import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
@@ -158,11 +158,18 @@ if (ssh)
     hostKey: ssh.hostKey.fingerprint,
   });
 
-// A run whose forge died is failed by whichever forge notices, on boot and
+// A run whose forge died is noticed by whichever forge is up, on boot and
 // on the way: an old process finishing beside a new one keeps its runs alive
-// by renewing their leases, so only a lapsed lease is a death.
+// by renewing their leases, so only a lapsed lease is a death. Deploys and
+// checks are failed; agent runs are the crew's to queue again, unless there
+// is no crew here to do it.
 const leaseTimer = setInterval(
-  () => failAbandonedRuns(app.db, STALE_AFTER_MS),
+  () =>
+    failAbandonedRuns(
+      app.db,
+      STALE_AFTER_MS,
+      crew === undefined ? undefined : CHECK_KINDS,
+    ),
   30_000,
 );
 

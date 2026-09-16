@@ -9,13 +9,14 @@
 
 import { appHostSuffix } from "../src/apps/host.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { envDir, isEnvName, type EnvName } from "../src/apps/data.ts";
+import { cloneDir, envDir, isEnvName, type EnvName } from "../src/apps/data.ts";
 import { appEnv, childEnv } from "../src/apps/process.ts";
 import {
   parseAppHost,
@@ -428,6 +429,30 @@ describe("ensureEnvData path safety", () => {
     expect(envDir(dataDir, "someappid", "pull-12").startsWith(dataDir)).toBe(
       true,
     );
+  });
+
+  test("a copy of an app's data leaves its sockets behind", async () => {
+    // An app that keeps a socket in its data — a forge does — must not
+    // make a preview impossible, let alone take the forge down with it.
+    const source = join(dataDir, "with-socket");
+    mkdirSync(join(source, "nested"), { recursive: true });
+    writeFileSync(join(source, "app.db"), "state");
+    writeFileSync(join(source, "nested", "note.txt"), "kept");
+    const server = createServer();
+    await new Promise<void>((resolve) =>
+      server.listen(join(source, "app.sock"), resolve),
+    );
+    try {
+      const target = join(dataDir, "copied");
+      cloneDir(source, target);
+      expect(readFileSync(join(target, "app.db"), "utf8")).toBe("state");
+      expect(readFileSync(join(target, "nested", "note.txt"), "utf8")).toBe(
+        "kept",
+      );
+      expect(existsSync(join(target, "app.sock"))).toBe(false);
+    } finally {
+      server.close();
+    }
   });
 });
 

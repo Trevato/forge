@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { getRepo } from "../src/core/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import {
   cancelRun,
@@ -117,6 +118,46 @@ describe("a run the last forge left running", () => {
     // The other forge finishes it; here, it is simply out of the way.
     cancelRun(app.db, alive.id, "finished elsewhere");
   });
+
+  test("a run whose lease lapses while the crew is up is queued again on the next tick", async () => {
+    const repo = getRepo(app.db, "alice", "garden")!;
+    const issued = openIssue(app, alice, repo, {
+      title: "Water it",
+      body: "",
+    });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    // A forge that fell and was back within the lease: at boot this run
+    // still looked alive, and only later did nobody renew it.
+    const orphan = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "feedback",
+    });
+    claimRun(app.db, orphan.id);
+    app.db
+      .query("UPDATE run SET heartbeat_at = ?2 WHERE id = ?1")
+      .run(
+        orphan.id,
+        new Date(Date.now() - STALE_AFTER_MS - 1_000).toISOString(),
+      );
+    const deadline = Date.now() + 15_000;
+    while (
+      getRun(app.db, orphan.id)?.state === "running" &&
+      Date.now() < deadline
+    )
+      await Bun.sleep(200);
+    const after = getRun(app.db, orphan.id)!;
+    expect(after.state).toBe("cancelled");
+    expect(after.summary).toContain("interrupted by a restart");
+    const queued = listQueued(app.db, "agent").filter(
+      (r) => r.issueId === issue.id && r.state === "queued",
+    );
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.attempt).toBe(1);
+  }, 30_000);
 
   test("a run in flight when the crew stops goes back on the queue", async () => {
     await crew?.stop();

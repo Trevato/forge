@@ -28,6 +28,7 @@ import {
   cancelRun,
   claimRun,
   createRun,
+  CHECK_KINDS,
   failAbandonedRuns,
   finishRun,
   type Run,
@@ -234,7 +235,13 @@ export class AppsRuntime {
 
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
-    const abandoned = failAbandonedRuns(this.app.db, STALE_AFTER_MS);
+    // Deploys and checks: an agent run the last forge left is the crew's,
+    // which queues it again rather than failing it.
+    const abandoned = failAbandonedRuns(
+      this.app.db,
+      STALE_AFTER_MS,
+      CHECK_KINDS,
+    );
     if (abandoned > 0) log.info("failed abandoned runs", { count: abandoned });
     this.unsubscribe = this.app.bus.subscribe((event) => {
       // Never let an event handler's rejection reach the bus.
@@ -543,9 +550,14 @@ export class AppsRuntime {
       `deploy ${state.env} of ${repo.ownerName}/${repo.name} at ${run.commitOid.slice(0, 7)} (${run.reason})`,
     );
 
-    const outcome = await this.gate.run(() =>
-      this.bringUp(state, repo, run, write, abort.signal),
-    );
+    // A deploy that throws is a failed run, never a fallen forge: the chain
+    // this runs on would otherwise reject unhandled and take the process.
+    const outcome = await this.gate
+      .run(() => this.bringUp(state, repo, run, write, abort.signal))
+      .catch((error: unknown) => ({
+        ok: false as const,
+        error: `deploy failed: ${error instanceof Error ? error.message : String(error)}`,
+      }));
 
     state.deploying = undefined;
     lease();

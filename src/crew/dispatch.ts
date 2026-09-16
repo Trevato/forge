@@ -107,7 +107,9 @@ export async function startCrew(
     }
   });
   const timer = setInterval(() => {
-    if (!stopped) pump(app, options, inFlight);
+    if (stopped) return;
+    requeueInterrupted(app);
+    pump(app, options, inFlight);
   }, TICK_MS);
   requeueInterrupted(app);
   sweep(app);
@@ -304,7 +306,8 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
  * conversation, so nothing a person said is lost. A run whose lease is
  * fresh is being worked by a forge still alive beside this one — the old
  * process of a release, finishing — and is left to it: that forge queues
- * the task again itself when it stops.
+ * the task again itself when it stops. Runs at boot and on every tick: a
+ * forge that fell and was back within the lease sees its runs lapse later.
  */
 function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
