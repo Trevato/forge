@@ -282,34 +282,46 @@ describe("forks", () => {
     expect(current).toContain("up to date");
     expect(current).not.toContain("Update from parent");
 
-    // Alice moves on with nothing following her, which is how a fork ends up
-    // behind: the page counts the commit it is missing and offers the update.
-    unfollow();
+    // Alice's main moves without a push the forge saw — a follow that failed,
+    // or has not happened yet — which is how a fork ends up plainly behind:
+    // the page counts the commit it is missing and offers the update.
     const dir = join(work, "app");
     await Bun.write(join(dir, "LATER.md"), "later\n");
     await gitOk(["add", "."], dir);
     await gitOk(["commit", "-m", "alice again"], dir);
-    await gitOk(["push", "origin", "main"], dir);
-    unfollow = followParents(app);
+    await gitOk(
+      [
+        "-C",
+        repoDir(join(dataDir, "repos"), "alice", "app"),
+        "fetch",
+        "-q",
+        dir,
+        "main:main",
+      ],
+      work,
+    );
 
     const behind = await rail("/dan/app", danCookie);
     expect(behind).toContain("1 commit behind");
     expect(behind).toContain("Update from parent");
 
-    // Bob committed on his fork and alice pushed twice since: an update would
-    // be refused, so the page says why instead of offering one.
+    // Bob committed on his fork and alice moved on twice since: an update
+    // would be refused, so the page says why instead of offering one.
     const diverged = await rail("/bob/app", await signIn("bob"));
     expect(diverged).toContain("1 commit of its own");
     expect(diverged).toContain("2 behind");
     expect(diverged).not.toContain("Update from parent");
+  });
+
   test("the fork count on the repository page opens the list of forks", async () => {
     const home = await (await fetch(`${base}/alice/app`)).text();
     expect(home).toContain('href="/alice/app/forks"');
-    expect(home).toContain("2 forks");
+    expect(home).toContain("3 forks");
     const listed = await (await fetch(`${base}/alice/app/forks`)).text();
-    expect(listed).toContain("2 forks");
+    expect(listed).toContain("3 forks");
     expect(listed).toContain('href="/bob/app"');
     expect(listed).toContain('href="/carol/app"');
+    expect(listed).toContain('href="/dan/app"');
   });
 
   test("a stranger cannot fork a private repo", async () => {
