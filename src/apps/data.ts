@@ -27,6 +27,7 @@ import {
   openSync,
   readdirSync,
   readSync,
+  renameSync,
   rmSync,
   closeSync,
 } from "node:fs";
@@ -115,20 +116,33 @@ export function removeApp(dataDir: string, appId: string): void {
  * happened. Only what a copy can carry comes along: directories, files and
  * links. A socket or a pipe an app left in its data belongs to the process
  * that made it, not to the data, and opening one to copy it is an error.
+ * The copy lands beside the target and is renamed into place whole, so a
+ * copy that fails part-way leaves nothing a later deploy could keep as if
+ * it were complete.
  */
 export function cloneDir(source: string, target: string): SeedOutcome {
+  const staging = `${target}.copying`;
+  rmSync(staging, { recursive: true, force: true });
+  let outcome: SeedOutcome;
   try {
-    cpSync(source, target, {
-      recursive: true,
-      mode: constants.COPYFILE_FICLONE_FORCE,
-      filter: copyable,
-    });
-    return "cloned";
-  } catch {
-    rmSync(target, { recursive: true, force: true });
-    cpSync(source, target, { recursive: true, filter: copyable });
-    return "copied";
+    try {
+      cpSync(source, staging, {
+        recursive: true,
+        mode: constants.COPYFILE_FICLONE_FORCE,
+        filter: copyable,
+      });
+      outcome = "cloned";
+    } catch {
+      rmSync(staging, { recursive: true, force: true });
+      cpSync(source, staging, { recursive: true, filter: copyable });
+      outcome = "copied";
+    }
+  } catch (error) {
+    rmSync(staging, { recursive: true, force: true });
+    throw error;
   }
+  renameSync(staging, target);
+  return outcome;
 }
 
 function copyable(path: string): boolean {
