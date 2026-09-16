@@ -531,3 +531,26 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
     ]),
   );
 }
+
+/** The newest agent run of each repository, in one query. */
+export function latestAgentRunsForRepos(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, Run> {
+  const out = new Map<string, Run>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM (
+           SELECT run.*, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY created_at DESC, id DESC) AS rn
+           FROM run WHERE kind = 'agent' AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ) WHERE rn = 1`,
+      )
+      .all(...batch);
+    for (const row of rows) out.set(row.repo_id, toRun(row));
+  }
+  return out;
+}

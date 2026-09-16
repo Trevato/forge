@@ -76,6 +76,13 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { mapPage } from "../web/pages/map.ts";
+import {
+  modeSubmit,
+  saySubmit,
+  shipSubmit,
+  tellSubmit,
+} from "../web/pages/studio.ts";
+import { DEFAULT_MODE, isMode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
@@ -339,6 +346,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
+  router.add("POST", "/mode", modeSubmit);
   router.add("GET", "/search", searchPage);
   // The JS-free half of every destructive action. Two literal segments, so it
   // is registered before /:owner/:name can claim the shape.
@@ -529,6 +537,10 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
     assigneeSubmit(ctx, "issue"),
   );
+  // The studio's three verbs on an app: tell, ship, say.
+  router.add("POST", "/:owner/:name/tell", tellSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",
@@ -1058,6 +1070,7 @@ export async function serve(app: App): Promise<Servers> {
       }
 
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
+      const modeCookie = cookieValue(request, "forge_mode") ?? "";
       const invoke = (into: Request): Response | Promise<Response> =>
         matched.handler({
           app,
@@ -1066,6 +1079,7 @@ export async function serve(app: App): Promise<Servers> {
           params: matched.params,
           auth,
           theme: isThemeName(themeCookie) ? themeCookie : undefined,
+          mode: isMode(modeCookie) ? modeCookie : DEFAULT_MODE,
         });
 
       const response =

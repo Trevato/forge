@@ -146,11 +146,16 @@ export function scopeHeader(
       ? getRepoById(ctx.app.db, repo.forkParentId)
       : undefined;
 
+  const isApp =
+    repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  // The studio's tabs for an app: the app itself first, then the map, what
+  // was told and every change. Code, commits and branches are dev mode's.
+  const studio = ctx.mode === "studio" && isApp;
   const items: TabItem[] = [
     {
-      label: "Code",
+      label: studio ? "Studio" : "Code",
       href: base,
-      icon: "repo",
+      icon: studio ? "rocket" : "repo",
       current: active === "code",
       shortcut: "g c",
     },
@@ -177,27 +182,31 @@ export function scopeHeader(
       current: active === "map",
       shortcut: "g a",
     },
-    {
-      label: "Commits",
-      href: `${base}/commits`,
-      icon: "commit",
-      current: active === "commits",
-      shortcut: "g m",
-    },
-    {
-      label: "Branches",
-      href: `${base}/branches`,
-      icon: "branch",
-      ...(options.branchCount === undefined
-        ? {}
-        : { count: options.branchCount }),
-      current: active === "branches",
-      shortcut: "g b",
-    },
+    ...(studio
+      ? []
+      : [
+          {
+            label: "Commits",
+            href: `${base}/commits`,
+            icon: "commit" as const,
+            current: active === "commits",
+            shortcut: "g m",
+          },
+          {
+            label: "Branches",
+            href: `${base}/branches`,
+            icon: "branch" as const,
+            ...(options.branchCount === undefined
+              ? {}
+              : { count: options.branchCount }),
+            current: active === "branches",
+            shortcut: "g b",
+          },
+        ]),
   ];
   // A repository that runs gets an App tab; one that does not has no such
   // page, and a tab that 404s is a lie about what is there.
-  if (repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined)
+  if (repo !== undefined && isApp && !studio)
     items.push({
       label: "App",
       href: `${base}/app`,

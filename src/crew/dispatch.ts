@@ -52,7 +52,7 @@ import { abortAgentRun } from "./running.ts";
 const log = createLog("crew");
 
 /** Automatic follow-ups after a failed check, before a person must speak. */
-const CHECK_FAILED_LIMIT = 2;
+export const CHECK_FAILED_LIMIT = 2;
 const TICK_MS = 5_000;
 
 export interface CrewHandle {

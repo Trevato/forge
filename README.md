@@ -255,6 +255,9 @@ mechanical rather than advisory.
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew.
 
+`docs/STUDIO.md` is the forge with apps as the unit: tell, working, look,
+shipped, asks you — and the switch to dev.
+
 ## Develop
 
 ```sh

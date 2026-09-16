@@ -106,6 +106,33 @@ function themeMenu(active: ThemeName | undefined): Html {
   </details>`;
 }
 
+/**
+ * Studio or dev, for this browser. Two buttons, one form each, so the
+ * choice is a POST like the theme's and never a query parameter that
+ * leaks into links.
+ */
+function modeToggle(ctx: Ctx): Html {
+  if (!ctx.auth.user) return html``;
+  const back = ctx.url.pathname + ctx.url.search;
+  const one = (mode: "studio" | "dev", label: string) =>
+    html`<form method="post" action="/mode">
+      <input type="hidden" name="mode" value="${mode}" />
+      <input type="hidden" name="back" value="${back}" />
+      <button
+        type="submit"
+        aria-pressed="${ctx.mode === mode ? "true" : "false"}"
+        title="${mode === "studio"
+          ? "Apps, the crew, what asks you"
+          : "Code, commits, branches, runs"}"
+      >
+        ${label}
+      </button>
+    </form>`;
+  return html`<span class="mode-toggle" role="group" aria-label="Studio or dev">
+    ${one("studio", "studio")}${one("dev", "dev")}
+  </span>`;
+}
+
 function newMenu(): Html {
   const items: MenuItem[] = [
     { label: "New app", href: "/apps/new", icon: "rocket" },
@@ -356,7 +383,7 @@ export function page(options: PageOptions, status = 200): Response {
           )}
           <span class="spacer"></span>
           <span class="topbar-tools">
-            ${searchBar()}${helpButton()}${themeMenu(theme)}
+            ${searchBar()}${helpButton()}${modeToggle(ctx)}${themeMenu(theme)}
             ${user
               ? html`${newMenu()}${userMenu(
                   user,
