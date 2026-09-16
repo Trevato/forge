@@ -1,6 +1,6 @@
 {
   "app": {
-    "run": "env FORGE_DATA=\"$FORGE_APP_DATA\" FORGE_URL=\"$FORGE_APP_URL\" FORGE_APPS=0 FORGE_SSH_PORT=0 FORGE_CHECKS=0 bun run src/main.ts",
+    "run": "bun run src/main.ts",
     "install": "",
     "health": "/healthz",
     "ready": 90

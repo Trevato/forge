@@ -31,19 +31,31 @@ if (process.argv[2] === "hook") {
   await runHookClient(name);
 }
 
+// A forge can be an app of a forge (docs/APPS.md, "The forge as an app of
+// itself"). The host's `FORGE_APP_*` say where this one lives and what it
+// answers to; `FORGE_URL` there names the host, not this forge. Hosted, the
+// defaults change to what fits inside another: no SSH listener (the host
+// owns the port), app hostnames nested under this forge's own, one agent at
+// a time. Anything set explicitly still wins.
+const hostedAt = (process.env.FORGE_APP_URL ?? "").trim();
+const hosted = hostedAt !== "";
+
 // SSH is on by default: the terminal UI is a first-class surface, not an
 // add-on. `FORGE_SSH_PORT=0` turns the listener off entirely.
-const sshPort = Number(process.env.FORGE_SSH_PORT ?? 2222);
+const sshPort = Number(process.env.FORGE_SSH_PORT ?? (hosted ? 0 : 2222));
 
 // FORGE_URL is the address people reach the forge at when a proxy in front
 // terminates TLS. Parsed once here so a typo fails the boot, not a request.
-const canonicalUrl = (process.env.FORGE_URL ?? "").trim();
+const canonicalUrl = hosted ? hostedAt : (process.env.FORGE_URL ?? "").trim();
 // FORGE_EDGE_TOKEN is the platform edge's secret: with it, the edge's
 // identity headers sign people in; without it they are ignored.
 const edgeToken = (process.env.FORGE_EDGE_TOKEN ?? "").trim();
 
 const app = createApp({
-  dataDir: process.env.FORGE_DATA ?? "data",
+  dataDir:
+    process.env.FORGE_DATA ??
+    (hosted ? process.env.FORGE_APP_DATA : undefined) ??
+    "data",
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
     ? {}
@@ -66,13 +78,15 @@ const ssh =
 // forge; FORGE_URL when the operator set one, the host and port otherwise.
 const host = app.config.host ?? "localhost";
 const forgeUrl =
-  process.env.FORGE_URL?.replace(/\/+$/, "") ??
+  (hosted ? hostedAt : process.env.FORGE_URL)?.replace(/\/+$/, "") ??
   `http://${host}:${servers.port}`;
 const publicUrl = new URL(forgeUrl);
 const appsOn = process.env.FORGE_APPS !== "0";
 const apps = appsOn
   ? new AppsRuntime(app, {
-      domain: process.env.FORGE_APP_DOMAIN ?? publicUrl.hostname,
+      domain:
+        process.env.FORGE_APP_DOMAIN ??
+        (hosted ? `--${publicUrl.hostname}` : publicUrl.hostname),
       scheme: publicUrl.protocol === "https:" ? "https" : "http",
       publicPort:
         publicUrl.port === ""
@@ -98,7 +112,7 @@ const crew = appsOn
       forgeUrl,
       localUrl: servers.url,
       binary: process.env.FORGE_CLAUDE ?? "claude",
-      concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, 2),
+      concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, hosted ? 1 : 2),
       budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
       runTimeoutMs: positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000,
       allowHosts: (process.env.FORGE_CREW_ALLOW_HOSTS ?? "")

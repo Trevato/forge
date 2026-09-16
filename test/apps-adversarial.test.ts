@@ -112,6 +112,18 @@ describe("host routing: a single-label attachment", () => {
   });
 
   test("the dotted form is not an app under an undotted attachment, and vice versa", () => {
+    // A forge hosted here has apps of its own: their hostnames sit in
+    // front of ours and pass through for that forge to route.
+    expect(parseAppHost("cs--lab--forge.example", DOM)).toEqual({
+      slug: "lab",
+      env: "production",
+    });
+    expect(parseAppHost("cs--3--lab--14--forge.example", DOM)).toEqual({
+      slug: "lab",
+      env: "pull-14",
+    });
+    expect(parseAppHost("--lab--forge.example", DOM)).toBeUndefined();
+    expect(parseAppHost("cs----lab--forge.example", DOM)).toBeUndefined();
     expect(parseAppHost("notes.forge.example", DOM)).toBeUndefined();
     expect(
       parseAppHost("notes--forge.example", "forge.example"),
@@ -153,8 +165,17 @@ describe("host routing: parseAppHost", () => {
     expect(parseAppHost("[::1]", "apps.test")).toBeUndefined();
   });
 
-  test("`--` inside what would be the slug is refused, not split cleverly", () => {
-    expect(parseAppHost("a--b--12.apps.test", DOM)).toBeUndefined();
+  test("what stands in front of our app's label is the guest's, passed through", () => {
+    // `a` is a hostname inside app `b`'s own world — a hosted forge's app —
+    // not a slug of ours split cleverly.
+    expect(parseAppHost("a--b--12.apps.test", DOM)).toEqual({
+      slug: "b",
+      env: "pull-12",
+    });
+    expect(parseAppHost("a--b.apps.test", DOM)).toEqual({
+      slug: "b",
+      env: "production",
+    });
   });
 
   test("pull number 0 and a leading zero are refused", () => {

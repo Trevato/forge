@@ -42,12 +42,18 @@ export function parseAppHost(
   if (!host.endsWith(suffix)) return undefined;
   const label = host.slice(0, -suffix.length);
   if (label === "" || label.includes(".")) return undefined;
-  const at = label.indexOf("--");
-  if (at === -1) return { slug: label, env: "production" };
-  const slug = label.slice(0, at);
-  const number = label.slice(at + 2);
-  if (!/^[1-9]\d*$/.test(number) || slug === "") return undefined;
-  return { slug, env: previewEnv(Number(number)) };
+  const parts = label.split("--");
+  if (parts.some((part) => part === "")) return undefined;
+  // The app of ours is the tail of the label: `slug`, or `slug--N` for the
+  // preview of pull N. Whatever comes before it belongs to the app's own
+  // world — a forge hosted here has apps of its own, at `<theirs>--<ours>`
+  // — and travels through untouched in `Host`, for that app to route.
+  const last = parts.at(-1)!;
+  if (parts.length >= 2 && /^\d+$/.test(last)) {
+    if (!/^[1-9]\d*$/.test(last)) return undefined;
+    return { slug: parts.at(-2)!, env: previewEnv(Number(last)) };
+  }
+  return { slug: last, env: "production" };
 }
 
 /**

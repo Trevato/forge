@@ -218,26 +218,35 @@ current commits. The install and test steps do not see them.
 The forge's own repository declares an app, so a forge can host the forge:
 production runs `main`, and every pull gets a preview forge of its own —
 the place to try a change that might not earn its keep, with the data it
-would run against. The manifest is the whole trick:
+would run against, and with a crew of its own to try it on. The manifest
+is nothing special:
 
 ```json
-"app": {
-  "run": "env FORGE_DATA=\"$FORGE_APP_DATA\" FORGE_URL=\"$FORGE_APP_URL\" FORGE_APPS=0 FORGE_SSH_PORT=0 FORGE_CHECKS=0 bun run src/main.ts",
-  "install": "",
-  "health": "/healthz",
-  "ready": 90
-}
+"app": { "run": "bun run src/main.ts", "install": "", "health": "/healthz", "ready": 90 }
 ```
 
-The inner forge keeps its state under the app's data directory, so a
-preview made with **copy** starts as a copy of the hosted one — the same
-accounts, repositories and history, disposable. It answers at the app's
-URL and nowhere else: no SSH listener, no apps and no crew of its own
-(the outer proxy routes one label of hostname, not two), no checks. It is
-handed none of the outer forge's secrets — an app's environment is only
-what `Environment` above lists — so its first sign-up is its admin, as on
-any fresh forge. `install` is empty because the forge has no dependencies
-to fetch; `ready` is generous because the first boot migrates.
+The forge knows when it is hosted: `FORGE_APP_URL` set means a forge put
+it here, and it takes its address and its data directory from the host's
+`FORGE_APP_*` rather than from `FORGE_URL` and `FORGE_DATA`, which name
+the host. Hosted, the defaults change to what fits inside another forge —
+no SSH listener (the host owns the port), one agent at a time, and its
+apps' hostnames nested under its own: an app `cs` of the forge at
+`lab--14--<domain>` answers at `cs--lab--14--<domain>`, and its previews at
+`cs--3--lab--14--<domain>`. The host routes those by the tail of the label
+— the part that names an app of _its_ own — and passes what stands in
+front through in `Host`, untouched, for the guest to route. Anything set
+explicitly still wins, so `FORGE_APPS=0` makes a hosted forge that serves
+pages and git and nothing else.
+
+A preview made with **copy** starts as a copy of the hosted forge — the
+same accounts, repositories and crew, disposable — and, like any preview,
+inherits the app's environment variables. That is how its crew signs in:
+a `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) set on the app under
+**Settings → App → Environment** reaches every forge it hosts, and no
+other secret of the host does — an app's environment is only what the
+section above lists, and its first sign-up is its admin, as on any fresh
+forge. `install` is empty because the forge has no dependencies to fetch;
+`ready` is generous because the first boot migrates.
 
 ## A terminal for every app
 
@@ -451,6 +460,10 @@ The public URL apps and agents are told about the forge is `FORGE_URL` when
 set, else `http://<FORGE_HOST>:<PORT>`; its scheme and port are what app
 URLs are built with, so a forge behind TLS on a wildcard domain sets
 `FORGE_URL=https://forge.example` and `FORGE_APP_DOMAIN=apps.example`.
+Hosted by a forge (`FORGE_APP_URL` set), the address is `FORGE_APP_URL`,
+the data directory `FORGE_APP_DATA`, and the defaults become
+`FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
+`FORGE_APP_DOMAIN=--<its own host>`.
 
 ## What is deliberately not here
 
