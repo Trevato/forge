@@ -37,6 +37,8 @@ import {
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
 import { appStrip } from "./apps.ts";
+import { studioApp } from "./studio.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, fragment, page } from "../layout.ts";
@@ -843,6 +845,12 @@ export function rawResponse(blob: Blob): Response {
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  // In the studio an app's home is the app: what it serves, who is on it,
+  // what it asks. Dev mode is the code, as ever.
+  if (ctx.mode === "studio") {
+    const record = getAppByRepo(ctx.app.db, repo.id);
+    if (record !== undefined) return studioApp(ctx, repo, record);
+  }
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);

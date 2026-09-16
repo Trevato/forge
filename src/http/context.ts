@@ -7,6 +7,7 @@ import type { App } from "../app.ts";
 import type { TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import type { ThemeName } from "../design/themes.ts";
+import type { Mode } from "../web/mode.ts";
 
 export interface Auth {
   readonly user: User | undefined;
@@ -25,6 +26,8 @@ export interface Ctx {
   auth: Auth;
   /** Persisted theme choice from the forge_theme cookie; absent = system. */
   theme: ThemeName | undefined;
+  /** Studio or dev, from the forge_mode cookie; studio when unset. */
+  mode: Mode;
 }
 
 export type Handler = (ctx: Ctx) => Response | Promise<Response>;
