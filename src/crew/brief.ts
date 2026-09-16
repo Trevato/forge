@@ -7,7 +7,7 @@
  * rules (docs/APPS.md) hold whether or not the agent reads them.
  */
 
-import type { Agent } from "../core/agents.ts";
+import type { Agent, CrewRole } from "../core/agents.ts";
 import type { Comment, Issue } from "../core/issues.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
@@ -27,6 +27,8 @@ export interface BriefInput {
   readonly previewUrl?: string | undefined;
   /** Whether a session is being continued (the task was already given). */
   readonly resuming: boolean;
+  /** What this agent is for on this repository; a planner writes maps. */
+  readonly role?: CrewRole | undefined;
 }
 
 export function systemPrompt(input: BriefInput): string {
@@ -54,6 +56,16 @@ export function systemPrompt(input: BriefInput): string {
     `  curl -sH "authorization: Bearer $FORGE_TOKEN" "$FORGE_URL/api/v1/repos/${repo.ownerName}/${repo.name}/map"`,
     'To plan, open issues each small enough for one run and link them — POST …/issues/N/dependencies with {"blockedBy": M} says N waits for M. Ready now is what nothing open stands in front of.',
   ];
+  if (input.role === "planner") {
+    lines.push(
+      "",
+      "You are this repository's planner, and this run is a planning run:",
+      "- The issue you were given is the direction. Turn it into a map: open issues, each small enough for one run by one builder, each with a title that says the outcome and a body that says what done looks like; then link what waits for what.",
+      "- Read the repository first so the issues are true to it, and read the existing open issues so you extend the plan rather than repeat it.",
+      "- Assign nobody and push nothing: the map is the result. The direction issue stays open.",
+      "- Finish with a short message that lists what you opened, in order, and what is ready now.",
+    );
+  }
   if (input.isApp) {
     lines.push(
       "",

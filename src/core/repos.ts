@@ -51,6 +51,11 @@ export interface RepoCounts {
   readonly openPulls: number;
 }
 
+export type Autonomy = "off" | "assisted" | "autonomous";
+export const AUTONOMY: readonly Autonomy[] = ["off", "assisted", "autonomous"];
+export const isAutonomy = (value: unknown): value is Autonomy =>
+  (AUTONOMY as readonly unknown[]).includes(value);
+
 export interface Repo {
   readonly id: string;
   readonly ownerId: string;
@@ -70,6 +75,19 @@ export interface Repo {
    * merges. Read live inside `mergePull`, like `requireReview`.
    */
   readonly requireChecks: boolean;
+  /**
+   * How much the crew does here on its own (docs/PLANNING.md): `off`, every
+   * run starts because a person acted; `assisted`, the crew works what is
+   * ready and green waits for a look; `autonomous`, green ships and an empty
+   * map wakes the planner. `autonomyBy` is the person the forge acts as.
+   */
+  readonly autonomy: Autonomy;
+  readonly autonomyDirection: string;
+  readonly autonomyCeilingUsd: number;
+  readonly autonomySlots: number;
+  readonly autonomyBy: string | null;
+  /** The issue the planner is given, when the map has run dry. */
+  readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
   /** The origin this mirrors, or null for a native repo. */
@@ -93,6 +111,12 @@ interface RepoRow {
   protect_default: number;
   require_review: number;
   require_checks: number;
+  autonomy: string;
+  autonomy_direction: string;
+  autonomy_ceiling_usd: number;
+  autonomy_slots: number;
+  autonomy_by: string | null;
+  direction_issue_id: string | null;
   fork_parent_id: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
@@ -121,6 +145,12 @@ function toRepo(row: RepoRow): Repo {
     protectDefault: row.protect_default === 1,
     requireReview: row.require_review === 1,
     requireChecks: row.require_checks === 1,
+    autonomy: isAutonomy(row.autonomy) ? row.autonomy : "off",
+    autonomyDirection: row.autonomy_direction,
+    autonomyCeilingUsd: row.autonomy_ceiling_usd,
+    autonomySlots: row.autonomy_slots,
+    autonomyBy: row.autonomy_by,
+    directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
     origin:
       row.origin_id !== null && row.origin_kind !== null
@@ -603,6 +633,12 @@ export interface RepoSettings {
   requireChecks?: boolean;
   /** The caller must have pointed git HEAD at this branch first. */
   defaultBranch?: string;
+  autonomy?: Autonomy;
+  autonomyDirection?: string;
+  autonomyCeilingUsd?: number;
+  autonomySlots?: number;
+  /** Who the forge acts as when it assigns and lands on its own. */
+  autonomyBy?: string | null;
 }
 
 /** Update the mutable repo fields, leaving unspecified ones untouched. */
@@ -613,7 +649,10 @@ export function updateRepoSettings(
 ): Repo {
   db.query(
     `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
-       default_branch = ?4, require_review = ?5, require_checks = ?7 WHERE id = ?6`,
+       default_branch = ?4, require_review = ?5, require_checks = ?7,
+       autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
+       autonomy_slots = ?11, autonomy_by = ?12
+     WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
     settings.description ?? repo.description,
@@ -622,6 +661,33 @@ export function updateRepoSettings(
     (settings.requireReview ?? repo.requireReview) ? 1 : 0,
     repo.id,
     (settings.requireChecks ?? repo.requireChecks) ? 1 : 0,
+    settings.autonomy ?? repo.autonomy,
+    settings.autonomyDirection ?? repo.autonomyDirection,
+    settings.autonomyCeilingUsd ?? repo.autonomyCeilingUsd,
+    settings.autonomySlots ?? repo.autonomySlots,
+    settings.autonomyBy === undefined ? repo.autonomyBy : settings.autonomyBy,
   );
   return getRepoById(db, repo.id)!;
+}
+
+/** Repositories the crew drives on its own, assisted or autonomous. */
+export function listAutonomousRepos(db: Database): Repo[] {
+  return db
+    .query<
+      RepoRow,
+      []
+    >(`${SELECT} WHERE repo.autonomy != 'off' ORDER BY repo.name`)
+    .all()
+    .map(toRepo);
+}
+
+export function setDirectionIssue(
+  db: Database,
+  repoId: string,
+  issueId: string | null,
+): void {
+  db.query("UPDATE repo SET direction_issue_id = ?2 WHERE id = ?1").run(
+    repoId,
+    issueId,
+  );
 }

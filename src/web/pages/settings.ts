@@ -26,6 +26,15 @@ import {
   listCrew,
   removeFromCrew,
 } from "../../actions/crew.ts";
+import { autonomyStatus } from "../../crew/autonomy.ts";
+import {
+  CREW_ROLES,
+  getAgentByName,
+  isCrewRole,
+  listCrewRoles,
+  setCrewRole,
+} from "../../core/agents.ts";
+import { isAutonomy } from "../../core/repos.ts";
 import {
   createLabel,
   createWebhook,
@@ -60,7 +69,7 @@ import {
   settingsLayout,
 } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
 import type { Flash } from "../flash.ts";
@@ -81,7 +90,14 @@ import {
 } from "../ui.ts";
 import { crewReadiness } from "./crew.ts";
 
-type Section = "general" | "app" | "crew" | "labels" | "hooks" | "danger";
+type Section =
+  | "general"
+  | "app"
+  | "crew"
+  | "autonomy"
+  | "labels"
+  | "hooks"
+  | "danger";
 
 /** The repo, but only for someone who administers it. A non-admin is told
  * nothing — the settings tab is not even rendered for them. */
@@ -110,6 +126,12 @@ function sections(base: string, active: Section) {
       href: `${base}/settings/crew`,
       icon: "bot" as const,
       current: active === "crew",
+    },
+    {
+      label: "Autonomy",
+      href: `${base}/settings/autonomy`,
+      icon: "play" as const,
+      current: active === "autonomy",
     },
     {
       label: "Labels",
@@ -659,6 +681,9 @@ export function crewSettingsPage(ctx: Ctx): Response {
   const allListed = listAllAgents(ctx.app, ctx.auth.user);
   const all = allListed.ok ? allListed.value : [];
   const onCrew = new Set(crew.map((agent) => agent.user.id));
+  const roles = new Map(
+    listCrewRoles(ctx.app.db, repo.id).map((c) => [c.agent.user.id, c.role]),
+  );
   const available = all.filter((agent) => !onCrew.has(agent.user.id));
   const admin = ctx.auth.user?.isAdmin === true;
 
@@ -682,14 +707,43 @@ export function crewSettingsPage(ctx: Ctx): Response {
                   : ` · ${agent.brief}`}</span
               >`,
               trail: html`<form
-                class="row-actions"
-                method="post"
-                action="${base}/settings/crew/${encodeURIComponent(
-                  agent.user.username,
-                )}/remove"
-              >
-                ${btn("Remove", { size: "sm", icon: "x" })}
-              </form>`,
+                  class="row-actions"
+                  method="post"
+                  action="${base}/settings/crew/${encodeURIComponent(
+                    agent.user.username,
+                  )}/role"
+                >
+                  <label class="sr-only" for="f-role-${agent.user.username}"
+                    >Role of ${agent.user.username}</label
+                  >
+                  <select
+                    class="input input-sm"
+                    id="f-role-${agent.user.username}"
+                    name="role"
+                  >
+                    ${CREW_ROLES.map(
+                      (r) =>
+                        html`<option
+                          value="${r}"
+                          ${(roles.get(agent.user.id) ?? "builder") === r
+                            ? raw("selected")
+                            : null}
+                        >
+                          ${r}
+                        </option>`,
+                    )}
+                  </select>
+                  ${btn("Set", { size: "sm" })}
+                </form>
+                <form
+                  class="row-actions"
+                  method="post"
+                  action="${base}/settings/crew/${encodeURIComponent(
+                    agent.user.username,
+                  )}/remove"
+                >
+                  ${btn("Remove", { size: "sm", icon: "x" })}
+                </form>`,
             }),
           ),
         );
@@ -1162,4 +1216,161 @@ export async function repoDelete(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, "/", { message: `${full} was deleted.` });
+}
+
+// POST /:owner/:name/settings/crew/:username/role
+export async function crewRoleUpdate(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const base = repoBase(repo);
+  const agent = getAgentByName(ctx.app.db, ctx.params.username ?? "");
+  const role = field(form, "role");
+  if (!agent || !isCrewRole(role))
+    return flashTo(ctx, `${base}/settings/crew`, {
+      tone: "danger",
+      message: "That role could not be set.",
+    });
+  setCrewRole(ctx.app.db, repo.id, agent.user.id, role);
+  return flashTo(ctx, `${base}/settings/crew`, {
+    message: `${agent.user.username} is a ${role} here.`,
+  });
+}
+
+// ---- autonomy ----
+
+/** GET /:owner/:name/settings/autonomy */
+export function autonomySettingsPage(ctx: Ctx): Response {
+  const repo = loadAdminRepo(ctx);
+  if (!repo) return repoNotFound(ctx);
+  const base = repoBase(repo);
+  const status = autonomyStatus(ctx.app, repo);
+  const crew = listCrewRoles(ctx.app.db, repo.id);
+  const builders = crew.filter((c) => c.role === "builder").length;
+  const planner = crew.find((c) => c.role === "planner");
+  const state =
+    repo.autonomy === "off"
+      ? html`<p class="muted small">
+          Off. Every run starts because a person assigned, commented, or a check
+          failed.
+        </p>`
+      : html`<p class="small">
+          ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} ·
+          $${status.spentTodayUsd.toFixed(2)} of
+          $${status.ceilingUsd.toFixed(0)} today · ${status.active} of
+          ${status.slots} slots in use
+          ${status.paused === "ceiling"
+            ? html`· <strong>paused at the ceiling</strong>, resumes at 00:00
+                UTC`
+            : status.paused === "no crew"
+              ? html`· <strong>paused: no crew</strong>`
+              : status.paused === "nobody"
+                ? html`· <strong>paused: nobody to act as</strong>`
+                : null}
+        </p>`;
+  const form = html`<form method="post" action="${base}/settings/autonomy">
+    ${selectField({
+      label: "Mode",
+      name: "autonomy",
+      hint: "Assisted: the crew works what is ready and every green change waits for your look. Autonomous: green ships, and when the map runs dry the planner is given the direction.",
+      options: [
+        { value: "off", label: "Off", selected: repo.autonomy === "off" },
+        {
+          value: "assisted",
+          label: "Assisted",
+          selected: repo.autonomy === "assisted",
+        },
+        {
+          value: "autonomous",
+          label: "Autonomous",
+          selected: repo.autonomy === "autonomous",
+        },
+      ],
+    })}
+    <div class="field">
+      <label for="f-direction">Direction</label>
+      <textarea
+        class="input"
+        id="f-direction"
+        name="direction"
+        rows="3"
+        placeholder="Pull the engine out of the game so a second game can use it."
+      >
+${repo.autonomyDirection}</textarea
+      >
+      <p class="hint">
+        One or two sentences. The planner turns this into issues and links them
+        when nothing is left to build.
+        ${planner
+          ? html`Planner here: ${userLink(planner.agent.user.username)}.`
+          : html`No planner on the crew yet — set one under Crew, or the map is
+            only what people write.`}
+      </p>
+    </div>
+    ${formField({
+      label: "Ceiling per day",
+      name: "ceiling",
+      value: String(repo.autonomyCeilingUsd),
+      type: "number",
+      hint: "Dollars of agent spend on this repository per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.",
+    })}
+    ${formField({
+      label: "Slots",
+      name: "slots",
+      value: String(repo.autonomySlots),
+      type: "number",
+      hint: `Agent runs at once here. This is the WIP limit; ${builders} builder${builders === 1 ? "" : "s"} on the crew now.`,
+    })}
+    <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
+  </form>`;
+  const body = card(html`${state}${form}`, {
+    head: html`<h2>Autonomy</h2>`,
+  });
+  return settingsPageResponse(ctx, repo, "autonomy", "Autonomy", body);
+}
+
+// POST /:owner/:name/settings/autonomy
+export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const base = repoBase(repo);
+  const mode = field(form, "autonomy");
+  const ceiling = Number(field(form, "ceiling"));
+  const slots = Number(field(form, "slots"));
+  if (
+    !isAutonomy(mode) ||
+    !Number.isFinite(ceiling) ||
+    ceiling < 0 ||
+    !Number.isInteger(slots) ||
+    slots < 1 ||
+    slots > 8
+  )
+    return flashTo(ctx, `${base}/settings/autonomy`, {
+      tone: "danger",
+      message:
+        "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
+    });
+  const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
+    autonomy: mode,
+    autonomyDirection: field(form, "direction").trim().slice(0, 2000),
+    autonomyCeilingUsd: ceiling,
+    autonomySlots: slots,
+    autonomyBy: mode === "off" ? null : (ctx.auth.user?.id ?? null),
+  });
+  return flashTo(ctx, `${base}/settings/autonomy`, {
+    ...(updated.ok
+      ? {
+          message:
+            mode === "off"
+              ? "Autonomy is off."
+              : mode === "assisted"
+                ? "Assisted: the crew works what is ready; green waits for you."
+                : "Autonomous: the crew works what is ready and ships on green, as you.",
+        }
+      : {
+          tone: "danger" as const,
+          message: "Those settings could not be saved.",
+        }),
+  });
 }
