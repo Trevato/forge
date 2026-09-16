@@ -359,6 +359,8 @@ export function openEnvUrl(
   repo: Repo,
   env: string,
   path = "/",
+  /** The hostname the visitor asked for, when it is one of this app's. */
+  host?: string,
 ): Result<string, EnvError | "unauthorized"> {
   const reader = requireReader(app, actor, repo);
   if (!reader.ok) return reader;
@@ -371,9 +373,11 @@ export function openEnvUrl(
     // A grant names a person; anonymous visitors get the same answer a
     // private repo gives them.
     if (actor === undefined) return err("unauthorized");
-    return ok(grantUrl(runtime, { app: record, env }, path));
+    return ok(grantUrl(runtime, { app: record, env }, path, host));
   }
-  return ok(`${runtime.urlFor(record, env)}${path === "/" ? "" : path}`);
+  const base = new URL(runtime.urlFor(record, env));
+  if (host !== undefined) base.hostname = host.replace(/:\d+$/, "");
+  return ok(`${base.origin}${path === "/" ? "" : path}`);
 }
 
 /** Deploy an environment again at its current commit. */

@@ -23,6 +23,7 @@ import { listAllAgents, listCrew } from "../../actions/crew.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { Pull } from "../../core/pulls.ts";
@@ -251,7 +252,7 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
           hint:
             domain === undefined
               ? "Letters, digits, dots, dashes and underscores. The hostname is made from it."
-              : `Letters, digits, dots, dashes and underscores. It runs at <name>.${domain}.`,
+              : `Letters, digits, dots, dashes and underscores. It runs at <name>${appHostSuffix(domain)}.`,
           ...(error ? { error } : {}),
         })}
         ${formField({
@@ -726,7 +727,7 @@ export function appsOpen(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   const repo = getRepoById(ctx.app.db, target.app.repoId);
   if (!repo) return notFoundPage(ctx);
-  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, target.env, path);
+  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, target.env, path, host);
   if (!link.ok) return notFoundPage(ctx);
   return new Response(null, {
     status: 302,

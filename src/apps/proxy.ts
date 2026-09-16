@@ -133,10 +133,16 @@ export function grantUrl(
   runtime: AppsRuntime,
   target: AppTarget,
   path = "/",
+  host?: string,
 ): string {
   const token = signGrant(runtime.app.config.dataDir, target, GRANT_URL_TTL_MS);
-  const base = runtime.urlFor(target.app, target.env);
-  return `${base}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(path)}`;
+  // The cookie a grant sets belongs to one hostname. A visitor who asked
+  // for a hostname inside the app's own world — an app of a forge hosted
+  // here — must be granted on that hostname, not the app's canonical one,
+  // or the cookie lands where the request never goes.
+  const base = new URL(runtime.urlFor(target.app, target.env));
+  if (host !== undefined) base.hostname = host.replace(/:\d+$/, "");
+  return `${base.origin}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(path)}`;
 }
 
 const HOP_BY_HOP = [

@@ -23,7 +23,13 @@ import {
   listOpenAgentPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
-import { getPull, joinMany, listPulls, type Pull } from "../../core/pulls.ts";
+import {
+  getPull,
+  joinMany,
+  listPulls,
+  openPullsClosing,
+  type Pull,
+} from "../../core/pulls.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
@@ -189,6 +195,7 @@ function decisionOptions(ctx: Ctx, d: Decision): Html {
         btn("Open the preview", { href, size: "sm" }),
       )}
       <form method="post" action="${base}/pulls/${pull.number}/ship">
+        <input type="hidden" name="pull" value="${pull.number}" />
         ${btn("Ship it", { size: "sm", variant: "primary" })}
       </form>
       <form
@@ -347,29 +354,41 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
     (r) => r.state === "running" || r.state === "queued",
   );
 
-  // What was told and not yet picked up: assigned to the crew, no run yet.
-  const ran = new Set(runs.map((r) => r.issueId));
+  // One row per thing, in the five words. Open pulls first (look, stopped,
+  // checking); then runs in flight with no pull yet; then what was told and
+  // not picked up at all; then the last few finished runs whose issue has
+  // no open pull — shipped or stopped. Nothing appears twice, and nothing
+  // finished lingers once its pull exists.
+  const proposed = new Set(openPulls.map((p) => p.id));
+  const openByIssue = openPullsClosing(db, repo.id);
   const told = listIssues(db, repo.id, {
     kind: "issue",
     state: "open",
-    limit: 20,
-  })
-    .filter((i) => i.assigneeIsAgent && !ran.has(i.id))
-    .slice(0, 5);
+    limit: 30,
+  }).filter((i) => i.assigneeIsAgent && !openByIssue.has(i.number));
+  const everRan = latestRunsForIssues(
+    db,
+    told.map((i) => i.id),
+    ["agent"],
+  );
+  const waiting = told.filter((i) => !everRan.has(i.id)).slice(0, 5);
+  const issueNumberById = new Map(told.map((i) => [i.id, i.number]));
+  const rowsNow = runs
+    .filter((r) => {
+      if (r.issueId === null) return true;
+      if (proposed.has(r.issueId)) return false; // its pull is listed
+      const n = issueNumberById.get(r.issueId) ?? issues.get(r.issueId)?.number;
+      return n === undefined || !openByIssue.has(n);
+    })
+    .filter(
+      (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
+    )
+    .slice(0, 6);
   const now = html`<section class="studio-now">
     <h2>Now</h2>
-    ${runs.length === 0 && openPulls.length === 0 && told.length === 0
+    ${rowsNow.length === 0 && openPulls.length === 0 && waiting.length === 0
       ? html`<p class="muted small">Nothing yet. Tell the crew something.</p>`
       : html`<ul class="studio-list">
-          ${told.map(
-            (i) =>
-              html`<li data-word="waiting">
-                ${icon(WORD_ICON.waiting)}
-                <span class="studio-who">${i.assigneeName}</span>
-                <a href="${base}/issues/${i.number}">${i.title}</a>
-                <span class="studio-word">waiting</span>
-              </li>`,
-          )}
           ${openPulls.map((p) => {
             const check = latestRunsForIssues(db, [p.id]).get(p.id);
             const state =
@@ -391,7 +410,7 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
               >
             </li>`;
           })}
-          ${runs.map((r) => {
+          ${rowsNow.map((r) => {
             const { word, note } = wordFor(r);
             const who =
               r.actorId === null
@@ -410,6 +429,15 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
               >
             </li>`;
           })}
+          ${waiting.map(
+            (i) =>
+              html`<li data-word="waiting">
+                ${icon(WORD_ICON.waiting)}
+                <span class="studio-who">${i.assigneeName}</span>
+                <a href="${base}/issues/${i.number}">${i.title}</a>
+                <span class="studio-word">waiting</span>
+              </li>`,
+          )}
         </ul>`}
   </section>`;
 
@@ -463,6 +491,15 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
         </li>
       </ul>
     </section>
+    ${autonomy === undefined
+      ? html`<section>
+          <h3>On its own</h3>
+          <p class="muted small">
+            Off. <a href="${base}/settings/autonomy">Turn it on</a> and the crew
+            works what is ready without being asked.
+          </p>
+        </section>`
+      : null}
     ${when(
       autonomy,
       (a) =>
