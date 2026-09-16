@@ -87,6 +87,7 @@ export type RepoTab =
   | "code"
   | "issues"
   | "pulls"
+  | "map"
   | "commits"
   | "branches"
   | "app"
@@ -168,6 +169,13 @@ export function scopeHeader(
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
       shortcut: "g p",
+    },
+    {
+      label: "Map",
+      href: `${base}/map`,
+      icon: "map",
+      current: active === "map",
+      shortcut: "g a",
     },
     {
       label: "Commits",

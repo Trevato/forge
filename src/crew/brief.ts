@@ -50,6 +50,9 @@ export function systemPrompt(input: BriefInput): string {
     "The forge's JSON API is available for reading the repository, its issues and pulls:",
     `  curl -sH "authorization: Bearer $FORGE_TOKEN" "$FORGE_URL/api/v1/repos/${repo.ownerName}/${repo.name}/issues/${input.issue.number}"`,
     "Prefer the working tree for code; use the API for conversation.",
+    "Issues can depend on issues, and the map of what waits for what is the plan:",
+    `  curl -sH "authorization: Bearer $FORGE_TOKEN" "$FORGE_URL/api/v1/repos/${repo.ownerName}/${repo.name}/map"`,
+    'To plan, open issues each small enough for one run and link them — POST …/issues/N/dependencies with {"blockedBy": M} says N waits for M. Ready now is what nothing open stands in front of.',
   ];
   if (input.isApp) {
     lines.push(

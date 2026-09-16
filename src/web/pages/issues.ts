@@ -51,6 +51,7 @@ import {
 } from "../ui.ts";
 import {
   assigneeCard,
+  dependenciesCard,
   composer,
   conversation,
   labelsCard,
@@ -509,6 +510,7 @@ export function issuePage(ctx: Ctx): Response {
       </div>
       <aside>
         ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
+        ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
         ${labelsCard(ctx, repo, issue, applied, all, `${thread}/labels`)}
         ${crewActivityCard(ctx, repo, issue)}
       </aside>

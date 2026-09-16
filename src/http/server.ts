@@ -75,6 +75,8 @@ import {
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
+import { mapPage } from "../web/pages/map.ts";
+import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
@@ -524,6 +526,13 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
     assigneeSubmit(ctx, "issue"),
   );
+  // What an issue waits for: link and unlink, from the issue page.
+  router.add(
+    "POST",
+    "/:owner/:name/issues/:number/dependencies",
+    dependencySubmit,
+  );
+  router.add("GET", "/:owner/:name/map", mapPage);
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   router.add("GET", "/:owner/:name/pulls", pullsList);

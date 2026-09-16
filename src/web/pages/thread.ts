@@ -9,6 +9,9 @@
  */
 
 import { listCrew } from "../../actions/crew.ts";
+import { linkIssue, unlinkIssue } from "../../actions/dependencies.ts";
+import { dependenciesOf } from "../../core/dependencies.ts";
+import { isCrew } from "../../core/agents.ts";
 import {
   assignIssue,
   setIssueLabelsThrough,
@@ -630,3 +633,129 @@ export async function labelsSubmit(
 }
 
 export { labelsFor, listComments, when };
+
+// ---- dependencies ----
+
+/**
+ * What this issue waits for, and what waits for it, with the form to change
+ * it. Anyone who can write the repository or is on its crew may link: a plan
+ * is the crew's to write as much as a person's.
+ */
+export function dependenciesCard(
+  ctx: Ctx,
+  repo: Repo,
+  issue: Issue,
+  action: string,
+): Html {
+  const { blockedBy, blocks } = dependenciesOf(ctx.app.db, issue.id);
+  const base = repoBase(repo);
+  const user = ctx.auth.user;
+  const mayEdit =
+    user !== undefined &&
+    (canWrite(ctx.app.db, repo, user) || isCrew(ctx.app.db, repo.id, user.id));
+  const list = (items: Issue[], removable: boolean) =>
+    html`<ul class="dep-list">
+      ${items.map(
+        (i) =>
+          html`<li data-state="${i.state}">
+            ${icon(i.state === "closed" ? "issueClosed" : "issue")}
+            <a href="${base}/issues/${i.number}">${i.title}</a>
+            <span class="muted small">#${i.number}</span>
+            ${removable && mayEdit
+              ? html`<form method="post" action="${action}" class="inline">
+                  <input type="hidden" name="unlink" value="${i.number}" />
+                  <button
+                    class="btn btn-ghost btn-xs"
+                    type="submit"
+                    aria-label="No longer waits for #${i.number}"
+                  >
+                    ${icon("x")}
+                  </button>
+                </form>`
+              : null}
+          </li>`,
+      )}
+    </ul>`;
+  const openBlockers = blockedBy.filter((i) => i.state === "open").length;
+  const waits =
+    openBlockers === 0
+      ? `Waits for ${blockedBy.length}, all done`
+      : openBlockers === blockedBy.length
+        ? `Waits for ${blockedBy.length}`
+        : `Waits for ${blockedBy.length}, ${openBlockers} still open`;
+  const holds = `Holds up ${blocks.length}`;
+  const body = html`${blockedBy.length === 0
+      ? html`<p class="muted small">Waits for nothing.</p>`
+      : html`<p class="small">${waits}</p>
+          ${list(blockedBy, true)}`}
+    ${blocks.length === 0
+      ? null
+      : html`<p class="small mt">${holds}</p>
+          ${list(blocks, false)}`}
+    ${mayEdit
+      ? html`<form method="post" action="${action}" class="edit-row mt">
+          <label class="sr-only" for="f-blocked-by"
+            >Waits for issue number</label
+          >
+          <input
+            class="input"
+            id="f-blocked-by"
+            name="blockedBy"
+            inputmode="numeric"
+            placeholder="#"
+            aria-label="Issue number this one waits for"
+          />
+          ${btn("Waits for", { type: "submit", size: "sm" })}
+        </form>`
+      : null}
+    <p class="muted small mt"><a href="${base}/map">See the map</a></p>`;
+  return card(body, {
+    head: html`${icon("map")}
+      <h2>Depends on</h2>`,
+  });
+}
+
+// POST /:owner/:name/issues/:number/dependencies  { blockedBy } | { unlink }
+export async function dependencySubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  const unlink = field(form, "unlink").trim();
+  const raw = unlink !== "" ? unlink : field(form, "blockedBy").trim();
+  const number = Number(raw.replace(/^#/, ""));
+  const other =
+    Number.isInteger(number) && number > 0
+      ? getIssue(ctx.app.db, found.repo.id, number)
+      : undefined;
+  if (!other || other.kind !== "issue")
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: `There is no issue #${raw.replace(/^#/, "")} here.`,
+    });
+  const result =
+    unlink !== ""
+      ? unlinkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other)
+      : linkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other);
+  if (!result.ok) {
+    const words: Record<string, string> = {
+      self: "An issue cannot wait for itself.",
+      cycle: `#${other.number} already waits for this one, directly or through others; linking would make a loop.`,
+      cross_repo: "Dependencies stay inside one repository.",
+      not_an_issue: "Only issues can depend on issues.",
+      forbidden: "You need write access, or a place on the crew, to plan here.",
+    };
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message: words[result.error] ?? "That could not be linked.",
+    });
+  }
+  return flashTo(ctx, dest, {
+    message:
+      unlink !== ""
+        ? `#${found.issue.number} no longer waits for #${other.number}.`
+        : `#${found.issue.number} waits for #${other.number}.`,
+  });
+}
