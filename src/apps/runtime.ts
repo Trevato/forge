@@ -28,7 +28,7 @@ import {
   cancelRun,
   claimRun,
   createRun,
-  failOrphanedRuns,
+  failAbandonedRuns,
   finishRun,
   type Run,
 } from "../core/runs.ts";
@@ -36,6 +36,7 @@ import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
 import {
@@ -233,8 +234,8 @@ export class AppsRuntime {
 
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
-    const orphaned = failOrphanedRuns(this.app.db);
-    if (orphaned > 0) log.info("failed orphaned runs", { count: orphaned });
+    const abandoned = failAbandonedRuns(this.app.db, STALE_AFTER_MS);
+    if (abandoned > 0) log.info("failed abandoned runs", { count: abandoned });
     this.unsubscribe = this.app.bus.subscribe((event) => {
       // Never let an event handler's rejection reach the bus.
       this.onEvent(event).catch((error) =>
@@ -531,6 +532,7 @@ export class AppsRuntime {
   ): Promise<void> {
     const claimed = claimRun(this.app.db, run.id);
     if (!claimed) return; // cancelled meanwhile
+    const lease = holdLease(this.app.db, run.id);
     const abort = new AbortController();
     state.deploying = { run: claimed, abort };
     state.lastRunId = run.id;
@@ -546,6 +548,7 @@ export class AppsRuntime {
     );
 
     state.deploying = undefined;
+    lease();
     if (outcome.ok) {
       const previous = state.live;
       state.live = outcome.value;

@@ -15,7 +15,6 @@ import {
 import {
   createPull,
   getPull,
-  listOpenPullsFromHead,
   mergePull as landPull,
   pullDiff,
   pullStatus,
@@ -61,6 +60,7 @@ import {
   type AccessError,
 } from "./access.ts";
 import { canWrite } from "../core/repos.ts";
+import { refreshPullHead as refreshHead } from "../core/following.ts";
 import { carryBranchThrough } from "../origins/push-through.ts";
 
 export interface OpenPullInput {
@@ -196,85 +196,12 @@ const assigneeOf = (issue: Issue) => ({
   assigneeIsAgent: issue.assigneeIsAgent,
 });
 
-/**
- * Bring `refs/pull/N/head` up to date with the fork it came from.
- *
- * A cross-repo pull's head lives in another repository, so the base repo
- * holds a *snapshot* of it — fetched when the pull opened and pointed at by
- * `refs/pull/N/head`. Everything downstream (the diff, mergeability, the
- * merge itself) reads that ref, so a fork that pushed again after opening
- * the pull would be reviewed and merged at the commit it opened with.
- *
- * This is the one place that closes it: fetch the fork's branch again, move
- * the ref, and let `pullStatus` read the tip that is actually being proposed.
- * A native same-repo pull needs none of it (its head is a live branch here),
- * and a mirrored pull's head lives on the origin and is not ours to fetch.
- *
- * Best-effort by design: a deleted fork or a vanished branch leaves the last
- * snapshot in place, which is a stale diff rather than no diff at all.
- */
-export async function refreshPullHead(
+/** The core's refresh, in the shape the actions' callers use. */
+export const refreshPullHead = (
   app: App,
   repo: Repo,
   pull: Pull,
-): Promise<string | undefined> {
-  if (!pull.crossRepo || pull.originHeadRepo !== null) return undefined;
-  if (pull.mergedAt !== null) return undefined;
-  const head = getRepoById(app.db, pull.headRepoId);
-  if (head === undefined) return undefined;
-  const headDir = repoDir(app.reposRoot, head.ownerName, head.name);
-  const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  // Two cheap `rev-parse`s before a fetch: this runs on every read of a
-  // cross-repo pull, and the overwhelmingly common answer is "nothing moved".
-  const [live, snapshot] = await Promise.all([
-    resolveOid(headDir, `refs/heads/${pull.headBranch}`),
-    resolveOid(baseDir, `refs/pull/${pull.number}/head`),
-  ]);
-  if (live === undefined || live === snapshot) return undefined;
-  const tip = await fetchInto(
-    baseDir,
-    headDir,
-    `refs/heads/${pull.headBranch}`,
-  );
-  if (tip === undefined) return undefined;
-  await writeRef(
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
-    `refs/pull/${pull.number}/head`,
-    tip,
-  );
-  return tip;
-}
-
-/**
- * After a push lands: every open pull headed by a pushed branch — in this
- * repository's parent, or wherever it was proposed — has its snapshot in
- * the base brought up to the new tip, and the base hears `pull.pushed` so a
- * preview can follow. Best-effort, like the refresh it is built on.
- */
-export async function followHeadPushes(
-  app: App,
-  headRepo: Repo,
-  updates: readonly { ref: string; newOid: string }[],
-  actorId: string | undefined,
-): Promise<void> {
-  for (const update of updates) {
-    if (!update.ref.startsWith("refs/heads/") || /^0+$/.test(update.newOid))
-      continue;
-    const branch = update.ref.slice("refs/heads/".length);
-    for (const pull of listOpenPullsFromHead(app.db, headRepo.id, branch)) {
-      const base = getRepoById(app.db, pull.repoId);
-      if (base === undefined) continue;
-      const tip = await refreshPullHead(app, base, pull);
-      if (tip === undefined) continue;
-      app.bus.append({
-        kind: "pull.pushed",
-        repoId: base.id,
-        actorId,
-        payload: { number: pull.number, headOid: tip, branch },
-      });
-    }
-  }
-}
+): Promise<string | undefined> => refreshHead(app, repo, pull);
 
 export interface ReviewInput {
   body: string;

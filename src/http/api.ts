@@ -2572,13 +2572,22 @@ export function apiRoutes(router: Router<Handler>): void {
       });
     }
     const run = found.value.run;
+    // Every line carries its number, so a browser that reconnects — a
+    // proxy in front of the forge cuts long responses — sends the last it
+    // saw and hears only what followed, never the log again from the top.
+    const seen = Number(ctx.request.headers.get("last-event-id") ?? "0") || 0;
     return eventStream(ctx.request, (emit, close) => {
       const controller = new AbortController();
+      let index = 0;
+      const send = (line: string): void => {
+        index += 1;
+        if (index > seen) emit("line", line, String(index));
+      };
       // Subscribe, then read: both are synchronous, so no line can land in
       // between — the tail is exact, not approximate.
-      subscribeRunLog(run.id, (line) => emit("line", line), controller.signal);
+      subscribeRunLog(run.id, send, controller.signal);
       for (const line of readRunLog(ctx.app.config.dataDir, run.id).lines)
-        emit("line", line);
+        send(line);
       const finish = (final: Run): void => {
         emit("done", final, final.id);
         close();

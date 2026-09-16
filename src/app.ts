@@ -9,8 +9,10 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { migrations } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
+import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
+import { id } from "./kernel/id.ts";
 import { createLog, type Log } from "./kernel/log.ts";
 import { closeReadersUnder } from "./git/read.ts";
 
@@ -37,6 +39,11 @@ export interface ForgeConfig {
    * in by the platform. Unset, those headers are a claim and are ignored.
    */
   edgeToken?: string;
+  /**
+   * What the platform edge is called where a person signs in — the name on
+   * the button that sends them to it. Unset, it is "the platform".
+   */
+  edgeName?: string;
   /**
    * The SSH host key's fingerprint, once the listener is up — what a person
    * compares against the one their client prints on first connect. Written
@@ -78,6 +85,9 @@ export function createApp(config: ForgeConfig): App {
   // sends them. Listener throws are swallowed by the bus, so this can never
   // break the action that produced the event.
   bus.subscribe((event) => enqueueForEvent(db, event));
+  // What a push moves besides its own branch: the pulls it heads elsewhere,
+  // and the forks whose default branch is still a copy of this one's.
+  follow({ db, reposRoot, bus });
 
   return {
     config: { ...config, dataDir },
@@ -85,7 +95,9 @@ export function createApp(config: ForgeConfig): App {
     bus,
     log: createLog("forge"),
     reposRoot,
-    socketPath: join(dataDir, "forge.sock"),
+    // This process's own: two forges share a data directory for the length
+    // of a release, and each spawns git with its own socket in the env.
+    socketPath: join(dataDir, `forge-${id()}.sock`),
     close: () => {
       // The pooled `cat-file` readers for this forge's repos are processes,
       // and processes outlive a closed database unless somebody says

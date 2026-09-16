@@ -159,10 +159,15 @@ const budgetOf = (form: Form): number | undefined => {
 
 // ---- the list ----
 
-/** Runs, what they cost, how long they take — or a quiet dash before any. */
+/**
+ * How an agent does, in the numbers that matter: runs and how many landed,
+ * pulls a person merged, and what a run costs in money, minutes and turns.
+ * A quiet dash before any.
+ */
 function totalsCells(t: AgentTotals | undefined): Html {
   if (t === undefined || t.runs === 0)
     return html`<td class="num muted">—</td>
+      <td class="num muted">—</td>
       <td class="num muted">—</td>
       <td class="num muted">—</td>`;
   const mean =
@@ -171,14 +176,21 @@ function totalsCells(t: AgentTotals | undefined): Html {
       : t.meanSeconds < 90
         ? `${Math.round(t.meanSeconds)}s`
         : `${Math.round(t.meanSeconds / 60)}m`;
+  const perRun = t.meanCostUsd === null ? "—" : `$${t.meanCostUsd.toFixed(2)}`;
+  const turns =
+    t.meanTurns === null ? "" : ` · ${Math.round(t.meanTurns)} turns`;
   return html`<td class="num">
       ${t.runs}
       <span class="muted small"
         >${t.ok} ok${t.failed > 0 ? html`, ${t.failed} failed` : null}</span
       >
     </td>
+    <td class="num">${t.merged}</td>
     <td class="num">$${t.spentUsd.toFixed(2)}</td>
-    <td class="num">${mean}</td>`;
+    <td class="num">
+      ${perRun}
+      <span class="muted small">${mean}${turns}</span>
+    </td>`;
 }
 
 function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
@@ -203,8 +215,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
                 <th>Model</th>
                 <th>Budget</th>
                 <th>Runs</th>
+                <th>Merged</th>
                 <th>Spent</th>
-                <th>Mean</th>
+                <th>Per run</th>
                 <th>Created</th>
                 <th></th>
               </tr>

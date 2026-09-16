@@ -2,7 +2,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { followParents } from "../src/actions/forks.ts";
 import { createApp, type App } from "../src/app.ts";
 import { deleteRepo, getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -24,7 +23,6 @@ const gitEnv = {
 };
 
 describe("forks", () => {
-  let unfollow: () => void;
   let dataDir: string;
   let work: string;
   let app: App;
@@ -87,7 +85,6 @@ describe("forks", () => {
     work = await mkdtemp(join(tmpdir(), "forge-fork-work-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    unfollow = followParents(app);
     base = servers.url;
     aliceToken = await mkUser("alice");
     bobToken = await mkUser("bob");
@@ -111,7 +108,6 @@ describe("forks", () => {
   });
 
   afterAll(async () => {
-    unfollow();
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -306,6 +302,14 @@ describe("forks", () => {
     expect(diverged).toContain("1 commit of its own");
     expect(diverged).toContain("2 behind");
     expect(diverged).not.toContain("Update from parent");
+  test("the fork count on the repository page opens the list of forks", async () => {
+    const home = await (await fetch(`${base}/alice/app`)).text();
+    expect(home).toContain('href="/alice/app/forks"');
+    expect(home).toContain("2 forks");
+    const listed = await (await fetch(`${base}/alice/app/forks`)).text();
+    expect(listed).toContain("2 forks");
+    expect(listed).toContain('href="/bob/app"');
+    expect(listed).toContain('href="/carol/app"');
   });
 
   test("a stranger cannot fork a private repo", async () => {

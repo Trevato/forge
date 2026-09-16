@@ -28,6 +28,9 @@ forge:
   # FORGE_HOST — the hostname in ssh:// clone URLs. SSH cannot ride the HTTPS
   # edge, so it has its own DNS name, pointed at the platform's TCP relay.
   sshHost: ssh.forge-trevato-apps.open-platform.sh
+  # FORGE_EDGE_NAME — what the platform edge is called on the sign-in page:
+  # the name on the button that sends a person to it.
+  edgeName: open-platform.sh
   sshPort: 2222
   # Origins registered by the operator, `host=client id` comma-separated: the
   # platform's own Forgejo, so connecting it is one click.

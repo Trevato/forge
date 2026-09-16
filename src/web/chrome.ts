@@ -9,6 +9,7 @@
  */
 
 import { getAppByRepo } from "../core/apps.ts";
+import { edgeLoginUrl } from "../http/edge.ts";
 import { canAdmin, canRead, getRepo, getRepoById } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -73,6 +74,10 @@ export const repoNotFound = notFoundPage;
 /** Send an anonymous visitor to sign in, and back where they were going. */
 export function signInFirst(ctx: Ctx): Response {
   const next = ctx.url.pathname + ctx.url.search;
+  // Behind a platform edge the edge is how people sign in; an account it
+  // made has no password here, so the password form would only refuse them.
+  if (ctx.app.config.edgeToken !== undefined)
+    return redirect(edgeLoginUrl(next));
   return redirect(`/signin?next=${encodeURIComponent(next)}`);
 }
 

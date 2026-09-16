@@ -28,6 +28,7 @@ import {
   cancelRun,
   createRun,
   getRun,
+  leaseLapsed,
   listActive,
   listQueued,
   type Run,
@@ -43,6 +44,7 @@ import {
   type CrewOptions,
   type Pause,
 } from "./runner.ts";
+import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { abortAgentRun } from "./running.ts";
 
 const log = createLog("crew");
@@ -55,8 +57,17 @@ export interface CrewHandle {
   /** Whether a usable Claude Code was found at start. */
   readonly ready: boolean;
   readonly detail: string;
-  stop(): Promise<void>;
+  /**
+   * Stop. Plain, what is in flight is cut short and its task queued again.
+   * Draining — a release's old process, with the new one already taking
+   * everything new — nothing more starts, and what is in flight is left to
+   * finish and land as if nothing had happened, up to `drainMs`.
+   */
+  stop(options?: { drain?: boolean; drainMs?: number }): Promise<void>;
 }
+
+/** How long a draining crew waits for its runs before cutting them short. */
+const DRAIN_MS = 50 * 60_000;
 
 const handles = new WeakMap<App, CrewHandle>();
 
@@ -105,10 +116,23 @@ export async function startCrew(
   const handle: CrewHandle = {
     ready: detected.ok,
     detail: detected.ok ? `Claude Code ${detected.version}` : detected.error,
-    stop: async () => {
+    stop: async (options = {}) => {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      if (options.drain === true && inFlight.size > 0) {
+        // Let what is in flight finish: a run cut short is a person's
+        // money spent twice. The new forge takes new work meanwhile.
+        log.info("crew draining", { runs: inFlight.size });
+        const done = Promise.all(inFlight.values()).then(() => "done");
+        const late = new Promise<"late">((resolve) =>
+          setTimeout(() => resolve("late"), options.drainMs ?? DRAIN_MS),
+        );
+        if ((await Promise.race([done, late])) === "done") {
+          handles.delete(app);
+          return;
+        }
+      }
       // What is in flight goes back on the queue once it has stopped: the
       // forge is restarting, not the person's request.
       const interrupted = [...inFlight.keys()]
@@ -201,8 +225,11 @@ function route(app: App, event: ForgeEvent): void {
       return;
     }
     case "run.finished": {
+      // A preview that failed to deploy, or a check that failed: either
+      // is the agent's to look at.
       if (
-        event.payload["kind"] !== "deploy" ||
+        (event.payload["kind"] !== "deploy" &&
+          event.payload["kind"] !== "check") ||
         event.payload["state"] !== "failed"
       )
         return;
@@ -271,14 +298,17 @@ function forgetWorkdir(app: App, repo: Repo, pull: Pull): void {
 }
 
 /**
- * A run the last forge left `running` was cut off by its restart: the
- * process that was working died with it. Each ends here as cancelled, and
- * the same task goes back on the queue under the same reason — the run that
- * starts reads the whole conversation, so nothing a person said is lost.
+ * A run a dead forge left `running` was cut off with it: its lease has
+ * lapsed. Each ends here as cancelled, and the same task goes back on the
+ * queue under the same reason — the run that starts reads the whole
+ * conversation, so nothing a person said is lost. A run whose lease is
+ * fresh is being worked by a forge still alive beside this one — the old
+ * process of a release, finishing — and is left to it: that forge queues
+ * the task again itself when it stops.
  */
 function requeueInterrupted(app: App): void {
   for (const run of listActive(app.db, "agent")) {
-    if (run.state === "running")
+    if (run.state === "running" && leaseLapsed(run, STALE_AFTER_MS))
       requeue(app, run, "interrupted by a restart; queued again");
   }
 }
@@ -288,7 +318,21 @@ function requeue(app: App, run: Run, why: string): void {
   cancelRun(app.db, run.id, why);
   const task = taskOf(app, run);
   if (task === undefined) return;
-  queueAgentRun(app, task.repo, task.issue, task.agent, task.reason);
+  // The run that starts carries on in the clone this one left, in the
+  // same session — an interruption is a pause, not a fresh start.
+  queueAgentRun(
+    app,
+    task.repo,
+    task.issue,
+    task.agent,
+    task.reason,
+    undefined,
+    {
+      notBefore: new Date().toISOString(),
+      attempt: run.attempt + 1,
+      summary: `${why}; carries on where it stopped`,
+    },
+  );
   log.info("run queued again", { run: run.id, reason: task.reason, why });
 }
 

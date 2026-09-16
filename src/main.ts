@@ -13,7 +13,10 @@ import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
-import { followParents } from "./actions/forks.ts";
+import { startChecks } from "./checks/service.ts";
+import { failAbandonedRuns } from "./core/runs.ts";
+import { health } from "./http/health.ts";
+import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { pruneTokens } from "./core/tokens.ts";
 
@@ -47,6 +50,9 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
+    ? {}
+    : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),
 });
 
 await reconcile(app);
@@ -79,8 +85,14 @@ const apps = appsOn
     })
   : undefined;
 await apps?.start();
-// Forks follow their parents as pushes land — a mirror's sync included.
-const unfollow = followParents(app);
+// A repository's own check, on every push a pull or the default branch takes.
+const checks =
+  process.env.FORGE_CHECKS === "0"
+    ? undefined
+    : startChecks(app, {
+        forgeUrl,
+        concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+      });
 const crew = appsOn
   ? await startCrew(app, {
       forgeUrl,
@@ -146,19 +158,47 @@ if (ssh)
     hostKey: ssh.hostKey.fingerprint,
   });
 
+// A run whose forge died is failed by whichever forge notices, on boot and
+// on the way: an old process finishing beside a new one keeps its runs alive
+// by renewing their leases, so only a lapsed lease is a death.
+const leaseTimer = setInterval(
+  () => failAbandonedRuns(app.db, STALE_AFTER_MS),
+  30_000,
+);
+
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
+let draining = false;
+
+/**
+ * A release does not drop a session. On SIGTERM this process stops taking
+ * new work — readiness says so, and the platform already routes new
+ * connections to the process that replaced it — lets the crew's runs in
+ * flight finish and land, stops the apps and the checks, and keeps serving
+ * whoever is connected over SSH until they leave. Only then does it go.
+ */
 function shutdown(): void {
-  app.log.info("forge shutting down");
+  if (draining) return;
+  draining = true;
+  health.draining = true;
+  const sessions = ssh?.sessions() ?? 0;
+  app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
-  unfollow();
-  // Apps and agents are child processes: stop them before the listeners,
-  // so nothing is left running with nowhere to be reached.
-  Promise.all([crew?.stop(), apps?.stop()])
+  clearInterval(leaseTimer);
+  Promise.all([crew?.stop({ drain: true }), apps?.stop(), checks?.stop()])
+    .catch(() => {})
+    .then(() => {
+      if (sessions > 0)
+        app.log.info("forge waiting for ssh sessions to end", {
+          sshSessions: sessions,
+        });
+      return ssh?.drain();
+    })
     .catch(() => {})
     .finally(() => {
+      app.log.info("forge shutting down");
       ssh?.stop();
       servers.stop();
       app.close();

@@ -776,6 +776,33 @@ describe("the fork flow", () => {
     expect(listed.items.map((p) => p.number)).toContain(pull.number);
   });
 
+  test("a mirror whose git is not ready yet is fetched again, and lands", async () => {
+    // The origin's API knows the repository before its git answers — what
+    // a freshly made fork looks like for a moment. The row is in the fake
+    // now; the git host gets the repository a second later.
+    forgejo.state.repos.push({
+      id: 900,
+      fullName: `${UPSTREAM_OWNER}/late`,
+      defaultBranch: "main",
+      cloneUrl: `${originServers.url}/${UPSTREAM_OWNER}/late.git`,
+      push: false,
+      admin: false,
+    });
+    const started = await api(`/api/v1/user/origins/${forgejoOrigin}/mirror`, {
+      method: "POST",
+      body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
+    });
+    expect(started.status).toBe(202);
+    setTimeout(() => void seedUpstream("late"), 1_200);
+    const job = await mirrorAndWait(started);
+    expect(job?.stage).toBe("done");
+    expect(job?.repo?.name).toBe("late");
+    const branches = await read<{ name: string }[]>(
+      await api(`/api/v1/repos/${job!.repo!.ownerName}/late/branches`),
+    );
+    expect(branches.map((b) => b.name)).toContain("main");
+  }, 60_000);
+
   test("a native repo has no upstream to contribute to", async () => {
     await api("/api/v1/repos", {
       method: "POST",

@@ -12,11 +12,7 @@
  */
 
 import { cancelRepoRun, listRepoRuns, runLog } from "../../actions/runs.ts";
-import {
-  getIssueById,
-  getIssuesByIds,
-  type Issue,
-} from "../../core/issues.ts";
+import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
@@ -98,6 +94,36 @@ export const reasonWords = (reason: string): string =>
 export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
 
 /** `12s`, `3m 4s`, `1h 2m` — how long a run took, or has taken so far. */
+/**
+ * What kind of line a run wrote: a tool the agent reached for (`→ Bash …`),
+ * a word from the forge itself (cloning, pushing, what the model cost), or
+ * the agent speaking. The script that appends live lines sorts them the
+ * same way, so a page and its stream look alike.
+ */
+export type LineKind = "tool" | "forge" | "say";
+
+const FORGE_LINE =
+  /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+
+export function lineKind(line: string): LineKind {
+  if (line.startsWith("→ ")) return "tool";
+  if (FORGE_LINE.test(line)) return "forge";
+  return "say";
+}
+
+/** One line of a run's log, as the page draws it. */
+export function logLine(line: string): Html {
+  const kind = lineKind(line);
+  if (kind === "tool") {
+    const rest = line.slice(2);
+    const at = rest.indexOf(" ");
+    const tool = at === -1 ? rest : rest.slice(0, at);
+    const args = at === -1 ? "" : rest.slice(at + 1);
+    return html`<div class="ln ln-tool"><b>${tool}</b> ${args}</div>`;
+  }
+  return html`<div class="ln ln-${kind}">${line}</div>`;
+}
+
 export function durationText(run: Run): string | undefined {
   if (run.startedAt === null) return undefined;
   const end = run.finishedAt === null ? Date.now() : Date.parse(run.finishedAt);
@@ -138,7 +164,8 @@ export function runTitleFrom(
   return runTitle(run, actor?.username, issue);
 }
 
-const kindIcon = (kind: RunKind) => icon(kind === "agent" ? "bot" : "rocket");
+const kindIcon = (kind: RunKind) =>
+  icon(kind === "agent" ? "bot" : kind === "check" ? "check" : "rocket");
 
 // ---- rows ----
 
@@ -214,7 +241,9 @@ export function runsList(ctx: Ctx): Response {
   const q = ctx.url.searchParams;
   const kindRaw = q.get("kind");
   const kind: RunKind | undefined =
-    kindRaw === "deploy" || kindRaw === "agent" ? kindRaw : undefined;
+    kindRaw === "deploy" || kindRaw === "agent" || kindRaw === "check"
+      ? kindRaw
+      : undefined;
   const cursor = q.get("cursor") ?? "";
 
   const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
@@ -246,8 +275,10 @@ export function runsList(ctx: Ctx): Response {
               ? "No agent runs yet"
               : kind === "deploy"
                 ? "No deploys yet"
-                : "No runs yet",
-          note: "A run is a deploy of an environment or an agent working an issue. Each one keeps its log here.",
+                : kind === "check"
+                  ? "No checks yet"
+                  : "No runs yet",
+          note: "A run is a deploy of an environment, a check of a commit, or an agent working an issue. Each one keeps its log here.",
         })
       : listCard(shown.map((run) => runRow(base, run, actors, issues)));
 
@@ -256,6 +287,7 @@ export function runsList(ctx: Ctx): Response {
       ${seg([
         { label: "All", href: href(undefined), current: kind === undefined },
         { label: "Deploys", href: href("deploy"), current: kind === "deploy" },
+        { label: "Checks", href: href("check"), current: kind === "check" },
         { label: "Crew", href: href("agent"), current: kind === "agent" },
       ])}
     </div>
@@ -295,7 +327,6 @@ export function runPage(ctx: Ctx): Response {
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   const duration = durationText(run);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
-  const text = lines.length === 0 ? "" : `${lines.join("\n")}\n`;
 
   const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
@@ -308,8 +339,12 @@ export function runPage(ctx: Ctx): Response {
           >${runStateBadge(run.state, run.kind)}</span
         >
         <span
-          >${run.kind === "agent" ? "agent run" : "deploy"} ·
-          ${reasonWords(run.reason)}</span
+          >${run.kind === "agent"
+            ? "agent run"
+            : run.kind === "check"
+              ? "check"
+              : "deploy"}
+          · ${reasonWords(run.reason)}</span
         >
         ${when(run.commitOid !== "", () =>
           sha(run.commitOid, `${base}/commit/${run.commitOid}`),
@@ -328,15 +363,21 @@ export function runPage(ctx: Ctx): Response {
               >#${i.number} ${i.title}</a
             >`,
         )}
-        ${when(
-          run.kind === "agent" && run.costUsd > 0,
-          () => html`<span class="num">${costText(run.costUsd)} spent</span>`,
-        )}
+        <span class="num" id="run-cost" ${run.costUsd > 0 ? null : html`hidden`}
+          >${costText(run.costUsd)} spent</span
+        >
+        <span class="num" id="run-turns" ${run.turns > 0 ? null : html`hidden`}
+          >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
+        >
         <span>queued ${time(run.createdAt)}</span>
         ${when(
           duration,
           (d) =>
-            html`<span class="num"
+            html`<span
+              class="num"
+              id="run-elapsed"
+              data-started="${run.startedAt ?? ""}"
+              data-finished="${run.finishedAt ?? ""}"
               >${run.finishedAt === null ? "running for" : "took"} ${d}</span
             >`,
         )}
@@ -370,13 +411,13 @@ export function runPage(ctx: Ctx): Response {
           Nothing has been logged yet.
         </p>`,
     )}
-    <pre
+    <div
       class="run-log mt"
       id="run-log"
       ${unfinished ? html`data-stream="${stream}"` : null}
     >
-${text}</pre
-    >`;
+      ${lines.map(logLine)}
+    </div>`;
 
   return page({
     ctx,
@@ -424,4 +465,3 @@ export async function runCancel(ctx: Ctx): Promise<Response> {
   }
   return flashTo(ctx, dest, { message: "Run cancelled." });
 }
-

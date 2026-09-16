@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { settled, subscribe, type MirrorStage } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import {
@@ -96,6 +97,8 @@ describe("RepoSource: one repository, two places to read it from", () => {
   const requests = (): number => fake.state.requests.length;
 
   beforeAll(async () => {
+    // A fetch that fails should say so now, not after the forge's patience.
+    firstFetchRetry.ms = [50];
     dataDir = await mkdtemp(join(tmpdir(), "forge-view-"));
     originDataDir = await mkdtemp(join(tmpdir(), "forge-view-up-"));
 

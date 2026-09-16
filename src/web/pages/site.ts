@@ -38,7 +38,7 @@ import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { hostOf, notFoundPage, pageHead } from "../chrome.ts";
+import { hostOf, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
@@ -520,11 +520,11 @@ function landing(ctx: Ctx): Html {
       <div class="bar">
         ${ctx.app.config.edgeToken === undefined
           ? html`${btn("Create an account", {
-                href: "/signup",
-                variant: "primary",
-                size: "lg",
-              })}
-              ${btn("Sign in", { href: "/signin", size: "lg" })}`
+              href: "/signup",
+              variant: "primary",
+              size: "lg",
+            })}
+            ${btn("Sign in", { href: "/signin", size: "lg" })}`
           : btn("Sign in", {
               href: edgeLoginUrl("/"),
               variant: "primary",
@@ -537,7 +537,8 @@ function landing(ctx: Ctx): Html {
           html`<p class="hero-terminal">
             <code class="mono">${ssh}</code>
             <span class="muted"
-              >the whole forge in your terminal — your key is your identity</span
+              >the whole forge in your terminal — your key is your
+              identity</span
             >
           </p>`,
       )}
@@ -575,13 +576,13 @@ function terminalCard(ctx: Ctx): Html {
   if (ssh === undefined) return html``;
   return card(
     html`<div class="terminal-line">
-      <code class="mono">${ssh}</code>
-      <a class="small" href="/settings/keys">SSH keys</a>
-    </div>
-    ${when(
-      ctx.app.config.sshHostKey,
-      (fp) => html`<p class="muted small mt">host key ${fp}</p>`,
-    )}`,
+        <code class="mono">${ssh}</code>
+        <a class="small" href="/settings/keys">SSH keys</a>
+      </div>
+      ${when(
+        ctx.app.config.sshHostKey,
+        (fp) => html`<p class="muted small mt">host key ${fp}</p>`,
+      )}`,
     { head: html`<h2>Terminal</h2>` },
   );
 }
@@ -657,8 +658,7 @@ function dashboard(ctx: Ctx, user: User): Html {
     </div>
     <aside class="stack">
       ${terminalCard(ctx)} ${appsCard(ctx)} ${rail.body}
-      ${downloadsCard(ctx, user)}
-      ${orgsCard(ctx, user)}
+      ${downloadsCard(ctx, user)} ${orgsCard(ctx, user)}
     </aside>
     ${liveMount({
       repo: rail.watch[0] ?? "",
@@ -705,70 +705,95 @@ function authForm(
   // of the whole user table — and the sign-in screen paints on every session.
   const firstAccount = kind === "signup" && !hasAnyUser(ctx.app.db);
 
-  const body = html`<form method="post" action="${action}">
-    ${formField({
-      label: "Username",
-      name: "username",
-      value: values.username ?? "",
-      autocomplete: "username",
-      required: true,
-      autofocus: true,
-      ...(kind === "signup"
-        ? {
-            hint: "Letters, digits, dots and dashes.",
-            pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
-          }
-        : {}),
-      ...(errors.username ? { error: errors.username } : {}),
-    })}
-    ${when(kind === "signup", () =>
-      formField({
-        label: "Email",
-        name: "email",
-        type: "email",
-        value: values.email ?? "",
-        autocomplete: "email",
+  // Behind a platform edge, that is the door: the button first, and the
+  // password form kept for the accounts that have one — an account the edge
+  // made has none, and the note says so before anyone types.
+  const edge =
+    ctx.app.config.edgeToken === undefined
+      ? undefined
+      : (ctx.app.config.edgeName ?? "the platform");
+  const throughEdge = when(
+    edge,
+    (name) =>
+      html`<div class="stack mb">
+        ${btn(`Continue with ${name}`, {
+          href: edgeLoginUrl(next ?? "/"),
+          variant: "primary",
+          size: "lg",
+        })}
+        <p class="muted small">
+          ${kind === "signin"
+            ? `Accounts made through ${name} sign in there and have no password here. The form below is for an account that was given one.`
+            : `Signing in through ${name} makes your account on first sight; the form below makes one with a password instead.`}
+        </p>
+      </div>`,
+  );
+
+  const body = html`${throughEdge}
+    <form method="post" action="${action}">
+      ${formField({
+        label: "Username",
+        name: "username",
+        value: values.username ?? "",
+        autocomplete: "username",
         required: true,
-        ...(errors.email ? { error: errors.email } : {}),
-      }),
-    )}
-    ${formField({
-      label: "Password",
-      name: "password",
-      type: "password",
-      autocomplete: kind === "signin" ? "current-password" : "new-password",
-      required: true,
-      ...(kind === "signup"
-        ? { minlength: 10, hint: "At least 10 characters." }
-        : {}),
-      ...(errors.password ? { error: errors.password } : {}),
-    })}
-    ${when(
-      firstAccount,
-      () =>
-        html`<p class="muted small mb">
-          This forge has no accounts yet — the first account becomes the site
-          admin.
-        </p>`,
-    )}
-    <div class="form-actions">
-      ${btn(kind === "signin" ? "Sign in" : "Create account", {
-        variant: "primary",
+        autofocus: true,
+        ...(kind === "signup"
+          ? {
+              hint: "Letters, digits, dots and dashes.",
+              pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
+            }
+          : {}),
+        ...(errors.username ? { error: errors.username } : {}),
       })}
-      <span class="spacer"></span>
-      ${kind === "signin"
-        ? btn("Need an account? Sign up", {
-            href: "/signup",
-            variant: "link",
-            size: "sm",
-          })
-        : btn("Have an account? Sign in", {
-            href: "/signin",
-            variant: "link",
-            size: "sm",
-          })}
-    </div>
-  </form>`;
+      ${when(kind === "signup", () =>
+        formField({
+          label: "Email",
+          name: "email",
+          type: "email",
+          value: values.email ?? "",
+          autocomplete: "email",
+          required: true,
+          ...(errors.email ? { error: errors.email } : {}),
+        }),
+      )}
+      ${formField({
+        label: "Password",
+        name: "password",
+        type: "password",
+        autocomplete: kind === "signin" ? "current-password" : "new-password",
+        required: true,
+        ...(kind === "signup"
+          ? { minlength: 10, hint: "At least 10 characters." }
+          : {}),
+        ...(errors.password ? { error: errors.password } : {}),
+      })}
+      ${when(
+        firstAccount,
+        () =>
+          html`<p class="muted small mb">
+            This forge has no accounts yet — the first account becomes the site
+            admin.
+          </p>`,
+      )}
+      <div class="form-actions">
+        ${btn(kind === "signin" ? "Sign in" : "Create account", {
+          variant: "primary",
+        })}
+        <span class="spacer"></span>
+        ${kind === "signin"
+          ? btn("Need an account? Sign up", {
+              href: "/signup",
+              variant: "link",
+              size: "sm",
+            })
+          : btn("Have an account? Sign in", {
+              href: "/signin",
+              variant: "link",
+              size: "sm",
+            })}
+      </div>
+    </form>`;
 
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
@@ -800,7 +825,12 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
         title: "Sign in",
         body: authForm(ctx, "signin", {
           values: { username },
-          errors: { password: "That username and password don't match." },
+          errors: {
+            password:
+              ctx.app.config.edgeToken === undefined
+                ? "That username and password don't match."
+                : `That username and password don't match. An account made through ${ctx.app.config.edgeName ?? "the platform"} has no password here — use the button above.`,
+          },
         }),
       },
       422,
@@ -956,7 +986,7 @@ function newRepoForm(ctx: Ctx, values: RepoValues, error?: string): Html {
 }
 
 export function newRepoPage(ctx: Ctx): Response {
-  if (!ctx.auth.user) return redirect("/signin?next=%2Fnew");
+  if (!ctx.auth.user) return signInFirst(ctx);
   return page({
     ctx,
     title: "New repository",
@@ -970,7 +1000,7 @@ export function newRepoPage(ctx: Ctx): Response {
 }
 
 export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
-  if (!ctx.auth.user) return redirect("/signin?next=%2Fnew");
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const values: RepoValues = {

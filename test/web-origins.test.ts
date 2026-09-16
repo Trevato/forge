@@ -23,7 +23,7 @@ import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
-import { settled } from "../src/origins/jobs.ts";
+import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
 import {
   newFakeOAuth,
@@ -243,6 +243,31 @@ describe("origins on the web", () => {
     expect(html).toContain("refused by the origin");
     expect(html).toContain(forgejo.url);
     expect(html).not.toContain("not-the-right-token");
+  });
+
+  test("a job page streams and refreshes only while the job runs; a failed one stands, with the reason and a retry", async () => {
+    const id = listOrigins(app.db, getUserByName(app.db, "alice")!.id)[0]!.id;
+    const running = createJob(id, "octo/still-going");
+    const live = await (
+      await asUser(alice, `/settings/origins/${id}/mirror/${running.id}`)
+    ).text();
+    expect(live).toContain(
+      `data-stream="/api/v1/user/origins/${id}/mirror/${running.id}/stream"`,
+    );
+    expect(live).toMatch(/<meta[^>]*http-equiv="refresh"/);
+    advance(running.id, {
+      stage: "failed",
+      detail: "",
+      error:
+        "Fetching from the origin failed: fatal: could not read from remote repository",
+    });
+    const failed = await (
+      await asUser(alice, `/settings/origins/${id}/mirror/${running.id}`)
+    ).text();
+    expect(failed).toContain('data-stream=""');
+    expect(failed).not.toMatch(/<meta[^>]*http-equiv="refresh"/);
+    expect(failed).toContain("Fetching from the origin failed");
+    expect(failed).toContain("Retry");
   });
 
   test("another user cannot see or act on that origin", async () => {
@@ -497,9 +522,10 @@ describe("origins on the web", () => {
     const where = started.headers.get("location") ?? "";
     const flowId = where.split("/").pop()!;
     const row = app.db
-      .query<{ short_code: string }, [string]>(
-        "SELECT short_code FROM oauth_flow WHERE id = ?1",
-      )
+      .query<
+        { short_code: string },
+        [string]
+      >("SELECT short_code FROM oauth_flow WHERE id = ?1")
       .get(flowId)!;
     expect(row.short_code).toMatch(/^[0-9a-z]{10}$/);
 
@@ -529,7 +555,9 @@ describe("origins on the web", () => {
 
     // A code nobody issued and a flow that has expired are the same answer,
     // byte for byte — anything else tells a guesser which half was right.
-    const unknown = await fetch(`${base}/go/zzzzzzzzzz`, { redirect: "manual" });
+    const unknown = await fetch(`${base}/go/zzzzzzzzzz`, {
+      redirect: "manual",
+    });
     expect(unknown.status).toBe(404);
     app.db
       .query("UPDATE oauth_flow SET expires_at = ?1 WHERE id = ?2")
@@ -549,9 +577,10 @@ describe("origins on the web", () => {
     });
     const secondId = (fresh.headers.get("location") ?? "").split("/").pop()!;
     const second = app.db
-      .query<{ short_code: string }, [string]>(
-        "SELECT short_code FROM oauth_flow WHERE id = ?1",
-      )
+      .query<
+        { short_code: string },
+        [string]
+      >("SELECT short_code FROM oauth_flow WHERE id = ?1")
       .get(secondId)!;
     expect(second.short_code).not.toBe(row.short_code);
     ghOauth.approved = true;
@@ -681,10 +710,7 @@ describe("origins on the web", () => {
     if (!rw.ok || !admin.ok) throw new Error("token mint failed");
     const id = listOrigins(app.db, user.id)[0]!.id;
 
-    for (const path of [
-      "/settings/origins",
-      `/settings/origins/${id}/repos`,
-    ]) {
+    for (const path of ["/settings/origins", `/settings/origins/${id}/repos`]) {
       const denied = await fetch(`${base}${path}`, {
         headers: { authorization: `Bearer ${rw.value.token}` },
         redirect: "manual",

@@ -6,12 +6,12 @@
  */
 
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
-import { followHeadPushes } from "../actions/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
+import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -21,8 +21,9 @@ import {
   serviceRpc,
   type GitService,
 } from "../git/smart-http.ts";
-import { lstat, rm } from "node:fs/promises";
-import { defect } from "../kernel/error.ts";
+import { lstat, readdir, rm } from "node:fs/promises";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { css } from "../web/style.ts";
@@ -42,6 +43,7 @@ import {
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import {
   blobPage,
+  forksPage,
   forkSubmit,
   pathsJson,
   pinSubmit,
@@ -80,6 +82,7 @@ import {
 } from "../web/pages/thread.ts";
 import {
   appOpen,
+  appsOpen,
   appPage,
   appRedeploy,
   appsList,
@@ -561,6 +564,8 @@ export function buildRouter(): Router<Handler> {
   // environment goes through the forge so a private app gets its grant.
   router.add("GET", "/:owner/:name/app", appPage);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
+  // Where a private app sends a person who arrived by its link.
+  router.add("GET", "/apps/open", appsOpen);
   router.add("POST", "/:owner/:name/app/:env/redeploy", appRedeploy);
   router.add("POST", "/:owner/:name/app/:env/stop", appStop);
   router.add("GET", "/:owner/:name/runs", runsList);
@@ -595,6 +600,7 @@ export function buildRouter(): Router<Handler> {
 
   // Branches: the list, and the two verbs a branch list exists for. Both
   // mutations go through actions/branches.ts, so a mirror asks its origin.
+  router.add("GET", "/:owner/:name/forks", forksPage);
   router.add("GET", "/:owner/:name/branches", branchesPage);
   router.add("POST", "/:owner/:name/branches", branchCreate);
   router.add("POST", "/:owner/:name/branches/:branch/delete", branchDelete);
@@ -936,9 +942,6 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     actorId: input.actorId || undefined,
     payload: { updates: input.updates },
   });
-  // A branch that heads a pull elsewhere (a fork's, proposed upstream)
-  // moves that pull's snapshot too.
-  await followHeadPushes(app, repo, input.updates, input.actorId || undefined);
   return new Response("");
 }
 
@@ -950,38 +953,52 @@ export interface Servers {
   stop(): void;
 }
 
+/** The hook sockets a data directory may hold: this forge's, and others'. */
+const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
+
 /**
- * A leftover socket file from an unclean shutdown would make `Bun.serve`
- * fail with EADDRINUSE forever. Probe it: if something answers, another
- * forge owns this data dir and we must not steal it; if nothing does, the
- * file is a corpse and we remove it.
+ * Every forge has a socket of its own in the data directory, so two can
+ * share it for the length of a release — the old one draining beside the
+ * new. A socket somebody still answers on is theirs and is left alone; one
+ * nobody answers on is a corpse from an unclean exit, and is removed so it
+ * cannot pile up or, if it is ours by name, block `Bun.serve` with
+ * EADDRINUSE forever.
  */
-async function clearStaleSocket(app: App): Promise<void> {
-  // lstat, not Bun.file().exists() — a socket is not a regular file and
-  // Bun.file reports it as absent, which would leave a real corpse in place.
-  const present = await lstat(app.socketPath).then(
-    () => true,
-    () => false,
-  );
-  if (!present) return;
+async function clearStaleSockets(app: App): Promise<void> {
+  const dir = app.config.dataDir;
+  let names: string[];
   try {
-    await fetch("http://forge/internal/ping", {
-      unix: app.socketPath,
-      signal: AbortSignal.timeout(500),
-    });
+    names = (await readdir(dir)).filter((name) => SOCKET_FILE.test(name));
   } catch {
-    await rm(app.socketPath, { force: true });
     return;
   }
-  defect(
-    "forge.socket_in_use",
-    `another forge is already live on ${app.socketPath}`,
-  );
+  for (const name of names) {
+    const path = join(dir, name);
+    // lstat, not Bun.file().exists() — a socket is not a regular file and
+    // Bun.file reports it as absent, which would leave a real corpse in place.
+    const present = await lstat(path).then(
+      () => true,
+      () => false,
+    );
+    if (!present) continue;
+    try {
+      await fetch("http://forge/internal/ping", {
+        unix: path,
+        signal: AbortSignal.timeout(500),
+      });
+      if (path !== app.socketPath)
+        app.log.info("sharing the data directory with a live forge", {
+          socket: name,
+        });
+    } catch {
+      await rm(path, { force: true });
+    }
+  }
 }
 
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
-  await clearStaleSocket(app);
+  await clearStaleSockets(app);
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
@@ -1004,6 +1021,7 @@ export async function serve(app: App): Promise<Servers> {
           return proxyApp(runtime, request, target, server);
       }
       const url = publicUrl(request, app.config.url);
+      if (url.pathname === "/healthz") return healthResponse();
       const matched = router.match(request.method, url.pathname);
       if (!matched) return noRoute(request.method, url.pathname);
       const auth = await resolveAuth(app, request);
@@ -1061,6 +1079,8 @@ export async function serve(app: App): Promise<Servers> {
     stop() {
       web.stop(true);
       internal.stop(true);
+      // Our socket goes with us; a corpse is only ever an unclean exit's.
+      rmSync(app.socketPath, { force: true });
     },
   };
 }

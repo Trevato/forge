@@ -1,0 +1,325 @@
+/**
+ * A repository's own check, run by the forge. `check` in `forge.json` names
+ * a command; every push a pull or the default branch takes runs it against
+ * that commit, in a fresh export of the tree, and the result is a run of
+ * kind `check` beside the pull — the same place a preview's deploy reports,
+ * read by the same code. A failing check on an agent's pull goes back to
+ * the agent, as a failed preview does.
+ *
+ * This is the forge's own CI, and deliberately small: one command, one
+ * checkout, one verdict, the log kept. Anything a repository wants checked
+ * is that command's business.
+ */
+
+import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import type { App } from "../app.ts";
+import { announceRun } from "../actions/runs.ts";
+import type { ForgeEvent } from "../core/events.ts";
+import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { getRepoById, type Repo } from "../core/repos.ts";
+import {
+  cancelRun,
+  claimRun,
+  createRun,
+  finishRun,
+  listActive,
+  type Run,
+} from "../core/runs.ts";
+import { Gate } from "../git/env.ts";
+import { resolveOid } from "../git/merge.ts";
+import { repoDir } from "../git/repos.ts";
+import { createLog } from "../kernel/log.ts";
+import { holdLease } from "../runs/lease.ts";
+import { appendRunLog } from "../runs/log.ts";
+import { exportTree, readFileAt } from "../apps/checkout.ts";
+import { parseCheck } from "../apps/manifest.ts";
+import { childEnv, runStep } from "../apps/process.ts";
+
+const log = createLog("checks");
+
+export interface ChecksOptions {
+  /** How many checks may run at once. @default 1 */
+  readonly concurrency?: number | undefined;
+  /** The forge's public URL, told to the check as `FORGE_URL`. */
+  readonly forgeUrl: string;
+}
+
+export interface ChecksHandle {
+  /** Ask for a check of one commit; the answer is the run, or nothing when the commit declares no check. */
+  request(
+    repo: Repo,
+    env: string,
+    commitOid: string,
+    reason: string,
+    issueId?: string,
+    actorId?: string,
+  ): Promise<Run | undefined>;
+  stop(): Promise<void>;
+}
+
+/** Where a check's checkout lives while it runs. */
+const checksRoot = (dataDir: string): string => join(dataDir, "checks");
+
+export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
+  const gate = new Gate(options.concurrency ?? 1);
+  const inFlight = new Map<
+    string,
+    { promise: Promise<void>; abort: AbortController }
+  >();
+  let stopped = false;
+
+  // A checkout left by a forge that died mid-check is nobody's.
+  rmSync(checksRoot(app.config.dataDir), { recursive: true, force: true });
+
+  async function request(
+    repo: Repo,
+    env: string,
+    commitOid: string,
+    reason: string,
+    issueId?: string,
+    actorId?: string,
+  ): Promise<Run | undefined> {
+    if (stopped) return undefined;
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const [forgeJson, packageJson] = await Promise.all([
+      readFileAt(bare, commitOid, "forge.json"),
+      readFileAt(bare, commitOid, "package.json"),
+    ]);
+    const declared = parseCheck(forgeJson, packageJson);
+    if (declared.ok && declared.value === undefined) return undefined;
+    // One check per environment at a time: a newer commit supersedes what
+    // is still waiting, and the same commit is not checked twice.
+    for (const run of listActive(app.db, "check")) {
+      if (run.repoId !== repo.id || run.env !== env) continue;
+      if (run.commitOid === commitOid) return run;
+      if (run.state === "queued")
+        cancelRun(app.db, run.id, `superseded by ${commitOid.slice(0, 7)}`);
+    }
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      env,
+      commitOid,
+      reason,
+      ...(issueId === undefined ? {} : { issueId }),
+      ...(actorId === undefined ? {} : { actorId }),
+    });
+    announceRun(app, run, actorId);
+    const abort = new AbortController();
+    const promise = execute(run, repo, abort.signal)
+      .catch((error) =>
+        log.error("check failed to execute", {
+          run: run.id,
+          error: String(error),
+        }),
+      )
+      .finally(() => inFlight.delete(run.id));
+    inFlight.set(run.id, { promise, abort });
+    return run;
+  }
+
+  async function execute(
+    run: Run,
+    repo: Repo,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const release = await gate.acquire();
+    try {
+      const claimed = claimRun(app.db, run.id);
+      if (!claimed) return;
+      const lease = holdLease(app.db, run.id);
+      announceRun(app, claimed);
+      const write = (line: string): void =>
+        appendRunLog(app.config.dataDir, run.id, line);
+      const started = Date.now();
+      const outcome = await check(claimed, repo, write, signal).finally(lease);
+      const seconds = Math.round((Date.now() - started) / 1000);
+      const done = finishRun(app.db, run.id, {
+        state: outcome.ok ? "ok" : "failed",
+        summary: outcome.ok
+          ? `check passed in ${seconds}s`
+          : `check failed: ${outcome.error}`,
+      });
+      write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
+      if (done) announceRun(app, done);
+    } finally {
+      release();
+    }
+  }
+
+  async function check(
+    run: Run,
+    repo: Repo,
+    write: (line: string) => void,
+    signal: AbortSignal,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const [forgeJson, packageJson] = await Promise.all([
+      readFileAt(bare, run.commitOid, "forge.json"),
+      readFileAt(bare, run.commitOid, "package.json"),
+    ]);
+    const declared = parseCheck(forgeJson, packageJson);
+    if (!declared.ok)
+      return {
+        ok: false,
+        error:
+          declared.error.kind === "invalid"
+            ? declared.error.message
+            : "this commit declares no check",
+      };
+    if (declared.value === undefined)
+      return { ok: false, error: "this commit declares no check" };
+    const manifest = declared.value;
+    const dir = join(checksRoot(app.config.dataDir), run.id);
+    mkdirSync(dir, { recursive: true });
+    write(`checking out ${run.commitOid.slice(0, 7)}`);
+    const exported = await exportTree(bare, run.commitOid, dir);
+    if (!exported.ok) return { ok: false, error: exported.error };
+    try {
+      const env = childEnv({
+        CI: "1",
+        FORGE_URL: options.forgeUrl,
+        FORGE_CHECK: run.id,
+        FORGE_COMMIT: run.commitOid,
+      });
+      if (manifest.install !== null) {
+        const installed = await runStep("install", manifest.install, {
+          cwd: dir,
+          env,
+          log: write,
+          signal,
+          timeoutMs: manifest.timeout * 1000,
+        });
+        if (!installed.ok) return { ok: false, error: installed.error };
+      }
+      const ran = await runStep("check", manifest.run, {
+        cwd: dir,
+        env,
+        log: write,
+        signal,
+        timeoutMs: manifest.timeout * 1000,
+      });
+      if (!ran.ok) return { ok: false, error: ran.error };
+      return { ok: true };
+    } finally {
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // What starts a check: a branch moving, a pull opening, a fork's push
+  // moving a pull's head. The commit checked is always the one the pull
+  // proposes now.
+  const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
+    onEvent(event).catch((error) =>
+      log.error("checks event handler failed", {
+        kind: event.kind,
+        error: String(error),
+      }),
+    );
+  });
+
+  async function onEvent(event: ForgeEvent): Promise<void> {
+    if (stopped || event.repoId === null) return;
+    const repo = getRepoById(app.db, event.repoId);
+    if (!repo) return;
+    const actor = event.actorId ?? undefined;
+    switch (event.kind) {
+      case "push": {
+        const updates = event.payload["updates"];
+        if (!Array.isArray(updates)) return;
+        for (const update of updates as { ref?: unknown; newOid?: unknown }[]) {
+          if (
+            typeof update.ref !== "string" ||
+            typeof update.newOid !== "string"
+          )
+            continue;
+          if (
+            !update.ref.startsWith("refs/heads/") ||
+            /^0+$/.test(update.newOid)
+          )
+            continue;
+          const branch = update.ref.slice("refs/heads/".length);
+          if (branch === repo.defaultBranch)
+            await request(
+              repo,
+              branch,
+              update.newOid,
+              "push",
+              undefined,
+              actor,
+            );
+          for (const pull of listPulls(app.db, repo.id, {
+            state: "open",
+            limit: 200,
+          })) {
+            if (pull.crossRepo || pull.headBranch !== branch) continue;
+            await request(
+              repo,
+              `pull-${pull.number}`,
+              update.newOid,
+              "push",
+              pull.id,
+              actor,
+            );
+          }
+        }
+        return;
+      }
+      case "pull.opened":
+      case "pull.reopened": {
+        const number = event.payload["number"];
+        if (typeof number !== "number") return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull) return;
+        const head = await headOf(repo, pull);
+        if (head !== undefined)
+          await request(
+            repo,
+            `pull-${pull.number}`,
+            head,
+            "pull",
+            pull.id,
+            actor,
+          );
+        return;
+      }
+      case "pull.pushed": {
+        const number = event.payload["number"];
+        const headOid = event.payload["headOid"];
+        if (typeof number !== "number" || typeof headOid !== "string") return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull) return;
+        await request(
+          repo,
+          `pull-${pull.number}`,
+          headOid,
+          "push",
+          pull.id,
+          actor,
+        );
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  async function headOf(repo: Repo, pull: Pull): Promise<string | undefined> {
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const ref = pull.crossRepo
+      ? `refs/pull/${pull.number}/head`
+      : `refs/heads/${pull.headBranch}`;
+    return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
+  }
+
+  return {
+    request,
+    stop: async () => {
+      stopped = true;
+      unsubscribe();
+      for (const { abort } of inFlight.values()) abort.abort();
+      await Promise.all([...inFlight.values()].map((f) => f.promise));
+    },
+  };
+}

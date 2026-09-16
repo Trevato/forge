@@ -94,8 +94,10 @@ export const mirrorJs = /* js */ `
         source.close();
         location.href = '/' + job.repo.ownerName + '/' + job.repo.name;
       } else if (job.stage === 'failed') {
+        // The page for a failed job carries the reason and a way to retry,
+        // and does not stream — so this loads it once, and stops.
         source.close();
-        location.reload();
+        location.replace(location.pathname + location.search);
       }
     });
   });
@@ -124,7 +126,6 @@ export const runLogJs = /* js */ `
   var summary = document.getElementById('run-summary');
   var cancel = document.getElementById('run-cancel');
   var follow = true;
-  var seeded = false;
   log.addEventListener('scroll', function () {
     follow = log.scrollTop + log.clientHeight >= log.scrollHeight - 12;
   });
@@ -146,11 +147,47 @@ export const runLogJs = /* js */ `
     if (cancel) cancel.hidden = true;
   }
 
+  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+  // The same sorting the page did for the lines it rendered.
+  function draw(line) {
+    var el = document.createElement('div');
+    if (line.indexOf('\u2192 ') === 0) {
+      var rest = line.slice(2), at = rest.indexOf(' ');
+      var b = document.createElement('b');
+      b.textContent = at === -1 ? rest : rest.slice(0, at);
+      el.className = 'ln ln-tool';
+      el.appendChild(b);
+      el.appendChild(document.createTextNode(at === -1 ? '' : ' ' + rest.slice(at + 1)));
+    } else {
+      el.className = 'ln ' + (FORGE.test(line) ? 'ln-forge' : 'ln-say');
+      el.textContent = line;
+    }
+    return el;
+  }
+
+  // The clock: elapsed time ticks while the run goes, and stops at "took".
+  var elapsed = document.getElementById('run-elapsed');
+  function tick() {
+    if (!elapsed) return;
+    var started = Date.parse(elapsed.getAttribute('data-started') || '');
+    if (!started) return;
+    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
+    var end = finished || Date.now();
+    var s = Math.max(0, Math.round((end - started) / 1000));
+    var text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
+  }
+  var clock = window.setInterval(tick, 1000);
+  tick();
+
   var source = new EventSource(url);
   var empty = document.getElementById('run-empty');
+  var seeded = false;
   source.addEventListener('line', function (event) {
-    if (!seeded) { log.textContent = ''; seeded = true; if (empty) empty.hidden = true; }
-    log.appendChild(document.createTextNode(event.data + '\\n'));
+    // The first line of a fresh stream is the log from the top: start
+    // clean. A reconnect carries on from the last line seen, and appends.
+    if (!seeded) { if (event.lastEventId === '1') log.textContent = ''; seeded = true; if (empty) empty.hidden = true; }
+    log.appendChild(draw(event.data));
     if (follow) log.scrollTop = log.scrollHeight;
   });
   source.addEventListener('done', function (event) {
@@ -158,8 +195,14 @@ export const runLogJs = /* js */ `
     var run;
     try { run = JSON.parse(event.data); } catch (err) { return; }
     paint(run);
+    if (elapsed && run.finishedAt) { elapsed.setAttribute('data-finished', run.finishedAt); tick(); }
+    window.clearInterval(clock);
+    var cost = document.getElementById('run-cost');
+    if (cost && run.costUsd > 0) { cost.textContent = '$' + run.costUsd.toFixed(2) + ' spent'; cost.hidden = false; }
+    var turns = document.getElementById('run-turns');
+    if (turns && run.turns > 0) { turns.textContent = run.turns + (run.turns === 1 ? ' turn' : ' turns'); turns.hidden = false; }
   });
-  source.addEventListener('error', function () { /* a reload shows the log as written */ });
+  source.addEventListener('error', function () { /* the browser reconnects with the last line seen */ });
 })();
 `;
 

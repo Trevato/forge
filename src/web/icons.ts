@@ -16,9 +16,9 @@
 
 import { raw, type Html } from "./html.ts";
 
-const svg = (paths: string, size: number): Html =>
+const svg = (paths: string, size: number, name = ""): Html =>
   raw(
-    `<svg class="ico" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
+    `<svg class="ico${name === "" ? "" : ` ico-${name}`}" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
       `fill="none" stroke="currentColor" stroke-width="1.75" ` +
       `stroke-linecap="round" stroke-linejoin="round" ` +
       `aria-hidden="true" focusable="false">${paths}</svg>`,
@@ -95,7 +95,7 @@ export type IconName = keyof typeof PATHS;
 
 /** One icon, in the standard 16px slot (20px for empty-state headers). */
 export function icon(name: IconName, size: 16 | 20 = 16): Html {
-  return svg(PATHS[name], size);
+  return svg(PATHS[name], size, name);
 }
 
 /** The half-filled circle that opens the theme menu — a glyph, not a Lucide icon. */

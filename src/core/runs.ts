@@ -11,7 +11,9 @@
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 
-export type RunKind = "deploy" | "agent";
+export type RunKind = "deploy" | "agent" | "check";
+/** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
+export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
 export type RunState = "queued" | "running" | "ok" | "failed" | "cancelled";
 
 export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
@@ -43,6 +45,10 @@ export interface Run {
   readonly notBefore: string | null;
   /** How many times this task has been paused and queued again. */
   readonly attempt: number;
+  /** When the process working this run last said it still was. */
+  readonly heartbeatAt: string | null;
+  /** For an agent run: how many turns the model took. */
+  readonly turns: number;
   readonly createdAt: string;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;
@@ -64,6 +70,8 @@ interface RunRow {
   cost_usd: number;
   not_before: string | null;
   attempt: number;
+  heartbeat_at: string | null;
+  turns: number;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -85,6 +93,8 @@ const toRun = (r: RunRow): Run => ({
   costUsd: r.cost_usd,
   notBefore: r.not_before,
   attempt: r.attempt,
+  heartbeatAt: r.heartbeat_at,
+  turns: r.turns,
   createdAt: r.created_at,
   startedAt: r.started_at,
   finishedAt: r.finished_at,
@@ -144,7 +154,8 @@ export function getRun(db: Database, runId: string): Run | undefined {
 export function claimRun(db: Database, runId: string): Run | undefined {
   const changes = db
     .query(
-      `UPDATE run SET state = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      `UPDATE run SET state = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+         heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'queued'`,
     )
     .run(runId).changes;
@@ -164,12 +175,14 @@ export function finishRun(
     summary: string;
     sessionId?: string | undefined;
     costUsd?: number | undefined;
+    turns?: number | undefined;
   },
 ): Run | undefined {
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3,
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
+         turns = COALESCE(?6, turns),
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'running'`,
     )
@@ -179,6 +192,7 @@ export function finishRun(
       outcome.summary.slice(0, 500),
       outcome.sessionId ?? null,
       outcome.costUsd ?? null,
+      outcome.turns ?? null,
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
@@ -239,18 +253,40 @@ export function lastAgentRun(
   return row ? toRun(row) : undefined;
 }
 
+/** The process working these runs says it still is. */
+export function heartbeatRuns(db: Database, runIds: readonly string[]): void {
+  if (runIds.length === 0) return;
+  db.query(
+    `UPDATE run SET heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     WHERE state = 'running' AND id IN (${runIds.map((_, n) => `?${n + 1}`).join(",")})`,
+  ).run(...runIds);
+}
+
 /**
- * Runs a process found on boot still marked running belong to a process
- * that no longer exists. Fail them honestly rather than leave a spinner.
+ * Running runs nobody has renewed for `staleMs` belong to a process that
+ * no longer exists — a forge that died with them. Fail them honestly rather
+ * than leave a spinner. A run a live process is still working, an old
+ * forge finishing beside a new one, is left alone: its lease says so.
  */
-export function failOrphanedRuns(db: Database): number {
+export function failAbandonedRuns(db: Database, staleMs: number): number {
+  const cutoff = new Date(Date.now() - staleMs).toISOString();
   return db
     .query(
-      `UPDATE run SET state = 'failed', summary = 'the forge restarted while this was running',
+      `UPDATE run SET state = 'failed', summary = 'the forge that was running this went away',
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE state = 'running'`,
+       WHERE state = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < ?1)`,
     )
-    .run().changes;
+    .run(cutoff).changes;
+}
+
+/** Whether a running run's lease has lapsed. */
+export function leaseLapsed(
+  run: Run,
+  staleMs: number,
+  now = Date.now(),
+): boolean {
+  if (run.heartbeatAt === null) return true;
+  return new Date(run.heartbeatAt).getTime() < now - staleMs;
 }
 
 export interface ListRunsOptions {
@@ -313,9 +349,10 @@ export function listQueued(db: Database, kind: RunKind, limit = 10): Run[] {
 /** Runs of one kind not yet finished, for concurrency and "is one on it?". */
 export function listActive(db: Database, kind: RunKind): Run[] {
   return db
-    .query<RunRow, [RunKind]>(
-      "SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 ORDER BY id",
-    )
+    .query<
+      RunRow,
+      [RunKind]
+    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 ORDER BY id")
     .all(kind)
     .map(toRun);
 }
@@ -327,9 +364,10 @@ export function activeRunFor(
   issueId: string,
 ): Run | undefined {
   const row = db
-    .query<RunRow, [RunKind, string]>(
-      "SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1",
-    )
+    .query<
+      RunRow,
+      [RunKind, string]
+    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1")
     .get(kind, issueId);
   return row ? toRun(row) : undefined;
 }
@@ -345,9 +383,10 @@ export function checksForHead(
   headOid: string,
 ): Run[] {
   return db
-    .query<RunRow, [string, string]>(
-      "SELECT * FROM run WHERE kind = 'deploy' AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC",
-    )
+    .query<
+      RunRow,
+      [string, string]
+    >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC")
     .all(issueId, headOid)
     .map(toRun);
 }
@@ -376,21 +415,22 @@ export function checkSummary(
 export function latestRunsForIssues(
   db: Database,
   issueIds: readonly string[],
-  kind: RunKind = "deploy",
+  kinds: readonly RunKind[] = CHECK_KINDS,
 ): Map<string, Run> {
   const out = new Map<string, Run>();
   const unique = [...new Set(issueIds)];
   const CHUNK = 400;
+  const kindList = kinds.map((k) => `'${k}'`).join(",");
   for (let i = 0; i < unique.length; i += CHUNK) {
     const batch = unique.slice(i, i + CHUNK);
     const rows = db
       .query<RunRow, string[]>(
         `SELECT run.* FROM run
          JOIN (SELECT issue_id, MAX(id) AS id FROM run
-               WHERE kind = ?1 AND issue_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+               WHERE kind IN (${kindList}) AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
                GROUP BY issue_id) latest ON latest.id = run.id`,
       )
-      .all(kind, ...batch);
+      .all(...batch);
     for (const row of rows) if (row.issue_id) out.set(row.issue_id, toRun(row));
   }
   return out;
@@ -424,6 +464,11 @@ export interface AgentTotals {
   readonly spentUsd: number;
   /** Mean wall-clock of finished runs, in seconds; null before the first. */
   readonly meanSeconds: number | null;
+  /** Mean cost of a finished run, and mean turns, over runs that reported them. */
+  readonly meanCostUsd: number | null;
+  readonly meanTurns: number | null;
+  /** Pulls this agent opened that a person merged. */
+  readonly merged: number;
 }
 
 /** Totals of agent runs, keyed by the agent's user id. */
@@ -437,6 +482,9 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
         failed: number;
         spent: number;
         mean_seconds: number | null;
+        mean_cost: number | null;
+        mean_turns: number | null;
+        merged: number;
       },
       []
     >(
@@ -447,7 +495,13 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
               SUM(cost_usd) AS spent,
               AVG(CASE WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
                        THEN (julianday(finished_at) - julianday(started_at)) * 86400 END)
-                AS mean_seconds
+                AS mean_seconds,
+              AVG(CASE WHEN state IN ('ok','failed') AND cost_usd > 0 THEN cost_usd END)
+                AS mean_cost,
+              AVG(CASE WHEN turns > 0 THEN turns END) AS mean_turns,
+              (SELECT COUNT(*) FROM pull JOIN issue ON issue.id = pull.issue_id
+                WHERE issue.author_id = run.actor_id AND pull.merged_at IS NOT NULL)
+                AS merged
          FROM run
         WHERE kind = 'agent' AND actor_id IS NOT NULL
         GROUP BY actor_id`,
@@ -462,6 +516,9 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
         failed: r.failed,
         spentUsd: r.spent,
         meanSeconds: r.mean_seconds,
+        meanCostUsd: r.mean_cost,
+        meanTurns: r.mean_turns,
+        merged: r.merged,
       },
     ]),
   );

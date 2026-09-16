@@ -92,6 +92,23 @@ describe("a forge behind the platform edge", () => {
     expect(page).toContain('href="/_plat/logout?rd=%2F"');
   });
 
+  test("a page that needs a person sends a stranger to the edge, not the password form", async () => {
+    const response = await fetch(`${base}/new`, { redirect: "manual" });
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/_plat/login?rd=%2Fnew");
+  });
+
+  test("the forge's own sign-in page leads with the edge and says who has no password", async () => {
+    const page = await fetch(`${base}/signin?next=%2Fnew`).then((r) =>
+      r.text(),
+    );
+    expect(page).toContain('href="/_plat/login?rd=%2Fnew"');
+    expect(page).toContain("Continue with the platform");
+    expect(page).toContain("have no password here");
+    // The password form is still there for an account that was given one.
+    expect(page).toContain('name="password"');
+  });
+
   test("the account has no password: the forge's own sign-in refuses it", async () => {
     const attempt = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

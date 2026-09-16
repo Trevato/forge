@@ -63,6 +63,15 @@ export function resolveAppHost(
 ): AppTarget | "unknown" | undefined {
   const host = request.headers.get("host");
   if (host === null) return undefined;
+  return resolveAppHostname(app, domain, host);
+}
+
+/** The same, for a hostname on its own — what the forge's own pages are handed. */
+export function resolveAppHostname(
+  app: App,
+  domain: string,
+  host: string,
+): AppTarget | "unknown" | undefined {
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return undefined;
   const record = getAppBySlug(app.db, parsed.slug);
@@ -152,7 +161,28 @@ function admit(
       cookie === undefined ||
       !verifyGrant(runtime.app.config.dataDir, cookie, target)
     ) {
-      // The same answer the forge gives for a repository you cannot see.
+      // A person arriving by link is sent to the forge to sign in; it vouches
+      // for them if they can see the repository and sends them back with the
+      // grant, and otherwise gives the answer a private repository gives.
+      // Anything that is not a person navigating — a script, an API call —
+      // gets that answer here.
+      const url = new URL(request.url);
+      const navigating =
+        (request.method === "GET" || request.method === "HEAD") &&
+        (request.headers.get("accept") ?? "").includes("text/html") &&
+        !url.pathname.startsWith("/__forge/");
+      if (navigating) {
+        const host = request.headers.get("host") ?? "";
+        const open = new URL("/apps/open", runtime.options.forgeUrl);
+        open.searchParams.set("host", host);
+        open.searchParams.set("to", url.pathname + url.search);
+        return err(
+          new Response(null, {
+            status: 303,
+            headers: { location: open.toString(), "cache-control": "no-store" },
+          }),
+        );
+      }
       return err(new Response("not found", { status: 404 }));
     }
   }

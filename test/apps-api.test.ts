@@ -216,6 +216,19 @@ describe("apps, runs and the crew over the API", () => {
     const events = await tail.text(); // the run is finished, so the stream closes after `done`
     expect(events).toContain("event: line");
     expect(events).toContain("event: done");
+    // Every line is numbered, and a browser that reconnects with the last
+    // number it saw hears only what followed.
+    expect(events).toMatch(/id: 1\nevent: line\n/);
+    const total = (events.match(/event: line\n/g) ?? []).length;
+    expect(total).toBeGreaterThan(2);
+    const resumed = await (
+      await api(`/api/v1/repos/alice/hello/runs/${run.id}/log?follow=1`, {
+        headers: { "last-event-id": String(total - 1) },
+      })
+    ).text();
+    expect((resumed.match(/event: line\n/g) ?? []).length).toBe(1);
+    expect(resumed).toContain(`id: ${total}\n`);
+    expect(resumed).toContain("event: done");
     const one = (await (
       await api(`/api/v1/repos/alice/hello/runs/${run.id}`)
     ).json()) as { id: string };

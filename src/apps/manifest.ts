@@ -122,6 +122,70 @@ export function parseManifest(
   });
 }
 
+/**
+ * How a repository checks a change: `check` in `forge.json`, beside or
+ * instead of `app`. Run on every push a pull or the default branch takes,
+ * whether or not the repository is an app; an app's own `test` still runs
+ * inside its deploy.
+ */
+export interface CheckManifest {
+  /** The command; a non-zero exit fails the check. Run through `sh -c`. */
+  readonly run: string;
+  /** Runs first, in the checkout. `null` skips it. */
+  readonly install: string | null;
+  /** Seconds the check may take before it fails. */
+  readonly timeout: number;
+}
+
+const CHECK_TIMEOUT_DEFAULT = 20 * 60;
+const CHECK_TIMEOUT_MAX = 2 * 60 * 60;
+
+/**
+ * The check a commit declares, `undefined` when it declares none. Fails
+ * closed like the app manifest: a `check` that is present and wrong is a
+ * check that fails with the reason, never a commit that goes unchecked.
+ */
+export function parseCheck(
+  forgeJson: string | undefined,
+  packageJson: string | undefined,
+): Result<CheckManifest | undefined, ManifestError> {
+  if (forgeJson === undefined) return ok(undefined);
+  const parsed = parseJson(forgeJson, "forge.json");
+  if (!parsed.ok) return parsed;
+  const check = parsed.value["check"];
+  if (check === undefined) return ok(undefined);
+  if (!isObject(check)) return invalid("forge.json: check must be an object");
+  const run = command(check, "run", "check");
+  if (!run.ok) return run;
+  if (run.value === undefined || run.value === "")
+    return invalid("forge.json: check.run is required");
+  const install = command(check, "install", "check");
+  if (!install.ok) return install;
+  const pkg = packageJson === undefined ? undefined : readPackage(packageJson);
+  if (pkg !== undefined && !pkg.ok) return pkg;
+  const timeout = check["timeout"];
+  if (
+    timeout !== undefined &&
+    (typeof timeout !== "number" ||
+      !Number.isInteger(timeout) ||
+      timeout < 1 ||
+      timeout > CHECK_TIMEOUT_MAX)
+  )
+    return invalid(
+      `forge.json: check.timeout must be a whole number of seconds, 1–${CHECK_TIMEOUT_MAX}`,
+    );
+  return ok({
+    run: run.value,
+    install:
+      install.value === undefined
+        ? (pkg?.value.hasDeps ?? false)
+          ? "bun install"
+          : null
+        : install.value || null,
+    timeout: timeout ?? CHECK_TIMEOUT_DEFAULT,
+  });
+}
+
 /** Whether `forge.json` declares an app at all, without validating it. */
 export function declaresApp(forgeJson: string | undefined): boolean {
   if (forgeJson === undefined) return false;
@@ -152,19 +216,20 @@ function parseJson(source: string, name: string): Result<Json, ManifestError> {
 
 /** A command field: absent, or a bounded non-empty string. */
 function command(
-  app: Json,
+  section: Json,
   key: string,
+  name = "app",
 ): Result<string | undefined, ManifestError> {
-  const value = app[key];
+  const value = section[key];
   if (value === undefined) return ok(undefined);
   if (typeof value !== "string")
-    return invalid(`forge.json: app.${key} must be a string`);
+    return invalid(`forge.json: ${name}.${key} must be a string`);
   if (value.length > COMMAND_MAX)
     return invalid(
-      `forge.json: app.${key} is longer than ${COMMAND_MAX} characters`,
+      `forge.json: ${name}.${key} is longer than ${COMMAND_MAX} characters`,
     );
   if (value.includes("\0") || value.includes("\n"))
-    return invalid(`forge.json: app.${key} must be one line`);
+    return invalid(`forge.json: ${name}.${key} must be one line`);
   return ok(value.trim());
 }
 

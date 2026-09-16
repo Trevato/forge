@@ -245,6 +245,10 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).toContain("<h1>Deploy production</h1>");
     expect(page).toContain('id="run-log"');
     expect(page).toContain('id="run-state"');
+    // The log is drawn line by line, each by what kind of line it is: the
+    // forge's own words ("checking out …") are marked as such.
+    expect(page).toContain('class="ln ln-forge"');
+    expect(page).toContain('id="run-elapsed"');
     // The stream and the no-script refresh exist only while it is going.
     const fresh = listRuns(app.db, hello.id).find((r) => r.id === run!.id)!;
     const going = fresh.state === "queued" || fresh.state === "running";
@@ -527,6 +531,8 @@ describe("apps, runs and the crew on the web", () => {
     expect(bot.user.kind).toBe("agent");
     expect(bot.budgetUsd).toBe(2);
     expect(await bodyOf(alice, "/settings/crew")).toContain("Be brief.");
+    expect(await bodyOf(alice, "/settings/crew")).toContain("<th>Merged</th>");
+    expect(await bodyOf(alice, "/settings/crew")).toContain("<th>Per run</th>");
 
     const edit = await bodyOf(alice, "/settings/crew/bot");
     expect(edit).toContain('value="bot"');

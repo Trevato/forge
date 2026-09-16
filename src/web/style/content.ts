@@ -575,6 +575,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4;
   font-variant-ligatures: none; min-height: 3.1em;
 }
+.run-log .ln { padding: 1px 0; }
+.run-log .ln-tool { color: var(--faint); }
+.run-log .ln-tool b { color: var(--fg); font-weight: 600; }
+.run-log .ln-forge { color: var(--accent); }
+.run-log .ln-say { color: var(--fg); }
 .run-summary { margin: 10px 0 0; text-wrap: pretty; }
 .run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .run-actions form { display: inline-flex; }

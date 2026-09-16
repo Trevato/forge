@@ -47,6 +47,7 @@ import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { holdLease } from "../runs/lease.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
 import {
   branchFor,
@@ -111,6 +112,7 @@ export async function executeAgentRun(
 ): Promise<Pause | undefined> {
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
+  const lease = holdLease(app.db, run.id);
   const controller = new AbortController();
   trackAgentRun(run.id, controller);
   const write = (line: string): void =>
@@ -127,6 +129,7 @@ export async function executeAgentRun(
     };
   } finally {
     untrackAgentRun(run.id);
+    lease();
   }
   // Whatever the agent left running in its clone — a server it started to
   // try something — ends with the run. The sandbox refuses it `kill`, so the
@@ -152,6 +155,7 @@ export async function executeAgentRun(
     summary: outcome.summary,
     sessionId: outcome.sessionId,
     costUsd: outcome.costUsd,
+    turns: outcome.turns,
   });
   if (done) announceRun(app, done);
   return undefined;
@@ -209,6 +213,7 @@ type Outcome =
       readonly summary: string;
       readonly sessionId?: string | undefined;
       readonly costUsd?: number | undefined;
+      readonly turns?: number | undefined;
     }
   | {
       /** The provider turned the run away; it goes on again at `resumeAt`. */
@@ -385,6 +390,11 @@ async function work(
       reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
       since,
       checkSummary: failedCheck?.run?.summary,
+      checkKind:
+        failedCheck?.run?.kind === "check" ||
+        failedCheck?.run?.kind === "deploy"
+          ? failedCheck.run.kind
+          : undefined,
       checkLog: failedCheck?.run
         ? readRunLog(
             app.config.dataDir,
@@ -509,6 +519,7 @@ async function work(
         ...wrapped,
         sessionId: wrapped.sessionId || result.sessionId,
         costUsd: result.costUsd + wrapped.costUsd,
+        turns: result.turns + wrapped.turns,
       };
       noteRunProgress(app.db, run.id, { costUsd: result.costUsd });
     }
@@ -518,6 +529,7 @@ async function work(
         summary: "cancelled",
         sessionId: result.sessionId,
         costUsd: result.costUsd,
+        turns: result.turns,
       };
 
     // The decline contract: an agent that should not do the task says so
@@ -539,6 +551,7 @@ async function work(
         summary: `declined: ${(why.split("\n")[0] ?? "").slice(0, 200)}`,
         sessionId: result.sessionId,
         costUsd: result.costUsd,
+        turns: result.turns,
       };
     }
 
@@ -567,6 +580,7 @@ async function work(
       summary: landed.summary + (result.ok ? "" : ` (${result.reason})`),
       sessionId: result.sessionId,
       costUsd: result.costUsd,
+      turns: result.turns,
     };
   } finally {
     deleteToken(app.db, agent.user.id, token.id);

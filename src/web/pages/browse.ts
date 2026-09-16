@@ -786,6 +786,9 @@ export function stageList(job: MirrorJob, streamUrl: string): Html {
     id="stages"
     data-stream="${streamUrl}"
     data-stage="${job.stage}"
+    data-repo="${job.repo === undefined
+      ? ""
+      : `/${job.repo.ownerName}/${job.repo.name}`}"
   >
     ${STAGES.map((stage) => {
       const state = stageState(stage.name, job.stage);
@@ -858,12 +861,15 @@ export function mirrorJobPage(ctx: Ctx): Response {
             itself every couple of seconds.
           </p>`;
 
+  // Only a job still going refreshes or streams: a finished one is a page
+  // that stands, a failed one a page with the reason and a way to retry —
+  // never one that reloads itself over and over on the same news.
   return page({
     ctx,
     title: `Mirroring ${job.fullName}`,
     ...(running
       ? { refresh: { seconds: 2 } }
-      : mirror !== undefined
+      : job.stage === "done" && mirror !== undefined
         ? { refresh: { seconds: 1, url: mirror } }
         : {}),
     body: html`<div class="page-head">
@@ -886,7 +892,7 @@ export function mirrorJobPage(ctx: Ctx): Response {
         )}
       </div>
       <div class="narrow-wide">
-        ${card(stageList(job, stream), {
+        ${card(stageList(job, running ? stream : ""), {
           head: html`${icon("download")}
             <h2>${job.fullName}</h2>`,
         })}

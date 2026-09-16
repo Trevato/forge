@@ -72,10 +72,14 @@ around it. None is advisory.
    the merge — never from a status a caller computed earlier.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
-   visibility). A private environment sets no cookie of its own; a visitor
-   is sent through the forge, which checks `canRead` on the repository and
-   returns them with a signed, short-lived grant. Guessing the hostname
-   yields the forge's own "not found".
+   visibility), and it is set apart from the repository's own: the code can
+   be private while the app is public, or the other way round. A private
+   environment sets no cookie of its own; a person arriving by its link is
+   sent to the forge to sign in, which checks `canRead` on the repository
+   and returns them with a signed, short-lived grant for the page they
+   wanted. Someone who cannot see the repository, and anything that is not
+   a person navigating, gets the forge's own "not found". Guessing the
+   hostname yields the same.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -160,6 +164,35 @@ and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
 An app that keeps its state under `FORGE_APP_DATA` gets production and
 preview data for free. The scaffold does exactly that with `bun:sqlite`.
 
+### Checks
+
+A repository says how a change is checked, in the same file, beside or
+instead of `app`:
+
+```json
+{
+  "check": {
+    "run": "bun x tsc --noEmit && bun test",
+    "install": "bun install",
+    "timeout": 1200
+  }
+}
+```
+
+The forge runs it against every commit a pull proposes — when the pull
+opens, and each time its branch moves, a fork's included — and against
+every push to the default branch, in a fresh export of that commit. The
+verdict is a run of kind `check`, kept with its log beside the pull, in
+the same place a preview's deploy reports and read by the same code: the
+inbox badge, the pull's status, the crew. A failing check on an agent's
+pull goes back to the agent with the log's tail, as a failed preview does,
+bounded the same way. An app's own `test` still runs inside its deploy;
+`check` is for a repository that is not an app, or an app whose check is
+more than its test. `install` defaults to `bun install` when the package
+declares dependencies; `timeout` is seconds, twenty minutes by default.
+A `check` that is present and wrong fails with the reason, so a commit is
+never silently unchecked.
+
 ### Environment
 
 What an app needs that the repository must not carry — an admin password,
@@ -233,6 +266,22 @@ ping for 120 seconds is dropped. The app's own 101 response headers are
 not carried — a cookie an app sets on the handshake does not reach the
 browser.
 
+## A release does not drop a session
+
+The forge is one process on one volume, and a release replaces it. The new
+process comes up beside the old one and takes everything new once it is
+ready; the old one drains: it starts no new crew runs and lets the ones in
+flight finish and land (a run cut short is a person's money spent twice),
+stops its apps and its checks, says so on `/healthz`, and keeps serving
+whoever is connected over SSH until they leave — for up to an hour — and
+only then goes. A run that does have to be cut short, by a crash or the
+hour running out, is queued again to carry on in the clone it left, in the
+same session. SQLite in WAL mode carries two processes for that window.
+Each running run carries a lease its process renews every fifteen seconds;
+a forge coming up fails only runs whose lease has lapsed, so the old
+process's live work is never mistaken for a crash's leftovers, and a real
+crash is still cleaned up within a minute or two.
+
 ## Where state lives
 
 Git is truth for code. The app's serving configuration (slug, access, the
@@ -265,6 +314,15 @@ optimization. `run.queued`, `run.started` and `run.finished` ride the event
 outbox like every other state change, so webhooks and the SSE stream see
 them.
 
+A run's page draws the log line by line as it is written — the tools the
+agent reached for, the forge's own words, the agent speaking — with the
+clock running and, at the end, what the run cost in money and turns. The
+stream numbers every line, so a browser that reconnects hears only what
+followed; nothing on the page reloads under a reader. Each agent's row on
+the crew page carries the numbers that say how it is doing: runs and how
+many landed, pulls a person merged, spend, and the mean cost, time and
+turns of a run.
+
 On a pull, the runs for the current head are its checks. A deploy run that
 fails — install, build, test, or the app never answering — fails the check
 and the preview shows the log where it stopped. A push makes new runs;
@@ -291,8 +349,9 @@ outbox with a sweep behind the wake-up:
   agent's session with the feedback quoted. A follow-up that begins after
   the pull was merged works on a fresh branch from the default branch and
   lands as a new pull that names the one it continues.
-- **A failed check.** A deploy that fails on the agent's pull starts a
-  follow-up with the log's tail. Bounded by rule 7.
+- **A failed check.** A deploy that fails on the agent's pull, or the
+  repository's own check failing on it, starts a follow-up with the log's
+  tail. Bounded by rule 7.
 
 Forks follow their parents. A fork's default branch is a copy of the
 parent's until someone commits on it, and while that is so the parent

@@ -314,8 +314,8 @@ describe("surfaces adversarial: web", () => {
     // docs/APPS.md) — it must never reach the page verbatim, escaped or not.
     expect(page).not.toContain("forge_rw_abcdefghijklmnopqrstuvwxyz0123456789");
     expect(page).toContain("[redacted]");
-    // Exactly one <pre id="run-log"> — nothing in the log broke out of it.
-    expect(page.match(/<pre[^>]*id="run-log"/g)?.length).toBe(1);
+    // Exactly one log box — nothing in the log broke out of it.
+    expect(page.match(/<div[^>]*id="run-log"/g)?.length).toBe(1);
   });
 
   // ---- 4. CSP ----

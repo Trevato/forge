@@ -29,12 +29,14 @@ import type { Pull } from "../../core/pulls.ts";
 import {
   canAdmin,
   canWrite,
+  getRepoById,
   listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
 import { isTerminal } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { resolveAppHostname } from "../../apps/proxy.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -48,6 +50,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import {
   badge,
   btn,
@@ -540,8 +543,8 @@ export function appPage(ctx: Ctx): Response {
           runs.map((run) => runRow(base, run, actors, issues)),
           { head: runsHead },
         );
-  // Something is still moving: refresh without a script, and the live pill
-  // says so with one.
+  // Something still moving is news the live pill announces; the page is
+  // never pulled out from under a reader.
   const moving =
     envs.some((env) => env.state === "deploying") ||
     runs.some((run) => !isTerminal(run.state));
@@ -640,7 +643,8 @@ export function appPage(ctx: Ctx): Response {
         <div class="mt">${runsCard}</div>
       </div>
       <aside>${about} ${crewCard}</aside>
-    </div>`;
+    </div>
+    ${when(moving, () => liveMount({ repo: base }))}`;
 
   return page({
     ctx,
@@ -648,7 +652,7 @@ export function appPage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(repo),
     body,
-    ...(moving ? { refresh: { seconds: 5 } } : {}),
+    scriptJs: liveClientJs,
   });
 }
 
@@ -702,6 +706,34 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
 
 // GET /:owner/:name/app/:env/open — through the forge, so a private app
 // gets its grant; a plain link to the hostname would 404 for everyone.
+/**
+ * GET /apps/open?host=…&to=… — where a private app sends a person who
+ * arrived by its link. Signed in (the edge, or the forge's own door), they
+ * are vouched for if they can see the repository and sent back with the
+ * grant; otherwise they get what a private repository gives a stranger.
+ * The repository is never named on this path: the hostname was already
+ * theirs, nothing else is.
+ */
+export function appsOpen(ctx: Ctx): Response {
+  const runtime = appsRuntime(ctx.app);
+  const host = (ctx.url.searchParams.get("host") ?? "").trim();
+  const wanted = ctx.url.searchParams.get("to") ?? "/";
+  const path =
+    wanted.startsWith("/") && !wanted.startsWith("//") ? wanted : "/";
+  if (runtime === undefined || host === "") return notFoundPage(ctx);
+  const target = resolveAppHostname(ctx.app, runtime.options.domain, host);
+  if (target === undefined || target === "unknown") return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const repo = getRepoById(ctx.app.db, target.app.repoId);
+  if (!repo) return notFoundPage(ctx);
+  const link = openEnvUrl(ctx.app, ctx.auth.user, repo, target.env, path);
+  if (!link.ok) return notFoundPage(ctx);
+  return new Response(null, {
+    status: 302,
+    headers: { location: link.value, "cache-control": "no-store" },
+  });
+}
+
 export function appOpen(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);

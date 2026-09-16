@@ -156,6 +156,9 @@ select.input {
   background: color-mix(in srgb, var(--attn) 12%, transparent);
 }
 .badge .ico { width: 12px; height: 12px; }
+/* A loader that turns: the one icon that means "still going". */
+.ico-loader { animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* One stored hex, derived three ways, so a chip reads correctly in all six
    themes. --label is set by a per-page nonce'd rule; the hex is validated
