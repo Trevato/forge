@@ -59,6 +59,7 @@ import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
 import {
+  avatar,
   btn,
   card,
   dot,
@@ -68,6 +69,7 @@ import {
   pill,
   row,
   time,
+  userTag,
   type Tone,
 } from "../ui.ts";
 import { onYouCard } from "./site.ts";
@@ -257,80 +259,16 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
 
 // ---- the app in the studio ----
 
-function tellForm(repo: Repo, builders: readonly Agent[]): Html {
-  const base = repoBase(repo);
-  return html`<form method="post" action="${base}/tell" class="studio-tell">
-    <label class="sr-only" for="tell">Tell the crew</label>
-    <textarea
-      class="input"
-      id="tell"
-      name="text"
-      rows="2"
-      required
-      placeholder="${builders.length === 0
-        ? "Add a crew member under Settings → Crew, then tell them what you want."
-        : "Make the greeting page load in under a second on my phone."}"
-    ></textarea>
-    ${btn("Tell the crew", { variant: "primary", type: "submit" })}
-  </form>`;
-}
-
-function previewBlock(ctx: Ctx, repo: Repo, record: AppRecord): Html {
-  const runtime = appsRuntime(ctx.app);
-  const base = repoBase(repo);
-  const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
-  const production = envs.find((e) => e.env === "production");
-  const url = runtime?.urlFor(record, "production");
-  const state = production?.state ?? "stopped";
-  const words: Record<string, string> = {
-    running: "live",
-    starting: "starting",
-    deploying: "starting",
-    failed: "not up",
-    stopped: "not running",
-  };
-  return html`<div class="studio-preview" data-state="${state}">
-    <div class="studio-preview-head">
-      <span class="studio-live" data-state="${state}"
-        >${words[state] ?? state}</span
-      >
-      ${when(
-        url,
-        (u) =>
-          html`<a href="${base}/app/production/open" class="mono"
-            >${u.replace(/^https?:\/\//, "")}</a
-          >`,
-      )}
-      <span class="spacer"></span>
-      ${btn("Open", {
-        href: `${base}/app/production/open`,
-        size: "sm",
-        variant: "primary",
-      })}
-    </div>
-    ${production?.commitOid
-      ? html`<p class="muted small">
-          serving
-          ${production.commitOid.slice(0, 7)}${production.since
-            ? html` since ${time(production.since)}`
-            : null}
-        </p>`
-      : html`<p class="muted small">Nothing is serving yet.</p>`}
-  </div>`;
-}
-
 export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 });
-  const actors = new Map<string, User>();
-  for (const r of runs)
-    if (r.actorId !== null && !actors.has(r.actorId)) {
-      const u = getUserById(db, r.actorId);
-      if (u) actors.set(r.actorId, u);
-    }
+  const actors = getUsersByIds(
+    db,
+    runs.map((r) => r.actorId).filter((id): id is string => id !== null),
+  );
   const issues = new Map<string, Issue>();
   for (const r of runs)
     if (r.issueId !== null && !issues.has(r.issueId)) {
@@ -339,6 +277,10 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
     }
   const decisions = decisionsFor(ctx, [repo]);
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const pullChecks = latestRunsForIssues(
+    db,
+    openPulls.map((p) => p.id),
+  );
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   const weekRuns = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
     (r) => r.createdAt >= week,
@@ -354,11 +296,92 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
     (r) => r.state === "running" || r.state === "queued",
   );
 
-  // One row per thing, in the five words. Open pulls first (look, stopped,
-  // checking); then runs in flight with no pull yet; then what was told and
-  // not picked up at all; then the last few finished runs whose issue has
-  // no open pull — shipped or stopped. Nothing appears twice, and nothing
-  // finished lingers once its pull exists.
+  // ---- the app itself ----
+  const runtime = appsRuntime(ctx.app);
+  const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
+  const production = envs.find((e) => e.env === "production");
+  const url = runtime?.urlFor(record, "production");
+  const state = production?.state ?? "stopped";
+  const liveWord =
+    state === "running"
+      ? "live"
+      : state === "failed"
+        ? "not up"
+        : state === "stopped"
+          ? "not running"
+          : "starting";
+  const liveTone: Tone =
+    state === "running" ? "success" : state === "failed" ? "danger" : "default";
+  const head = html`<div class="page-head studio-head">
+    <div class="stack" style="gap: 4px">
+      <h1>
+        ${repo.name}
+        <span
+          class="badge"
+          data-variant="${liveTone === "success"
+            ? "success"
+            : liveTone === "danger"
+              ? "danger"
+              : "secondary"}"
+          >${liveWord}</span
+        >
+      </h1>
+      <p class="muted">
+        ${repo.description || "No description yet."}
+        ${url === undefined
+          ? null
+          : html`·
+              <a href="${base}/app/production/open" class="mono"
+                >${url.replace(/^https?:\/\//, "")}</a
+              >`}
+        ${production?.commitOid
+          ? html`·
+            ${production.commitOid.slice(0, 7)}${production.since
+              ? html` since ${time(production.since)}`
+              : null}`
+          : null}
+      </p>
+    </div>
+    <span class="spacer"></span>
+    ${btn("Open the app", {
+      href: `${base}/app/production/open`,
+      variant: "primary",
+      icon: "external",
+    })}
+  </div>`;
+
+  // ---- the box ----
+  const tell = html`<form
+    class="card comment-form studio-tell"
+    method="post"
+    action="${base}/tell"
+  >
+    <label class="sr-only" for="tell">Tell the crew</label>
+    <textarea
+      class="input"
+      id="tell"
+      name="text"
+      rows="3"
+      required
+      placeholder="${builders.length === 0
+        ? "Add a crew member under Settings → Crew, then tell them what you want."
+        : "What should change? One thing at a time works best."}"
+    ></textarea>
+    <div class="bar">
+      <span class="muted small">
+        ${builders.length === 0
+          ? html`Nobody on the crew yet.`
+          : html`${builders
+              .map((b) => userTag(b.user.username))
+              .reduce((a, b) => html`${a} ${b}`)}
+            ${builders.length === 1 ? "takes it" : "share the work"}`}
+      </span>
+      <span class="spacer"></span>
+      ${btn("Tell the crew", { variant: "primary", type: "submit" })}
+    </div>
+  </form>`;
+
+  // ---- now: one row per thing, in the five words ----
   const proposed = new Set(openPulls.map((p) => p.id));
   const openByIssue = openPullsClosing(db, repo.id);
   const told = listIssues(db, repo.id, {
@@ -376,7 +399,7 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
   const rowsNow = runs
     .filter((r) => {
       if (r.issueId === null) return true;
-      if (proposed.has(r.issueId)) return false; // its pull is listed
+      if (proposed.has(r.issueId)) return false;
       const n = issueNumberById.get(r.issueId) ?? issues.get(r.issueId)?.number;
       return n === undefined || !openByIssue.has(n);
     })
@@ -384,155 +407,207 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
       (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
     )
     .slice(0, 6);
-  const now = html`<section class="studio-now">
-    <h2>Now</h2>
-    ${rowsNow.length === 0 && openPulls.length === 0 && waiting.length === 0
-      ? html`<p class="muted small">Nothing yet. Tell the crew something.</p>`
-      : html`<ul class="studio-list">
-          ${openPulls.map((p) => {
-            const check = latestRunsForIssues(db, [p.id]).get(p.id);
-            const state =
-              check?.state === "ok"
-                ? "look"
-                : check?.state === "failed"
-                  ? "stopped"
-                  : "working";
-            return html`<li data-word="${state}">
-              ${icon(WORD_ICON[state])}
-              <span class="studio-who">${p.authorName}</span>
-              <a href="${base}/pulls/${p.number}">${p.title}</a>
-              <span class="studio-word"
-                >${state === "look"
-                  ? "look"
-                  : state === "stopped"
-                    ? "stopped"
-                    : "checking"}</span
-              >
-            </li>`;
-          })}
-          ${rowsNow.map((r) => {
-            const { word, note } = wordFor(r);
-            const who =
-              r.actorId === null
-                ? "crew"
-                : (actors.get(r.actorId)?.username ?? "crew");
-            const about =
-              r.issueId === null ? undefined : issues.get(r.issueId);
-            return html`<li data-word="${word}">
-              ${icon(WORD_ICON[word])}
-              <span class="studio-who">${who}</span>
-              <a href="${base}/runs/${r.id}">${about?.title ?? note}</a>
-              <span class="studio-word"
-                >${word}${word === "working"
-                  ? ""
-                  : html` · ${time(r.finishedAt ?? r.createdAt)}`}</span
-              >
-            </li>`;
-          })}
-          ${waiting.map(
-            (i) =>
-              html`<li data-word="waiting">
-                ${icon(WORD_ICON.waiting)}
-                <span class="studio-who">${i.assigneeName}</span>
-                <a href="${base}/issues/${i.number}">${i.title}</a>
-                <span class="studio-word">waiting</span>
-              </li>`,
-          )}
-        </ul>`}
-  </section>`;
+  const wordBadge = (word: Word): Html => {
+    const variant =
+      word === "look" || word === "shipped"
+        ? "success"
+        : word === "stopped"
+          ? "danger"
+          : word === "working"
+            ? "accent"
+            : "secondary";
+    return html`<span
+      class="badge"
+      data-variant="${variant}"
+      data-word="${word}"
+      >${word === "working" ? icon("loader") : null}${word}</span
+    >`;
+  };
+  const nowRows: Html[] = [
+    ...openPulls.map((p) => {
+      const check = pullChecks.get(p.id);
+      const word: Word =
+        check?.state === "ok"
+          ? "look"
+          : check?.state === "failed"
+            ? "stopped"
+            : "working";
+      return row({
+        href: `${base}/pulls/${p.number}`,
+        nav: true,
+        lead: avatarOf(p.authorName),
+        title: p.title,
+        meta: html`${p.authorName} ·
+        ${word === "look"
+          ? "green, ready for a look"
+          : word === "stopped"
+            ? "the check failed"
+            : "checking"}
+        · ${time(p.createdAt)}`,
+        trail: wordBadge(word),
+      });
+    }),
+    ...rowsNow.map((r) => {
+      const { word, note } = wordFor(r);
+      const who =
+        r.actorId === null
+          ? "crew"
+          : (actors.get(r.actorId)?.username ?? "crew");
+      const about = r.issueId === null ? undefined : issues.get(r.issueId);
+      return row({
+        href: `${base}/runs/${r.id}`,
+        nav: true,
+        lead: avatarOf(who),
+        title: about?.title ?? note,
+        meta: html`${who} · ${word === "working" ? "working now" : note}
+        ${word === "working"
+          ? null
+          : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
+        trail: wordBadge(word),
+      });
+    }),
+    ...waiting.map((i) =>
+      row({
+        href: `${base}/issues/${i.number}`,
+        nav: true,
+        lead: avatarOf(i.assigneeName ?? "crew"),
+        title: i.title,
+        meta: html`${i.assigneeName} · told ${time(i.createdAt)}, not picked up
+        yet`,
+        trail: wordBadge("waiting"),
+      }),
+    ),
+  ];
+  const now =
+    nowRows.length === 0
+      ? card(
+          html`<p class="muted small">
+            Nothing yet. Tell the crew something.
+          </p>`,
+          {
+            head: html`${icon("activity")}
+              <h2>Now</h2>`,
+          },
+        )
+      : listCard(nowRows, {
+          head: html`${icon("activity")}
+            <h2>Now</h2>
+            <span class="spacer"></span>
+            ${btn("Every run", { href: `${base}/runs`, size: "sm" })}`,
+        });
 
-  const asks = when(
-    decisions.length > 0,
-    () =>
-      html`<section class="studio-asks">
-        <h2>Asks you</h2>
-        ${decisions.map((d) => decisionCard(ctx, d))}
-      </section>`,
+  const asks = when(decisions.length > 0, () =>
+    listCard(
+      decisions.map((d) => decisionRow(ctx, d)),
+      {
+        head: html`${icon("alert")}
+          <h2>Asks you</h2>
+          <span class="muted small">decide, and the crew carries on</span>`,
+      },
+    ),
   );
 
-  const rail = html`<aside class="studio-rail">
-    <section>
-      <h3>Crew on this app</h3>
-      ${crew.length === 0
-        ? html`<p class="muted small">
+  // ---- the rail ----
+  const crewCard =
+    crew.length === 0
+      ? card(
+          html`<p class="muted small">
             Nobody yet. <a href="${base}/settings/crew">Add someone.</a>
-          </p>`
-        : html`<ul class="studio-crew">
-            ${crew.map(
-              (c) =>
-                html`<li>
-                  <b>${c.agent.user.username}</b
-                  ><span
-                    >${c.role === "builder"
-                      ? "builds"
-                      : c.role === "planner"
-                        ? "plans"
-                        : "reviews"}</span
-                  >
-                </li>`,
-            )}
-          </ul>`}
-    </section>
-    <section>
-      <h3>This week</h3>
-      <ul class="studio-crew">
-        <li>
-          <b>shipped</b
-          ><span>${shipped} change${shipped === 1 ? "" : "s"}</span>
-        </li>
-        <li><b>runs</b><span>${weekRuns.length}</span></li>
-        <li>
-          <b>spent</b
-          ><span
-            >$${spent.toFixed(2)}${shipped > 0
-              ? ` · $${(spent / shipped).toFixed(2)} per shipped change`
-              : ""}</span
-          >
-        </li>
-      </ul>
-    </section>
-    ${autonomy === undefined
-      ? html`<section>
-          <h3>On its own</h3>
-          <p class="muted small">
-            Off. <a href="${base}/settings/autonomy">Turn it on</a> and the crew
-            works what is ready without being asked.
-          </p>
-        </section>`
-      : null}
-    ${when(
-      autonomy,
-      (a) =>
-        html`<section>
-          <h3>On its own</h3>
-          <p class="small">
-            ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} ·
-            $${a.spentTodayUsd.toFixed(2)} of $${a.ceilingUsd.toFixed(0)} today
-            · ${a.active} of ${a.slots} slots
-            ${a.paused ? html`· <strong>paused</strong>` : null}
-          </p>
-          <p class="muted small">
-            <a href="${base}/settings/autonomy">Change</a> ·
-            <a href="${base}/map">the map</a>
-          </p>
-        </section>`,
-    )}
-    <section>
-      <p class="muted small">
-        <a href="${base}/map">Map</a> ·
-        <a href="${base}/issues">Everything told</a> ·
-        <a href="${base}/pulls">Every change</a>
-      </p>
-    </section>
-  </aside>`;
+          </p>`,
+          {
+            head: html`${icon("bot")}
+              <h2>Crew</h2>`,
+          },
+        )
+      : listCard(
+          crew.map((c) =>
+            row({
+              lead: avatarOf(c.agent.user.username),
+              title: c.agent.user.username,
+              meta: html`${c.role === "builder"
+                ? "builds"
+                : c.role === "planner"
+                  ? "plans"
+                  : "reviews"}`,
+            }),
+          ),
+          {
+            head: html`${icon("bot")}
+              <h2>Crew</h2>
+              <span class="spacer"></span>
+              ${btn("Change", { href: `${base}/settings/crew`, size: "sm" })}`,
+          },
+        );
+  const weekCard = card(
+    html`<dl>
+      <dt>Shipped</dt>
+      <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+      <dt>Runs</dt>
+      <dd>${weekRuns.length}</dd>
+      <dt>Spent</dt>
+      <dd>
+        $${spent.toFixed(2)}${shipped > 0
+          ? html` <span class="muted"
+              >· $${(spent / shipped).toFixed(2)} per shipped change</span
+            >`
+          : null}
+      </dd>
+    </dl>`,
+    {
+      head: html`${icon("activity")}
+        <h2>This week</h2>`,
+      extra: "about",
+    },
+  );
+  const ownCard = card(
+    autonomy === undefined
+      ? html`<p class="muted small">
+          Off. <a href="${base}/settings/autonomy">Turn it on</a> and the crew
+          works what is ready without being asked.
+        </p>`
+      : html`<dl>
+          <dt>Mode</dt>
+          <dd>${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"}</dd>
+          <dt>Today</dt>
+          <dd>
+            $${autonomy.spentTodayUsd.toFixed(2)} of
+            $${autonomy.ceilingUsd.toFixed(0)}
+          </dd>
+          <dt>Slots</dt>
+          <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
+          ${autonomy.paused
+            ? html`<dt>Paused</dt>
+                <dd>
+                  ${autonomy.paused === "ceiling"
+                    ? "at the ceiling, until 00:00 UTC"
+                    : autonomy.paused}
+                </dd>`
+            : null}
+        </dl>`,
+    {
+      head: html`${icon("play")}
+        <h2>On its own</h2>
+        <span class="spacer"></span>
+        ${btn("Change", { href: `${base}/settings/autonomy`, size: "sm" })}`,
+      extra: "about",
+    },
+  );
+  const more = html`<p class="muted small">
+    <a href="${base}/map">The map</a> ·
+    <a href="${base}/issues">Everything told</a> ·
+    <a href="${base}/pulls">Every change</a>
+  </p>`;
 
-  const body = html`${repoHeader(ctx, repo, "code", { compact: true })}
-    <div class="studio">
-      <div class="studio-main">
-        ${previewBlock(ctx, repo, record)} ${tellForm(repo, builders)} ${asks}
-        ${now}
-      </div>
-      ${rail}
+  const body = html`${repoHeader(ctx, repo, "code", {
+      compact: true,
+      ownTitle: true,
+    })}
+    ${head}
+    <div class="dash">
+      <div class="dash-main stack">${tell} ${asks} ${now}</div>
+      <aside class="dash-rail stack">
+        ${crewCard} ${weekCard} ${ownCard} ${more}
+      </aside>
     </div>
     ${when(moving, () => liveMount({ repo: base }))}`;
   return page({
@@ -544,6 +619,10 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
     styleCss: studioCss,
     scriptJs: liveClientJs,
   });
+}
+
+function avatarOf(username: string): Html {
+  return avatar(username);
 }
 
 // ---- the studio home ----
@@ -849,8 +928,11 @@ export const studioCss = /* css */ `
 .studio-live { font-family: var(--mono); font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
 .studio-live[data-state="running"] { color: var(--merged); border-color: var(--merged); }
 .studio-live[data-state="failed"] { color: var(--danger, #c33); }
-.studio-tell { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: start; }
-.studio-tell textarea { min-height: 52px; resize: vertical; }
+.studio-tell textarea { min-height: 72px; resize: vertical; }
+.studio-tell .bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.studio-head h1 { display: flex; align-items: center; gap: 10px; }
+.badge[data-variant="accent"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.badge[data-word="working"] svg { animation: spin 1.1s linear infinite; }
 .studio-now h2, .studio-asks h2 { font-size: 14px; margin: 0 0 8px; }
 .studio-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .studio-list li { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; }
