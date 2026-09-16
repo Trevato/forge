@@ -225,6 +225,40 @@ describe("checks", () => {
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
 
+  test("a check in flight when the forge stops is queued again, and the next forge runs it", async () => {
+    const slow = await commitToBranch(app, alice, repo, {
+      message: "A slower check",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 3 && test -f OK.md") },
+      ],
+    });
+    if (!slow.ok) throw new Error(JSON.stringify(slow.error));
+    const oid = slow.value.commitOid;
+    const deadline = Date.now() + 20_000;
+    let cut: Run | undefined;
+    while (Date.now() < deadline && cut?.state !== "running") {
+      cut = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.commitOid === oid,
+      );
+      await Bun.sleep(50);
+    }
+    expect(cut?.state).toBe("running");
+
+    // This forge stops — a release — with the check under way.
+    await checks.stop();
+    const runs = listRuns(app.db, repo.id, { kind: "check", limit: 50 });
+    const interrupted = runs.find((r) => r.id === cut!.id);
+    expect(interrupted?.state).toBe("cancelled");
+    expect(interrupted?.summary).toContain("queued again");
+    const again = runs.find((r) => r.commitOid === oid && r.state === "queued");
+    expect(again?.attempt).toBe(1);
+
+    // The forge that carries on finds it queued and runs it to the end.
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    const done = await settled((r) => r.id === again!.id);
+    expect(done.state).toBe("ok");
+  }, 60_000);
+
   test("a check that is declared wrong fails with the reason", async () => {
     const wrong = await commitToBranch(app, alice, repo, {
       message: "A wrong check",
