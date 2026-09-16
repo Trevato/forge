@@ -26,6 +26,12 @@ import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 export interface AppTarget {
   readonly app: AppRecord;
   readonly env: EnvName;
+  /**
+   * The hostname named something in front of this app's label: an app of a
+   * forge hosted here. Such a request is the guest's to route — including
+   * its own `/__forge/grant`, which carries a token this forge did not sign.
+   */
+  readonly nested?: boolean;
 }
 
 /**
@@ -36,7 +42,7 @@ export interface AppTarget {
 export function parseAppHost(
   hostHeader: string,
   domain: string,
-): { slug: string; env: EnvName } | undefined {
+): { slug: string; env: EnvName; nested: boolean } | undefined {
   const host = hostHeader.toLowerCase().replace(/:\d+$/, "");
   const suffix = appHostSuffix(domain.toLowerCase().replace(/:\d+$/, ""));
   if (!host.endsWith(suffix)) return undefined;
@@ -51,9 +57,13 @@ export function parseAppHost(
   const last = parts.at(-1)!;
   if (parts.length >= 2 && /^\d+$/.test(last)) {
     if (!/^[1-9]\d*$/.test(last)) return undefined;
-    return { slug: parts.at(-2)!, env: previewEnv(Number(last)) };
+    return {
+      slug: parts.at(-2)!,
+      env: previewEnv(Number(last)),
+      nested: parts.length > 2,
+    };
   }
-  return { slug: last, env: "production" };
+  return { slug: last, env: "production", nested: parts.length > 1 };
 }
 
 /**
@@ -81,7 +91,9 @@ export function resolveAppHostname(
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return undefined;
   const record = getAppBySlug(app.db, parsed.slug);
-  return record ? { app: record, env: parsed.env } : "unknown";
+  return record
+    ? { app: record, env: parsed.env, nested: parsed.nested }
+    : "unknown";
 }
 
 const GRANT_COOKIE = "forge_grant";
@@ -217,8 +229,16 @@ export async function proxyApp(
   server: Bun.Server<AppSocket>,
 ): Promise<Response | undefined> {
   const url = new URL(request.url);
+  // A grant with this forge's own token is answered here. On a nested
+  // hostname a grant this forge did not sign is the guest forge's, and
+  // goes through to it like any other request.
   if (url.pathname === "/__forge/grant") {
-    return grant(runtime, request, url, target);
+    const token = url.searchParams.get("t") ?? "";
+    if (
+      !target.nested ||
+      verifyGrant(runtime.app.config.dataDir, token, target)
+    )
+      return grant(runtime, request, url, target);
   }
   const admitted = admit(runtime, request, target);
   if (!admitted.ok) return admitted.error;
