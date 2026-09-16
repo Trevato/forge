@@ -31,6 +31,7 @@ import {
   driveRepo,
   landIfGreen,
   pickBuilder,
+  sweepGreen,
 } from "../src/crew/autonomy.ts";
 
 describe("a repository on its own", () => {
@@ -235,6 +236,69 @@ describe("a repository on its own", () => {
       .run(repo.id);
     expect(await landIfGreen(app, fresh(), pull)).toBe(true);
     expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
+  });
+
+  test("a merged pull closes what it says it closes; a proposed issue is not picked again; a stalled one waits for a person", async () => {
+    app.db
+      .query(
+        "UPDATE repo SET autonomy = 'autonomous', autonomy_slots = 2 WHERE id = ?1",
+      )
+      .run(repo.id);
+    const todo = openIssue(app, alice, repo, { title: "Audio mixer" });
+    if (!todo.ok) throw new Error(String(todo.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/audio",
+      base: "main",
+      message: "Audio mixer",
+      files: [{ path: "audio.ts", content: "export const mix = 1;\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Audio mixer",
+      body: `Mixes.\n\nCloses #${todo.value.number}`,
+      baseBranch: "main",
+      headBranch: "feature/audio",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    // Proposed, so not ready for a builder: the tick has nothing to pick.
+    expect(driveRepo(app, fresh())).not.toBe("picked");
+    expect(getIssue(app.db, repo.id, todo.value.number)!.assigneeId).toBeNull();
+
+    // Green: the sweep lands it, and the issue it closes closes.
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: opened.value.id,
+      env: `pull-${opened.value.number}`,
+      commitOid: opened.value.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed in 1s" });
+    expect(await sweepGreen(app, fresh())).toBe(1);
+    expect(getIssue(app.db, repo.id, todo.value.number)!.state).toBe("closed");
+
+    // A builder that ran and left no pull is stalled: not picked by the
+    // clock, however ready the map says it is.
+    const stuck = openIssue(app, alice, repo, { title: "Netcode" });
+    if (!stuck.ok) throw new Error(String(stuck.error));
+    const gaveUp = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: stuck.value.id,
+      actorId: scout.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, gaveUp.id);
+    finishRun(app.db, gaveUp.id, {
+      state: "ok",
+      summary: "no changes pushed: this needs a decision on the protocol",
+      costUsd: 0.2,
+    });
+    expect(driveRepo(app, fresh())).not.toBe("picked");
+    expect(
+      getIssue(app.db, repo.id, stuck.value.number)!.assigneeId,
+    ).toBeNull();
   });
 
   test("the builder pick is one fixed-choice function", () => {

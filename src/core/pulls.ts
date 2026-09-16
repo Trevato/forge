@@ -480,3 +480,33 @@ export async function mergePull(
 }
 
 export { getIssueById };
+
+// ---- what a pull says it closes ----
+
+const CLOSES = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+
+/** Issue numbers a pull's description closes: `Closes #12`, `Fixes #3`. */
+export function closesFromBody(body: string): number[] {
+  const out = new Set<number>();
+  for (const m of body.matchAll(CLOSES)) {
+    const n = Number(m[1]);
+    if (Number.isInteger(n) && n > 0) out.add(n);
+  }
+  return [...out];
+}
+
+/**
+ * Open pulls of a repository by the issue number each would close: the
+ * work that is proposed and not yet landed, which is neither ready nor
+ * done.
+ */
+export function openPullsClosing(
+  db: Database,
+  repoId: string,
+): Map<number, Pull> {
+  const out = new Map<number, Pull>();
+  for (const pull of listPulls(db, repoId, { state: "open", limit: 200 }))
+    for (const n of closesFromBody(pull.body))
+      if (!out.has(n)) out.set(n, pull);
+  return out;
+}
