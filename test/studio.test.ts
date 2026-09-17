@@ -13,7 +13,12 @@ import { previewEnv, type EnvName } from "../src/apps/data.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { assignIssue, openIssue, setIssueState } from "../src/actions/issues.ts";
+import { linkIssue } from "../src/actions/dependencies.ts";
+import {
+  assignIssue,
+  openIssue,
+  setIssueState,
+} from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
@@ -24,7 +29,7 @@ import { setCrewRole } from "../src/core/agents.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { setDirectionIssue, type Repo } from "../src/core/repos.ts";
 import {
   claimRun,
   createRun,
@@ -335,6 +340,109 @@ describe("the studio", () => {
     expect(studioCookie).toContain("diff-table");
     expect(studioCookie).toContain("PLAIN.md");
     expect(studioCookie).toContain("Merge pull request");
+  });
+
+  test("a tell on an app renders as a studio page — who has it, its runs, what blocks it, and no label form; ?mode=dev still renders today's page", async () => {
+    const blocker = openIssue(app, alice, repo, {
+      title: "Ground work",
+      body: "Do this first.",
+    });
+    if (!blocker.ok) throw new Error(String(blocker.error));
+    const told = openIssue(app, alice, repo, {
+      title: "Make the export button work",
+      body: "It does nothing right now.",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const linked = linkIssue(app, alice, repo, told.value, blocker.value);
+    expect(linked.ok).toBe(true);
+    const scout = getUserByName(app.db, "scout")!;
+    const assigned = assignIssue(app, alice, repo, told.value, scout);
+    expect(assigned.ok).toBe(true);
+    const issue = getIssue(app.db, repo.id, told.value.number)!;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: scout.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    noteRunProgress(app.db, run.id, { costUsd: 0.12 });
+
+    const studio = await (
+      await get(`/alice/notes/issues/${issue.number}`)
+    ).text();
+    expect(studio).toContain("Make the export button work");
+    expect(studio).toContain("scout");
+    expect(studio).toContain("has it");
+    expect(studio).toContain("Ground work");
+    expect(studio).toContain(`href="/alice/notes/issues/${blocker.value.number}"`);
+    expect(studio).toContain('data-word="working"');
+    expect(studio).toContain("$0.12");
+    expect(studio).toContain('id="comment-body"');
+    expect(studio).not.toContain("<h2>Labels</h2>");
+    expect(studio).not.toContain("Apply labels");
+    expect(studio).toContain(
+      `href="/alice/notes/issues/${issue.number}?mode=dev"`,
+    );
+
+    const dev = await (
+      await get(`/alice/notes/issues/${issue.number}`, {
+        cookie: `${cookie}; forge_mode=dev`,
+      })
+    ).text();
+    expect(dev).toContain("<h2>Labels</h2>");
+    expect(dev).toContain("<h2>Assignee</h2>");
+    expect(dev).toContain("<h2>Depends on</h2>");
+  });
+
+  test("the repository's direction never reads as waiting forever", async () => {
+    const direction = openIssue(app, alice, repo, {
+      title: "Direction",
+      body: "Ship faster.",
+    });
+    if (!direction.ok) throw new Error(String(direction.error));
+    setDirectionIssue(app.db, repo.id, direction.value.id);
+
+    const studio = await (
+      await get(`/alice/notes/issues/${direction.value.number}`)
+    ).text();
+    expect(studio).toContain("standing direction");
+    expect(studio).not.toContain('data-word="told"');
+
+    // Leave the repository as the other tests in this suite found it.
+    setDirectionIssue(app.db, repo.id, null);
+  });
+
+  test("a tell on a repository that is not an app renders exactly what it renders today, even in studio mode", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plaintell",
+      visibility: "private",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const told = openIssue(app, alice, plain.value, {
+      title: "Plain issue",
+      body: "Nothing special.",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+
+    const studioCookie = await (
+      await get(`/alice/plaintell/issues/${told.value.number}`)
+    ).text();
+    expect(studioCookie).toContain("<h2>Labels</h2>");
+    expect(studioCookie).toContain("<h2>Assignee</h2>");
+    expect(studioCookie).toContain("<h2>Depends on</h2>");
+  });
+
+  test("a reader without access gets the forge's not-found on a tell, exactly as dev", async () => {
+    const told = openIssue(app, alice, repo, { title: "Private work" });
+    if (!told.ok) throw new Error(String(told.error));
+    const anon = await fetch(
+      `${base}/alice/notes/issues/${told.value.number}`,
+      { headers: { cookie: "forge_mode=studio" }, redirect: "manual" },
+    );
+    expect(anon.status).toBe(404);
   });
 
   test("several asks, one decision: a box per ask, one bar, one post; in place when asked for JSON", async () => {

@@ -5,6 +5,7 @@
  */
 
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import {
   issueCounts,
   labelsFor,
@@ -62,6 +63,7 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
+import { studioTell } from "./studio.ts";
 
 const PER_PAGE = 25;
 
@@ -464,10 +466,18 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
 // ---- one issue ----
 
 // GET /:owner/:name/issues/:number
-export function issuePage(ctx: Ctx): Response {
+export async function issuePage(ctx: Ctx): Promise<Response> {
   const found = threadContext(ctx, "issue");
   if (found instanceof Response) return found;
   const { repo, issue } = found;
+  // In the studio a tell is one sentence someone said, not dev's labels and
+  // dependency form — the same rule `pullPage` follows for a change.
+  // `?mode=dev` is the one-off way to dev's page without switching the
+  // browser, same as there.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
+    return await studioTell(ctx, repo, issue);
   const base = repoBase(repo);
   const thread = `${base}/issues/${issue.number}`;
 

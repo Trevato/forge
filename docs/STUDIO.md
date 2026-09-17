@@ -102,6 +102,28 @@ A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone
 who can write here; its title opens the transcript, where the agent can be
 steered mid-run (see `docs/APPS.md`, _Runs_).
 
+## A tell, on its own page
+
+`/:owner/:name/issues/:number` on an app, in the studio, is a tell — one
+sentence someone said to the crew — not dev's labels, milestones and
+dependency form. It answers three questions: who has it (or that nobody
+does yet), what it is waiting on and what waits on it (`dependenciesOf`,
+`src/core/dependencies.ts`, each a link, read-only here), and what the
+crew has done with it — every agent run, newest first, who ran it, how
+long it went, what it cost and its state in the studio's own word
+(`tellWord`, `src/web/pages/studio.ts`), its title opening the transcript
+— and the pull that closes it, with its check and a link into its
+preview, when one exists. The sentence itself, and the reply, are the
+conversation dev's page shows too (`conversation`/`composer`,
+`src/web/pages/thread.ts`): the same action, the same same-origin check,
+told once. The repository's own standing direction is not an ordinary
+tell — it never gets picked up on its own — and the page says so rather
+than showing it as waiting forever. *Read the details* is one link away,
+`?mode=dev` on the same URL, where labels, the dependency form and the
+assignee control stay the only place those exist; an issue on a
+repository that is not an app, or any issue in dev mode, renders exactly
+what it always has.
+
 ## Working, on its own page
 
 `/:owner/:name/runs/:id` on an app, in the studio, is a run: who is on it,
