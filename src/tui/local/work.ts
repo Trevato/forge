@@ -17,7 +17,7 @@ import { G, type Rect, type Screen as Surface } from "../term/screen.ts";
 import { BOLD, DIM, style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
 import { confirmScreen, errorText, ListState } from "../screens/common.ts";
-import { fill, len, split } from "../ui/layout.ts";
+import { beside, fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { emptyState, scrollbar, spinner } from "../ui/widgets.ts";
 import { branchesScreen } from "./branches.ts";
@@ -33,6 +33,7 @@ import {
 } from "./common.ts";
 import { HunkList, hunkScreen, sectionLabel, type Section } from "./hunks.ts";
 import { logScreen } from "./log.ts";
+import { dividedAside } from "./rows.ts";
 import { stashScreen } from "./stash.ts";
 
 interface Item {
@@ -186,19 +187,18 @@ export function workScreen(local: Local, ctx: Ctx, repo: LocalRepo): Screen {
         });
         return;
       }
-      if (!ctx.twoPane) {
-        drawFiles(s, body!, c, list, items);
-        return;
-      }
-      const [left, right] = split(body!, "h", [fill(2), fill(3)]);
-      drawFiles(s, left!, c, list, items);
-      for (let y = right!.y; y < right!.y + right!.h; y++)
-        s.set(right!.x, y, G.v, style(c.border, c.bg));
-      preview.render(
-        s,
-        { x: right!.x + 2, y: right!.y, w: right!.w - 2, h: right!.h },
-        c,
-      );
+      const {
+        main: left,
+        aside: right,
+        stacked,
+      } = beside(body!, ctx.twoPane, {
+        main: fill(2),
+        aside: fill(3),
+        below: fill(3),
+      });
+      drawFiles(s, left, c, list, items);
+      if (right !== undefined)
+        preview.render(s, dividedAside(s, right, c, stacked), c);
     },
     key(e) {
       if (task.blocked) return true;

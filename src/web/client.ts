@@ -1580,8 +1580,93 @@ export const shellJs = /* js */ `
  * fetch) and swaps just those regions in place. Nothing reloads under a
  * reader, no client templating, and the server renders exactly what it
  * would have rendered on a visit. `forge:event` is dispatched on
- * `document` for scripts that want the event itself.
+ * `document` for scripts that want the event itself, `forge:swapped` on a
+ * region that was just replaced, and `forge:live` on `document` with the
+ * stream's state (`open`, `reconnecting`) for a page that shows it.
  */
+export const boardJs = /* js */ `
+(function () {
+  var board = document.querySelector('.board');
+  if (!board) return;
+  var doc = document;
+
+  // ---- clocks: the corner, every run's elapsed, every relative time ----
+  var clock = doc.getElementById('board-clock');
+  function two(n) { return (n < 10 ? '0' : '') + n; }
+  function span(s) {
+    return s < 60 ? s + 's'
+      : s < 3600 ? Math.floor(s / 60) + 'm ' + two(s % 60) + 's'
+      : Math.floor(s / 3600) + 'h ' + two(Math.floor((s % 3600) / 60)) + 'm';
+  }
+  // The same words the server used, so a swap never changes a row's voice.
+  function ago(s) {
+    if (s < 60) return 'just now';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    if (s < 86400 * 30) return Math.floor(s / 86400) + 'd ago';
+    if (s < 86400 * 365) return Math.floor(s / (86400 * 30)) + 'mo ago';
+    return Math.floor(s / (86400 * 365)) + 'y ago';
+  }
+  function tick() {
+    var now = Date.now();
+    if (clock) {
+      var d = new Date(now);
+      clock.textContent = two(d.getHours()) + ':' + two(d.getMinutes());
+      clock.setAttribute('datetime', d.toISOString());
+    }
+    Array.prototype.forEach.call(board.querySelectorAll('[data-started]'), function (el) {
+      var t = Date.parse(el.getAttribute('data-started') || '');
+      if (t) el.textContent = span(Math.max(0, Math.round((now - t) / 1000)));
+    });
+    Array.prototype.forEach.call(board.querySelectorAll('time[datetime]'), function (el) {
+      if (el === clock) return;
+      var t = Date.parse(el.getAttribute('datetime') || '');
+      if (t) el.textContent = ago(Math.max(0, (now - t) / 1000));
+    });
+  }
+  // One interval for the page, set once: each tick reads whatever cards are
+  // on the wall right then, so a swap never arms a second clock.
+  window.setInterval(tick, 1000);
+  tick();
+  // A swapped region carries fresh rows: their clocks start at once, and
+  // the heading glows for a moment so a glance catches what moved. Nothing
+  // here fetches or emits: the stream cannot echo a swap.
+  doc.addEventListener('forge:swapped', function (e) {
+    tick();
+    var region = e.target && e.target.closest ? e.target.closest('.board-region') : null;
+    if (!region) return;
+    region.setAttribute('data-fresh', '');
+    window.setTimeout(function () { region.removeAttribute('data-fresh'); }, 1500);
+  });
+
+  // ---- the dot: whether the stream is connected ----
+  var live = doc.getElementById('board-live');
+  doc.addEventListener('forge:live', function (e) {
+    if (live && e.detail) live.setAttribute('data-state', e.detail.state);
+  });
+
+  // ---- keys: f fullscreen, 1–4 one region, 0 all. Escape is the browser's. ----
+  var REGIONS = { '1': 'working', '2': 'landed', '3': 'decided', '4': 'today' };
+  doc.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var t = e.target;
+    if (t && t.closest && t.closest('dialog[open]')) return;
+    if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) return;
+    if (e.key === 'f') {
+      e.preventDefault();
+      if (doc.fullscreenElement) { if (doc.exitFullscreen) doc.exitFullscreen(); }
+      else if (doc.documentElement.requestFullscreen) doc.documentElement.requestFullscreen().catch(function () {});
+    } else if (e.key === '0') {
+      e.preventDefault();
+      board.removeAttribute('data-focus');
+    } else if (REGIONS[e.key]) {
+      e.preventDefault();
+      board.setAttribute('data-focus', REGIONS[e.key]);
+    }
+  });
+})();
+`;
+
 export const liveRegionsJs = /* js */ `
 (function () {
   var regions = document.querySelectorAll('[data-live]');
@@ -1618,6 +1703,10 @@ export const liveRegionsJs = /* js */ `
       .catch(function () {});
   }
   var source = new EventSource('/events');
+  // The stream's own state, for a page that shows whether it is connected.
+  function state(s) { document.dispatchEvent(new CustomEvent('forge:live', { detail: { state: s } })); }
+  source.addEventListener('open', function () { state('open'); });
+  source.addEventListener('error', function () { state('reconnecting'); });
   source.addEventListener('forge', function (event) {
     var data;
     try { data = JSON.parse(event.data); } catch (err) { return; }

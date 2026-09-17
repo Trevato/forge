@@ -508,6 +508,93 @@ describe("the decision ledger", () => {
     expect(asks.some((d) => d.kind === "stopped")).toBe(false);
   });
 
+  test("a review run never fills a slot, and a builder's run that ends without a pull parks its issue for one fresh try", async () => {
+    const { settleAgentRun, parkedCount } =
+      await import("../src/crew/autonomy.ts");
+    const { getIssueById: issueById } = await import("../src/core/issues.ts");
+    // A queued review run on some pull, one slot: the next issue is still picked.
+    const work = openIssue(app, alice, repo, { title: "Wishlist" });
+    if (!work.ok) throw new Error(String(work.error));
+    const anyPull = listRuns(app.db, repo.id, { kind: "agent" }).find(
+      (r) => r.reason === "review",
+    );
+    expect(anyPull).toBeDefined();
+    const busy = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: anyPull!.issueId!,
+      actorId: anyPull!.actorId!,
+      reason: "review",
+    });
+    void busy;
+    script["next"] = String(work.value.number);
+    // Exactly as many slots as builders' runs already in flight: the
+    // review run above would make it "full" if it counted.
+    const builders = listRuns(app.db, repo.id, { kind: "agent" }).filter(
+      (r) =>
+        (r.state === "queued" || r.state === "running") &&
+        r.reason !== "review",
+    ).length;
+    updateRepoSettings(app.db, fresh(), { autonomySlots: builders + 1 });
+    expect(await driveRepo(app, fresh())).toBe("picked");
+    expect(issueById(app.db, work.value.id)?.assigneeId).toBe(scout.id);
+
+    // The builder's run ends with nothing pushed: parked, unassigned. (No
+    // crew runs here, so the run row is made by hand.)
+    const done = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: work.value.id,
+      actorId: scout.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, done.id);
+    finishRun(app.db, done.id, {
+      state: "ok",
+      summary: "no changes pushed: DECLINED: out of scope",
+    });
+    expect(
+      settleAgentRun(app, fresh(), {
+        issueId: work.value.id,
+        state: "ok",
+        summary: "no changes pushed: DECLINED: out of scope",
+        reason: "assigned",
+        actorId: scout.id,
+      }),
+    ).toBe(true);
+    expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
+    expect(parkedCount(app, work.value.id)).toBe(1);
+    // A run that opened a pull parks nothing.
+    expect(
+      settleAgentRun(app, fresh(), {
+        issueId: work.value.id,
+        state: "ok",
+        summary: "opened pull #99",
+        reason: "assigned",
+        actorId: scout.id,
+      }),
+    ).toBe(false);
+    updateRepoSettings(app.db, fresh(), { autonomySlots: 2 });
+  });
+
+  test("the ceiling gates every run the crew starts on its own; a person's assignment is not the crew's", async () => {
+    const { queueAgentRun } = await import("../src/crew/dispatch.ts");
+    const { getAgentByName } = await import("../src/core/agents.ts");
+    const work = openIssue(app, alice, repo, { title: "Loyalty points" });
+    if (!work.ok) throw new Error(String(work.error));
+    const scoutAgent = getAgentByName(app.db, "scout")!;
+    updateRepoSettings(app.db, fresh(), { autonomyCeilingUsd: 0 });
+    // At the ceiling: no feedback run.
+    expect(
+      queueAgentRun(app, fresh(), work.value, scoutAgent, "feedback"),
+    ).toBeUndefined();
+    // A person's assignment still runs.
+    expect(
+      queueAgentRun(app, fresh(), work.value, scoutAgent, "assigned"),
+    ).toBeDefined();
+    updateRepoSettings(app.db, fresh(), { autonomyCeilingUsd: 20 });
+  });
+
   test("the ledger is on the API, newest first, with the week per kind", async () => {
     const { createToken } = await import("../src/core/tokens.ts");
     const token = createToken(app.db, alice.id, "ledger", "ro");

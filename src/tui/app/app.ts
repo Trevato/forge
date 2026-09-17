@@ -42,7 +42,15 @@ import {
   type Tokens,
 } from "../ui/theme.ts";
 import { THEME_NAMES } from "../../design/themes.ts";
-import { split, len, fill, contains } from "../ui/layout.ts";
+import {
+  MIN_COLS,
+  MIN_ROWS,
+  TWO_PANE_COLS,
+  contains,
+  fill,
+  len,
+  split,
+} from "../ui/layout.ts";
 import { clearImages } from "../ui/image.ts";
 import { fileIcon, icon } from "../ui/icons.ts";
 import {
@@ -190,7 +198,11 @@ export interface Ctx {
   readonly theme: Theme;
   readonly cols: number;
   readonly rows: number;
-  /** ≥100 columns: list plus preview. Below: one pane at a time. */
+  /**
+   * At least `TWO_PANE_COLS` wide: a list sits beside its detail. Below,
+   * `beside()` stacks the two, and a screen with no detail to stack draws
+   * one pane at a time.
+   */
   readonly twoPane: boolean;
   /** Frame counter, for spinners. */
   readonly tick: number;
@@ -410,7 +422,7 @@ export class App {
         return app.surface.rows;
       },
       get twoPane() {
-        return app.surface.cols >= 100;
+        return app.surface.cols >= TWO_PANE_COLS;
       },
       get tick() {
         return app.frames;
@@ -638,18 +650,25 @@ export class App {
   }
 
   private onResize(cols: number, rows: number): void {
-    // A suspended child owns the screen: it gets the new size first, and our
-    // own buffer is resized behind it so the resumed repaint is correct.
-    this.rawResize?.(Math.max(1, cols), Math.max(1, rows));
-    if (cols === this.surface.cols && rows === this.surface.rows) return;
-    // A resize invalidates every assumption; never diff across one.
-    this.surface = new Surface(Math.max(1, cols), Math.max(1, rows));
-    this.capabilities = this.readCapabilities();
-    this.renderer.invalidate();
-    // A kitty placement is anchored to a cell, so after a reflow it is
-    // sitting on top of unrelated text until it is sent again.
-    this.imagesStale = true;
-    this.invalidate();
+    const c = Math.max(1, cols);
+    const r = Math.max(1, rows);
+    if (c !== this.surface.cols || r !== this.surface.rows) {
+      // A resize invalidates every assumption; never diff across one. The
+      // screens keep their own state — a cursor, a scroll — and re-lay
+      // themselves on the next frame, which `invalidate` asks for now.
+      this.surface = new Surface(c, r);
+      this.capabilities = this.readCapabilities();
+      this.renderer.invalidate();
+      // A kitty placement is anchored to a cell, so after a reflow it is
+      // sitting on top of unrelated text until it is sent again.
+      this.imagesStale = true;
+      this.invalidate();
+    }
+    // A suspended child owns the screen and hears every window-change, even
+    // one that changed nothing. The buffer went first so that `host.cols`
+    // already says the new size inside the child's own callback; nothing
+    // paints over the child, because `schedule` stays quiet while suspended.
+    this.rawResize?.(c, r);
   }
 
   /** Feed one event as if it arrived from the terminal (tests, SSH adapters). */
@@ -963,11 +982,17 @@ export class App {
     // the user's own background show through looks like six half-themes.
     s.clear(style(c.fg, c.bg));
 
-    if (s.cols < 20 || s.rows < 10) {
+    // Below the floor no layout survives — a card is narrower than its title
+    // and the help bar shows one key — so one line says what would help,
+    // and the screens keep their state for the moment the window grows.
+    if (s.cols < MIN_COLS || s.rows < MIN_ROWS) {
       s.line(
         s.rect(),
         Math.floor(s.rows / 2),
-        truncate("Resize your terminal", s.cols),
+        truncate(
+          `Resize your terminal to ${MIN_COLS}×${MIN_ROWS} or more`,
+          s.cols,
+        ),
         style(c.mutedFg, c.bg),
         "center",
       );

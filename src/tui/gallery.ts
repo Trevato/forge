@@ -285,8 +285,8 @@ function drawLists(r: Rect, s: Surface, c: Tokens, g: GalleryState): void {
     columns: [
       { header: "#", width: len(5), numeric: true },
       { header: "Title", width: fill(1) },
-      { header: "+", width: len(5), numeric: true },
-      { header: "−", width: len(5), numeric: true },
+      { header: "+", width: len(5), numeric: true, drop: 2 },
+      { header: "−", width: len(5), numeric: true, drop: 1 },
     ],
     rows: [
       ["42", "Cell-diff renderer", "812", "204"],

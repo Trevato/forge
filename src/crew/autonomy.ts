@@ -24,7 +24,12 @@ import { mergeable, resolveOid } from "../git/merge.ts";
 import { listReviews } from "../core/reviews.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
-import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
+import {
+  listCrewRoles,
+  type Agent,
+  type CrewRole,
+  crewRole,
+} from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import { latestDecision, resolveOpen } from "../core/decisions.ts";
@@ -166,7 +171,10 @@ export async function driveRepo(
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
-  if (active.length >= repo.autonomySlots) return "full";
+  // Slots bound the builders. A review is the reviewer's short pass on a
+  // pull and never keeps a builder from picking the next issue.
+  const slotted = active.filter((r) => r.reason !== "review");
+  if (slotted.length >= repo.autonomySlots) return "full";
 
   const busyIssues = new Set(active.map((r) => r.issueId));
   const inFlight = new Map<string, number>();
@@ -296,6 +304,65 @@ export function parkedCount(app: App, issueId: string): number {
 }
 
 /**
+ * Park an issue: a note with the reason and the assignee cleared, so the
+ * planner rewrites it on its next pass and the crew tries it fresh once.
+ */
+export function parkIssue(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  why: string,
+): boolean {
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by || issue.state !== "open") return false;
+  if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
+  addComment(app, by, repo, issue, `Parked by the crew: ${why}`);
+  log.info("parked", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    issue: issue.number,
+    why,
+  });
+  return true;
+}
+
+/**
+ * After a builder's run on an issue ends without a pull to show for it —
+ * declined, out of budget, or simply nothing pushed — the issue is parked
+ * rather than left stalled: one fresh try later, then the planner's.
+ */
+export function settleAgentRun(
+  app: App,
+  repo: Repo,
+  run: {
+    readonly issueId: string;
+    readonly state: string;
+    readonly summary: string;
+    readonly reason: string;
+    readonly actorId: string | null;
+  },
+): boolean {
+  if (repo.autonomy !== "autonomous") return false;
+  if (run.state !== "ok" && run.state !== "failed") return false;
+  if (run.reason === "review") return false;
+  if (/opened pull #|updated pull #/.test(run.summary)) return false;
+  const issue = getIssueById(app.db, run.issueId);
+  if (!issue || issue.kind !== "issue" || issue.state !== "open") return false;
+  if (issue.id === repo.directionIssueId) return false;
+  if (
+    run.actorId !== null &&
+    crewRole(app.db, repo.id, run.actorId) !== "builder"
+  )
+    return false;
+  return parkIssue(
+    app,
+    repo,
+    issue,
+    `the run ended without a pull: ${run.summary || run.state}`,
+  );
+}
+
+/**
  * Park a pull the crew cannot finish: close it with the reason, put its
  * issues back on the map unassigned with the same reason, and move on. A
  * repository on its own never waits for a person; a parked issue is the
@@ -377,13 +444,21 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   for (const repo of listAutonomousRepos(app.db)) {
     try {
       await sweepGreen(app, repo);
-      const did = await driveRepo(
-        app,
-        getRepoById(app.db, repo.id) ?? repo,
-        now,
-      );
-      if (did === "picked" || did === "planned")
-        log.info("tick", { repo: `${repo.ownerName}/${repo.name}`, did });
+      const current = getRepoById(app.db, repo.id) ?? repo;
+      const did = await driveRepo(app, current, now);
+      // Every tick says what it did and why, so an app that sits still is
+      // never a mystery: the numbers behind "idle" are on the line.
+      const status = autonomyStatus(app, current, now);
+      const graph = repoGraph(app.db, current.id);
+      log.info("tick", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        did,
+        ready: readyNow(graph).length,
+        active: status.active,
+        slots: status.slots,
+        spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
+        ...(status.paused === null ? {} : { paused: status.paused }),
+      });
     } catch (error) {
       log.error("autonomy tick failed", {
         repo: `${repo.ownerName}/${repo.name}`,
@@ -532,17 +607,27 @@ export async function reviewFirst(
   if (last?.state === "changes_requested") return "wait";
   // A reviewer that could not run — the run failed before a verdict — is
   // not asked again for this head: autonomous lands, and the log says so.
-  const tried = app.db
+  // One pass per head. A review run that already ended for this head —
+  // with a verdict the forge could not match, or none at all — is not run
+  // again: the reviewer had its look, and autonomous lands. Three review
+  // runs on one pull, whatever their heads, is the reviewer's whole say.
+  const passes = app.db
     .query<
       { state: string; summary: string },
-      [string, string]
-    >("SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason = 'review' AND summary = ?2 ORDER BY created_at DESC LIMIT 1")
-    .get(pull.id, `review at ${pull.headOid.slice(0, 7)}`);
-  if (tried?.state === "failed" || tried?.state === "cancelled") {
-    log.warn("the reviewer could not review it; landing without", {
+      [string]
+    >("SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason = 'review' AND state IN ('ok','failed','cancelled') ORDER BY created_at DESC")
+    .all(pull.id);
+  const forHead = passes.find(
+    (p) =>
+      p.summary.startsWith(`review at ${pull.headOid.slice(0, 7)}`) ||
+      p.state === "failed" ||
+      p.state === "cancelled",
+  );
+  if (forHead !== undefined || passes.length >= 3) {
+    log.info("the reviewer had its look; landing", {
       repo: `${repo.ownerName}/${repo.name}`,
       pull: pull.number,
-      why: tried.summary,
+      why: forHead?.summary ?? `${passes.length} review runs`,
     });
     return "ship";
   }

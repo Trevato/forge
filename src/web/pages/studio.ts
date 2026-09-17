@@ -571,7 +571,7 @@ export async function studioApp(
   const liveTone: Tone =
     state === "running" ? "success" : state === "failed" ? "danger" : "default";
   const head = html`<div class="page-head studio-head">
-    <div class="stack" style="gap: 4px">
+    <div class="stack stack-tight">
       <h1>
         ${repo.name}
         <span
@@ -1011,11 +1011,19 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     running.map((r) => r.actorId).filter((id): id is string => id !== null),
   );
   const byId = new Map(appRepos.map((r) => [r.id, r]));
+  // The board: the same runs as a wall for a second monitor.
+  const nowHead = html`${icon("activity")}
+    <h2>Happening now</h2>
+    <span class="spacer"></span>
+    ${btn("Focus", {
+      href: "/board",
+      size: "sm",
+      title: "The board: a live wall of the crews at work",
+    })}`;
   const now =
     running.length === 0
       ? card(html`<p class="muted small">Nobody is working right now.</p>`, {
-          head: html`${icon("activity")}
-            <h2>Happening now</h2>`,
+          head: nowHead,
         })
       : listCard(
           running.map((r) => {
@@ -1047,10 +1055,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
                 : {}),
             });
           }),
-          {
-            head: html`${icon("activity")}
-              <h2>Happening now</h2>`,
-          },
+          { head: nowHead },
         );
 
   const body = html`<div class="dash">
