@@ -246,14 +246,19 @@ describe("the studio", () => {
     // c: red, and the crew tried its limit since anyone spoke — it stopped.
     check(c, "failed");
     await Bun.sleep(5);
-    for (let i = 0; i < CHECK_FAILED_LIMIT; i++)
-      createRun(app.db, {
+    // Each try is over: a run still queued or running would make c the
+    // crew's, not a question for a person.
+    for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
+      const tried = createRun(app.db, {
         repoId: repo.id,
         kind: "agent",
         issueId: c.id,
         reason: "check_failed",
         actorId: scout.id,
       });
+      claimRun(app.db, tried.id);
+      finishRun(app.db, tried.id, { state: "failed", summary: "still red" });
+    }
 
     // (a) One box per ask, one form around them, the bar's actions, and a
     // row's own form outside the panel's — never a form in a form.
