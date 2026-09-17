@@ -83,6 +83,22 @@ A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone
 who can write here; its title opens the transcript, where the agent can be
 steered mid-run (see `docs/APPS.md`, _Runs_).
 
+## The look, on its own page
+
+`/:owner/:name/pulls/:n` on an app, in the studio, is the change itself —
+never its diff. The title and the opening post in the author's own words,
+who made it and when, the check in the studio's five words (`checkWord`,
+`src/web/pages/studio.ts`) with its deploy one click away, the preview's
+state with the link that opens it (`previewCard`, the same card the aside
+carries in dev), and the look at phone and desktop width when one has been
+taken (`lookCard`, docs/APPS.md). Below that the same decision an ask card
+offers — ship it, or say what is off — through the very same `mergePull`
+and comment actions, and the conversation: read it, add to it. *Read the
+code* is one link away, `?mode=dev` on the same URL, landing on the diff
+page exactly as it always has, deep links and all. Nothing here reads a
+diff or a blob: the page costs a handful of small queries whatever the
+change's size, unlike the page it links to.
+
 ## The home
 
 `/` in the studio: what asks you across every app you can land, what is on

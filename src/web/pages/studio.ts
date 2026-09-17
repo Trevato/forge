@@ -42,15 +42,22 @@ import {
   openPullsClosing,
   type Pull,
 } from "../../core/pulls.ts";
-import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import {
+  canWrite,
+  getRepoById,
+  listReposVisibleTo,
+  type Repo,
+} from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
   activeRunFor,
   automaticRunsSince,
+  checkSummary,
   latestAgentRunsForRepos,
   latestRunsForIssues,
   listActiveRuns,
   listRuns,
+  type CheckSummary,
   type Run,
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
@@ -94,15 +101,22 @@ import {
   envPhrase,
   icon,
   listCard,
+  originTag,
   pill,
   row,
+  sha,
+  stateBadge,
   time,
+  userLink,
   userTag,
   type Tone,
 } from "../ui.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { lookNow, lookThumb, lookUrl } from "./looks.ts";
+import { lookCard, lookNow, lookThumb, lookUrl } from "./looks.ts";
 import { onYouCard } from "./site.ts";
+import { previewCard } from "./apps.ts";
+import { pullState } from "./pulls.ts";
+import { composer, conversation, originGlyph } from "./thread.ts";
 
 // ---- decisions: what asks a person ----
 
@@ -587,6 +601,37 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
   planned: "map",
 };
 
+/** One of the five (or six) studio words, as a badge. */
+function wordBadge(word: Word): Html {
+  const variant =
+    word === "look" || word === "shipped"
+      ? "success"
+      : word === "stopped"
+        ? "danger"
+        : word === "working"
+          ? "accent"
+          : "secondary";
+  return html`<span class="badge" data-variant="${variant}" data-word="${word}"
+    >${word === "working" ? icon("loader") : null}${word}</span
+  >`;
+}
+
+/** A single open pull's check, in the studio's own words — never dev's
+ * "Checks passed/failed": the same five words as the rest of the page. */
+function checkWord(check: CheckSummary): { word: Word; note: string } {
+  if (check.state === "ok")
+    return { word: "look", note: "green — ready for a look" };
+  if (check.state === "failed")
+    return { word: "stopped", note: "the check failed" };
+  if (check.state === "running")
+    return { word: "working", note: "checking now" };
+  if (check.state === "queued")
+    return { word: "working", note: "queued to check" };
+  if (check.state === "cancelled")
+    return { word: "stopped", note: "the check was cancelled" };
+  return { word: "waiting", note: "no deploy of this head yet" };
+}
+
 // ---- previews: every open pull's preview, one click away ----
 
 /** The three words the studio uses for a preview, whatever its check says. */
@@ -811,22 +856,6 @@ export async function studioApp(
       (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
     )
     .slice(0, 6);
-  const wordBadge = (word: Word): Html => {
-    const variant =
-      word === "look" || word === "shipped"
-        ? "success"
-        : word === "stopped"
-          ? "danger"
-          : word === "working"
-            ? "accent"
-            : "secondary";
-    return html`<span
-      class="badge"
-      data-variant="${variant}"
-      data-word="${word}"
-      >${word === "working" ? icon("loader") : null}${word}</span
-    >`;
-  };
   const nowRows: Html[] = [
     ...openPulls.map((p) => {
       const check = pullChecks.get(p.id);
@@ -1049,6 +1078,132 @@ export async function studioApp(
 
 function avatarOf(username: string): Html {
   return avatar(username);
+}
+
+// ---- one pull, in studio words ----
+
+/**
+ * GET /:owner/:name/pulls/:number in studio mode: a change is judged by
+ * what it does, not by its diff. The title and the author's own words (the
+ * opening post, same as dev), who made it and when, the check and the
+ * preview in the studio's five words, the look when one has been taken, the
+ * same decision the asks panel would offer, and the conversation — with the
+ * diff exactly one click away at `?mode=dev`. No diff is computed here, so
+ * this never gets slower as a change gets bigger.
+ */
+export async function studioPull(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  record: AppRecord,
+): Promise<Response> {
+  const db = ctx.app.db;
+  const base = repoBase(repo);
+  const thread = `${base}/pulls/${pull.number}`;
+  const check = checkSummary(db, pull.id, pull.headOid);
+  const { word, note } = checkWord(check);
+  const decision = decisionsFor(ctx, [repo]).find(
+    (d) => d.pull?.id === pull.id,
+  );
+
+  const headRepo = pull.crossRepo
+    ? getRepoById(db, pull.headRepoId)
+    : undefined;
+  const headLabel = headRepo
+    ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
+    : pull.headBranch;
+
+  const head = html`<div class="issue-head">
+    <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
+    <div class="issue-meta">
+      ${stateBadge(pullState(pull))}
+      <span
+        >${pull.originAuthor
+          ? originTag(pull.originAuthor, originGlyph(repo))
+          : userLink(pull.authorName)}
+        opened this ${time(pull.createdAt)}</span
+      >
+      ${when(
+        pull.originUrl,
+        (url) =>
+          html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
+            >${icon("external")}view on origin</a
+          >`,
+      )}
+      <span class="mono">${headLabel} → ${pull.baseBranch}</span>
+    </div>
+  </div>`;
+
+  const checkLine = card(
+    html`<p class="studio-pull-check">
+      ${wordBadge(word)} <span class="muted small">${note}</span>
+      ${when(
+        check.run,
+        (run) =>
+          html`<span class="where-sep" aria-hidden="true">·</span
+            ><a href="${base}/runs/${run.id}"
+              >deploy ${run.commitOid.slice(0, 7)}</a
+            >`,
+      )}
+    </p>`,
+  );
+
+  const decisionSection = when(decision, (d) =>
+    card(
+      html`<p>${d.says}</p>
+        <div class="bar mt">${decisionActions(ctx, d)}</div>`,
+      {
+        head: html`${icon("alert")}
+          <h2>Decide</h2>`,
+      },
+    ),
+  );
+
+  const talk = conversation(ctx, repo, pull, {
+    openVerb: html`wants to merge <span class="mono">${headLabel}</span> into
+      <span class="mono">${pull.baseBranch}</span> ·`,
+  });
+
+  const body = html`${repoHeader(ctx, repo, "pulls", {
+      compact: true,
+      ownTitle: true,
+    })}
+    ${head} ${checkLine} ${decisionSection}
+    ${lookCard(ctx, repo, record, pull, pull.headOid)}
+    <div class="split">
+      <div>
+        ${talk.node}
+        ${composer(ctx, {
+          action: `${thread}/comments`,
+          stateAction: `${thread}/state`,
+          state: pull.state,
+          locked: pull.mergedAt !== null,
+          kind: "pull",
+        })}
+      </div>
+      <aside>${previewCard(ctx, repo, pull)}</aside>
+    </div>
+    <p class="muted small mt">
+      <a href="${thread}?mode=dev">${icon("code")}Read the code</a> — every
+      file it changed, line by line.
+    </p>
+    ${decision ? decisionForm(decision) : null}
+    ${liveMount({
+      repo: base,
+      thread: "pull",
+      number: pull.number,
+      lastCommentId: talk.lastCommentId,
+    })}`;
+
+  return page({
+    ctx,
+    title: `${pull.title} · ${repo.name}`,
+    crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
+    body,
+    styleCss: studioCss,
+    scriptJs: liveClientJs,
+  });
 }
 
 // ---- the studio home ----

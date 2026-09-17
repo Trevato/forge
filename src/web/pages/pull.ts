@@ -96,6 +96,7 @@ import { previewCard } from "./apps.ts";
 import { lookCard } from "./looks.ts";
 import { pullState } from "./pulls.ts";
 import { crewActivityCard } from "./runs.ts";
+import { studioPull } from "./studio.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -666,6 +667,15 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   const { repo, pull } = found;
+  // In the studio a change is judged by what it does, not its diff — the
+  // same rule `repoHome` follows for an app's own page. `?mode=dev` is the
+  // one-off way to the diff without switching the browser, same as home.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio) {
+    const record = getAppByRepo(ctx.app.db, repo.id);
+    if (record !== undefined) return await studioPull(ctx, repo, pull, record);
+  }
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const base = repoBase(repo);
   const thread = `${base}/pulls/${pull.number}`;

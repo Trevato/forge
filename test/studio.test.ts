@@ -223,6 +223,107 @@ describe("the studio", () => {
     expect(getUserByName(app.db, "scout")).toBeDefined();
   });
 
+  test("a pull on an app renders as a studio page — the preview, the look and the decision, no diff; ?mode=dev still renders the diff", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/studio-pull",
+      base: "main",
+      message: "Studio pull",
+      files: [{ path: "STUDIO_PULL.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    // Scout is an agent: this pull is the crew's, so a decision applies to
+    // it once its check is green (`listOpenAgentPullsVisibleTo`).
+    const opened = await openPull(app, scout, repo, {
+      title: "Studio pull test",
+      body: "Makes the thing faster.",
+      baseBranch: "main",
+      headBranch: "feature/studio-pull",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed in 1s" });
+
+    const studio = await (
+      await get(`/alice/notes/pulls/${pull.number}`)
+    ).text();
+    expect(studio).toContain("Studio pull test");
+    expect(studio).toContain("Makes the thing faster.");
+    expect(studio).toContain(`href="/alice/notes/app/pull-${pull.number}/open"`);
+    expect(studio).toContain("data-word=\"look\"");
+    expect(studio).toContain("Ship");
+    expect(studio).toContain('id="comment-body"');
+    expect(studio).toContain(
+      `href="/alice/notes/pulls/${pull.number}?mode=dev"`,
+    );
+    expect(studio).not.toContain("diff-table");
+
+    // The dev page, either by cookie or by the one-off query, is untouched
+    // and still carries the diff.
+    const devCookie = await (
+      await get(`/alice/notes/pulls/${pull.number}`, {
+        cookie: `${cookie}; forge_mode=dev`,
+      })
+    ).text();
+    expect(devCookie).toContain("diff-table");
+    expect(devCookie).toContain("STUDIO_PULL.md");
+
+    const devQuery = await (
+      await get(`/alice/notes/pulls/${pull.number}?mode=dev`)
+    ).text();
+    expect(devQuery).toContain("diff-table");
+
+    // Ship it, so it stops being an ask on the shared repo's home for the
+    // tests that follow.
+    const merged = await mergePull(app, alice, repo, pull, "squash");
+    expect(merged.ok).toBe(true);
+  });
+
+  test("a pull on a repository that is not an app renders exactly what it renders today, even in studio mode", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainrepo",
+      visibility: "private",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const seeded = await commitToBranch(app, alice, plain.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, plain.value, {
+      branch: "feature/plain",
+      base: "main",
+      message: "Plain change",
+      files: [{ path: "PLAIN.md", content: "plain\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, plain.value, {
+      title: "Plain pull",
+      body: "Nothing special.",
+      baseBranch: "main",
+      headBranch: "feature/plain",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+
+    const studioCookie = await (
+      await get(`/alice/plainrepo/pulls/${pull.number}`)
+    ).text();
+    expect(studioCookie).toContain("diff-table");
+    expect(studioCookie).toContain("PLAIN.md");
+    expect(studioCookie).toContain("Merge pull request");
+  });
+
   test("several asks, one decision: a box per ask, one bar, one post; in place when asked for JSON", async () => {
     const scout = getUserByName(app.db, "scout")!;
     // The crew proposes: a pull by scout on its own branch.
