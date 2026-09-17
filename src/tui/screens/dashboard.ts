@@ -65,7 +65,13 @@ import { openAppTerminal } from "./apptty.ts";
 import { describeEvent, type FeedLine } from "./activity.ts";
 import { accountScreen } from "./account.ts";
 import { appScreen } from "./app.ts";
-import { appRow, appsScreen, listVisibleApps, type AppItem } from "./apps.ts";
+import {
+  appRow,
+  appsScreen,
+  listVisibleApps,
+  newAppFlow,
+  type AppItem,
+} from "./apps.ts";
 import { exploreScreen } from "./explore.ts";
 import { issueScreen } from "./issue.ts";
 import { newRepoScreen } from "./newrepo.ts";
@@ -319,6 +325,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           disabled: focus !== "machine" || pins.length === 0,
         }),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
+        binding(["N"], "new app", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
         binding(["r"], "refresh"),
@@ -427,6 +434,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(newRepoScreen(f, ctx));
         return true;
       }
+      if (e.key === "N" && f.signedIn) {
+        newAppFlow(f, ctx, screen);
+        return true;
+      }
       if (e.key === "A" && f.user) {
         ctx.push(accountScreen(f, ctx));
         return true;
@@ -523,7 +534,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       emptyState(s, r, c, {
         title: f.signedIn ? "No repositories yet" : "Nothing public yet",
         body: f.signedIn
-          ? "Press n to create one, or e to explore."
+          ? "Press N for a new app, n for a plain repository, or e to explore."
           : "Press s to sign in, or e to explore.",
       });
       return;

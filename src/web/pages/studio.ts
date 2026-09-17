@@ -11,8 +11,9 @@
  * pull the crew stopped on, or a green one waiting for a look.
  */
 
-import { addComment, openIssue, assignIssue } from "../../actions/issues.ts";
+import { addComment } from "../../actions/issues.ts";
 import { mergePull } from "../../actions/pulls.ts";
+import { tellCrew } from "../../actions/crew.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
 import { listCrewRoles, type Agent } from "../../core/agents.ts";
 import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -42,7 +43,6 @@ import {
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
-import { routeIssue } from "../../crew/route.ts";
 import { certain, decideOr } from "../../crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -916,40 +916,20 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message: "Say something first.",
     });
-  const firstLine = text.split(/\n/)[0]!.trim();
-  const title =
-    firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
-  const opened = openIssue(ctx.app, ctx.auth.user, repo, {
-    title,
-    body: text === firstLine ? "" : text,
-  });
-  if (!opened.ok)
+  const told = await tellCrew(ctx.app, ctx.auth.user, repo, text);
+  if (!told.ok)
     return flashTo(ctx, base, {
       tone: "danger",
       message: "That could not be told.",
     });
-  const crew = listCrewRoles(ctx.app.db, repo.id);
-  const inFlight = new Map<string, number>();
-  for (const r of listRuns(ctx.app.db, repo.id, { kind: "agent", limit: 50 }))
-    if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
-      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const routed = await routeIssue(ctx.app, repo, opened.value, crew, inFlight);
+  const { routed } = told.value;
   if (routed === undefined)
     return flashTo(ctx, base, {
       message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
     });
   const builder = routed.builder;
-  const assigned = assignIssue(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    opened.value,
-    builder.user,
-  );
   return flashTo(ctx, base, {
-    message: assigned.ok
-      ? `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`
-      : `Told as #${opened.value.number}, but ${builder.user.username} could not take it.`,
+    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
   });
 }
 
