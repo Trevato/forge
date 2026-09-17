@@ -11,7 +11,7 @@
  * what the forge has.
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
@@ -201,6 +201,7 @@ export async function executeAgentRun(
   // try something — ends with the run. The sandbox refuses it `kill`, so the
   // forge does the tidying, by the directory the process is working in.
   await reapOrphans(app, run, write);
+  forgetLandedClone(app, run);
   if (outcome.state === "paused") {
     write(outcome.summary);
     noteRunProgress(app.db, run.id, {
@@ -225,6 +226,34 @@ export async function executeAgentRun(
   });
   if (done) announceRun(app, done);
   return undefined;
+}
+
+/**
+ * The clone of a pull that is no longer open — landed or closed while this
+ * run worked on it — is nobody's now. The dispatcher lets a clone go the
+ * moment its pull closes with no run in it; a run in flight lets go of its
+ * own, here, once its git is done with the floor.
+ */
+function forgetLandedClone(app: App, run: Run): void {
+  const repo = getRepoById(app.db, run.repoId);
+  const agent =
+    run.actorId === null ? undefined : getAgent(app.db, run.actorId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  if (!repo || !agent || !issue) return;
+  const number = issueOfBranch(agent, run.branch) ?? issue.number;
+  const pull =
+    issue.kind === "pull"
+      ? getPull(app.db, repo.id, issue.number)
+      : listPulls(app.db, repo.id, { state: "closed" }).find(
+          (p) => p.headBranch === run.branch,
+        );
+  if (pull === undefined || (pull.state === "open" && pull.mergedAt === null))
+    return;
+  rmSync(workdirFor(app.config.dataDir, agent, repo, number), {
+    recursive: true,
+    force: true,
+  });
 }
 
 /**

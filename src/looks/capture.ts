@@ -172,7 +172,11 @@ async function shoot(
   try {
     for (;;) {
       if (pictureDone(input.out)) return ok();
-      if (exited !== undefined) break;
+      if (exited !== undefined) {
+        // The browser's last words reach the pipe a beat after it exits.
+        await Bun.sleep(150);
+        break;
+      }
       if (Date.now() >= deadline)
         return err(
           `the picture took longer than ${Math.round(input.timeoutMs / 1000)}s`,
@@ -188,7 +192,7 @@ async function shoot(
       .filter((l) => l !== "" && !/crashpad|ProcessSingleton/i.test(l))
       .at(-1);
     return err(
-      `chromium exited ${exited} without a picture${last === undefined ? "" : `: ${last.slice(0, 200)}`}`,
+      `chromium exited ${exited} without a picture${last === undefined ? "" : `: ${last.slice(0, 300)}`}`,
     );
   } finally {
     if (exited === undefined) proc.kill("SIGKILL");
