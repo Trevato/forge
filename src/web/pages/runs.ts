@@ -11,7 +11,12 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
-import { cancelRepoRun, listRepoRuns, runLog } from "../../actions/runs.ts";
+import {
+  cancelRepoRun,
+  listRepoRuns,
+  runLog,
+  steerRepoRun,
+} from "../../actions/runs.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
@@ -27,7 +32,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { runLogJs } from "../client.ts";
-import { readForm } from "../form.ts";
+import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -100,28 +105,41 @@ export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
  * the agent speaking. The script that appends live lines sorts them the
  * same way, so a page and its stream look alike.
  */
-export type LineKind = "tool" | "forge" | "say";
+export type LineKind = "tool" | "forge" | "say" | "you";
 
 const FORGE_LINE =
   /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
 
 export function lineKind(line: string): LineKind {
   if (line.startsWith("→ ")) return "tool";
+  if (line.startsWith("you: ")) return "you";
   if (FORGE_LINE.test(line)) return "forge";
   return "say";
 }
 
 /** One line of a run's log, as the page draws it. */
-export function logLine(line: string): Html {
+export function logLine(line: string, who = "agent"): Html {
   const kind = lineKind(line);
+  if (kind === "you")
+    return html`<div class="ln ln-you">
+      <span class="who">you</span><span class="txt">${line.slice(5)}</span>
+    </div>`;
   if (kind === "tool") {
     const rest = line.slice(2);
     const at = rest.indexOf(" ");
     const tool = at === -1 ? rest : rest.slice(0, at);
     const args = at === -1 ? "" : rest.slice(at + 1);
-    return html`<div class="ln ln-tool"><b>${tool}</b> ${args}</div>`;
+    return html`<div class="ln ln-tool">
+      <span class="who"></span><span class="txt"><b>${tool}</b> ${args}</span>
+    </div>`;
   }
-  return html`<div class="ln ln-${kind}">${line}</div>`;
+  if (kind === "forge")
+    return html`<div class="ln ln-forge">
+      <span class="who">forge</span><span class="txt">${line}</span>
+    </div>`;
+  return html`<div class="ln ln-say">
+    <span class="who">${who}</span><span class="txt">${line}</span>
+  </div>`;
 }
 
 export function durationText(run: Run): string | undefined {
@@ -327,6 +345,7 @@ export function runPage(ctx: Ctx): Response {
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   const duration = durationText(run);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
+  const who = actor?.username ?? "agent";
 
   const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
@@ -385,7 +404,16 @@ export function runPage(ctx: Ctx): Response {
     </div>
     <p class="run-summary" id="run-summary">${run.summary}</p>
     ${when(
-      writer && unfinished,
+      writer && unfinished && run.kind === "agent" && issue === undefined,
+      () =>
+        html`<div class="run-actions" id="run-cancel">
+          <form method="post" action="${base}/runs/${run.id}/cancel">
+            ${btn("Stop", { size: "sm", variant: "outline", icon: "square" })}
+          </form>
+        </div>`,
+    )}
+    ${when(
+      writer && unfinished && run.kind !== "agent",
       () =>
         html`<div class="run-actions" id="run-cancel">
           <form method="post" action="${base}/runs/${run.id}/cancel">
@@ -411,12 +439,76 @@ export function runPage(ctx: Ctx): Response {
           Nothing has been logged yet.
         </p>`,
     )}
-    <div
-      class="run-log mt"
-      id="run-log"
-      ${unfinished ? html`data-stream="${stream}"` : null}
-    >
-      ${lines.map(logLine)}
+    <div class="run-live" id="run-live" data-state="${run.state}">
+      <div
+        class="run-log"
+        id="run-log"
+        data-who="${who}"
+        ${unfinished ? html`data-stream="${stream}"` : null}
+      >
+        ${lines.map((l) => logLine(l, who))}
+        ${when(
+          run.state === "running",
+          () =>
+            html`<div class="ln ln-pulse" id="run-pulse">
+              <span class="who">${who}</span
+              ><span class="txt"><i></i><i></i><i></i></span>
+            </div>`,
+        )}
+        <button type="button" class="run-jump" id="run-jump" hidden>
+          newer below
+        </button>
+      </div>
+      ${when(
+        writer && run.kind === "agent" && issue !== undefined,
+        () =>
+          html`<form
+            class="run-steer"
+            id="run-steer"
+            method="post"
+            action="${base}/runs/${run.id}/steer"
+            data-api="/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/steer"
+            data-running="${run.state === "running" ? "1" : "0"}"
+          >
+            <label class="sr-only" for="steer-text"
+              >Say something to ${who}</label
+            >
+            <textarea
+              class="input"
+              id="steer-text"
+              name="text"
+              rows="1"
+              required
+              placeholder="${run.state === "running"
+                ? `Steer ${who} — it hears you at its next step`
+                : `Tell ${who} for its next run`}"
+            ></textarea>
+            <div class="bar">
+              <span class="muted small" id="run-steer-note"
+                >${run.state === "running"
+                  ? "Heard after the step it is on. Enter sends; every word is kept in the log."
+                  : "The run is over; this goes on the conversation and starts a run."}</span
+              >
+              <span class="spacer"></span>
+              ${when(
+                unfinished,
+                () =>
+                  html`<button
+                    type="submit"
+                    class="btn"
+                    data-size="sm"
+                    data-variant="outline"
+                    id="run-stop"
+                    formaction="${base}/runs/${run.id}/cancel"
+                    formnovalidate
+                  >
+                    ${run.state === "running" ? "Stop" : "Cancel"}
+                  </button>`,
+              )}
+              ${btn("Send", { size: "sm", variant: "primary", type: "submit" })}
+            </div>
+          </form>`,
+      )}
     </div>`;
 
   return page({
@@ -429,6 +521,42 @@ export function runPage(ctx: Ctx): Response {
     // The no-script half of a live log: while the run is going, the page
     // refreshes itself; the script above removes this the moment it runs.
     ...(unfinished ? { refresh: { seconds: 5 } } : {}),
+  });
+}
+
+// POST /:owner/:name/runs/:id/steer  { text }
+export async function runSteer(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const id = ctx.params.id ?? "";
+  const dest = `${repoBase(repo)}/runs/${id}`;
+  const steered = steerRepoRun(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    id,
+    field(form, "text"),
+  );
+  if (!steered.ok) {
+    if (steered.error === "not_found") return notFoundPage(ctx);
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message:
+        steered.error === "empty"
+          ? "Say something first."
+          : steered.error === "not_agent"
+            ? "Only an agent's run can be steered."
+            : "You need write access to steer a run.",
+    });
+  }
+  return flashTo(ctx, dest, {
+    message:
+      steered.value === "sent"
+        ? "Sent. The agent hears it at its next step."
+        : "The run had nobody listening, so it went on the conversation; a run starts from it.",
   });
 }
 

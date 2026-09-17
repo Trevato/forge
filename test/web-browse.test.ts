@@ -297,6 +297,7 @@ describe("browsing an origin repository on the web", () => {
           action.endsWith("/fork") ||
           action.endsWith("/contribute") ||
           action === "/theme" ||
+          action === "/mode" ||
           action === "/logout";
         expect(`${path} allows ${action}`).toBe(
           allowed ? `${path} allows ${action}` : `${path} allows nothing`,

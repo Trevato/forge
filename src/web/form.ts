@@ -45,3 +45,9 @@ export function field(form: Form, name: string): string {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
 }
+
+/** Whether the client asked for JSON — a script keeping the page in place —
+ * rather than the redirect a plain form gets. */
+export function prefersJson(ctx: Ctx): boolean {
+  return (ctx.request.headers.get("accept") ?? "").includes("application/json");
+}

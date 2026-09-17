@@ -104,7 +104,7 @@ describe("a run that spends its budget", () => {
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 n=$(($(cat "${countFile}" 2>/dev/null || echo 0) + 1)); echo "$n" > "${countFile}"
 printf '%s\\n' "$@" > "${argsFile}.$n"
-cat > "${promptFile}.$n"
+IFS= read -r first; printf '%s\n' "$first" > "${promptFile}.$n"
 echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
 if grep -q "out of budget" "${promptFile}.$n"; then
   if grep -q BUDGET-ME-TWICE "${promptFile}.1"; then

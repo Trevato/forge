@@ -77,6 +77,7 @@ import {
 } from "../web/pages/issues.ts";
 import { mapPage } from "../web/pages/map.ts";
 import {
+  asksSubmit,
   modeSubmit,
   saySubmit,
   shipSubmit,
@@ -103,6 +104,7 @@ import {
   runCancel,
   runPage,
   runRedirect,
+  runSteer,
   runsList,
 } from "../web/pages/runs.ts";
 import {
@@ -347,6 +349,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
   router.add("POST", "/mode", modeSubmit);
+  // Several asks, one decision — the studio's bar over its asks panel.
+  router.add("POST", "/studio/asks", asksSubmit);
   router.add("GET", "/search", searchPage);
   // The JS-free half of every destructive action. Two literal segments, so it
   // is registered before /:owner/:name can claim the shape.
@@ -595,6 +599,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
+  router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
 
   // Live event stream for a repo the viewer can read.
   router.add("GET", "/:owner/:name/stream", (ctx) => {

@@ -48,12 +48,23 @@ them what to try_ (a comment, which starts a feedback run), _close it_,
 and _see the change_. A green pull waiting for a look offers _open the
 preview_, _ship it_ (a squash merge, as you, with your review and check
 requirements enforced inside it), and _not like this_ (a comment). A
-repository paused at its ceiling says so, with the way to settings. Nothing
+repository paused at its ceiling says so, with the way to settings. A pull
+the crew is on right now — a run queued or running for it — is working,
+not a question, and is not listed until the crew is done with it. Nothing
 here re-queues anything: a re-queue button is what an operator presses
 instead of deciding.
 
+Check several asks and one bar above them offers what fits them all — ship
+the green ones, close the stopped ones — as one decision (`POST
+/studio/asks`), each done exactly as its own button would have. Deciding
+never leaves the page: the row looks busy until it lands, then goes; one
+that could not be done stays, with the reason on it.
+
 **Now** lists what was told and not yet picked up, every open pull with its
 state, and the last runs, each in one of the five words with who and when.
+A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone
+who can write here; its title opens the transcript, where the agent can be
+steered mid-run (see `docs/APPS.md`, _Runs_).
 
 ## The home
 

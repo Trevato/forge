@@ -24,6 +24,7 @@ import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
   activeRunFor,
+  hasQueuedRun,
   automaticRunsSince,
   cancelRun,
   createRun,
@@ -48,6 +49,7 @@ import {
   workdirFor,
   type CrewOptions,
   type Pause,
+  steerRun,
 } from "./runner.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { abortAgentRun } from "./running.ts";
@@ -189,10 +191,11 @@ export function queueAgentRun(
 ): Run | undefined {
   const active = activeRunFor(app.db, "agent", issue.id);
   // One queued follow-up is enough: the run that eventually starts reads
-  // the whole conversation since the last one, so nothing is lost.
+  // the whole conversation since the last one, so nothing is lost. The
+  // queued one may sit behind a running one, so it is looked for by itself.
   if (
     active !== undefined &&
-    (active.state === "queued" || reason === "assigned")
+    (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
   )
     return undefined;
   const run = createRun(app.db, {
@@ -249,6 +252,22 @@ function route(app: App, event: ForgeEvent): void {
       if (!issue || issue.state !== "open") return;
       const agent = agentFor(app, issue);
       if (!agent) return;
+      // Said while the agent works: it hears the words now, as its next
+      // turn, instead of a second run queuing up behind the first. A
+      // session nobody can reach any more falls through to the queue.
+      const said = event.payload["body"];
+      const active = activeRunFor(app.db, "agent", issue.id);
+      if (
+        active?.state === "running" &&
+        typeof said === "string" &&
+        said.trim() !== "" &&
+        steerRun(
+          app,
+          active.id,
+          `${actor.username} on #${issue.number}: ${said.trim()}`,
+        )
+      )
+        return;
       queueAgentRun(app, repo, issue, agent, "feedback", actor.id);
       return;
     }

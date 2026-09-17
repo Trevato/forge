@@ -85,7 +85,7 @@ describe("the crew, with a stand-in Claude Code", () => {
       `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 printf '%s\\n' "$@" > "${argsFile}"
-cat > "${promptFile}"
+IFS= read -r first; printf '%s\\n' "$first" > "${promptFile}"
 echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
 if grep -q LIMIT-ME "${promptFile}" && [ ! -f PAUSED.md ]; then
   echo "half-done" > PAUSED.md

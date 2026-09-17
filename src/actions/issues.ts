@@ -154,7 +154,7 @@ export function addComment(
     kind: `${issue.kind}.commented`,
     repoId: repo.id,
     actorId: user.value.id,
-    payload: { number: issue.number },
+    payload: { number: issue.number, body },
   });
   return added;
 }
