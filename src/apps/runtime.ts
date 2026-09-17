@@ -52,11 +52,17 @@ import {
   previewEnv,
   removeApp,
   removeEnv,
+  reseedEmpty,
   type EnvName,
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
-import { startProcess, type ProcessHandle } from "./process.ts";
+import {
+  startProcess,
+  type ProcessHandle,
+  type StartError,
+  type StartInput,
+} from "./process.ts";
 
 const log = createLog("apps");
 
@@ -122,6 +128,19 @@ interface Live {
 function elapsedSeconds(fromIso: string, toIso: string): string {
   const ms = Math.max(0, Date.parse(toIso) - Date.parse(fromIso));
   return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Whether a start failure is the process itself exiting before it ever
+ * answered its health path — as opposed to install failing, or the process
+ * staying up but never answering. Only this shape of failure is worth
+ * retrying on empty data: it is what a build too old for the data it was
+ * given looks like.
+ */
+function diedBeforeAnswering(error: StartError): boolean {
+  return error.stage === "start" && /^exited with code \d+ before answering/.test(
+    error.message,
+  );
 }
 
 /** A running environment, as a terminal session needs it. */
@@ -729,7 +748,7 @@ export class AppsRuntime {
     else if (seeded === "empty" && state.env !== "production")
       write("data: starting empty");
 
-    const started = await startProcess({
+    const startInput: Omit<StartInput, "signal"> = {
       dir,
       dataDir,
       manifest: manifest.value,
@@ -743,9 +762,33 @@ export class AppsRuntime {
       // process that comes up is the one that sees it.
       vars: resolveAppEnv(this.app.db, this.app.config.dataDir, state.app.id),
       log: write,
-      signal,
-    });
-    if (!started.ok) {
+    };
+    let started = await startProcess({ ...startInput, signal });
+
+    // The one retry this deploy gets: a preview seeded from production whose
+    // process died before it ever answered — schema ahead of what this build
+    // knows, most often — is tried again on empty data, once. A production
+    // deploy is never seeded from a copy, so it never takes this path.
+    if (
+      !started.ok &&
+      (seeded === "cloned" || seeded === "copied") &&
+      diedBeforeAnswering(started.error)
+    ) {
+      const first = started.error;
+      write(`failed: ${first.stage}: ${first.message}`);
+      write(
+        "the copied data was not usable by this build; the preview is starting on empty data",
+      );
+      reseedEmpty(this.app.config.dataDir, state.app.id, state.env);
+      started = await startProcess({ ...startInput, signal });
+      if (!started.ok) {
+        rmSync(dir, { recursive: true, force: true });
+        return {
+          ok: false,
+          error: `${started.error.stage}: ${started.error.message} (retried on empty data after the copy failed with ${first.stage}: ${first.message})`,
+        };
+      }
+    } else if (!started.ok) {
       rmSync(dir, { recursive: true, force: true });
       return {
         ok: false,

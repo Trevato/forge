@@ -65,7 +65,11 @@ around it. None is advisory.
    where the filesystem offers it — APFS, XFS, btrfs — a plain copy
    otherwise, and `empty` is a per-app choice). A preview process is handed
    its own `FORGE_APP_DATA` and nothing that names production's. Merging a
-   pull moves code; it never touches data.
+   pull moves code; it never touches data. A copy the build cannot read —
+   its process exits before it ever answers, most often a migration on
+   `main` the pull's commit predates — is tried exactly once more on an
+   empty data directory before the deploy is failed; production is never
+   seeded from a copy, so this never applies to it.
 4. **A deployment is a check.** Every deploy is a run; the run's state is
    what the pull shows. With `require_checks` on, `mergePull` refuses
    `checks_required` until the head's deploy run is `ok`, read live inside

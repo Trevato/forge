@@ -14,8 +14,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { envDir } from "../src/apps/data.ts";
-import { newApp, openEnvUrl, updateAppSettings } from "../src/actions/apps.ts";
+import { envDataDir, envDir, previewEnv } from "../src/apps/data.ts";
+import {
+  enableApp,
+  newApp,
+  openEnvUrl,
+  updateAppSettings,
+} from "../src/actions/apps.ts";
 import { addToCrew, createAgent, listCrew } from "../src/actions/crew.ts";
 import {
   assignIssue,
@@ -38,6 +43,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { readRunLog } from "../src/runs/log.ts";
 import { grantedCookie } from "./helpers/identity.ts";
 
 const clientEnv = {
@@ -828,6 +834,228 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(openPreviews.length).toBe(1); // the bot's pull is the one open pull
   }, 90_000);
+});
+
+describe("a preview whose copied data the build cannot read starts fresh (issue #36)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let alice: User;
+  const DOMAIN = "retry.test";
+
+  async function settled(
+    where: (run: Run) => boolean,
+    repoId: string,
+    timeoutMs = 30_000,
+  ): Promise<Run> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
+        where,
+      );
+      if (
+        run &&
+        (run.state === "ok" ||
+          run.state === "failed" ||
+          run.state === "cancelled")
+      )
+        return run;
+      await Bun.sleep(50);
+    }
+    throw new Error("run did not settle in time");
+  }
+
+  // Never checks in, so `install` has nothing to do: the deploy starts the
+  // process directly, no `bun install` on the critical path.
+  const FORGE_JSON = JSON.stringify({
+    app: { run: "sh run.sh", install: "", health: "/", ready: 5 },
+  });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-retry-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: DOMAIN,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 2,
+    });
+    await runtime.start();
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+  }, 30_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a build too old for a migration on main comes up on the retry", async () => {
+    const made = await createRepo(app, alice, {
+      name: "schema-ahead",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value;
+    const committed = await commitToBranch(app, alice, repo, {
+      message: "Refuse data from a schema this build does not know",
+      files: [
+        { path: "forge.json", content: FORGE_JSON },
+        {
+          path: "run.sh",
+          content: `if [ -f "$FORGE_APP_DATA/schema-22" ]; then
+  echo "database is at schema 22, this build only knows 21 - refusing to run" 1>&2
+  exit 1
+fi
+exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch:()=>new Response('ok')})"
+`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    const enabled = enableApp(app, alice, repo, {});
+    expect(enabled.ok).toBe(true);
+    if (!enabled.ok) return;
+    const record = enabled.value;
+
+    const production = await settled(
+      (r) => r.env === "production",
+      repo.id,
+    );
+    expect(production.state).toBe("ok");
+
+    // A migration lands on `main` — simulated here the way the issue
+    // describes it, a schema file production now has that an older build
+    // does not know how to read.
+    writeFileSync(
+      join(envDataDir(dataDir, record.id, "production"), "schema-22"),
+      "22",
+    );
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "note",
+      base: repo.defaultBranch,
+      message: "A trivial, unrelated change",
+      files: [{ path: "NOTE.md", content: "hi\n" }],
+    });
+    expect(branch.ok).toBe(true);
+    const opened = await openPull(app, alice, repo, {
+      title: "Unrelated change",
+      baseBranch: repo.defaultBranch,
+      headBranch: "note",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const run = await settled(
+      (r) => r.env === `pull-${opened.value.number}`,
+      repo.id,
+    );
+    expect(run.state).toBe("ok");
+
+    const { lines } = readRunLog(dataDir, run.id);
+    const text = lines.join("\n");
+    expect(text).toContain("data: copied from production");
+    expect(text).toContain("exited with code 1 before answering");
+    expect(text).toContain(
+      "the copied data was not usable by this build; the preview is starting on empty data",
+    );
+    expect(text).toContain(`serving http://`);
+
+    // The retry's data directory does not carry the discarded copy's file.
+    const previewData = envDataDir(
+      dataDir,
+      record.id,
+      previewEnv(opened.value.number),
+    );
+    expect(existsSync(join(previewData, "schema-22"))).toBe(false);
+
+    const page = await fetch(`${servers.url}/`, {
+      headers: { host: `schema-ahead--${opened.value.number}.${DOMAIN}` },
+    });
+    expect(page.status).toBe(200);
+  }, 60_000);
+
+  test("an app that always exits retries exactly once in a preview, and never in production", async () => {
+    const made = await createRepo(app, alice, {
+      name: "always-fails",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value;
+    const committed = await commitToBranch(app, alice, repo, {
+      message: "A run that never comes up",
+      files: [
+        { path: "forge.json", content: FORGE_JSON },
+        {
+          path: "run.sh",
+          content: `echo "boom" 1>&2\nexit 1\n`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    const enabled = enableApp(app, alice, repo, {});
+    expect(enabled.ok).toBe(true);
+    if (!enabled.ok) return;
+
+    // Production: seeded empty, never a copy, so it gets exactly one try.
+    const production = await settled((r) => r.env === "production", repo.id);
+    expect(production.state).toBe("failed");
+    const prodLog = readRunLog(dataDir, production.id).lines;
+    expect(prodLog.filter((l) => l.startsWith("$ sh run.sh")).length).toBe(1);
+    expect(
+      prodLog.some((l) => l.includes("starting on empty data")),
+    ).toBe(false);
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "note",
+      base: repo.defaultBranch,
+      message: "A trivial change",
+      files: [{ path: "NOTE.md", content: "hi\n" }],
+    });
+    expect(branch.ok).toBe(true);
+    const opened = await openPull(app, alice, repo, {
+      title: "Trivial",
+      baseBranch: repo.defaultBranch,
+      headBranch: "note",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const run = await settled(
+      (r) => r.env === `pull-${opened.value.number}`,
+      repo.id,
+    );
+    expect(run.state).toBe("failed");
+    const previewLog = readRunLog(dataDir, run.id).lines;
+    // Exactly one retry: the process is started twice, never more.
+    expect(
+      previewLog.filter((l) => l.startsWith("$ sh run.sh")).length,
+    ).toBe(2);
+    expect(
+      previewLog.some((l) =>
+        l.includes(
+          "the copied data was not usable by this build; the preview is starting on empty data",
+        ),
+      ),
+    ).toBe(true);
+    // The run's summary names the first failure's reason too.
+    expect(run.summary ?? "").toContain("retried on empty data");
+    expect(run.summary ?? "").toContain("exited with code 1 before answering");
+  }, 60_000);
 });
 
 describe("New app: turn the sentence into a plan and pick the crew", () => {
