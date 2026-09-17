@@ -90,6 +90,7 @@ const REASONS: Record<string, string> = {
   feedback: "after feedback",
   check_failed: "after a failed check",
   conflict: "after main moved",
+  review: "the reviewer's pass",
 };
 
 /** Why a run exists, as a phrase that follows its title. */

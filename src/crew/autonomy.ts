@@ -15,7 +15,8 @@
 import type { App } from "../app.ts";
 import { assignIssue, openIssue } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { resolveOid } from "../git/merge.ts";
+import { mergeable, resolveOid } from "../git/merge.ts";
+import { listReviews } from "../core/reviews.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
@@ -45,6 +46,7 @@ import {
   checksForHead,
   listActive,
   type Run,
+  cancelRun,
 } from "../core/runs.ts";
 import {
   agentFor,
@@ -423,6 +425,62 @@ export async function shipOrShow(
   return decided.answers.land.choice === "show" ? "show" : "ship";
 }
 
+/**
+ * The reviewer's pass. When the decider would rather not land a pull
+ * unseen, the crew's reviewer looks first: one review run per head, then
+ * its verdict decides — approved lands, changes requested go back to the
+ * builder as feedback (dispatch handles that review like a person's). A
+ * crew with no reviewer lands it.
+ */
+export async function reviewFirst(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+): Promise<"ship" | "wait"> {
+  const reviewer = listCrewRoles(app.db, repo.id).find(
+    (c) => c.role === "reviewer",
+  )?.agent;
+  if (reviewer === undefined) return "ship";
+  const verdicts = listReviews(app.db, pull.id)
+    .filter(
+      (r) => r.authorId === reviewer.user.id && r.commitOid === pull.headOid,
+    )
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const last = verdicts.at(-1);
+  if (last?.state === "approved") {
+    // A review run still waiting for a head that is already approved has
+    // nothing left to do.
+    const pending = activeRunFor(app.db, "agent", pull.id);
+    if (pending?.reason === "review" && pending.state === "queued")
+      cancelRun(app.db, pending.id, "approved before the run started");
+    return "ship";
+  }
+  if (last?.state === "changes_requested") return "wait";
+  if (activeRunFor(app.db, "agent", pull.id) !== undefined) return "wait";
+  const issue = getIssueById(app.db, pull.id);
+  if (!issue) return "wait";
+  const queued = queueAgentRun(
+    app,
+    repo,
+    issue,
+    reviewer,
+    "review",
+    undefined,
+    {
+      notBefore: new Date().toISOString(),
+      attempt: 0,
+      summary: `review at ${pull.headOid.slice(0, 7)}`,
+    },
+  );
+  if (queued)
+    log.info("green; the reviewer looks first", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      pull: pull.number,
+      reviewer: reviewer.user.username,
+    });
+  return "wait";
+}
+
 /** Pull id → the `head:base` tips a merge last conflicted between. */
 const conflicted = new Map<string, string>();
 
@@ -445,28 +503,30 @@ function mergeWhy(error: AccessError | MergePullError): string {
  * stop at the same limit a failing check does — past it, the pull waits
  * for a person.
  */
-function bringUpToDate(
+export function bringUpToDate(
   app: App,
   repo: Repo,
   pull: Pull,
   files: readonly string[],
-): void {
+): string | undefined {
   const issue = getIssueById(app.db, pull.id);
-  if (!issue || issue.state !== "open") return;
+  if (!issue || issue.state !== "open") return undefined;
   const agent = agentFor(app, issue);
-  if (!agent) return;
-  if (activeRunFor(app.db, "agent", issue.id) !== undefined) return;
+  if (!agent) return undefined;
+  if (activeRunFor(app.db, "agent", issue.id) !== undefined)
+    return agent.user.username;
   const tries = automaticRunsSince(
     app.db,
     issue.id,
     lastHumanWord(app, issue, agent),
   );
-  if (tries >= CHECK_FAILED_LIMIT) return;
+  if (tries >= CHECK_FAILED_LIMIT) return undefined;
   queueAgentRun(app, repo, issue, agent, "conflict", undefined, {
     notBefore: new Date().toISOString(),
     attempt: 0,
     summary: `main moved: ${files.join(", ")}`,
   });
+  return agent.user.username;
 }
 
 /**
@@ -488,20 +548,32 @@ export async function landIfGreen(
   const checks = checksForHead(app.db, pull.id, pull.headOid);
   if (checks.length === 0) return false;
   if (checks.some((c) => c.state !== "ok")) return false;
-  // Ship, or show a person first: the decider reads the pull against the
-  // direction. A rule ships everything green; the decider is what makes
-  // "autonomous" mean judgement rather than a conveyor belt.
-  if ((await shipOrShow(app, repo, pull, checks)) === "show") return false;
-  // A conflict is remembered by the two tips it was between: until one of
-  // them moves there is nothing new to try, and a merge attempt is real
-  // work on disk, once a minute for every green pull.
+  // Conflicts first: a pull that no longer merges is the crew's to bring
+  // up to date, before anyone is asked whether it should land. A conflict
+  // is remembered by the two tips it was between: until one of them moves
+  // there is nothing new to try.
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const baseTip =
-    (await resolveOid(
-      repoDir(app.reposRoot, repo.ownerName, repo.name),
-      `refs/heads/${pull.baseBranch}`,
-    )) ?? "";
+    (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
   const between = `${pull.headOid}:${baseTip}`;
   if (conflicted.get(pull.id) === between) return false;
+  if (baseTip !== "") {
+    const clean = await mergeable(dir, baseTip, pull.headOid);
+    if (!clean.ok) {
+      if (clean.error.kind === "conflict") {
+        conflicted.set(pull.id, between);
+        bringUpToDate(app, repo, pull, clean.error.files);
+      }
+      return false;
+    }
+  }
+  // Ship, or look first: the decider reads the pull against the direction.
+  // A rule ships everything green; the decider is what makes "autonomous"
+  // mean judgement rather than a conveyor belt — and the look is the crew's
+  // own reviewer, not a person. Without a reviewer, it lands.
+  if ((await shipOrShow(app, repo, pull, checks)) === "show") {
+    if ((await reviewFirst(app, repo, pull)) === "wait") return false;
+  }
   const merged = await mergePull(app, by, repo, pull, "squash");
   if (!merged.ok) {
     const why = mergeWhy(merged.error);

@@ -77,11 +77,17 @@ asked, under **Settings → Autonomy**:
   pull waits for a person's look.
 - **Autonomous.** The same, and a pull whose head has a passing check and
   a passing deploy lands as the person who turned autonomy on — with their
-  review and check requirements still enforced inside the merge. A green
-  pull that no longer merges because `main` moved under it sends its agent
-  one run (`conflict`, naming the files) to merge `main` into the branch;
-  one waiting is enough, and those tries stop at the same limit a failing
-  check does, after which the pull waits for a person. When nothing is
+  review and check requirements still enforced inside the merge. Nothing
+  about a green pull reaches a person: first, a pull that no longer merges
+  because `main` moved under it sends its agent one run (`conflict`, naming
+  the files) to merge `main` into the branch, one waiting at a time, up to
+  the same limit a failing check has; then the decider reads the pull
+  against the direction and either lands it or hands it to the crew's
+  _reviewer_ (`review` run: the diff, the preview, the pictures the forge
+  took), whose approval lands it and whose change request goes back to the
+  builder as feedback; a crew with no reviewer lands it. A person is asked
+  only when the crew has stopped — a check red past its tries, or a
+  conflict it could not resolve — and when the day's ceiling is reached. When nothing is
   ready and nothing is in flight, the map has run dry: the planner is
   given the direction.
 

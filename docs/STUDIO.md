@@ -52,7 +52,12 @@ leads with the preview as pictured on a phone (`docs/APPS.md`, _The look_),
 and the picture opens the pull, where both pictures are. A repository
 paused at its ceiling says so, with the way to settings. A pull
 the crew is on right now — a run queued or running for it — is working,
-not a question, and is not listed until the crew is done with it. Nothing
+not a question, and is not listed until the crew is done with it. An
+autonomous app's green pulls are never a question: the decider and the
+crew's reviewer look at them, and conflicts with `main` are the builder's
+to fix, so what reaches you from an autonomous app is only what stopped
+the crew. Shipping a pull that conflicts, from any app, sends its agent
+to bring the branch up to date rather than handing you the conflict. Nothing
 here re-queues anything: a re-queue button is what an operator presses
 instead of deciding.
 

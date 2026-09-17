@@ -21,7 +21,7 @@ import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
-import { getAppByRepo } from "../core/apps.ts";
+import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
   getIssue,
   getIssueById,
@@ -43,6 +43,8 @@ import {
 import { createToken, deleteToken } from "../core/tokens.ts";
 import { runGit } from "../git/env.ts";
 import { isSafeRef } from "../git/guard.ts";
+import { runGitCapture } from "../git/env.ts";
+import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
@@ -107,6 +109,44 @@ export function steerRun(app: App, runId: string, text: string): boolean {
   );
   return send(text);
 }
+
+/** What a reviewer reads: the pull's diff against its base, and its pictures. */
+async function reviewInputs(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  record: AppRecord | undefined,
+  bare: string,
+): Promise<{ reviewDiff: string; looks: string[] }> {
+  const base = (await resolveOid(bare, `refs/heads/${pull.baseBranch}`)) ?? "";
+  let reviewDiff = "(no diff available)";
+  if (base !== "") {
+    const out = await runGitCapture(
+      ["diff", "--stat", "-p", `${base}...${pull.headOid}`],
+      { cwd: bare },
+    );
+    const text = out.stdout.toString();
+    reviewDiff =
+      text.length > REVIEW_DIFF_MAX
+        ? `${text.slice(0, REVIEW_DIFF_MAX)}\n… (cut at ${REVIEW_DIFF_MAX} bytes)`
+        : text;
+  }
+  const looks =
+    record === undefined
+      ? []
+      : looksForEnv(app.db, record.id, `pull-${pull.number}`)
+          .filter((l) => l.commitOid === pull.headOid && l.error === null)
+          .sort(
+            (a, b) =>
+              (a.kind === "phone" ? -1 : 1) - (b.kind === "phone" ? -1 : 1),
+          )
+          .map((l) =>
+            l.path.startsWith("/") ? l.path : join(app.config.dataDir, l.path),
+          );
+  return { reviewDiff, looks };
+}
+
+const REVIEW_DIFF_MAX = 60 * 1024;
 
 /** The share of a run's budget held back for finishing. */
 const RESERVE = 0.15;
@@ -424,6 +464,9 @@ async function work(
               .split(", ")
               .filter((f) => f !== "")
           : undefined,
+      ...(reason === "review" && pull
+        ? await reviewInputs(app, repo, pull, record, bare)
+        : {}),
       checkKind:
         failedCheck?.run?.kind === "check" ||
         failedCheck?.run?.kind === "deploy"
