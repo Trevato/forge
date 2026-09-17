@@ -80,6 +80,9 @@ import { onYouCard } from "./site.ts";
 
 export type DecisionKind = "stopped" | "look" | "paused";
 
+/** Dollars as a person reads them: cents when small, whole when not. */
+const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
+
 export interface Decision {
   readonly kind: DecisionKind;
   readonly repo: Repo;
@@ -87,6 +90,8 @@ export interface Decision {
   readonly who: string;
   /** Three sentences at most: what, why, what happens next. */
   readonly says: string;
+  /** The same in one clause, for a row. */
+  readonly short: string;
   /** The option the decider thinks is right, and how sure; none for a rule. */
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
 }
@@ -198,6 +203,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
           pull,
           who,
           says: `${who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
+          short: `${who} tried ${tries + 1} times; the check still fails`,
         });
     } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
       out.push({
@@ -206,6 +212,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
         pull,
         who,
         says: `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
+        short: `${who} finished it; the check is green`,
       });
     }
   }
@@ -217,7 +224,8 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
         kind: "paused",
         repo,
         who: "the crew",
-        says: `${repo.name} reached its $${s.ceilingUsd.toFixed(0)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
+        says: `${repo.name} reached its $${dollars(s.ceilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
+        short: `at its $${dollars(s.ceilingUsd)} ceiling until 00:00 UTC`,
       });
   }
   return out;
@@ -250,7 +258,12 @@ function leanNote(d: Decision, option: string): Html | null {
   >`;
 }
 
-function decisionOptions(ctx: Ctx, d: Decision): Html {
+/**
+ * The actions on one ask, on one line: a button for what lands, links for
+ * what needs a look or a word. Saying something to the crew happens on the
+ * change's own page, where the conversation is — not in a box in a list.
+ */
+function decisionActions(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const pull = d.pull;
   const preview =
@@ -260,80 +273,45 @@ function decisionOptions(ctx: Ctx, d: Decision): Html {
         ? undefined
         : `${base}/app/pull-${pull.number}/open`;
   if (d.kind === "stopped" && pull)
-    return html`<form
-        method="post"
-        action="${base}/pulls/${pull.number}/say"
-        class="studio-say"
-      >
-        <label class="sr-only" for="say-${pull.number}">What to try</label>
-        <input
-          class="input"
-          id="say-${pull.number}"
-          name="text"
-          placeholder="Tell ${d.who} what to try"
-          required
-        />
-        ${btn("Send", { size: "sm", ...leanVariant(d, "say", "primary") })}
-        ${leanNote(d, "say")}
-      </form>
+    return html`${btn("Tell them", {
+        href: `${base}/pulls/${pull.number}#comment-body`,
+        size: "sm",
+        ...leanVariant(d, "say", "primary"),
+      })}${leanNote(d, "say")}
       <form method="post" action="${base}/pulls/${pull.number}/state">
         <input type="hidden" name="state" value="closed" />
-        ${btn("Close it", {
-          size: "sm",
-          ...leanVariant(d, "close", undefined),
-        })}
+        ${btn("Close", { size: "sm", ...leanVariant(d, "close", undefined) })}
         ${leanNote(d, "close")}
       </form>
-      ${btn("See the change", {
+      ${btn("See", {
         href: `${base}/pulls/${pull.number}`,
         size: "sm",
         ...leanVariant(d, "look", undefined),
-      })}
-      ${leanNote(d, "look")}`;
+      })}${leanNote(d, "look")}`;
   if (d.kind === "look" && pull)
-    return html`${when(
+    return html`<form method="post" action="${base}/pulls/${pull.number}/ship">
+        <input type="hidden" name="pull" value="${pull.number}" />
+        ${btn("Ship", { size: "sm", ...leanVariant(d, "ship", "primary") })}
+        ${leanNote(d, "ship")}
+      </form>
+      ${when(
         preview,
         (href) =>
-          html`${btn("Open the preview", {
+          html`${btn("Preview", {
             href,
             size: "sm",
             ...leanVariant(d, "preview", undefined),
           })}${leanNote(d, "preview")}`,
       )}
-      <form method="post" action="${base}/pulls/${pull.number}/ship">
-        <input type="hidden" name="pull" value="${pull.number}" />
-        ${btn("Ship it", { size: "sm", ...leanVariant(d, "ship", "primary") })}
-        ${leanNote(d, "ship")}
-      </form>
-      <form
-        method="post"
-        action="${base}/pulls/${pull.number}/say"
-        class="studio-say"
-      >
-        <label class="sr-only" for="say-${pull.number}">What is off</label>
-        <input
-          class="input"
-          id="say-${pull.number}"
-          name="text"
-          placeholder="Not like this — say what is off"
-          required
-        />
-        ${btn("Send", { size: "sm", ...leanVariant(d, "say", undefined) })}
-        ${leanNote(d, "say")}
-      </form>`;
+      ${btn("Not like this", {
+        href: `${base}/pulls/${pull.number}#comment-body`,
+        size: "sm",
+        ...leanVariant(d, "say", undefined),
+      })}${leanNote(d, "say")}`;
   return html`${btn("Settings", {
     href: `${base}/settings/autonomy`,
     size: "sm",
   })}`;
-}
-
-function decisionCard(ctx: Ctx, d: Decision): Html {
-  return html`<div class="studio-decision" data-kind="${d.kind}">
-    <p class="studio-decision-says">
-      <strong>${d.repo.name}</strong> · ${d.says}
-    </p>
-    <div class="studio-decision-options">${decisionOptions(ctx, d)}</div>
-  </div>`;
 }
 
 // ---- studio words for what the crew is doing ----
@@ -902,14 +880,24 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
 
 /** One decision as a row: what it says, and the options in place. */
 function decisionRow(ctx: Ctx, d: Decision): Html {
-  return html`<div class="row studio-decision" data-kind="${d.kind}">
-    <div class="row-body">
-      <p class="studio-decision-says">
-        <strong>${d.repo.name}</strong> · ${d.says}
-      </p>
-      <div class="studio-decision-options">${decisionOptions(ctx, d)}</div>
-    </div>
-  </div>`;
+  const base = repoBase(d.repo);
+  const glyph =
+    d.kind === "stopped" ? "alert" : d.kind === "look" ? "eye" : "clock";
+  // The title links; the row itself does not, because its trail holds forms
+  // and a form inside an anchor is not HTML a browser will keep together.
+  const title = d.pull
+    ? html`<a href="${base}/pulls/${d.pull.number}">${d.pull.title}</a>`
+    : html`<a href="${base}">${d.repo.name}</a>`;
+  return row({
+    lead: icon(glyph),
+    title,
+    titleAttr: d.says,
+    meta: html`${d.repo.name}${d.pull ? html` #${d.pull.number}` : null} ·
+    ${d.short}`,
+    trail: html`<span class="studio-ask-actions"
+      >${decisionActions(ctx, d)}</span
+    >`,
+  });
 }
 
 // ---- actions ----
@@ -1053,14 +1041,8 @@ export const studioCss = /* css */ `
 .studio-list li[data-word="working"] .studio-word { color: var(--accent); opacity: 1; }
 .studio-list li[data-word="look"] .studio-word { color: var(--merged); opacity: 1; }
 .studio-list li[data-word="stopped"] .studio-word { color: var(--danger, #c33); opacity: 1; }
-.studio-decision { display: grid; gap: 10px; padding: 12px 14px; border-left: 3px solid var(--accent); }
-.studio-asks .studio-decision { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 10px; background: var(--bg); }
-.studio-decision[data-kind="stopped"] { border-left-color: var(--danger, #c33); }
-.studio-decision[data-kind="paused"] { border-left-color: var(--border); }
-.studio-decision-says { margin: 0; font-size: 14.5px; }
-.studio-decision-options { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.studio-decision-options form { display: flex; gap: 6px; align-items: center; margin: 0; }
-.studio-say .input { min-width: 240px; }
+.studio-ask-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.studio-ask-actions form { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
 .studio-lean { margin-left: 2px; }
 .studio-rail { display: grid; gap: 18px; align-content: start; }
 .studio-rail h3 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 6px; font-weight: 600; }
