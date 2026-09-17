@@ -14,6 +14,7 @@ import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { startChecks } from "./checks/service.ts";
+import { startLooks } from "./looks/service.ts";
 import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
@@ -120,6 +121,9 @@ const checks =
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
       });
+// The look: a picture of every environment that comes up green, taken
+// through this forge's own listener.
+const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
 const crew = appsOn
   ? await startCrew(app, {
       forgeUrl,
@@ -221,7 +225,12 @@ function shutdown(): void {
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
   clearInterval(leaseTimer);
-  Promise.all([crew?.stop({ drain: true }), apps?.stop(), checks?.stop()])
+  Promise.all([
+    crew?.stop({ drain: true }),
+    apps?.stop(),
+    checks?.stop(),
+    looks?.stop(),
+  ])
     .catch(() => {})
     .then(() => {
       if (sessions > 0)

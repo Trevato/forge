@@ -557,6 +557,25 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .env-card .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
 .env-card .card-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .env-card .card-foot form { display: inline-flex; }
+/* The look: a phone beside a desktop, each in a hairline frame. The phone
+   keeps a phone's narrowness; the desktop takes what is left, never more
+   than its own size. A thumbnail shows the top of the phone picture; the
+   studio head shows production small. */
+.look-card .card-head { gap: 10px; flex-wrap: wrap; }
+.look-card .look-of { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.look-pair { display: flex; gap: 14px; align-items: flex-start; }
+.look { display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--muted); }
+.look img { display: block; width: 100%; height: auto; }
+.look-phone { flex: 0 0 200px; }
+.look-desktop { flex: 1 1 320px; min-width: 0; max-width: 1280px; }
+@media (max-width: 640px) {
+  .look-pair { flex-direction: column; }
+  .look-phone { flex-basis: auto; width: 200px; }
+}
+.look-thumb { display: block; flex: none; width: 30px; height: 40px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: var(--muted); }
+.look-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.look-now { display: block; flex: none; width: 168px; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--muted); }
+.look-now img { display: block; width: 100%; height: auto; }
 /* The checks line inside the merge box, in the reviews chip's voice. */
 .checks-line {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;

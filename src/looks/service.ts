@@ -1,0 +1,290 @@
+/**
+ * The look (docs/APPS.md): when an environment's deploy comes up green,
+ * the forge takes a picture of it at phone and desktop width, as the
+ * repository's owner would see it, and keeps the pictures beside the
+ * commit they are of. A person judges a change from what it is.
+ *
+ * Best-effort by design: a look never blocks a check, never fails a run,
+ * and a picture that could not be taken is a row that says why, so a page
+ * can say "no picture" honestly. One look per environment and head; a
+ * newer head replaces one still waiting; one waiting too long is dropped
+ * rather than pictured late. Pictures live exactly as long as the
+ * environment does — a preview's go when its pull closes.
+ */
+
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { App } from "../app.ts";
+import { isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
+import { signGrant, type GrantWho } from "../apps/proxy.ts";
+import { appsRuntime } from "../apps/runtime.ts";
+import { getAppById, getAppByRepo, listApps } from "../core/apps.ts";
+import type { ForgeEvent } from "../core/events.ts";
+import {
+  deleteLooks,
+  LOOK_KINDS,
+  LOOK_SIZES,
+  looksForEnv,
+  recordLook,
+  type LookKind,
+} from "../core/looks.ts";
+import { getPull } from "../core/pulls.ts";
+import { getRepoById } from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
+import { createLog } from "../kernel/log.ts";
+import { findChromium, takeLook, type Capture } from "./capture.ts";
+
+const log = createLog("looks");
+
+export interface LooksOptions {
+  /** The forge's own listener, plain http: where the browser is pointed. */
+  readonly localUrl: string;
+  /** What takes the picture. Chromium unless a test says otherwise. */
+  readonly capture?: Capture | undefined;
+}
+
+export interface LooksHandle {
+  /** Settles once every look queued so far is taken or dropped. */
+  idle(): Promise<void>;
+  stop(): Promise<void>;
+}
+
+/** A look that has waited longer than this is stale, and is dropped. */
+const MAX_WAIT_MS = 10 * 60_000;
+/** The browser's whole allowance for one picture. */
+const CAPTURE_TIMEOUT_MS = 20_000;
+/** How long the grant in the URL is good for — the browser uses it at once. */
+const GRANT_TTL_MS = 60_000;
+
+export const looksRoot = (dataDir: string): string => join(dataDir, "looks");
+
+/** Where a picture lives, relative to the data directory. */
+export const lookPath = (
+  appId: string,
+  env: EnvName,
+  commitOid: string,
+  kind: LookKind,
+): string => join("looks", appId, env, `${commitOid}-${kind}.png`);
+
+interface Pending {
+  readonly appId: string;
+  readonly env: EnvName;
+  readonly commitOid: string;
+  readonly at: number;
+}
+
+export function startLooks(app: App, options: LooksOptions): LooksHandle {
+  const { dataDir } = app.config;
+  const port = new URL(options.localUrl).port;
+  const capture = options.capture ?? takeLook;
+  if (options.capture === undefined && findChromium() === undefined)
+    log.warn(
+      "no chromium on this forge: looks will say so instead of a picture (install one, or set FORGE_CHROMIUM)",
+    );
+  const queue: Pending[] = [];
+  let pump: Promise<void> = Promise.resolve();
+  let pumping = false;
+  let stopped = false;
+
+  prune();
+
+  const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
+    try {
+      onEvent(event);
+    } catch (error) {
+      log.error("looks event handler failed", {
+        kind: event.kind,
+        error: String(error),
+      });
+    }
+  });
+
+  function onEvent(event: ForgeEvent): void {
+    if (stopped || event.repoId === null) return;
+    const payload = event.payload;
+    switch (event.kind) {
+      case "run.finished": {
+        if (payload["kind"] !== "deploy" || payload["state"] !== "ok") return;
+        const env = payload["env"];
+        const commitOid = payload["commitOid"];
+        if (typeof env !== "string" || !isEnvName(env)) return;
+        if (typeof commitOid !== "string" || commitOid === "") return;
+        const record = getAppByRepo(app.db, event.repoId);
+        if (!record) return;
+        enqueue({ appId: record.id, env, commitOid, at: Date.now() });
+        return;
+      }
+      case "pull.closed":
+      case "pull.merged": {
+        const number = payload["number"];
+        const record = getAppByRepo(app.db, event.repoId);
+        if (typeof number !== "number" || !record) return;
+        forget(record.id, previewEnv(number));
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /** One waiting look per environment: a newer head takes the older's place. */
+  function enqueue(item: Pending): void {
+    const at = queue.findIndex(
+      (q) => q.appId === item.appId && q.env === item.env,
+    );
+    if (at !== -1) queue.splice(at, 1);
+    queue.push(item);
+    if (pumping) return;
+    pumping = true;
+    pump = drain().finally(() => {
+      pumping = false;
+    });
+  }
+
+  async function drain(): Promise<void> {
+    for (;;) {
+      const next = queue.shift();
+      if (next === undefined || stopped) return;
+      if (Date.now() - next.at > MAX_WAIT_MS) {
+        log.warn("look dropped: waited too long", {
+          app: next.appId,
+          env: next.env,
+        });
+        continue;
+      }
+      try {
+        await take(next);
+      } catch (error) {
+        log.error("look failed", {
+          app: next.appId,
+          env: next.env,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  async function take(item: Pending): Promise<void> {
+    const record = getAppById(app.db, item.appId);
+    const runtime = appsRuntime(app);
+    if (!record || runtime === undefined) return;
+    const repo = getRepoById(app.db, record.repoId);
+    if (!repo) return;
+    // The environment must still be serving this commit: a look of a
+    // page that has moved on would be filed under the wrong head.
+    const status = runtime.envStatus(record, item.env);
+    if (status?.state !== "running" || status.commitOid !== item.commitOid)
+      return;
+    const have = new Set(
+      looksForEnv(app.db, item.appId, item.env)
+        .filter((l) => l.commitOid === item.commitOid && l.error === null)
+        .map((l) => l.kind),
+    );
+    const wanted = LOOK_KINDS.filter((kind) => !have.has(kind));
+    if (wanted.length === 0) return;
+    // The picture is what the owner sees: the app renders for a signed-in
+    // admin, exactly as when they open it from the forge.
+    const owner = getUserById(app.db, repo.ownerId);
+    const who: GrantWho | undefined =
+      owner === undefined
+        ? undefined
+        : { id: owner.id, name: owner.username, role: "admin" };
+    const host = runtime.hostFor(record.slug, item.env);
+    let allOk = true;
+    for (const kind of wanted) {
+      if (stopped) return;
+      const token = signGrant(
+        dataDir,
+        { app: record, env: item.env },
+        GRANT_TTL_MS,
+        Date.now(),
+        who,
+      );
+      const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent("/")}`;
+      const path = lookPath(item.appId, item.env, item.commitOid, kind);
+      const out = join(dataDir, path);
+      mkdirSync(dirname(out), { recursive: true });
+      const taken = await capture({
+        url,
+        out,
+        ...LOOK_SIZES[kind],
+        timeoutMs: CAPTURE_TIMEOUT_MS,
+      });
+      const row = {
+        appId: item.appId,
+        env: item.env,
+        commitOid: item.commitOid,
+      };
+      if (taken.ok) {
+        recordLook(app.db, { ...row, kind, path });
+      } else {
+        allOk = false;
+        log.warn("no picture", {
+          app: record.slug,
+          env: item.env,
+          kind,
+          error: taken.error,
+        });
+        recordLook(app.db, { ...row, kind, path: "", error: taken.error });
+      }
+    }
+    // A full set at this head is the environment's look now; the pictures
+    // of heads before it have nothing left to say.
+    if (allOk)
+      remove(deleteLooks(app.db, item.appId, item.env, item.commitOid));
+  }
+
+  /** An environment is gone: so are its pictures, waiting or taken. */
+  function forget(appId: string, env: EnvName): void {
+    const at = queue.findIndex((q) => q.appId === appId && q.env === env);
+    if (at !== -1) queue.splice(at, 1);
+    deleteLooks(app.db, appId, env);
+    rmSync(join(looksRoot(dataDir), appId, env), {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  function remove(looks: readonly { path: string }[]): void {
+    for (const look of looks)
+      if (look.path !== "") rmSync(join(dataDir, look.path), { force: true });
+  }
+
+  /**
+   * Pictures on disk for apps that no longer exist, or previews whose pull
+   * closed while no forge was listening, are nobody's: the same sweep the
+   * runtime makes over its checkouts on boot.
+   */
+  function prune(): void {
+    const root = looksRoot(dataDir);
+    if (!existsSync(root)) return;
+    const known = new Map(listApps(app.db).map((r) => [r.id, r]));
+    for (const appId of readdirSync(root)) {
+      const record = known.get(appId);
+      if (record === undefined) {
+        rmSync(join(root, appId), { recursive: true, force: true });
+        continue;
+      }
+      for (const env of readdirSync(join(root, appId))) {
+        if (!isEnvName(env) || env === "production") continue;
+        const pull = getPull(app.db, record.repoId, Number(env.slice(5)));
+        if (
+          pull === undefined ||
+          pull.state !== "open" ||
+          pull.mergedAt !== null
+        )
+          forget(appId, env);
+      }
+    }
+  }
+
+  return {
+    idle: () => pump,
+    stop: async () => {
+      stopped = true;
+      unsubscribe();
+      queue.length = 0;
+      await pump;
+    },
+  };
+}
