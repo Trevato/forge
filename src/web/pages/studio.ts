@@ -53,6 +53,7 @@ import {
   activeRunFor,
   automaticRunsSince,
   checkSummary,
+  isTerminal,
   latestAgentRunsForRepos,
   latestRunsForIssues,
   listActiveRuns,
@@ -85,7 +86,7 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { asksJs, liveRegionsJs } from "../client.ts";
+import { asksJs, liveRegionsJs, studioRunJs } from "../client.ts";
 import { flashOrJson, flashTo, fragment, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
@@ -116,6 +117,7 @@ import { lookCard, lookNow, lookThumb, lookUrl } from "./looks.ts";
 import { onYouCard } from "./site.ts";
 import { previewCard } from "./apps.ts";
 import { pullState } from "./pulls.ts";
+import { costText, durationText, logLine, runTitle } from "./runs.ts";
 import { composer, conversation, originGlyph } from "./thread.ts";
 
 // ---- decisions: what asks a person ----
@@ -601,8 +603,9 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
   planned: "map",
 };
 
-/** One of the five (or six) studio words, as a badge. */
-function wordBadge(word: Word): Html {
+/** One of the five (or six) studio words, as a badge. An id names the one a
+ * live script repaints as a run finishes (`studioRunJs`). */
+function wordBadge(word: Word, id?: string): Html {
   const variant =
     word === "look" || word === "shipped"
       ? "success"
@@ -611,7 +614,11 @@ function wordBadge(word: Word): Html {
         : word === "working"
           ? "accent"
           : "secondary";
-  return html`<span class="badge" data-variant="${variant}" data-word="${word}"
+  return html`<span
+    class="badge"
+    data-variant="${variant}"
+    data-word="${word}"
+    ${id === undefined ? null : html`id="${id}"`}
     >${word === "working" ? icon("loader") : null}${word}</span
   >`;
 }
@@ -1114,6 +1121,228 @@ export async function studioApp(
 
 function avatarOf(username: string): Html {
   return avatar(username);
+}
+
+// ---- working: one run, in studio words ----
+
+/** At most this many of the run's own lines held in the page at once — the
+ * live script drops the oldest as a new one lands, past this. */
+const RUN_TRANSCRIPT_CAP = 400;
+
+/**
+ * GET /:owner/:name/runs/:id in the studio: who is on it, the tell it came
+ * from, how long it has gone and what it has cost, the transcript itself,
+ * and its state in the studio's own word — the page someone sits on while
+ * waiting for a change to become visible. Steer and Stop are the very same
+ * forms `runPage` offers, posting to the very same routes with the very
+ * same checks; `?mode=dev` reads the transcript there, unchanged.
+ */
+export function studioRun(
+  ctx: Ctx,
+  repo: Repo,
+  run: Run,
+  lines: readonly string[],
+  truncated: boolean,
+): Response {
+  const db = ctx.app.db;
+  const base = repoBase(repo);
+  const actor =
+    run.actorId === null ? undefined : getUserById(db, run.actorId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(db, run.issueId);
+  const who = actor?.username ?? "an agent";
+  const title = runTitle(run, actor?.username, issue);
+  const { word } = wordFor(run);
+  const unfinished = !isTerminal(run.state);
+  const writer = canWrite(db, repo, ctx.auth.user);
+  const duration = durationText(run);
+  const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
+  const shown = lines.slice(-RUN_TRANSCRIPT_CAP);
+  const hidden = lines.length - shown.length;
+
+  // The pull this run's tell has become, once one exists: the tell itself
+  // when the run is already a pull's own (feedback, a failed check, a
+  // conflict fix), or the open pull that closes it while the run is still
+  // the tell's first build — the case this page matters most for.
+  const pull =
+    issue === undefined
+      ? undefined
+      : issue.kind === "pull"
+        ? getPull(db, repo.id, issue.number)
+        : openPullsClosing(db, repo.id).get(issue.number);
+
+  const head = html`<div class="issue-head">
+    <h1>${title}</h1>
+    <div class="issue-meta">
+      ${wordBadge(word, "run-word")}
+      ${when(
+        issue,
+        (i) =>
+          html`<a
+            href="${base}/${i.kind === "pull" ? "pulls" : "issues"}/${i.number}"
+            >#${i.number} ${i.title}</a
+          >`,
+      )}
+      <span class="num" id="run-cost" ${run.costUsd > 0 ? null : html`hidden`}
+        >${costText(run.costUsd)} spent</span
+      >
+      <span class="num" id="run-turns" ${run.turns > 0 ? null : html`hidden`}
+        >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
+      >
+      ${when(
+        duration,
+        (d) =>
+          html`<span
+            class="num"
+            id="run-elapsed"
+            data-started="${run.startedAt ?? ""}"
+            data-finished="${run.finishedAt ?? ""}"
+            >${run.finishedAt === null ? "running for" : "took"} ${d}</span
+          >`,
+      )}
+    </div>
+    <p class="run-summary" id="run-summary">${run.summary}</p>
+  </div>`;
+
+  const body = html`${repoHeader(ctx, repo, "app", {
+      compact: true,
+      ownTitle: true,
+    })}
+    ${head}
+    ${when(
+      writer && unfinished && run.kind === "agent" && issue === undefined,
+      () =>
+        html`<div class="run-actions" id="run-cancel">
+          <form method="post" action="${base}/runs/${run.id}/cancel">
+            ${btn("Stop", { size: "sm", variant: "outline", icon: "square" })}
+          </form>
+        </div>`,
+    )}
+    ${when(
+      writer && unfinished && run.kind !== "agent",
+      () =>
+        html`<div class="run-actions" id="run-cancel">
+          <form method="post" action="${base}/runs/${run.id}/cancel">
+            ${btn("Cancel run", {
+              size: "sm",
+              variant: "outline",
+              icon: "square",
+            })}
+          </form>
+        </div>`,
+    )}
+    ${when(pull, (p) => previewCard(ctx, repo, p))}
+    ${when(
+      truncated,
+      () =>
+        html`<p class="muted small mb">
+          Showing the last 512 KB of the log; the file on disk has the rest.
+        </p>`,
+    )}
+    ${when(
+      shown.length === 0,
+      () =>
+        html`<p class="muted small" id="run-empty">
+          Nothing has been logged yet.
+        </p>`,
+    )}
+    <div class="run-live" id="run-live" data-state="${run.state}">
+      <div
+        class="run-log"
+        id="run-log"
+        data-who="${who}"
+        data-cap="${RUN_TRANSCRIPT_CAP}"
+        ${unfinished ? html`data-stream="${stream}"` : null}
+      >
+        ${when(
+          hidden > 0,
+          () =>
+            html`<p class="muted small">
+              Holding the last ${RUN_TRANSCRIPT_CAP} lines here; the run's own
+              log keeps the rest.
+            </p>`,
+        )}
+        ${shown.map((l) => logLine(l, who))}
+        ${when(
+          run.state === "running",
+          () =>
+            html`<div class="ln ln-pulse" id="run-pulse">
+              <span class="who">${who}</span
+              ><span class="txt"><i></i><i></i><i></i></span>
+            </div>`,
+        )}
+        <button type="button" class="run-jump" id="run-jump" hidden>
+          newer below
+        </button>
+      </div>
+      ${when(
+        writer && run.kind === "agent" && issue !== undefined,
+        () =>
+          html`<form
+            class="run-steer"
+            id="run-steer"
+            method="post"
+            action="${base}/runs/${run.id}/steer"
+            data-api="/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/steer"
+            data-running="${run.state === "running" ? "1" : "0"}"
+          >
+            <label class="sr-only" for="steer-text"
+              >Say something to ${who}</label
+            >
+            <textarea
+              class="input"
+              id="steer-text"
+              name="text"
+              rows="1"
+              required
+              placeholder="${run.state === "running"
+                ? `Steer ${who} — it hears you at its next step`
+                : `Tell ${who} for its next run`}"
+            ></textarea>
+            <div class="bar">
+              <span class="muted small" id="run-steer-note"
+                >${run.state === "running"
+                  ? "Heard after the step it is on. Enter sends; every word is kept in the log."
+                  : "The run is over; this goes on the conversation and starts a run."}</span
+              >
+              <span class="spacer"></span>
+              ${when(
+                unfinished,
+                () =>
+                  html`<button
+                    type="submit"
+                    class="btn"
+                    data-size="sm"
+                    data-variant="outline"
+                    id="run-stop"
+                    formaction="${base}/runs/${run.id}/cancel"
+                    formnovalidate
+                  >
+                    ${run.state === "running" ? "Stop" : "Cancel"}
+                  </button>`,
+              )}
+              ${btn("Send", { size: "sm", variant: "primary", type: "submit" })}
+            </div>
+          </form>`,
+      )}
+    </div>
+    <p class="muted small mt">
+      <a href="${base}/runs/${run.id}?mode=dev">${icon("code")}Read the transcript</a>
+      — every tool call, in dev's own words.
+    </p>`;
+
+  return page({
+    ctx,
+    title: `${title} · ${repo.name}`,
+    crumbs: crumbsFor(repo),
+    palette: repoPalette(repo),
+    body,
+    styleCss: studioCss,
+    scriptJs: studioRunJs,
+    // The no-script half of a live log: while the run is going, the page
+    // refreshes itself; the script above removes this the moment it runs.
+    ...(unfinished ? { refresh: { seconds: 5 } } : {}),
+  });
 }
 
 // ---- one pull, in studio words ----

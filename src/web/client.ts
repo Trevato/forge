@@ -448,6 +448,194 @@ export const runLogJs = /* js */ `
 `;
 
 /**
+ * The same live transcript as \`runLogJs\`, painted in the studio's own five
+ * words instead of dev's queued/running/passed/failed — the one thing that
+ * cannot be shared, since the two pages speak different vocabularies for the
+ * same run. \`data-cap\` on \`#run-log\` bounds how many lines a long-running
+ * agent can pile into the DOM: past it, the oldest line is dropped as a new
+ * one arrives, so an hour-long run never grows without bound.
+ */
+export const studioRunJs = /* js */ `
+(function () {
+  var log = document.getElementById('run-log');
+  if (!log) return;
+  var url = log.getAttribute('data-stream');
+  var who = log.getAttribute('data-who') || 'agent';
+  var cap = parseInt(log.getAttribute('data-cap') || '0', 10) || 0;
+  var pulse = document.getElementById('run-pulse');
+  var jump = document.getElementById('run-jump');
+  var word = document.getElementById('run-word');
+  var summary = document.getElementById('run-summary');
+  var cancel = document.getElementById('run-cancel');
+  var stop = document.getElementById('run-stop');
+  var steer = document.getElementById('run-steer');
+  var live = document.getElementById('run-live');
+
+  var follow = true;
+  function atEnd() { return log.scrollTop + log.clientHeight >= log.scrollHeight - 12; }
+  function toEnd() { log.scrollTop = log.scrollHeight; follow = true; if (jump) jump.hidden = true; }
+  log.addEventListener('scroll', function () { follow = atEnd(); if (follow && jump) jump.hidden = true; });
+  if (jump) jump.addEventListener('click', toEnd);
+  function fit() {
+    var room = window.innerHeight - log.getBoundingClientRect().top - (steer ? steer.offsetHeight : 0) - 16;
+    if (room > 240) log.style.maxHeight = room + 'px';
+    if (follow) toEnd();
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  function studioWord(run) {
+    if (run.state === 'queued') return 'waiting';
+    if (run.state === 'running') return 'working';
+    if (run.state === 'failed' || run.state === 'cancelled') return 'stopped';
+    var s = run.summary || '';
+    if (/opened pull|updated pull/.test(s)) return 'look';
+    if (/planned|no changes pushed/.test(s)) return 'planned';
+    return 'shipped';
+  }
+  function variantFor(w) {
+    return w === 'look' || w === 'shipped' ? 'success' : w === 'stopped' ? 'danger' : w === 'working' ? 'accent' : 'secondary';
+  }
+  function money(n) { return n < 0.01 ? '<$0.01' : '$' + n.toFixed(2); }
+  function paint(run) {
+    if (word) {
+      var w = studioWord(run);
+      word.setAttribute('data-word', w);
+      word.setAttribute('data-variant', variantFor(w));
+      word.textContent = w;
+    }
+    if (live) live.setAttribute('data-state', run.state);
+    if (summary && run.summary) summary.textContent = run.summary;
+    var cost = document.getElementById('run-cost');
+    if (cost && typeof run.costUsd === 'number' && run.costUsd > 0) { cost.textContent = money(run.costUsd) + ' spent'; cost.hidden = false; }
+    var turns = document.getElementById('run-turns');
+    if (turns && typeof run.turns === 'number' && run.turns > 0) { turns.textContent = run.turns + (run.turns === 1 ? ' turn' : ' turns'); turns.hidden = false; }
+    if (cancel) cancel.hidden = true;
+    if (stop) stop.hidden = true;
+    if (pulse && pulse.parentNode) pulse.parentNode.removeChild(pulse);
+    var elapsed = document.getElementById('run-elapsed');
+    if (elapsed && !elapsed.getAttribute('data-finished')) elapsed.setAttribute('data-finished', new Date().toISOString());
+  }
+
+  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+  function line(kind, speaker, fill) {
+    var el = document.createElement('div');
+    el.className = 'ln ln-' + kind;
+    var w = document.createElement('span');
+    w.className = 'who';
+    w.textContent = speaker;
+    var t = document.createElement('span');
+    t.className = 'txt';
+    fill(t);
+    el.appendChild(w);
+    el.appendChild(t);
+    return el;
+  }
+  function draw(text) {
+    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); });
+    if (text.indexOf('\\u2192 ') === 0) {
+      var rest = text.slice(2), at = rest.indexOf(' ');
+      return line('tool', '', function (t) {
+        var b = document.createElement('b');
+        b.textContent = at === -1 ? rest : rest.slice(0, at);
+        t.appendChild(b);
+        t.appendChild(document.createTextNode(at === -1 ? '' : ' ' + rest.slice(at + 1)));
+      });
+    }
+    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; });
+    return line('say', who, function (t) { t.textContent = text; });
+  }
+  function add(el) {
+    log.insertBefore(el, pulse && pulse.parentNode === log ? pulse : jump);
+    if (cap) {
+      var kept = log.querySelectorAll('.ln:not(#run-pulse)');
+      while (kept.length > cap) { log.removeChild(kept[0]); kept = log.querySelectorAll('.ln:not(#run-pulse)'); }
+    }
+    if (follow) toEnd(); else if (jump) jump.hidden = false;
+  }
+
+  function tick() {
+    var elapsed = document.getElementById('run-elapsed');
+    if (!elapsed) return;
+    var started = Date.parse(elapsed.getAttribute('data-started') || '');
+    if (!started) return;
+    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
+    var end = finished || Date.now();
+    var s = Math.max(0, Math.round((end - started) / 1000));
+    var text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
+  }
+  var clock = window.setInterval(tick, 1000);
+  tick();
+
+  if (steer && window.fetch) {
+    var text = steer.querySelector('textarea');
+    function size() { if (!text) return; text.style.height = 'auto'; text.style.height = Math.min(160, text.scrollHeight) + 'px'; fit(); }
+    if (text) {
+      text.addEventListener('input', size);
+      text.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); if (steer.requestSubmit) steer.requestSubmit(); else steer.submit(); }
+      });
+      size();
+    }
+    steer.addEventListener('submit', function (ev) {
+      if (ev.submitter && ev.submitter.id === 'run-stop') return;
+      var api = steer.getAttribute('data-api');
+      if (!text || !api || steer.getAttribute('data-running') !== '1') return;
+      ev.preventDefault();
+      var said = text.value.trim();
+      if (!said) return;
+      text.disabled = true;
+      fetch(api, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ text: said }) })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
+        .then(function (out) {
+          text.value = '';
+          size();
+          var note = document.getElementById('run-steer-note');
+          if (note) note.textContent = out.outcome === 'sent' ? 'Heard at its next step. Every word is kept in the log.' : 'Nobody was listening; it went on the conversation.';
+        })
+        .catch(function () { steer.submit(); })
+        .then(function () { text.disabled = false; text.focus(); });
+    });
+  }
+
+  if (!url || typeof EventSource === 'undefined') return;
+  var meta = document.querySelector('meta[http-equiv="refresh"]');
+  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
+  var source = new EventSource(url);
+  var empty = document.getElementById('run-empty');
+  var seeded = false;
+  source.addEventListener('line', function (event) {
+    if (!seeded) {
+      if (event.lastEventId === '1') {
+        Array.prototype.slice.call(log.querySelectorAll('.ln:not(#run-pulse)')).forEach(function (el) { log.removeChild(el); });
+      }
+      seeded = true;
+      if (empty) empty.hidden = true;
+    }
+    var text = event.data;
+    try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
+    add(draw(text));
+  });
+  source.addEventListener('done', function (event) {
+    source.close();
+    var run;
+    try { run = JSON.parse(event.data); } catch (err) { return; }
+    paint(run);
+    if (steer) {
+      steer.setAttribute('data-running', '0');
+      var n = document.getElementById('run-steer-note');
+      if (n) n.textContent = 'The run is over; this goes on the conversation and starts a run.';
+      var t = steer.querySelector('textarea');
+      if (t) t.placeholder = 'Tell ' + who + ' for its next run';
+    }
+    window.clearInterval(clock);
+    tick();
+  });
+})();
+`;
+
+/**
  * The code browser: the explorer column, the preview it paints beside itself,
  * and the fuzzy file finder.
  *

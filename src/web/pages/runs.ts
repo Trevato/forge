@@ -17,6 +17,7 @@ import {
   runLog,
   steerRepoRun,
 } from "../../actions/runs.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
@@ -36,6 +37,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { studioRun } from "./studio.ts";
 import {
   btn,
   empty,
@@ -337,6 +339,14 @@ export function runPage(ctx: Ctx): Response {
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   if (!found.ok) return notFoundPage(ctx);
   const { run, lines, truncated } = found.value;
+  // In the studio, working is a run: who is on it, the tell it came from,
+  // what it has cost, and the box to steer it — the same rule `repoHome`
+  // and `pullPage` follow. `?mode=dev` is the one-off way to the transcript
+  // dev already renders, without switching the browser.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
+    return studioRun(ctx, repo, run, lines, truncated);
   const base = repoBase(repo);
   const actor =
     run.actorId === null ? undefined : getUserById(ctx.app.db, run.actorId);

@@ -13,8 +13,8 @@ import { previewEnv, type EnvName } from "../src/apps/data.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { openIssue } from "../src/actions/issues.ts";
+import { mergePull, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
   createRepo,
@@ -25,7 +25,12 @@ import { getIssue, listIssues } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import {
+  claimRun,
+  createRun,
+  finishRun,
+  noteRunProgress,
+} from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
@@ -1311,5 +1316,163 @@ describe("the studio's slot count", () => {
     expect(page).toContain("Warp the loom");
     expect(page).toContain("Look at the shuttle");
     expect(page).toContain("Plan the next cloth");
+  });
+});
+
+/**
+ * Working, on its own page: `/:owner/:name/runs/:id` in the studio names
+ * the tell, the cost, and offers the steer box — same routes and checks as
+ * dev's transcript, one click away at `?mode=dev`.
+ */
+describe("working: a run's own page in the studio", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let alice: User;
+  let scoutId: string;
+  let writerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-run-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    writerCookie = await signIn("alice");
+    readerCookie = await signIn("bob");
+    const made = await createRepo(app, a.value, {
+      name: "engine",
+      visibility: "private",
+      description: "an app that builds",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "engine\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "engine" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, a.value, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    scoutId = scout.value.user.id;
+    expect(addToCrew(app, a.value, repo, "scout").ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the studio transcript names the tell, the cost, and the steer box", async () => {
+    const tell = openIssue(app, alice, repo, {
+      title: "Fix the flicker on load",
+      body: "It flashes white before the page renders.",
+    });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    noteRunProgress(app.db, run.id, { costUsd: 0.42 });
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(page).toContain("Fix the flicker on load");
+    expect(page).toContain(`href="/alice/engine/issues/${tell.value.number}"`);
+    expect(page).toContain("$0.42 spent");
+    expect(page).toContain('data-word="working"');
+    expect(page).toContain('id="run-steer"');
+    expect(page).toContain("Steer scout");
+    expect(page).toContain('id="run-stop"');
+    // The transcript is on the page, and dev's own reading is one click away.
+    expect(page).toContain('id="run-log"');
+    expect(page).toContain(`href="/alice/engine/runs/${run.id}?mode=dev"`);
+  });
+
+  test("a reader without access gets the forge's not-found, exactly as dev", async () => {
+    const tell = openIssue(app, alice, repo, { title: "Private work" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+
+    const asReader = await get(`/alice/engine/runs/${run.id}`, readerCookie);
+    expect(asReader.status).toBe(404);
+  });
+
+  test("a finished run renders in the studio's own word, with no Stop", async () => {
+    const tell = openIssue(app, alice, repo, { title: "Tidy the footer" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, {
+      state: "ok",
+      summary: "opened pull #9",
+      costUsd: 0.1,
+      turns: 4,
+    });
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(page).toContain('data-word="look"');
+    expect(page).not.toContain('id="run-stop"');
+    expect(page).not.toContain(">Stop<");
+    expect(page).not.toContain(">Cancel run<");
   });
 });

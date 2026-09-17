@@ -86,6 +86,22 @@ A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone
 who can write here; its title opens the transcript, where the agent can be
 steered mid-run (see `docs/APPS.md`, _Runs_).
 
+## Working, on its own page
+
+`/:owner/:name/runs/:id` on an app, in the studio, is a run: who is on it,
+the tell it came from (linking to it), how long it has gone and what it has
+cost, and its state in the studio's own word. The transcript is the page's
+body, tailing live with a fixed-height scrolling area and a cap on how many
+lines it holds — a long agent run never grows the page without bound; with
+JavaScript off the page still shows what was logged and refreshes itself
+while the run is in flight. Once the tell has become a pull, its preview is
+on the page as soon as it exists — this is the page someone sits on while
+waiting for a change to become visible. Steer and Stop are here for anyone
+who can write, through the very same routes and checks dev's page uses.
+_Read the transcript_ links to dev's page (`?mode=dev` on the same URL),
+unchanged; a run on a repository that is not an app, or any run in dev
+mode, renders exactly what it always has.
+
 ## The look, on its own page
 
 `/:owner/:name/pulls/:n` on an app, in the studio, is the change itself —
