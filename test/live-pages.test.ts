@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { enableApp } from "../src/actions/apps.ts";
 import { editFiles } from "../src/actions/contents.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/core/repos.ts";
@@ -68,6 +69,40 @@ describe("live browsing pages", () => {
   test("the branches page wires up the live client", async () => {
     const html = await (await fetch(`${base}/lex/proj/branches`)).text();
     expect(html).toContain('id="live"');
+    expect(html).toContain("new EventSource");
+  });
+
+  test("the studio app page wires up the live client with data-app, so a deploy run event refetches the app's own fragment", async () => {
+    const user = await createUser(app.db, {
+      username: "nia",
+      email: "nia@f.dev",
+      password: "live-pages-pass",
+      adminIfFirst: true,
+    });
+    if (!user.ok) throw new Error("user");
+    const repo = await createRepo(app.db, app.reposRoot, {
+      ownerId: user.value.id,
+      name: "runner",
+      visibility: "public",
+    });
+    if (!repo.ok) throw new Error("repo");
+    const committed = await editFiles(app, user.value, repo.value, {
+      files: [{ path: "README.md", content: "# runner\n" }],
+      message: "first commit",
+    });
+    if (!committed.ok) throw new Error("commit");
+    const enabled = await enableApp(app, user.value, repo.value, {
+      slug: "runner",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    const html = await (
+      await fetch(`${base}/nia/runner`, {
+        headers: { cookie: "forge_mode=studio" },
+      })
+    ).text();
+    expect(html).toContain('id="live"');
+    expect(html).toContain('data-app="1"');
     expect(html).toContain("new EventSource");
   });
 });

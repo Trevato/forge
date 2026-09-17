@@ -86,7 +86,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { asksJs, liveRegionsJs } from "../client.ts";
-import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
+import { flashOrJson, flashTo, fragment, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
 import {
@@ -713,51 +713,20 @@ function previewsPanel(
   );
 }
 
-// ---- the app in the studio ----
-
-export async function studioApp(
+/**
+ * The head card and the previews list: what production is doing, and every
+ * open pull's own environment. One function, called for the page's first
+ * paint and for the fragment a deploy event refreshes in place
+ * (`appStateFragment`) — the two never draw two copies of the same markup.
+ */
+function appPanels(
   ctx: Ctx,
   repo: Repo,
   record: AppRecord,
-): Promise<Response> {
+  openPulls: readonly Pull[],
+): { head: Html; previews: Html | null } {
   const db = ctx.app.db;
   const base = repoBase(repo);
-  const crew = listCrewRoles(db, repo.id);
-  const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 });
-  const actors = getUsersByIds(
-    db,
-    runs.map((r) => r.actorId).filter((id): id is string => id !== null),
-  );
-  const issues = new Map<string, Issue>();
-  for (const r of runs)
-    if (r.issueId !== null && !issues.has(r.issueId)) {
-      const i = getIssueById(db, r.issueId);
-      if (i) issues.set(r.issueId, i);
-    }
-  const decisions = withLikely(ctx, decisionsFor(ctx, [repo]));
-  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
-  const pullChecks = latestRunsForIssues(
-    db,
-    openPulls.map((p) => p.id),
-  );
-  const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-  const weekRuns = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
-    (r) => r.createdAt >= week,
-  );
-  const spent = weekRuns.reduce((s, r) => s + r.costUsd, 0);
-  const shipped = listPulls(db, repo.id, {
-    state: "closed",
-    limit: 100,
-  }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
-  const ledgerWeek = decisionStats(db, repo.id, week);
-  const autonomy =
-    repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
-  const moving = runs.some(
-    (r) => r.state === "running" || r.state === "queued",
-  );
-
-  // ---- the app itself ----
   const runtime = appsRuntime(ctx.app);
   const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
   const previews = previewsPanel(base, runtime, record, openPulls, envs);
@@ -798,6 +767,73 @@ export async function studioApp(
     })}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
+  return { head, previews };
+}
+
+/**
+ * GET /:owner/:name/app/state — the head card and previews list, bare. The
+ * studio page's own live client (`live.ts`) fetches this on a deploy run
+ * event for the app being viewed and swaps the two in place, so a change
+ * serving in its preview shows up without a reload. Authorized exactly as
+ * the studio page: a viewer who cannot see the app gets the same 404.
+ */
+export function appStateFragment(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return fragment(html``, 404);
+  const record = getAppByRepo(ctx.app.db, repo.id);
+  if (!record) return fragment(html``, 404);
+  const openPulls = listPulls(ctx.app.db, repo.id, {
+    state: "open",
+    limit: 10,
+  });
+  const { head, previews } = appPanels(ctx, repo, record, openPulls);
+  return fragment(html`<div id="app-head">${head}</div>
+    <div id="app-previews">${previews}</div>`);
+}
+
+// ---- the app in the studio ----
+
+export async function studioApp(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+): Promise<Response> {
+  const db = ctx.app.db;
+  const base = repoBase(repo);
+  const crew = listCrewRoles(db, repo.id);
+  const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
+  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 });
+  const actors = getUsersByIds(
+    db,
+    runs.map((r) => r.actorId).filter((id): id is string => id !== null),
+  );
+  const issues = new Map<string, Issue>();
+  for (const r of runs)
+    if (r.issueId !== null && !issues.has(r.issueId)) {
+      const i = getIssueById(db, r.issueId);
+      if (i) issues.set(r.issueId, i);
+    }
+  const decisions = withLikely(ctx, decisionsFor(ctx, [repo]));
+  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const pullChecks = latestRunsForIssues(
+    db,
+    openPulls.map((p) => p.id),
+  );
+  const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+  const weekRuns = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
+    (r) => r.createdAt >= week,
+  );
+  const spent = weekRuns.reduce((s, r) => s + r.costUsd, 0);
+  const shipped = listPulls(db, repo.id, {
+    state: "closed",
+    limit: 100,
+  }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
+  const ledgerWeek = decisionStats(db, repo.id, week);
+  const autonomy =
+    repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
+
+  // ---- the app itself ----
+  const { head, previews } = appPanels(ctx, repo, record, openPulls);
 
   // ---- the box ----
   const tell = html`<form
@@ -1040,7 +1076,7 @@ export async function studioApp(
       compact: true,
       ownTitle: true,
     })}
-    ${head}
+    <div id="app-head">${head}</div>
     <div class="dash">
       <div class="dash-main stack">
         ${tell}
@@ -1051,7 +1087,7 @@ export async function studioApp(
         >
           ${asks}
         </div>
-        ${previews}
+        <div id="app-previews">${previews}</div>
         <div
           id="live-now"
           data-live="run.*,pull.*,issue.*"
@@ -1064,7 +1100,7 @@ export async function studioApp(
         ${crewCard} ${weekCard} ${ownCard} ${more}
       </aside>
     </div>
-    ${when(moving, () => liveMount({ repo: base }))}`;
+    ${liveMount({ repo: base, app: true })}`;
   return page({
     ctx,
     title: `${repo.name}`,

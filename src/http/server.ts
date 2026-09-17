@@ -77,6 +77,7 @@ import {
 } from "../web/pages/issues.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
+  appStateFragment,
   asksSubmit,
   modeSubmit,
   saySubmit,
@@ -597,6 +598,9 @@ export function buildRouter(): Router<Handler> {
   // The app a repository runs as, and the runs it produced. Opening an
   // environment goes through the forge so a private app gets its grant.
   router.add("GET", "/:owner/:name/app", appPage);
+  // The studio page's own live refresh: the head card and previews list,
+  // bare, fetched on a deploy run event for the app being viewed.
+  router.add("GET", "/:owner/:name/app/state", appStateFragment);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);

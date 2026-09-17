@@ -32,7 +32,10 @@ An app's home in the studio (`/:owner/:name`, when the repository is an
 app) shows, top to bottom: what it serves and where; the box; what asks
 you; what is happening now. Beside it, who is on the crew and what each is
 for, this week's numbers (shipped, runs, spend, spend per shipped change),
-and how the repository runs itself, when it does.
+and how the repository runs itself, when it does. The page keeps itself
+current about deployments: a deploy run for the app being viewed refetches
+the head card and previews list in place, so a change serving in its
+preview shows up without a reload.
 
 **The box** is the front door. A sentence becomes an issue — the first line
 its title, the rest its body — and the routing decision hands it to a

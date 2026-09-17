@@ -521,6 +521,8 @@ export function fragment(body: Html, status = 200): Response {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
         "default-src 'none'; style-src 'none'; sandbox",
+      "referrer-policy": "same-origin",
+      "x-content-type-options": "nosniff",
       "cache-control": "no-store",
     },
   });

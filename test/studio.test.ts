@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import type { EnvName } from "../src/apps/data.ts";
+import { previewEnv, type EnvName } from "../src/apps/data.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
@@ -1014,5 +1014,186 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).toContain("serving · tests failed");
     expect(mine).not.toContain("not up");
     expect(mine).toContain("serving · tests failed: 1 of 3 tests failed");
+  });
+});
+
+/**
+ * GET /:owner/:name/app/state — the fragment the studio page's live client
+ * fetches on a deploy run event, and swaps into `#app-head`/`#app-previews`
+ * in place of a reload. It is authorized exactly as the studio page, and
+ * renders from the same `appPanels` function the page's first paint does.
+ */
+describe("the app's live fragment: /:owner/:name/app/state", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let runtime: AppsRuntime;
+  let repo: Repo;
+  let record: AppRecord;
+  let owner: string;
+  let stranger: string;
+
+  interface PreviewSlot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    deploying?: unknown;
+    live?: unknown;
+    lastError?: string;
+    lastRunId?: string;
+  }
+  const putEnv = (
+    env: EnvName,
+    slot: Omit<PreviewSlot, "app" | "env" | "chain" | "restarts">,
+  ): void => {
+    (runtime as unknown as { envs: Map<string, PreviewSlot> }).envs.set(
+      `${record.id}/${env}`,
+      { app: record, env, chain: Promise.resolve(), restarts: [], ...slot },
+    );
+  };
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-state-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "state.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const c = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!c.ok) throw new Error(c.error);
+    owner = await signIn("alice");
+    stranger = await signIn("carol");
+    const made = await createRepo(app, a.value, {
+      name: "vault",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "v\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "vault" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("renders the head card for a viewer who may see it, with the security floor's headers; refuses one who may not, same as the page", async () => {
+    const fragment = await get("/alice/vault/app/state", owner);
+    expect(fragment.status).toBe(200);
+    expect(fragment.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(fragment.headers.get("referrer-policy")).toBe("same-origin");
+    const text = await fragment.text();
+    expect(text).toContain('id="app-head"');
+    expect(text).toContain('id="app-previews"');
+    expect(text).toContain("not running");
+
+    const page = await (await get("/alice/vault", owner)).text();
+    expect(page).toContain("not running");
+
+    const refusedFragment = await get("/alice/vault/app/state", stranger);
+    expect(refusedFragment.status).toBe(404);
+    const refusedPage = await get("/alice/vault", stranger);
+    expect(refusedPage.status).toBe(404);
+  });
+
+  test("a preview flips from deploying to live between two calls, and the link stays correct", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/x",
+      base: repo.defaultBranch,
+      message: "Add X",
+      files: [{ path: "X.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add X",
+      body: "",
+      baseBranch: repo.defaultBranch,
+      headBranch: "feature/x",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const env = previewEnv(pull.number);
+    const link = `href="/alice/vault/app/${env}/open"`;
+
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, deployRun.id);
+    putEnv(env, {
+      deploying: {
+        run: { id: deployRun.id, commitOid: pull.headOid },
+        abort: new AbortController(),
+      },
+    });
+    const starting = await (await get("/alice/vault/app/state", owner)).text();
+    expect(starting).toContain("starting");
+    expect(starting).not.toContain(">live<");
+    expect(starting).toContain(link);
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4321 },
+        runId: deployRun.id,
+        since: new Date().toISOString(),
+      },
+    });
+    const live = await (await get("/alice/vault/app/state", owner)).text();
+    expect(live).not.toContain("starting");
+    expect(live).toContain(">live<");
+    expect(live).toContain(link);
   });
 });

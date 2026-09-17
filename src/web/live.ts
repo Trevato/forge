@@ -34,6 +34,12 @@ export interface LiveConfig {
   number?: number;
   /** Id of the last comment already on the page (for the ?after= fetch). */
   lastCommentId?: string;
+  /**
+   * The studio app page: a deploy run event for this repo fetches
+   * `<repo>/app/state` and swaps the head card and previews list in place,
+   * rather than only offering the pill.
+   */
+  app?: boolean;
 }
 
 /** The config element, the polite status line, and the (hidden) activity pill. */
@@ -46,6 +52,7 @@ export function liveMount(config: LiveConfig): Html {
       data-thread="${config.thread ?? ""}"
       data-number="${config.number ?? ""}"
       data-last="${config.lastCommentId ?? ""}"
+      data-app="${config.app ? "1" : ""}"
     ></div>
     <p
       class="live-status"
@@ -66,6 +73,7 @@ export const liveClientJs = /* js */ `
   var thread = cfg.getAttribute('data-thread');
   var number = cfg.getAttribute('data-number');
   var lastId = cfg.getAttribute('data-last') || '';
+  var isApp = cfg.getAttribute('data-app') === '1';
   var pill = document.getElementById('live-pill');
   var status = document.getElementById('live-status');
   var conv = document.getElementById('conversation');
@@ -117,9 +125,42 @@ export const liveClientJs = /* js */ `
       .catch(function () {});
   }
 
+  // A deploy run for the app this page is about: refetch the app's own
+  // fragment and swap the head card and previews list in place, so a change
+  // serving in its preview shows up without a reload. At most one fetch in
+  // flight — a burst of queued/started/finished for the same push collapses
+  // to whatever the last one finds.
+  var appBusy = false, appQueued = false;
+  function isDeploy(data) {
+    return isApp && data && data.kind && data.kind.indexOf('run.') === 0 &&
+      data.payload && data.payload.kind === 'deploy';
+  }
+  function refreshApp() {
+    if (appBusy) { appQueued = true; return; }
+    appBusy = true;
+    fetch(repo + '/app/state', { headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        if (!text) return;
+        var holder = document.createElement('div');
+        holder.innerHTML = text;
+        ['app-head', 'app-previews'].forEach(function (id) {
+          var mine = document.getElementById(id);
+          var theirs = holder.querySelector('#' + id);
+          if (mine && theirs) mine.replaceWith(theirs);
+        });
+      })
+      .catch(function () {})
+      .then(function () {
+        appBusy = false;
+        if (appQueued) { appQueued = false; refreshApp(); }
+      });
+  }
+
   function onEvent(e) {
     var data;
     try { data = JSON.parse(e.data); } catch (_) { return; }
+    if (isDeploy(data)) { refreshApp(); return; }
     if (relevant(data) && conv && (data.kind === thread + '.commented')) {
       appendNew();
     } else if (relevant(data) || !thread) {
