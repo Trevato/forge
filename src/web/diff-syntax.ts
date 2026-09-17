@@ -11,12 +11,12 @@ import { blobForRender } from "../git/read.ts";
 import { detectLanguage, highlightLines } from "./highlight.ts";
 import {
   MAX_DIFF_FILES,
+  stubFor,
   type FileTokens,
   type SyntaxMap,
 } from "./diff-view.ts";
 
 const CAP_BYTES = 1_000_000;
-const MAX_CHANGED = 5000;
 
 export async function diffSyntax(
   dir: string,
@@ -25,11 +25,11 @@ export async function diffSyntax(
   newRev: string,
 ): Promise<SyntaxMap> {
   const map: SyntaxMap = new Map();
-  // Only the files the viewer will actually render are worth highlighting;
-  // this is the bound that keeps a huge diff from spawning thousands of
-  // git subprocesses.
+  // Only the files the viewer will actually render as a table are worth
+  // highlighting — a stubbed file shows no hunks, so tokenising it would
+  // burn the same cost the stub exists to avoid.
   for (const file of diff.files.slice(0, MAX_DIFF_FILES)) {
-    if (file.binary || file.additions + file.deletions > MAX_CHANGED) continue;
+    if (file.binary || stubFor(file) !== null) continue;
     const entry: FileTokens = {};
     if (file.oldPath) {
       const blob = await blobForRender(dir, oldRev, file.oldPath, CAP_BYTES);

@@ -134,7 +134,12 @@ export function renderCommit(
     { extra: "commit-head" },
   );
   return html`<div class="mt">${head}</div>
-    <div class="mt">${renderDiff(diff, syntax)}</div>`;
+    <div class="mt">
+      ${renderDiff(diff, {
+        syntax,
+        fileLinkBase: `${scope.base}/blob/${commit.oid}`,
+      })}
+    </div>`;
 }
 
 /** The ref switcher (and path crumbs) above a history list. */

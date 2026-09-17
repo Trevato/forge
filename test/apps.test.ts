@@ -496,6 +496,16 @@ describe("apps: production, previews, data, gates, crew", () => {
         r.commitOid === committed.value.commitOid,
     );
     expect(done.state).toBe("ok");
+    // Close it out: a later test counts open previews and expects only the
+    // one it opens itself.
+    const merged = await mergePull(
+      app,
+      alice,
+      repo,
+      getPull(app.db, repo.id, opened.value.number)!,
+      "merge",
+    );
+    expect(merged.ok).toBe(true);
   }, 30_000);
 
   test("the crew: an agent reads and writes its repo, never the default branch, never a merge", async () => {

@@ -424,6 +424,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .diff-stat .add { color: var(--add-fg); }
 .diff-stat .del { color: var(--del-fg); }
 .diff-note { padding: 20px 16px; text-align: center; color: var(--muted-fg); font-size: 13px; }
+.diff-stub p { margin: 0 0 10px; }
+.diff-stub .diff-stat { display: inline-flex; }
 .diff-viewed {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   font-size: 12px; color: var(--muted-fg); cursor: pointer; margin: 0;

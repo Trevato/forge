@@ -692,6 +692,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     syntax,
     comments: reviewComments,
     threads: threadViews,
+    fileLinkBase: `${base}/blob/${status.headOid}`,
     ...(ctx.auth.user ? { reviewBase: thread } : {}),
     ...(active ? { active } : {}),
   };

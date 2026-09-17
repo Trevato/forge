@@ -2,9 +2,25 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { diffCommit, diffRange, parseUnifiedDiff } from "../src/git/diff.ts";
+import {
+  diffCommit,
+  diffRange,
+  parseUnifiedDiff,
+  type Diff,
+  type DiffLine,
+  type FileDiff,
+  type Hunk,
+} from "../src/git/diff.ts";
 import { initBareRepo, repoDir } from "../src/git/repos.ts";
 import { unwrap } from "../src/kernel/result.ts";
+import { anchorKey, type ReviewComment } from "../src/core/reviews.ts";
+import {
+  MAX_FILE_BYTES,
+  MAX_LINE_WIDTH,
+  renderDiff,
+  stubFor,
+  type DiffViewOptions,
+} from "../src/web/diff-view.ts";
 
 const env = {
   ...process.env,
@@ -189,5 +205,114 @@ describe("diff against real git", () => {
   test("unsafe revs are refused, not executed", async () => {
     const bad = await diffRange(dir, "--output=/tmp/x", "main");
     expect(bad.ok).toBe(false);
+  });
+});
+
+// ---- the diff view's render budget (src/web/diff-view.ts), pure and fast:
+// no git, no server, just FileDiff fixtures built by hand.
+describe("renderDiff stub budget (the view, not the engine)", () => {
+  function row(
+    kind: DiffLine["kind"],
+    oldNumber: number | null,
+    newNumber: number | null,
+    content: string,
+  ): DiffLine {
+    return { kind, oldNumber, newNumber, content, noNewline: false };
+  }
+
+  function hunk(lines: DiffLine[]): Hunk {
+    return {
+      oldStart: 1,
+      oldLines: lines.filter((l) => l.kind !== "add").length,
+      newStart: 1,
+      newLines: lines.filter((l) => l.kind !== "del").length,
+      section: "",
+      lines,
+    };
+  }
+
+  function file(path: string, hunks: Hunk[]): FileDiff {
+    const lines = hunks.flatMap((h) => h.lines);
+    return {
+      status: "modified",
+      oldPath: path,
+      newPath: path,
+      path,
+      binary: false,
+      additions: lines.filter((l) => l.kind === "add").length,
+      deletions: lines.filter((l) => l.kind === "del").length,
+      similarity: null,
+      hunks,
+    };
+  }
+
+  function oneFile(f: FileDiff): Diff {
+    return { files: [f], additions: f.additions, deletions: f.deletions };
+  }
+
+  test("a normal small file renders its hunk, not a stub", () => {
+    const f = file("small.txt", [
+      hunk([
+        row("context", 1, 1, "one"),
+        row("del", 2, null, "two"),
+        row("add", null, 2, "TWO"),
+      ]),
+    ]);
+    expect(stubFor(f)).toBeNull();
+    const out = renderDiff(oneFile(f)).toString();
+    expect(out).toContain("small.txt");
+    expect(out).toContain("diff-table");
+    expect(out).not.toContain("Diff not shown");
+  });
+
+  test("one line wider than MAX_LINE_WIDTH is stubbed even though the file is tiny", () => {
+    const wide = "x".repeat(MAX_LINE_WIDTH + 500);
+    const f = file("bundle.min.js", [hunk([row("add", null, 1, wide)])]);
+    expect(stubFor(f)?.reason).toContain("characters wide");
+    const out = renderDiff(oneFile(f)).toString();
+    expect(out).toContain("bundle.min.js"); // path
+    expect(out).toContain("Diff not shown"); // why
+    expect(out).toContain("characters wide");
+    expect(out).toContain("+1"); // the real counts, not hidden
+    expect(out).not.toContain(wide); // no hunks in the HTML
+  });
+
+  test("a file over MAX_FILE_BYTES is stubbed even with only a handful of lines", () => {
+    const lines = Array.from({ length: 10 }, (_, i) =>
+      row("add", null, i + 1, "y".repeat(Math.ceil(MAX_FILE_BYTES / 5))),
+    );
+    const f = file("data.json", [hunk(lines)]);
+    expect(stubFor(f)?.reason).toContain("bytes of diff");
+    const out = renderDiff(oneFile(f)).toString();
+    expect(out).toContain("Diff not shown");
+    expect(out).toContain("bytes of diff");
+  });
+
+  test("a stubbed file with an existing review comment renders in full instead", () => {
+    const wide = "x".repeat(MAX_LINE_WIDTH + 500);
+    const f = file("bundle.min.js", [hunk([row("add", null, 1, wide)])]);
+    const comments = new Map<string, ReviewComment[]>([
+      [anchorKey("bundle.min.js", "new", 1), []],
+    ]);
+    const opts: DiffViewOptions = { comments };
+    const out = renderDiff(oneFile(f), opts).toString();
+    expect(out).toContain("diff-table");
+    expect(out).not.toContain("Diff not shown");
+  });
+
+  test("the stub links to the file at that commit when fileLinkBase is set", () => {
+    const wide = "x".repeat(MAX_LINE_WIDTH + 500);
+    const f = file("bundle.min.js", [hunk([row("add", null, 1, wide)])]);
+    const opts: DiffViewOptions = { fileLinkBase: "/o/r/blob/deadbeef" };
+    const out = renderDiff(oneFile(f), opts).toString();
+    expect(out).toContain('href="/o/r/blob/deadbeef/bundle.min.js"');
+  });
+
+  test("no fileLinkBase means no link, not a crash", () => {
+    const wide = "x".repeat(MAX_LINE_WIDTH + 500);
+    const f = file("bundle.min.js", [hunk([row("add", null, 1, wide)])]);
+    const out = renderDiff(oneFile(f)).toString();
+    expect(out).toContain("Diff not shown");
+    expect(out).not.toContain("View file");
   });
 });
