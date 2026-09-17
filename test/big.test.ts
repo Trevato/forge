@@ -426,7 +426,7 @@ describe("the big view", () => {
     expect(issues).toContain('data-word="working"');
     // Home now counts them.
     const home = await (await get("/big")).text();
-    expect(home).toMatch(/1 working\s*·\s*1\s+ask you/);
+    expect(home).toMatch(/1\s+working\s*·\s*1\s+ask you/);
     // Somebody else's app, or none: not found, never a hint of it.
     expect((await get("/big?app=alice%2Fnowhere")).status).toBe(404);
     expect((await get("/big?run=nothing")).status).toBe(404);
