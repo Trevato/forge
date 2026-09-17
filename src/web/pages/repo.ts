@@ -36,6 +36,7 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
 import { studioApp } from "./studio.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -916,14 +917,14 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
     entries: tree,
     rail: aboutCard(ctx, repo, refs, drift),
   })}
-  ${codeMount(scope, ref)} ${finderDialog()}`;
+  ${codeMount(scope, ref)} ${finderDialog()} ${liveMount({ repo: scope.base })}`;
   return page({
     ctx,
     title: repo.name,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
-    scriptJs: codeJs,
+    scriptJs: `${codeJs}\n${liveClientJs}`,
   });
 }
 

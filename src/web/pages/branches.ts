@@ -26,6 +26,7 @@ import { loadRepo, notFoundPage, scopeHeader, signInFirst } from "../chrome.ts";
 import { field as formValue, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { localScope } from "../scope.ts";
 import {
   badge,
@@ -277,7 +278,8 @@ export async function renderBranches(
                 )}`,
             },
           )}
-    </div>`;
+    </div>
+    ${when(scope.kind === "local", () => liveMount({ repo: scope.base }))}`;
 
   return page({
     ctx,
@@ -285,6 +287,7 @@ export async function renderBranches(
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    ...(scope.kind === "local" ? { scriptJs: liveClientJs } : {}),
   });
 }
 
