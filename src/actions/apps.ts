@@ -35,6 +35,8 @@ import {
   type AppEnvName,
 } from "../core/app_env.ts";
 import { addCrew, getAgentByName } from "../core/agents.ts";
+import { listAllAgents } from "./crew.ts";
+import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
@@ -221,6 +223,12 @@ export interface NewAppInput {
   visibility?: "public" | "private";
   /** An agent to put on the crew and hand the first issue to. */
   agent?: string;
+  /**
+   * Turn the sentence into a checklist and pick the agent instead of
+   * `agent` naming one. Ignored without a description, or when `agent` is
+   * also given.
+   */
+  pickAgent?: boolean;
 }
 
 export interface NewAppResult {
@@ -228,6 +236,8 @@ export interface NewAppResult {
   readonly app: AppRecord;
   /** The first issue, when a description was given and an agent named. */
   readonly issue?: Issue;
+  /** Who the plan picked and why, when `pickAgent` landed one. */
+  readonly plan?: { agent: string; summary: string; confidence: number };
 }
 
 export type NewAppError =
@@ -275,19 +285,56 @@ export async function newApp(
   if (!record.ok)
     return err(record.error === "not_found" ? "scaffold_failed" : record.error);
 
+  const description = (input.description ?? "").trim();
+  let chosen = agent;
+  let body = description;
+  let picked: NewAppResult["plan"];
+
+  // Off the critical path only in the sense that a slow or absent decider
+  // costs at most `PLAN_TIMEOUT_MS` and never a wrong answer (crew/plan.ts):
+  // the repository, the app and production above have already started.
+  if (!agent && input.pickAgent && description !== "") {
+    const binary = process.env["FORGE_CLAUDE"] ?? "claude";
+    if (planningAvailable(binary)) {
+      const roster = listAllAgents(app, user.value);
+      const agents = roster.ok ? roster.value : [];
+      if (agents.length > 0) {
+        const result = await plan(
+          {
+            name: input.name,
+            description,
+            agents: agents.map((a) => ({ name: a.user.username, brief: a.brief })),
+          },
+          { binary },
+        );
+        const match =
+          result && agents.find((a) => a.user.username === result.agent);
+        if (result && match) {
+          chosen = match;
+          body = planIssueBody(result);
+          picked = {
+            agent: result.agent,
+            summary: result.summary,
+            confidence: result.confidence,
+          };
+        }
+      }
+    }
+  }
+
   let issue: Issue | undefined;
-  if (agent) {
-    addCrew(app.db, repo.value.id, agent.user.id, user.value.id);
+  if (chosen) {
+    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id);
     app.bus.append({
       kind: "crew.added",
       repoId: repo.value.id,
       actorId: user.value.id,
-      payload: { agent: agent.user.username },
+      payload: { agent: chosen.user.username },
     });
-    if (input.description && input.description.trim() !== "") {
+    if (body !== "") {
       const opened = openIssue(app, user.value, repo.value, {
         title: `Build ${input.name}`,
-        body: input.description.trim(),
+        body,
       });
       if (opened.ok) {
         const assigned = assignIssue(
@@ -295,7 +342,7 @@ export async function newApp(
           user.value,
           repo.value,
           opened.value,
-          agent.user,
+          chosen.user,
         );
         issue = assigned.ok ? assigned.value : opened.value;
       }
@@ -305,6 +352,7 @@ export async function newApp(
     repo: repo.value,
     app: record.value,
     ...(issue === undefined ? {} : { issue }),
+    ...(picked === undefined ? {} : { plan: picked }),
   });
 }
 

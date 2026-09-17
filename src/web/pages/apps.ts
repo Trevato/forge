@@ -20,6 +20,7 @@ import {
   stopEnv,
 } from "../../actions/apps.ts";
 import { listAllAgents, listCrew } from "../../actions/crew.ts";
+import { planningAvailable } from "../../crew/plan.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
@@ -217,6 +218,9 @@ interface NewAppValues {
   agent: string;
 }
 
+/** The agent select's sentinel for "turn the sentence into a plan and pick". */
+const PICK_AGENT = "__pick__";
+
 function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
   const user = ctx.auth.user!;
   const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
@@ -226,6 +230,7 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
   const agents = listAllAgents(ctx.app, user);
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
+  const canPlan = planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude");
 
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
@@ -292,8 +297,19 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
           : selectField({
               label: "Agent",
               name: "agent",
-              hint: "Joins the crew of the new app. With a sentence above, it gets the first issue and starts on it.",
+              hint: canPlan
+                ? "Pick for me turns the sentence into a checklist and picks who's likeliest to do it well. Otherwise it joins the crew and, with a sentence, gets the first issue."
+                : "Joins the crew of the new app. With a sentence above, it gets the first issue and starts on it.",
               options: [
+                ...(canPlan
+                  ? [
+                      {
+                        value: PICK_AGENT,
+                        label: "Pick for me",
+                        selected: values.agent === PICK_AGENT,
+                      },
+                    ]
+                  : []),
                 {
                   value: "",
                   label: "Nobody — I'll build it myself",
@@ -329,7 +345,9 @@ export function newAppPage(ctx: Ctx): Response {
       name: "",
       description: "",
       visibility: "private",
-      agent: "",
+      agent: planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude")
+        ? PICK_AGENT
+        : "",
     }),
   });
 }
@@ -359,12 +377,17 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
   };
+  const pickAgent = values.agent === PICK_AGENT;
   const made = await newApp(ctx.app, ctx.auth.user, {
     name: values.name,
     owner: values.owner,
     description: values.description,
     visibility: values.visibility === "public" ? "public" : "private",
-    ...(values.agent === "" ? {} : { agent: values.agent }),
+    ...(pickAgent
+      ? { pickAgent: true }
+      : values.agent === ""
+        ? {}
+        : { agent: values.agent }),
   });
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
@@ -382,7 +405,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       422,
     );
   }
-  const { repo, app: record, issue } = made.value;
+  const { repo, app: record, issue, plan } = made.value;
   const url = appsRuntime(ctx.app)?.urlFor(record, "production");
   const first =
     url === undefined
@@ -391,7 +414,9 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   const second =
     issue === undefined || issue.assigneeName === null
       ? ""
-      : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
+      : plan
+        ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
+        : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
   return flashTo(ctx, repoBase(repo), { message: `${first}${second}` });
 }
 

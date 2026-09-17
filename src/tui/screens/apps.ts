@@ -14,6 +14,7 @@
 
 import { newApp } from "../../actions/apps.ts";
 import { listAllAgents } from "../../actions/crew.ts";
+import { planningAvailable } from "../../crew/plan.ts";
 import type { Agent } from "../../core/agents.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
@@ -259,6 +260,7 @@ export function newAppFlow(f: Session, ctx: Ctx, parent: Screen): void {
     description: string;
     visibility: "public" | "private";
     agent: string | undefined;
+    pickAgent?: boolean;
   }): void => {
     runAsync(ctx, async () => {
       ctx.toast(`creating ${input.name}…`);
@@ -267,6 +269,7 @@ export function newAppFlow(f: Session, ctx: Ctx, parent: Screen): void {
         visibility: input.visibility,
         ...(input.description === "" ? {} : { description: input.description }),
         ...(input.agent === undefined ? {} : { agent: input.agent }),
+        ...(input.pickAgent ? { pickAgent: true } : {}),
       });
       if (!made.ok) {
         ctx.toast(errorText(made.error), "danger");
@@ -281,8 +284,9 @@ export function newAppFlow(f: Session, ctx: Ctx, parent: Screen): void {
         url === undefined
           ? "apps are off on this forge, so nothing is running"
           : `starting at ${url}`;
-      const who =
-        input.agent === undefined
+      const who = made.value.plan
+        ? ` · ${made.value.plan.agent} was picked — ${made.value.plan.summary}`
+        : input.agent === undefined
           ? ""
           : made.value.issue === undefined
             ? ` · ${input.agent} is on the crew`
@@ -300,18 +304,32 @@ export function newAppFlow(f: Session, ctx: Ctx, parent: Screen): void {
       create(input);
       return;
     }
+    const canPick =
+      input.description !== "" &&
+      planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude");
     ctx.push(
       pickerScreen(ctx, parent, {
         title: "Who works on it?",
         items: [
+          ...(canPick
+            ? [
+                {
+                  id: "__pick__",
+                  label: "Pick for me",
+                  hint: "turns the sentence into a checklist and picks",
+                },
+              ]
+            : []),
           { id: "", label: "nobody yet", hint: "you can add crew later" },
           ...agents.map((agent) => agentPick(agent, ctx.icons)),
         ],
         onPick: ([chosen]) =>
-          create({
-            ...input,
-            agent: chosen === undefined || chosen === "" ? undefined : chosen,
-          }),
+          chosen === "__pick__"
+            ? create({ ...input, agent: undefined, pickAgent: true })
+            : create({
+                ...input,
+                agent: chosen === undefined || chosen === "" ? undefined : chosen,
+              }),
       }),
     );
   };

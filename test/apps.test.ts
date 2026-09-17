@@ -7,7 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,7 @@ import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { envDir } from "../src/apps/data.ts";
 import { newApp, openEnvUrl, updateAppSettings } from "../src/actions/apps.ts";
-import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { addToCrew, createAgent, listCrew } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { forkRepo } from "../src/actions/repos.ts";
@@ -632,4 +632,131 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(openPreviews.length).toBe(1); // the bot's pull is the one open pull
   }, 90_000);
+});
+
+describe("New app: turn the sentence into a plan and pick the crew", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let bot: string;
+  let fakeClaude: string;
+  let realClaude: string | undefined;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-plan-"));
+    app = createApp({ dataDir, port: 0 });
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+    const made = await createAgent(app, alice, {
+      username: "bot",
+      brief: "Be brief.",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    bot = made.value.user.username;
+
+    // A stand-in for `claude --output-format json`: one JSON object on
+    // stdout, chosen by a marker in the prompt (which carries the sentence).
+    fakeClaude = join(dataDir, "fake-claude");
+    writeFileSync(
+      fakeClaude,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+args="$*"
+case "$args" in
+  *HANG-ME*) sleep 30; exit 0 ;;
+  *BAD-AGENT*) printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"nope\\",\\"checklist\\":[\\"x\\"],\\"agent\\":\\"nobody-on-this-forge\\",\\"confidence\\":0.9}"}'; exit 0 ;;
+esac
+printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\\",\\"checklist\\":[\\"Set up storage\\",\\"Add a form\\",\\"Show the list\\"],\\"agent\\":\\"bot\\",\\"confidence\\":0.8}"}'
+`,
+    );
+    chmodSync(fakeClaude, 0o755);
+    realClaude = process.env["FORGE_CLAUDE"];
+    process.env["FORGE_CLAUDE"] = fakeClaude;
+  });
+
+  afterAll(async () => {
+    if (realClaude === undefined) delete process.env["FORGE_CLAUDE"];
+    else process.env["FORGE_CLAUDE"] = realClaude;
+    delete process.env["FORGE_APP_PLAN"];
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a good plan lands its checklist on the first issue and picks the agent", async () => {
+    const made = await newApp(app, alice, {
+      name: "notes-a",
+      description: "Keep a list of notes",
+      pickAgent: true,
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.plan?.agent).toBe(bot);
+    expect(made.value.issue?.assigneeName).toBe(bot);
+    expect(made.value.issue?.body).toContain("Build a notes app");
+    expect(made.value.issue?.body).toContain("- [ ] Set up storage");
+    expect(made.value.issue?.body).toContain("- [ ] Add a form");
+  });
+
+  test("a plan naming an agent not on the forge is refused; nothing changes", async () => {
+    const made = await newApp(app, alice, {
+      name: "notes-b",
+      description: "BAD-AGENT: pick someone who does not exist",
+      pickAgent: true,
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.plan).toBeUndefined();
+    expect(made.value.issue).toBeUndefined();
+    const crew = listCrew(app, alice, made.value.repo);
+    expect(crew.ok && crew.value.length).toBe(0);
+  });
+
+  test("a plan that times out changes nothing", async () => {
+    const made = await newApp(app, alice, {
+      name: "notes-c",
+      description: "HANG-ME: never answer",
+      pickAgent: true,
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.plan).toBeUndefined();
+    expect(made.value.issue).toBeUndefined();
+    const crew = listCrew(app, alice, made.value.repo);
+    expect(crew.ok && crew.value.length).toBe(0);
+  }, 10_000);
+
+  test("FORGE_APP_PLAN=0 behaves exactly as without pickAgent", async () => {
+    process.env["FORGE_APP_PLAN"] = "0";
+    const made = await newApp(app, alice, {
+      name: "notes-d",
+      description: "Keep a list of notes",
+      pickAgent: true,
+    });
+    delete process.env["FORGE_APP_PLAN"];
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.plan).toBeUndefined();
+    expect(made.value.issue).toBeUndefined();
+  });
+
+  test("no claude on PATH behaves exactly as without pickAgent", async () => {
+    const before = process.env["FORGE_CLAUDE"];
+    process.env["FORGE_CLAUDE"] = join(dataDir, "no-such-binary");
+    const made = await newApp(app, alice, {
+      name: "notes-e",
+      description: "Keep a list of notes",
+      pickAgent: true,
+    });
+    process.env["FORGE_CLAUDE"] = before;
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.plan).toBeUndefined();
+    expect(made.value.issue).toBeUndefined();
+  });
 });

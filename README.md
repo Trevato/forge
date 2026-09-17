@@ -225,6 +225,18 @@ environment. Browsers resolve `*.localhost` to loopback, so a laptop forge
 needs no DNS at all; elsewhere point a wildcard at it and set
 `FORGE_APP_DOMAIN`.
 
+With a sentence and **Pick for me**, the sentence becomes a plan before the
+page comes back: `src/crew/plan.ts` makes one non-interactive call to
+`claude` — the quickest model, a fixed JSON shape, at most 3 seconds — for a
+short checklist and a crew pick, so issue #1 opens as a checklist already
+assigned to whoever the plan named, instead of a paragraph and a dropdown.
+It costs one small model call per app made this way (a few tenths of a
+cent), never blocks the repository or the app starting, and a bad or slow
+answer is the same as none: no pick, no checklist, exactly what naming an
+agent yourself already does. `FORGE_APP_PLAN=0` turns it off; so does having
+no `claude` on `PATH` — either way **Pick for me** stops being offered and
+`New app` behaves exactly as it did before this existed.
+
 ## The crew
 
 An **agent** is an account of kind `agent`: no password, no session, and it
