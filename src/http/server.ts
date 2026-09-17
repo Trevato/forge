@@ -109,6 +109,7 @@ import {
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
 import { boardPage } from "../web/pages/board.ts";
+import { bigPage } from "../web/pages/big.ts";
 import {
   agentCreate,
   agentDelete,
@@ -355,6 +356,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/studio/asks", asksSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
+  // The big view: the whole forge as one keyboard-first frame.
+  router.add("GET", "/big", bigPage);
   router.add("GET", "/search", searchPage);
   // The JS-free half of every destructive action. Two literal segments, so it
   // is registered before /:owner/:name can claim the shape.

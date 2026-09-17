@@ -597,6 +597,7 @@ function node(base: string, n: Placed, g: Geometry, emphasis: Emphasis): Html {
   return html`<a
     class="map-node"
     data-state="${word}"
+    data-key="issue:${n.issue.id}"
     data-crit="${emphasis.critical.has(n.issue.id) ? "1" : "0"}"
     ${run ? html`data-run="${run}"` : null}
     href="${base}/issues/${n.issue.number}"
@@ -1292,7 +1293,7 @@ export function mapJson(
 
 // ---- every app, one lane each ----
 
-interface Lane {
+export interface Lane {
   readonly repo: Repo;
   readonly graph: Graph;
   readonly placed: Layout;
@@ -1408,7 +1409,7 @@ function spendBar(status: AutonomyStatus): Html {
 }
 
 /** A lane: the repository's name, how it runs itself, who is on it, and its map. */
-function laneHtml(lane: Lane, width: number): Html {
+export function laneHtml(lane: Lane, width: number): Html {
   const { repo } = lane;
   const id = `lane-${repo.ownerName}-${repo.name}`;
   return html`<details
