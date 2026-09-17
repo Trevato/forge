@@ -566,20 +566,44 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .checks-line .ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
 .checks-line .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
 .checks-line .now { display: inline-flex; align-items: center; gap: 4px; color: var(--attn); }
-/* A run's log: monospace, wrapped so a phone never scrolls sideways, and
-   bounded in height so the page head stays reachable. */
+/* A run, live: a transcript with a speaker column, bounded so the page
+   head stays reachable, and a composer that sits under it. */
+.run-live { position: relative; margin-top: 12px; }
 .run-log {
-  margin: 0; padding: 12px 14px; max-height: 70dvh; overflow: auto;
+  margin: 0; padding: 10px 14px 8px; max-height: calc(100dvh - 300px); min-height: 12em; overflow: auto;
   background: var(--muted); border: 1px solid var(--border); border-radius: var(--radius);
-  font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
-  white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4;
-  font-variant-ligatures: none; min-height: 3.1em;
+  font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere; tab-size: 4;
 }
-.run-log .ln { padding: 1px 0; }
-.run-log .ln-tool { color: var(--faint); }
+.run-live:has(.run-steer) .run-log { border-radius: var(--radius) var(--radius) 0 0; }
+.run-log .ln { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 2px 0; }
+.run-log .who { color: var(--faint); font-size: 12px; font-weight: 600; padding-top: 2px; user-select: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-log .txt { white-space: pre-wrap; }
+.run-log .ln-say .who { color: var(--fg); }
+.run-log .ln-say + .ln-say > .who, .run-log .ln-say + .ln-tool > .who, .run-log .ln-tool + .ln-tool > .who,
+.run-log .ln-tool + .ln-say > .who, .run-log .ln-forge + .ln-forge > .who, .run-log .ln-say + .ln-pulse > .who,
+.run-log .ln-tool + .ln-pulse > .who { visibility: hidden; }
+.run-log .ln-tool .txt { font-family: var(--mono); font-size: 12px; color: var(--faint); }
 .run-log .ln-tool b { color: var(--fg); font-weight: 600; }
-.run-log .ln-forge { color: var(--accent); }
-.run-log .ln-say { color: var(--fg); }
+.run-log .ln-forge .txt { color: var(--faint); font-style: italic; }
+.run-log .ln-you { margin: 6px 0; }
+.run-log .ln-you .who { color: var(--accent); }
+.run-log .ln-you .txt { background: color-mix(in srgb, var(--accent) 10%, transparent); border-left: 2px solid var(--accent); padding: 4px 10px; border-radius: 0 var(--radius) var(--radius) 0; }
+.run-log .ln-pulse .txt { padding-top: 6px; }
+.run-log .ln-pulse i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--faint); margin-right: 4px; animation: run-pulse 1.2s infinite ease-in-out; }
+.run-log .ln-pulse i:nth-child(2) { animation-delay: .2s; }
+.run-log .ln-pulse i:nth-child(3) { animation-delay: .4s; }
+@keyframes run-pulse { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+.run-jump {
+  position: sticky; bottom: 6px; float: right; margin-top: 6px; padding: 4px 10px; font: inherit; font-size: 12px;
+  color: var(--bg); background: var(--fg); border: 0; border-radius: 999px; cursor: pointer; box-shadow: var(--shadow, 0 2px 8px rgba(0,0,0,.15));
+}
+.run-steer {
+  position: sticky; bottom: 0; display: grid; gap: 6px; padding: 10px 12px; background: var(--bg);
+  border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--radius) var(--radius);
+}
+.run-steer textarea { min-height: 38px; max-height: 160px; resize: none; }
+.run-steer .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.run-steer .bar .muted { flex: 1 1 200px; }
 .run-summary { margin: 10px 0 0; text-wrap: pretty; }
 .run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .run-actions form { display: inline-flex; }

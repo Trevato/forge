@@ -440,7 +440,11 @@ export async function submitReview(
     kind: "pull.reviewed",
     repoId: repo.id,
     actorId: user.id,
-    payload: { number: pull.number, state: input.state },
+    payload: {
+      number: pull.number,
+      state: input.state,
+      body: (input.body ?? "").trim(),
+    },
   });
   return recorded;
 }

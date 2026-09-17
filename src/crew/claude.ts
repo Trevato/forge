@@ -29,6 +29,12 @@ export interface ClaudeInput {
   readonly timeoutMs: number;
   readonly log: (line: string) => void;
   readonly signal: AbortSignal;
+  /**
+   * Hands the caller a way to say something to the agent while it runs.
+   * The words arrive as its next user turn, after the step it is on; a
+   * send after the session ended returns false.
+   */
+  readonly onSteer?: ((send: (text: string) => boolean) => void) | undefined;
 }
 
 export interface ClaudeOutcome {
@@ -92,6 +98,11 @@ export function claudeArgs(input: ClaudeInput): string[] {
     "--verbose",
     "--output-format",
     "stream-json",
+    // The prompt comes over stdin as a user message, and so can anything
+    // a person says while the run goes: the session stays open until the
+    // forge closes it.
+    "--input-format",
+    "stream-json",
     "--restricted",
     // Restricted mode drops every tool that runs code unless it is named
     // here; "default" does not name Bash. This is the agent's whole kit.
@@ -125,9 +136,45 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       DISABLE_TELEMETRY: "1",
       ...input.env,
     }),
-    stdin: new Blob([input.prompt]),
+    stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+  });
+  // What the agent hears: the prompt first, then whatever a person says
+  // while it works. Each is a user turn; the session ends when the forge
+  // closes its stdin after a turn nobody followed.
+  let pending = 0;
+  let open = true;
+  const say = (text: string): boolean => {
+    if (!open || proc.exitCode !== null || proc.signalCode !== null)
+      return false;
+    try {
+      proc.stdin.write(
+        `${JSON.stringify({
+          type: "user",
+          message: { role: "user", content: [{ type: "text", text }] },
+        })}\n`,
+      );
+      proc.stdin.flush();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const closeInput = (): void => {
+    if (!open) return;
+    open = false;
+    try {
+      proc.stdin.end();
+    } catch {
+      // already gone
+    }
+  };
+  say(input.prompt);
+  input.onSteer?.((text) => {
+    if (!say(text)) return false;
+    pending++;
+    return true;
   });
 
   let sessionId = "";
@@ -187,6 +234,10 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
         const errors = e["errors"];
         if (Array.isArray(errors)) result = errors.map(String).join("; ");
       }
+      // A turn is over. Something said meanwhile is the next turn; nothing
+      // said means the session is done, and closing stdin lets it end.
+      if (pending > 0 && ok) pending--;
+      else closeInput();
       return;
     }
     // `user` records are tool results: long and mostly file contents.
@@ -194,6 +245,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
 
   let why: "timeout" | "cancelled" | undefined;
   const stopChild = (): void => {
+    closeInput();
     proc.kill("SIGTERM");
     setTimeout(() => {
       if (proc.exitCode === null && proc.signalCode === null)
@@ -222,6 +274,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     proc.exited,
   ]);
   clearTimeout(timer);
+  closeInput();
   input.signal.removeEventListener("abort", onAbort);
 
   if (why !== undefined) {

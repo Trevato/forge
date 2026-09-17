@@ -380,6 +380,22 @@ export function activeRunFor(
   return row ? toRun(row) : undefined;
 }
 
+/** Whether a run of this kind already waits its turn for the issue. */
+export function hasQueuedRun(
+  db: Database,
+  kind: RunKind,
+  issueId: string,
+): boolean {
+  return (
+    db
+      .query<
+        { n: number },
+        [RunKind, string]
+      >("SELECT COUNT(*) AS n FROM run WHERE state = 'queued' AND kind = ?1 AND issue_id = ?2")
+      .get(kind, issueId)!.n > 0
+  );
+}
+
 /**
  * The checks on a pull: the deploy runs at its current head, newest first.
  * Older heads are history — a push makes new runs — so a caller that wants

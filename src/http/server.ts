@@ -103,6 +103,7 @@ import {
   runCancel,
   runPage,
   runRedirect,
+  runSteer,
   runsList,
 } from "../web/pages/runs.ts";
 import {
@@ -595,6 +596,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs", runsList);
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
+  router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
 
   // Live event stream for a repo the viewer can read.
   router.add("GET", "/:owner/:name/stream", (ctx) => {

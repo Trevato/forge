@@ -165,6 +165,7 @@ import {
   updateAgent,
 } from "../actions/crew.ts";
 import { assignIssue } from "../actions/issues.ts";
+import { steerRepoRun } from "../actions/runs.ts";
 import { linkIssue, unlinkIssue } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { mapJson } from "../web/pages/map.ts";
@@ -2719,6 +2720,31 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!cancelled.ok) return respondAccess(cancelled.error, 409);
     return json(cancelled.value);
   });
+
+  // Say something to an agent mid-run.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/runs/:id/steer",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const input = await body(ctx.request);
+      const steered = steerRepoRun(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.id ?? "",
+        str(input.text),
+      );
+      if (!steered.ok)
+        return steered.error === "empty" || steered.error === "not_agent"
+          ? apiError(steered.error, 422, "say something, to an agent's run")
+          : respondAccess(steered.error, 409);
+      return json({ outcome: steered.value });
+    },
+  );
 
   // The checks on a pull: the deploy runs at its current head.
   router.add(

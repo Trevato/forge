@@ -7,6 +7,9 @@
  */
 
 import type { App } from "../app.ts";
+import { steerRun } from "../crew/runner.ts";
+import { getIssueById } from "../core/issues.ts";
+import { addComment } from "./issues.ts";
 import type { Repo } from "../core/repos.ts";
 import {
   cancelRun as markCancelled,
@@ -31,6 +34,8 @@ export function runPayload(run: Run): Record<string, unknown> {
     commitOid: run.commitOid,
     reason: run.reason,
     summary: run.summary,
+    costUsd: run.costUsd,
+    turns: run.turns,
     ...(run.issueId === null ? {} : { issueId: run.issueId }),
   };
 }
@@ -127,4 +132,39 @@ export function cancelRepoRun(
   if (run.kind === "agent") abortAgentRun(runId);
   announceRun(app, cancelled, writer.value.id);
   return ok(cancelled);
+}
+
+export type SteerOutcome =
+  /** The agent hears it at its next step. */
+  | "sent"
+  /** No session was listening; it went on the conversation for the next run. */
+  | "commented";
+
+/**
+ * Say something to an agent mid-run. A running agent hears it as its next
+ * user turn. A run that is queued, paused, or over has nobody listening,
+ * so the words go on the issue or pull instead, where the next run reads
+ * them — a feedback run, like any comment from a person.
+ */
+export function steerRepoRun(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  runId: string,
+  text: string,
+): Result<SteerOutcome, AccessError | "empty" | "not_agent"> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  const run = getRun(app.db, runId);
+  if (!run || run.repoId !== repo.id) return err("not_found");
+  if (run.kind !== "agent") return err("not_agent");
+  const said = text.trim();
+  if (said === "") return err("empty");
+  if (run.state === "running" && steerRun(app, run.id, said)) return ok("sent");
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  if (issue === undefined) return err("not_found");
+  const commented = addComment(app, writer.value, repo, issue, said);
+  if (!commented.ok) return err("forbidden");
+  return ok("commented");
 }

@@ -30,9 +30,10 @@ import {
   openPullsClosing,
   type Pull,
 } from "../../core/pulls.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
+  activeRunFor,
   automaticRunsSince,
   latestAgentRunsForRepos,
   latestRunsForIssues,
@@ -193,6 +194,8 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     if (!pull) continue;
     const check = checks.get(issue.id);
     const who = issue.authorName;
+    // The crew is on it: that is working, not a question for a person.
+    if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
     if (check?.state === "failed") {
       const since = lastHumanWord(ctx, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
@@ -316,12 +319,34 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
 
 // ---- studio words for what the crew is doing ----
 
+/**
+ * The one control a live run has: a person who can write here stops a
+ * running one or takes a queued one back off the board. Nothing for runs
+ * that are over, or for readers.
+ */
+function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
+  if (run.state !== "running" && run.state !== "queued") return null;
+  if (run.kind !== "agent") return null;
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return null;
+  return html`<form
+    method="post"
+    action="${repoBase(repo)}/runs/${run.id}/cancel"
+  >
+    ${btn(run.state === "running" ? "Stop" : "Cancel", {
+      size: "sm",
+      variant: "outline",
+    })}
+  </form>`;
+}
+
 type Word = "working" | "look" | "shipped" | "stopped" | "waiting" | "planned";
 
 function wordFor(run: Run): { word: Word; note: string } {
-  if (run.state === "queued") return { word: "waiting", note: "queued" };
+  if (run.state === "queued")
+    return run.notBefore === null
+      ? { word: "waiting", note: "queued" }
+      : { word: "waiting", note: "paused, resumes soon" };
   if (run.state === "running") return { word: "working", note: "now" };
-  return { word: "waiting", note: "paused, resumes soon" };
   if (run.state === "failed" || run.state === "cancelled")
     return { word: "stopped", note: run.summary || run.state };
   const summary = run.summary || "";
@@ -542,16 +567,22 @@ export async function studioApp(
           ? "crew"
           : (actors.get(r.actorId)?.username ?? "crew");
       const about = r.issueId === null ? undefined : issues.get(r.issueId);
+      const stop = stopForm(ctx, repo, r);
       return row({
-        href: `${base}/runs/${r.id}`,
-        nav: true,
+        ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
         lead: avatarOf(who),
-        title: about?.title ?? note,
+        title: stop
+          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
+          : (about?.title ?? note),
         meta: html`${who} · ${word === "working" ? "working now" : note}
         ${word === "working"
           ? null
           : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
-        trail: wordBadge(word),
+        trail: stop
+          ? html`<span class="studio-ask-actions"
+              >${wordBadge(word)} ${stop}</span
+            >`
+          : wordBadge(word),
       });
     }),
     ...waiting.map((i) =>
@@ -845,16 +876,27 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
               r.actorId === null
                 ? "crew"
                 : (runActors.get(r.actorId)?.username ?? "crew");
+            const stop = stopForm(ctx, repo, r);
             return row({
-              href: `${repoBase(repo)}/runs/${r.id}`,
-              nav: true,
+              ...(stop
+                ? {}
+                : { href: `${repoBase(repo)}/runs/${r.id}`, nav: true }),
               lead: icon(r.state === "running" ? "loader" : "clock"),
-              title: html`${who} · ${repo.name}`,
+              title: html`<a href="${repoBase(repo)}/runs/${r.id}"
+                >${who} · ${repo.name}</a
+              >`,
               meta: html`${r.state === "running"
                 ? "working"
                 : "waiting"}${r.startedAt
                 ? html` since ${time(r.startedAt)}`
                 : null}`,
+              ...(stop
+                ? {
+                    trail: html`<span class="studio-ask-actions"
+                      >${stop}</span
+                    >`,
+                  }
+                : {}),
             });
           }),
           {

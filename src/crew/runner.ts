@@ -87,6 +87,27 @@ export interface CrewOptions {
 
 export { crewRoot, workdirFor } from "./workdir.ts";
 
+/** Runs with an agent listening: what a person says reaches it next. */
+const steering = new Map<string, (text: string) => boolean>();
+
+/**
+ * Say something to an agent while its run goes. Written to the run's log
+ * as the person's line first, so the record holds it whether or not the
+ * agent gets to answer, then handed to the session as its next user turn.
+ * False when the run has no session listening: queued, ended, or between
+ * invocations.
+ */
+export function steerRun(app: App, runId: string, text: string): boolean {
+  const send = steering.get(runId);
+  if (send === undefined) return false;
+  appendRunLog(
+    app.config.dataDir,
+    runId,
+    `you: ${text.replace(/\s*\n\s*/g, " ")}`,
+  );
+  return send(text);
+}
+
 /** The share of a run's budget held back for finishing. */
 const RESERVE = 0.15;
 /** ...and never less than this: a wrap-up that cannot run a test is none. */
@@ -133,6 +154,7 @@ export async function executeAgentRun(
     };
   } finally {
     untrackAgentRun(run.id);
+    steering.delete(run.id);
     lease();
   }
   // Whatever the agent left running in its clone — a server it started to
@@ -457,6 +479,7 @@ async function work(
         timeoutMs: Math.max(deadline - Date.now(), 0),
         log: write,
         signal,
+        onSteer: (send) => steering.set(run.id, send),
       });
     write(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
