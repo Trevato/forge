@@ -69,7 +69,13 @@ around it. None is advisory.
 4. **A deployment is a check.** Every deploy is a run; the run's state is
    what the pull shows. With `require_checks` on, `mergePull` refuses
    `checks_required` until the head's deploy run is `ok`, read live inside
-   the merge — never from a status a caller computed earlier.
+   the merge — never from a status a caller computed earlier. Install still
+   comes first, but `test` and `start` run side by side: the environment is
+   swapped in and serving the moment the app answers, and the run stays
+   `running` — checking, not blocking — until `test` finishes and decides
+   `ok` or `failed`. A deployment that answers is what was asked for; the
+   suite going green is confirmed a few seconds later, not stood in front
+   of the door.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
    visibility), and it is set apart from the repository's own: the code can
@@ -186,9 +192,10 @@ verdict is a run of kind `check`, kept with its log beside the pull, in
 the same place a preview's deploy reports and read by the same code: the
 inbox badge, the pull's status, the crew. A failing check on an agent's
 pull goes back to the agent with the log's tail, as a failed preview does,
-bounded the same way. An app's own `test` still runs inside its deploy;
-`check` is for a repository that is not an app, or an app whose check is
-more than its test. `install` defaults to `bun install` when the package
+bounded the same way. An app's own `test` still runs inside its deploy,
+concurrently with `start` rather than before it; `check` is for a
+repository that is not an app, or an app whose check is more than its
+test. `install` defaults to `bun install` when the package
 declares dependencies; `timeout` is seconds, twenty minutes by default.
 A `check` that is present and wrong fails with the reason, so a commit is
 never silently unchecked. A check under way when the forge restarts is
@@ -376,8 +383,11 @@ many landed, pulls a person merged, spend, and the mean cost, time and
 turns of a run.
 
 On a pull, the runs for the current head are its checks. A deploy run that
-fails — install, build, test, or the app never answering — fails the check
-and the preview shows the log where it stopped. A push makes new runs;
+fails — install, build, or the app never answering — fails the check before
+anything serves; the preview shows the log where it stopped. A deploy whose
+app answers but whose `test` then fails is different: the preview keeps
+serving that commit, but the run still fails the check, and the page says
+in words that it is serving code whose tests failed. A push makes new runs;
 older ones are history, not status.
 
 ## The crew

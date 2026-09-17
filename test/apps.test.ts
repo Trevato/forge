@@ -391,10 +391,17 @@ describe("apps: production, previews, data, gates, crew", () => {
     const refused = await mergePull(app, alice, repo, opened.value, "merge");
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.error).toBe("checks_required");
-    // The preview shows why instead of a gateway error.
+    // The app itself never broke, only its tests: the preview answers with
+    // its own page rather than a gateway error, because a deployment that
+    // answers is what was asked for.
     const page = await viaHost(`hello--${opened.value.number}.${DOMAIN}`);
-    expect(page.status).toBe(502);
-    expect(await page.text()).toContain("test");
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(
+      `preview of pull #${opened.value.number}`,
+    );
+    const status = runtime.envStatus(record, `pull-${opened.value.number}`);
+    expect(status?.state).toBe("running");
+    expect(status?.error).toContain("tests failed");
 
     const fixed = await commitToBranch(app, alice, repo, {
       branch: "broken",
@@ -424,6 +431,72 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(merged.ok).toBe(true);
   }, 120_000);
+
+  test("a deploy whose test step sleeps: the preview answers before it finishes, and the run stays open until it does", async () => {
+    const committed = await commitToBranch(app, alice, repo, {
+      branch: "slow-test",
+      base: repo.defaultBranch,
+      message: "Slow test",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                run: "bun run src/server.ts",
+                test: "sleep 3 && bun test",
+                tty: "bun run src/tty.ts",
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const opened = await openPull(app, alice, repo, {
+      title: "Slow test",
+      baseBranch: repo.defaultBranch,
+      headBranch: "slow-test",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const start = Date.now();
+    const deadline = start + 15_000;
+    let answered = false;
+    while (Date.now() < deadline) {
+      if (
+        (await viaHost(`hello--${opened.value.number}.${DOMAIN}`)).status ===
+        200
+      ) {
+        answered = true;
+        break;
+      }
+      await Bun.sleep(50);
+    }
+    expect(answered).toBe(true);
+    // It answered well inside the test step's own sleep.
+    expect(Date.now() - start).toBeLessThan(3_000);
+
+    const status = runtime.envStatus(record, `pull-${opened.value.number}`);
+    expect(status?.state).toBe("running");
+    expect(status?.note).toContain("verifying its tests");
+
+    const run = listRuns(app.db, repo.id, {
+      env: `pull-${opened.value.number}`,
+    }).find((r) => r.commitOid === committed.value.commitOid);
+    expect(run?.state).toBe("running");
+
+    const done = await settled(
+      (r) =>
+        r.env === `pull-${opened.value.number}` &&
+        r.commitOid === committed.value.commitOid,
+    );
+    expect(done.state).toBe("ok");
+  }, 30_000);
 
   test("the crew: an agent reads and writes its repo, never the default branch, never a merge", async () => {
     const made = await createAgent(app, alice, {

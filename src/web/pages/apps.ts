@@ -459,7 +459,9 @@ const envFacts = (base: string, env: EnvStatus): Html =>
         html`<a href="${base}/runs/${id}"
           >${env.state === "deploying"
             ? "deploy in progress"
-            : "last deploy"}</a
+            : env.note !== undefined
+              ? "verifying tests"
+              : "last deploy"}</a
         >`,
     )}
   </div>`;
@@ -472,10 +474,13 @@ function envCard(base: string, env: EnvStatus, writer: boolean): Html {
       <p class="env-facts mt">
         <span class="mono truncate" title="${env.url}">${env.url}</span>
       </p>
+      ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
       ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}`,
     {
       extra: "env-card",
-      ...(env.state === "failed" ? { tone: "danger" as const } : {}),
+      ...(env.state === "failed" || env.error !== undefined
+        ? { tone: "danger" as const }
+        : {}),
       head: html`${icon(number === undefined ? "rocket" : "pull")}
         <h2>
           ${number === undefined
@@ -686,6 +691,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   }
   return card(
     html`${envFacts(base, env)}
+      ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
       ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
       <div class="bar mt">
         ${btn("Open preview", {
@@ -698,7 +704,9 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
     {
       head,
       extra: "env-card",
-      ...(env.state === "failed" ? { tone: "danger" as const } : {}),
+      ...(env.state === "failed" || env.error !== undefined
+        ? { tone: "danger" as const }
+        : {}),
     },
   );
 }

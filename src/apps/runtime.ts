@@ -37,6 +37,7 @@ import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
@@ -83,6 +84,13 @@ export interface EnvStatus {
   readonly runId?: string | undefined;
   readonly since?: string | undefined;
   readonly error?: string | undefined;
+  /**
+   * A running environment whose deploy is still checking itself: its tests
+   * are still running, or ran and failed. Never set while `state` is
+   * anything but `running` — a failed test never stops a deployment that
+   * already answers.
+   */
+  readonly note?: string | undefined;
 }
 
 interface Live {
@@ -93,6 +101,8 @@ interface Live {
   readonly since: string;
   /** How this checkout runs — its `tty` is what an ssh session opens. */
   readonly manifest: AppManifest;
+  /** Unset while tests are still running or there are none; the message once they fail. */
+  readonly testsFailed?: string | undefined;
 }
 
 /** A running environment, as a terminal session needs it. */
@@ -199,7 +209,14 @@ export class AppsRuntime {
 
   private describe(state: Environment): EnvStatus {
     const url = this.urlFor(state.app, state.env);
-    if (state.deploying !== undefined) {
+    // Once a deploy's own commit has answered and swapped in, it is
+    // "running" from here — even though its run stays open, checking its
+    // tests, until they finish. Only a build still short of that point (no
+    // live process yet, or the live one is an older commit) is "deploying".
+    const swapped =
+      state.deploying !== undefined &&
+      state.live?.commitOid === state.deploying.run.commitOid;
+    if (state.deploying !== undefined && !swapped) {
       return {
         env: state.env,
         state: "deploying",
@@ -217,8 +234,12 @@ export class AppsRuntime {
         commitOid: state.live.commitOid,
         url,
         port: state.live.handle.port,
-        runId: state.live.runId,
+        runId: swapped ? state.deploying!.run.id : state.live.runId,
         since: state.live.since,
+        ...(swapped ? { note: "serving — still verifying its tests" } : {}),
+        ...(state.live.testsFailed === undefined
+          ? {}
+          : { error: `serving — its tests failed: ${state.live.testsFailed}` }),
       };
     }
     return {
@@ -559,29 +580,9 @@ export class AppsRuntime {
         error: `deploy failed: ${error instanceof Error ? error.message : String(error)}`,
       }));
 
-    state.deploying = undefined;
-    lease();
-    if (outcome.ok) {
-      const previous = state.live;
-      state.live = outcome.value;
-      state.lastError = undefined;
-      if (previous !== undefined) {
-        write(
-          `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
-        );
-        await previous.handle.stop();
-        if (previous.dir !== outcome.value.dir)
-          rmSync(previous.dir, { recursive: true, force: true });
-      }
-      this.watch(state, repo, outcome.value);
-      const url = this.urlFor(state.app, state.env);
-      const done = finishRun(this.app.db, run.id, {
-        state: "ok",
-        summary: `running at ${url}`,
-      });
-      write(`done: ${url}`);
-      if (done) announceRun(this.app, done);
-    } else {
+    if (!outcome.ok) {
+      state.deploying = undefined;
+      lease();
       state.lastError = outcome.error;
       const done = finishRun(this.app.db, run.id, {
         state: "failed",
@@ -593,7 +594,50 @@ export class AppsRuntime {
           `the previous deployment (${state.live.commitOid.slice(0, 7)}) keeps serving`,
         );
       if (done) announceRun(this.app, done);
+      return;
     }
+
+    // It answers: swap it in now, before its tests are done. `state.deploying`
+    // stays set — the run is still open, and a stop or a teardown must still
+    // be able to reach in and kill the test step — until they finish below.
+    const previous = state.live;
+    state.live = outcome.value;
+    state.lastError = undefined;
+    if (previous !== undefined) {
+      write(
+        `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
+      );
+      await previous.handle.stop();
+      if (previous.dir !== outcome.value.dir)
+        rmSync(previous.dir, { recursive: true, force: true });
+    }
+    this.watch(state, repo, outcome.value);
+    const url = this.urlFor(state.app, state.env);
+    write(`serving ${url}`);
+
+    const tested = await outcome.tested;
+    state.deploying = undefined;
+    lease();
+    if (tested.ok) {
+      const done = finishRun(this.app.db, run.id, {
+        state: "ok",
+        summary: `running at ${url}`,
+      });
+      write(`done: ${url}`);
+      if (done) announceRun(this.app, done);
+      return;
+    }
+    // The tests failed, but the deployment that answered is what was asked
+    // for: it keeps serving, and the run — the check a pull shows — fails.
+    if (state.live === outcome.value)
+      state.live = { ...outcome.value, testsFailed: tested.error };
+    const done = finishRun(this.app.db, run.id, {
+      state: "failed",
+      summary: `test: ${tested.error}`,
+    });
+    write(`failed: test: ${tested.error}`);
+    write(`serving ${url} anyway — its tests failed`);
+    if (done) announceRun(this.app, done);
   }
 
   private async bringUp(
@@ -602,7 +646,10 @@ export class AppsRuntime {
     run: Run,
     write: (line: string) => void,
     signal: AbortSignal,
-  ): Promise<{ ok: true; value: Live } | { ok: false; error: string }> {
+  ): Promise<
+    | { ok: true; value: Live; tested: Promise<Result<void, string>> }
+    | { ok: false; error: string }
+  > {
     const bare = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
@@ -668,12 +715,13 @@ export class AppsRuntime {
       ok: true,
       value: {
         commitOid: run.commitOid,
-        handle: started.value,
+        handle: started.value.handle,
         dir,
         runId: run.id,
         since: new Date().toISOString(),
         manifest: manifest.value,
       },
+      tested: started.value.tested,
     };
   }
 

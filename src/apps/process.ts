@@ -1,8 +1,9 @@
 /**
- * One deployment's process: install, test, start, and wait until it
- * answers. Everything the app is handed is listed here and nothing else
- * reaches it — the forge's own environment carries secrets, and a child
- * inherits exactly what `childEnv` names (rule 8 in docs/APPS.md).
+ * One deployment's process: install, then start the app and run its tests
+ * side by side, and wait until the app answers. Everything the app is
+ * handed is listed here and nothing else reaches it — the forge's own
+ * environment carries secrets, and a child inherits exactly what `childEnv`
+ * names (rule 8 in docs/APPS.md).
  *
  * Commands run through `sh -c` with an `exec` in front, so the shell
  * replaces itself with the app and a signal to the pid is a signal to the
@@ -46,6 +47,17 @@ export type StartStage = "install" | "test" | "start" | "ready";
 export interface StartError {
   readonly stage: StartStage;
   readonly message: string;
+}
+
+export interface StartedProcess {
+  readonly handle: ProcessHandle;
+  /**
+   * The `test` step's outcome. Already running by the time this resolves —
+   * it started alongside `start`, not before it — so a caller that wants a
+   * fast preview can swap the handle in now and await this afterwards.
+   * `ok()` immediately when the manifest has no `test`.
+   */
+  readonly tested: Promise<Result<void, string>>;
 }
 
 const STEP_TIMEOUT_MS = 10 * 60_000;
@@ -177,13 +189,15 @@ export async function runStep(
 }
 
 /**
- * Install, test, start, and wait for the app to answer on its port.
- * Returns the running process; on failure the process (if it started) is
- * already gone.
+ * Install, then start the app and run its tests side by side, and wait for
+ * the app to answer on its port. Returns as soon as it does — `tested`
+ * keeps running and is the caller's to await — so a preview is never held
+ * behind its own test suite. On failure the process (if it started) and the
+ * test step (if one was running) are both already gone.
  */
 export async function startProcess(
   input: StartInput,
-): Promise<Result<ProcessHandle, StartError>> {
+): Promise<Result<StartedProcess, StartError>> {
   const { manifest, log } = input;
   const stepEnv = childEnv({
     CI: "1",
@@ -200,17 +214,27 @@ export async function startProcess(
     if (!installed.ok)
       return err({ stage: "install", message: installed.error });
   }
-  if (manifest.test !== null) {
-    const tested = await runStep("test", manifest.test, {
-      cwd: input.dir,
-      env: stepEnv,
-      log,
-      signal: input.signal,
-    });
-    if (!tested.ok) return err({ stage: "test", message: tested.error });
-  }
   if (input.signal.aborted)
     return err({ stage: "start", message: "cancelled" });
+
+  // `test` starts here, alongside the app below, and is aborted on its own
+  // signal — a start failure must not leave it running past its run, and
+  // neither may the caller's abort after this function has already returned.
+  const testAbort = new AbortController();
+  if (input.signal.aborted) testAbort.abort();
+  else
+    input.signal.addEventListener("abort", () => testAbort.abort(), {
+      once: true,
+    });
+  const tested: Promise<Result<void, string>> =
+    manifest.test === null
+      ? Promise.resolve(ok())
+      : runStep("test", manifest.test, {
+          cwd: input.dir,
+          env: stepEnv,
+          log,
+          signal: testAbort.signal,
+        });
 
   const port = freePort();
   log(`$ ${manifest.run}  (PORT=${port})`);
@@ -267,6 +291,10 @@ export async function startProcess(
   });
   if (!ready.ok) {
     await handle.stop();
+    // The app never came up: the test step running beside it has nothing
+    // left to verify, and must not outlive this failed run.
+    testAbort.abort();
+    await tested.catch(() => {});
     const tail =
       recent.length > 0
         ? ` — last output: ${recent.slice(-3).join(" | ")}`
@@ -277,7 +305,7 @@ export async function startProcess(
     });
   }
   log(`ready: ${input.url}`);
-  return ok(handle);
+  return ok({ handle, tested });
 }
 
 /**
