@@ -12,10 +12,11 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getIssue, listIssues } from "../src/core/issues.ts";
-import { getPull } from "../src/core/pulls.ts";
+import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
+import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("the studio", () => {
@@ -201,5 +202,165 @@ describe("the studio", () => {
     // What was told and then shipped is not still "waiting" in Now.
     expect(page).not.toContain(">waiting<");
     expect(getUserByName(app.db, "scout")).toBeDefined();
+  });
+
+  test("several asks, one decision: a box per ask, one bar, one post; in place when asked for JSON", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    // The crew proposes: a pull by scout on its own branch.
+    const ask = async (name: string): Promise<Pull> => {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: `ask/${name}`,
+        base: "main",
+        message: `Ask ${name}`,
+        files: [{ path: `${name}.md`, content: `${name}\n` }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, scout, repo, {
+        title: `Ask ${name}`,
+        body: "",
+        baseBranch: "main",
+        headBranch: `ask/${name}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      return opened.value;
+    };
+    const check = (pull: Pull, state: "ok" | "failed") => {
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: pull.id,
+        env: `pull-${pull.number}`,
+        commitOid: pull.headOid,
+        reason: "pull",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state, summary: `check ${state}` });
+    };
+    const a = await ask("a");
+    const b = await ask("b");
+    const c = await ask("c");
+    const d = await ask("d");
+    check(a, "ok");
+    check(b, "ok");
+    check(d, "ok");
+    // c: red, and the crew tried its limit since anyone spoke — it stopped.
+    check(c, "failed");
+    await Bun.sleep(5);
+    for (let i = 0; i < CHECK_FAILED_LIMIT; i++)
+      createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: c.id,
+        reason: "check_failed",
+        actorId: scout.id,
+      });
+
+    // (a) One box per ask, one form around them, the bar's actions, and a
+    // row's own form outside the panel's — never a form in a form.
+    const page = await (await get("/alice/notes")).text();
+    expect(page.match(/class="studio-ask-pick"/g)?.length).toBe(4);
+    expect(page).toContain(`value="look:${a.id}"`);
+    expect(page).toContain(`value="stopped:${c.id}"`);
+    expect(page).toContain('action="/studio/asks"');
+    expect(page).toMatch(/name="action"\s+value="ship"/);
+    expect(page).toMatch(/name="action"\s+value="close"/);
+    expect(page).toContain(`form="ask-look:${a.id}"`);
+    expect(page).toContain(`id="ask-look:${a.id}"`);
+    expect(page).toContain(`id="ask-stopped:${c.id}"`);
+    const panel = page.slice(page.indexOf('action="/studio/asks"'));
+    expect(panel.slice(0, panel.indexOf("</form>"))).not.toContain("<form");
+
+    // (b) One decision for two; the third does not take it and is skipped.
+    const bulk = (body: [string, string][], accept?: string) =>
+      fetch(`${base}/studio/asks`, {
+        method: "POST",
+        headers: {
+          cookie: `${cookie}; forge_mode=studio`,
+          origin: base,
+          ...(accept === undefined ? {} : { accept }),
+        },
+        body: new URLSearchParams(body),
+        redirect: "manual",
+      });
+    const shipped = await bulk([
+      ["ask", `look:${a.id}`],
+      ["ask", `look:${b.id}`],
+      ["ask", `stopped:${c.id}`],
+      ["action", "ship"],
+      ["back", "/alice/notes"],
+    ]);
+    expect(shipped.status).toBe(303);
+    expect(shipped.headers.get("location")).toBe("/alice/notes");
+    expect(
+      decodeURIComponent(shipped.headers.get("set-cookie") ?? ""),
+    ).toContain("Shipped 2 · skipped 1");
+    expect(getPull(app.db, repo.id, a.number)?.mergedAt).not.toBeNull();
+    expect(getPull(app.db, repo.id, b.number)?.mergedAt).not.toBeNull();
+    expect(getPull(app.db, repo.id, c.number)?.state).toBe("open");
+
+    // (c) Asked for JSON, the route says what was done and what was skipped
+    // — an ask already decided is skipped, not guessed at.
+    const closed = await bulk(
+      [
+        ["ask", `stopped:${c.id}`],
+        ["ask", `look:${a.id}`],
+        ["action", "close"],
+      ],
+      "application/json",
+    );
+    expect(closed.status).toBe(200);
+    expect(await closed.json()).toEqual({
+      ok: true,
+      flash: "Closed 1 · skipped 1",
+      done: [`stopped:${c.id}`],
+      skipped: [`look:${a.id}`],
+      failed: [],
+    });
+    expect(getPull(app.db, repo.id, c.number)?.state).toBe("closed");
+    const nothing = await bulk(
+      [
+        ["ask", "look:nothing"],
+        ["action", "close"],
+      ],
+      "application/json",
+    );
+    expect(nothing.status).toBe(422);
+    expect(await nothing.json()).toEqual({
+      ok: false,
+      error: "Closed 0 · skipped 1",
+      done: [],
+      skipped: ["look:nothing"],
+      failed: [],
+    });
+
+    // (d) A row's own button answers the same two ways: JSON when asked,
+    // the redirect and flash otherwise.
+    const ship = (accept?: string) =>
+      fetch(`${base}/alice/notes/pulls/${d.number}/ship`, {
+        method: "POST",
+        headers: {
+          cookie: `${cookie}; forge_mode=studio`,
+          origin: base,
+          ...(accept === undefined ? {} : { accept }),
+        },
+        redirect: "manual",
+      });
+    const inPlace = await ship("application/json");
+    expect(inPlace.status).toBe(200);
+    expect(await inPlace.json()).toEqual({
+      ok: true,
+      flash: 'Shipped "Ask d". Production is redeploying.',
+    });
+    expect(getPull(app.db, repo.id, d.number)?.mergedAt).not.toBeNull();
+    const refused = await ship("application/json");
+    expect(refused.status).toBe(422);
+    expect(await refused.json()).toMatchObject({ ok: false });
+    const plain = await ship();
+    expect(plain.status).toBe(303);
+    expect(plain.headers.get("location")).toBe("/alice/notes");
+    // Nothing asks any more: no box, no panel.
+    const after = await (await get("/alice/notes")).text();
+    expect(after).not.toContain('class="studio-ask-pick"');
+    expect(after).not.toContain('action="/studio/asks"');
   });
 });
