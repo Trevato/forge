@@ -183,13 +183,17 @@ passed before autonomy was on — land, so nothing green waits on chance.
 
 **What holds it.** The ceiling is dollars of agent spend per UTC day; at
 the ceiling the crew stops picking until midnight, and nothing in flight is
-cut. Slots are runs at once — the WIP limit — and a repository never
-starts more than that, whatever the forge-wide concurrency allows. A
-failing check on an agent's pull goes back to the agent as ever, and after
-the same bounded number of tries the crew stops and waits for a person:
-autonomy re-queues nothing a person must decide. The map page says how it
-stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why it is
-paused when it is.
+cut. Slots are the builders' runs at once — the WIP limit — and a
+repository never starts more than that, whatever the forge-wide concurrency
+allows. A reviewer's pass over a pull and a planner's run on the direction
+take no slot: they refill the map rather than work it, and they never keep
+a builder from picking the next issue. The number a page shows is that
+same count, so what the page says and what the loop gates on are one
+thing. A failing check on an agent's pull goes back to the agent as ever,
+and after the same bounded number of tries the crew stops and waits for a
+person: autonomy re-queues nothing a person must decide. The map page says
+how it stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why
+it is paused when it is.
 
 ## The decider
 

@@ -447,3 +447,106 @@ describe("a repository on its own", () => {
     expect(map).toContain("of $25 today");
   });
 });
+
+/**
+ * One rule says which runs in flight spend a slot, and the number a page
+ * shows is the number the loop gates on — never more than the slots.
+ */
+describe("the slot count is the rule the loop enforces", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let repo: Repo;
+  let builder: User;
+  let reviewer: User;
+  let planner: User;
+  const work: Issue[] = [];
+  const fresh = () => getRepoById(app.db, repo.id)!;
+  const running = (issue: Issue, actor: User, reason: string) => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: actor.id,
+      reason,
+    });
+    claimRun(app.db, run.id);
+    return run;
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-slots-"));
+    app = createApp({ dataDir, port: 0 });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, {
+      name: "loom",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# loom\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    for (const name of ["brick", "quill", "chart"]) {
+      const agent = await createAgent(app, alice, { username: name });
+      if (!agent.ok) throw new Error(String(agent.error));
+      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+    }
+    const byName = (await import("../src/core/users.ts")).getUserByName;
+    builder = byName(app.db, "brick")!;
+    reviewer = byName(app.db, "quill")!;
+    planner = byName(app.db, "chart")!;
+    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    setCrewRole(app.db, repo.id, planner.id, "planner");
+    for (const title of ["Warp", "Weft", "Shuttle", "Heddle"]) {
+      const opened = openIssue(app, alice, repo, { title });
+      if (!opened.ok) throw new Error(String(opened.error));
+      work.push(opened.value);
+    }
+    const on = await updateRepoSettings(app, alice, repo, {
+      autonomy: "autonomous",
+      autonomyDirection: "",
+      autonomyCeilingUsd: 10,
+      autonomySlots: 2,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a review and a planner's run take no slot: one builder of two slots, and a builder still starts", async () => {
+    running(work[0]!, builder, "assigned");
+    running(work[3]!, reviewer, "review");
+    running(work[2]!, planner, "assigned");
+    const status = autonomyStatus(app, fresh());
+    expect(status.slots).toBe(2);
+    expect(status.active).toBe(1);
+    // Three runs are in flight; one of them spends a slot.
+    expect(listRuns(app.db, repo.id, { kind: "agent" }).length).toBe(3);
+    expect(await driveRepo(app, fresh())).toBe("picked");
+    expect(getIssue(app.db, repo.id, work[1]!.number)!.assigneeId).toBe(
+      builder.id,
+    );
+  });
+
+  test("two builder runs fill both slots: 2 of 2, and the loop says full", async () => {
+    running(work[1]!, builder, "assigned");
+    const status = autonomyStatus(app, fresh());
+    expect(status.active).toBe(2);
+    expect(status.active).toBeLessThanOrEqual(status.slots);
+    expect(await driveRepo(app, fresh())).toBe("full");
+  });
+});

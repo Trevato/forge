@@ -86,7 +86,10 @@ export interface AutonomyStatus {
   readonly spentTodayUsd: number;
   readonly ceilingUsd: number;
   readonly slots: number;
-  /** Agent runs queued or running here now. */
+  /**
+   * Agent runs in flight here that spend a slot — what `slottedRuns` counts,
+   * which is what the loop gates on. Not every run in flight: see there.
+   */
   readonly active: number;
   readonly paused: Paused | null;
   /** When a ceiling pause lifts: the next UTC midnight. */
@@ -120,6 +123,32 @@ function activeRuns(app: App, repoId: string) {
   return listActive(app.db, "agent").filter((r) => r.repoId === repoId);
 }
 
+/**
+ * Of the agent runs in flight here, the ones that spend a slot. Slots are
+ * the builders' work-in-progress limit, so two kinds of run take none: a
+ * review, which is the reviewer's short pass over a pull and must never
+ * keep a builder from picking up the next issue, and any run by a planner
+ * or a reviewer, whose work refills the map rather than works it.
+ *
+ * The rule lives here only: `driveRepo` gates on this set and
+ * `autonomyStatus` counts it, so the number a page shows is the number the
+ * loop enforces. The runs it leaves out are still in flight and still shown
+ * — Now on the studio page lists every one of them.
+ */
+export function slottedRuns(
+  active: readonly Run[],
+  crew: readonly { readonly agent: Agent; readonly role: CrewRole }[],
+): Run[] {
+  const notBuilders = new Set(
+    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
+  );
+  return active.filter(
+    (r) =>
+      r.reason !== "review" &&
+      (r.actorId === null || !notBuilders.has(r.actorId)),
+  );
+}
+
 export function autonomyStatus(
   app: App,
   repo: Repo,
@@ -144,7 +173,7 @@ export function autonomyStatus(
     spentTodayUsd: spent,
     ceilingUsd: repo.autonomyCeilingUsd,
     slots: repo.autonomySlots,
-    active: activeRuns(app, repo.id).length,
+    active: slottedRuns(activeRuns(app, repo.id), crew).length,
     paused,
     resumesAt: paused === "ceiling" ? tomorrow.toISOString() : null,
   };
@@ -171,15 +200,11 @@ export async function driveRepo(
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
-  // Slots bound the builders. A review is the reviewer's short pass on a
-  // pull and never keeps a builder from picking the next issue.
+  // An issue a planner or a reviewer holds is theirs, not a builder's.
   const planners = new Set(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
-  const slotted = active.filter(
-    (r) =>
-      r.reason !== "review" && (r.actorId === null || !planners.has(r.actorId)),
-  );
+  const slotted = slottedRuns(active, crew);
   if (slotted.length >= repo.autonomySlots) {
     // The builders are busy; the planner can still refill the map.
     if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";

@@ -14,7 +14,13 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import {
+  commitToBranch,
+  createRepo,
+  updateRepoSettings,
+} from "../src/actions/repos.ts";
+import { setCrewRole } from "../src/core/agents.ts";
 import { getIssue, listIssues } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
@@ -1195,5 +1201,115 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(live).not.toContain("starting");
     expect(live).toContain(">live<");
     expect(live).toContain(link);
+  });
+});
+
+/**
+ * On its own: the slots line counts what the loop counts — the builders —
+ * while Now still shows every run in flight, review and plan included.
+ */
+describe("the studio's slot count", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let cookie: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-slots-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "loom",
+      visibility: "private",
+      description: "a place for cloth",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# loom\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "loom" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    for (const name of ["brick", "quill", "chart"]) {
+      const agent = await createAgent(app, alice, { username: name });
+      if (!agent.ok) throw new Error(String(agent.error));
+      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+    }
+    const reviewer = getUserByName(app.db, "quill")!;
+    const planner = getUserByName(app.db, "chart")!;
+    setCrewRole(app.db, repo.id, reviewer.id, "reviewer");
+    setCrewRole(app.db, repo.id, planner.id, "planner");
+    const on = await updateRepoSettings(app, alice, repo, {
+      autonomy: "autonomous",
+      autonomyDirection: "",
+      autonomyCeilingUsd: 10,
+      autonomySlots: 2,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+    // One builder building, one reviewer reviewing, one planner planning.
+    const inFlight: [string, User, string][] = [
+      ["Warp the loom", getUserByName(app.db, "brick")!, "assigned"],
+      ["Look at the shuttle", reviewer, "review"],
+      ["Plan the next cloth", planner, "assigned"],
+    ];
+    for (const [title, actor, reason] of inFlight) {
+      const issue = openIssue(app, alice, repo, { title });
+      if (!issue.ok) throw new Error(String(issue.error));
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: issue.value.id,
+        actorId: actor.id,
+        reason,
+      });
+      claimRun(app.db, run.id);
+    }
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("reads 1 of 2 in use with three runs in flight, and Now still lists all three", async () => {
+    const page = await (
+      await fetch(`${base}/alice/loom`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(page).toContain("1 of 2 in use");
+    expect(page).not.toContain("3 of 2");
+    expect(page).not.toContain("2 of 2");
+    // The runs that take no slot are not hidden: Now has all of them.
+    expect(page).toContain("Warp the loom");
+    expect(page).toContain("Look at the shuttle");
+    expect(page).toContain("Plan the next cloth");
   });
 });
