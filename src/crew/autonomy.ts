@@ -24,7 +24,12 @@ import { mergeable, resolveOid } from "../git/merge.ts";
 import { listReviews } from "../core/reviews.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
-import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
+import {
+  listCrewRoles,
+  type Agent,
+  type CrewRole,
+  crewRole,
+} from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import { latestDecision, resolveOpen } from "../core/decisions.ts";
@@ -166,7 +171,10 @@ export async function driveRepo(
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
-  if (active.length >= repo.autonomySlots) return "full";
+  // Slots bound the builders. A review is the reviewer's short pass on a
+  // pull and never keeps a builder from picking the next issue.
+  const slotted = active.filter((r) => r.reason !== "review");
+  if (slotted.length >= repo.autonomySlots) return "full";
 
   const busyIssues = new Set(active.map((r) => r.issueId));
   const inFlight = new Map<string, number>();
@@ -293,6 +301,65 @@ export function parkedCount(app: App, issueId: string): number {
     >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND body LIKE 'Parked by the crew%'")
     .get(issueId);
   return row?.n ?? 0;
+}
+
+/**
+ * Park an issue: a note with the reason and the assignee cleared, so the
+ * planner rewrites it on its next pass and the crew tries it fresh once.
+ */
+export function parkIssue(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  why: string,
+): boolean {
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by || issue.state !== "open") return false;
+  if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
+  addComment(app, by, repo, issue, `Parked by the crew: ${why}`);
+  log.info("parked", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    issue: issue.number,
+    why,
+  });
+  return true;
+}
+
+/**
+ * After a builder's run on an issue ends without a pull to show for it —
+ * declined, out of budget, or simply nothing pushed — the issue is parked
+ * rather than left stalled: one fresh try later, then the planner's.
+ */
+export function settleAgentRun(
+  app: App,
+  repo: Repo,
+  run: {
+    readonly issueId: string;
+    readonly state: string;
+    readonly summary: string;
+    readonly reason: string;
+    readonly actorId: string | null;
+  },
+): boolean {
+  if (repo.autonomy !== "autonomous") return false;
+  if (run.state !== "ok" && run.state !== "failed") return false;
+  if (run.reason === "review") return false;
+  if (/opened pull #|updated pull #/.test(run.summary)) return false;
+  const issue = getIssueById(app.db, run.issueId);
+  if (!issue || issue.kind !== "issue" || issue.state !== "open") return false;
+  if (issue.id === repo.directionIssueId) return false;
+  if (
+    run.actorId !== null &&
+    crewRole(app.db, repo.id, run.actorId) !== "builder"
+  )
+    return false;
+  return parkIssue(
+    app,
+    repo,
+    issue,
+    `the run ended without a pull: ${run.summary || run.state}`,
+  );
 }
 
 /**

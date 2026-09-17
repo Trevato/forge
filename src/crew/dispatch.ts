@@ -46,6 +46,7 @@ import {
   autonomyTick,
   landIfGreen,
   parkPull,
+  settleAgentRun,
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
 import { certain, decideOr } from "./decide.ts";
@@ -298,6 +299,22 @@ function route(app: App, event: ForgeEvent): void {
       return;
     }
     case "run.finished": {
+      if (event.payload["kind"] === "agent") {
+        // A builder's run that ends with nothing to show parks its issue.
+        const issueId = event.payload["issueId"];
+        const runId = event.payload["runId"];
+        const finished =
+          typeof runId === "string" ? getRun(app.db, runId) : undefined;
+        if (typeof issueId === "string")
+          settleAgentRun(app, repo, {
+            issueId,
+            state: String(event.payload["state"] ?? ""),
+            summary: String(event.payload["summary"] ?? ""),
+            reason: String(event.payload["reason"] ?? ""),
+            actorId: finished?.actorId ?? null,
+          });
+        return;
+      }
       if (
         event.payload["kind"] !== "deploy" &&
         event.payload["kind"] !== "check"
