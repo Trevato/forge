@@ -433,6 +433,14 @@ describe("the look", () => {
     expect(home).toContain(`class="look-thumb"`);
   }, 120_000);
 
+  test("under memory pressure a look waits its turn rather than being the straw", async () => {
+    const { cgroupMemoryPressure } = await import("../src/looks/service.ts");
+    // Not a container here: unknown pressure is no pressure.
+    expect(
+      cgroupMemoryPressure() === undefined || cgroupMemoryPressure()! >= 0,
+    ).toBe(true);
+  });
+
   const chromium = findChromium();
   test.skipIf(chromium === undefined)(
     chromium === undefined

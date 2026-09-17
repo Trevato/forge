@@ -12,6 +12,7 @@
  * environment does — a preview's go when its pull closes.
  */
 
+import { readFileSync } from "node:fs";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
@@ -41,7 +42,32 @@ export interface LooksOptions {
   readonly localUrl: string;
   /** What takes the picture. Chromium unless a test says otherwise. */
   readonly capture?: Capture | undefined;
+  /**
+   * How full the process's memory is, 0 to 1, or undefined when unknown.
+   * The container's cgroup unless a test says otherwise. A browser is the
+   * one thing here that can tip a pod over its limit, so a look waits
+   * while two agent runs are at their peak rather than being the straw.
+   */
+  readonly pressure?: (() => number | undefined) | undefined;
 }
+
+/** The share of the memory limit in use, read from cgroup v2, if this is a container. */
+export function cgroupMemoryPressure(): number | undefined {
+  try {
+    const current = Number(
+      readFileSync("/sys/fs/cgroup/memory.current", "utf8"),
+    );
+    const max = readFileSync("/sys/fs/cgroup/memory.max", "utf8").trim();
+    if (!Number.isFinite(current) || max === "max") return undefined;
+    const limit = Number(max);
+    return limit > 0 ? current / limit : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Above this share of the limit, a look waits. */
+const PRESSURE_CEILING = 0.7;
 
 export interface LooksHandle {
   /** Settles once every look queued so far is taken or dropped. */
@@ -150,6 +176,15 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
           app: next.appId,
           env: next.env,
         });
+        continue;
+      }
+      // Memory first: a capture behind two agent runs at their peak waits
+      // its turn, and gives up with the rest of the queue's patience.
+      const pressure = options.pressure ?? cgroupMemoryPressure;
+      if ((pressure() ?? 0) > PRESSURE_CEILING) {
+        if (stopped) return;
+        queue.unshift(next);
+        await Bun.sleep(15_000);
         continue;
       }
       try {
