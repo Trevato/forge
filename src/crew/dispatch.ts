@@ -47,6 +47,7 @@ import {
   landIfGreen,
   parkPull,
   settleAgentRun,
+  spentToday,
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
 import { certain, decideOr } from "./decide.ts";
@@ -202,6 +203,22 @@ export function queueAgentRun(
   actorId?: string,
   again?: { notBefore: string; attempt: number; summary: string },
 ): Run | undefined {
+  // The day's ceiling gates every run the crew starts on its own, not only
+  // the picks: a review, a feedback run or a conflict run past the ceiling
+  // is money the person did not agree to. A person's own assignment is not
+  // the crew's.
+  if (
+    reason !== "assigned" &&
+    repo.autonomy === "autonomous" &&
+    spentToday(app.db, repo.id) >= repo.autonomyCeilingUsd
+  ) {
+    log.info("at the ceiling; not queued", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      issue: issue.number,
+      reason,
+    });
+    return undefined;
+  }
   const active = activeRunFor(app.db, "agent", issue.id);
   // One queued follow-up is enough: the run that eventually starts reads
   // the whole conversation since the last one, so nothing is lost. The

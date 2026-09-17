@@ -577,6 +577,24 @@ describe("the decision ledger", () => {
     updateRepoSettings(app.db, fresh(), { autonomySlots: 2 });
   });
 
+  test("the ceiling gates every run the crew starts on its own; a person's assignment is not the crew's", async () => {
+    const { queueAgentRun } = await import("../src/crew/dispatch.ts");
+    const { getAgentByName } = await import("../src/core/agents.ts");
+    const work = openIssue(app, alice, repo, { title: "Loyalty points" });
+    if (!work.ok) throw new Error(String(work.error));
+    const scoutAgent = getAgentByName(app.db, "scout")!;
+    updateRepoSettings(app.db, fresh(), { autonomyCeilingUsd: 0 });
+    // At the ceiling: no feedback run.
+    expect(
+      queueAgentRun(app, fresh(), work.value, scoutAgent, "feedback"),
+    ).toBeUndefined();
+    // A person's assignment still runs.
+    expect(
+      queueAgentRun(app, fresh(), work.value, scoutAgent, "assigned"),
+    ).toBeDefined();
+    updateRepoSettings(app.db, fresh(), { autonomyCeilingUsd: 20 });
+  });
+
   test("the ledger is on the API, newest first, with the week per kind", async () => {
     const { createToken } = await import("../src/core/tokens.ts");
     const token = createToken(app.db, alice.id, "ledger", "ro");
