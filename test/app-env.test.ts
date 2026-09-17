@@ -201,6 +201,7 @@ describe("an app's environment", () => {
       url: "http://hello.apps.test",
       commitOid: "abc1234",
       forgeUrl: "http://forge.test",
+      identityKey: "test-identity-key",
       vars: {
         PORT: "1",
         HOST: "0.0.0.0",

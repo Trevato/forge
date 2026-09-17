@@ -255,6 +255,38 @@ section above lists, and its first sign-up is its admin, as on any fresh
 forge. `install` is empty because the forge has no dependencies to fetch;
 `ready` is generous because the first boot migrates.
 
+## Who is there: identity from the forge
+
+An app never writes sign-in. The forge tells it who is there, on every
+request it proxies, in two headers:
+
+- `x-forge-identity` — `<user id>|<username>|<role>|<expiry ms>`, where the
+  role is `user` (a signed-in person who can see the app's repository) or
+  `admin` (one who can write it);
+- `x-forge-signature` — the HMAC-SHA256 of that exact string, base64url,
+  under the app's identity key, which the forge hands the app as
+  `FORGE_APP_IDENTITY_KEY` when it starts it (the same key for production
+  and every preview of the app, a different key for every app, derived from
+  the forge's own so nothing new is stored).
+
+No headers means nobody the forge could name: a visitor to a public app who
+never signed in. The forge drops any copy of these headers a client sends
+before it speaks, so a verified signature is the only thing an app has to
+trust — and it must verify: a constant-time compare of the signature and a
+check that the expiry is in the future (`src/who.ts` in the template does
+exactly this).
+
+Behind the headers is the grant. A person who opens an app through the
+forge — the app's link, or the app's own **Sign in** — is sent to
+`/apps/open`, which vouches for them if they can see the repository and
+sends them back with a signed grant in a cookie naming them (twelve hours,
+HttpOnly, SameSite=Lax). The forge answers two paths on every app's host:
+`/__forge/signin?to=<path>` starts that round trip, and
+`/__forge/signout?to=<path>` drops the grant. A private app admits nobody
+without a grant; a public app admits everyone, and names those who have one.
+An app of a forge hosted here (a nested hostname) routes both paths through
+to that forge, which speaks for its own apps.
+
 ## A terminal for every app
 
 The forge's own port answers `ssh`, and the login name picks what opens:

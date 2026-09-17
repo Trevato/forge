@@ -155,6 +155,28 @@ Where it decides today:
   sentence is told in the studio and when a repository on its own picks
   from the map. An issue already assigned to a builder keeps its builder;
   the decider is not asked.
+- **Which issue next** (`crew/autonomy.ts`, `nextOf`): when a repository
+  on its own has more than one ready issue, the decider chooses among the
+  first six with the direction in hand. The rule takes the top of the ready
+  list, the critical path.
+- **Ship or show** (`shipOrShow`): a green pull in an autonomous repository
+  lands by rule. The decider reads the pull against the direction and may
+  say _show_: the pull stays open and appears in the studio as a look,
+  saying the decider asked. One answer per head; a new push is asked again.
+- **Try again or stop** (`crew/dispatch.ts`, `retryOrStop`): a failed check
+  gets another automatic run by rule, up to the limit. The decider reads
+  the failure, the log's tail and the count, and may stop sooner, before
+  the run's money is spent; the pull then waits for a person as a stopped
+  ask.
+
+**The ledger.** Each of these is written to the `decision` table
+(`core/decisions.ts`): what the decider saw, what it answered and with what
+probability, who answered (the decider or the rule), and later what came of
+it — a shown pull shipped or closed by a person, a retry's next check green
+or red, a picked issue shipped. `GET /api/v1/repos/:owner/:name/decisions`
+lists it with the week summed per kind. It is the value function's raw
+material: whether the decider beats the rule is a query, not an opinion.
+
 - **A red check** (`crew/dispatch.ts`): from the tail of the check's log,
   whether the change, the environment or the base branch failed. When it
   is the environment's fault, at 70% or better, the check runs again once

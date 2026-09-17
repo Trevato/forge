@@ -397,6 +397,7 @@ describe("rule 8: a child inherits nothing it was not handed", () => {
         url: "http://hello.apps.test",
         commitOid: "abc123",
         forgeUrl: "http://forge.test",
+        identityKey: "test-identity-key",
       });
       for (const key of Object.keys(SECRETS)) expect(env[key]).toBeUndefined();
       expect(env["FORGE_APP_DATA"]).toBe("/data/apps/x/production/data");
@@ -1233,8 +1234,8 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     // Tampered signature: the payload is untouched, but the MAC no longer
     // matches it — this is the actual HMAC check, not just a field mismatch.
     const parts = good.split(".");
-    const payload = parts.slice(0, 3).join(".");
-    const sig = parts[3]!;
+    const payload = parts.slice(0, -1).join(".");
+    const sig = parts.at(-1)!;
     const flipped = sig.at(-1) === "A" ? "B" : "A";
     const tampered = `${payload}.${sig.slice(0, -1)}${flipped}`;
     expect(verifyGrant(dataDir, tampered, target)).toBe(false);

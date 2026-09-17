@@ -39,7 +39,7 @@ import { listAllAgents } from "./crew.ts";
 import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
-import type { Repo } from "../core/repos.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -417,12 +417,20 @@ export function openEnvUrl(
   if (!isEnvName(env)) return err("no_such_env");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
-  if (record.access === "private") {
-    // A grant names a person; anonymous visitors get the same answer a
-    // private repo gives them.
-    if (actor === undefined) return err("unauthorized");
-    return ok(grantUrl(runtime, { app: record, env }, path, host));
+  // A grant names a person, so the app hears who they are: a signed-in
+  // visitor always goes in through one, public app or private. Anonymous
+  // visitors walk into a public app and get a private one's answer.
+  if (actor !== undefined) {
+    const who = {
+      id: actor.id,
+      name: actor.username,
+      role: canWrite(app.db, repo, actor)
+        ? ("admin" as const)
+        : ("user" as const),
+    };
+    return ok(grantUrl(runtime, { app: record, env }, path, host, who));
   }
+  if (record.access === "private") return err("unauthorized");
   const base = new URL(runtime.urlFor(record, env));
   if (host !== undefined) base.hostname = host.replace(/:\d+$/, "");
   return ok(`${base.origin}${path === "/" ? "" : path}`);
