@@ -3,15 +3,18 @@
  * URLs answer in both modes; the cookie decides which face they show.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
 import { getIssue, listIssues } from "../src/core/issues.ts";
+import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -20,6 +23,12 @@ import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { pendingLeans } from "../src/web/pages/studio.ts";
+
+/** One transparent pixel, dropped where a look would sit. */
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 describe("the studio", () => {
   test("the asks script posts to the form's action attribute: a control named action shadows form.action", async () => {
@@ -375,6 +384,109 @@ describe("the studio", () => {
     const after = await (await get("/alice/notes")).text();
     expect(after).not.toContain('class="studio-ask-pick"');
     expect(after).not.toContain('action="/studio/asks"');
+  });
+
+  test("signed out in studio, / leads with the public apps that are serving — their look, not a private one's", async () => {
+    // A second app, public, with a picture of its production. "notes" stays
+    // private, so its presence (or absence) is the negative case below.
+    const madePublic = await createRepo(app, alice, {
+      name: "beacon",
+      visibility: "public",
+      description: "a lighthouse in the fog",
+    });
+    if (!madePublic.ok) throw new Error(String(madePublic.error));
+    const beacon = madePublic.value;
+    const seededPublic = await commitToBranch(app, alice, beacon, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"beacon","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seededPublic.ok) throw new Error(JSON.stringify(seededPublic.error));
+    const enabledPublic = await enableApp(app, alice, beacon, {
+      slug: "beacon",
+    });
+    if (!enabledPublic.ok) throw new Error(String(enabledPublic.error));
+
+    // A look for each app's production, so the picture route has something
+    // real to answer for and refuse.
+    const dropLook = (appId: string, env: "production", commit: string) => {
+      const rel = join("looks", appId, `${env}-desktop.png`);
+      const abs = join(app.config.dataDir, rel);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, PNG);
+      return recordLook(app.db, {
+        appId,
+        env,
+        commitOid: commit,
+        kind: "desktop",
+        path: rel,
+      });
+    };
+    const beaconApp = getAppByRepo(app.db, beacon.id)!;
+    const notesApp = getAppByRepo(app.db, repo.id)!;
+    dropLook(beaconApp.id, "production", seededPublic.value.commitOid);
+    dropLook(notesApp.id, "production", "0".repeat(40));
+
+    // Signed out, with the studio cookie: the public app's name, its look,
+    // and Sign in / Create an account — never the private one.
+    const anon = await (
+      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
+    ).text();
+    expect(anon).toContain("beacon");
+    expect(anon).toContain("a lighthouse in the fog");
+    expect(anon).toContain(`/looks/production/${seededPublic.value.commitOid}/desktop.png`);
+    expect(anon).toContain('href="/signin"');
+    expect(anon).toContain('href="/signup"');
+    expect(anon).not.toContain(">notes<");
+    expect(anon).not.toContain("Your code, your machine");
+
+    // The private app's picture 404s for a stranger — asserted, not assumed.
+    const privateLook = await fetch(
+      `${base}/alice/notes/looks/production/${"0".repeat(40)}/desktop.png`,
+      { headers: { cookie: "forge_mode=studio" } },
+    );
+    expect(privateLook.status).toBe(404);
+    // The public one's does not.
+    const publicLook = await fetch(
+      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      { headers: { cookie: "forge_mode=studio" } },
+    );
+    expect(publicLook.status).toBe(200);
+
+    // `?mode=dev` still renders the dev landing, unchanged, for a stranger.
+    const dev = await (
+      await fetch(`${base}/?mode=dev`, {
+        headers: { cookie: "forge_mode=studio" },
+      })
+    ).text();
+    expect(dev).toContain("Your code, your machine");
+  });
+
+  test("a forge with no public apps falls back to the dev landing, signed out in studio", async () => {
+    const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-empty-"));
+    const app2 = createApp({ dataDir: dataDir2, port: 0 });
+    const servers2 = await serve(app2);
+    try {
+      const body = await (
+        await fetch(`${servers2.url}/`, {
+          headers: { cookie: "forge_mode=studio" },
+        })
+      ).text();
+      expect(body).toContain("Your code, your machine");
+    } finally {
+      servers2.stop();
+      app2.close();
+      await rm(dataDir2, { recursive: true, force: true });
+    }
   });
 });
 

@@ -269,6 +269,25 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .hero-points .card-body { font-size: 13px; color: var(--muted-fg); }
 .hero-points strong { display: block; color: var(--fg); font-size: 14px; margin-bottom: 3px; }
 
+/* The studio's front door: the public apps that are serving, as pictures. */
+.app-shelf {
+  display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.app-tile {
+  display: block; border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; background: var(--card); color: inherit; text-decoration: none;
+}
+.app-tile:hover { border-color: var(--accent); }
+.app-tile-look { display: block; width: 100%; height: auto; background: var(--muted); }
+.app-tile-blank {
+  display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 1280 / 800; background: var(--muted); color: var(--muted-fg);
+}
+.app-tile-body { display: grid; gap: 6px; padding: 10px 12px; }
+.app-tile-name { font-weight: 600; font-size: 14px; }
+.app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
+
 /* Every page grid, in one rule: a grid item's automatic minimum size is its
    *content*, so a column with a long unbreakable line pushes the page wider
    than the phone rather than letting its own ellipsis do the work. A zero

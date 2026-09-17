@@ -10,6 +10,8 @@
 
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import { appsForRepos } from "../../core/apps.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
 import {
   getIssuesByRef,
@@ -17,6 +19,7 @@ import {
   listOpenAgentPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
+import { LOOK_SIZES, looksForApps } from "../../core/looks.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins, pinnedRepoIds } from "../../core/pins.ts";
 import {
@@ -39,10 +42,17 @@ import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioHome } from "./studio.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { hostOf, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
+import {
+  hostOf,
+  notFoundPage,
+  pageHead,
+  repoBase,
+  signInFirst,
+} from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
+import { lookUrl } from "./looks.ts";
 import {
   eventActor,
   eventVerb,
@@ -54,6 +64,7 @@ import {
   btn,
   card,
   empty,
+  envStateBadge,
   field as formField,
   iconBtn,
   listCard,
@@ -509,6 +520,96 @@ function orgsCard(ctx: Ctx, user: User): Html {
   );
 }
 
+/**
+ * The studio's front door for a stranger: the public apps actually
+ * serving, as a shelf of pictures, name and one clamped line — not the dev
+ * pitch, which a signed-out reader reaches through `?mode=dev` (unchanged,
+ * `landing` below) exactly as a signed-in one reaches it through the mode
+ * switch. A forge with nothing public up yet — most people's first visit —
+ * falls back to that same dev landing rather than showing an empty shelf.
+ *
+ * Two grouped reads carry the whole shelf (the apps, then their looks), and
+ * a repository's runtime state is a map lookup (`AppsRuntime.status`), not
+ * a process call — so this never gets slower as the forge grows apps, the
+ * one page anonymous traffic actually hits.
+ */
+function studioLanding(ctx: Ctx): Html {
+  const db = ctx.app.db;
+  const publicRepos = listReposVisibleTo(db, undefined, { limit: 24 });
+  const records = appsForRepos(
+    db,
+    publicRepos.map((repo) => repo.id),
+  );
+  const appRepos = publicRepos.filter((repo) => records.has(repo.id));
+  if (appRepos.length === 0) return landing(ctx);
+
+  const runtime = appsRuntime(ctx.app);
+  const looks = looksForApps(
+    db,
+    appRepos.map((repo) => records.get(repo.id)!.id),
+  );
+  const tiles = appRepos.map((repo) => {
+    const record = records.get(repo.id)!;
+    const production = (
+      runtime === undefined ? [] : runtime.status(record)
+    ).find((env) => env.env === "production");
+    const look = looks.find(
+      (l) =>
+        l.appId === record.id &&
+        l.env === "production" &&
+        l.kind === "desktop" &&
+        l.error === null,
+    );
+    const base = repoBase(repo);
+    return html`<a class="app-tile" href="${base}">
+      ${look
+        ? html`<img
+            class="app-tile-look"
+            src="${lookUrl(base, "production", look.commitOid, "desktop")}"
+            width="${LOOK_SIZES.desktop.width}"
+            height="${LOOK_SIZES.desktop.height}"
+            alt=""
+            loading="lazy"
+          />`
+        : html`<span class="app-tile-blank" aria-hidden="true"
+            >${icon("rocket")}</span
+          >`}
+      <span class="app-tile-body">
+        <span class="app-tile-name">${repo.name}</span>
+        ${repo.description !== ""
+          ? html`<span class="app-tile-desc truncate"
+              >${repo.description}</span
+            >`
+          : null}
+        ${envStateBadge(production?.state ?? "stopped")}
+      </span>
+    </a>`;
+  });
+
+  return html`<section class="hero">
+      <h1>Apps, live.</h1>
+      <p>
+        A software forge that builds and serves its own apps — these are
+        running here right now.
+      </p>
+      <div class="bar">
+        ${ctx.app.config.edgeToken === undefined
+          ? html`${btn("Create an account", {
+              href: "/signup",
+              variant: "primary",
+              size: "lg",
+            })}
+            ${btn("Sign in", { href: "/signin", size: "lg" })}`
+          : btn("Sign in", {
+              href: edgeLoginUrl("/"),
+              variant: "primary",
+              size: "lg",
+            })}
+      </div>
+    </section>
+    <div class="mt app-shelf">${tiles}</div>`;
+}
+
 function landing(ctx: Ctx): Html {
   const publicRepos = listReposVisibleTo(ctx.app.db, undefined, { limit: 8 });
   return html`<section class="hero">
@@ -671,17 +772,19 @@ function dashboard(ctx: Ctx, user: User): Html {
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   // Studio by default: apps, the crew, what asks you. `?mode=dev` on the
-  // home is the one-off way in without switching the browser.
-  if (
-    user !== undefined &&
-    ctx.mode === "studio" &&
-    ctx.url.searchParams.get("mode") !== "dev"
-  )
-    return await studioHome(ctx, user);
+  // home is the one-off way in without switching the browser — for a
+  // stranger as much as for someone signed in.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (user !== undefined && studio) return await studioHome(ctx, user);
   return page({
     ctx,
     title: "forge",
-    body: user ? dashboard(ctx, user) : landing(ctx),
+    body: user
+      ? dashboard(ctx, user)
+      : studio
+        ? studioLanding(ctx)
+        : landing(ctx),
     ...(user === undefined ? {} : { scriptJs: liveClientJs }),
   });
 }

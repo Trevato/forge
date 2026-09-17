@@ -91,6 +91,14 @@ whether it is live, what the crew last did there, and a way in. **New app**
 is the same flow as ever. `/?mode=dev` is the repositories list without
 switching the browser.
 
+Signed out, `/` in the studio is a stranger's front door, not the dev
+pitch: a shelf of the public apps actually serving — name, one line of
+description, live state, and production's own picture, linking straight to
+the app. Sign in and Create an account stay one click away; `/?mode=dev`
+still renders the dev landing unchanged. A forge with no public apps yet —
+most people's first visit — falls back to that same dev landing rather
+than showing an empty shelf.
+
 ## What the studio never does
 
 It never says _shipped_ before production redeployed, never hides that a
