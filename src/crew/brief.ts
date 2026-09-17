@@ -13,7 +13,12 @@ import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Review, ReviewComment } from "../core/reviews.ts";
 
-export type RunReason = "assigned" | "feedback" | "check_failed" | "conflict";
+export type RunReason =
+  | "assigned"
+  | "feedback"
+  | "check_failed"
+  | "conflict"
+  | "review";
 
 export interface BriefInput {
   readonly agent: Agent;
@@ -62,6 +67,8 @@ export function systemPrompt(input: BriefInput): string {
       "You are this repository's planner, and this run is a planning run:",
       "- The issue you were given is the direction. Turn it into a map: open issues, each small enough for one run by one builder, each with a title that says the outcome and a body that says what done looks like; then link what waits for what.",
       "- Read the repository first so the issues are true to it, and read the existing open issues so you extend the plan rather than repeat it.",
+      "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with at least three ready issues, every time.",
+      '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was.',
       "- Assign nobody and push nothing: the map is the result. The direction issue stays open.",
       "- Finish with a short message that lists what you opened, in order, and what is ready now.",
     );
@@ -110,6 +117,10 @@ export interface TaskInput extends BriefInput {
   readonly checkKind?: "deploy" | "check" | undefined;
   /** For `conflict`: the files main and the branch both changed. */
   readonly conflictFiles?: readonly string[] | undefined;
+  /** For `review`: the pull's diff against its base, capped. */
+  readonly reviewDiff?: string | undefined;
+  /** For `review`: pictures of the preview at this head, phone and desktop. */
+  readonly looks?: readonly string[] | undefined;
 }
 
 /**
@@ -157,6 +168,39 @@ function taskBody(input: TaskInput): string {
       "",
       `Work it on the branch \`${input.branch}\` and push when done.`,
     );
+    return out.join("\n");
+  }
+
+  if (input.reason === "review") {
+    const pull = input.pull;
+    out.push(
+      `You are the reviewer on this crew. Pull #${issue.number} — "${issue.title}" — is green and would land on its own; the crew's decider wants a second pair of eyes first, because it may be large, off the direction, or touch money, sign-in, data, or what people see first.`,
+      "",
+      `The direction of this repository: ${input.repo.autonomyDirection.trim() || "(none written)"}`,
+      "",
+      "Do not write code and do not push. Read, look, and judge:",
+      `- The change, in full, is below. Read it against the direction and against what a careful engineer would ship.`,
+      ...(input.previewUrl === undefined
+        ? []
+        : [
+            `- The preview is at ${input.previewUrl}. Use it as a person would: curl its pages, try the doors it offers.`,
+          ]),
+      ...(input.looks !== undefined && input.looks.length > 0
+        ? [
+            `- The forge took pictures of the preview at this head; read them (they are PNG files, phone then desktop): ${input.looks.join(", ")}`,
+          ]
+        : []),
+      "",
+      "Then submit exactly one review through the forge's API and stop:",
+      `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/pulls/${issue.number}/reviews" -d '{"state":"approved","body":"..."}'`,
+      `Approve when it does what the direction asks, works in the preview, and looks right. Otherwise use "changes_requested" with a body a builder can act on: what does not work, and the one thing to fix first, concrete. You get two rounds of changes on a pull; after that it lands as it is, so if something is left, open an issue for it with the API instead. One review, then stop; your last message is not read by anyone.`,
+      "",
+      "The change:",
+      "```diff",
+      input.reviewDiff ?? "(no diff available)",
+      "```",
+    );
+    void pull;
     return out.join("\n");
   }
 

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { addComment, openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
@@ -155,7 +155,7 @@ describe("the decision ledger", () => {
     expect(seen.ready.length).toBe(3);
   });
 
-  test("ship or show: a green pull the decider wants shown stays open and becomes a look; shown once per head", async () => {
+  test("ship or show: a shown pull with no reviewer on the crew lands anyway, once per head, and the ledger says so", async () => {
     const branch = await commitToBranch(app, alice, repo, {
       branch: "feature/pay",
       base: "main",
@@ -182,46 +182,30 @@ describe("the decision ledger", () => {
     claimRun(app.db, check.id);
     finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
 
+    // The decider says show; there is nobody on the crew to show it to, so
+    // autonomous means autonomous: it lands, and the decision is recorded
+    // with what came of it.
     script["land"] = "show";
-    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
-    expect(getPull(app.db, repo.id, pull.number)?.mergedAt).toBeNull();
+    const calls = decider.seen.length;
+    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+    expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
+    expect(decider.seen.length).toBe(calls + 1);
     const shown = latestDecision(app.db, pull.id, "land")!;
     expect(shown.answer).toBe("show");
     expect((shown.state as { head: string }).head).toBe(pull.headOid);
-    // Asked once per head: a second pass reuses the answer without a call.
-    const calls = decider.seen.length;
-    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
-    expect(decider.seen.length).toBe(calls);
+    expect(shown.outcome).toBe("shipped");
     expect(
       listDecisions(app.db, repo.id, { kind: "land" }).filter(
         (d) => d.issueId === pull.id,
       ).length,
     ).toBe(1);
-
-    // The studio lists it as a look even though the repository is autonomous.
+    // Never a question for a person in an autonomous repository.
     const { decisionsFor } = await import("../src/web/pages/studio.ts");
     const asks = decisionsFor(
       { app, auth: { user: alice, via: "session" } } as never,
       [fresh()],
     );
-    expect(asks.some((d) => d.kind === "look" && d.pull?.id === pull.id)).toBe(
-      true,
-    );
-    expect(asks.find((d) => d.pull?.id === pull.id)?.short).toContain(
-      "decider",
-    );
-
-    // A person ships it: the decision's outcome is written back.
-    const { mergePull } = await import("../src/actions/pulls.ts");
-    const merged = await mergePull(
-      app,
-      alice,
-      fresh(),
-      getPull(app.db, repo.id, pull.number)!,
-      "squash",
-    );
-    expect(merged.ok).toBe(true);
-    expect(latestDecision(app.db, pull.id, "land")?.outcome).toBe("shipped");
+    expect(asks.some((d) => d.pull?.id === pull.id)).toBe(false);
   });
 
   test("try again or stop: the decider can stop before another run is spent; the next check is the outcome", async () => {
@@ -275,6 +259,216 @@ describe("the decision ledger", () => {
     expect(resolveOpen(app.db, pull.id, "retry", "green")).toBe(true);
     expect(latestDecision(app.db, pull.id, "retry")?.outcome).toBe("green");
     expect(resolveOpen(app.db, pull.id, "retry", "green")).toBe(false);
+  });
+
+  test("conflicts come first: a green pull that no longer merges gets a conflict run before anyone decides", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/readme",
+      base: "main",
+      message: "Readme, the branch's way",
+      files: [{ path: "README.md", content: "# shop, by the branch\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Readme",
+      baseBranch: "main",
+      headBranch: "feature/readme",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const moved = await commitToBranch(app, alice, repo, {
+      branch: "main",
+      message: "Readme, main's way",
+      files: [{ path: "README.md", content: "# shop, by main\n" }],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+    script["land"] = "show";
+    const calls = decider.seen.length;
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    // No decision was asked for: the conflict run came first.
+    expect(decider.seen.length).toBe(calls);
+    expect(latestDecision(app.db, pull.id, "land")).toBeUndefined();
+    const conflict = listRuns(app.db, repo.id, { kind: "agent" }).find(
+      (r) => r.issueId === pull.id && r.reason === "conflict",
+    );
+    expect(conflict?.summary).toBe("main moved: README.md");
+    expect(conflict?.actorId).toBe(scout.id);
+  });
+
+  test("the reviewer's pass: a shown pull gets one review run; approval lands it; no reviewer means it lands", async () => {
+    const { setCrewRole } = await import("../src/core/agents.ts");
+    const { submitReview } = await import("../src/actions/pulls.ts");
+    const made = await createAgent(app, alice, { username: "sentinel" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, repo, "sentinel").ok).toBe(true);
+    const sentinel = made.value.user;
+    setCrewRole(app.db, repo.id, sentinel.id, "reviewer");
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/checkout",
+      base: "main",
+      message: "Checkout",
+      files: [
+        { path: "checkout.ts", content: "export const checkout = true;\n" },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Checkout",
+      body: "Takes the money.",
+      baseBranch: "main",
+      headBranch: "feature/checkout",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+
+    script["land"] = "show";
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    const reviews = () =>
+      listRuns(app.db, repo.id, { kind: "agent" }).filter(
+        (r) => r.issueId === pull.id && r.reason === "review",
+      );
+    expect(reviews().length).toBe(1);
+    expect(reviews()[0]!.actorId).toBe(sentinel.id);
+    expect(reviews()[0]!.summary).toBe(`review at ${pull.headOid.slice(0, 7)}`);
+    // Nothing for a person: the studio lists no look ask for it.
+    const { decisionsFor } = await import("../src/web/pages/studio.ts");
+    const asks = decisionsFor(
+      { app, auth: { user: alice, via: "session" } } as never,
+      [fresh()],
+    );
+    expect(asks.some((d) => d.pull?.id === pull.id)).toBe(false);
+    // A second look queues nothing more.
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    expect(reviews().length).toBe(1);
+
+    // The reviewer approves: it lands, and the waiting review run is let go.
+    const approved = await submitReview(
+      app,
+      sentinel,
+      fresh(),
+      getPull(app.db, repo.id, pull.number)!,
+      {
+        state: "approved",
+        body: "Does what the direction asks; the preview takes a test card.",
+      },
+    );
+    expect(approved.ok).toBe(true);
+    expect(
+      await landIfGreen(app, fresh(), getPull(app.db, repo.id, pull.number)!),
+    ).toBe(true);
+    expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
+    expect(reviews()[0]!.state).toBe("cancelled");
+
+    // Without a reviewer on the crew, a shown pull lands: autonomous means autonomous.
+    setCrewRole(app.db, repo.id, sentinel.id, "builder");
+    const branch2 = await commitToBranch(app, alice, repo, {
+      branch: "feature/receipts",
+      base: "main",
+      message: "Receipts",
+      files: [
+        { path: "receipts.ts", content: "export const receipts = true;\n" },
+      ],
+    });
+    if (!branch2.ok) throw new Error(JSON.stringify(branch2.error));
+    const opened2 = await openPull(app, scout, repo, {
+      title: "Receipts",
+      baseBranch: "main",
+      headBranch: "feature/receipts",
+    });
+    if (!opened2.ok) throw new Error(String(opened2.error));
+    const check2 = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: opened2.value.id,
+      env: `pull-${opened2.value.number}`,
+      commitOid: opened2.value.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check2.id);
+    finishRun(app.db, check2.id, { state: "ok", summary: "check passed" });
+    expect(await landIfGreen(app, fresh(), opened2.value)).toBe(true);
+  });
+
+  test("a repository on its own never waits: past its tries a pull is parked, its issue goes back on the map, and an issue parked twice is left to the direction", async () => {
+    const { parkPull, parkedCount } = await import("../src/crew/autonomy.ts");
+    const { listComments, getIssueById: issueById } =
+      await import("../src/core/issues.ts");
+    const work = openIssue(app, alice, repo, { title: "Gift cards" });
+    if (!work.ok) throw new Error(String(work.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/gift",
+      base: "main",
+      message: "Gift cards",
+      files: [{ path: "gift.ts", content: "export const gift = 1;\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Gift cards",
+      body: `Closes #${work.value.number}`,
+      baseBranch: "main",
+      headBranch: "feature/gift",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect(
+      parkPull(
+        app,
+        fresh(),
+        opened.value,
+        "the check stayed red through 2 automatic tries",
+      ),
+    ).toBe(true);
+    expect(getPull(app.db, repo.id, opened.value.number)?.state).toBe("closed");
+    const about = issueById(app.db, work.value.id)!;
+    expect(about.state).toBe("open");
+    expect(about.assigneeId).toBeNull();
+    const notes = listComments(app.db, work.value.id).map((c) => c.body);
+    expect(
+      notes.some((b) =>
+        b.startsWith("Parked by the crew: the check stayed red"),
+      ),
+    ).toBe(true);
+    expect(parkedCount(app, work.value.id)).toBe(1);
+    // Parked once: the planner can re-plan it and the crew picks it again.
+    // Parked twice: left to the direction, never picked by itself.
+    addComment(
+      app,
+      alice,
+      repo,
+      about,
+      "Parked by the crew: main moved under it twice",
+    );
+    expect(parkedCount(app, work.value.id)).toBe(2);
+    script["next"] = String(work.value.number);
+    await driveRepo(app, fresh());
+    expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
+    // Not a question for a person, in either case.
+    const { decisionsFor } = await import("../src/web/pages/studio.ts");
+    const asks = decisionsFor(
+      { app, auth: { user: alice, via: "session" } } as never,
+      [fresh()],
+    );
+    expect(asks.some((d) => d.kind === "stopped")).toBe(false);
   });
 
   test("the ledger is on the API, newest first, with the week per kind", async () => {

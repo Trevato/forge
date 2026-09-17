@@ -35,12 +35,12 @@ forge:
   # Origins registered by the operator, `host=client id` comma-separated: the
   # platform's own Forgejo, so connecting it is one click.
   originClients: "git.open-platform.sh=d9b50fa1-a56a-483d-9fbc-b3c44ec726b5"
-  # Agent runs at once. Each Claude Code process wants ~500Mi, and the pod
-  # holds 2Gi, so two is what fits; four OOM-killed the forge the moment
-  # four runs started together (2026-09-17). Raise it with the memory
-  # limit below, and only once the tenant quota fits two such pods during
-  # a rollout.
-  crewConcurrency: 2
+  # Agent runs at once. Each Claude Code process wants ~500Mi at its peak,
+  # a look (chromium) about 250Mi more, and the forge itself ~400Mi: four
+  # runs fit a 4Gi pod with room to spare. Two runs OOM-killed a 2Gi pod
+  # once and four did so at once (2026-09-17), so this number and the
+  # memory limit below move together.
+  crewConcurrency: 4
   # App deploys at once.
   appsConcurrency: 3
 
@@ -51,14 +51,15 @@ ssh:
 
 # Apps and agent runs are child processes of this one pod, so it is sized
 # like a small machine rather than a web handler. The org runs on the
-# platform's plus tier, which caps one container at 2 CPU / 2Gi.
+# platform's dedicated tier (8Gi of limits, 4Gi of requests), and a rollout
+# has two of these pods up at once, so each takes exactly half.
 resources:
   requests:
-    cpu: 500m
-    memory: 1Gi
-  limits:
-    cpu: "2"
+    cpu: "1"
     memory: 2Gi
+  limits:
+    cpu: "4"
+    memory: 4Gi
 
 # Appended by the platform: self-serve secrets, and whatever else it grants.
 extraEnvFrom: []

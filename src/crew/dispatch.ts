@@ -11,7 +11,7 @@
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
 import { announceRun } from "../actions/runs.ts";
-import { getAgent, type Agent } from "../core/agents.ts";
+import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   getIssue,
@@ -41,7 +41,12 @@ import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { sandboxAvailable } from "./sandbox.ts";
-import { AUTONOMY_TICK_MS, autonomyTick, landIfGreen } from "./autonomy.ts";
+import {
+  AUTONOMY_TICK_MS,
+  autonomyTick,
+  landIfGreen,
+  parkPull,
+} from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
 import { certain, decideOr } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
@@ -244,14 +249,33 @@ function route(app: App, event: ForgeEvent): void {
       if (event.payload["via"] === "origin") return;
       const actor =
         event.actorId === null ? undefined : getUserById(app.db, event.actorId);
-      if (!actor || actor.kind === "agent") return; // agents talking is not feedback
+      if (!actor) return;
+      // Agents talking is not feedback — except the crew's reviewer passing
+      // a verdict on a pull, which is exactly what a person's review is.
+      const reviewerVerdict =
+        actor.kind === "agent" &&
+        event.kind === "pull.reviewed" &&
+        crewRole(app.db, repo.id, actor.id) === "reviewer";
+      if (actor.kind === "agent" && !reviewerVerdict) return;
+      const issue = getIssue(app.db, repo.id, number);
+      if (!issue || issue.state !== "open") return;
       if (
         event.kind === "pull.reviewed" &&
         event.payload["state"] === "approved"
-      )
+      ) {
+        // The reviewer approved: the pull lands now, not at the next sweep.
+        if (reviewerVerdict) {
+          const pull = getPull(app.db, repo.id, number);
+          if (pull)
+            landIfGreen(app, repo, pull).catch((error) =>
+              log.warn("could not land after the review", {
+                pull: number,
+                error: String(error),
+              }),
+            );
+        }
         return;
-      const issue = getIssue(app.db, repo.id, number);
-      if (!issue || issue.state !== "open") return;
+      }
       const agent = agentFor(app, issue);
       if (!agent) return;
       // Said while the agent works: it hears the words now, as its next
@@ -312,6 +336,17 @@ function route(app: App, event: ForgeEvent): void {
       // person must speak (docs/APPS.md, rule 7).
       const since = lastHumanWord(app, issue, agent);
       if (automaticRunsSince(app.db, issue.id, since) >= CHECK_FAILED_LIMIT) {
+        const pull = getPull(app.db, repo.id, issue.number);
+        if (
+          pull &&
+          parkPull(
+            app,
+            repo,
+            pull,
+            `the check stayed red through ${CHECK_FAILED_LIMIT} automatic tries`,
+          )
+        )
+          return;
         log.info("check failed again; waiting for a person", {
           issue: issue.number,
         });
@@ -328,7 +363,19 @@ function route(app: App, event: ForgeEvent): void {
         return;
       }
       void retryOrStop(app, repo, issue, runId, since).then((verdict) => {
-        if (verdict === "stop") return;
+        if (verdict === "stop") {
+          // The decider's stop is the crew's stop: parked, never waiting,
+          // in a repository on its own.
+          const pull = getPull(app.db, repo.id, issue.number);
+          if (pull)
+            parkPull(
+              app,
+              repo,
+              pull,
+              "the check failed and the decider saw no point in another try",
+            );
+          return;
+        }
         return whoseFault(app, runId).then((fault) => {
           const checks = checksFor(app);
           const kind = event.payload["kind"];
@@ -583,7 +630,8 @@ function taskOf(
   const reason: RunReason =
     run.reason === "feedback" ||
     run.reason === "check_failed" ||
-    run.reason === "conflict"
+    run.reason === "conflict" ||
+    run.reason === "review"
       ? run.reason
       : "assigned";
   return { issue, repo, agent, reason };

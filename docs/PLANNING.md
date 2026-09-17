@@ -77,11 +77,26 @@ asked, under **Settings → Autonomy**:
   pull waits for a person's look.
 - **Autonomous.** The same, and a pull whose head has a passing check and
   a passing deploy lands as the person who turned autonomy on — with their
-  review and check requirements still enforced inside the merge. A green
-  pull that no longer merges because `main` moved under it sends its agent
-  one run (`conflict`, naming the files) to merge `main` into the branch;
-  one waiting is enough, and those tries stop at the same limit a failing
-  check does, after which the pull waits for a person. When nothing is
+  review and check requirements still enforced inside the merge. Nothing
+  about a green pull reaches a person: first, a pull that no longer merges
+  because `main` moved under it sends its agent one run (`conflict`, naming
+  the files) to merge `main` into the branch, one waiting at a time, up to
+  the same limit a failing check has; then the decider reads the pull
+  against the direction and either lands it or hands it to the crew's
+  _reviewer_ (`review` run: the diff, the preview, the pictures the forge
+  took), whose approval lands it and whose change request goes back to the
+  builder as feedback; a crew with no reviewer lands it. Nothing waits for a
+  person: a pull whose check stays red past its tries, or whose branch
+  could not be brought up to date, is _parked_ — closed with the reason,
+  its issue put back on the map unassigned with the same note — and the
+  crew moves on; the planner's next pass splits or rewrites a parked
+  issue, and one parked twice is left to the direction. A dry map is
+  planned again within twenty minutes, and the planner is told the
+  direction is never finished: when what it names is built, it proposes
+  the next increment and leaves at least three ready issues. The reviewer
+  gets two rounds of changes on a pull; after that it lands and what is
+  left becomes an issue. The only pause is the day's ceiling. A person
+  steers by editing the direction and the map; the crew does the rest. When nothing is
   ready and nothing is in flight, the map has run dry: the planner is
   given the direction.
 
@@ -101,7 +116,7 @@ map runs dry the forge opens an issue titled _Direction: …_ that carries
 it, assigns the planner, and the planner's brief says the rest: open
 issues each small enough for one run, link what waits for what, assign
 nobody, push nothing. The direction issue stays open, is never picked as
-work, and the planner is not asked again for six hours unless its run
+work, and the planner is not asked again for twenty minutes unless its run
 ended.
 
 **What counts as done and as taken.** A pull that says _Closes #12_

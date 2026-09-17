@@ -48,7 +48,7 @@ import {
   type Run,
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
+import { autonomyStatus, bringUpToDate } from "../../crew/autonomy.ts";
 import {
   decisionStats,
   latestDecision,
@@ -307,7 +307,12 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
       const since = lastHumanWord(ctx, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
       const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
-      if (tries >= CHECK_FAILED_LIMIT || stopped)
+      // A repository on its own parks what it cannot finish and moves on;
+      // only an assisted one stops here for a person.
+      if (
+        (tries >= CHECK_FAILED_LIMIT || stopped) &&
+        repo.autonomy !== "autonomous"
+      )
         out.push({
           kind: "stopped",
           id: `stopped:${pull.id}`,
@@ -321,28 +326,20 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
             ? `the check failed; the decider stopped for you`
             : `${who} tried ${tries + 1} times; the check still fails`,
         });
-    } else if (check?.state === "ok") {
-      // Not autonomous: every green pull waits for a look. Autonomous: only
-      // the ones the decider chose to show.
-      const shown =
-        repo.autonomy === "autonomous" &&
-        latestDecision(db, issue.id, "land")?.answer === "show";
+    } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
+      // Autonomous repositories look at their own green pulls: the decider,
+      // then the crew's reviewer. Everything else waits for a person.
       const picture = pictureOf(repo, pull);
-      if (repo.autonomy !== "autonomous" || shown)
-        out.push({
-          kind: "look",
-          id: `look:${pull.id}`,
-          repo,
-          pull,
-          who,
-          says: shown
-            ? `${who} finished "${pull.title}" and the check is green, and the crew's decider wants you to look before it lands. Ship it, or say what is off.`
-            : `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
-          short: shown
-            ? `green; the decider asks you to look first`
-            : `${who} finished it; the check is green`,
-          ...(picture === undefined ? {} : { picture }),
-        });
+      out.push({
+        kind: "look",
+        id: `look:${pull.id}`,
+        repo,
+        pull,
+        who,
+        says: `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
+        short: `${who} finished it; the check is green`,
+        ...(picture === undefined ? {} : { picture }),
+      });
     }
   }
   for (const repo of repos) {
@@ -498,6 +495,17 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
 }
 
 // ---- studio words for what the crew is doing ----
+
+/** A merge refusal in a person's words. */
+function mergeWords(error: unknown): string {
+  if (typeof error === "string") return error.replace(/_/g, " ");
+  if (typeof error === "object" && error !== null && "kind" in error) {
+    const e = error as { kind: string; message?: string };
+    if (e.kind === "git") return `git said ${e.message ?? "no"}`;
+    return e.kind.replace(/_/g, " ");
+  }
+  return String(error);
+}
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -1241,12 +1249,28 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
     : undefined;
   if (!pull) return notFoundPage(ctx);
   const merged = await mergePull(ctx.app, ctx.auth.user, repo, pull, "squash");
+  // A conflict is never the person's to fix: the pull's agent brings the
+  // branch up to date, and the pull comes back green, or lands on its own.
+  if (
+    !merged.ok &&
+    typeof merged.error !== "string" &&
+    merged.error.kind === "conflict"
+  ) {
+    const who = bringUpToDate(ctx.app, repo, pull, merged.error.files);
+    return flashOrJson(ctx, base, {
+      tone: "danger" as const,
+      message:
+        who === undefined
+          ? `It conflicts with main (${merged.error.files.join(", ")}) and the crew has already tried its limit; say what to do on the pull.`
+          : `It conflicts with main (${merged.error.files.join(", ")}); ${who} is bringing it up to date${repo.autonomy === "autonomous" ? ", then it lands on its own" : ", then it comes back to you"}.`,
+    });
+  }
   return flashOrJson(ctx, base, {
     ...(merged.ok
       ? { message: `Shipped "${pull.title}". Production is redeploying.` }
       : {
           tone: "danger" as const,
-          message: `That could not ship: ${String(merged.error).replace(/_/g, " ")}.`,
+          message: `That could not ship: ${mergeWords(merged.error)}.`,
         }),
   });
 }
