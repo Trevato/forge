@@ -48,6 +48,7 @@ import {
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
+import { latestDecision } from "../../core/decisions.ts";
 import { routeIssue } from "../../crew/route.ts";
 import { certain, decideOr } from "../../crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
@@ -208,26 +209,41 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     if (check?.state === "failed") {
       const since = lastHumanWord(ctx, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
-      if (tries >= CHECK_FAILED_LIMIT)
+      const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
+      if (tries >= CHECK_FAILED_LIMIT || stopped)
         out.push({
           kind: "stopped",
           id: `stopped:${pull.id}`,
           repo,
           pull,
           who,
-          says: `${who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
-          short: `${who} tried ${tries + 1} times; the check still fails`,
+          says: stopped
+            ? `${who}'s check failed and the crew's decider stopped rather than spend another run. Say what to try, or close it.`
+            : `${who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
+          short: stopped
+            ? `the check failed; the decider stopped for you`
+            : `${who} tried ${tries + 1} times; the check still fails`,
         });
-    } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
-      out.push({
-        kind: "look",
-        id: `look:${pull.id}`,
-        repo,
-        pull,
-        who,
-        says: `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
-        short: `${who} finished it; the check is green`,
-      });
+    } else if (check?.state === "ok") {
+      // Not autonomous: every green pull waits for a look. Autonomous: only
+      // the ones the decider chose to show.
+      const shown =
+        repo.autonomy === "autonomous" &&
+        latestDecision(db, issue.id, "land")?.answer === "show";
+      if (repo.autonomy !== "autonomous" || shown)
+        out.push({
+          kind: "look",
+          id: `look:${pull.id}`,
+          repo,
+          pull,
+          who,
+          says: shown
+            ? `${who} finished "${pull.title}" and the check is green, and the crew's decider wants you to look before it lands. Ship it, or say what is off.`
+            : `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
+          short: shown
+            ? `green; the decider asks you to look first`
+            : `${who} finished it; the check is green`,
+        });
     }
   }
   for (const repo of repos) {

@@ -168,6 +168,7 @@ import { assignIssue } from "../actions/issues.ts";
 import { steerRepoRun } from "../actions/runs.ts";
 import { linkIssue, unlinkIssue } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
+import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { mapJson } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
@@ -1551,6 +1552,25 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     return json(mapJson(repo, repoGraph(ctx.app.db, repo.id)));
+  });
+
+  // The decision ledger: what the crew's decider answered and what came of
+  // it, newest first, with the week summed up per kind.
+  router.add("GET", "/api/v1/repos/:owner/:name/decisions", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const kind = ctx.url.searchParams.get("kind");
+    const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    return json({
+      decisions: listDecisions(ctx.app.db, repo.id, {
+        kind:
+          kind === "next" || kind === "land" || kind === "retry"
+            ? kind
+            : undefined,
+        limit: 100,
+      }),
+      week: decisionStats(ctx.app.db, repo.id, week),
+    });
   });
 
   router.add(

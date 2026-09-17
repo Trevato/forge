@@ -4,6 +4,7 @@
  * issues — a pull is an issue with a diff.
  */
 
+import { resolveOpen } from "../core/decisions.ts";
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
 import {
@@ -307,6 +308,8 @@ export async function mergePull(
     },
   );
   if (!merged.ok) return merged;
+  // What came of the decision to show it, when there was one.
+  resolveOpen(app.db, pull.id, "land", "shipped");
   app.bus.append({
     kind: "pull.merged",
     repoId: repo.id,

@@ -20,6 +20,8 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
+import { resolveOpen } from "../core/decisions.ts";
+import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
@@ -281,6 +283,13 @@ function route(app: App, event: ForgeEvent): void {
       if (typeof issueId !== "string") return;
       const issue = getIssueById(app.db, issueId);
       if (!issue || issue.kind !== "pull" || issue.state !== "open") return;
+      // A check's result is the outcome of the last "try again" decision.
+      resolveOpen(
+        app.db,
+        issue.id,
+        "retry",
+        event.payload["state"] === "ok" ? "green" : "red",
+      );
       // Green, in a repository that ships on green: land it.
       if (event.payload["state"] === "ok") {
         if (repo.autonomy !== "autonomous") return;
@@ -318,28 +327,31 @@ function route(app: App, event: ForgeEvent): void {
         queueAgentRun(app, repo, issue, agent, "check_failed");
         return;
       }
-      void whoseFault(app, runId).then((fault) => {
-        const checks = checksFor(app);
-        const kind = event.payload["kind"];
-        const commit = event.payload["commitOid"];
-        const env = event.payload["env"];
-        if (
-          fault === "environment" &&
-          kind === "check" &&
-          checks !== undefined &&
-          typeof commit === "string" &&
-          typeof env === "string" &&
-          !retriedChecks.has(`${issue.id}:${commit}`)
-        ) {
-          retriedChecks.add(`${issue.id}:${commit}`);
-          log.info(
-            "check looked like the environment's fault; running it again",
-            { issue: issue.number },
-          );
-          void checks.request(repo, env, commit, "retry", issue.id);
-          return;
-        }
-        queueAgentRun(app, repo, issue, agent, "check_failed");
+      void retryOrStop(app, repo, issue, runId, since).then((verdict) => {
+        if (verdict === "stop") return;
+        return whoseFault(app, runId).then((fault) => {
+          const checks = checksFor(app);
+          const kind = event.payload["kind"];
+          const commit = event.payload["commitOid"];
+          const env = event.payload["env"];
+          if (
+            fault === "environment" &&
+            kind === "check" &&
+            checks !== undefined &&
+            typeof commit === "string" &&
+            typeof env === "string" &&
+            !retriedChecks.has(`${issue.id}:${commit}`)
+          ) {
+            retriedChecks.add(`${issue.id}:${commit}`);
+            log.info(
+              "check looked like the environment's fault; running it again",
+              { issue: issue.number },
+            );
+            void checks.request(repo, env, commit, "retry", issue.id);
+            return;
+          }
+          queueAgentRun(app, repo, issue, agent, "check_failed");
+        });
       });
       return;
     }
@@ -348,6 +360,12 @@ function route(app: App, event: ForgeEvent): void {
       if (typeof number !== "number") return;
       const pull = getPull(app.db, repo.id, number);
       if (!pull) return;
+      // Closed without landing: what came of the decisions about it. (A
+      // merge writes its own outcome in the action, crew or no crew.)
+      if (event.kind === "pull.closed") {
+        resolveOpen(app.db, pull.id, "land", "closed");
+        resolveOpen(app.db, pull.id, "retry", "closed");
+      }
       forgetWorkdir(app, repo, pull);
       return;
     }
@@ -406,6 +424,57 @@ export function agentFor(app: App, issue: Issue): Agent | undefined {
     if (assigned) return assigned;
   }
   return issue.kind === "pull" ? getAgent(app.db, issue.authorId) : undefined;
+}
+
+/**
+ * Try again, or stop and wait for a person. The rule tries again up to the
+ * limit; the decider reads the failure and the count and may stop sooner,
+ * before another run's money is spent. The next check's result is the
+ * outcome, written back on the ledger row.
+ */
+export async function retryOrStop(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  runId: string,
+  since: string,
+): Promise<"again" | "stop"> {
+  if (app.config.decider === undefined) return "again";
+  const run = getRun(app.db, runId);
+  const tail = readRunLog(app.config.dataDir, runId, 8 * 1024).lines.slice(-25);
+  const options = ["again", "stop"];
+  const decided = await decideAndRecord(
+    app,
+    { kind: "retry", repo, issue },
+    {
+      direction: repo.autonomyDirection,
+      pull: { number: issue.number, title: issue.title },
+      tries: automaticRunsSince(app.db, issue.id, since),
+      limit: CHECK_FAILED_LIMIT,
+      check: { kind: run?.kind ?? "check", summary: run?.summary ?? "" },
+      log: tail,
+    },
+    {
+      retry: {
+        options,
+        about:
+          "The check failed. Is another automatic try by the agent worth its cost, or should a person look?",
+        describe: {
+          again:
+            "Try again: the failure reads as something the agent can fix from the log.",
+          stop: "Stop: the failure is environmental, repeats an earlier one, or is beyond what another run would fix.",
+        },
+      },
+    },
+    () => ({ retry: certain(options, "again") }),
+  );
+  if (decided.answers.retry.choice === "stop")
+    log.info("check failed; the decider stopped here for a person", {
+      issue: issue.number,
+      by: decided.by,
+      p: decided.answers.retry.p.toFixed(2),
+    });
+  return decided.answers.retry.choice === "stop" ? "stop" : "again";
 }
 
 /** When a person last said anything on the conversation, or its start. */

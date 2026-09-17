@@ -20,10 +20,14 @@ import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
-import { readyNow, repoGraph } from "../core/dependencies.ts";
-import { getIssueById, type Issue } from "../core/issues.ts";
+import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
+import { latestDecision, resolveOpen } from "../core/decisions.ts";
+import { certain } from "./decide.ts";
+import { decideAndRecord } from "./ledger.ts";
+import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
 import {
   getPull,
+  closesFromBody,
   listPulls,
   openPullsClosing,
   type MergePullError,
@@ -40,6 +44,7 @@ import {
   automaticRunsSince,
   checksForHead,
   listActive,
+  type Run,
 } from "../core/runs.ts";
 import {
   agentFor,
@@ -168,7 +173,7 @@ export async function driveRepo(
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
       !stalled(app, r.issue),
   );
-  const next = ready[0];
+  const next = await nextOf(app, repo, ready);
   if (next !== undefined) {
     const routed = await routeIssue(app, repo, next.issue, crew, inFlight);
     if (!routed) return "paused";
@@ -312,6 +317,112 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   }
 }
 
+/**
+ * Which ready issue next. The rule takes the top of the ready list (the
+ * critical path); the decider, when there is one, chooses among the first
+ * few with the direction in hand. Recorded, so a pick can be judged later.
+ */
+async function nextOf(
+  app: App,
+  repo: Repo,
+  ready: readonly Ranked[],
+): Promise<Ranked | undefined> {
+  const first = ready[0];
+  if (first === undefined) return undefined;
+  if (ready.length === 1 || app.config.decider === undefined) return first;
+  const few = ready.slice(0, 6);
+  const options = few.map((r) => String(r.issue.number));
+  const describe: Record<string, string> = {};
+  for (const r of few)
+    describe[String(r.issue.number)] =
+      `#${r.issue.number} ${r.issue.title}` +
+      (r.holdsUp > 0 ? ` (holds up ${r.holdsUp})` : "");
+  const decided = await decideAndRecord(
+    app,
+    { kind: "next", repo, issue: first.issue },
+    {
+      direction: repo.autonomyDirection,
+      ready: few.map((r) => ({
+        number: r.issue.number,
+        title: r.issue.title,
+        body: r.issue.body.slice(0, 400),
+        holdsUp: r.holdsUp,
+      })),
+    },
+    {
+      next: {
+        options,
+        about:
+          "Which of these ready issues moves the direction forward most right now? Prefer what unblocks others and what the direction names.",
+        describe,
+      },
+    },
+    () => ({ next: certain(options, options[0]!) }),
+  );
+  return (
+    few.find((r) => String(r.issue.number) === decided.answers.next.choice) ??
+    first
+  );
+}
+
+/**
+ * Ship a green pull, or show it to a person first. The rule ships; the
+ * decider may say show when the change looks large, off-direction, or
+ * touches money, sign-in or data. One answer per head: the same head is
+ * not asked about twice.
+ */
+export async function shipOrShow(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  checks: readonly Run[],
+): Promise<"ship" | "show"> {
+  if (app.config.decider === undefined) return "ship";
+  const earlier = latestDecision(app.db, pull.id, "land");
+  if (
+    earlier !== undefined &&
+    typeof earlier.state === "object" &&
+    earlier.state !== null &&
+    (earlier.state as { head?: unknown }).head === pull.headOid
+  )
+    return earlier.answer === "show" ? "show" : "ship";
+  const options = ["ship", "show"];
+  const decided = await decideAndRecord(
+    app,
+    { kind: "land", repo, issue: pull },
+    {
+      direction: repo.autonomyDirection,
+      head: pull.headOid,
+      pull: {
+        number: pull.number,
+        title: pull.title,
+        body: pull.body.slice(0, 1200),
+      },
+      checks: checks.map((c) => ({ kind: c.kind, summary: c.summary })),
+    },
+    {
+      land: {
+        options,
+        about:
+          "The check is green. Land this pull now, or have a person look first?",
+        describe: {
+          ship: "Land it now: the change is within the direction and the kind a crew lands on its own.",
+          show: "Show a person first: the change is large, off the direction, or touches money, sign-in, data, or what people see first.",
+        },
+      },
+    },
+    () => ({ land: certain(options, "ship") }),
+  );
+  if (decided.answers.land.choice === "show")
+    log.info("green; shown to a person first", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      pull: pull.number,
+      by: decided.by,
+      p: decided.answers.land.p.toFixed(2),
+    });
+  return decided.answers.land.choice === "show" ? "show" : "ship";
+}
+
 /** Pull id → the `head:base` tips a merge last conflicted between. */
 const conflicted = new Map<string, string>();
 
@@ -377,6 +488,10 @@ export async function landIfGreen(
   const checks = checksForHead(app.db, pull.id, pull.headOid);
   if (checks.length === 0) return false;
   if (checks.some((c) => c.state !== "ok")) return false;
+  // Ship, or show a person first: the decider reads the pull against the
+  // direction. A rule ships everything green; the decider is what makes
+  // "autonomous" mean judgement rather than a conveyor belt.
+  if ((await shipOrShow(app, repo, pull, checks)) === "show") return false;
   // A conflict is remembered by the two tips it was between: until one of
   // them moves there is nothing new to try, and a merge attempt is real
   // work on disk, once a minute for every green pull.
@@ -404,6 +519,11 @@ export async function landIfGreen(
     return false;
   }
   conflicted.delete(pull.id);
+  resolveOpen(app.db, pull.id, "land", "shipped");
+  for (const number of closesFromBody(pull.body)) {
+    const closed = getIssue(app.db, repo.id, number);
+    if (closed) resolveOpen(app.db, closed.id, "next", "shipped");
+  }
   log.info("landed on green", {
     repo: `${repo.ownerName}/${repo.name}`,
     pull: pull.number,
