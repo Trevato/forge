@@ -136,21 +136,22 @@ describe("dependencies", () => {
     expect(criticalPath(graph).map((i) => i.number)).toEqual([1, 3, 5, 6]);
   });
 
-  test("the layout puts each issue one column right of its blockers and islands the rest", () => {
+  test("the layout puts each issue one level below its blockers and islands the rest", () => {
     const placed = layout(repoGraph(app.db, repo.id));
-    const col = (n: number) =>
-      placed.nodes.find((p) => p.issue.number === n)!.column;
-    expect(col(1)).toBe(0);
-    expect(col(2)).toBe(0);
-    expect(col(3)).toBe(1);
-    expect(col(4)).toBe(1);
-    expect(col(5)).toBe(2);
-    expect(col(6)).toBe(3);
+    const level = (n: number) =>
+      placed.nodes.find((p) => p.issue.number === n)!.level;
+    expect(level(1)).toBe(0);
+    expect(level(2)).toBe(0);
+    expect(level(3)).toBe(1);
+    expect(level(4)).toBe(1);
+    expect(level(5)).toBe(2);
+    expect(level(6)).toBe(3);
     const docs = placed.nodes.find((p) => p.issue.number === 7)!;
     expect(docs.island).toBe(true);
-    expect(docs.row).toBeGreaterThan(
-      Math.max(...placed.nodes.filter((p) => !p.island).map((p) => p.row)),
+    expect(docs.level).toBeGreaterThan(
+      Math.max(...placed.nodes.filter((p) => !p.island).map((p) => p.level)),
     );
+    expect(placed.islandFrom).toBe(4);
   });
 
   test("closing a blocker frees what waited; the level falls and the flow ticks", () => {

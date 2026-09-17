@@ -169,7 +169,7 @@ import { steerRepoRun } from "../actions/runs.ts";
 import { linkIssue, unlinkIssue } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
-import { crewMarks, globalMapJson, mapJson } from "../web/pages/map.ts";
+import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import type { Agent } from "../core/agents.ts";
@@ -1558,11 +1558,17 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const graph = repoGraph(ctx.app.db, repo.id);
     return json(
       mapJson(
         repo,
-        repoGraph(ctx.app.db, repo.id),
-        crewMarks(listActiveRuns(ctx.app.db, [repo.id])),
+        graph,
+        marksFor(
+          ctx.app.db,
+          repo.id,
+          graph,
+          listActiveRuns(ctx.app.db, [repo.id]),
+        ),
       ),
     );
   });
