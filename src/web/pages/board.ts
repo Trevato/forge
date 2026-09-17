@@ -61,6 +61,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   next: "next issue",
   land: "ship or show",
   retry: "try again",
+  lean: "which way",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
