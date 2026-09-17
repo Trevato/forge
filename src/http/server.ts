@@ -107,6 +107,7 @@ import {
   runSteer,
   runsList,
 } from "../web/pages/runs.ts";
+import { lookImage } from "../web/pages/looks.ts";
 import {
   agentCreate,
   agentDelete,
@@ -600,6 +601,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
   router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
+  // The pictures of an environment, read like the repository.
+  router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 
   // Live event stream for a repo the viewer can read.
   router.add("GET", "/:owner/:name/stream", (ctx) => {

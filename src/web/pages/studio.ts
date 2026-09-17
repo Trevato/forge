@@ -86,6 +86,9 @@ import {
   userTag,
   type Tone,
 } from "../ui.ts";
+import { looksForApps } from "../../core/looks.ts";
+import { previewEnv } from "../../apps/data.ts";
+import { lookNow, lookThumb, lookUrl } from "./looks.ts";
 import { onYouCard } from "./site.ts";
 
 // ---- decisions: what asks a person ----
@@ -109,6 +112,8 @@ export interface Decision {
   readonly short: string;
   /** The option the decider thinks is right, and how sure; none for a rule. */
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
+  /** The preview pictured on a phone, when the forge has taken one. */
+  readonly picture?: string | undefined;
 }
 
 /** The options a card offers, by name, as the decider sees them. */
@@ -202,6 +207,25 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     pulls.map((p) => p.id),
   );
   const joined = new Map(joinMany(db, pulls).map((p) => [p.id, p]));
+  // The pictures, in one read: a green pull's row leads with its preview.
+  const records = appsForRepos(db, [...byId.keys()]);
+  const looks = looksForApps(
+    db,
+    [...records.values()].map((r) => r.id),
+  );
+  const pictureOf = (repo: Repo, pull: Pull): string | undefined => {
+    const record = records.get(repo.id);
+    if (record === undefined) return undefined;
+    const env = previewEnv(pull.number);
+    const look = looks.find(
+      (l) =>
+        l.appId === record.id &&
+        l.env === env &&
+        l.kind === "phone" &&
+        l.error === null,
+    );
+    return look && lookUrl(repoBase(repo), env, look.commitOid, "phone");
+  };
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -234,6 +258,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
       const shown =
         repo.autonomy === "autonomous" &&
         latestDecision(db, issue.id, "land")?.answer === "show";
+      const picture = pictureOf(repo, pull);
       if (repo.autonomy !== "autonomous" || shown)
         out.push({
           kind: "look",
@@ -247,6 +272,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
           short: shown
             ? `green; the decider asks you to look first`
             : `${who} finished it; the check is green`,
+          ...(picture === undefined ? {} : { picture }),
         });
     }
   }
@@ -567,6 +593,7 @@ export async function studioApp(
       </p>
     </div>
     <span class="spacer"></span>
+    ${lookNow(ctx, repo, record)}
     ${btn("Open the app", {
       href: `${base}/app/production/open`,
       variant: "primary",
@@ -1023,9 +1050,8 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
     d.kind === "stopped" ? "alert" : d.kind === "look" ? "eye" : "clock";
   // The title links; the row itself does not, because it holds controls
   // and a control inside an anchor is not HTML a browser will keep together.
-  const title = d.pull
-    ? html`<a href="${base}/pulls/${d.pull.number}">${d.pull.title}</a>`
-    : html`<a href="${base}">${d.repo.name}</a>`;
+  const href = d.pull ? `${base}/pulls/${d.pull.number}` : base;
+  const title = html`<a href="${href}">${d.pull?.title ?? d.repo.name}</a>`;
   return row({
     lead: html`<input
         class="studio-ask-pick"
@@ -1035,7 +1061,7 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
         data-kind="${d.kind}"
         data-repo="${base}"
         aria-label="Select: ${d.pull?.title ?? d.repo.name}"
-      />${icon(glyph)}`,
+      />${d.picture === undefined ? icon(glyph) : lookThumb(href, d.picture)}`,
     title,
     titleAttr: d.says,
     meta: html`${d.repo.name}${d.pull ? html` #${d.pull.number}` : null} ·

@@ -47,8 +47,10 @@ sentences each with the real options in place. A pull the crew stopped on
 them what to try_ (a comment, which starts a feedback run), _close it_,
 and _see the change_. A green pull waiting for a look offers _open the
 preview_, _ship it_ (a squash merge, as you, with your review and check
-requirements enforced inside it), and _not like this_ (a comment). A
-repository paused at its ceiling says so, with the way to settings. A pull
+requirements enforced inside it), and _not like this_ (a comment); its row
+leads with the preview as pictured on a phone (`docs/APPS.md`, _The look_),
+and the picture opens the pull, where both pictures are. A repository
+paused at its ceiling says so, with the way to settings. A pull
 the crew is on right now — a run queued or running for it — is working,
 not a question, and is not listed until the crew is done with it. Nothing
 here re-queues anything: a re-queue button is what an operator presses
