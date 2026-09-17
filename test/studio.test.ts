@@ -29,13 +29,15 @@ import {
   claimRun,
   createRun,
   finishRun,
+  markServing,
   noteRunProgress,
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { pendingLeans } from "../src/web/pages/studio.ts";
+import { pendingLeans, pullWord, runWord, type WordCtx } from "../src/web/pages/studio.ts";
+import { repoDir } from "../src/git/repos.ts";
 
 /** One transparent pixel, dropped where a look would sit. */
 const PNG = Buffer.from(
@@ -1468,6 +1470,182 @@ describe("the studio's slot count", () => {
   });
 });
 
+describe("words come from facts, not from run.summary", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let repo: Repo;
+  let record: AppRecord;
+  let alice: User;
+  let wordCtx: WordCtx;
+  let seededCommit: string;
+
+  const put = (
+    live?: { commitOid: string; state?: "failed" },
+  ): void => {
+    const envs = (runtime as unknown as { envs: Map<string, unknown> }).envs;
+    envs.set(`${record.id}/production`, {
+      app: record,
+      env: "production",
+      chain: Promise.resolve(),
+      restarts: [],
+      ...(live?.state === "failed"
+        ? { lastError: "the deploy failed" }
+        : live
+          ? {
+              live: {
+                commitOid: live.commitOid,
+                handle: { port: 4321 },
+                runId: "fake",
+                since: new Date().toISOString(),
+              },
+            }
+          : {}),
+    });
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-words-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: "words.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, {
+      name: "wordsapp",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    seededCommit = seeded.value.commitOid;
+    const enabled = await enableApp(app, alice, repo, { slug: "wordsapp" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+    wordCtx = {
+      db: app.db,
+      dir: repoDir(app.reposRoot, repo.ownerName, repo.name),
+      runtime,
+      record,
+    };
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a merged pull whose production deploy has not yet served does not say shipped, and says so once it has", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/word",
+      base: "main",
+      message: "Add a word",
+      files: [{ path: "WORD.md", content: "word\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add a word",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/word",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const merged = await mergePull(app, alice, repo, opened.value, "squash");
+    if (!merged.ok) throw new Error(String(merged.error));
+    const pull = getPull(app.db, repo.id, opened.value.number)!;
+    expect(pull.mergedOid).not.toBeNull();
+
+    // Production is still on the commit before the merge: not shipped.
+    put({ commitOid: seededCommit });
+    const notYet = await pullWord(wordCtx, pull);
+    expect(notYet.word).not.toBe("shipped");
+
+    // Production has caught up to the merge commit: shipped, live.
+    put({ commitOid: pull.mergedOid! });
+    const now = await pullWord(wordCtx, pull);
+    expect(now.word).toBe("shipped");
+  });
+
+  test('an agent run that opened no pull and pushed nothing is not shipped', async () => {
+    const told = await openIssue(app, alice, repo, {
+      title: "Write a plan",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: told.value.id,
+      branch: "scout/999-a-branch-nothing-used",
+      actorId: alice.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    const finished = finishRun(app.db, run.id, {
+      state: "ok",
+      summary: "wrote docs/PLAN.md",
+    });
+    const word = await runWord(wordCtx, finished!);
+    expect(word.word).not.toBe("shipped");
+    expect(word.word).toBe("planned");
+    expect(word.note).toBe("wrote docs/PLAN.md");
+  });
+
+  test("a deploy serving with failed tests is not shipped", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/preview",
+      base: "main",
+      message: "Preview",
+      files: [{ path: "PREVIEW.md", content: "preview\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Preview",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/preview",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const deploy = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, deploy.id);
+    markServing(app.db, deploy.id);
+    finishRun(app.db, deploy.id, {
+      state: "failed",
+      summary: "test: 1 of 3 tests failed",
+    });
+    const word = await pullWord(wordCtx, getPull(app.db, repo.id, pull.number)!);
+    expect(word.word).not.toBe("shipped");
+    expect(word.note).toBe("serving, but the check failed");
+  });
+});
+
 /**
  * Working, on its own page: `/:owner/:name/runs/:id` in the studio names
  * the tell, the cost, and offers the steer box — same routes and checks as
@@ -1601,17 +1779,34 @@ describe("working: a run's own page in the studio", () => {
   test("a finished run renders in the studio's own word, with no Stop", async () => {
     const tell = openIssue(app, alice, repo, { title: "Tidy the footer" });
     if (!tell.ok) throw new Error(String(tell.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "scout/tidy-the-footer",
+      base: "main",
+      message: "Tidy the footer",
+      files: [{ path: "FOOTER.md", content: "tidy\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Tidy the footer",
+      body: `Closes #${tell.value.number}`,
+      baseBranch: "main",
+      headBranch: "scout/tidy-the-footer",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    // The word comes from the pull this run actually produced (found by
+    // its branch), not from parsing the summary below.
     const run = createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
       issueId: tell.value.id,
+      branch: "scout/tidy-the-footer",
       actorId: scoutId,
       reason: "assigned",
     });
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, {
       state: "ok",
-      summary: "opened pull #9",
+      summary: `opened pull #${opened.value.number}`,
       costUsd: 0.1,
       turns: 4,
     });

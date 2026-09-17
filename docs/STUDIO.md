@@ -19,6 +19,22 @@ Every word on a studio page is one thing in git, and dev mode shows it.
 | **shipped**  | a merge to the default branch, production redeployed    |
 | **asks you** | a pull the crew stopped on, or a green one for a look   |
 
+Every word above is decided in one place (`runWord` and `pullWord`,
+`src/web/pages/studio.ts`), from facts — never from a run's own summary
+text, which stays the note beside the word. A run's word comes from its
+state, and once it is over, from what it produced: a pull, judged by
+`pullWord`, or nothing to show, which is *planned* rather than a guess at
+*shipped*. A pull's word comes from its own state: open goes by its check
+(`checkRunWord`), closed without a merge is *stopped*, and merged is
+*shipped* only once production's live commit is at or past the one the
+merge carried (an ancestry check in git, not equality — a later merge
+already deploying it still counts). Between a merge and production
+catching up, the word is its own honest one — *working* while production
+deploys it, *stopped* if that deploy failed, *waiting* if production has
+not started on it yet — and it becomes *shipped* on the next render or
+live event, no reload needed. The app page, the change page and the home
+all call the same two functions; nothing here is re-derived per surface.
+
 These are also a kanban board: tell is the backlog, working is in progress,
 look is review, shipped is done, asks you is blocked. The crew's slot count
 (**Settings → Autonomy**) is the WIP limit. The map is the plan. A week's
@@ -106,7 +122,7 @@ mode, renders exactly what it always has.
 
 `/:owner/:name/pulls/:n` on an app, in the studio, is the change itself —
 never its diff. The title and the opening post in the author's own words,
-who made it and when, the check in the studio's five words (`checkWord`,
+who made it and when, the check in the studio's five words (`pullWord`,
 `src/web/pages/studio.ts`) with its deploy one click away, the preview's
 state with the link that opens it (`previewCard`, the same card the aside
 carries in dev), and the look at phone and desktop width when one has been

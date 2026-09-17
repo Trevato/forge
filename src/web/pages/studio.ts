@@ -7,10 +7,15 @@
  * hand.
  *
  * Words: *tell* is an issue; *working* is a run; *look* is an open pull
- * with a green check and a preview; *shipped* is a merge; *asks you* is a
- * pull the crew stopped on, or a green one waiting for a look.
+ * with a green check and a preview; *shipped* is a merge production has
+ * caught up to; *asks you* is a pull the crew stopped on, or a green one
+ * waiting for a look. `runWord` and `pullWord` are the one place these are
+ * decided, from facts — never from a run's own summary text.
  */
 
+import type { Database } from "bun:sqlite";
+import { mergeBase } from "../../git/merge.ts";
+import { repoDir } from "../../git/repos.ts";
 import {
   addComment,
   assignIssue,
@@ -40,6 +45,7 @@ import {
   joinMany,
   listPulls,
   openPullsClosing,
+  pullForBranch,
   type Pull,
 } from "../../core/pulls.ts";
 import {
@@ -578,7 +584,120 @@ function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
 
 type Word = "working" | "look" | "shipped" | "stopped" | "waiting" | "planned";
 
-function wordFor(run: Run): { word: Word; note: string } {
+/**
+ * Everything the word functions below need to see production: the repo's
+ * git directory (an ancestry check reads it), and the runtime plus the
+ * app record, when the repository runs one. Built once per page and
+ * threaded through — never a second way to ask what is serving.
+ */
+export interface WordCtx {
+  readonly db: Database;
+  readonly dir: string;
+  readonly runtime: AppsRuntime | undefined;
+  readonly record: AppRecord | undefined;
+}
+
+/**
+ * The pull an agent run produced, if it produced one — not a foreign key
+ * (a pull is its own issue, unrelated in the schema to the issue it
+ * closes) but the two facts a run leaves behind: a review run's
+ * `issueId` is the pull itself, and a builder run's `branch` is the one
+ * `landWork` (`crew/runner.ts`) already uses to find its own pull again.
+ */
+function pullFromRun(db: Database, run: Run): Pull | undefined {
+  if (run.issueId !== null) {
+    const about = getIssueById(db, run.issueId);
+    if (about?.kind === "pull") return getPull(db, run.repoId, about.number);
+  }
+  if (run.branch === "") return undefined;
+  return pullForBranch(db, run.repoId, run.branch);
+}
+
+/** Whether production is serving this commit, or something later than it. */
+async function caughtUp(
+  dir: string,
+  production: EnvStatus | undefined,
+  commitOid: string,
+): Promise<boolean> {
+  if (production === undefined || production.commitOid === "") return false;
+  if (production.commitOid === commitOid) return true;
+  return (await mergeBase(dir, commitOid, production.commitOid)) === commitOid;
+}
+
+/** A merged pull production has not caught up to yet: its own honest word. */
+function mergedPullWord(
+  production: EnvStatus | undefined,
+  commitOid: string,
+): { word: Word; note: string } {
+  if (production?.commitOid === commitOid) {
+    if (production.state === "failed")
+      return {
+        word: "stopped",
+        note: production.error ?? "production's deploy of it failed",
+      };
+    return { word: "working", note: "production is deploying it now" };
+  }
+  return { word: "waiting", note: "merged; waiting for production to redeploy" };
+}
+
+/** A single open pull's check, in the studio's own words — never dev's
+ * "Checks passed/failed": the same five words as the rest of the page. */
+function checkRunWord(check: CheckSummary): { word: Word; note: string } {
+  if (check.state === "ok")
+    return { word: "look", note: "green — ready for a look" };
+  if (check.state === "failed")
+    return check.run?.servingAt != null
+      ? { word: "stopped", note: "serving, but the check failed" }
+      : { word: "stopped", note: "failed before it answered" };
+  if (check.state === "running")
+    return {
+      word: "working",
+      note: check.run?.servingAt != null ? "serving — still checking" : "checking now",
+    };
+  if (check.state === "queued")
+    return { word: "working", note: "queued to check" };
+  if (check.state === "cancelled")
+    return { word: "stopped", note: "the check was cancelled" };
+  return { word: "waiting", note: "no deploy of this head yet" };
+}
+
+/**
+ * A pull's word: open goes by its own check, closed without a merge is
+ * simply stopped, and merged is *shipped* only once production is at or
+ * past the commit that merge carried — the one place that fact is asked,
+ * so the app page, the change page, the home and the board never invent
+ * their own answer to it.
+ */
+export async function pullWord(
+  ctx: WordCtx,
+  pull: Pull,
+): Promise<{ word: Word; note: string }> {
+  if (pull.mergedAt !== null) {
+    const commitOid = pull.mergedOid ?? pull.headOid;
+    if (ctx.runtime === undefined || ctx.record === undefined)
+      return { word: "shipped", note: "merged" };
+    const production = ctx.runtime
+      .status(ctx.record)
+      .find((e) => e.env === "production");
+    if (await caughtUp(ctx.dir, production, commitOid))
+      return { word: "shipped", note: "production is serving it" };
+    return mergedPullWord(production, commitOid);
+  }
+  if (pull.state === "closed")
+    return { word: "stopped", note: "closed without shipping" };
+  return checkRunWord(checkSummary(ctx.db, pull.id, pull.headOid));
+}
+
+/**
+ * An agent run's word: still going by its state, and once it is over, by
+ * what it produced — a pull, judged the same way `pullWord` judges any
+ * other, or nothing to show, which is *planned* rather than a guess at
+ * *shipped*. Never `run.summary`: that stays the note beside the word.
+ */
+export async function runWord(
+  ctx: WordCtx,
+  run: Run,
+): Promise<{ word: Word; note: string }> {
   if (run.state === "queued")
     return run.notBefore === null
       ? { word: "waiting", note: "queued" }
@@ -586,12 +705,10 @@ function wordFor(run: Run): { word: Word; note: string } {
   if (run.state === "running") return { word: "working", note: "now" };
   if (run.state === "failed" || run.state === "cancelled")
     return { word: "stopped", note: run.summary || run.state };
-  const summary = run.summary || "";
-  if (/opened pull|updated pull/.test(summary))
-    return { word: "look", note: summary };
-  if (/planned|no changes pushed/.test(summary))
-    return { word: "planned", note: summary };
-  return { word: "shipped", note: summary };
+  const pull = pullFromRun(ctx.db, run);
+  if (pull === undefined)
+    return { word: "planned", note: run.summary || "nothing to show yet" };
+  return await pullWord(ctx, pull);
 }
 
 const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
@@ -621,22 +738,6 @@ function wordBadge(word: Word, id?: string): Html {
     ${id === undefined ? null : html`id="${id}"`}
     >${word === "working" ? icon("loader") : null}${word}</span
   >`;
-}
-
-/** A single open pull's check, in the studio's own words — never dev's
- * "Checks passed/failed": the same five words as the rest of the page. */
-function checkWord(check: CheckSummary): { word: Word; note: string } {
-  if (check.state === "ok")
-    return { word: "look", note: "green — ready for a look" };
-  if (check.state === "failed")
-    return { word: "stopped", note: "the check failed" };
-  if (check.state === "running")
-    return { word: "working", note: "checking now" };
-  if (check.state === "queued")
-    return { word: "working", note: "queued to check" };
-  if (check.state === "cancelled")
-    return { word: "stopped", note: "the check was cancelled" };
-  return { word: "waiting", note: "no deploy of this head yet" };
 }
 
 // ---- previews: every open pull's preview, one click away ----
@@ -807,6 +908,12 @@ export async function studioApp(
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
+  const wordCtx: WordCtx = {
+    db,
+    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+    runtime: appsRuntime(ctx.app),
+    record,
+  };
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 });
@@ -822,10 +929,6 @@ export async function studioApp(
     }
   const decisions = withLikely(ctx, decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
-  const pullChecks = latestRunsForIssues(
-    db,
-    openPulls.map((p) => p.id),
-  );
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   const weekRuns = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
     (r) => r.createdAt >= week,
@@ -900,54 +1003,46 @@ export async function studioApp(
     )
     .slice(0, 6);
   const nowRows: Html[] = [
-    ...openPulls.map((p) => {
-      const check = pullChecks.get(p.id);
-      const word: Word =
-        check?.state === "ok"
-          ? "look"
-          : check?.state === "failed"
-            ? "stopped"
-            : "working";
-      return row({
-        href: `${base}/pulls/${p.number}`,
-        nav: true,
-        lead: avatarOf(p.authorName),
-        title: p.title,
-        meta: html`${p.authorName} ·
-        ${word === "look"
-          ? "green, ready for a look"
-          : word === "stopped"
-            ? "the check failed"
-            : "checking"}
-        · ${time(p.createdAt)}`,
-        trail: wordBadge(word),
-      });
-    }),
-    ...rowsNow.map((r) => {
-      const { word, note } = wordFor(r);
-      const who =
-        r.actorId === null
-          ? "crew"
-          : (actors.get(r.actorId)?.username ?? "crew");
-      const about = r.issueId === null ? undefined : issues.get(r.issueId);
-      const stop = stopForm(ctx, repo, r);
-      return row({
-        ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
-        lead: avatarOf(who),
-        title: stop
-          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
-          : (about?.title ?? note),
-        meta: html`${who} · ${word === "working" ? "working now" : note}
-        ${word === "working"
-          ? null
-          : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
-        trail: stop
-          ? html`<span class="studio-ask-actions"
-              >${wordBadge(word)} ${stop}</span
-            >`
-          : wordBadge(word),
-      });
-    }),
+    ...(await Promise.all(
+      openPulls.map(async (p) => {
+        const { word, note } = await pullWord(wordCtx, p);
+        return row({
+          href: `${base}/pulls/${p.number}`,
+          nav: true,
+          lead: avatarOf(p.authorName),
+          title: p.title,
+          meta: html`${p.authorName} · ${note} · ${time(p.createdAt)}`,
+          trail: wordBadge(word),
+        });
+      }),
+    )),
+    ...(await Promise.all(
+      rowsNow.map(async (r) => {
+        const { word, note } = await runWord(wordCtx, r);
+        const who =
+          r.actorId === null
+            ? "crew"
+            : (actors.get(r.actorId)?.username ?? "crew");
+        const about = r.issueId === null ? undefined : issues.get(r.issueId);
+        const stop = stopForm(ctx, repo, r);
+        return row({
+          ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
+          lead: avatarOf(who),
+          title: stop
+            ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
+            : (about?.title ?? note),
+          meta: html`${who} · ${word === "working" ? "working now" : note}
+          ${word === "working"
+            ? null
+            : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
+          trail: stop
+            ? html`<span class="studio-ask-actions"
+                >${wordBadge(word)} ${stop}</span
+              >`
+            : wordBadge(word),
+        });
+      }),
+    )),
     ...waiting.map((i) =>
       row({
         href: `${base}/issues/${i.number}`,
@@ -1137,13 +1232,13 @@ const RUN_TRANSCRIPT_CAP = 400;
  * forms `runPage` offers, posting to the very same routes with the very
  * same checks; `?mode=dev` reads the transcript there, unchanged.
  */
-export function studioRun(
+export async function studioRun(
   ctx: Ctx,
   repo: Repo,
   run: Run,
   lines: readonly string[],
   truncated: boolean,
-): Response {
+): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const actor =
@@ -1152,7 +1247,13 @@ export function studioRun(
     run.issueId === null ? undefined : getIssueById(db, run.issueId);
   const who = actor?.username ?? "an agent";
   const title = runTitle(run, actor?.username, issue);
-  const { word } = wordFor(run);
+  const wordCtx: WordCtx = {
+    db,
+    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+    runtime: appsRuntime(ctx.app),
+    record: getAppByRepo(db, repo.id),
+  };
+  const { word } = await runWord(wordCtx, run);
   const unfinished = !isTerminal(run.state);
   const writer = canWrite(db, repo, ctx.auth.user);
   const duration = durationText(run);
@@ -1365,8 +1466,27 @@ export async function studioPull(
   const db = ctx.app.db;
   const base = repoBase(repo);
   const thread = `${base}/pulls/${pull.number}`;
-  const check = checkSummary(db, pull.id, pull.headOid);
-  const { word, note } = checkWord(check);
+  const wordCtx: WordCtx = {
+    db,
+    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+    runtime: appsRuntime(ctx.app),
+    record,
+  };
+  const { word, note } = await pullWord(wordCtx, pull);
+  // Before a merge the deploy worth linking is the preview's own check;
+  // after, it is production's — the preview's run may already be torn
+  // down, and the word above is judged by production regardless.
+  let deploy: { id: string; commitOid: string } | undefined;
+  if (pull.mergedAt === null) {
+    const run = checkSummary(db, pull.id, pull.headOid).run;
+    if (run) deploy = { id: run.id, commitOid: run.commitOid };
+  } else {
+    const production = wordCtx.runtime
+      ?.status(record)
+      .find((e) => e.env === "production");
+    if (production?.runId)
+      deploy = { id: production.runId, commitOid: production.commitOid };
+  }
   const decision = decisionsFor(ctx, [repo]).find(
     (d) => d.pull?.id === pull.id,
   );
@@ -1403,11 +1523,11 @@ export async function studioPull(
     html`<p class="studio-pull-check">
       ${wordBadge(word)} <span class="muted small">${note}</span>
       ${when(
-        check.run,
-        (run) =>
+        deploy,
+        (d) =>
           html`<span class="where-sep" aria-hidden="true">·</span
-            ><a href="${base}/runs/${run.id}"
-              >deploy ${run.commitOid.slice(0, 7)}</a
+            ><a href="${base}/runs/${d.id}"
+              >deploy ${d.commitOid.slice(0, 7)}</a
             >`,
       )}
     </p>`,
@@ -1501,13 +1621,24 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   for (const d of decisions)
     asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
 
-  const appRows = appRepos.map((repo) => {
+  const appRows = await Promise.all(appRepos.map(async (repo) => {
     const record = records.get(repo.id)!;
     const envs = runtime === undefined ? [] : runtime.status(record);
     const production = envs.find((e) => e.env === "production");
     const state = production?.state ?? "stopped";
     const latest = latestRuns.get(repo.id);
-    const word = latest === undefined ? undefined : wordFor(latest);
+    const word =
+      latest === undefined
+        ? undefined
+        : await runWord(
+            {
+              db,
+              dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+              runtime,
+              record,
+            },
+            latest,
+          );
     const who =
       latest?.actorId == null
         ? undefined
@@ -1547,7 +1678,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
               : state}</span
         >`,
     });
-  });
+  }));
 
   const apps =
     appRows.length === 0

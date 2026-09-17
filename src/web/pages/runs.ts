@@ -333,7 +333,7 @@ export function runsList(ctx: Ctx): Response {
 // ---- one run ----
 
 // GET /:owner/:name/runs/:id
-export function runPage(ctx: Ctx): Response {
+export async function runPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
@@ -346,7 +346,7 @@ export function runPage(ctx: Ctx): Response {
   const studio =
     ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
   if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
-    return studioRun(ctx, repo, run, lines, truncated);
+    return await studioRun(ctx, repo, run, lines, truncated);
   const base = repoBase(repo);
   const actor =
     run.actorId === null ? undefined : getUserById(ctx.app.db, run.actorId);

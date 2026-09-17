@@ -177,6 +177,29 @@ export function getPull(
 }
 
 /**
+ * The newest pull, in any state, whose head is this branch of this
+ * repository — what an agent run's own `branch` names, and how
+ * `landWork` (`crew/runner.ts`) finds the pull it already opened. A pull
+ * is its own issue, unrelated in the schema to the issue that asked for
+ * it; the branch is the only durable link a run's outcome leaves behind.
+ */
+export function pullForBranch(
+  db: Database,
+  repoId: string,
+  branch: string,
+): Pull | undefined {
+  const row = db
+    .query<
+      { number: number },
+      [string, string]
+    >(`SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.head_branch = ?2
+       ORDER BY issue.created_at DESC LIMIT 1`)
+    .get(repoId, branch);
+  return row ? getPull(db, repoId, row.number) : undefined;
+}
+
+/**
  * Open pulls, in any repository, whose head is this branch of this one:
  * what a push to a fork moves.
  */
