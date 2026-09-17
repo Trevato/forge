@@ -11,7 +11,12 @@
  * pull the crew stopped on, or a green one waiting for a look.
  */
 
-import { addComment, openIssue, assignIssue } from "../../actions/issues.ts";
+import {
+  addComment,
+  assignIssue,
+  openIssue,
+  setIssueStateThrough,
+} from "../../actions/issues.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
 import { listCrewRoles, type Agent } from "../../core/agents.ts";
@@ -57,7 +62,8 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page, redirect } from "../layout.ts";
+import { asksJs } from "../client.ts";
+import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
 import {
@@ -85,6 +91,9 @@ const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
 
 export interface Decision {
   readonly kind: DecisionKind;
+  /** Stable across renders — the kind and what it is about — so a form can
+   * name it and a later request can find it again. */
+  readonly id: string;
   readonly repo: Repo;
   readonly pull?: Pull | undefined;
   readonly who: string;
@@ -199,6 +208,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
       if (tries >= CHECK_FAILED_LIMIT)
         out.push({
           kind: "stopped",
+          id: `stopped:${pull.id}`,
           repo,
           pull,
           who,
@@ -208,6 +218,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
       out.push({
         kind: "look",
+        id: `look:${pull.id}`,
         repo,
         pull,
         who,
@@ -222,6 +233,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     if (s.paused === "ceiling")
       out.push({
         kind: "paused",
+        id: `paused:${repo.id}`,
         repo,
         who: "the crew",
         says: `${repo.name} reached its $${dollars(s.ceilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
@@ -258,10 +270,63 @@ function leanNote(d: Decision, option: string): Html | null {
   >`;
 }
 
+// ---- deciding several at once ----
+
 /**
- * The actions on one ask, on one line: a button for what lands, links for
- * what needs a look or a word. Saying something to the crew happens on the
- * change's own page, where the conversation is — not in a box in a list.
+ * What a person can decide for several asks in one go: an ask's own landing
+ * button, applied to each. Only what needs no words qualifies — saying
+ * something happens on the change's page. The page shows an action only
+ * while every checked ask takes it; the route skips one that does not.
+ */
+export type BulkAction = "ship" | "close";
+
+const BULK: Readonly<
+  Record<
+    BulkAction,
+    {
+      readonly kinds: readonly DecisionKind[];
+      readonly label: string;
+      readonly done: string;
+    }
+  >
+> = {
+  ship: { kinds: ["look"], label: "Ship", done: "Shipped" },
+  close: { kinds: ["stopped"], label: "Close", done: "Closed" },
+};
+const BULK_ACTIONS = Object.keys(BULK) as readonly BulkAction[];
+const isBulkAction = (v: string): v is BulkAction => Object.hasOwn(BULK, v);
+const takes = (d: Decision, a: BulkAction): boolean =>
+  BULK[a].kinds.includes(d.kind);
+
+/** The id of the form a row's own button submits (see `decisionForm`). */
+const askFormId = (d: Decision): string => `ask-${d.id}`;
+
+/**
+ * The form behind a row's landing button — its own post, exactly as it was.
+ * It sits after the panel's form, because a form inside a form is not
+ * HTML; the button reaches it by id.
+ */
+function decisionForm(d: Decision): Html | null {
+  const pull = d.pull;
+  if (pull === undefined) return null;
+  const base = repoBase(d.repo);
+  const own = html`id="${askFormId(d)}" method="post" hidden`;
+  if (d.kind === "stopped")
+    return html`<form ${own} action="${base}/pulls/${pull.number}/state">
+      <input type="hidden" name="state" value="closed" />
+    </form>`;
+  if (d.kind === "look")
+    return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
+      <input type="hidden" name="pull" value="${pull.number}" />
+    </form>`;
+  return null;
+}
+
+/**
+ * The actions on one ask, on one line: a button for what lands (submitting
+ * the row's own form, `decisionForm`), links for what needs a look or a
+ * word. Saying something to the crew happens on the change's own page,
+ * where the conversation is — not in a box in a list.
  */
 function decisionActions(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
@@ -274,40 +339,40 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
         : `${base}/app/pull-${pull.number}/open`;
   if (d.kind === "stopped" && pull)
     return html`${btn("Tell them", {
-        href: `${base}/pulls/${pull.number}#comment-body`,
-        size: "sm",
-        ...leanVariant(d, "say", "primary"),
-      })}${leanNote(d, "say")}
-      <form method="post" action="${base}/pulls/${pull.number}/state">
-        <input type="hidden" name="state" value="closed" />
-        ${btn("Close", { size: "sm", ...leanVariant(d, "close", undefined) })}
-        ${leanNote(d, "close")}
-      </form>
-      ${btn("See", {
-        href: `${base}/pulls/${pull.number}`,
-        size: "sm",
-        ...leanVariant(d, "look", undefined),
-      })}${leanNote(d, "look")}`;
+      href: `${base}/pulls/${pull.number}#comment-body`,
+      size: "sm",
+      ...leanVariant(d, "say", "primary"),
+    })}${leanNote(d, "say")}
+    ${btn("Close", {
+      size: "sm",
+      form: askFormId(d),
+      ...leanVariant(d, "close", undefined),
+    })}${leanNote(d, "close")}
+    ${btn("See", {
+      href: `${base}/pulls/${pull.number}`,
+      size: "sm",
+      ...leanVariant(d, "look", undefined),
+    })}${leanNote(d, "look")}`;
   if (d.kind === "look" && pull)
-    return html`<form method="post" action="${base}/pulls/${pull.number}/ship">
-        <input type="hidden" name="pull" value="${pull.number}" />
-        ${btn("Ship", { size: "sm", ...leanVariant(d, "ship", "primary") })}
-        ${leanNote(d, "ship")}
-      </form>
-      ${when(
-        preview,
-        (href) =>
-          html`${btn("Preview", {
-            href,
-            size: "sm",
-            ...leanVariant(d, "preview", undefined),
-          })}${leanNote(d, "preview")}`,
-      )}
-      ${btn("Not like this", {
-        href: `${base}/pulls/${pull.number}#comment-body`,
-        size: "sm",
-        ...leanVariant(d, "say", undefined),
-      })}${leanNote(d, "say")}`;
+    return html`${btn("Ship", {
+      size: "sm",
+      form: askFormId(d),
+      ...leanVariant(d, "ship", "primary"),
+    })}${leanNote(d, "ship")}
+    ${when(
+      preview,
+      (href) =>
+        html`${btn("Preview", {
+          href,
+          size: "sm",
+          ...leanVariant(d, "preview", undefined),
+        })}${leanNote(d, "preview")}`,
+    )}
+    ${btn("Not like this", {
+      href: `${base}/pulls/${pull.number}#comment-body`,
+      size: "sm",
+      ...leanVariant(d, "say", undefined),
+    })}${leanNote(d, "say")}`;
   return html`${btn("Settings", {
     href: `${base}/settings/autonomy`,
     size: "sm",
@@ -585,14 +650,7 @@ export async function studioApp(
         });
 
   const asks = when(decisions.length > 0, () =>
-    listCard(
-      decisions.map((d) => decisionRow(ctx, d)),
-      {
-        head: html`${icon("alert")}
-          <h2>Asks you</h2>
-          <span class="muted small">decide, and the crew carries on</span>`,
-      },
-    ),
+    asksPanel(ctx, decisions, base),
   );
 
   // ---- the rail ----
@@ -705,7 +763,7 @@ export async function studioApp(
     palette: repoPalette(repo),
     body,
     styleCss: studioCss,
-    scriptJs: liveClientJs,
+    scriptJs: `${liveClientJs}\n${asksJs}`,
   });
 }
 
@@ -724,13 +782,8 @@ function avatarOf(username: string): Html {
  */
 export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const db = ctx.app.db;
-  const repos = listReposVisibleTo(db, user, { limit: 200 });
-  const records = appsForRepos(
-    db,
-    repos.map((r) => r.id),
-  );
+  const { repos: appRepos, records } = appsOf(ctx, user);
   const runtime = appsRuntime(ctx.app);
-  const appRepos = repos.filter((r) => records.has(r.id));
   // One read for the newest run of every app, one for who ran them: the
   // home must not get slower as the apps grow.
   const latestRuns = latestAgentRunsForRepos(
@@ -811,16 +864,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
             ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`,
         });
 
-  const asks = when(decisions.length > 0, () =>
-    listCard(
-      decisions.map((d) => decisionRow(ctx, d)),
-      {
-        head: html`${icon("alert")}
-          <h2>Asks you</h2>
-          <span class="muted small">decide, and the crew carries on</span>`,
-      },
-    ),
-  );
+  const asks = when(decisions.length > 0, () => asksPanel(ctx, decisions, "/"));
 
   // Happening now: every run in flight across the apps, one read.
   const running = listActiveRuns(
@@ -874,22 +918,30 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     title: "Studio",
     body,
     styleCss: studioCss,
-    scriptJs: liveClientJs,
+    scriptJs: `${liveClientJs}\n${asksJs}`,
   });
 }
 
-/** One decision as a row: what it says, and the options in place. */
+/** One decision as a row: a box to pick it, what it says, the options in place. */
 function decisionRow(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const glyph =
     d.kind === "stopped" ? "alert" : d.kind === "look" ? "eye" : "clock";
-  // The title links; the row itself does not, because its trail holds forms
-  // and a form inside an anchor is not HTML a browser will keep together.
+  // The title links; the row itself does not, because it holds controls
+  // and a control inside an anchor is not HTML a browser will keep together.
   const title = d.pull
     ? html`<a href="${base}/pulls/${d.pull.number}">${d.pull.title}</a>`
     : html`<a href="${base}">${d.repo.name}</a>`;
   return row({
-    lead: icon(glyph),
+    lead: html`<input
+        class="studio-ask-pick"
+        type="checkbox"
+        name="ask"
+        value="${d.id}"
+        data-kind="${d.kind}"
+        data-repo="${base}"
+        aria-label="Select: ${d.pull?.title ?? d.repo.name}"
+      />${icon(glyph)}`,
     title,
     titleAttr: d.says,
     meta: html`${d.repo.name}${d.pull ? html` #${d.pull.number}` : null} ·
@@ -898,6 +950,54 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
       >${decisionActions(ctx, d)}</span
     >`,
   });
+}
+
+/**
+ * The asks as one form. Every row has a box; check any and a bar appears
+ * with what fits them all, posting to /studio/asks. A row's own button
+ * submits that row's form, placed after this one — nothing is nested, and
+ * one decision is exactly the post it was before.
+ */
+function asksPanel(
+  ctx: Ctx,
+  decisions: readonly Decision[],
+  back: string,
+): Html {
+  const bar = html`<div class="studio-bulk">
+    <output class="studio-bulk-count">Selected</output>
+    ${BULK_ACTIONS.map((a) =>
+      btn(BULK[a].label, { size: "sm", name: "action", value: a }),
+    )}
+    <span class="muted studio-bulk-none">no one action fits them all</span>
+  </div>`;
+  return html`<div class="studio-asks">
+    <form method="post" action="/studio/asks">
+      <input type="hidden" name="back" value="${back}" />
+      ${card(
+        html`${bar}
+          <ul class="list">
+            ${decisions.map((d) => decisionRow(ctx, d))}
+          </ul>`,
+        {
+          head: html`${icon("alert")}
+            <h2>Asks you</h2>
+            <span class="muted small">decide, and the crew carries on</span>`,
+          pad: false,
+        },
+      )}
+    </form>
+    ${decisions.map(decisionForm)}
+  </div>`;
+}
+
+/** The apps a person can see, as repositories, with their records. */
+function appsOf(ctx: Ctx, user: User) {
+  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  return { repos: repos.filter((r) => records.has(r.id)), records };
 }
 
 // ---- actions ----
@@ -967,7 +1067,7 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
     : undefined;
   if (!pull) return notFoundPage(ctx);
   const merged = await mergePull(ctx.app, ctx.auth.user, repo, pull, "squash");
-  return flashTo(ctx, base, {
+  return flashOrJson(ctx, base, {
     ...(merged.ok
       ? { message: `Shipped "${pull.title}". Production is redeploying.` }
       : {
@@ -997,11 +1097,76 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
       message: "Say something first.",
     });
   const said = addComment(ctx.app, ctx.auth.user, repo, pull, text);
-  return flashTo(ctx, base, {
+  return flashOrJson(ctx, base, {
     ...(said.ok
       ? { message: `Told ${pull.authorName}. It picks the change back up.` }
       : { tone: "danger" as const, message: "That could not be said." }),
   });
+}
+
+/**
+ * POST /studio/asks  { ask*, action, back } — one decision for several asks.
+ * Each is the same act as its row's own button. An ask that is gone, or
+ * never took this action, is skipped and counted, never guessed at.
+ */
+export async function asksSubmit(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const back = backTo(ctx, field(form, "back"));
+  const action = field(form, "action");
+  const picked = [
+    ...new Set(
+      form.getAll("ask").filter((v): v is string => typeof v === "string"),
+    ),
+  ];
+  if (!isBulkAction(action) || picked.length === 0)
+    return flashOrJson(ctx, back, {
+      tone: "danger",
+      message: "Pick some asks, and what to do with them.",
+    });
+  // The asks as they stand now, not as the page had them.
+  const asks = new Map(
+    decisionsFor(ctx, appsOf(ctx, user).repos).map((d) => [d.id, d]),
+  );
+  const done: string[] = [];
+  const skipped: string[] = [];
+  const failed: string[] = [];
+  for (const id of picked) {
+    const d = asks.get(id);
+    if (d?.pull === undefined || !takes(d, action)) {
+      skipped.push(id);
+      continue;
+    }
+    const r =
+      action === "ship"
+        ? await mergePull(ctx.app, user, d.repo, d.pull, "squash")
+        : await setIssueStateThrough(ctx.app, user, d.repo, d.pull, "closed");
+    (r.ok ? done : failed).push(id);
+  }
+  const tally = [`${BULK[action].done} ${done.length}`];
+  if (skipped.length > 0) tally.push(`skipped ${skipped.length}`);
+  if (failed.length > 0) tally.push(`could not ${action} ${failed.length}`);
+  return flashOrJson(
+    ctx,
+    back,
+    {
+      ...(done.length === 0 ? { tone: "danger" as const } : {}),
+      message: tally.join(" · "),
+    },
+    { done, skipped, failed },
+  );
+}
+
+/** Where a form sends a person back: what it said, else the referer, else
+ * home — and never off this forge. */
+function backTo(ctx: Ctx, said: string): string {
+  const back = said || ctx.request.headers.get("referer") || "/";
+  return (back.startsWith("/") && !back.startsWith("//")) ||
+    back.startsWith(`${ctx.url.origin}/`)
+    ? back
+    : "/";
 }
 
 /** POST /mode  { mode } — studio or dev, for this browser. */
@@ -1009,13 +1174,30 @@ export async function modeSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const choice = field(form, "mode");
-  const back = field(form, "back") || ctx.request.headers.get("referer") || "/";
   const secure = ctx.url.protocol === "https:";
   return redirect(
-    back.startsWith("/") || back.startsWith(ctx.url.origin) ? back : "/",
+    backTo(ctx, field(form, "back")),
     modeCookie(isMode(choice) ? choice : undefined, secure),
   );
 }
+
+/**
+ * An action in the bar shows only while every checked ask takes it, and a
+ * note when none does — from the same table the route enforces, so the
+ * page cannot offer what the server would skip. CSS alone: it holds with
+ * scripts off.
+ */
+const bulkCss = ((): string => {
+  const other = (a: BulkAction): string =>
+    `[name="ask"]${BULK[a].kinds.map((k) => `:not([data-kind="${k}"])`).join("")}:checked`;
+  return [
+    ...BULK_ACTIONS.map(
+      (a) =>
+        `.studio-asks:has(${other(a)}) [name="action"][value="${a}"] { display: none; }`,
+    ),
+    `.studio-asks${BULK_ACTIONS.map((a) => `:has(${other(a)})`).join("")} .studio-bulk-none { display: inline; }`,
+  ].join("\n");
+})();
 
 export const studioCss = /* css */ `
 .studio { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 22px; margin-top: 16px; }
@@ -1031,7 +1213,6 @@ export const studioCss = /* css */ `
 .studio-head h1 { display: flex; align-items: center; gap: 10px; }
 .badge[data-variant="accent"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .badge[data-word="working"] svg { animation: spin 1.1s linear infinite; }
-.studio-now h2, .studio-asks h2 { font-size: 14px; margin: 0 0 8px; }
 .studio-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .studio-list li { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; }
 .studio-list li svg { vertical-align: -3px; }
@@ -1042,8 +1223,20 @@ export const studioCss = /* css */ `
 .studio-list li[data-word="look"] .studio-word { color: var(--merged); opacity: 1; }
 .studio-list li[data-word="stopped"] .studio-word { color: var(--danger, #c33); opacity: 1; }
 .studio-ask-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.studio-ask-actions form { display: inline-flex; align-items: center; gap: 4px; margin: 0; }
 .studio-lean { margin-left: 2px; }
+.studio-asks .row-lead { gap: 8px; }
+.studio-ask-pick { accent-color: var(--accent); margin: 0; width: 13px; height: 13px; opacity: .6; }
+.studio-ask-pick:checked, .studio-ask-pick:focus-visible, .row:hover .studio-ask-pick { opacity: 1; }
+.studio-bulk { display: none; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px; background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
+.studio-asks:has([name="ask"]:checked) .studio-bulk { display: flex; }
+.studio-bulk-count { font-weight: 550; font-variant-numeric: tabular-nums; }
+.studio-bulk-none { display: none; }
+.studio-asks li[data-busy] { opacity: .6; }
+.studio-asks li[data-busy] .studio-ask-actions { visibility: hidden; }
+.studio-asks li[data-busy] .row-lead svg { display: none; }
+.studio-asks li[data-busy] .row-lead::after { content: ""; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+.studio-ask-note { color: var(--danger, #c33); }
+${bulkCss}
 .studio-rail { display: grid; gap: 18px; align-content: start; }
 .studio-rail h3 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 6px; font-weight: 600; }
 .studio-crew { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }

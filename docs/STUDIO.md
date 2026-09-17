@@ -52,6 +52,12 @@ repository paused at its ceiling says so, with the way to settings. Nothing
 here re-queues anything: a re-queue button is what an operator presses
 instead of deciding.
 
+Check several asks and one bar above them offers what fits them all — ship
+the green ones, close the stopped ones — as one decision (`POST
+/studio/asks`), each done exactly as its own button would have. Deciding
+never leaves the page: the row looks busy until it lands, then goes; one
+that could not be done stays, with the reason on it.
+
 **Now** lists what was told and not yet picked up, every open pull with its
 state, and the last runs, each in one of the five words with who and when.
 

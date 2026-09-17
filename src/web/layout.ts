@@ -11,6 +11,7 @@ import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
+import { json } from "../http/respond.ts";
 import { secret } from "../kernel/id.ts";
 import {
   metaThemeColor,
@@ -25,6 +26,7 @@ import {
   readFlash,
   type Flash,
 } from "./flash.ts";
+import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon, themeGlyph } from "./icons.ts";
 import { btn, iconBtn, kbd, menu, type MenuItem } from "./ui.ts";
@@ -482,4 +484,22 @@ export function fragment(body: Html, status = 200): Response {
 /** Redirect back to a page carrying a message — the shape most handlers want. */
 export function flashTo(ctx: Ctx, to: string, flash: Flash): Response {
   return redirect(to, { flash, url: ctx.url });
+}
+
+/**
+ * A form's answer with two faces: the redirect and flash a plain form gets,
+ * or — when the client asked for JSON, to act in place — `{ ok: true,
+ * flash }` or `{ ok: false, error }` (422), with anything `extra` beside it.
+ * One route, one outcome; only the way it is told differs.
+ */
+export function flashOrJson(
+  ctx: Ctx,
+  to: string,
+  flash: Flash,
+  extra: Record<string, unknown> = {},
+): Response {
+  if (!prefersJson(ctx)) return flashTo(ctx, to, flash);
+  return flash.tone === "danger"
+    ? json({ ok: false, error: flash.message, ...extra }, 422)
+    : json({ ok: true, flash: flash.message, ...extra });
 }

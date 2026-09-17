@@ -33,7 +33,7 @@ import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo } from "../layout.ts";
+import { flashOrJson, flashTo } from "../layout.ts";
 import {
   btn,
   card,
@@ -585,9 +585,9 @@ export async function stateSubmit(
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
           : "That could not be changed.");
-    return flashTo(ctx, dest, { tone: "danger", message });
+    return flashOrJson(ctx, dest, { tone: "danger", message });
   }
-  return flashTo(ctx, dest, {
+  return flashOrJson(ctx, dest, {
     message: wanted === "closed" ? "Closed." : "Reopened.",
   });
 }
