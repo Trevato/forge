@@ -65,6 +65,22 @@ export function servedPhrase(env: EnvStatus): string | undefined {
   return `${(ms / 1000).toFixed(1)}s after the push`;
 }
 
+/**
+ * How long a queued run has waited, worded like the run list's own line
+ * (`queued 12m ago`) but compact enough to sit beside a state word: `queued
+ * 12m`. `just now` under a minute, so a check that only just queued never
+ * reads as `queued 0m`.
+ */
+export function queuedPhrase(createdAt: string, now = Date.now()): string {
+  const seconds = Math.max(0, (now - Date.parse(createdAt)) / 1000);
+  if (seconds < 60) return "queued just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `queued ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `queued ${hours}h`;
+  return `queued ${Math.floor(hours / 24)}d`;
+}
+
 /** Bytes, three significant figures, never more precision than is true. */
 export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

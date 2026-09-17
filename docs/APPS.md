@@ -209,6 +209,13 @@ A `check` that is present and wrong fails with the reason, so a commit is
 never silently unchecked. A check under way when the forge restarts is
 queued again, and the forge that carries on runs it from the start.
 
+Checks share `FORGE_CHECKS_CONCURRENCY` slots (default `1`), and when one
+frees, it goes to the most recently requested check waiting, not the one
+queued longest — a fresh push is never stuck behind pulls that queued hours
+earlier. The one exception is starvation: a check that has waited ten
+minutes to start outranks a newer one regardless, so nothing waits forever.
+A pull's status names how long its queued check has been waiting.
+
 ### Environment
 
 What an app needs that the repository must not carry — an admin password,

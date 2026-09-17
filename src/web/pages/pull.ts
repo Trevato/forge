@@ -72,6 +72,7 @@ import {
   labelCss,
   listCard,
   originTag,
+  queuedPhrase,
   sha,
   stateBadge,
   time,
@@ -226,12 +227,17 @@ function checksLine(
       ? html`<span class="ok">${icon("check")}Checks passed</span>${link}`
       : check.state === "failed"
         ? html`<span class="bad">${icon("x")}Checks failed</span>${link}`
-        : check.state === "running" || check.state === "queued"
-          ? html`<span class="now">${icon("loader")}Checks ${check.state}</span
-              >${link}`
-          : check.state === "cancelled"
-            ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
-            : html`<span>${icon("clock")}No checks on this head yet</span>`;
+        : check.state === "queued"
+          ? html`<span class="now"
+              >${icon("loader")}Checks
+              ${run ? queuedPhrase(run.createdAt) : "queued"}</span
+            >${link}`
+          : check.state === "running"
+            ? html`<span class="now">${icon("loader")}Checks running</span
+                >${link}`
+            : check.state === "cancelled"
+              ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
+              : html`<span>${icon("clock")}No checks on this head yet</span>`;
   return html`<p class="checks-line">
     ${body}${when(
       required,

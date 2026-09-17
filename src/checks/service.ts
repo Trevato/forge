@@ -62,6 +62,44 @@ export interface ChecksHandle {
 /** How often queued checks another forge left are looked for. */
 const TICK_MS = 5_000;
 
+/**
+ * How long a queued check may wait before it outranks a newer one however
+ * fresh: the bound that keeps `pickNext` from starving a pull nobody has
+ * pushed to in a while.
+ */
+export const STARVATION_MS = 10 * 60 * 1000;
+
+/**
+ * Which queued check takes a slot when one frees: the one requested most
+ * recently, so a push's own check is never stuck behind pulls that queued
+ * hours earlier — unless something has already waited `STARVATION_MS` or
+ * more, in which case the longest-waiting check goes first regardless of
+ * how fresh the rest are. Ties (down to the same instant) fall back to id
+ * order, which is itself creation order (`kernel/id.ts`).
+ */
+export function pickNext(
+  queued: readonly Run[],
+  now: number = Date.now(),
+): Run | undefined {
+  if (queued.length === 0) return undefined;
+  let oldest = queued[0]!;
+  let newest = queued[0]!;
+  for (const run of queued) {
+    if (
+      run.createdAt < oldest.createdAt ||
+      (run.createdAt === oldest.createdAt && run.id < oldest.id)
+    )
+      oldest = run;
+    if (
+      run.createdAt > newest.createdAt ||
+      (run.createdAt === newest.createdAt && run.id > newest.id)
+    )
+      newest = run;
+  }
+  if (now - Date.parse(oldest.createdAt) >= STARVATION_MS) return oldest;
+  return newest;
+}
+
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
@@ -72,7 +110,8 @@ export const checksFor = (app: App): ChecksHandle | undefined =>
   handles.get(app);
 
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
-  const gate = new Gate(options.concurrency ?? 1);
+  const capacity = options.concurrency ?? 1;
+  const gate = new Gate(capacity);
   const inFlight = new Map<
     string,
     { promise: Promise<void>; abort: AbortController }
@@ -116,7 +155,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       ...(actorId === undefined ? {} : { actorId }),
     });
     announceRun(app, run, actorId);
-    start(run, repo);
+    schedule();
     return run;
   }
 
@@ -131,20 +170,33 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           error: String(error),
         }),
       )
-      .finally(() => inFlight.delete(run.id));
+      .finally(() => {
+        inFlight.delete(run.id);
+        // The slot this run held is free again: give it to whichever queued
+        // check now deserves it most, not whoever asked first.
+        schedule();
+      });
     inFlight.set(run.id, { promise, abort });
   }
 
   /**
-   * Queued checks are whichever forge's picks them up: one the forge before
-   * this one never reached, or one a forge stopping beside this one handed
-   * back. Claiming is what decides, so two forges never run the same one.
+   * Fill every free slot with the queued check `pickNext` says deserves it —
+   * one the forge before this one never reached, one a forge stopping
+   * beside this one handed back, or simply the newest push once a slot
+   * opens up. Claiming is what decides between two forges, so calling this
+   * from both never runs the same check twice.
    */
-  function pickUp(): void {
-    for (const run of listActive(app.db, "check")) {
-      if (run.state !== "queued" || inFlight.has(run.id)) continue;
-      const repo = getRepoById(app.db, run.repoId);
-      if (repo) start(run, repo);
+  function schedule(): void {
+    if (stopped) return;
+    while (inFlight.size < capacity) {
+      const queued = listActive(app.db, "check").filter(
+        (run) => run.state === "queued" && !inFlight.has(run.id),
+      );
+      const next = pickNext(queued);
+      if (!next) return;
+      const repo = getRepoById(app.db, next.repoId);
+      if (!repo) return;
+      start(next, repo);
     }
   }
 
@@ -406,9 +458,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   }
 
   const timer = setInterval(() => {
-    if (!stopped) pickUp();
+    if (!stopped) schedule();
   }, TICK_MS);
-  pickUp();
+  schedule();
   void catchUp();
 
   const handle: ChecksHandle = {

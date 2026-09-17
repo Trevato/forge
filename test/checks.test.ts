@@ -11,8 +11,20 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
-import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
-import { checksForHead, listRuns, type Run } from "../src/core/runs.ts";
+import {
+  pickNext,
+  startChecks,
+  STARVATION_MS,
+  type ChecksHandle,
+} from "../src/checks/service.ts";
+import {
+  cancelRun,
+  checksForHead,
+  createRun,
+  getRun,
+  listRuns,
+  type Run,
+} from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -224,6 +236,106 @@ describe("checks", () => {
     expect(middle?.state).toBe("cancelled");
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
+
+  test("pickNext takes the newest queued check, unless one has starved", () => {
+    const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
+    const b = createRun(app.db, { repoId: repo.id, kind: "check", env: "b" });
+    const c = createRun(app.db, { repoId: repo.id, kind: "check", env: "c" });
+    // ids are creation-ordered, so this is oldest-to-newest already.
+    expect(pickNext([a, b, c])?.id).toBe(c.id);
+    expect(pickNext([c, a, b])?.id).toBe(c.id);
+    expect(pickNext([a])?.id).toBe(a.id);
+    expect(pickNext([])).toBeUndefined();
+
+    // `a` has waited past the starvation bound: it outranks `c`, however new.
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(a.id, new Date(Date.now() - STARVATION_MS - 1_000).toISOString());
+    const starved = getRun(app.db, a.id)!;
+    expect(pickNext([starved, b, c])?.id).toBe(starved.id);
+    // Just short of the bound, the newest still wins.
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(a.id, new Date(Date.now() - STARVATION_MS + 1_000).toISOString());
+    expect(pickNext([getRun(app.db, a.id)!, b, c])?.id).toBe(c.id);
+
+    // These never named a real commit: cancel them rather than leave them
+    // for the live checks service running beside this test to trip over.
+    for (const run of [a, b, c]) cancelRun(app.db, run.id);
+  });
+
+  test("when a slot frees, the newest of several queued checks runs first", async () => {
+    // A slow check on its own environment holds the only slot.
+    const held = await commitToBranch(app, alice, repo, {
+      branch: "order-hold",
+      message: "Hold the slot",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
+      ],
+    });
+    if (!held.ok) throw new Error(JSON.stringify(held.error));
+    const holder = await checks.request(
+      repo,
+      "order-hold",
+      held.value.commitOid,
+      "push",
+    );
+    expect(holder).toBeDefined();
+
+    // Three more, on three environments so none supersedes another, queue
+    // behind it — oldest requested first.
+    const oldest = await commitToBranch(app, alice, repo, {
+      branch: "order-a",
+      message: "A",
+      files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
+    });
+    if (!oldest.ok) throw new Error(JSON.stringify(oldest.error));
+    const middle = await commitToBranch(app, alice, repo, {
+      branch: "order-b",
+      message: "B",
+      files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
+    });
+    if (!middle.ok) throw new Error(JSON.stringify(middle.error));
+    const newest = await commitToBranch(app, alice, repo, {
+      branch: "order-c",
+      message: "C",
+      files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
+    });
+    if (!newest.ok) throw new Error(JSON.stringify(newest.error));
+
+    const oldestRun = await checks.request(
+      repo,
+      "order-a",
+      oldest.value.commitOid,
+      "push",
+    );
+    const middleRun = await checks.request(
+      repo,
+      "order-b",
+      middle.value.commitOid,
+      "push",
+    );
+    const newestRun = await checks.request(
+      repo,
+      "order-c",
+      newest.value.commitOid,
+      "push",
+    );
+    expect(oldestRun && middleRun && newestRun).toBeTruthy();
+    expect(oldestRun?.state).toBe("queued");
+    expect(middleRun?.state).toBe("queued");
+    expect(newestRun?.state).toBe("queued");
+
+    await settled((r) => r.id === newestRun!.id);
+    await settled((r) => r.id === middleRun!.id);
+    await settled((r) => r.id === oldestRun!.id);
+
+    const runs = listRuns(app.db, repo.id, { kind: "check", limit: 50 });
+    const startedAt = (id: string): number =>
+      Date.parse(runs.find((r) => r.id === id)!.startedAt!);
+    expect(startedAt(newestRun!.id)).toBeLessThan(startedAt(middleRun!.id));
+    expect(startedAt(middleRun!.id)).toBeLessThan(startedAt(oldestRun!.id));
+  }, 30_000);
 
   test("a check in flight when the forge stops is queued again, and the next forge runs it", async () => {
     const slow = await commitToBranch(app, alice, repo, {
