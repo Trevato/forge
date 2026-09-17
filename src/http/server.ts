@@ -227,7 +227,7 @@ import {
   storeIdempotent,
   type StoredResponse,
 } from "../core/idempotency.ts";
-import { sseStream } from "./sse.ts";
+import { sseStream, viewerStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -605,6 +605,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 
   // Live event stream for a repo the viewer can read.
+  // Everything the viewer may see, live. Pages with live regions listen here.
+  router.add("GET", "/events", (ctx) =>
+    viewerStream(ctx.app, ctx.auth.user, ctx.request),
+  );
+
   router.add("GET", "/:owner/:name/stream", (ctx) => {
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
     if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();

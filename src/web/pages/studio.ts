@@ -68,7 +68,7 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { asksJs } from "../client.ts";
+import { asksJs, liveRegionsJs } from "../client.ts";
 import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
@@ -868,7 +868,23 @@ export async function studioApp(
     })}
     ${head}
     <div class="dash">
-      <div class="dash-main stack">${tell} ${asks} ${now}</div>
+      <div class="dash-main stack">
+        ${tell}
+        <div
+          id="live-asks"
+          data-live="run.*,pull.*,issue.*,check.*"
+          data-live-repo="${repo.ownerName}/${repo.name}"
+        >
+          ${asks}
+        </div>
+        <div
+          id="live-now"
+          data-live="run.*,pull.*,issue.*"
+          data-live-repo="${repo.ownerName}/${repo.name}"
+        >
+          ${now}
+        </div>
+      </div>
       <aside class="dash-rail stack">
         ${crewCard} ${weekCard} ${ownCard} ${more}
       </aside>
@@ -881,7 +897,7 @@ export async function studioApp(
     palette: repoPalette(repo),
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
   });
 }
 
@@ -1037,9 +1053,15 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
         );
 
   const body = html`<div class="dash">
-    <div class="dash-main stack">${asks} ${apps}</div>
+    <div class="dash-main stack">
+      <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">${asks}</div>
+      <div id="live-apps" data-live="run.finished,pull.merged,pull.opened">
+        ${apps}
+      </div>
+    </div>
     <aside class="dash-rail stack">
-      ${now} ${onYouCard(ctx, user) ?? null}
+      <div id="live-now" data-live="run.*">${now}</div>
+      ${onYouCard(ctx, user) ?? null}
     </aside>
   </div>`;
   return page({
@@ -1047,7 +1069,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     title: "Studio",
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
   });
 }
 

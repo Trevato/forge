@@ -1569,3 +1569,65 @@ export const shellJs = /* js */ `
   });
 })();
 `;
+
+/**
+ * Live regions. A page marks the parts of itself that change while it is
+ * open: an element with an `id` and `data-live="kinds"` (comma-separated
+ * event kinds, `*` as a suffix wildcard: `run.*`), optionally scoped to
+ * one repository with `data-live-repo="owner/name"`. One stream per page
+ * carries everything the viewer may see; when an event matches, the page
+ * refetches itself once (several events within half a second are one
+ * fetch) and swaps just those regions in place. Nothing reloads under a
+ * reader, no client templating, and the server renders exactly what it
+ * would have rendered on a visit. `forge:event` is dispatched on
+ * `document` for scripts that want the event itself.
+ */
+export const liveRegionsJs = /* js */ `
+(function () {
+  var regions = document.querySelectorAll('[data-live]');
+  if (regions.length === 0 || typeof EventSource === 'undefined') return;
+  function matches(patterns, kind, repo, region) {
+    var want = region.getAttribute('data-live-repo');
+    if (want && want !== repo) return false;
+    return patterns.some(function (p) {
+      return p.slice(-1) === '*' ? kind.indexOf(p.slice(0, -1)) === 0 : p === kind;
+    });
+  }
+  var due = {};
+  var timer = null;
+  function refresh() {
+    timer = null;
+    var ids = Object.keys(due);
+    due = {};
+    if (ids.length === 0) return;
+    fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
+      .then(function (text) {
+        var fresh = new DOMParser().parseFromString(text, 'text/html');
+        ids.forEach(function (id) {
+          var mine = document.getElementById(id);
+          var theirs = fresh.getElementById(id);
+          if (!mine || !theirs) return;
+          var active = document.activeElement;
+          if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+          mine.innerHTML = theirs.innerHTML;
+          Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
+          mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
+        });
+      })
+      .catch(function () {});
+  }
+  var source = new EventSource('/events');
+  source.addEventListener('forge', function (event) {
+    var data;
+    try { data = JSON.parse(event.data); } catch (err) { return; }
+    document.dispatchEvent(new CustomEvent('forge:event', { detail: data }));
+    var hit = false;
+    Array.prototype.forEach.call(document.querySelectorAll('[data-live]'), function (region) {
+      var patterns = (region.getAttribute('data-live') || '').split(',').map(function (p) { return p.trim(); }).filter(Boolean);
+      if (region.id && matches(patterns, data.kind, data.repo, region)) { due[region.id] = true; hit = true; }
+    });
+    if (hit && timer === null) timer = setTimeout(refresh, 500);
+  });
+})();
+`;

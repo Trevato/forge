@@ -15,6 +15,9 @@
  */
 
 import type { App } from "../app.ts";
+import type { User } from "../core/users.ts";
+import { listEventsVisibleTo } from "../core/events.ts";
+import { canRead, getRepoById } from "../core/repos.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 const HEARTBEAT_MS = 25_000;
@@ -134,6 +137,57 @@ export function eventStream(
       // Tell nginx-style proxies not to buffer the stream.
       "x-accel-buffering": "no",
     },
+  });
+}
+
+/**
+ * Everything one viewer may see, as it happens: every event on every
+ * repository they can read, replayed from `Last-Event-ID` first so a
+ * browser that reconnects misses nothing. Visibility is decided once per
+ * repository per connection; a repository whose visibility changes is
+ * seen on the next connection.
+ */
+export function viewerStream(
+  app: App,
+  viewer: User | undefined,
+  request: Request,
+): Response {
+  const seen = new Map<string, boolean>();
+  const visible = (repoId: string): boolean => {
+    const known = seen.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(app.db, repoId);
+    const ok = repo !== undefined && canRead(app.db, repo, viewer);
+    seen.set(repoId, ok);
+    return ok;
+  };
+  const named = (event: ForgeEvent): Record<string, unknown> => {
+    const repo =
+      event.repoId === null ? undefined : getRepoById(app.db, event.repoId);
+    return {
+      id: event.id,
+      kind: event.kind,
+      repo: repo === undefined ? null : `${repo.ownerName}/${repo.name}`,
+      payload: event.payload,
+      at: event.createdAt,
+    };
+  };
+  const after =
+    request.headers.get("last-event-id") ??
+    new URL(request.url).searchParams.get("since") ??
+    undefined;
+  return eventStream(request, (emit) => {
+    if (after !== undefined && after !== "") {
+      const missed = listEventsVisibleTo(app.db, viewer, {
+        afterId: after,
+        limit: 200,
+      }).reverse();
+      for (const event of missed) emit("forge", named(event), event.id);
+    }
+    return app.bus.subscribe((event: ForgeEvent) => {
+      if (event.repoId === null || !visible(event.repoId)) return;
+      emit("forge", named(event), event.id);
+    });
   });
 }
 
