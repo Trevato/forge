@@ -260,11 +260,13 @@ export function finderDialog(): Html {
   return html`<dialog
     class="dialog palette finder"
     id="finder"
+    role="dialog"
+    aria-modal="true"
     aria-label="Go to file"
   >
     <input
       class="input palette-input"
-      type="search"
+      type="text"
       placeholder="Go to file…"
       aria-label="Go to file"
       autocomplete="off"
