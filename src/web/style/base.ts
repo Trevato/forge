@@ -78,6 +78,8 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .skip:focus-visible { top: 10px; color: var(--primary-fg); }
 
 .shell { width: 100%; max-width: var(--page); margin: 0 auto; padding: 0 16px 96px; flex: 1; }
+/* A bare page owns the whole window: no width, no padding, no chrome. */
+.bare { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
 .topbar {
   position: sticky; top: 0; z-index: 20;
