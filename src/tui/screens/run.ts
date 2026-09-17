@@ -11,6 +11,12 @@
  *
  * The log follows its end the way `tail -f` does until the reader scrolls
  * up to look at something, and `G` puts it back on the end.
+ *
+ * Lines wrap to the width rather than clip at it: a log is read for the
+ * words at the end of a line — the path, the exit code, the URL — and a
+ * terminal that cut them off would be showing the least useful half. The
+ * wrapped rows are built once per width and extended a line at a time as
+ * the tail arrives, so a resize is the only thing that rewraps.
  */
 
 import { cancelRepoRun, getRepoRun, runLog } from "../../actions/runs.ts";
@@ -21,7 +27,7 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import type { Span } from "../term/screen.ts";
 import { BOLD, ITALIC, style, type Color, type Style } from "../term/style.ts";
-import { truncate } from "../term/width.ts";
+import { expandTabs, truncate, wrap } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { dot, spinner, type Tone } from "../ui/widgets.ts";
@@ -49,6 +55,15 @@ import {
 /** Head rows: the state line, the summary, and the times. */
 const HEAD = 4;
 
+/** The log laid out for one width and one theme. */
+interface View {
+  readonly width: number;
+  readonly c: Tokens;
+  readonly rows: Span[][];
+  /** The line each row came from; -1 for the "earlier lines" notice. */
+  readonly from: number[];
+}
+
 export function runScreen(
   f: Session,
   ctx: Ctx,
@@ -59,7 +74,7 @@ export function runScreen(
   let names = new Map<string, { username: string }>();
   let lines: string[] = [];
   let truncated = false;
-  let styled: Span[][] = [];
+  let view: View | undefined;
   let follow = true;
   let failed: string | undefined;
   const scroll = new Scroll();
@@ -69,16 +84,39 @@ export function runScreen(
   const mayCancel = (): boolean =>
     run !== undefined && !isTerminal(run.state) && canWrite(f.db, repo, f.user);
 
-  const restyle = (): void => {
+  const addLine = (v: View, line: string, index: number): void => {
+    const st = lineStyle(line, v.c);
+    for (const piece of wrap(expandTabs(line), v.width)) {
+      v.rows.push([{ text: piece, style: st }]);
+      v.from.push(index);
+    }
+  };
+
+  /**
+   * The rows for this width. A new width rewraps everything and keeps the
+   * reader's place by *line*, not by row: the line that was at the top stays
+   * at the top, whatever number of rows it now takes.
+   */
+  const viewFor = (width: number): View => {
     const c = ctx.theme.c;
-    styled = lines.map((line) => [{ text: line, style: lineStyle(line, c) }]);
-    if (truncated)
-      styled.unshift([
+    if (view !== undefined && view.width === width && view.c === c) return view;
+    const next: View = { width, c, rows: [], from: [] };
+    if (truncated) {
+      next.rows.push([
         {
           text: "… earlier lines are not shown; the log is large",
           style: style(c.faint, c.bg, ITALIC),
         },
       ]);
+      next.from.push(-1);
+    }
+    lines.forEach((line, i) => addLine(next, line, i));
+    if (view !== undefined && !follow) {
+      const wasAt = view.from[scroll.top] ?? -1;
+      scroll.top = Math.max(0, next.from.indexOf(wasAt));
+    }
+    view = next;
+    return next;
   };
 
   /** Re-read the row: the state, the summary and the cost move as it runs. */
@@ -138,7 +176,7 @@ export function runScreen(
         (line) => {
           if (signal.aborted) return;
           lines.push(line);
-          restyle();
+          if (view !== undefined) addLine(view, line, lines.length - 1);
           ctx.invalidate();
         },
         signal,
@@ -153,7 +191,7 @@ export function runScreen(
       names = runActors(f, [run]);
       lines = read.value.lines;
       truncated = read.value.truncated;
-      restyle();
+      view = undefined;
       live(
         f,
         signal,
@@ -238,7 +276,9 @@ export function runScreen(
         style(c.faint, c.bg),
         right,
       );
-      if (styled.length === 0) {
+      // One column for the scrollbar, one so a full row never touches it.
+      const { rows } = viewFor(Math.max(1, body!.w - 2));
+      if (rows.length === 0) {
         s.text(
           body!.x,
           body!.y,
@@ -250,11 +290,11 @@ export function runScreen(
         );
         return;
       }
-      // Following means "the last line is the bottom row", and the bottom
+      // Following means "the last row is the bottom row", and the bottom
       // row is only known here, where the height is.
-      if (follow) scroll.to(styled.length - body!.h, styled.length);
-      drawLines(s, body!, c, scroll, styled);
-      hitScroll(ctx, body!, scroll, styled.length);
+      if (follow) scroll.to(rows.length - body!.h, rows.length);
+      drawLines(s, body!, c, scroll, rows);
+      hitScroll(ctx, body!, scroll, rows.length);
     },
     key(e) {
       if (e.key === "x" && mayCancel()) {
@@ -265,10 +305,11 @@ export function runScreen(
         follow = true;
         return true;
       }
-      if (scroll.key(e, styled.length)) {
+      const total = view?.rows.length ?? 0;
+      if (scroll.key(e, total)) {
         // Scrolling away from the end is a choice to read; new lines stop
         // moving the view until `G` asks for the end again.
-        follow = scroll.top + scroll.height >= styled.length;
+        follow = scroll.top + scroll.height >= total;
         return true;
       }
       if (e.key === "r") {

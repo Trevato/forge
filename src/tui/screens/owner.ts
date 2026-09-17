@@ -25,7 +25,7 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
 import { truncate } from "../term/width.ts";
-import { fill, len, split } from "../ui/layout.ts";
+import { beside, fill, len, split } from "../ui/layout.ts";
 import { emptyState, tabs } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
@@ -130,37 +130,44 @@ export function ownerScreen(f: Session, ctx: Ctx, name: string): Screen {
         );
 
       if (tab === 1) {
-        const [left, right] = split(body!, "h", [len(28), fill(1)]);
+        // The teams beside their members, or the members under the teams
+        // on a narrow terminal — a team you cannot see the members of is a
+        // name, not a team.
+        const { main: left, aside: right } = beside(body!, ctx.twoPane, {
+          main: len(28),
+          aside: fill(1),
+        });
         drawList(
           s,
-          left!,
+          left,
           c,
           state,
           teams.map((t) => ({ title: t.name, meta: t.permission })),
         );
         // A team's members are what the right pane shows, so selecting one
         // *is* opening it — the click reloads exactly what `j` reloads.
-        hitList(ctx, left!, state, teams.length, {
+        hitList(ctx, left, state, teams.length, {
           select: () => reload(),
           open: () => reload(),
         });
+        if (right === undefined) return;
         members.forEach((member, i) => {
-          if (i >= right!.h) return;
+          if (i >= right.h) return;
           s.text(
-            right!.x + 1,
-            right!.y + i,
-            truncate(member.username, right!.w - 1),
+            right.x + 1,
+            right.y + i,
+            truncate(member.username, right.w - 1),
             style(c.fg, c.bg),
-            right!.x + right!.w,
+            right.x + right.w,
           );
         });
         if (members.length === 0)
           s.text(
-            right!.x + 1,
-            right!.y,
+            right.x + 1,
+            right.y,
             "No members",
             style(c.faint, c.bg),
-            right!.x + right!.w,
+            right.x + right.w,
           );
         return;
       }

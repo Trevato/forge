@@ -430,6 +430,25 @@ const ROW_TONE: Record<RowState, Tone> = {
   draft: "secondary",
 };
 
+/** The columns a row's title keeps before its meta starts giving way. */
+const TITLE_MIN = 16;
+
+/**
+ * The meta a narrow row can afford. Meta is pieces joined by two spaces
+ * (`metaOf`), least important first — a commit, then a cost, then the time
+ * — so when the title would be squeezed under `TITLE_MIN` columns the
+ * leading pieces go first and the last one is the last to leave. A row
+ * whose title is three letters and an ellipsis beside a whole meta column
+ * is a row that says nothing about what it is.
+ */
+function metaThatFits(meta: string, room: number): string {
+  if (meta === "") return "";
+  let pieces = meta.split("  ");
+  while (pieces.length > 0 && displayWidth(pieces.join("  ")) + 1 > room)
+    pieces = pieces.slice(1);
+  return pieces.join("  ");
+}
+
 /** `row` / `.row` — the list row: dot, title, secondary text, right meta. */
 export function row(s: Screen, r: Rect, c: Tokens, o: RowOpts): void {
   if (r.w <= 0 || r.h <= 0) return;
@@ -465,7 +484,7 @@ export function row(s: Screen, r: Rect, c: Tokens, o: RowOpts): void {
         right,
       ) + 1;
 
-  const meta = o.meta ?? "";
+  const meta = metaThatFits(o.meta ?? "", right - x - TITLE_MIN);
   const metaW = meta === "" ? 0 : displayWidth(meta) + 1;
   const titleRight = Math.max(x, right - metaW);
   const titleStyle = style(
@@ -499,6 +518,12 @@ export interface Column {
   readonly align?: Align;
   /** Right-aligned digits read as a column; use for counts and sizes. */
   readonly numeric?: boolean;
+  /**
+   * Given up when the table is too narrow for every column, lowest rank
+   * first — the same word `local/rows.ts` uses. A column without one is
+   * never dropped, and is what gets truncated instead.
+   */
+  readonly drop?: number;
 }
 
 export interface TableOpts {
@@ -508,13 +533,45 @@ export interface TableOpts {
   readonly offset?: number;
 }
 
+/** A growing column needs this much before a droppable one is worth keeping. */
+const TABLE_FILL_MIN = 12;
+
+/**
+ * Which columns a table of `width` can hold: every fixed column plus a
+ * living wage for each growing one, or the lowest-ranked droppable column
+ * goes, until they fit. Indices into `columns`, in their declared order.
+ */
+function columnsThatFit(columns: readonly Column[], width: number): number[] {
+  const kept = columns.map((_, i) => i);
+  const needs = (): number =>
+    kept.reduce((sum, i) => {
+      const w = columns[i]!.width;
+      return sum + (w.k === "len" || w.k === "min" ? w.v : TABLE_FILL_MIN);
+    }, 0);
+  for (;;) {
+    if (needs() <= width) return kept;
+    let rank = Infinity;
+    let drop = -1;
+    for (const i of kept) {
+      const d = columns[i]!.drop;
+      if (d !== undefined && d < rank) {
+        rank = d;
+        drop = i;
+      }
+    }
+    if (drop < 0) return kept;
+    kept.splice(kept.indexOf(drop), 1);
+  }
+}
+
 /** `table` / `.table` — header rule, no vertical rules (they read as noise). */
 export function table(s: Screen, r: Rect, c: Tokens, o: TableOpts): void {
   if (r.w <= 0 || r.h <= 1) return;
+  const shown = columnsThatFit(o.columns, r.w);
   const cols = split(
     { x: r.x, y: r.y, w: r.w, h: 1 },
     "h",
-    o.columns.map((col) => col.width),
+    shown.map((i) => o.columns[i]!.width),
   );
   const right = r.x + r.w;
   s.fill({ x: r.x, y: r.y, w: r.w, h: 1 }, " ", style(c.mutedFg, c.bg));
@@ -522,9 +579,10 @@ export function table(s: Screen, r: Rect, c: Tokens, o: TableOpts): void {
   // and the next header run together and the table reads as one word.
   const inner = (i: number): number => {
     const cell = cols[i]!;
-    return Math.max(0, cell.w - (i === o.columns.length - 1 ? 0 : 1));
+    return Math.max(0, cell.w - (i === shown.length - 1 ? 0 : 1));
   };
-  o.columns.forEach((col, i) => {
+  shown.forEach((ci, i) => {
+    const col = o.columns[ci]!;
     const cell = cols[i];
     if (!cell) return;
     const align: Align = col.align ?? (col.numeric === true ? "right" : "left");
@@ -551,12 +609,13 @@ export function table(s: Screen, r: Rect, c: Tokens, o: TableOpts): void {
     const sel = o.selected === offset + i;
     const bg = sel ? c.muted : c.bg;
     s.fill({ x: r.x, y, w: r.w, h: 1 }, " ", style(c.fg, bg));
-    o.columns.forEach((col, ci) => {
-      const cell = cols[ci];
+    shown.forEach((ci, i) => {
+      const col = o.columns[ci]!;
+      const cell = cols[i];
       if (!cell) return;
       const align: Align =
         col.align ?? (col.numeric === true ? "right" : "left");
-      const w = inner(ci);
+      const w = inner(i);
       const text = pad(truncate(data[ci] ?? "", w), w, align);
       s.text(cell.x, y, text, style(c.fg, bg, sel ? BOLD : 0), right);
     });

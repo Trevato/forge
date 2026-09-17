@@ -8,15 +8,20 @@
 import * as git from "../../git/local.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
-import { G } from "../term/screen.ts";
-import { style } from "../term/style.ts";
 import { confirmScreen, ListState, relTime } from "../screens/common.ts";
-import { fill, len, split } from "../ui/layout.ts";
+import { beside, fill, len, split } from "../ui/layout.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { emptyState } from "../ui/widgets.ts";
 import { HunkList } from "./hunks.ts";
 import { Task, track, type LocalRepo } from "./common.ts";
-import { cell, drawBusy, drawRows, type Cell, type Column } from "./rows.ts";
+import {
+  cell,
+  dividedAside,
+  drawBusy,
+  drawRows,
+  type Cell,
+  type Column,
+} from "./rows.ts";
 
 export function stashScreen(ctx: Ctx, repo: LocalRepo): Screen {
   const list = new ListState();
@@ -79,19 +84,18 @@ export function stashScreen(ctx: Ctx, repo: LocalRepo): Screen {
         return;
       }
       const rows = stashes.map((stash) => rowFor(c, stash));
-      if (!ctx.twoPane) {
-        drawRows(s, body!, c, list, COLUMNS, rows);
-        return;
-      }
-      const [left, right] = split(body!, "h", [fill(2), fill(3)]);
-      drawRows(s, left!, c, list, COLUMNS, rows);
-      for (let y = right!.y; y < right!.y + right!.h; y++)
-        s.set(right!.x, y, G.v, style(c.border, c.bg));
-      preview.render(
-        s,
-        { x: right!.x + 2, y: right!.y, w: right!.w - 2, h: right!.h },
-        c,
-      );
+      const {
+        main: left,
+        aside: right,
+        stacked,
+      } = beside(body!, ctx.twoPane, {
+        main: fill(2),
+        aside: fill(3),
+        below: fill(3),
+      });
+      drawRows(s, left, c, list, COLUMNS, rows);
+      if (right !== undefined)
+        preview.render(s, dividedAside(s, right, c, stacked), c);
     },
     key(e) {
       if (task.blocked) return true;
