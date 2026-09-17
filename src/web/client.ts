@@ -10,6 +10,50 @@
  * behaviour that a page depends on to be usable.
  */
 
+import { paletteHelpersJs } from "./palette.ts";
+
+/**
+ * A native `<dialog>` opened as a modal that owns its Escape. Shared by the
+ * scripts that open one (the palette, the help, the finder), because the
+ * leak is the same for each: a `showModal()` dialog closes on Escape through
+ * the browser's default action, and the *keydown itself* is left unhandled —
+ * which a fullscreen browser window on macOS reads as "leave fullscreen".
+ * So Escape is consumed on keydown and the dialog is closed by hand; the
+ * dialog's own `cancel` is caught the same way for the browsers that raise
+ * it regardless. Nothing is listened for while the dialog is closed, and on
+ * close the focus goes back to where it was.
+ *
+ * Returns `close`, which is safe to call more than once.
+ */
+const modalJs = /* js */ `
+  function openModal(dlg, onClose) {
+    var was = document.activeElement;
+    var done = false;
+    function onKey(e) {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
+    function onCancel(e) { e.preventDefault(); close(); }
+    function close() {
+      if (done) return;
+      done = true;
+      dlg.removeEventListener('keydown', onKey);
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.removeEventListener('close', close);
+      if (dlg.open) dlg.close();
+      if (onClose) onClose();
+      if (was && was.focus && document.contains(was)) { try { was.focus(); } catch (_) {} }
+    }
+    dlg.addEventListener('keydown', onKey);
+    dlg.addEventListener('cancel', onCancel);
+    dlg.addEventListener('close', close);
+    dlg.showModal();
+    return close;
+  }
+`;
+
 /**
  * The device-code page's only enhancement: submit the "check again" form on
  * the interval the provider asked for, and reload when the flow stops being
@@ -423,6 +467,7 @@ export const runLogJs = /* js */ `
 export const codeJs = /* js */ `
 (function () {
   var doc = document;
+  ${modalJs}
   var cfg = doc.getElementById('code');
   if (!cfg || typeof fetch === 'undefined') return;
   var nav = doc.querySelector('.explorer');
@@ -689,7 +734,7 @@ export const codeJs = /* js */ `
     input.value = '';
     list.textContent = '';
     if (note) note.textContent = 'loading…';
-    dlg.showModal();
+    openModal(dlg);
     input.focus();
     ensureIndex().then(function (rows) {
       render(rows);
@@ -1027,6 +1072,7 @@ export const editorJs = /* js */ `
 export const shellJs = /* js */ `
 (function () {
   var doc = document;
+  ${modalJs}
 
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.
@@ -1049,6 +1095,8 @@ export const shellJs = /* js */ `
       open.removeAttribute('open');
       var s = open.querySelector('summary');
       if (s) s.focus();
+      // Consumed: an Escape the page lets through leaves fullscreen on macOS.
+      e.preventDefault();
       e.stopPropagation();
     }
   });
@@ -1172,15 +1220,19 @@ export const shellJs = /* js */ `
   }
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
+    // Inside an open dialog the dialog owns the keys; none of these apply.
+    if (t && t.closest && t.closest('dialog[open]')) return;
+    // The palette is one chord away from anywhere, a field included.
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      openPalette();
+      return;
+    }
     if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) {
-      if (e.key === 'Escape') t.blur();
+      if (e.key === 'Escape') { e.preventDefault(); t.blur(); }
       return;
     }
-    if (e.metaKey || e.ctrlKey) {
-      if (e.key === 'k') { e.preventDefault(); openPalette(); }
-      return;
-    }
-    if (e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (Date.now() - last > 1200) seq.length = 0;
     last = Date.now();
     seq.push(e.key);
@@ -1237,10 +1289,35 @@ export const shellJs = /* js */ `
     STATIC_KEYS.forEach(function (p) { tbody.appendChild(keyRow(p[0], p[1])); });
     table.appendChild(tbody);
     if (body) { body.textContent = ''; body.appendChild(table); }
-    dlg.showModal();
+    openModal(dlg);
   }
 
   // ---- command palette ----
+  //
+  // Its manners are cmdk's (pacocoursey/cmdk), written by hand:
+  //  - the input keeps focus for the life of the dialog: it is a combobox
+  //    over the listbox (aria-activedescendant), a click on a row never
+  //    steals focus, and Tab goes nowhere
+  //  - ↑/↓ move the highlight and wrap, Home/End jump to the ends, Enter
+  //    opens the highlighted row; the pointer highlights what it is over,
+  //    and there is exactly one highlight
+  //  - rows sit under group headings; the best row leads its group and the
+  //    best group leads the list
+  //  - matching is one forgiving score (fuzzyScore): exact, prefix, word
+  //    start, substring, then letters in order — every word typed must land
+  //  - the list is one swap per keystroke, never cleared and refilled, so
+  //    nothing flickers; what the server finds is folded in when it lands,
+  //    and what it found last stays up, re-scored, until then
+  //  - the empty state is one line
+  //  - Escape closes the palette and nothing else: consumed on keydown, and
+  //    the dialog's own cancel is handled the same way (openModal)
+  //  - a proper dialog: role="dialog", aria-modal, the focus back where it
+  //    was on close, and Cmd/Ctrl+K toggles it
+  //  - what you picked before is remembered (localStorage) and offered
+  //    first while the box is empty
+  ${paletteHelpersJs}
+  var RECENT_KEY = 'forge.palette.recent';
+  var RECENT_MAX = 8;
   var index = null;
   function loadIndex() {
     if (index) return index;
@@ -1248,116 +1325,166 @@ export const shellJs = /* js */ `
     try { index = JSON.parse(el.textContent); } catch (_) { index = { items: [] }; }
     return index;
   }
+  // Storage may be absent, full or refused (a private window): a palette
+  // with no memory is still a palette.
+  function readRecent() {
+    try {
+      var raw = JSON.parse(window.localStorage.getItem(RECENT_KEY) || '[]');
+      if (!Array.isArray(raw)) return [];
+      return raw.filter(function (r) {
+        return r && typeof r.t === 'string' && typeof r.h === 'string' && r.h.charAt(0) === '/';
+      }).slice(0, RECENT_MAX).map(function (r) {
+        return { t: r.t, h: r.h, g: typeof r.g === 'string' ? r.g : '' };
+      });
+    } catch (_) { return []; }
+  }
+  function remember(r) {
+    try {
+      var rest = readRecent().filter(function (x) { return x.h !== r.h; });
+      var next = [{ t: r.t, h: r.h, g: r.g === 'Recent' ? (r.d || '') : r.g }].concat(rest);
+      window.localStorage.setItem(RECENT_KEY, JSON.stringify(next.slice(0, RECENT_MAX)));
+    } catch (_) {}
+  }
+  // What the server found, as rows. The links are built here from the
+  // parts the API returns, never taken from it whole.
+  function fold(out) {
+    var rows = [];
+    (out.repos || []).slice(0, 5).forEach(function (r) {
+      rows.push(r.source === 'origin'
+        ? { t: r.fullName, h: '/origins/' + r.originId + '/r/' + r.fullName, g: 'Repositories',
+            d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
+        : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
+    });
+    (out.issues || []).slice(0, 5).forEach(function (i) {
+      if (i.source !== 'local') return;
+      rows.push({
+        t: i.title,
+        h: '/' + i.repo.owner + '/' + i.repo.name + '/' + (i.kind === 'issue' ? 'issues' : 'pulls') + '/' + i.number,
+        g: i.kind === 'issue' ? 'Issues' : 'Pull requests',
+        d: i.repo.owner + '/' + i.repo.name + ' #' + i.number,
+      });
+    });
+    (out.code || []).slice(0, 5).forEach(function (c) {
+      rows.push({
+        t: c.path + ':' + c.line,
+        h: '/' + c.repo.owner + '/' + c.repo.name + '/blob/HEAD/' + c.path + '#L' + c.line,
+        g: 'Code',
+        d: (c.text || '').trim().slice(0, 60),
+      });
+    });
+    return rows;
+  }
+
+  var closePalette = null;
   function openPalette() {
     var dlg = doc.getElementById('palette');
     if (!dlg || !dlg.showModal) { location.href = '/search'; return; }
+    if (closePalette) { closePalette(); return; }
     var input = dlg.querySelector('.palette-input');
     var list = dlg.querySelector('.palette-list');
-    var items = loadIndex().items || [];
-    var shown = [];
-    var at = 0;
+    var items = (loadIndex().items || []).map(function (i) {
+      return { t: String(i.t), h: String(i.h), g: i.c ? String(i.c) : 'Go to' };
+    });
+    var recent = readRecent().map(function (r) { return { t: r.t, h: r.h, g: 'Recent', d: r.g }; });
+    var recentHrefs = recent.map(function (r) { return r.h; });
+    var served = [];       // rows the server found, for the query servedFor
+    var servedFor = '';
+    var pending = false;   // a server answer is on its way
     var remote = null;
     var remoteTimer = 0;
-    // Every row is built from DOM nodes: the titles below are repository
-    // names, issue titles and lines of code, and page text is exactly what
-    // must never be parsed as markup.
-    function itemRow(href, title, cat) {
+    var nodes = [];        // the rows on screen, in order …
+    var shown = [];        // … and what each one is
+    var at = 0;
+
+    // Every row is built from DOM nodes: the titles are repository names,
+    // issue titles and lines of code, and page text is exactly what must
+    // never be parsed as markup.
+    function row(r, id) {
       var a = doc.createElement('a');
       a.className = 'palette-item';
+      a.id = id;
       a.setAttribute('role', 'option');
+      a.setAttribute('aria-selected', 'false');
       // Same-origin paths only: the index is ours, and this keeps it so.
-      a.setAttribute('href', String(href).charAt(0) === '/' ? href : '/');
+      a.setAttribute('href', r.h.charAt(0) === '/' ? r.h : '/');
       var t = doc.createElement('span');
       t.className = 'grow';
-      t.textContent = title;
+      t.textContent = r.t;
       a.appendChild(t);
-      if (cat) {
-        var c = doc.createElement('span');
-        c.className = 'cat';
-        c.textContent = cat;
-        a.appendChild(c);
+      if (r.d) {
+        var d = doc.createElement('span');
+        d.className = 'cat';
+        d.textContent = r.d;
+        a.appendChild(d);
       }
-      list.appendChild(a);
       return a;
     }
-    function heading(text) {
-      var h = doc.createElement('span');
-      h.className = 'menu-title';
-      h.textContent = text;
-      list.appendChild(h);
-    }
-    function selectFirst() {
-      var nodes = list.querySelectorAll('.palette-item');
-      if (nodes.length > 0 && !list.querySelector('.palette-item[aria-selected="true"]')) {
-        nodes[0].setAttribute('aria-selected', 'true');
-      }
-    }
-    function emptyNote() {
+    function emptyLine(q) {
       var p = doc.createElement('p');
       p.className = 'palette-empty';
-      p.appendChild(doc.createTextNode('Nothing here. '));
-      var more = doc.createElement('a');
-      more.href = '/search?q=' + encodeURIComponent(input.value);
-      more.textContent = 'Search everything';
-      p.appendChild(more);
-      list.appendChild(p);
+      if (pending) { p.textContent = 'Searching…'; return p; }
+      p.appendChild(doc.createTextNode(q === '' ? 'Nothing here.' : 'No matches. '));
+      if (q !== '') {
+        var more = doc.createElement('a');
+        more.href = '/search?q=' + encodeURIComponent(q);
+        more.textContent = 'Search everything';
+        p.appendChild(more);
+      }
+      return p;
     }
-
-    function render() {
-      var q = input.value.trim().toLowerCase();
-      shown = items.filter(function (i) {
-        return q === '' || (i.t + ' ' + (i.c || '')).toLowerCase().indexOf(q) !== -1;
-      }).slice(0, 12);
-      at = 0;
+    function select(n, scroll) {
+      if (nodes.length === 0) { at = 0; input.removeAttribute('aria-activedescendant'); return; }
+      at = ((n % nodes.length) + nodes.length) % nodes.length;
+      nodes.forEach(function (a, i) { a.setAttribute('aria-selected', i === at ? 'true' : 'false'); });
+      input.setAttribute('aria-activedescendant', nodes[at].id);
+      if (scroll !== false) nodes[at].scrollIntoView({ block: 'nearest' });
+    }
+    // One fragment, one swap. With keep, the highlight stays on the same row
+    // when the list changes under it (a server answer landing); a new query
+    // starts at the top.
+    function render(keep) {
+      var q = input.value.trim();
+      var pool = (q === '' ? recent : []).concat(items, q.length >= 2 ? served : []);
+      var groups = rankPalette(pool, q, recentHrefs, q === '' ? 24 : 20);
+      var was = keep && nodes[at] ? nodes[at].getAttribute('href') : null;
+      var frag = doc.createDocumentFragment();
+      nodes = []; shown = [];
+      groups.forEach(function (g, gi) {
+        var box = doc.createElement('div');
+        box.className = 'palette-group';
+        box.setAttribute('role', 'group');
+        var h = doc.createElement('div');
+        h.className = 'palette-heading';
+        h.id = 'palette-g' + gi;
+        h.setAttribute('aria-hidden', 'true');
+        h.textContent = g.title;
+        box.setAttribute('aria-labelledby', h.id);
+        box.appendChild(h);
+        g.rows.forEach(function (r) {
+          var a = row(r, 'palette-o' + nodes.length);
+          nodes.push(a); shown.push(r);
+          box.appendChild(a);
+        });
+        frag.appendChild(box);
+      });
+      if (nodes.length === 0) frag.appendChild(emptyLine(q));
       list.textContent = '';
-      shown.forEach(function (i) { itemRow(i.h, i.t, i.c); });
-      selectFirst();
-      if (shown.length === 0) emptyNote();
-      ask(input.value.trim());
+      list.appendChild(frag);
+      var n = 0;
+      if (was) nodes.forEach(function (a, i) { if (a.getAttribute('href') === was) n = i; });
+      select(n, false);
     }
 
-    // The forge's own search, behind the palette. It is the same action the
-    // /search page and the API call, so the palette can never disagree with
-    // the page behind it — and it is debounced and cancelled, because a
-    // keystroke is not a reason to grep every repository twice.
-    function paint(out) {
-      var note = list.querySelector('.palette-empty');
-      if (note) note.remove();
-      var titled = false;
-      (out.repos || []).slice(0, 5).forEach(function (r) {
-        if (!titled) { heading('Repositories'); titled = true; }
-        itemRow(
-          r.source === 'origin' ? '/origins/' + r.originId + '/r/' + r.fullName : '/' + r.owner + '/' + r.name,
-          r.source === 'origin' ? r.fullName : r.owner + '/' + r.name,
-          r.source === 'origin' ? 'on an origin' : 'repository'
-        );
-      });
-      titled = false;
-      (out.issues || []).slice(0, 5).forEach(function (i) {
-        if (i.source !== 'local') return;
-        if (!titled) { heading('Issues and pulls'); titled = true; }
-        itemRow(
-          '/' + i.repo.owner + '/' + i.repo.name + '/' + (i.kind === 'issue' ? 'issues' : 'pulls') + '/' + i.number,
-          i.title,
-          i.repo.owner + '/' + i.repo.name + ' #' + i.number
-        );
-      });
-      titled = false;
-      (out.code || []).slice(0, 5).forEach(function (c) {
-        if (!titled) { heading('Code'); titled = true; }
-        itemRow(
-          '/' + c.repo.owner + '/' + c.repo.name + '/blob/HEAD/' + c.path + '#L' + c.line,
-          c.path + ':' + c.line,
-          (c.text || '').trim().slice(0, 40)
-        );
-      });
-      if (!list.querySelector('.palette-item')) emptyNote();
-      selectFirst();
-    }
+    // The forge's own search, behind the palette. It is the same action as
+    // the /search page and the API call, so the palette can never disagree
+    // with the page behind it — and it is debounced and cancelled, because
+    // a keystroke is not a reason to grep every repository twice.
     function ask(q) {
       window.clearTimeout(remoteTimer);
       if (remote) { remote.abort(); remote = null; }
-      if (q.length < 2 || typeof fetch === 'undefined') return;
+      if (q.length < 2 || typeof fetch === 'undefined') { pending = false; served = []; servedFor = ''; return; }
+      if (q === servedFor) { pending = false; return; }
+      pending = true;
       remoteTimer = window.setTimeout(function () {
         var ctl = new AbortController();
         remote = ctl;
@@ -1366,34 +1493,65 @@ export const shellJs = /* js */ `
         })
           .then(function (r) { return r.ok ? r.json() : null; })
           .then(function (out) {
-            if (!out || ctl.signal.aborted || input.value.trim() !== q) return;
-            paint(out);
-          }, function () {});
+            if (ctl.signal.aborted || input.value.trim() !== q) return;
+            remote = null; pending = false;
+            served = out ? fold(out) : [];
+            servedFor = q;
+            render(true);
+          }, function () {
+            if (ctl.signal.aborted) return;
+            remote = null; pending = false;
+            render(true);
+          });
       }, 120);
     }
-    function select(n) {
-      var nodes = list.querySelectorAll('.palette-item');
-      if (nodes.length === 0) return;
-      at = (n + nodes.length) % nodes.length;
-      nodes.forEach(function (el, i) { el.setAttribute('aria-selected', i === at ? 'true' : 'false'); });
-      nodes[at].scrollIntoView({ block: 'nearest' });
-    }
-    input.value = '';
-    render();
-    input.oninput = render;
-    input.onkeydown = function (e) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); select(at + 1); }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); select(at - 1); }
-      else if (e.key === 'Enter') {
-        var sel = list.querySelectorAll('.palette-item')[at];
-        if (sel) { e.preventDefault(); location.href = sel.getAttribute('href'); }
+    function onKey(e) {
+      var k = e.key;
+      if (k === 'Escape' || ((e.metaKey || e.ctrlKey) && (k === 'k' || k === 'K'))) {
+        e.preventDefault(); e.stopPropagation(); close(); return;
       }
-    };
-    dlg.addEventListener('close', function () {
+      if (k === 'ArrowDown') { e.preventDefault(); select(at + 1); }
+      else if (k === 'ArrowUp') { e.preventDefault(); select(at - 1); }
+      else if (k === 'Home') { e.preventDefault(); select(0); }
+      else if (k === 'End') { e.preventDefault(); select(nodes.length - 1); }
+      else if (k === 'Enter') {
+        e.preventDefault();
+        var q = input.value.trim();
+        if (nodes[at]) nodes[at].click();
+        else if (q !== '') location.href = '/search?q=' + encodeURIComponent(q);
+      }
+      else if (k === 'Tab') e.preventDefault();
+      // Whatever the key, it is the palette's: the page's shortcuts never see it.
+      e.stopPropagation();
+    }
+
+    input.value = '';
+    render(false);
+    var close = openModal(dlg, function () {
+      dlg.onkeydown = null; dlg.onpointerdown = null;
+      list.onclick = null; list.onpointermove = null;
+      input.oninput = null;
       window.clearTimeout(remoteTimer);
       if (remote) { remote.abort(); remote = null; }
-    }, { once: true });
-    dlg.showModal();
+      closePalette = null;
+    });
+    closePalette = close;
+    dlg.onkeydown = onKey;
+    // A press anywhere but the input would move the focus off it.
+    dlg.onpointerdown = function (e) { if (e.target !== input) e.preventDefault(); };
+    input.oninput = function () { ask(input.value.trim()); render(false); };
+    list.onpointermove = function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
+      var i = a ? nodes.indexOf(a) : -1;
+      if (i !== -1 && i !== at) select(i, false);
+    };
+    // A real click and Enter's synthetic one both land here; the browser
+    // follows the link (and honours a modifier) on its own.
+    list.onclick = function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
+      var i = a ? nodes.indexOf(a) : -1;
+      if (i !== -1) remember(shown[i]);
+    };
     input.focus();
   }
   doc.querySelectorAll('[data-palette]').forEach(function (b) {
