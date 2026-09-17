@@ -111,9 +111,9 @@ import {
   canRead,
   countsForRepos,
   getRepo,
-  listForks,
   listReposByOwner,
   listReposVisibleTo,
+  visibleForks,
   type Repo,
   type RepoCounts,
   getRepoById,
@@ -1095,11 +1095,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(
-      listForks(ctx.app.db, repo.id).filter((f) =>
-        canRead(ctx.app.db, f, ctx.auth.user),
-      ),
-    );
+    return json(visibleForks(ctx.app.db, repo.id, ctx.auth.user));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {

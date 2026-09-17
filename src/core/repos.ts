@@ -372,6 +372,33 @@ export function listForks(db: Database, repoId: string): Repo[] {
     .map(toRepo);
 }
 
+/**
+ * The repository this one was forked from, while that parent is still here
+ * and the viewer may read it. A fork's lineage — the parent's name, and how
+ * far the fork has drifted from it — is a fact about the parent, so a fork
+ * that has been opened up never speaks for a parent that has not.
+ */
+export function forkParentFor(
+  db: Database,
+  repo: Repo,
+  viewer: User | undefined,
+): Repo | undefined {
+  const parent =
+    repo.forkParentId === null ? undefined : getRepoById(db, repo.forkParentId);
+  return parent !== undefined && canRead(db, parent, viewer)
+    ? parent
+    : undefined;
+}
+
+/** The forks of this repository the viewer may see — the list, and its count. */
+export function visibleForks(
+  db: Database,
+  repoId: string,
+  viewer: User | undefined,
+): Repo[] {
+  return listForks(db, repoId).filter((fork) => canRead(db, fork, viewer));
+}
+
 export function getRepo(
   db: Database,
   ownerName: string,

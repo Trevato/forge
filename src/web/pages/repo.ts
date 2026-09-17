@@ -14,10 +14,9 @@ import { forkDrift, syncFork, type ForkDrift } from "../../actions/forks.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
-  canRead,
   canWrite,
-  getRepoById,
-  listForks,
+  forkParentFor,
+  visibleForks,
 } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
@@ -80,12 +79,11 @@ export { pathCrumbs, refMenu, refSet, refSetFrom } from "./refs.ts";
 
 // ---- fork ----
 
-/** The repository this one was forked from, while that parent is still here. */
-function forkParent(ctx: Ctx, repo: Repo): Repo | undefined {
-  return repo.forkParentId === null
-    ? undefined
-    : getRepoById(ctx.app.db, repo.forkParentId);
-}
+/** The parent and the forks this viewer may see, from the request. */
+const forkParent = (ctx: Ctx, repo: Repo): Repo | undefined =>
+  forkParentFor(ctx.app.db, repo, ctx.auth.user);
+const forksFor = (ctx: Ctx, repo: Repo): Repo[] =>
+  visibleForks(ctx.app.db, repo.id, ctx.auth.user);
 
 /**
  * How far the fork has slipped from its parent, in a phrase. A fork with
@@ -121,9 +119,7 @@ function updatable(drift: ForkDrift | undefined): boolean {
 export function forksPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const forks = listForks(ctx.app.db, repo.id).filter((fork) =>
-    canRead(ctx.app.db, fork, ctx.auth.user),
-  );
+  const forks = forksFor(ctx, repo);
   const body = html`${repoHeader(ctx, repo, "code")}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
@@ -154,7 +150,7 @@ export function forksPage(ctx: Ctx): Response {
 function forkBar(ctx: Ctx, repo: Repo): Html {
   const canFork =
     ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
-  const forkCount = listForks(ctx.app.db, repo.id).length;
+  const forkCount = forksFor(ctx, repo).length;
   if (!canFork && forkCount === 0) return html``;
   return html`<div class="fork-bar">
     ${when(
@@ -898,13 +894,15 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
       : knownRef(refs, repo.defaultBranch)
         ? repo.defaultBranch
         : refs.branches[0]!;
-  const entries = await scope.source.tree(ref, "");
-  const tree = entries.ok ? entries.value : [];
   // A fork's rail says how far its default branch is from its parent's; the
-  // count is git's, so it is read here rather than inside the card.
+  // count is git's, so it is read here rather than inside the card — beside
+  // the tree read, not after it, because neither waits on the other.
   const parent = forkParent(ctx, repo);
-  const drift =
-    parent === undefined ? undefined : await forkDrift(ctx.app, repo, parent);
+  const [entries, drift] = await Promise.all([
+    scope.source.tree(ref, ""),
+    parent === undefined ? undefined : forkDrift(ctx.app, repo, parent),
+  ]);
+  const tree = entries.ok ? entries.value : [];
 
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,

@@ -10,7 +10,7 @@
 
 import { getAppByRepo } from "../core/apps.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
-import { canAdmin, canRead, getRepo, getRepoById } from "../core/repos.ts";
+import { canAdmin, canRead, forkParentFor, getRepo } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { html, raw, when, type Html } from "./html.ts";
@@ -141,10 +141,12 @@ export function scopeHeader(
   const repo = scope.repo;
   const facts = scope.facts;
   const admin = repo !== undefined && canAdmin(ctx.app.db, repo, ctx.auth.user);
+  // "forked from …" names another repository, so it says nothing to somebody
+  // who cannot read that one — same rule as the About rail's Fork-of row.
   const parent =
-    repo?.forkParentId != null
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
+    repo === undefined
+      ? undefined
+      : forkParentFor(ctx.app.db, repo, ctx.auth.user);
 
   const isApp =
     repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
