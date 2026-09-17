@@ -13,7 +13,12 @@
  */
 
 import type { App } from "../app.ts";
-import { assignIssue, openIssue } from "../actions/issues.ts";
+import {
+  addComment,
+  assignIssue,
+  openIssue,
+  setIssueState,
+} from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -61,7 +66,13 @@ const log = createLog("autonomy");
 
 export const AUTONOMY_TICK_MS = 60_000;
 /** A planner is not asked again sooner than this unless the map changed. */
-const REPLAN_AFTER_MS = 6 * 60 * 60_000;
+/**
+ * How soon a dry map is planned again. A repository on its own is never
+ * finished: when nothing is ready and nothing is in flight, the planner
+ * is asked for the next increment, with only a short floor so a planner
+ * that produced nothing is not asked every minute.
+ */
+const REPLAN_AFTER_MS = 20 * 60_000;
 
 export type Paused = "ceiling" | "nobody" | "no crew";
 
@@ -173,7 +184,8 @@ export async function driveRepo(
       !busyIssues.has(r.issue.id) &&
       !proposed.has(r.issue.number) &&
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
-      !stalled(app, r.issue),
+      !stalled(app, r.issue) &&
+      parkedCount(app, r.issue.id) < 2,
   );
   const next = await nextOf(app, repo, ready);
   if (next !== undefined) {
@@ -253,14 +265,76 @@ export async function driveRepo(
  */
 function stalled(app: App, issue: Issue): boolean {
   const last = app.db
-    .query<{ state: string; summary: string }, [string]>(
-      `SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent'
+    .query<{ state: string; summary: string; created_at: string }, [string]>(
+      `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
        ORDER BY created_at DESC LIMIT 1`,
     )
     .get(issue.id);
   if (last === null || last === undefined) return false;
   if (last.state === "queued" || last.state === "running") return true;
-  return !/opened pull #|updated pull #/.test(last.summary);
+  if (/opened pull #|updated pull #/.test(last.summary)) return false;
+  // A word since then — a person's, or the planner's when it re-planned
+  // a parked issue — is what un-stalls it.
+  const spoken = app.db
+    .query<
+      { n: number },
+      [string, string]
+    >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND created_at > ?2")
+    .get(issue.id, last.created_at);
+  return (spoken?.n ?? 0) === 0;
+}
+
+/** How many times the crew has parked work on this issue. */
+export function parkedCount(app: App, issueId: string): number {
+  const row = app.db
+    .query<
+      { n: number },
+      [string]
+    >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND body LIKE 'Parked by the crew%'")
+    .get(issueId);
+  return row?.n ?? 0;
+}
+
+/**
+ * Park a pull the crew cannot finish: close it with the reason, put its
+ * issues back on the map unassigned with the same reason, and move on. A
+ * repository on its own never waits for a person; a parked issue is the
+ * planner's to split or drop on its next pass, and one parked twice is
+ * left to the direction.
+ */
+export function parkPull(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  why: string,
+): boolean {
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by) return false;
+  const issue = getIssueById(app.db, pull.id);
+  if (!issue || issue.state !== "open") return false;
+  const note = `Parked by the crew: ${why}`;
+  addComment(app, by, repo, issue, note);
+  const closed = setIssueState(app, by, repo, issue, "closed");
+  if (!closed.ok) return false;
+  for (const number of closesFromBody(pull.body)) {
+    const about = getIssue(app.db, repo.id, number);
+    if (!about || about.state !== "open") continue;
+    if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
+    addComment(
+      app,
+      by,
+      repo,
+      about,
+      `${note} (pull #${pull.number} closed). Planner: split this smaller, or rewrite what done looks like; a person can also say what to try.`,
+    );
+  }
+  log.info("parked", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    pull: pull.number,
+    why,
+  });
+  return true;
 }
 
 /**
@@ -456,6 +530,12 @@ export async function reviewFirst(
     return "ship";
   }
   if (last?.state === "changes_requested") return "wait";
+  // Two rounds of changes are the reviewer's say; after that it lands,
+  // and what is left is the reviewer's to open as an issue.
+  const rounds = listReviews(app.db, pull.id).filter(
+    (r) => r.authorId === reviewer.user.id && r.state === "changes_requested",
+  ).length;
+  if (rounds >= 2) return "ship";
   if (activeRunFor(app.db, "agent", pull.id) !== undefined) return "wait";
   const issue = getIssueById(app.db, pull.id);
   if (!issue) return "wait";
@@ -520,7 +600,16 @@ export function bringUpToDate(
     issue.id,
     lastHumanWord(app, issue, agent),
   );
-  if (tries >= CHECK_FAILED_LIMIT) return undefined;
+  if (tries >= CHECK_FAILED_LIMIT) {
+    // Autonomous: parked, never waiting. Assisted: the person's word.
+    parkPull(
+      app,
+      repo,
+      pull,
+      `main moved under it ${tries} times and the branch could not be brought up to date (${files.join(", ")})`,
+    );
+    return undefined;
+  }
   queueAgentRun(app, repo, issue, agent, "conflict", undefined, {
     notBefore: new Date().toISOString(),
     attempt: 0,

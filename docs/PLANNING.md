@@ -85,9 +85,18 @@ asked, under **Settings → Autonomy**:
   against the direction and either lands it or hands it to the crew's
   _reviewer_ (`review` run: the diff, the preview, the pictures the forge
   took), whose approval lands it and whose change request goes back to the
-  builder as feedback; a crew with no reviewer lands it. A person is asked
-  only when the crew has stopped — a check red past its tries, or a
-  conflict it could not resolve — and when the day's ceiling is reached. When nothing is
+  builder as feedback; a crew with no reviewer lands it. Nothing waits for a
+  person: a pull whose check stays red past its tries, or whose branch
+  could not be brought up to date, is _parked_ — closed with the reason,
+  its issue put back on the map unassigned with the same note — and the
+  crew moves on; the planner's next pass splits or rewrites a parked
+  issue, and one parked twice is left to the direction. A dry map is
+  planned again within twenty minutes, and the planner is told the
+  direction is never finished: when what it names is built, it proposes
+  the next increment and leaves at least three ready issues. The reviewer
+  gets two rounds of changes on a pull; after that it lands and what is
+  left becomes an issue. The only pause is the day's ceiling. A person
+  steers by editing the direction and the map; the crew does the rest. When nothing is
   ready and nothing is in flight, the map has run dry: the planner is
   given the direction.
 
@@ -107,7 +116,7 @@ map runs dry the forge opens an issue titled _Direction: …_ that carries
 it, assigns the planner, and the planner's brief says the rest: open
 issues each small enough for one run, link what waits for what, assign
 nobody, push nothing. The direction issue stays open, is never picked as
-work, and the planner is not asked again for six hours unless its run
+work, and the planner is not asked again for twenty minutes unless its run
 ended.
 
 **What counts as done and as taken.** A pull that says _Closes #12_

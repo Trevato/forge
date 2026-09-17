@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { addComment, openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
@@ -408,6 +408,67 @@ describe("the decision ledger", () => {
     claimRun(app.db, check2.id);
     finishRun(app.db, check2.id, { state: "ok", summary: "check passed" });
     expect(await landIfGreen(app, fresh(), opened2.value)).toBe(true);
+  });
+
+  test("a repository on its own never waits: past its tries a pull is parked, its issue goes back on the map, and an issue parked twice is left to the direction", async () => {
+    const { parkPull, parkedCount } = await import("../src/crew/autonomy.ts");
+    const { listComments, getIssueById: issueById } =
+      await import("../src/core/issues.ts");
+    const work = openIssue(app, alice, repo, { title: "Gift cards" });
+    if (!work.ok) throw new Error(String(work.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/gift",
+      base: "main",
+      message: "Gift cards",
+      files: [{ path: "gift.ts", content: "export const gift = 1;\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Gift cards",
+      body: `Closes #${work.value.number}`,
+      baseBranch: "main",
+      headBranch: "feature/gift",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect(
+      parkPull(
+        app,
+        fresh(),
+        opened.value,
+        "the check stayed red through 2 automatic tries",
+      ),
+    ).toBe(true);
+    expect(getPull(app.db, repo.id, opened.value.number)?.state).toBe("closed");
+    const about = issueById(app.db, work.value.id)!;
+    expect(about.state).toBe("open");
+    expect(about.assigneeId).toBeNull();
+    const notes = listComments(app.db, work.value.id).map((c) => c.body);
+    expect(
+      notes.some((b) =>
+        b.startsWith("Parked by the crew: the check stayed red"),
+      ),
+    ).toBe(true);
+    expect(parkedCount(app, work.value.id)).toBe(1);
+    // Parked once: the planner can re-plan it and the crew picks it again.
+    // Parked twice: left to the direction, never picked by itself.
+    addComment(
+      app,
+      alice,
+      repo,
+      about,
+      "Parked by the crew: main moved under it twice",
+    );
+    expect(parkedCount(app, work.value.id)).toBe(2);
+    script["next"] = String(work.value.number);
+    await driveRepo(app, fresh());
+    expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
+    // Not a question for a person, in either case.
+    const { decisionsFor } = await import("../src/web/pages/studio.ts");
+    const asks = decisionsFor(
+      { app, auth: { user: alice, via: "session" } } as never,
+      [fresh()],
+    );
+    expect(asks.some((d) => d.kind === "stopped")).toBe(false);
   });
 
   test("the ledger is on the API, newest first, with the week per kind", async () => {

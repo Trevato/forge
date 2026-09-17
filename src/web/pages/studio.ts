@@ -238,7 +238,12 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
       const since = lastHumanWord(ctx, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
       const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
-      if (tries >= CHECK_FAILED_LIMIT || stopped)
+      // A repository on its own parks what it cannot finish and moves on;
+      // only an assisted one stops here for a person.
+      if (
+        (tries >= CHECK_FAILED_LIMIT || stopped) &&
+        repo.autonomy !== "autonomous"
+      )
         out.push({
           kind: "stopped",
           id: `stopped:${pull.id}`,
