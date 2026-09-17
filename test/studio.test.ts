@@ -9,6 +9,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
+import type { EnvName } from "../src/apps/data.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
+import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
@@ -622,5 +625,180 @@ describe("the studio home does not wait on the decider", () => {
     expect(calls).toBe(1);
     const again = await (await get("/")).text();
     expect(again).toContain("by the decider");
+  });
+});
+
+/**
+ * The studio head of an app that is not up: the same facts the App page
+ * shows — why, the deploy that says the rest, and the way to try again.
+ */
+describe("the studio head says why the app is not up", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let record: AppRecord;
+  let runtime: AppsRuntime;
+  let deploy: string;
+  let writer: string;
+  let reader: string;
+
+  const head = (cookie: string) =>
+    fetch(`${base}/alice/notes`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  /**
+   * An environment as the runtime holds it, without running a deploy: the
+   * page reads `runtime.status(record)`, and a real failure would mean a
+   * real install and a real health timeout for a rendering test.
+   */
+  interface Slot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    readonly live?: unknown;
+    readonly lastError?: string;
+    readonly lastRunId?: string;
+  }
+  const put = (
+    slot: Omit<Slot, "app" | "env" | "chain" | "restarts">,
+  ): void => {
+    (runtime as unknown as { envs: Map<string, Slot> }).envs.set(
+      `${record.id}/production`,
+      {
+        app: record,
+        env: "production",
+        chain: Promise.resolve(),
+        restarts: [],
+        ...slot,
+      },
+    );
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-notup-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "apps.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    writer = await signIn("alice");
+    reader = await signIn("bob");
+    const made = await createRepo(app, a.value, {
+      name: "notes",
+      visibility: "public",
+      description: "a place for notes",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "notes\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "notes" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: seeded.value.commitOid,
+      reason: "push",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, {
+      state: "failed",
+      summary: "the deploy failed",
+    });
+    deploy = run.id;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a failed production says what failed, links its deploy, and offers Redeploy to a writer only", async () => {
+    put({
+      lastError: "the deploy failed: <install> exited 1",
+      lastRunId: deploy,
+    });
+    const mine = await head(writer);
+    expect(mine).toContain("not up");
+    // The error is the app's own output: shown, and escaped.
+    expect(mine).toContain("the deploy failed: &lt;install&gt; exited 1");
+    expect(mine).not.toContain("<install>");
+    expect(mine).toContain(`href="/alice/notes/runs/${deploy}"`);
+    expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
+    expect(mine).toContain('action="/alice/notes/app/production/stop"');
+
+    const theirs = await head(reader);
+    expect(theirs).toContain("not up");
+    expect(theirs).toContain("the deploy failed: &lt;install&gt; exited 1");
+    expect(theirs).toContain(`href="/alice/notes/runs/${deploy}"`);
+    expect(theirs).not.toContain("/app/production/redeploy");
+    expect(theirs).not.toContain("/app/production/stop");
+  });
+
+  test("a stopped production says it is not running and offers Redeploy, not Stop", async () => {
+    put({ lastRunId: deploy });
+    const mine = await head(writer);
+    expect(mine).toContain("not running");
+    expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
+    expect(mine).not.toContain('action="/alice/notes/app/production/stop"');
+  });
+
+  test("a serving app with red tests still reads as serving, with the failure in its own words", async () => {
+    put({
+      live: {
+        commitOid: "0".repeat(40),
+        handle: { port: 4321 },
+        runId: deploy,
+        since: new Date(Date.now() - 60_000).toISOString(),
+        testsFailed: "1 of 3 tests failed",
+      },
+    });
+    const mine = await head(writer);
+    expect(mine).toContain("serving · tests failed");
+    expect(mine).not.toContain("not up");
+    expect(mine).toContain("serving · tests failed: 1 of 3 tests failed");
   });
 });

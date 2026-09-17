@@ -59,13 +59,14 @@ import {
   card,
   dot,
   empty,
+  envActions,
+  envFacts,
   envStateBadge,
   envTone,
   icon,
   listCard,
   row,
   selectField,
-  servedPhrase,
   sha,
   time,
   userLink,
@@ -473,36 +474,11 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
 
 // ---- the app page ----
 
-const envFacts = (base: string, env: EnvStatus): Html =>
-  html`<div class="env-facts">
-    ${when(env.commitOid !== "", () =>
-      sha(env.commitOid, `${base}/commit/${env.commitOid}`),
-    )}
-    ${when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`)}
-    ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
-    ${when(
-      env.runId,
-      (id) =>
-        html`<a href="${base}/runs/${id}"
-          >${env.state === "deploying"
-            ? "deploy in progress"
-            : env.note !== undefined
-              ? "verifying tests"
-              : "last deploy"}</a
-        >`,
-    )}
-  </div>`;
-
 /** One environment: what it is doing, the facts, and the buttons. */
 function envCard(base: string, env: EnvStatus, writer: boolean): Html {
   const number = envPull(env.env);
   return card(
-    html`${envFacts(base, env)}
-      <p class="env-facts mt">
-        <span class="mono truncate" title="${env.url}">${env.url}</span>
-      </p>
-      ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
-      ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}`,
+    envFacts(base, env, { url: true }),
     {
       extra: "env-card",
       ...(env.state === "failed" || env.error !== undefined
@@ -521,20 +497,7 @@ function envCard(base: string, env: EnvStatus, writer: boolean): Html {
         variant: "outline",
         icon: "external",
       })}
-      ${when(
-        writer,
-        () =>
-          html`<form method="post" action="${base}/app/${env.env}/redeploy">
-              ${btn("Redeploy", { size: "sm", icon: "sync" })}
-            </form>
-            ${when(
-              env.state !== "stopped",
-              () =>
-                html`<form method="post" action="${base}/app/${env.env}/stop">
-                  ${btn("Stop", { size: "sm", icon: "square" })}
-                </form>`,
-            )}`,
-      )}`,
+      ${envActions(base, env, writer)}`,
     },
   );
 }
@@ -718,8 +681,6 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   }
   return card(
     html`${envFacts(base, env)}
-      ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
-      ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
       <div class="bar mt">
         ${btn("Open preview", {
           href: `${base}/app/${env.env}/open`,

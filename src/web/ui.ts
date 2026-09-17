@@ -280,6 +280,103 @@ export function envTone(state: EnvState | undefined): Tone {
         : "default";
 }
 
+/**
+ * An environment's state in a person's words rather than a badge's —
+ * `live`, `serving · tests failed`, `not up`, `not running` — for a head
+ * that speaks one line. A card head wears `envStateBadge` instead. How fast
+ * it came up belongs to `envFacts`, which sits under this and says it once.
+ *
+ * A serving app is never called down because its tests are red: the words
+ * say the tests failed, the tone stays the tone of something that answers.
+ */
+export function envPhrase(env: EnvStatus | undefined): {
+  word: string;
+  tone: Tone;
+} {
+  if (env === undefined || env.state === "stopped")
+    return { word: "not running", tone: "default" };
+  if (env.state === "failed") return { word: "not up", tone: "danger" };
+  if (env.state === "deploying") return { word: "starting", tone: "default" };
+  return {
+    word: env.error === undefined ? "live" : "serving · tests failed",
+    tone: "success",
+  };
+}
+
+export interface EnvFactsOptions {
+  /** Name the environment's address in full — a card has room for it, a
+   * head that already links the app does not. */
+  readonly url?: boolean;
+}
+
+/**
+ * What an environment is doing, as facts: the commit it runs, how fast it
+ * came up, how long it has been up, a link to the deploy that produced it,
+ * and — when the deployment has words of its own — its note and its error.
+ * Every page showing an environment renders this one, so `not up` never
+ * says less on one page than on another. Facts, not a card: the caller
+ * decides what box they sit in.
+ */
+export function envFacts(
+  base: string,
+  env: EnvStatus,
+  o: EnvFactsOptions = {},
+): Html {
+  return html`<div class="env-facts">
+      ${when(env.commitOid !== "", () =>
+        sha(env.commitOid, `${base}/commit/${env.commitOid}`),
+      )}
+      ${when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`)}
+      ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
+      ${when(
+        env.runId,
+        (id) =>
+          html`<a href="${base}/runs/${id}"
+            >${env.state === "deploying"
+              ? "deploy in progress"
+              : env.note !== undefined
+                ? "verifying tests"
+                : "last deploy"}</a
+          >`,
+      )}
+    </div>
+    ${when(
+      o.url === true,
+      () =>
+        html`<p class="env-facts mt">
+          <span class="mono truncate" title="${env.url}">${env.url}</span>
+        </p>`,
+    )}
+    ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
+    ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}`;
+}
+
+/**
+ * The two things a writer can do to an environment. Both are POST forms —
+ * the routes they post to make the same-origin check — and a reader is
+ * handed nothing at all.
+ */
+export function envActions(
+  base: string,
+  env: EnvStatus,
+  writer: boolean,
+): Html {
+  return when(
+    writer,
+    () =>
+      html`<form method="post" action="${base}/app/${env.env}/redeploy">
+          ${btn("Redeploy", { size: "sm", icon: "sync" })}
+        </form>
+        ${when(
+          env.state !== "stopped",
+          () =>
+            html`<form method="post" action="${base}/app/${env.env}/stop">
+              ${btn("Stop", { size: "sm", icon: "square" })}
+            </form>`,
+        )}`,
+  );
+}
+
 export interface LabelLike {
   readonly name: string;
   readonly color: string;

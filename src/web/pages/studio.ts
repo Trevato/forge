@@ -78,15 +78,18 @@ import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
 import {
   avatar,
+  badge,
   btn,
   card,
   dot,
   empty,
+  envActions,
+  envFacts,
+  envPhrase,
   icon,
   listCard,
   pill,
   row,
-  servedPhrase,
   time,
   userTag,
   type Tone,
@@ -628,35 +631,20 @@ export async function studioApp(
   const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
-  const state = production?.state ?? "stopped";
-  const servedAfter = production ? servedPhrase(production) : undefined;
-  const liveWord =
-    state === "running"
-      ? production?.error !== undefined
-        ? "serving · tests failed"
-        : servedAfter !== undefined
-          ? `live ${servedAfter}`
-          : "live"
-      : state === "failed"
-        ? "not up"
-        : state === "stopped"
-          ? "not running"
-          : "starting";
-  const liveTone: Tone =
-    state === "running" ? "success" : state === "failed" ? "danger" : "default";
+  const writer = canWrite(db, repo, ctx.auth.user);
+  // The state in one word, and under it the same facts the App page shows —
+  // why it is not up, and the deploy whose log says the rest.
+  const live = envPhrase(production);
   const head = html`<div class="page-head studio-head">
     <div class="stack" style="gap: 4px">
       <h1>
         ${repo.name}
-        <span
-          class="badge"
-          data-variant="${liveTone === "success"
-            ? "success"
-            : liveTone === "danger"
-              ? "danger"
-              : "secondary"}"
-          >${liveWord}</span
-        >
+        ${badge(
+          live.word,
+          live.tone === "default"
+            ? { variant: "secondary" }
+            : { tone: live.tone },
+        )}
       </h1>
       <p class="muted">
         ${repo.description || "No description yet."}
@@ -666,13 +654,8 @@ export async function studioApp(
               <a href="${base}/app/production/open" class="mono"
                 >${url.replace(/^https?:\/\//, "")}</a
               >`}
-        ${production?.commitOid
-          ? html`·
-            ${production.commitOid.slice(0, 7)}${production.since
-              ? html` since ${time(production.since)}`
-              : null}`
-          : null}
       </p>
+      ${when(production, (env) => envFacts(base, env))}
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
@@ -681,6 +664,7 @@ export async function studioApp(
       variant: "primary",
       icon: "external",
     })}
+    ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
 
   // ---- the box ----
@@ -1409,6 +1393,10 @@ export const studioCss = /* css */ `
 .studio-tell textarea { min-height: 72px; resize: vertical; }
 .studio-tell .bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .studio-head h1 { display: flex; align-items: center; gap: 10px; }
+/* The facts under the title take the whole line; the two buttons that act
+   on production sit with the rest, each in its own POST form. */
+.studio-head .env-facts { margin-top: 2px; }
+.studio-head form { display: inline-flex; }
 .badge[data-variant="accent"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .badge[data-word="working"] svg { animation: spin 1.1s linear infinite; }
 .studio-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }

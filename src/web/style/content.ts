@@ -572,10 +572,12 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .app-strip .spacer { flex: 1; }
 /* One environment: name and state in the head, the facts and the reason it
    failed in the body, its buttons in the foot. A card rather than a row so a
-   deploy error has a whole line to be read on. */
+   deploy error has a whole line to be read on. The facts and the error read
+   the same wherever they are shown — the App page's card, a pull's preview,
+   the studio head — so they are not scoped to the card. */
 .env-card .card-head { gap: 10px; }
-.env-card .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); }
-.env-card .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
+.env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); }
+.env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
 .env-card .card-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .env-card .card-foot form { display: inline-flex; }
 /* The look: a phone beside a desktop, each in a hairline frame. The phone
