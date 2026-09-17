@@ -1,15 +1,27 @@
 /**
- * The map: a repository's issues drawn by what waits for what. Each issue
- * sits one column right of everything it is blocked by, so the left edge is
- * what is ready now; the longest open chain is emphasised; issues that wait
- * for nothing and hold nothing up stand apart below. Beside the drawing: the
- * three lists the crew and a person both read — ready now, blocked on, the
- * critical path — and two weeks of open count over closed-per-day.
+ * The map: a repository's issues drawn by what waits for what. Each issue is
+ * a card one level below everything it is blocked by, so the top edge is
+ * what is ready now and the longest open chain runs down the page in the
+ * accent. Issues that wait for nothing and hold nothing up stand apart
+ * below, under a rule. Beside the drawing: the three lists the crew and a
+ * person both read — ready now, blocked on, the critical path — and two
+ * weeks of open count over closed-per-day.
  *
- * Drawn on the server as SVG, laid out by hand: a plan bigger than the
- * few hundred issues this handles is not one a person reads.
+ * One language for every map. A card says its title, who is on it, and one
+ * word: ready, working, blocked, done, parked, or waiting. Edges are calm
+ * curves from the bottom of a card to the top of the next; the critical path
+ * is the accent at the same weight, never louder. The drawing fits its
+ * container, pans and zooms, and is a live region: a card turns to working,
+ * a pull lands, or a new issue appears while the page is open.
+ *
+ * Drawn on the server as SVG, laid out by hand: a plan bigger than the few
+ * hundred issues this handles is not one a person reads. The global map at
+ * `/map` is the same drawing once per repository the viewer can see, one
+ * lane each, at one scale, so a column means the same thing in every lane.
  */
 
+import type { Database } from "bun:sqlite";
+import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
@@ -17,157 +29,679 @@ import {
   readyNow,
   repoGraph,
   type DayPoint,
+  type Edge,
   type Graph,
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import type { Repo } from "../../core/repos.ts";
+import { openPullsClosing } from "../../core/pulls.ts";
+import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
+import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
   loadRepo,
   notFoundPage,
+  pageHead,
   repoBase,
   repoHeader,
   repoPalette,
+  signInFirst,
 } from "../chrome.ts";
-import { html, raw, type Html } from "../html.ts";
+import { liveRegionsJs } from "../client.ts";
+import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { icon } from "../ui.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
+import { avatar, hueOf, icon } from "../ui.ts";
+import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 
 // ---- layout ----
 
 interface Placed {
   readonly issue: Issue;
-  readonly column: number;
-  readonly row: number;
+  /** Depth: one below the deepest blocker. Level 0 is the top edge. */
+  readonly level: number;
+  /** Position within the level, left to right. */
+  readonly slot: number;
   /** In the island of dependency-free issues, below the chains. */
   readonly island: boolean;
 }
 
-export interface Layout {
-  readonly nodes: Placed[];
-  readonly columns: number;
-  readonly rows: number;
-  readonly islandRows: number;
+/** A spot in the grid a long edge passes through, between its cards. */
+export interface Via {
+  readonly level: number;
+  /** The gutter it runs down: `g` is between slot `g - 1` and slot `g`. */
+  readonly gutter: number;
+  /** Which of the lines sharing that gutter this one is, left to right. */
+  readonly lane: number;
+  readonly lanes: number;
 }
 
+/** An edge that skips levels, and the empty slots it is routed through. */
+export interface Route {
+  readonly issueId: string;
+  readonly blockedById: string;
+  readonly via: Via[];
+}
+
+export interface Layout {
+  readonly nodes: Placed[];
+  /** The edges that skip levels, with the slots they pass through. */
+  readonly routes: Route[];
+  /** Levels of chained issues, then the island's rows. */
+  readonly levels: number;
+  /** The widest level, in slots. */
+  readonly width: number;
+  /** The first level of the island; equals `levels` when there is none. */
+  readonly islandFrom: number;
+}
+
+/** One hop of an edge between adjacent levels: the unit `order` sees. */
+interface Seg {
+  readonly from: string;
+  readonly to: string;
+}
+
+function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+}
+
+const routeKey = (e: Edge): string => `${e.blockedById}>${e.issueId}`;
+
 /**
- * Longest-path layering: an issue's column is one more than the deepest of
+ * Longest-path layering: an issue's level is one more than the deepest of
  * its blockers. A cycle would never settle, so the relaxation is bounded
- * and a cycle simply lands in adjacent columns. Within a column, issues are
- * ordered by the mean row of their blockers (two sweeps), which is what
- * keeps the arrows short and mostly uncrossed.
+ * and a cycle simply lands in adjacent levels. An edge that skips levels
+ * takes an empty slot in each level it crosses — a waypoint, so it is
+ * routed between cards and never under one — and is ordered like anything
+ * else. Within a level, cards and waypoints are ordered to keep the curves
+ * short and mostly uncrossed; see `order`. Issues on no edge are the
+ * island: a grid under the chains, a few wide.
  */
 export function layout(graph: Graph): Layout {
-  const ids = graph.issues.map((i) => i.id);
   const blockers = new Map<string, string[]>();
   const dependents = new Map<string, string[]>();
   for (const e of graph.edges) {
-    blockers.set(e.issueId, [
-      ...(blockers.get(e.issueId) ?? []),
-      e.blockedById,
-    ]);
-    dependents.set(e.blockedById, [
-      ...(dependents.get(e.blockedById) ?? []),
-      e.issueId,
-    ]);
+    push(blockers, e.issueId, e.blockedById);
+    push(dependents, e.blockedById, e.issueId);
   }
-  const onEdge = new Set<string>([...blockers.keys(), ...dependents.keys()]);
-  const column = new Map<string, number>(ids.map((id) => [id, 0]));
+  const ids = graph.issues.map((i) => i.id);
+  const level = new Map<string, number>(ids.map((id) => [id, 0]));
   const passes = Math.min(ids.length, 64);
   for (let pass = 0; pass < passes; pass++) {
     let moved = false;
     for (const id of ids) {
       const want = Math.max(
         0,
-        ...(blockers.get(id) ?? []).map((b) => (column.get(b) ?? 0) + 1),
+        ...(blockers.get(id) ?? []).map((b) => (level.get(b) ?? 0) + 1),
       );
-      if (want > (column.get(id) ?? 0)) {
-        column.set(id, want);
+      if (want > (level.get(id) ?? 0)) {
+        level.set(id, want);
         moved = true;
       }
     }
     if (!moved) break;
   }
+  const onEdge = new Set<string>([...blockers.keys(), ...dependents.keys()]);
   const chained = graph.issues.filter((i) => onEdge.has(i.id));
   const island = graph.issues.filter((i) => !onEdge.has(i.id));
-  const columns = new Map<number, Issue[]>();
+  const depth =
+    chained.length === 0
+      ? 0
+      : Math.max(...chained.map((i) => level.get(i.id) ?? 0)) + 1;
+  const rows: string[][] = Array.from({ length: depth }, () => []);
+  const tie = new Map<string, number>();
   for (const i of chained) {
-    const c = column.get(i.id) ?? 0;
-    columns.set(c, [...(columns.get(c) ?? []), i]);
+    rows[level.get(i.id) ?? 0]!.push(i.id);
+    tie.set(i.id, i.number);
   }
-  const width = columns.size === 0 ? 0 : Math.max(...columns.keys()) + 1;
-  const row = new Map<string, number>();
-  for (let c = 0; c < width; c++)
-    (columns.get(c) ?? []).forEach((i, r) => row.set(i.id, r));
-  const mean = (list: string[]): number =>
-    list.length === 0
-      ? Number.POSITIVE_INFINITY
-      : list.reduce((s, id) => s + (row.get(id) ?? 0), 0) / list.length;
-  for (let sweep = 0; sweep < 2; sweep++) {
-    for (let c = 1; c < width; c++) {
-      const list = columns.get(c) ?? [];
-      list.sort((a, b) => {
-        const ma = mean(blockers.get(a.id) ?? []);
-        const mb = mean(blockers.get(b.id) ?? []);
-        return ma - mb || a.number - b.number;
-      });
-      list.forEach((i, r) => row.set(i.id, r));
+  // Split every edge into hops between adjacent levels; the joints are the
+  // waypoints, which take a slot each so the line has somewhere to go.
+  const segs: Seg[] = [];
+  const waypoints = new Map<string, string[]>();
+  for (const e of graph.edges) {
+    const from = level.get(e.blockedById);
+    const to = level.get(e.issueId);
+    if (from === undefined || to === undefined) continue;
+    if (to - from <= 1) {
+      segs.push({ from: e.blockedById, to: e.issueId });
+      continue;
     }
-    for (let c = width - 2; c >= 0; c--) {
-      const list = columns.get(c) ?? [];
-      list.sort((a, b) => {
-        const ma = mean(dependents.get(a.id) ?? []);
-        const mb = mean(dependents.get(b.id) ?? []);
-        return ma - mb || a.number - b.number;
-      });
-      list.forEach((i, r) => row.set(i.id, r));
+    let prev = e.blockedById;
+    const via: string[] = [];
+    for (let l = from + 1; l < to; l++) {
+      const d = `${routeKey(e)}@${l}`;
+      rows[l]!.push(d);
+      level.set(d, l);
+      tie.set(d, Number.MAX_SAFE_INTEGER);
+      segs.push({ from: prev, to: d });
+      via.push(d);
+      prev = d;
     }
+    segs.push({ from: prev, to: e.issueId });
+    waypoints.set(routeKey(e), via);
   }
-  const rows = Math.max(0, ...[...columns.values()].map((l) => l.length));
-  const ISLAND_COLUMNS = Math.max(1, width || 4);
+  order(rows, segs, level, tie);
+  // Cards take the slots, in the order found. A waypoint takes no room of
+  // its own: its line runs straight between the edge's two cards, down the
+  // gutter nearest that line at each level, sharing the gutter if it must.
+  const slot = new Map<string, number>();
+  for (const row of rows) {
+    let cards = 0;
+    for (const id of row)
+      if (tie.get(id) !== Number.MAX_SAFE_INTEGER) slot.set(id, cards++);
+  }
+  const via = new Map<string, Via>();
+  const sharing = new Map<string, { id: string; at: number }[]>();
+  for (const e of graph.edges) {
+    const ids = waypoints.get(routeKey(e));
+    if (ids === undefined) continue;
+    const at = (slot.get(e.blockedById)! + slot.get(e.issueId)!) / 2;
+    // Gutter g sits half a slot (and half a gap) left of slot g.
+    const gutter = Math.max(0, Math.round(at + 0.5 + GUTTER_LEAN));
+    for (const d of ids)
+      push(sharing, `${level.get(d)}:${gutter}`, { id: d, at });
+  }
+  for (const [key, list] of sharing) {
+    list.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+    const [l, g] = key.split(":").map(Number) as [number, number];
+    list.forEach(({ id }, lane) =>
+      via.set(id, { level: l, gutter: g, lane, lanes: list.length }),
+    );
+  }
+  const width = Math.max(0, ...[...slot.values()].map((s) => s + 1));
+  const cols = Math.min(6, Math.max(3, width));
   const nodes: Placed[] = [
     ...chained.map((issue) => ({
       issue,
-      column: column.get(issue.id) ?? 0,
-      row: row.get(issue.id) ?? 0,
+      level: level.get(issue.id) ?? 0,
+      slot: slot.get(issue.id) ?? 0,
       island: false,
     })),
     ...island.map((issue, n) => ({
       issue,
-      column: n % ISLAND_COLUMNS,
-      row: rows + (rows > 0 ? 1 : 0) + Math.floor(n / ISLAND_COLUMNS),
+      level: depth + Math.floor(n / cols),
+      slot: n % cols,
       island: true,
     })),
   ];
-  const islandRows = Math.ceil(island.length / ISLAND_COLUMNS);
+  const routes: Route[] = graph.edges
+    .filter((e) => waypoints.has(routeKey(e)))
+    .map((e) => ({
+      issueId: e.issueId,
+      blockedById: e.blockedById,
+      via: (waypoints.get(routeKey(e)) ?? [])
+        .map((d) => via.get(d))
+        .filter((v): v is Via => v !== undefined),
+    }));
   return {
     nodes,
-    columns: Math.max(width, island.length > 0 ? ISLAND_COLUMNS : 0),
-    rows: rows + (rows > 0 && islandRows > 0 ? 1 : 0) + islandRows,
-    islandRows,
+    routes,
+    levels: depth + Math.ceil(island.length / cols),
+    width: Math.max(width, Math.min(cols, island.length)),
+    islandFrom: depth,
   };
+}
+
+/**
+ * Whether two hops cross, drawn as monotone curves between their ends:
+ * their spans of levels overlap and their ends are in opposite order.
+ * Hops that share an end never cross; they meet.
+ */
+function cross(
+  s: Seg,
+  t: Seg,
+  level: Map<string, number>,
+  pos: Map<string, number>,
+): boolean {
+  if (s.from === t.from || s.to === t.to || s.from === t.to || s.to === t.from)
+    return false;
+  const sa = level.get(s.from)!;
+  const sb = level.get(s.to)!;
+  const ta = level.get(t.from)!;
+  const tb = level.get(t.to)!;
+  if (
+    Math.max(Math.min(sa, sb), Math.min(ta, tb)) >=
+    Math.min(Math.max(sa, sb), Math.max(ta, tb))
+  )
+    return false;
+  const top = pos.get(s.from)! - pos.get(t.from)!;
+  const bottom = pos.get(s.to)! - pos.get(t.to)!;
+  return top * bottom < 0;
+}
+
+function countCrossings(
+  segs: readonly Seg[],
+  level: Map<string, number>,
+  pos: Map<string, number>,
+): number {
+  let n = 0;
+  for (let i = 0; i < segs.length; i++)
+    for (let j = i + 1; j < segs.length; j++)
+      if (cross(segs[i]!, segs[j]!, level, pos)) n++;
+  return n;
+}
+
+/**
+ * How many crossings a layout draws between its edges, card to card; what
+ * `order` minimises, counted the way a reader sees it.
+ */
+export function crossings(graph: Graph, placed: Layout): number {
+  const level = new Map(placed.nodes.map((n) => [n.issue.id, n.level]));
+  const pos = new Map(placed.nodes.map((n) => [n.issue.id, n.slot]));
+  const segs = graph.edges
+    .filter((e) => level.has(e.issueId) && level.has(e.blockedById))
+    .map((e) => ({ from: e.blockedById, to: e.issueId }));
+  return countCrossings(segs, level, pos);
+}
+
+/**
+ * Ordering within levels. Barycenter sweeps first: each level is sorted by
+ * the mean position of what it hangs from (down the levels), then of what
+ * hangs from it (back up), a few times, keeping the best ordering seen.
+ * Then a transposition pass: neighbours swap wherever that draws fewer
+ * crossings between the hops they touch. Pure, and deterministic — ties
+ * fall back to the issue number, waypoints after cards.
+ */
+function order(
+  rows: string[][],
+  segs: readonly Seg[],
+  level: Map<string, number>,
+  tie: Map<string, number>,
+): Map<string, number> {
+  const pos = new Map<string, number>();
+  for (const row of rows) row.forEach((id, n) => pos.set(id, n));
+  if (rows.length < 2) return pos;
+  const up = new Map<string, string[]>();
+  const down = new Map<string, string[]>();
+  for (const s of segs) {
+    push(up, s.to, s.from);
+    push(down, s.from, s.to);
+  }
+  const sortRow = (row: string[], near: Map<string, string[]>): void => {
+    const keyed = row.map((id) => {
+      const ids = near.get(id) ?? [];
+      const k =
+        ids.length === 0
+          ? pos.get(id)!
+          : ids.reduce((s, n) => s + (pos.get(n) ?? 0), 0) / ids.length;
+      return { id, k };
+    });
+    keyed.sort((a, b) => a.k - b.k || tie.get(a.id)! - tie.get(b.id)!);
+    keyed.forEach((k, n) => {
+      row[n] = k.id;
+      pos.set(k.id, n);
+    });
+  };
+  let best = countCrossings(segs, level, pos);
+  let bestPos = new Map(pos);
+  for (let sweep = 0; sweep < 4 && best > 0; sweep++) {
+    for (let l = 1; l < rows.length; l++) sortRow(rows[l]!, up);
+    for (let l = rows.length - 2; l >= 0; l--) sortRow(rows[l]!, down);
+    const n = countCrossings(segs, level, pos);
+    if (n < best) {
+      best = n;
+      bestPos = new Map(pos);
+    }
+  }
+  for (const [id, n] of bestPos) pos.set(id, n);
+  for (const row of rows) row.sort((a, b) => pos.get(a)! - pos.get(b)!);
+
+  const touching = new Map<string, Seg[]>();
+  for (const s of segs) {
+    touching.set(s.to, [...(touching.get(s.to) ?? []), s]);
+    touching.set(s.from, [...(touching.get(s.from) ?? []), s]);
+  }
+  const between = (a: string, b: string): number => {
+    let n = 0;
+    for (const s of touching.get(a) ?? [])
+      for (const t of touching.get(b) ?? []) if (cross(s, t, level, pos)) n++;
+    return n;
+  };
+  for (let round = 0; round < 4 && best > 0; round++) {
+    let improved = false;
+    for (const row of rows)
+      for (let i = 0; i + 1 < row.length; i++) {
+        const a = row[i]!;
+        const b = row[i + 1]!;
+        const before = between(a, b);
+        if (before === 0) continue;
+        pos.set(a, i + 1);
+        pos.set(b, i);
+        if (between(a, b) < before) {
+          row[i] = b;
+          row[i + 1] = a;
+          improved = true;
+        } else {
+          pos.set(a, i);
+          pos.set(b, i + 1);
+        }
+      }
+    if (!improved) break;
+  }
+  return pos;
+}
+
+// ---- the words ----
+
+/** The one word a card says. */
+export type Word =
+  | "ready"
+  | "working"
+  | "blocked"
+  | "done"
+  | "parked"
+  | "waiting";
+
+const WORDS: readonly Word[] = [
+  "ready",
+  "working",
+  "blocked",
+  "waiting",
+  "parked",
+  "done",
+];
+
+/** What is known about a repository's issues beyond the graph itself. */
+export interface Marks {
+  /** Issues the crew is on right now, by issue id; see `crewMarks`. */
+  readonly crew: Map<string, RunState>;
+  /** Open issues an open pull would close: proposed, not landed. */
+  readonly waiting: Set<string>;
+  /** Issues whose last word is the crew parking them. */
+  readonly parked: Set<string>;
+}
+
+/**
+ * Where the crew is: each issue with an agent run in flight, by issue id.
+ * A running run outranks a queued one on the same issue. Issue ids are
+ * forge-wide, so one map serves every repository's drawing at once.
+ */
+export function crewMarks(runs: readonly Run[]): Map<string, RunState> {
+  const marks = new Map<string, RunState>();
+  for (const run of runs)
+    if (run.issueId !== null && marks.get(run.issueId) !== "running")
+      marks.set(run.issueId, run.state);
+  return marks;
+}
+
+/** Issues whose latest comment is the crew parking them. */
+function parkedIds(db: Database, issueIds: readonly string[]): Set<string> {
+  const out = new Set<string>();
+  const CHUNK = 400;
+  for (let i = 0; i < issueIds.length; i += CHUNK) {
+    const batch = issueIds.slice(i, i + CHUNK);
+    const marks = batch.map((_, n) => `?${n + 1}`).join(",");
+    const rows = db
+      .query<{ id: string }, string[]>(
+        `SELECT c.issue_id AS id FROM comment c
+           JOIN (SELECT issue_id, MAX(created_at) AS at FROM comment
+                 WHERE issue_id IN (${marks}) GROUP BY issue_id) last
+             ON last.issue_id = c.issue_id AND last.at = c.created_at
+         WHERE c.body LIKE 'Parked by the crew%'`,
+      )
+      .all(...batch);
+    for (const row of rows) out.add(row.id);
+  }
+  return out;
+}
+
+/** The marks for one repository's graph: three reads, all bounded. */
+export function marksFor(
+  db: Database,
+  repoId: string,
+  graph: Graph,
+  runs: readonly Run[],
+): Marks {
+  const byNumber = new Map(graph.issues.map((i) => [i.number, i.id]));
+  const waiting = new Set<string>();
+  for (const number of openPullsClosing(db, repoId).keys()) {
+    const id = byNumber.get(number);
+    if (id !== undefined) waiting.add(id);
+  }
+  const open = graph.issues.filter((i) => i.state === "open").map((i) => i.id);
+  return { crew: crewMarks(runs), waiting, parked: parkedIds(db, open) };
+}
+
+export const NO_MARKS: Marks = {
+  crew: new Map(),
+  waiting: new Set(),
+  parked: new Set(),
+};
+
+/**
+ * The word for an issue, most telling first: done is done; the crew on it
+ * outranks a pull for it; a pull outranks having been parked; and what is
+ * left is ready or blocked by what the graph says.
+ */
+export function wordFor(issue: Issue, ready: Set<string>, marks: Marks): Word {
+  if (issue.state === "closed") return "done";
+  if (marks.crew.has(issue.id)) return "working";
+  if (marks.waiting.has(issue.id)) return "waiting";
+  if (marks.parked.has(issue.id)) return "parked";
+  return ready.has(issue.id) ? "ready" : "blocked";
 }
 
 // ---- drawing ----
 
-const W = 184;
-const H = 46;
-const GX = 56;
-const GY = 16;
-const PAD = 14;
+const W = 196;
+const H = 68;
+const GX = 28;
+const GY = 44;
+const PAD = 22;
+/** Between lines that share a gutter. */
+const LANE = 6;
+/** How far left of a slot's centre its left gutter lies, in slots. */
+const GUTTER_LEAN = GX / 2 / (W + GX);
+/** Room for the rule between the chains and the island. */
+const RULE = 30;
+/** Characters of title per line at the card's type size, conservatively. */
+const LINE = 26;
 
-function trim(text: string, max = 24): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+function trim(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
+}
+
+/** A title on at most two lines, whole words where they fit, then an ellipsis. */
+export function wrapTitle(title: string, max = LINE): [string, string | null] {
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return ["", null];
+  let first = "";
+  let at = 0;
+  for (; at < words.length; at++) {
+    const next = first === "" ? words[at]! : `${first} ${words[at]}`;
+    if (next.length > max) break;
+    first = next;
+  }
+  if (first === "")
+    return [trim(words[0]!, max), trim(words.slice(1).join(" "), max) || null];
+  const rest = words.slice(at).join(" ");
+  return [first, rest === "" ? null : trim(rest, max)];
+}
+
+export interface Emphasis {
+  readonly ready: Set<string>;
+  /** The issues on the critical path. */
+  readonly critical: Set<string>;
+  /** The path's own edges, blocker to blocked, as `routeKey`s. */
+  readonly chain: Set<string>;
+  readonly marks: Marks;
+}
+
+/** What to emphasise, from the ready list, the critical path and the marks. */
+export function emphasisFor(
+  ready: readonly Ranked[],
+  path: readonly Issue[],
+  marks: Marks,
+): Emphasis {
+  const chain = new Set<string>();
+  for (let i = 0; i + 1 < path.length; i++)
+    chain.add(`${path[i]!.id}>${path[i + 1]!.id}`);
+  return {
+    ready: new Set(ready.map((r) => r.issue.id)),
+    critical: new Set(path.map((i) => i.id)),
+    chain,
+    marks,
+  };
+}
+
+interface Geometry {
+  readonly width: number;
+  readonly height: number;
+  readonly x: (slot: number) => number;
+  /** Where a waypoint's line runs: in its gutter, spread if shared. */
+  readonly gx: (v: Via) => number;
+  readonly y: (level: number) => number;
+  /** Whether a rule separates the chains from the island. */
+  readonly ruled: boolean;
+}
+
+/** The drawing's own width, before any lane widens it. */
+export function drawingWidth(placed: Layout): number {
+  return PAD * 2 + placed.width * W + Math.max(0, placed.width - 1) * GX;
+}
+
+function geometry(placed: Layout, minWidth: number): Geometry {
+  const ruled = placed.islandFrom > 0 && placed.islandFrom < placed.levels;
+  const width = Math.max(minWidth, drawingWidth(placed));
+  const height =
+    PAD * 2 +
+    placed.levels * H +
+    Math.max(0, placed.levels - 1) * GY +
+    (ruled ? RULE : 0);
+  const x = (slot: number): number => PAD + slot * (W + GX);
+  return {
+    width,
+    height,
+    ruled,
+    x,
+    gx: (v) => x(v.gutter) - GX / 2 + (v.lane - (v.lanes - 1) / 2) * LANE,
+    y: (level) =>
+      PAD + level * (H + GY) + (ruled && level >= placed.islandFrom ? RULE : 0),
+  };
+}
+
+function node(base: string, n: Placed, g: Geometry, emphasis: Emphasis): Html {
+  const word = wordFor(n.issue, emphasis.ready, emphasis.marks);
+  const run = emphasis.marks.crew.get(n.issue.id);
+  const [first, second] = wrapTitle(n.issue.title);
+  const px = g.x(n.slot);
+  const py = g.y(n.level);
+  const left = px + 12;
+  const bottom = py + H - 11;
+  const number = `#${n.issue.number}`;
+  const who = n.issue.assigneeName;
+  const whoX = left + 9 + number.length * 6.4;
+  return html`<a
+    class="map-node"
+    data-state="${word}"
+    data-crit="${emphasis.critical.has(n.issue.id) ? "1" : "0"}"
+    ${run ? html`data-run="${run}"` : null}
+    href="${base}/issues/${n.issue.number}"
+  >
+    <title>${number} ${n.issue.title} — ${word}</title>
+    ${word === "working"
+      ? html`<rect
+          class="map-breath"
+          x="${px - 4}"
+          y="${py - 4}"
+          width="${W + 8}"
+          height="${H + 8}"
+          rx="12"
+        />`
+      : null}
+    <rect
+      class="map-card"
+      x="${px}"
+      y="${py}"
+      width="${W}"
+      height="${H}"
+      rx="8"
+    />
+    <text class="map-title" x="${left}" y="${py + 23}">
+      ${first}${second === null
+        ? null
+        : html`<tspan x="${left}" dy="16">${second}</tspan>`}
+    </text>
+    <text class="map-meta" x="${left}" y="${bottom}">${number}</text>
+    ${who
+      ? html`<g class="map-who" data-h="${hueOf(who)}">
+          <circle cx="${whoX + 7}" cy="${bottom - 4}" r="7" />
+          <text class="map-who-i" x="${whoX + 7}" y="${bottom - 1}"
+            >${who[0]}</text
+          >
+          <text class="map-who-n" x="${whoX + 19}" y="${bottom}"
+            >${trim(who, 11)}</text
+          >
+        </g>`
+      : null}
+    <text class="map-word" x="${px + W - 12}" y="${bottom}" text-anchor="end">
+      ${word === "done"
+        ? null
+        : html`<tspan class="map-dot" dy="-1">●</tspan
+            ><tspan dy="1"> </tspan>`}${word}
+    </text>
+  </a>`;
+}
+
+/**
+ * A calm curve from the bottom of one card to the top of the next, vertical
+ * at both ends. An edge that skips levels runs straight through the empty
+ * slots the layout kept for it, curving only between levels.
+ */
+function edge(
+  e: Edge,
+  at: Map<string, Placed>,
+  via: readonly Via[],
+  g: Geometry,
+  emphasis: Emphasis,
+): Html | null {
+  const from = at.get(e.blockedById);
+  const to = at.get(e.issueId);
+  if (!from || !to) return null;
+  let cx = g.x(from.slot) + W / 2;
+  let cy = g.y(from.level) + H;
+  let d = `M${cx} ${cy}`;
+  const hop = (nx: number, ny: number): void => {
+    const bend = Math.max(18, (ny - cy) / 2);
+    d += ` C ${cx} ${cy + bend}, ${nx} ${ny - bend}, ${nx} ${ny}`;
+    cx = nx;
+    cy = ny;
+  };
+  for (const v of via) {
+    const x = g.gx(v);
+    hop(x, g.y(v.level));
+    cy = g.y(v.level) + H;
+    d += ` L ${x} ${cy}`;
+  }
+  hop(g.x(to.slot) + W / 2, g.y(to.level));
+  const crit = emphasis.chain.has(routeKey(e));
+  const faded = from.issue.state === "closed" || to.issue.state === "closed";
+  return html`<path
+    class="map-edge${crit ? " map-edge-crit" : ""}${faded
+      ? " map-edge-done"
+      : ""}"
+    d="${d}"
+  />`;
+}
+
+export interface DrawOptions {
+  /** The container's id: the pan and zoom are remembered by it across a swap. */
+  readonly id: string;
+  /** Widen the drawing to this, so lanes share one scale and one grid. */
+  readonly minWidth?: number;
+  /** The most of the window's height the canvas takes before it pans. */
+  readonly cap?: number;
 }
 
 export function drawMap(
   repo: Repo,
   graph: Graph,
   placed: Layout,
-  emphasis: { ready: Set<string>; critical: Set<string> },
+  emphasis: Emphasis,
+  options: DrawOptions,
 ): Html {
   if (placed.nodes.length === 0)
     return html`<div class="map-empty">
@@ -175,69 +709,91 @@ export function drawMap(
       <p>No open issues to map. Open one, then link what it waits for.</p>
     </div>`;
   const base = repoBase(repo);
+  const g = geometry(placed, options.minWidth ?? 0);
   const at = new Map(placed.nodes.map((n) => [n.issue.id, n]));
-  const x = (c: number) => PAD + c * (W + GX);
-  const y = (r: number) => PAD + r * (H + GY);
-  const width =
-    PAD * 2 + placed.columns * W + Math.max(0, placed.columns - 1) * GX;
-  const height = PAD * 2 + placed.rows * H + Math.max(0, placed.rows - 1) * GY;
-  const edges = graph.edges.map((e) => {
-    const from = at.get(e.blockedById);
-    const to = at.get(e.issueId);
-    if (!from || !to) return null;
-    const x1 = x(from.column) + W;
-    const y1 = y(from.row) + H / 2;
-    const x2 = x(to.column);
-    const y2 = y(to.row) + H / 2;
-    const bend = Math.max(24, (x2 - x1) / 2);
-    const crit =
-      emphasis.critical.has(e.issueId) && emphasis.critical.has(e.blockedById);
-    return html`<path
-      class="map-edge${crit ? " map-edge-crit" : ""}"
-      d="M${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}"
-    />`;
-  });
-  const nodes = placed.nodes.map((n) => {
-    const state =
-      n.issue.state === "closed"
-        ? "done"
-        : emphasis.ready.has(n.issue.id)
-          ? "ready"
-          : "waiting";
-    const px = x(n.column);
-    const py = y(n.row);
-    return html`<a
-      class="map-node"
-      data-state="${state}"
-      data-crit="${emphasis.critical.has(n.issue.id) ? "1" : "0"}"
-      href="${base}/issues/${n.issue.number}"
-    >
-      <rect x="${px}" y="${py}" width="${W}" height="${H}" rx="7" />
-      <text class="map-title" x="${px + 12}" y="${py + 19}">
-        ${trim(n.issue.title)}
-      </text>
-      <text class="map-sub" x="${px + 12}" y="${py + 35}">
-        #${n.issue.number}
-        ${n.issue.state === "closed"
-          ? " · done"
-          : state === "ready"
-            ? " · ready"
-            : ""}${n.issue.assigneeName ? ` · ${n.issue.assigneeName}` : ""}
-      </text>
-    </a>`;
-  });
-  return html`<div class="map-scroll">
+  const ry = g.y(placed.islandFrom) - GY / 2 - RULE / 2;
+  const routed = new Map(
+    placed.routes.map((r) => [`${r.blockedById}>${r.issueId}`, r.via]),
+  );
+  return html`<div
+    class="map-canvas"
+    id="${options.id}"
+    data-w="${g.width}"
+    data-h="${g.height}"
+    data-cap="${options.cap ?? 0.72}"
+    data-cuts="${Array.from({ length: placed.levels }, (_, l) =>
+      l === placed.levels - 1 ? g.height : g.y(l) + H + 12,
+    ).join(",")}"
+  >
     <svg
       class="map-svg"
-      viewBox="0 0 ${width} ${height}"
-      width="${width}"
-      height="${height}"
-      role="img"
+      viewBox="0 0 ${g.width} ${g.height}"
+      preserveAspectRatio="xMinYMin meet"
+      role="group"
       aria-label="Issues of ${repo.name} laid out by what they wait for"
     >
-      ${edges}${nodes}
+      ${g.ruled
+        ? html`<g class="map-rule">
+            <text x="${PAD}" y="${ry + 4}">not linked</text>
+            <line
+              x1="${PAD + 66}"
+              y1="${ry}"
+              x2="${g.width - PAD}"
+              y2="${ry}"
+            />
+          </g>`
+        : null}
+      ${graph.edges.map((e) =>
+        edge(e, at, routed.get(routeKey(e)) ?? [], g, emphasis),
+      )}
+      ${placed.nodes.map((n) => node(base, n, g, emphasis))}
     </svg>
+    <div class="map-tools js-only" role="group" aria-label="Zoom">
+      <button
+        type="button"
+        class="map-tool"
+        data-map="out"
+        aria-label="Zoom out"
+      >
+        −
+      </button>
+      <button
+        type="button"
+        class="map-tool"
+        data-map="fit"
+        title="Fit the map to view. Drag to pan; ⌘ or Ctrl and scroll to zoom."
+      >
+        fit
+      </button>
+      <button type="button" class="map-tool" data-map="in" aria-label="Zoom in">
+        +
+      </button>
+    </div>
   </div>`;
+}
+
+/** The words, counted: the one quiet line under a drawing. */
+export function countWords(words: readonly Word[]): Record<Word, number> {
+  const out: Record<Word, number> = {
+    ready: 0,
+    working: 0,
+    blocked: 0,
+    done: 0,
+    parked: 0,
+    waiting: 0,
+  };
+  for (const w of words) out[w]++;
+  return out;
+}
+
+function countsLine(counts: Record<Word, number>): Html {
+  const always = new Set<Word>(["ready", "working", "blocked", "done"]);
+  return html`<p class="map-counts">
+    ${WORDS.filter((w) => always.has(w) || counts[w] > 0).map(
+      (w) =>
+        html`<span><i data-state="${w}"></i>${w} <b>${counts[w]}</b></span>`,
+    )}
+  </p>`;
 }
 
 function rankedList(
@@ -289,6 +845,7 @@ function chart(points: DayPoint[]): Html {
       y="${(h - pad - bh).toFixed(1)}"
       width="${barW.toFixed(1)}"
       height="${bh.toFixed(1)}"
+      rx="1.5"
     />`;
   });
   const last = points.at(-1);
@@ -305,39 +862,281 @@ function chart(points: DayPoint[]): Html {
       <path class="map-level" d="${line}" />
     </svg>
     <p class="muted small">
-      ${last?.open ?? 0} open now · ${closedTotal} closed in 14 days
+      <span class="num">${last?.open ?? 0}</span> open now ·
+      <span class="num">${closedTotal}</span> closed in 14 days
     </p>
   </section>`;
 }
 
+const hueRules = Array.from(
+  { length: 12 },
+  (_, i) => `.map-who[data-h="${i}"] { --hue: ${i * 30 + 8}; }`,
+).join("\n");
+
 export const mapCss = /* css */ `
-.map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; align-items: start; }
+.map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 24px; align-items: start; margin-top: 4px; }
 @media (max-width: 860px) { .map-wrap { grid-template-columns: 1fr; } }
-.map-scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); padding: 4px; }
-.map-svg { display: block; max-width: none; }
-.map-node rect { fill: var(--muted); stroke: var(--border); }
-.map-node[data-state="ready"] rect { fill: color-mix(in srgb, var(--accent) 14%, var(--bg)); stroke: var(--accent); }
-.map-node[data-state="done"] rect { fill: color-mix(in srgb, var(--merged) 12%, var(--bg)); stroke: color-mix(in srgb, var(--merged) 60%, var(--border)); }
-.map-node[data-crit="1"] rect { stroke-width: 2; }
-.map-node:hover rect { stroke: var(--fg); }
-.map-node text { font-family: var(--font); pointer-events: none; }
-.map-title { font-size: 12.5px; font-weight: 560; fill: var(--fg); }
-.map-sub { font-size: 11px; fill: var(--fg-muted, var(--fg)); opacity: .72; }
-.map-edge { fill: none; stroke: var(--border); stroke-width: 1.4; }
-.map-edge-crit { stroke: var(--accent); stroke-width: 2; }
+.map-main { min-width: 0; }
+.map-autonomy { flex-basis: 100%; color: var(--muted-fg); text-wrap: pretty; }
+.map-autonomy .ico { color: var(--faint); vertical-align: -3px; margin-right: 2px; }
+
+/* ---- the canvas ---- */
+.map-canvas { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.map-canvas.is-view { cursor: grab; }
+.map-canvas.is-drag { cursor: grabbing; }
+.map-canvas.is-cut::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 36px; background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none; }
+.map-svg { display: block; width: 100%; height: auto; }
+.map-canvas.is-view .map-svg { height: 100%; }
+.map-svg text { font-family: var(--font); pointer-events: none; }
+.map-tools { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-1); overflow: hidden; }
+.map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12px; font-weight: 550; line-height: 1; cursor: pointer; }
+.map-tool + .map-tool { border-left: 1px solid var(--border); }
+.map-tool:hover { background: var(--muted); color: var(--fg); }
+.map-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ---- cards ---- */
+.map-node { cursor: pointer; outline: none; }
+.map-card { fill: var(--card); stroke: var(--border); stroke-width: 1; transition: stroke 120ms var(--ease), fill 120ms var(--ease); }
+.map-node[data-state="ready"] .map-card { stroke: var(--border-strong); }
+.map-node[data-state="working"] .map-card { stroke: var(--accent); }
+.map-node[data-state="blocked"] .map-card { fill: var(--muted); }
+.map-node[data-state="waiting"] .map-card { stroke: color-mix(in srgb, var(--merged) 55%, var(--border)); }
+.map-node[data-state="parked"] .map-card { fill: color-mix(in srgb, var(--attn) 7%, var(--card)); stroke: color-mix(in srgb, var(--attn) 45%, var(--border)); }
+.map-node[data-state="done"] .map-card { fill: none; stroke: var(--border); }
+.map-node:hover .map-card { stroke: var(--border-strong); }
+.map-node[data-state="working"]:hover .map-card { stroke: var(--accent); }
+.map-node:focus-visible .map-card { stroke: var(--accent); stroke-width: 2; }
+/* A soft outer ring, static: any animation inside a large inline SVG
+   repaints the whole drawing every frame, whatever property it touches. */
+.map-breath { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: .35; }
+.map-title { font-size: 12.5px; font-weight: 560; fill: var(--fg); transition: fill 120ms var(--ease); }
+.map-node:hover .map-title { fill: var(--accent); }
+.map-node[data-state="done"] .map-title, .map-node[data-state="done"] .map-meta, .map-node[data-state="done"] .map-word { fill: var(--faint); }
+.map-node[data-state="blocked"] .map-title { fill: var(--muted-fg); }
+.map-meta { font-size: 11px; fill: var(--faint); font-variant-numeric: tabular-nums; }
+.map-who circle { fill: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 22%, var(--card)); stroke: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 30%, transparent); }
+.map-who-i { font-size: 8px; font-weight: 650; text-transform: uppercase; fill: color-mix(in srgb, hsl(var(--hue, 220) 62% 42%) 88%, var(--fg)); }
+.map-who-n { font-size: 11px; fill: var(--muted-fg); }
+.map-word { font-size: 11px; font-weight: 550; fill: var(--muted-fg); }
+.map-word .map-dot { font-size: 7px; fill: var(--faint); }
+.map-node[data-state="ready"] .map-dot { fill: var(--success); }
+.map-node[data-state="working"] .map-dot { fill: var(--accent); }
+.map-node[data-state="working"] .map-word { fill: var(--accent); }
+.map-node[data-state="waiting"] .map-dot { fill: var(--merged); }
+.map-node[data-state="parked"] .map-dot { fill: var(--attn); }
+.map-node[data-state="parked"] .map-word { fill: var(--attn); }
+
+/* ---- edges ---- */
+.map-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.25; }
+.map-edge-crit { stroke: var(--accent); }
+.map-edge-done { opacity: .45; }
+.map-rule line { stroke: var(--border); stroke-width: 1; }
+.map-rule text { font-size: 10.5px; fill: var(--faint); letter-spacing: .02em; }
+
+/* ---- the line under a drawing ---- */
+.map-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 2px 0; font-size: 12px; color: var(--muted-fg); }
+.map-counts b { font-weight: 550; color: var(--fg); font-variant-numeric: tabular-nums; }
+.map-counts i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--faint); }
+.map-counts i[data-state="ready"] { background: var(--success); }
+.map-counts i[data-state="working"] { background: var(--accent); }
+.map-counts i[data-state="waiting"] { background: var(--merged); }
+.map-counts i[data-state="parked"] { background: var(--attn); }
+.map-counts i[data-state="done"] { background: transparent; border: 1px solid var(--faint); }
+
+/* ---- beside the drawing ---- */
 .map-list h2 { font-size: 13px; margin: 0 0 6px; }
-.map-list ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; }
+.map-list ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; list-style: decimal; }
+.map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
 .map-chart { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
-.map-level { fill: none; stroke: var(--accent); stroke-width: 1.6; }
-.map-flow { fill: color-mix(in srgb, var(--merged) 45%, transparent); }
-.map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--fg); opacity: .8; text-align: center; }
-.map-legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin-top: 8px; opacity: .8; }
-.map-legend i { display: inline-block; width: 14px; height: 10px; border-radius: 3px; border: 1px solid var(--border); vertical-align: -1px; margin-right: 5px; background: var(--muted); }
-.map-legend i.ready { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); border-color: var(--accent); }
-.map-legend i.done { background: color-mix(in srgb, var(--merged) 12%, var(--bg)); }
-.map-legend i.crit { border: 2px solid var(--accent); background: transparent; }
+.map-level { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.map-flow { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
+.map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
+
+/* ---- lanes ---- */
+.map-lanes { display: grid; gap: 14px; margin-top: 16px; }
+.map-lane { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow-1); }
+.map-lane-head { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; padding: 10px 14px; cursor: pointer; list-style: none; }
+.map-lane-head::-webkit-details-marker { display: none; }
+.map-lane-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius); }
+.map-lane-caret { display: inline-flex; color: var(--faint); transition: transform 160ms var(--ease); }
+.map-lane[open] > .map-lane-head .map-lane-caret { transform: rotate(90deg); }
+.map-lane-name { font-weight: 620; font-size: 15px; letter-spacing: -0.01em; }
+.map-lane-name .muted { font-weight: 500; }
+.map-lane-word { font-size: 12px; color: var(--muted-fg); padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; line-height: 18px; }
+.map-lane-word[data-autonomy="autonomous"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
+.map-spend { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.map-spend svg { width: 72px; height: 4px; border-radius: 2px; overflow: hidden; }
+.map-spend-track { fill: var(--muted); }
+.map-spend-fill { fill: var(--muted-fg); }
+.map-spend[data-near="1"] .map-spend-fill { fill: var(--attn); }
+.map-lane-crew { display: inline-flex; align-items: center; gap: 4px; }
+.map-lane-crew .avatar { box-shadow: 0 0 0 2px var(--card); }
+.map-lane-head .map-counts { margin: 0 0 0 auto; }
+.map-lane[data-idle="1"] > .map-lane-head .map-lane-name { color: var(--muted-fg); font-weight: 560; }
+.map-lane > .map-canvas, .map-lane > .map-empty { border: 0; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); }
+@media (max-width: 600px) {
+  .map-lane-head { gap: 6px 10px; }
+  .map-lane-head .map-counts { margin-left: 0; flex-basis: 100%; }
+}
+${hueRules}
+`;
+
+/**
+ * Fit, pan and zoom, and folds that survive a live swap. The drawing is a
+ * viewBox: fitting is choosing one, panning moves its origin, zooming
+ * shrinks it around a point — no transforms, and text stays crisp. Each
+ * canvas remembers its view by id, so when a live region swaps the SVG
+ * under the reader, they are still looking where they were looking.
+ * Scroll zooms only with ⌘ or Ctrl (a trackpad pinch sends exactly that),
+ * because a page of lanes must still scroll like a page.
+ */
+export const mapViewJs = /* js */ `
+(function () {
+  var MIN = 0.35, MAX = 2.5;
+  var views = {};
+  var folds = {};
+  function all(root) { return Array.prototype.slice.call((root || document).querySelectorAll('.map-canvas')); }
+  function apply(canvas) {
+    var svg = canvas.querySelector('.map-svg'), v = views[canvas.id];
+    if (!svg || !v) return;
+    svg.setAttribute('viewBox', v.x.toFixed(2) + ' ' + v.y.toFixed(2) + ' ' + (v.cw / v.k).toFixed(2) + ' ' + (v.ch / v.k).toFixed(2));
+  }
+  function setup(canvas, refit) {
+    if (!canvas.id || !canvas.querySelector('.map-svg') || !canvas.clientWidth) return;
+    var W = +canvas.getAttribute('data-w') || 1, H = +canvas.getAttribute('data-h') || 1;
+    var cw = canvas.clientWidth;
+    var fitK = Math.min(1, Math.max(0.5, cw / W));
+    var cap = +canvas.getAttribute('data-cap') || 0.72;
+    // Tall drawings are cut to the window's share, at a level's foot, never
+    // through a card; a fade says there is more.
+    var most = Math.round(window.innerHeight * cap), full = Math.round(H * fitK) + 2, ch = full;
+    if (full > most) {
+      ch = most;
+      (canvas.getAttribute('data-cuts') || '').split(',').forEach(function (c) {
+        var y = Math.round(+c * fitK) + 2;
+        if (y <= most && y >= 120) ch = y;
+      });
+    }
+    ch = Math.max(120, ch);
+    canvas.classList.toggle('is-cut', full > ch);
+    canvas.classList.add('is-view');
+    canvas.style.height = ch + 'px';
+    var v = views[canvas.id];
+    if (!v || refit || !v.touched) v = views[canvas.id] = { k: fitK, x: 0, y: 0, touched: false };
+    v.cw = cw; v.ch = ch;
+    apply(canvas);
+  }
+  function zoom(canvas, factor, cx, cy) {
+    var v = views[canvas.id]; if (!v) return;
+    var k = Math.min(MAX, Math.max(MIN, v.k * factor));
+    if (k === v.k) return;
+    if (cx === undefined) { cx = v.cw / 2; cy = v.ch / 2; }
+    v.x += cx / v.k - cx / k; v.y += cy / v.k - cy / k; v.k = k; v.touched = true;
+    apply(canvas);
+  }
+  function pan(canvas, dx, dy) {
+    var v = views[canvas.id]; if (!v) return;
+    v.x -= dx / v.k; v.y -= dy / v.k; v.touched = true;
+    apply(canvas);
+  }
+  function canvasOf(e) { return e.target && e.target.closest ? e.target.closest('.map-canvas') : null; }
+  function at(canvas, e) { var r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+  var pointers = {}, drag = null;
+  document.addEventListener('pointerdown', function (e) {
+    var canvas = canvasOf(e);
+    if (!canvas || !views[canvas.id] || e.target.closest('.map-tools')) return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if (ids.length === 1) drag = { canvas: canvas, x: e.clientX, y: e.clientY, moved: false, pinch: null };
+    else if (ids.length === 2 && drag) {
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      drag.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    }
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (!drag || !(e.pointerId in pointers)) return;
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if (ids.length >= 2 && drag.pinch) {
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+      var r = drag.canvas.getBoundingClientRect();
+      if (drag.pinch.d > 0) zoom(drag.canvas, d / drag.pinch.d, mx - r.left, my - r.top);
+      pan(drag.canvas, mx - drag.pinch.mx, my - drag.pinch.my);
+      drag.pinch = { d: d, mx: mx, my: my }; drag.moved = true;
+      e.preventDefault();
+      return;
+    }
+    var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    drag.moved = true; drag.canvas.classList.add('is-drag');
+    pan(drag.canvas, dx, dy); drag.x = e.clientX; drag.y = e.clientY;
+    e.preventDefault();
+  }, { passive: false });
+  function release(e) {
+    delete pointers[e.pointerId];
+    if (!drag) return;
+    if (Object.keys(pointers).length > 0) { drag.pinch = null; return; }
+    var c = drag.canvas, moved = drag.moved;
+    c.classList.remove('is-drag');
+    drag = null;
+    if (moved) { c.setAttribute('data-dragged', '1'); setTimeout(function () { c.removeAttribute('data-dragged'); }, 0); }
+  }
+  document.addEventListener('pointerup', release);
+  document.addEventListener('pointercancel', release);
+  document.addEventListener('click', function (e) {
+    var canvas = canvasOf(e);
+    if (!canvas) return;
+    if (canvas.hasAttribute('data-dragged')) { e.preventDefault(); e.stopPropagation(); return; }
+    var tool = e.target.closest('[data-map]');
+    if (!tool) return;
+    var what = tool.getAttribute('data-map');
+    if (what === 'fit') setup(canvas, true); else zoom(canvas, what === 'in' ? 1.25 : 0.8);
+  }, true);
+  document.addEventListener('wheel', function (e) {
+    var canvas = canvasOf(e);
+    if (!canvas || !views[canvas.id] || !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    var p = at(canvas, e);
+    zoom(canvas, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.01)), p[0], p[1]);
+  }, { passive: false });
+  document.addEventListener('dblclick', function (e) {
+    var canvas = canvasOf(e);
+    if (!canvas || !views[canvas.id] || e.target.closest('.map-tools')) return;
+    e.preventDefault();
+    var p = at(canvas, e);
+    zoom(canvas, 1.6, p[0], p[1]);
+  });
+  document.addEventListener('focusin', function (e) {
+    var node = e.target && e.target.closest ? e.target.closest('.map-node') : null;
+    if (!node) return;
+    var canvas = node.closest('.map-canvas');
+    if (!canvas || !views[canvas.id]) return;
+    var r = node.getBoundingClientRect(), c = canvas.getBoundingClientRect(), m = 12, dx = 0, dy = 0;
+    if (r.left < c.left + m) dx = c.left + m - r.left; else if (r.right > c.right - m) dx = c.right - m - r.right;
+    if (r.top < c.top + m) dy = c.top + m - r.top; else if (r.bottom > c.bottom - m) dy = c.bottom - m - r.bottom;
+    if (dx || dy) pan(canvas, dx, dy);
+  });
+
+  document.addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (!d || !d.classList || !d.classList.contains('map-lane') || !d.id) return;
+    folds[d.id] = d.open;
+    if (d.open) all(d).forEach(function (c) { setup(c, false); });
+  }, true);
+  function restore(root) {
+    Array.prototype.forEach.call(root.querySelectorAll('.map-lane'), function (d) { if (d.id in folds) d.open = folds[d.id]; });
+    if (root.classList && root.classList.contains('map-canvas')) setup(root, false);
+    all(root).forEach(function (c) { setup(c, false); });
+  }
+  document.addEventListener('forge:swapped', function (e) { if (e.target && e.target.querySelectorAll) restore(e.target); });
+  window.addEventListener('resize', function () { all().forEach(function (c) { setup(c, false); }); });
+  all().forEach(function (c) { setup(c, false); });
+})();
 `;
 
 /** One line on how the repository runs itself, when it does. */
@@ -359,36 +1158,44 @@ function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
   </p>`;
 }
 
+const LIVE_KINDS = "run.*,issue.*,pull.*";
+
 /** GET /:owner/:name/map */
 export function mapPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const graph = repoGraph(ctx.app.db, repo.id);
+  const db = ctx.app.db;
+  const graph = repoGraph(db, repo.id);
   const ready = readyNow(graph);
   const blocked = blockedOn(graph);
   const critical = criticalPath(graph);
   const placed = layout(graph);
+  const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
+  const readySet = new Set(ready.map((r) => r.issue.id));
+  const counts = countWords(
+    graph.issues.map((i) => wordFor(i, readySet, marks)),
+  );
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
       <p class="muted">
-        What waits for what. The left edge is ready now; the emphasised chain is
-        the least work that still has to happen in order.
+        What waits for what. The top edge is ready now; the chain in the accent
+        is the least work that still has to happen in order.
       </p>
       ${autonomyLine(ctx, repo)}
     </div>
-    <div class="map-wrap">
-      <div>
-        ${drawMap(repo, graph, placed, {
-          ready: new Set(ready.map((r) => r.issue.id)),
-          critical: new Set(critical.map((i) => i.id)),
+    <div
+      class="map-wrap"
+      id="map-live"
+      data-live="${LIVE_KINDS}"
+      data-live-repo="${repo.ownerName}/${repo.name}"
+    >
+      <div class="map-main">
+        ${drawMap(repo, graph, placed, emphasisFor(ready, critical, marks), {
+          id: "map-canvas",
+          cap: 1,
         })}
-        <div class="map-legend">
-          <span><i class="ready"></i>ready now</span>
-          <span><i></i>waiting</span>
-          <span><i class="done"></i>done</span>
-          <span><i class="crit"></i>critical path</span>
-        </div>
+        ${placed.nodes.length === 0 ? null : countsLine(counts)}
       </div>
       <aside>
         ${graph.issues.length === 0
@@ -425,7 +1232,7 @@ export function mapPage(ctx: Ctx): Response {
               </ol>
             </section>`
           : null}
-        ${chart(levelAndFlow(ctx.app.db, repo.id))}
+        ${chart(levelAndFlow(db, repo.id))}
       </aside>
     </div>`;
   return page({
@@ -435,20 +1242,32 @@ export function mapPage(ctx: Ctx): Response {
     palette: repoPalette(repo),
     body,
     styleCss: mapCss,
+    scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
   });
 }
 
-/** The map as data, for the crew and the tick: the same three lists. */
-export function mapJson(repo: Repo, graph: Graph): Record<string, unknown> {
+/**
+ * The map as data, for the crew and the tick: the same three lists,
+ * `working`, the issues the crew is on right now, and every issue with its
+ * word and the words counted.
+ */
+export function mapJson(
+  repo: Repo,
+  graph: Graph,
+  marks: Marks = NO_MARKS,
+): Record<string, unknown> {
+  const ready = readyNow(graph);
+  const readySet = new Set(ready.map((r) => r.issue.id));
   const brief = (i: Issue) => ({
     number: i.number,
     title: i.title,
     state: i.state,
     assignee: i.assigneeName,
+    word: wordFor(i, readySet, marks),
   });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
-    ready: readyNow(graph).map((r) => ({
+    ready: ready.map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
     })),
@@ -458,11 +1277,224 @@ export function mapJson(repo: Repo, graph: Graph): Record<string, unknown> {
       waitsFor: r.waitsFor,
     })),
     critical: criticalPath(graph).map((i) => i.number),
+    working: graph.issues
+      .filter((i) => marks.crew.has(i.id))
+      .map((i) => i.number),
     issues: graph.issues.map(brief),
+    counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);
       const b = graph.issues.find((i) => i.id === e.blockedById);
       return { issue: a?.number, blockedBy: b?.number };
     }),
+  };
+}
+
+// ---- every app, one lane each ----
+
+interface Lane {
+  readonly repo: Repo;
+  readonly graph: Graph;
+  readonly placed: Layout;
+  readonly marks: Marks;
+  readonly ready: Ranked[];
+  readonly critical: Issue[];
+  readonly counts: Record<Word, number>;
+  /** Agent runs queued or running here now. */
+  readonly inFlight: number;
+  /** Who those runs are: usernames, the running ones first. */
+  readonly workers: string[];
+  /** Nothing in flight and nothing ready: the lane folds to its header. */
+  readonly idle: boolean;
+  /** Set when the repository runs itself; `off` has no spend to show. */
+  readonly status: AutonomyStatus | undefined;
+}
+
+/**
+ * One lane per repository the viewer can see that has something to draw:
+ * an open issue, or a run in flight. The rest are left out rather than
+ * drawn empty, so the page is as long as the work and no longer. One read
+ * for every run in flight and one for who runs them; a graph and its marks
+ * only for the lanes that stay.
+ */
+export function globalLanes(app: App, viewer: User | undefined): Lane[] {
+  const db = app.db;
+  const repos = listReposVisibleTo(db, viewer, { limit: 200 });
+  const runs = listActiveRuns(
+    db,
+    repos.map((r) => r.id),
+  );
+  const actors = getUsersByIds(
+    db,
+    runs.map((r) => r.actorId).filter((id): id is string => id !== null),
+  );
+  const byRepo = new Map<string, Run[]>();
+  for (const run of runs)
+    byRepo.set(run.repoId, [...(byRepo.get(run.repoId) ?? []), run]);
+  const lanes: Lane[] = [];
+  for (const repo of repos) {
+    const flying = byRepo.get(repo.id) ?? [];
+    if ((repo.counts?.openIssues ?? 0) === 0 && flying.length === 0) continue;
+    const graph = repoGraph(db, repo.id);
+    const marks = marksFor(db, repo.id, graph, flying);
+    const ready = readyNow(graph);
+    const readySet = new Set(ready.map((r) => r.issue.id));
+    const workers = [
+      ...new Set(
+        [...flying]
+          .sort(
+            (a, b) =>
+              (a.state === "running" ? -1 : 0) -
+              (b.state === "running" ? -1 : 0),
+          )
+          .map((r) =>
+            r.actorId === null ? undefined : actors.get(r.actorId)?.username,
+          )
+          .filter((n): n is string => n !== undefined),
+      ),
+    ];
+    const counts = countWords(
+      graph.issues.map((i) => wordFor(i, readySet, marks)),
+    );
+    lanes.push({
+      repo,
+      graph,
+      placed: layout(graph),
+      marks,
+      ready,
+      critical: criticalPath(graph),
+      counts,
+      inFlight: flying.length,
+      workers,
+      // Nothing in flight and no card that says ready: a parked or proposed
+      // issue is not one a free slot would take.
+      idle: flying.length === 0 && counts.ready === 0,
+      status: repo.autonomy === "off" ? undefined : autonomyStatus(app, repo),
+    });
+  }
+  // Where the crew is first, then what has work ready, idle lanes last;
+  // by name within each, so the page reads the same twice.
+  return lanes.sort(
+    (a, b) =>
+      Number(b.inFlight > 0) - Number(a.inFlight > 0) ||
+      Number(a.idle) - Number(b.idle) ||
+      b.counts.ready - a.counts.ready ||
+      `${a.repo.ownerName}/${a.repo.name}`.localeCompare(
+        `${b.repo.ownerName}/${b.repo.name}`,
+      ),
+  );
+}
+
+/** "$1.20 of $10", as one string so nothing wraps inside it. */
+function spendWords(status: AutonomyStatus): string {
+  return `$${status.spentTodayUsd.toFixed(2)} of $${status.ceilingUsd.toFixed(0)}`;
+}
+
+function spendBar(status: AutonomyStatus): Html {
+  const share =
+    status.ceilingUsd > 0 ? status.spentTodayUsd / status.ceilingUsd : 0;
+  const pct = Math.max(0, Math.min(100, share * 100));
+  return html`<span
+    class="map-spend"
+    ${share >= 0.9 ? html`data-near="1"` : null}
+    title="Spent today against the day's ceiling"
+  >
+    <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
+      <rect class="map-spend-track" width="100" height="4" />
+      <rect class="map-spend-fill" width="${pct.toFixed(1)}" height="4" />
+    </svg>
+    <span>${spendWords(status)}</span>
+  </span>`;
+}
+
+/** A lane: the repository's name, how it runs itself, who is on it, and its map. */
+function laneHtml(lane: Lane, width: number): Html {
+  const { repo } = lane;
+  const id = `lane-${repo.ownerName}-${repo.name}`;
+  return html`<details
+    class="map-lane"
+    id="${id}"
+    ${lane.idle ? html`data-idle="1"` : html`open`}
+  >
+    <summary class="map-lane-head">
+      <span class="map-lane-caret">${icon("chevronRight")}</span>
+      <span class="map-lane-name"
+        ><a href="${repoBase(repo)}/map"
+          ><span class="muted">${repo.ownerName}/</span>${repo.name}</a
+        ></span
+      >
+      <span class="map-lane-word" data-autonomy="${repo.autonomy}"
+        >${repo.autonomy}</span
+      >
+      ${lane.status === undefined ? null : spendBar(lane.status)}
+      ${lane.workers.length === 0
+        ? null
+        : html`<span
+            class="map-lane-crew"
+            title="Working: ${lane.workers.join(", ")}"
+            >${lane.workers.slice(0, 5).map((w) => avatar(w))}${lane.workers
+              .length > 5
+              ? html`<span class="muted small"
+                  >+${lane.workers.length - 5}</span
+                >`
+              : null}</span
+          >`}
+      ${countsLine(lane.counts)}
+    </summary>
+    ${drawMap(
+      repo,
+      lane.graph,
+      lane.placed,
+      emphasisFor(lane.ready, lane.critical, lane.marks),
+      {
+        id: `map-canvas-${repo.ownerName}-${repo.name}`,
+        minWidth: width,
+        cap: 0.6,
+      },
+    )}
+  </details>`;
+}
+
+/** GET /map — every app the viewer can see, one lane each. */
+export function globalMapPage(ctx: Ctx): Response {
+  const viewer = ctx.auth.user;
+  if (!viewer) return signInFirst(ctx);
+  const lanes = globalLanes(ctx.app, viewer);
+  const width = Math.max(0, ...lanes.map((l) => drawingWidth(l.placed)));
+  const body = html`${pageHead("Map", {
+      sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a ringed card is where the crew is.",
+    })}
+    <div id="map-lanes" class="map-lanes" data-live="${LIVE_KINDS}">
+      ${lanes.length === 0
+        ? html`<p class="muted">
+            Nothing to map: no open issues anywhere you can see, and nobody
+            working.
+          </p>`
+        : lanes.map((lane) => laneHtml(lane, width))}
+    </div>`;
+  return page({
+    ctx,
+    title: "Map",
+    body,
+    styleCss: mapCss,
+    scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
+  });
+}
+
+/** GET /api/v1/map — the lanes as data, one entry per repository. */
+export function globalMapJson(
+  app: App,
+  viewer: User | undefined,
+): Record<string, unknown> {
+  return {
+    repos: globalLanes(app, viewer).map((lane) => ({
+      ...mapJson(lane.repo, lane.graph, lane.marks),
+      autonomy: lane.repo.autonomy,
+      spentTodayUsd: lane.status?.spentTodayUsd ?? null,
+      ceilingUsd: lane.status?.ceilingUsd ?? null,
+      inFlight: lane.inFlight,
+      workers: lane.workers,
+      idle: lane.idle,
+    })),
   };
 }

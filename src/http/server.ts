@@ -75,7 +75,7 @@ import {
   newIssuePage,
   newIssueSubmit,
 } from "../web/pages/issues.ts";
-import { mapPage } from "../web/pages/map.ts";
+import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
   asksSubmit,
   modeSubmit,
@@ -368,6 +368,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/apps", appsList);
   router.add("GET", "/apps/new", newAppPage);
   router.add("POST", "/apps/new", newAppSubmit);
+  // Every app on one canvas; a literal route, so it must sit above /:owner.
+  router.add("GET", "/map", globalMapPage);
   router.add("GET", "/runs/:id", runRedirect);
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);

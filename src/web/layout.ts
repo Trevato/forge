@@ -162,6 +162,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
@@ -225,6 +226,7 @@ function helpButton(): Html {
 const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Map", h: "/map", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },

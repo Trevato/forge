@@ -31,13 +31,42 @@ change, so hooks and the crew see it.
 ## The map
 
 `/:owner/:name/map` draws the repository's open issues, and any closed one
-still on an edge, laid out by what waits for what. Each issue sits one
-column right of everything it is blocked by, so the left edge is what is
-ready now. Within a column, issues are ordered by where their blockers sit,
-which keeps the arrows short. Issues that wait for nothing and hold nothing
-up stand apart below the chains, so a backlog of loose items never crowds
-the plan. The longest chain of open issues is emphasised: the least work
-that still has to happen one thing after another.
+still on an edge, laid out by what waits for what. Each issue is a card one
+level below everything it is blocked by, so the top edge is what is ready
+now. Within a level, cards are ordered to keep the curves short and
+uncrossed: a barycenter pass sorts each level by where its blockers sit,
+then by where its dependents sit, and a transposition pass swaps
+neighbours wherever that draws fewer crossings. An edge that skips levels
+is routed down the gutters between cards, never under one. Issues that
+wait for nothing and hold nothing up stand apart below the chains, under
+a rule, so a backlog of loose items never crowds the plan. The longest
+chain of open issues runs in the accent, at the same weight as every other
+edge: the least work that still has to happen one thing after another.
+
+**What a card says.** Its title on at most two lines, who is on it when
+someone is, and one word:
+
+- _ready_ — open, and nothing open stands in front of it.
+- _working_ — the crew has a run in flight on it; the card wears a soft
+  accent ring. Nothing on the map animates on its own: an animation inside
+  a large inline SVG repaints the whole drawing every frame.
+- _blocked_ — open, waiting for something open.
+- _waiting_ — an open pull would close it: proposed, not landed.
+- _parked_ — the last word on it is the crew parking it; a quiet warning
+  tint, for the planner's next pass.
+- _done_ — closed, still on an edge; it recedes.
+
+Working outranks waiting, waiting outranks parked, and the rest is what
+the graph says. Under the drawing, one line counts them.
+
+**Fit, pan, zoom.** The drawing fits its container's width on load and
+never overflows the page sideways. Drag pans it; ⌘ or Ctrl and scroll (a
+trackpad pinch, or two fingers on a phone) zooms around the pointer; the
+_fit_ button puts it back. Every card is a link to its issue, so the map
+is read by keyboard too, and the view follows focus. The drawing is a
+live region: a card turns to _working_, a pull lands, or a new issue
+appears while the page is open, and the reader's pan and zoom survive the
+swap.
 
 Beside the drawing, the three lists the crew and a person both read:
 
@@ -54,7 +83,30 @@ converging, the bars say whether anything is moving.
 
 The same three lists are data at `GET /api/v1/repos/:owner/:name/map`,
 which is what an agent reads before it starts and what a repository in
-autonomous mode reads to pick the next thing.
+autonomous mode reads to pick the next thing. Both carry where the crew
+is: an issue with an agent run in flight is marked _working_ on the
+drawing and listed under `working` in the data; every issue in the data
+carries its `word`, and `counts` sums them.
+
+### The global map
+
+`/map` is every app on one page, one lane each. Each repository the viewer
+can see that has an open issue or a run in flight is a lane, headed by its
+name (a link to its own map), how it runs itself — _off_, _assisted_ or
+_autonomous_ — today's spend as a thin bar against the ceiling with the
+numbers beside it when it is not off, who is working (their avatars), and
+the same count line as the repository's map. The lane is the same drawing
+as the repository's map, drawn at the widest lane's width so one scale and
+one grid hold across every lane; nothing is ever drawn across lanes. A
+lane with nothing in flight and no card that says _ready_ is idle: it
+folds to its header, and opens on a click. The page is one live region,
+and a reader's folds, pans and zooms survive its swaps. Repositories with
+nothing to draw are left out; a forge with nothing to draw anywhere says
+so in one sentence. It is reached from the user menu and the command
+palette, and from the Apps card on either home. `GET /api/v1/map` is the
+same, one entry per repository, each the repository's map data plus
+`autonomy`, `spentTodayUsd`, `ceilingUsd`, `inFlight`, `workers` and
+`idle`.
 
 ## Planning by the crew
 
