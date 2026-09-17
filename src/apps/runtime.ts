@@ -53,6 +53,7 @@ import {
   type EnvName,
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
+import { identityKey } from "./proxy.ts";
 import { startProcess, type ProcessHandle } from "./process.ts";
 
 const log = createLog("apps");
@@ -650,6 +651,7 @@ export class AppsRuntime {
       url: this.urlFor(state.app, state.env),
       commitOid: run.commitOid,
       forgeUrl: this.options.forgeUrl,
+      identityKey: identityKey(this.app.config.dataDir, state.app.id),
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.

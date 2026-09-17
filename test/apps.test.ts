@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 /**
  * Apps, end to end (docs/APPS.md): a new app runs in production seconds
  * after it exists; a pull gets a preview with a copy of production's data;
@@ -60,6 +61,7 @@ async function sh(args: string[], cwd: string) {
   return { code, out: out.trim(), err: err.trim() };
 }
 
+import { identityKey } from "../src/apps/proxy.ts";
 describe("apps: production, previews, data, gates, crew", () => {
   let dataDir: string;
   let work: string;
@@ -424,6 +426,90 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(merged.ok).toBe(true);
   }, 120_000);
+
+  test("identity: a granted person is named to the app, signed with the app's key; a client's own claim is dropped; the two doors work", async () => {
+    // An app that says who it hears.
+    const committed = await commitToBranch(app, alice, repo, {
+      message: "Echo who is here",
+      files: [
+        {
+          path: "src/server.ts",
+          content: `Bun.serve({
+  port: Number(process.env.PORT),
+  hostname: "127.0.0.1",
+  fetch(request) {
+    return Response.json({
+      identity: request.headers.get("x-forge-identity"),
+      signature: request.headers.get("x-forge-signature"),
+      key: process.env.FORGE_APP_IDENTITY_KEY ?? "",
+    });
+  },
+});
+`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const run = await settled(
+      (r) =>
+        r.env === "production" && r.commitOid === committed.value.commitOid,
+    );
+    expect(run.state).toBe("ok");
+
+    const link = openEnvUrl(app, alice, repo, "production", "/who");
+    expect(link.ok).toBe(true);
+    if (!link.ok) return;
+    const url = new URL(link.value);
+    const granted = await viaHost(url.host, `${url.pathname}${url.search}`);
+    expect(granted.status).toBe(303);
+    expect(granted.headers.get("location")).toBe("/who");
+    const cookie = (granted.headers.get("set-cookie") ?? "").split(";")[0]!;
+
+    // Named, and the signature verifies under the key the app was given.
+    const heard = (await (
+      await viaHost(`hello.${DOMAIN}`, "/who", {
+        headers: {
+          cookie,
+          // A client's own claim never reaches the app.
+          "x-forge-identity": "evil|mallory|admin|9999999999999",
+          "x-forge-signature": "AAAA",
+        },
+      })
+    ).json()) as { identity: string; signature: string; key: string };
+    expect(heard.key).toBe(identityKey(dataDir, record.id));
+    const [id, name, role, expires] = heard.identity.split("|");
+    expect(id).toBe(alice.id);
+    expect(name).toBe("alice");
+    expect(role).toBe("admin"); // alice can write the repository
+    expect(Number(expires)).toBeGreaterThan(Date.now());
+    const expected = createHmac("sha256", heard.key)
+      .update(heard.identity)
+      .digest("base64url");
+    expect(heard.signature).toBe(expected);
+
+    // The doors: sign in goes to the forge and comes back to the page
+    // asked for; sign out drops the grant.
+    const signin = await viaHost(
+      `hello.${DOMAIN}`,
+      "/__forge/signin?to=/who%3Fq%3D1",
+    );
+    expect(signin.status).toBe(303);
+    const open = new URL(signin.headers.get("location") ?? "");
+    expect(open.pathname).toBe("/apps/open");
+    expect(open.searchParams.get("host")).toBe(`hello.${DOMAIN}`);
+    expect(open.searchParams.get("to")).toBe("/who?q=1");
+    const signout = await viaHost(
+      `hello.${DOMAIN}`,
+      "/__forge/signout?to=//evil",
+      {
+        headers: { cookie },
+      },
+    );
+    expect(signout.status).toBe(303);
+    expect(signout.headers.get("location")).toBe("/");
+    expect(signout.headers.get("set-cookie") ?? "").toContain("Max-Age=0");
+  }, 90_000);
 
   test("the crew: an agent reads and writes its repo, never the default branch, never a merge", async () => {
     const made = await createAgent(app, alice, {

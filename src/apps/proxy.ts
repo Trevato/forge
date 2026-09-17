@@ -106,14 +106,30 @@ const grantCookieName = (target: AppTarget): string =>
 const GRANT_URL_TTL_MS = 2 * 60_000;
 const GRANT_COOKIE_TTL_MS = 12 * 60 * 60_000;
 
-/** A signed grant: `<app id>.<env>.<expiry ms>.<signature>`. */
+/**
+ * Who a grant vouches for. `user` can see the app's repository; `admin`
+ * can write it. A grant with nobody named is a door opened for a visitor
+ * the forge could not name (a public app's guest who never signed in).
+ */
+export interface GrantWho {
+  readonly id: string;
+  readonly name: string;
+  readonly role: "user" | "admin";
+}
+
+/**
+ * A signed grant: `<app id>.<env>.<expiry ms>.<user id>.<username>.<role>.<signature>`,
+ * with `-` in the three person fields when nobody is named. Usernames and
+ * ids never contain a dot, so the token splits cleanly.
+ */
 export function signGrant(
   dataDir: string,
   target: AppTarget,
   ttlMs: number,
   now = Date.now(),
+  who?: GrantWho,
 ): string {
-  const payload = `${target.app.id}.${target.env}.${now + ttlMs}`;
+  const payload = `${target.app.id}.${target.env}.${now + ttlMs}.${who?.id ?? "-"}.${who?.name ?? "-"}.${who?.role ?? "-"}`;
   return `${payload}.${mac(dataDir, payload)}`;
 }
 
@@ -123,6 +139,46 @@ function mac(dataDir: string, payload: string): string {
     .digest("base64url");
 }
 
+/** A grant taken apart and checked: who it names, and until when. */
+export interface Grant {
+  readonly who: GrantWho | undefined;
+  readonly expiresMs: number;
+}
+
+/** The grant behind a token, when it vouches for this target right now. */
+export function readGrant(
+  dataDir: string,
+  grant: string,
+  target: AppTarget,
+  now = Date.now(),
+): Grant | undefined {
+  const parts = grant.split(".");
+  if (parts.length !== 7) return undefined;
+  const [appId, env, expires, id, name, role, signature] = parts as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (appId !== target.app.id || env !== target.env) return undefined;
+  if (!/^\d+$/.test(expires) || Number(expires) <= now) return undefined;
+  const expected = mac(
+    dataDir,
+    `${appId}.${env}.${expires}.${id}.${name}.${role}`,
+  );
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined;
+  const named: GrantWho | undefined =
+    id !== "-" && name !== "-" && (role === "user" || role === "admin")
+      ? { id, name, role }
+      : undefined;
+  return { who: named, expiresMs: Number(expires) };
+}
+
 /** Whether `grant` vouches for this target right now. */
 export function verifyGrant(
   dataDir: string,
@@ -130,20 +186,41 @@ export function verifyGrant(
   target: AppTarget,
   now = Date.now(),
 ): boolean {
-  const parts = grant.split(".");
-  if (parts.length !== 4) return false;
-  const [appId, env, expires, signature] = parts as [
-    string,
-    string,
-    string,
-    string,
-  ];
-  if (appId !== target.app.id || env !== target.env) return false;
-  if (!/^\d+$/.test(expires) || Number(expires) <= now) return false;
-  const expected = mac(dataDir, `${appId}.${env}.${expires}`);
-  const a = Buffer.from(signature);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return readGrant(dataDir, grant, target, now) !== undefined;
+}
+
+/**
+ * The key an app verifies identity with, derived from the forge's own so
+ * nothing new is stored: the same for production and every preview of the
+ * app, different for every app.
+ */
+export function identityKey(dataDir: string, appId: string): string {
+  return createHmac("sha256", loadKey(dataDir))
+    .update(`identity:${appId}`)
+    .digest("hex");
+}
+
+/**
+ * What the app hears about the visitor: `x-forge-identity` is
+ * `<user id>|<username>|<role>|<expiry ms>` and `x-forge-signature` is its
+ * HMAC-SHA256 (base64url) under the app's identity key. No headers means
+ * nobody the forge could name. A client's own copies of these headers are
+ * dropped before the forge speaks, so a verified signature is the only
+ * thing an app has to trust.
+ */
+export const IDENTITY_HEADERS = ["x-forge-identity", "x-forge-signature"];
+
+export function identityHeaders(
+  dataDir: string,
+  appId: string,
+  grant: Grant | undefined,
+): Record<string, string> {
+  if (grant?.who === undefined) return {};
+  const identity = `${grant.who.id}|${grant.who.name}|${grant.who.role}|${grant.expiresMs}`;
+  const signature = createHmac("sha256", identityKey(dataDir, appId))
+    .update(identity)
+    .digest("base64url");
+  return { "x-forge-identity": identity, "x-forge-signature": signature };
 }
 
 /** The URL the forge redirects a vouched-for visitor to. */
@@ -152,8 +229,15 @@ export function grantUrl(
   target: AppTarget,
   path = "/",
   host?: string,
+  who?: GrantWho,
 ): string {
-  const token = signGrant(runtime.app.config.dataDir, target, GRANT_URL_TTL_MS);
+  const token = signGrant(
+    runtime.app.config.dataDir,
+    target,
+    GRANT_URL_TTL_MS,
+    Date.now(),
+    who,
+  );
   // The cookie a grant sets belongs to one hostname. A visitor who asked
   // for a hostname inside the app's own world — an app of a forge hosted
   // here — must be granted on that hostname, not the app's canonical one,
@@ -184,13 +268,14 @@ function admit(
   runtime: AppsRuntime,
   request: Request,
   target: AppTarget,
-): Result<{ status: EnvStatus; port: number }, Response> {
+): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
+  const cookie = cookieValue(request, grantCookieName(target));
+  const grant =
+    cookie === undefined
+      ? undefined
+      : readGrant(runtime.app.config.dataDir, cookie, target);
   if (target.app.access === "private") {
-    const cookie = cookieValue(request, grantCookieName(target));
-    if (
-      cookie === undefined ||
-      !verifyGrant(runtime.app.config.dataDir, cookie, target)
-    ) {
+    if (grant === undefined) {
       // A person arriving by link is sent to the forge to sign in; it vouches
       // for them if they can see the repository and sends them back with the
       // grant, and otherwise gives the answer a private repository gives.
@@ -220,7 +305,11 @@ function admit(
   if (status === undefined || status.port === undefined) {
     return err(unavailable(runtime, target, status));
   }
-  return ok({ status, port: status.port });
+  return ok(
+    grant === undefined
+      ? { status, port: status.port }
+      : { status, port: status.port, grant },
+  );
 }
 
 /**
@@ -246,9 +335,34 @@ export async function proxyApp(
     )
       return grant(runtime, request, url, target);
   }
+  // The two doors an app links to: sign in sends the visitor to the forge,
+  // which vouches for them and sends them back named; sign out drops the
+  // grant so the app hears nobody again.
+  if (url.pathname === "/__forge/signin" && !target.nested) {
+    const open = new URL("/apps/open", runtime.options.forgeUrl);
+    open.searchParams.set("host", request.headers.get("host") ?? "");
+    open.searchParams.set("to", safePath(url.searchParams.get("to")));
+    return new Response(null, {
+      status: 303,
+      headers: { location: open.toString(), "cache-control": "no-store" },
+    });
+  }
+  if (url.pathname === "/__forge/signout" && !target.nested) {
+    const secure =
+      url.protocol === "https:" ||
+      request.headers.get("x-forwarded-proto") === "https";
+    return new Response(null, {
+      status: 303,
+      headers: {
+        location: safePath(url.searchParams.get("to")),
+        "set-cookie": `${grantCookieName(target)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`,
+        "cache-control": "no-store",
+      },
+    });
+  }
   const admitted = admit(runtime, request, target);
   if (!admitted.ok) return admitted.error;
-  const { status, port } = admitted.value;
+  const { status, port, grant: vouched } = admitted.value;
 
   const upstream = new URL(url);
   upstream.protocol = "http:";
@@ -256,8 +370,13 @@ export async function proxyApp(
   upstream.port = String(port);
   const headers = new Headers(request.headers);
   for (const name of HOP_BY_HOP) headers.delete(name);
+  for (const name of IDENTITY_HEADERS) headers.delete(name);
   headers.set("x-forwarded-host", request.headers.get("host") ?? "");
   headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
+  for (const [name, value] of Object.entries(
+    identityHeaders(runtime.app.config.dataDir, target.app.id, vouched),
+  ))
+    headers.set(name, value);
 
   if (isWebSocketHandshake(request)) {
     return proxyWebSocket(
@@ -515,16 +634,18 @@ function grant(
   target: AppTarget,
 ): Response {
   const token = url.searchParams.get("t") ?? "";
-  if (!verifyGrant(runtime.app.config.dataDir, token, target)) {
+  const vouched = readGrant(runtime.app.config.dataDir, token, target);
+  if (vouched === undefined) {
     return new Response("not found", { status: 404 });
   }
   const cookie = signGrant(
     runtime.app.config.dataDir,
     target,
     GRANT_COOKIE_TTL_MS,
+    Date.now(),
+    vouched.who,
   );
-  const to = url.searchParams.get("to") ?? "/";
-  const path = to.startsWith("/") && !to.startsWith("//") ? to : "/";
+  const path = safePath(url.searchParams.get("to"));
   const secure =
     url.protocol === "https:" ||
     request.headers.get("x-forwarded-proto") === "https";
@@ -536,6 +657,11 @@ function grant(
       "cache-control": "no-store",
     },
   });
+}
+
+/** A `to` a redirect may follow: this site's own paths, nothing else. */
+function safePath(to: string | null): string {
+  return to !== null && to.startsWith("/") && !to.startsWith("//") ? to : "/";
 }
 
 function cookieValue(request: Request, name: string): string | undefined {

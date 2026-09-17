@@ -32,6 +32,8 @@ export interface StartInput {
   readonly url: string;
   readonly commitOid: string;
   readonly forgeUrl: string;
+  /** The key the app verifies `x-forge-identity` with (`apps/proxy.ts`). */
+  readonly identityKey: string;
   /** The `ssh …` that opens this environment's terminal, when SSH is on. */
   readonly ssh?: string | undefined;
   /** The operator's variables for this app (`core/app_env.ts`). */
@@ -80,6 +82,8 @@ export function appEnv(input: {
   url: string;
   commitOid: string;
   forgeUrl: string;
+  /** The key the app verifies `x-forge-identity` with. */
+  identityKey: string;
   /** The exact `ssh …` that opens this environment's terminal, if any. */
   ssh?: string | undefined;
   /** The operator's variables: an admin password, an API key. */
@@ -101,6 +105,7 @@ export function appEnv(input: {
       FORGE_APP_URL: input.url,
       FORGE_APP_COMMIT: input.commitOid,
       FORGE_URL: input.forgeUrl,
+      FORGE_APP_IDENTITY_KEY: input.identityKey,
       ...(pull === undefined ? {} : { FORGE_APP_PULL: String(pull) }),
       // Printed verbatim by an app that tells people how to reach its
       // terminal; a guessed form (`you@app.host`) reaches the forge instead.
@@ -223,6 +228,7 @@ export async function startProcess(
       url: input.url,
       commitOid: input.commitOid,
       forgeUrl: input.forgeUrl,
+      identityKey: input.identityKey,
       ssh: input.ssh,
       vars: input.vars,
     }),
