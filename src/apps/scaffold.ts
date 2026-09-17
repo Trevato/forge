@@ -25,6 +25,7 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: ".gitignore", content: GITIGNORE },
     { path: "README.md", content: readme(title, description) },
     { path: "AGENTS.md", content: AGENTS_MD },
+    { path: "src/auth.ts", content: AUTH },
     { path: "src/server.ts", content: server(title, description) },
     { path: "src/server.test.ts", content: SERVER_TEST },
     { path: "src/tty.ts", content: tty(title) },
@@ -140,6 +141,167 @@ preview at its own address, deployed from your branch as you push.
   what is real versus simulated, \`forge.json\` says how to run it.
 `;
 
+const AUTH = `/**
+ * Auth, in one small file. The two ideas that matter:
+ *
+ * 1. Default allow anon. Nothing here forces a sign-in — the app works for
+ *    a visitor with no cookie at all. Add a role check only where an action
+ *    truly needs one; every route unchecked is anon by default.
+ * 2. Clear roles for RBAC. A session carries a role. Today there are two
+ *    ("anon" — no session, the implicit default — and "admin"); add a third
+ *    by extending the union below and the checks that read it, never by
+ *    stringly-typed comparisons scattered through routes.
+ *
+ * An app is never claimed by whoever visits first: the first admin needs a
+ * secret only the operator holds — ADMIN_PASSWORD from the environment, or
+ * a one-time code this file generates and prints to the run log and the
+ * app's terminal. Sessions store a hash of their token, never the token
+ * itself, so a leaked database yields nothing usable.
+ */
+
+import type { Database } from "bun:sqlite";
+
+export type Role = "anon" | "admin";
+
+const SESSION_COOKIE = "session";
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function ensureAuthSchema(db: Database): void {
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS session (token_hash TEXT PRIMARY KEY, role TEXT NOT NULL, expires_at TEXT NOT NULL)",
+  );
+  db.exec(
+    "CREATE TABLE IF NOT EXISTS admin_claim (id INTEGER PRIMARY KEY CHECK (id = 1), code TEXT NOT NULL, claimed INTEGER NOT NULL DEFAULT 0)",
+  );
+}
+
+function randomToken(bytes: number): string {
+  const raw = new Uint8Array(bytes);
+  crypto.getRandomValues(raw);
+  return Array.from(raw, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hash(token: string): string {
+  return new Bun.CryptoHasher("sha256").update(token).digest("hex");
+}
+
+// Equal-length, constant-time: a random token never leaks its prefix
+// through how long a comparison takes to fail.
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+/**
+ * The secret that proves someone is the operator. ADMIN_PASSWORD from the
+ * environment wins and never expires or is marked used — it is the
+ * operator's own password, good for as many sign-ins as they like. With
+ * none set, a one-time code is generated on first boot and persisted
+ * (unclaimed) so every process — the server, the terminal — shows the same
+ * value, and using it once retires it for good.
+ */
+export interface AdminSecret {
+  readonly value: string;
+  readonly fromEnv: boolean;
+}
+
+export function resolveAdminSecret(db: Database): AdminSecret {
+  const configured = process.env.ADMIN_PASSWORD?.trim();
+  if (configured) return { value: configured, fromEnv: true };
+  const row = db
+    .query<{ code: string; claimed: number }, []>(
+      "SELECT code, claimed FROM admin_claim WHERE id = 1",
+    )
+    .get();
+  if (row) return { value: row.claimed ? "" : row.code, fromEnv: false };
+  const code = randomToken(10);
+  db.query(
+    "INSERT INTO admin_claim (id, code, claimed) VALUES (1, ?1, 0)",
+  ).run(code);
+  return { value: code, fromEnv: false };
+}
+
+export function isAdminClaimed(db: Database): boolean {
+  if (process.env.ADMIN_PASSWORD?.trim()) return false; // never "claimed"; the password just keeps working
+  const row = db
+    .query<{ claimed: number }, []>("SELECT claimed FROM admin_claim WHERE id = 1")
+    .get();
+  return row?.claimed === 1;
+}
+
+export function verifyAdminSecret(db: Database, provided: string): boolean {
+  const secret = resolveAdminSecret(db);
+  if (!secret.value) return false;
+  if (!secret.fromEnv && isAdminClaimed(db)) return false;
+  return timingSafeEqual(provided, secret.value);
+}
+
+export function claimAdmin(db: Database): void {
+  db.query("UPDATE admin_claim SET claimed = 1 WHERE id = 1").run();
+}
+
+export function createSession(db: Database, role: Role): string {
+  const token = randomToken(24);
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+  db.query(
+    "INSERT INTO session (token_hash, role, expires_at) VALUES (?1, ?2, ?3)",
+  ).run(hash(token), role, expiresAt);
+  return token;
+}
+
+export function destroySession(db: Database, token: string): void {
+  db.query("DELETE FROM session WHERE token_hash = ?1").run(hash(token));
+}
+
+function cookieValue(request: Request, name: string): string | undefined {
+  const header = request.headers.get("cookie");
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const i = part.indexOf("=");
+    if (i === -1) continue;
+    if (part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+  }
+  return undefined;
+}
+
+/** Anon unless a live, unexpired session says otherwise. That is the whole default-allow-anon rule. */
+export function roleFromRequest(db: Database, request: Request): Role {
+  const token = cookieValue(request, SESSION_COOKIE);
+  if (!token) return "anon";
+  const row = db
+    .query<{ role: string; expires_at: string }, [string]>(
+      "SELECT role, expires_at FROM session WHERE token_hash = ?1",
+    )
+    .get(hash(token));
+  if (!row || row.expires_at <= new Date().toISOString()) return "anon";
+  return row.role === "admin" ? "admin" : "anon";
+}
+
+export function sessionToken(request: Request): string | undefined {
+  return cookieValue(request, SESSION_COOKIE);
+}
+
+export function setCookie(token: string, secure: boolean): string {
+  const attrs = [
+    \`\${SESSION_COOKIE}=\${token}\`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    \`Max-Age=\${SESSION_TTL_MS / 1000}\`,
+  ];
+  if (secure) attrs.push("Secure");
+  return attrs.join("; ");
+}
+
+export function clearCookie(secure: boolean): string {
+  const attrs = [\`\${SESSION_COOKIE}=\`, "Path=/", "HttpOnly", "SameSite=Lax", "Max-Age=0"];
+  if (secure) attrs.push("Secure");
+  return attrs.join("; ");
+}
+`;
+
 const server = (title: string, description: string): string => `/**
  * ${title} — a small app with real data.
  *
@@ -151,6 +313,20 @@ const server = (title: string, description: string): string => `/**
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import {
+  claimAdmin,
+  clearCookie,
+  createSession,
+  destroySession,
+  ensureAuthSchema,
+  isAdminClaimed,
+  resolveAdminSecret,
+  roleFromRequest,
+  sessionToken,
+  setCookie,
+  verifyAdminSecret,
+  type Role,
+} from "./auth.ts";
 
 const dataDir = process.env.FORGE_APP_DATA ?? "./data";
 mkdirSync(dataDir, { recursive: true });
@@ -159,10 +335,19 @@ db.exec("PRAGMA journal_mode = WAL");
 db.exec(
   "CREATE TABLE IF NOT EXISTS note (id INTEGER PRIMARY KEY, body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
 );
+ensureAuthSchema(db);
 
 const env = process.env.FORGE_APP_ENV ?? "local";
 const pull = process.env.FORGE_APP_PULL;
 const commit = (process.env.FORGE_APP_COMMIT ?? "").slice(0, 7);
+
+// Anon is the default for everything; admin is the one role above it, for
+// the one thing anon should not do (delete). Printed once, here and in the
+// terminal (src/tty.ts) — never on a page — so whoever is at the keyboard
+// when the app first boots is the one who can claim it.
+const adminSecret = resolveAdminSecret(db);
+if (!adminSecret.fromEnv && !isAdminClaimed(db))
+  console.log(\`Admin claim code (use once, at /admin): \${adminSecret.value}\`);
 
 const escape = (s: string): string =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
@@ -246,7 +431,7 @@ async function readForm(request: Request): Promise<FormData | undefined> {
   }).formData();
 }
 
-function page(): string {
+function page(role: Role): string {
   const notes = db
     .query<{ id: number; body: string; created_at: string }, []>(
       "SELECT id, body, created_at FROM note ORDER BY id DESC LIMIT 100",
@@ -254,6 +439,18 @@ function page(): string {
     .all();
   const where =
     env === "preview" ? \`preview of pull #\${pull ?? "?"}\` : env;
+  // Anon sees everything above; the one extra a session brings is a way to
+  // delete, so admin gets a button and a way to sign out.
+  const roleLine =
+    role === "admin"
+      ? \`admin · <form method="post" action="/admin/logout" class="inline"><button class="link">log out</button></form>\`
+      : \`<a href="/admin">admin</a>\`;
+  const noteItem = (n: { id: number; body: string; created_at: string }): string =>
+    \`<li><span>\${escape(n.body)}</span> <small>\${n.created_at}</small>\${
+      role === "admin"
+        ? \` <form method="post" action="/notes/delete" class="inline"><input type="hidden" name="id" value="\${n.id}"><button class="ghost" aria-label="Delete note">×</button></form>\`
+        : ""
+    }</li>\`;
   return \`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -264,22 +461,60 @@ function page(): string {
   .env { display: inline-block; padding: .1rem .5rem; border-radius: 999px; font-size: .8rem;
          background: \${env === "production" ? "#16a34a" : "#2563eb"}; color: white; }
   form { display: flex; gap: .5rem; margin: 1.5rem 0; }
+  form.inline { display: inline; margin: 0; }
   input { flex: 1; padding: .6rem .8rem; font: inherit; border: 1px solid #8884; border-radius: .5rem; }
   button { padding: .6rem 1rem; font: inherit; border: 0; border-radius: .5rem; background: #111; color: white; }
-  li { padding: .5rem 0; border-top: 1px solid #8883; list-style: none; }
+  button.link { background: none; color: inherit; text-decoration: underline; padding: 0; font-size: .8rem; }
+  button.ghost { background: none; color: #b91c1c; padding: 0 .4rem; font-size: 1rem; }
+  li { padding: .5rem 0; border-top: 1px solid #8883; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+  li span { overflow-wrap: anywhere; }
   small { opacity: .6; }
 </style>
 <h1>${escape(title)}</h1>
 <p>${escape(description || "A new app on the forge.")}</p>
-<p><span class="env">\${escape(where)}</span> <small>\${commit ? "@ " + commit : ""}</small></p>
+<p><span class="env">\${escape(where)}</span> <small>\${commit ? "@ " + commit : ""} · \${roleLine}</small></p>
 <form method="post" action="/notes">
   <input name="body" placeholder="Write a note" required maxlength="500" autofocus>
   <button>Add</button>
 </form>
-<ul>\${notes
-    .map((n) => \`<li>\${escape(n.body)} <small>\${n.created_at}</small></li>\`)
-    .join("")}</ul>
+<ul>\${notes.map(noteItem).join("")}</ul>
 <p><small>\${notes.length === 0 ? "No notes yet. Notes written here stay in this environment's data." : \`\${notes.length} note\${notes.length === 1 ? "" : "s"} in \${escape(where)} data.\`}</small></p>
+\`;
+}
+
+function adminPage(role: Role, error?: string): string {
+  const claimed = isAdminClaimed(db);
+  const body =
+    role === "admin"
+      ? \`<h1>Signed in as admin</h1>
+<p>Notes can now be deleted from the home page.</p>
+<form method="post" action="/admin/logout"><button>Log out</button></form>\`
+      : \`<h1>Claim admin</h1>
+<p>\${
+          claimed
+            ? "This app already has an admin. Ask them, or sign in from where it was first claimed."
+            : "The operator holds a secret: ADMIN_PASSWORD from the environment, or the one-time code printed to the run log and the app's terminal when it first booted."
+        }</p>
+\${error ? \`<p class="error">\${escape(error)}</p>\` : ""}
+<form method="post" action="/admin/claim">
+  <input name="secret" type="password" placeholder="Admin code" required autofocus>
+  <button>Claim</button>
+</form>\`;
+  return \`<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin — ${escape(title)}</title>
+<style>
+  :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+  body { max-width: 30rem; margin: 3rem auto; padding: 0 1rem; }
+  form { display: flex; gap: .5rem; margin: 1.5rem 0; }
+  input { flex: 1; padding: .6rem .8rem; font: inherit; border: 1px solid #8884; border-radius: .5rem; }
+  button { padding: .6rem 1rem; font: inherit; border: 0; border-radius: .5rem; background: #111; color: white; }
+  .error { color: #b91c1c; }
+  a { color: inherit; }
+</style>
+<p><a href="/">← ${escape(title)}</a></p>
+\${body}
 \`;
 }
 
@@ -290,6 +525,10 @@ export const server = Bun.serve({
     const url = new URL(request.url);
     if (request.method === "POST" && !sameOrigin(request))
       return new Response("forbidden", { status: 403 });
+    // Read once per request; every route below is anon unless it says otherwise.
+    const role = roleFromRequest(db, request);
+    const secure = publicOrigin.startsWith("https:");
+
     if (request.method === "POST" && url.pathname === "/notes") {
       const form = await readForm(request);
       if (form === undefined)
@@ -298,9 +537,43 @@ export const server = Bun.serve({
       if (body) db.query("INSERT INTO note (body) VALUES (?1)").run(body);
       return Response.redirect("/", 303);
     }
+    // Deleting is the one thing this app reserves for admin; everything else
+    // above stays open to anon, by default.
+    if (request.method === "POST" && url.pathname === "/notes/delete") {
+      if (role !== "admin") return new Response("forbidden", { status: 403, headers: SECURITY });
+      const form = await readForm(request);
+      if (form === undefined)
+        return new Response("too large", { status: 413, headers: SECURITY });
+      const id = Number(form.get("id"));
+      if (Number.isInteger(id)) db.query("DELETE FROM note WHERE id = ?1").run(id);
+      return Response.redirect("/", 303);
+    }
+    if (url.pathname === "/admin" && request.method === "GET") return html(adminPage(role));
+    if (request.method === "POST" && url.pathname === "/admin/claim") {
+      const form = await readForm(request);
+      if (form === undefined)
+        return new Response("too large", { status: 413, headers: SECURITY });
+      const secret = String(form.get("secret") ?? "");
+      if (!verifyAdminSecret(db, secret))
+        return html(adminPage("anon", "That code didn't match."), 403);
+      claimAdmin(db); // no-op when the secret is ADMIN_PASSWORD, which never expires
+      const token = createSession(db, "admin");
+      return new Response(null, {
+        status: 303,
+        headers: { location: "/admin", "set-cookie": setCookie(token, secure), ...SECURITY },
+      });
+    }
+    if (request.method === "POST" && url.pathname === "/admin/logout") {
+      const token = sessionToken(request);
+      if (token) destroySession(db, token);
+      return new Response(null, {
+        status: 303,
+        headers: { location: "/", "set-cookie": clearCookie(secure), ...SECURITY },
+      });
+    }
     // HEAD is GET without the body: a health check sees the app up.
     if (url.pathname === "/" && (request.method === "GET" || request.method === "HEAD")) {
-      const full = html(page());
+      const full = html(page(role));
       return request.method === "HEAD"
         ? new Response(null, { status: full.status, headers: full.headers })
         : full;
@@ -339,6 +612,7 @@ const tty = (title: string): string => `/**
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { ensureAuthSchema, isAdminClaimed, resolveAdminSecret } from "./auth.ts";
 
 const dataDir = process.env.FORGE_APP_DATA ?? "./data";
 mkdirSync(dataDir, { recursive: true });
@@ -347,7 +621,13 @@ db.exec("PRAGMA journal_mode = WAL");
 db.exec(
   "CREATE TABLE IF NOT EXISTS note (id INTEGER PRIMARY KEY, body TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
 );
+ensureAuthSchema(db);
 const where = process.env.FORGE_APP_ENV === "preview" ? \`preview of #\${process.env.FORGE_APP_PULL ?? "?"}\` : (process.env.FORGE_APP_ENV ?? "local");
+// Same code the server printed on boot (both read the same persisted row),
+// shown here too — a terminal is a valid place to have first found it.
+const adminSecret = resolveAdminSecret(db);
+const claimLine =
+  !adminSecret.fromEnv && !isAdminClaimed(db) ? \`admin claim code: \${adminSecret.value}\` : undefined;
 
 type Note = { id: number; body: string; created_at: string };
 const notes = (): Note[] => db.query<Note, []>("SELECT id, body, created_at FROM note ORDER BY id DESC").all();
@@ -361,6 +641,7 @@ function draw(): void {
   const rows = notes();
   const lines: string[] = [];
   lines.push(\`\${esc}1m${title}\${esc}0m  \${esc}2m\${where}\${esc}0m\`);
+  if (claimLine) lines.push(\`\${esc}2m\${claimLine} (use once, at /admin)\${esc}0m\`);
   lines.push("");
   if (rows.length === 0) lines.push(\`\${esc}2mNo notes yet. Press a to add one.\${esc}0m\`);
   rows.forEach((n, i) => {
@@ -412,8 +693,10 @@ import { join } from "node:path";
 
 process.env.FORGE_APP_DATA = mkdtempSync(join(tmpdir(), "app-"));
 process.env.PORT = "0";
+process.env.ADMIN_PASSWORD = "test-admin-secret";
 const { server } = await import("./server.ts");
 const base = \`http://\${server.hostname}:\${server.port}\`;
+let adminCookie = "";
 
 test("serves the page", async () => {
   const response = await fetch(base + "/");
@@ -421,7 +704,7 @@ test("serves the page", async () => {
   expect(await response.text()).toContain("<h1>");
 });
 
-test("keeps a note", async () => {
+test("an anonymous visitor can read and write, with no sign-in at all", async () => {
   const form = new FormData();
   form.set("body", "hello from a test");
   const posted = await fetch(base + "/notes", { method: "POST", body: form, redirect: "manual" });
@@ -433,6 +716,65 @@ test("stands on the security floor", async () => {
   const response = await fetch(base + "/");
   expect(response.headers.get("content-security-policy")).toContain("default-src 'self'");
   expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+});
+
+test("anon cannot delete a note", async () => {
+  const form = new FormData();
+  form.set("id", "1");
+  const response = await fetch(base + "/notes/delete", { method: "POST", body: form, redirect: "manual" });
+  expect(response.status).toBe(403);
+});
+
+test("the wrong secret does not claim admin", async () => {
+  const form = new FormData();
+  form.set("secret", "not-it");
+  const response = await fetch(base + "/admin/claim", { method: "POST", body: form, redirect: "manual" });
+  expect(response.status).toBe(403);
+  expect(response.headers.get("set-cookie")).toBeNull();
+});
+
+test("the right secret claims admin", async () => {
+  const form = new FormData();
+  form.set("secret", "test-admin-secret");
+  const response = await fetch(base + "/admin/claim", { method: "POST", body: form, redirect: "manual" });
+  expect(response.status).toBe(303);
+  expect(response.headers.get("location")).toBe("/admin");
+  const cookie = response.headers.get("set-cookie") ?? "";
+  expect(cookie).toContain("HttpOnly");
+  adminCookie = cookie.split(";")[0] ?? "";
+  const page = await (await fetch(base + "/", { headers: { cookie: adminCookie } })).text();
+  expect(page).toContain("admin");
+});
+
+test("admin can delete a note, anon still cannot", async () => {
+  const form = new FormData();
+  form.set("body", "to be deleted");
+  await fetch(base + "/notes", { method: "POST", body: form });
+  const page = await (await fetch(base + "/", { headers: { cookie: adminCookie } })).text();
+  const id = page.match(/name="id" value="(\\d+)"/)?.[1];
+  expect(id).toBeDefined();
+
+  const asAnon = new FormData();
+  asAnon.set("id", id!);
+  expect((await fetch(base + "/notes/delete", { method: "POST", body: asAnon })).status).toBe(403);
+
+  const asAdmin = new FormData();
+  asAdmin.set("id", id!);
+  const response = await fetch(base + "/notes/delete", {
+    method: "POST",
+    body: asAdmin,
+    headers: { cookie: adminCookie },
+    redirect: "manual",
+  });
+  expect(response.status).toBe(303);
+  expect(await (await fetch(base + "/")).text()).not.toContain("to be deleted");
+});
+
+test("logging out ends the session", async () => {
+  const response = await fetch(base + "/admin/logout", { method: "POST", headers: { cookie: adminCookie }, redirect: "manual" });
+  expect(response.status).toBe(303);
+  const page = await (await fetch(base + "/admin", { headers: { cookie: adminCookie } })).text();
+  expect(page).toContain("Claim admin");
 });
 
 test("a bug answers with the floor, not the runtime's page", async () => {

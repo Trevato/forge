@@ -542,9 +542,20 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       runs("agent").find((r) => r.reason === "assigned" && r.state === "ok"),
     );
     expect(built.summary).toMatch(/^opened pull #\d+/);
+    // The pull's own commit is checked in `pull-<number>`; the initial
+    // commit to the default branch (no CREW.md yet) is checked too, in
+    // `production`, and fails for its own reason (no such file) — so the
+    // pull's check is picked out by its environment, not just "failed".
+    const pullNumber = Number(built.summary.match(/#(\d+)/)?.[1]);
+    const pullChecks = () =>
+      listRuns(app.db, orchard.id, {
+        kind: "check",
+        env: `pull-${pullNumber}`,
+        limit: 50,
+      });
     // The forge checks the pull: no daffodils yet.
     const failed = await until(() =>
-      runs("check").find((r) => r.state === "failed"),
+      pullChecks().find((r) => r.state === "failed"),
     );
     expect(failed.summary).toBe("check failed: check exited with code 1");
     // …and the agent hears about it, with the log, and answers.
@@ -559,7 +570,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(prompt).toContain("check exited with code 1");
     expect(prompt).toContain("The end of the check log:");
     const passed = await until(() =>
-      runs("check").find((r) => r.state === "ok"),
+      pullChecks().find((r) => r.state === "ok"),
     );
     expect(passed.summary).toMatch(/^check passed/);
   }, 120_000);
