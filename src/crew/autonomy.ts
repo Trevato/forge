@@ -15,6 +15,8 @@
 import type { App } from "../app.ts";
 import { assignIssue, openIssue } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
+import { resolveOid } from "../git/merge.ts";
+import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
@@ -310,6 +312,9 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   }
 }
 
+/** Pull id → the `head:base` tips a merge last conflicted between. */
+const conflicted = new Map<string, string>();
+
 /** A merge refusal in words a log can carry. */
 function mergeWhy(error: AccessError | MergePullError): string {
   if (typeof error === "string") return error;
@@ -372,6 +377,16 @@ export async function landIfGreen(
   const checks = checksForHead(app.db, pull.id, pull.headOid);
   if (checks.length === 0) return false;
   if (checks.some((c) => c.state !== "ok")) return false;
+  // A conflict is remembered by the two tips it was between: until one of
+  // them moves there is nothing new to try, and a merge attempt is real
+  // work on disk, once a minute for every green pull.
+  const baseTip =
+    (await resolveOid(
+      repoDir(app.reposRoot, repo.ownerName, repo.name),
+      `refs/heads/${pull.baseBranch}`,
+    )) ?? "";
+  const between = `${pull.headOid}:${baseTip}`;
+  if (conflicted.get(pull.id) === between) return false;
   const merged = await mergePull(app, by, repo, pull, "squash");
   if (!merged.ok) {
     const why = mergeWhy(merged.error);
@@ -382,10 +397,13 @@ export async function landIfGreen(
     });
     // Main moved under a green pull: that is the agent's to fix, once per
     // move, and never past the same limit a red check gets.
-    if (typeof merged.error !== "string" && merged.error.kind === "conflict")
+    if (typeof merged.error !== "string" && merged.error.kind === "conflict") {
+      conflicted.set(pull.id, between);
       bringUpToDate(app, repo, pull, merged.error.files);
+    }
     return false;
   }
+  conflicted.delete(pull.id);
   log.info("landed on green", {
     repo: `${repo.ownerName}/${repo.name}`,
     pull: pull.number,
