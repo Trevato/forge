@@ -24,6 +24,8 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { appsScreen } from "../src/tui/screens/apps.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { getAppBySlug } from "../src/core/apps.ts";
+import { grantedCookie } from "./helpers/identity.ts";
 import { settleApp } from "./helpers/tui.ts";
 
 const SSH = "/usr/bin/ssh";
@@ -180,7 +182,15 @@ describe("a terminal for every app, over ssh", () => {
     const posted = await fetch(`${servers.url}/notes`, {
       method: "POST",
       body: form,
-      headers: { host: "hello.apps.test" },
+      headers: {
+        host: "hello.apps.test",
+        cookie: await grantedCookie(
+          app,
+          servers.url,
+          alice,
+          getAppBySlug(app.db, "hello")!,
+        ),
+      },
       redirect: "manual",
     });
     expect(posted.status).toBe(303);

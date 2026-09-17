@@ -62,6 +62,7 @@ import {
   runLogListenerCount,
   subscribeRunLog,
 } from "../src/runs/log.ts";
+import { grantedCookie } from "./helpers/identity.ts";
 
 const DOMAIN = "apps.test";
 
@@ -1473,6 +1474,9 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     await viaHost(`emptypolicy.${DOMAIN}`, "/notes", {
       method: "POST",
       body: form,
+      headers: {
+        cookie: await grantedCookie(app, servers.url, alice, made.value.app),
+      },
     });
     expect(await (await viaHost(`emptypolicy.${DOMAIN}`)).text()).toContain(
       "production-only note",
