@@ -607,17 +607,27 @@ export async function reviewFirst(
   if (last?.state === "changes_requested") return "wait";
   // A reviewer that could not run — the run failed before a verdict — is
   // not asked again for this head: autonomous lands, and the log says so.
-  const tried = app.db
+  // One pass per head. A review run that already ended for this head —
+  // with a verdict the forge could not match, or none at all — is not run
+  // again: the reviewer had its look, and autonomous lands. Three review
+  // runs on one pull, whatever their heads, is the reviewer's whole say.
+  const passes = app.db
     .query<
       { state: string; summary: string },
-      [string, string]
-    >("SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason = 'review' AND summary = ?2 ORDER BY created_at DESC LIMIT 1")
-    .get(pull.id, `review at ${pull.headOid.slice(0, 7)}`);
-  if (tried?.state === "failed" || tried?.state === "cancelled") {
-    log.warn("the reviewer could not review it; landing without", {
+      [string]
+    >("SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason = 'review' AND state IN ('ok','failed','cancelled') ORDER BY created_at DESC")
+    .all(pull.id);
+  const forHead = passes.find(
+    (p) =>
+      p.summary.startsWith(`review at ${pull.headOid.slice(0, 7)}`) ||
+      p.state === "failed" ||
+      p.state === "cancelled",
+  );
+  if (forHead !== undefined || passes.length >= 3) {
+    log.info("the reviewer had its look; landing", {
       repo: `${repo.ownerName}/${repo.name}`,
       pull: pull.number,
-      why: tried.summary,
+      why: forHead?.summary ?? `${passes.length} review runs`,
     });
     return "ship";
   }
