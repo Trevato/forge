@@ -182,7 +182,10 @@ preview at its own address, deployed from your branch as you push.
   behaviour you add gets a test that would fail without it.
 - \`src/tty.ts\` is the app's terminal. The exact command that reaches it is
   \`FORGE_APP_SSH\` at runtime; print that verbatim wherever the app tells
-  people how to connect. What a person can do on the page they can do here.
+  people how to connect. What a person can do on the page they can do here,
+  and nothing more: the terminal gates its reads and writes exactly as the
+  page does (\`FORGE_APP_USER_ROLE\` is the forge's word on who is there), and a
+  write made there reaches web viewers live like any other.
 - Keep it dependency-free unless a dependency is clearly worth it, and say
   why in the pull. A dependency is code you now maintain.
 - When you are done, push and stop. Your last message becomes the pull's
