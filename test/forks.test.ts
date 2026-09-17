@@ -80,6 +80,26 @@ describe("forks", () => {
       .then((j) => (j as { token: string }).token);
   }
 
+  /** Sign in through the web form; the cookie is what a browser would carry. */
+  async function signIn(username: string): Promise<string> {
+    const res = await fetch(`${base}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({ username, password: "fork-me-please" }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  }
+
+  /** The HTML of a page as somebody — or, with no cookie, as a stranger. */
+  async function pageAs(path: string, cookie?: string): Promise<string> {
+    const res = await fetch(
+      `${base}${path}`,
+      cookie === undefined ? {} : { headers: { cookie } },
+    );
+    expect(res.status).toBe(200);
+    return await res.text();
+  }
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-fork-"));
     work = await mkdtemp(join(tmpdir(), "forge-fork-work-"));
@@ -251,19 +271,6 @@ describe("forks", () => {
       authorization: `Bearer ${token}`,
       "content-type": "application/json",
     });
-    async function signIn(username: string): Promise<string> {
-      const res = await fetch(`${base}/signin`, {
-        method: "POST",
-        body: new URLSearchParams({ username, password: "fork-me-please" }),
-        redirect: "manual",
-      });
-      return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
-    }
-    async function rail(path: string, cookie: string): Promise<string> {
-      const res = await fetch(`${base}${path}`, { headers: { cookie } });
-      expect(res.status).toBe(200);
-      return await res.text();
-    }
 
     // Dan forks alice/app as it stands, so his copy starts level with it:
     // nothing to take, and nothing offered.
@@ -278,7 +285,7 @@ describe("forks", () => {
         })
       ).status,
     ).toBe(201);
-    const current = await rail("/dan/app", danCookie);
+    const current = await pageAs("/dan/app", danCookie);
     expect(current).toContain("up to date");
     expect(current).not.toContain("Update from parent");
 
@@ -301,13 +308,13 @@ describe("forks", () => {
       work,
     );
 
-    const behind = await rail("/dan/app", danCookie);
+    const behind = await pageAs("/dan/app", danCookie);
     expect(behind).toContain("1 commit behind");
     expect(behind).toContain("Update from parent");
 
     // Bob committed on his fork and alice moved on twice since: an update
     // would be refused, so the page says why instead of offering one.
-    const diverged = await rail("/bob/app", await signIn("bob"));
+    const diverged = await pageAs("/bob/app", await signIn("bob"));
     expect(diverged).toContain("1 commit of its own");
     expect(diverged).toContain("2 behind");
     expect(diverged).not.toContain("Update from parent");
@@ -356,6 +363,93 @@ describe("forks", () => {
     expect(res.status).toBe(422);
     expect(((await res.json()) as { error: string }).error).toBe(
       "already_forked",
+    );
+  });
+
+  test("a fork does not name a parent the viewer cannot read", async () => {
+    const asAlice = {
+      authorization: `Bearer ${aliceToken}`,
+      "content-type": "application/json",
+    };
+    // A private repo, forked by its own owner and then opened: the copy is
+    // public, the parent is not. The lineage row is the one place a public
+    // page could name a repository the visitor cannot see — and the drift
+    // beside it would say how busy that repository has been.
+    await fetch(`${base}/api/v1/repos`, {
+      method: "POST",
+      headers: asAlice,
+      body: JSON.stringify({ name: "vault", visibility: "private" }),
+    });
+    const remote = `${base.replace("http://", `http://alice:${aliceToken}@`)}/alice/vault.git`;
+    await gitOk(["clone", remote, "vault"], work);
+    const dir = join(work, "vault");
+    await Bun.write(join(dir, "README.md"), "# vault\n");
+    await gitOk(["add", "."], dir);
+    await gitOk(["commit", "-m", "vault seed"], dir);
+    await gitOk(["push", "origin", "main"], dir);
+    expect(
+      (
+        await fetch(`${base}/api/v1/repos/alice/vault/forks`, {
+          method: "POST",
+          headers: asAlice,
+          body: JSON.stringify({ name: "vault-open" }),
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await fetch(`${base}/api/v1/repos/alice/vault-open`, {
+          method: "PATCH",
+          headers: asAlice,
+          body: JSON.stringify({ visibility: "public" }),
+        })
+      ).status,
+    ).toBe(200);
+
+    const stranger = await pageAs("/alice/vault-open");
+    expect(stranger).not.toContain("Fork of");
+    expect(stranger).not.toContain('href="/alice/vault"');
+    expect(stranger).not.toContain("up to date");
+
+    // Alice reads the same page and the row is all there.
+    const owner = await pageAs("/alice/vault-open", await signIn("alice"));
+    expect(owner).toContain("Fork of");
+    expect(owner).toContain('href="/alice/vault"');
+    expect(owner).toContain("up to date");
+  });
+
+  test("a fork the viewer cannot read is not counted on the parent", async () => {
+    const asAlice = {
+      authorization: `Bearer ${aliceToken}`,
+      "content-type": "application/json",
+    };
+    expect(
+      (
+        await fetch(`${base}/api/v1/repos/alice/app/forks`, {
+          method: "POST",
+          headers: asAlice,
+          body: JSON.stringify({ name: "app-quiet" }),
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await fetch(`${base}/api/v1/repos/alice/app-quiet`, {
+          method: "PATCH",
+          headers: asAlice,
+          body: JSON.stringify({ visibility: "private" }),
+        })
+      ).status,
+    ).toBe(200);
+
+    // The count is a link to the list, so it counts what the list would show.
+    const stranger = await pageAs("/alice/app");
+    expect(stranger).toContain("3 forks");
+    expect(await pageAs("/alice/app/forks")).not.toContain(
+      'href="/alice/app-quiet"',
+    );
+    expect(await pageAs("/alice/app", await signIn("alice"))).toContain(
+      "4 forks",
     );
   });
 

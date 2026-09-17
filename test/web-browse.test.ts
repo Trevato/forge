@@ -366,6 +366,8 @@ describe("browsing an origin repository on the web", () => {
     expect(html).not.toContain("/branches/main/delete");
     // The banner still says where the bytes came from.
     expect(html).toContain("Reading live from");
+    // A live-browse origin has no local repo to open an SSE stream against.
+    expect(html).not.toContain("new EventSource");
   });
 
   test("commits and one commit render live, with the origin's author", async () => {
