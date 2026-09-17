@@ -62,6 +62,7 @@ import {
   runLogListenerCount,
   subscribeRunLog,
 } from "../src/runs/log.ts";
+import { IDENTITY_KEY, signedAs } from "./helpers/identity.ts";
 
 const DOMAIN = "apps.test";
 
@@ -924,6 +925,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     work = await mkdtemp(join(tmpdir(), "forge-adv-work-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    process.env["FORGE_APP_IDENTITY_KEY"] = IDENTITY_KEY;
     runtime = new AppsRuntime(app, {
       domain: DOMAIN,
       scheme: "http",
@@ -1342,6 +1344,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     await viaHost(`emptypolicy.${DOMAIN}`, "/notes", {
       method: "POST",
       body: form,
+      headers: signedAs(alice),
     });
     expect(await (await viaHost(`emptypolicy.${DOMAIN}`)).text()).toContain(
       "production-only note",
