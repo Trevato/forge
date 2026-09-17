@@ -81,8 +81,13 @@ export interface CrewHandle {
   stop(options?: { drain?: boolean; drainMs?: number }): Promise<void>;
 }
 
-/** How long a draining crew waits for its runs before cutting them short. */
-const DRAIN_MS = 50 * 60_000;
+/**
+ * How long a draining crew waits for its runs before cutting them short.
+ * Short: a run cut here is queued again and resumes its own session on the
+ * forge that comes up next, so little is lost, while a long drain holds a
+ * whole pod's memory through a rollout and blocks the next one.
+ */
+const DRAIN_MS = 3 * 60_000;
 
 const handles = new WeakMap<App, CrewHandle>();
 
