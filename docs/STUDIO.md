@@ -126,6 +126,16 @@ whether it is live, what the crew last did there, and a way in. **New app**
 is the same flow as ever. `/?mode=dev` is the repositories list without
 switching the browser.
 
+The home keeps itself current. *Asks you*, *your apps*, *happening now* and
+*on you* are each a live region (`data-live`, `src/web/client.ts`): a deploy
+serving, a pull opening, closing or merging, a run starting or ending, or an
+assignment changing refetches the home — the very same `studioHome` render
+that drew the first paint, never a second copy of that markup — and swaps
+just that region in place, so a card that is answered goes and a new one
+arrives without a reload. Events within half a second of each other cost one
+fetch. A card mid-decision (its post to the crew still in flight) is never
+swapped out from under the click deciding it.
+
 Signed out, `/` in the studio is a stranger's front door, not the dev
 pitch: a shelf of the public apps actually serving — name, one line of
 description, live state, and production's own picture, linking straight to

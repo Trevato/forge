@@ -13,7 +13,7 @@ import { previewEnv, type EnvName } from "../src/apps/data.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { assignIssue, openIssue, setIssueState } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
@@ -21,7 +21,7 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
-import { getIssue, listIssues } from "../src/core/issues.ts";
+import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -850,6 +850,155 @@ describe("the studio home does not wait on the decider", () => {
     expect(calls).toBe(1);
     const again = await (await get("/")).text();
     expect(again).toContain("by the decider");
+  });
+});
+
+/**
+ * The studio home keeps itself current: Asks you, Your apps and On you are
+ * each a live region — no second fragment endpoint, the same `studioHome`
+ * render as the first paint, fetched again on a matching event and swapped
+ * in place by `liveRegionsJs` (`src/web/client.ts`).
+ */
+describe("the studio home keeps itself current", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let cookie: string;
+  let pull: Pull;
+  let readme: Issue;
+
+  const get = (extraCookie = "") =>
+    fetch(`${base}/`, {
+      headers: {
+        cookie: `${cookie}${extraCookie}; forge_mode=studio`,
+      },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-live-home-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "signals",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "s\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "signals" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, alice, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
+    const scoutUser = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/x",
+      base: "main",
+      message: "Add x",
+      files: [{ path: "x.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scoutUser, repo, {
+      title: "Add x",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/x",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+
+    const asked = openIssue(app, alice, repo, { title: "Write the README" });
+    if (!asked.ok) throw new Error(String(asked.error));
+    readme = asked.value;
+    expect(assignIssue(app, alice, repo, readme, alice).ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("Asks you, Your apps, Happening now and On you are each a live region, with the security floor's headers", async () => {
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("same-origin");
+    const home = await res.text();
+    expect(home).toMatch(/id="live-asks"\s+data-live="/);
+    expect(home).toMatch(/id="live-apps"\s*\n?\s*data-live="/);
+    expect(home).toMatch(/id="live-now"\s+data-live="/);
+    expect(home).toMatch(/id="live-on-you"\s*\n?\s*data-live="/);
+    expect(home).toContain("new EventSource('/events')");
+    expect(home).toContain("Add x");
+    expect(home).toContain("Write the README");
+  });
+
+  test("a signed-out request gets a signed-out home: no per-viewer live regions, nothing of alice's", async () => {
+    const res = await fetch(`${base}/`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+    expect(res.status).toBe(200);
+    const home = await res.text();
+    expect(home).not.toContain('id="live-asks"');
+    expect(home).not.toContain('id="live-on-you"');
+    expect(home).not.toContain("Add x");
+    expect(home).not.toContain("Write the README");
+  });
+
+  test("a card leaves Asks you and Your apps once its pull merges; On you once its issue closes", async () => {
+    const before = await (await get()).text();
+    expect(before).toContain("Add x");
+    expect(before).toContain("Write the README");
+
+    const merged = await mergePull(app, alice, repo, pull, "squash");
+    expect(merged.ok).toBe(true);
+    expect(setIssueState(app, alice, repo, readme, "closed").ok).toBe(true);
+
+    const after = await (await get()).text();
+    expect(after).not.toContain("Add x");
+    expect(after).not.toContain("Write the README");
   });
 });
 

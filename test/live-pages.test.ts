@@ -105,4 +105,47 @@ describe("live browsing pages", () => {
     expect(html).toContain('data-app="1"');
     expect(html).toContain("new EventSource");
   });
+
+  test("the studio home wires up asks, apps, now and on-you as live regions, signed in; a signed-out visitor gets neither", async () => {
+    const signedOut = await (
+      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
+    ).text();
+    expect(signedOut).not.toContain('id="live-asks"');
+    expect(signedOut).not.toContain('id="live-on-you"');
+
+    const user = await createUser(app.db, {
+      username: "ren",
+      email: "ren@f.dev",
+      password: "live-pages-pass",
+    });
+    if (!user.ok) throw new Error("user");
+    const cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "ren",
+            password: "live-pages-pass",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+    const html = await (
+      await fetch(`${base}/`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(html).toContain('id="live-asks"');
+    expect(html).toContain('id="live-apps"');
+    expect(html).toContain('id="live-now"');
+    expect(html).toContain('id="live-on-you"');
+    expect(html).toContain("new EventSource('/events')");
+  });
+
+  test("a live region never swaps out from under a card that is mid-decision", async () => {
+    const { liveRegionsJs } = await import("../src/web/client.ts");
+    expect(liveRegionsJs).toContain("data-busy");
+  });
 });

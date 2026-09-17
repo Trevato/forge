@@ -1627,13 +1627,21 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const body = html`<div class="dash">
     <div class="dash-main stack">
       <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">${asks}</div>
-      <div id="live-apps" data-live="run.finished,pull.merged,pull.opened">
+      <div
+        id="live-apps"
+        data-live="app.serving,app.stopped,run.queued,run.started,run.finished,pull.opened,pull.closed,pull.merged"
+      >
         ${apps}
       </div>
     </div>
     <aside class="dash-rail stack">
       <div id="live-now" data-live="run.*">${now}</div>
-      ${onYouCard(ctx, user) ?? null}
+      <div
+        id="live-on-you"
+        data-live="issue.assigned,pull.assigned,issue.closed,pull.closed,issue.reopened,pull.reopened,pull.merged"
+      >
+        ${onYouCard(ctx, user) ?? null}
+      </div>
     </aside>
   </div>`;
   return page({
