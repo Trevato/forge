@@ -35,9 +35,13 @@ forge:
   # Origins registered by the operator, `host=client id` comma-separated: the
   # platform's own Forgejo, so connecting it is one click.
   originClients: "git.open-platform.sh=d9b50fa1-a56a-483d-9fbc-b3c44ec726b5"
-  # Agent runs and app deploys at once. Two runs used a fifth of the pod's
-  # memory; four is comfortable on the plus tier.
-  crewConcurrency: 4
+  # Agent runs at once. Each Claude Code process wants ~500Mi, and the pod
+  # holds 2Gi, so two is what fits; four OOM-killed the forge the moment
+  # four runs started together (2026-09-17). Raise it with the memory
+  # limit below, and only once the tenant quota fits two such pods during
+  # a rollout.
+  crewConcurrency: 2
+  # App deploys at once.
   appsConcurrency: 3
 
 ssh:
