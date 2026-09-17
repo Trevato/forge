@@ -23,7 +23,7 @@ import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
@@ -236,6 +236,59 @@ describe("a repository on its own", () => {
       .run(repo.id);
     expect(await landIfGreen(app, fresh(), pull)).toBe(true);
     expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
+  });
+
+  test("a green pull that no longer merges sends its agent one run to bring the branch up to date", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/shared",
+      base: "main",
+      message: "Shared, the branch's way",
+      files: [
+        { path: "shared.ts", content: "export const shared = 'branch';\n" },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, atlas, repo, {
+      title: "Shared",
+      baseBranch: "main",
+      headBranch: "feature/shared",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    // Main moves the other way on the same file.
+    const moved = await commitToBranch(app, alice, repo, {
+      branch: "main",
+      message: "Shared, main's way",
+      files: [
+        { path: "shared.ts", content: "export const shared = 'main';\n" },
+      ],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed in 1s" });
+    app.db
+      .query("UPDATE repo SET autonomy = 'autonomous' WHERE id = ?1")
+      .run(repo.id);
+
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    const conflicts = () =>
+      listRuns(app.db, repo.id, { kind: "agent" }).filter(
+        (r) => r.issueId === pull.id && r.reason === "conflict",
+      );
+    expect(conflicts().length).toBe(1);
+    expect(conflicts()[0]!.summary).toBe("main moved: shared.ts");
+    expect(conflicts()[0]!.actorId).toBe(atlas.id);
+    // Still not landed, still one run waiting: a second look queues nothing.
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    expect(conflicts().length).toBe(1);
   });
 
   test("a merged pull closes what it says it closes; a proposed issue is not picked again; a stalled one waits for a person", async () => {

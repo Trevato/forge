@@ -14,6 +14,7 @@
 
 import type { App } from "../app.ts";
 import { assignIssue, openIssue } from "../actions/issues.ts";
+import type { AccessError } from "../actions/access.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
@@ -23,6 +24,7 @@ import {
   getPull,
   listPulls,
   openPullsClosing,
+  type MergePullError,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -31,7 +33,18 @@ import {
   setDirectionIssue,
   type Repo,
 } from "../core/repos.ts";
-import { checksForHead, listActive } from "../core/runs.ts";
+import {
+  activeRunFor,
+  automaticRunsSince,
+  checksForHead,
+  listActive,
+} from "../core/runs.ts";
+import {
+  agentFor,
+  CHECK_FAILED_LIMIT,
+  lastHumanWord,
+  queueAgentRun,
+} from "./dispatch.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 
@@ -297,6 +310,49 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   }
 }
 
+/** A merge refusal in words a log can carry. */
+function mergeWhy(error: AccessError | MergePullError): string {
+  if (typeof error === "string") return error;
+  switch (error.kind) {
+    case "conflict":
+      return `conflict: ${error.files.join(", ")}`;
+    case "git":
+      return `git: ${error.message}`;
+    default:
+      return error.kind;
+  }
+}
+
+/**
+ * Queue one run for the pull's agent to merge main into its branch. One
+ * waiting is enough, and the automatic tries since a person last spoke
+ * stop at the same limit a failing check does — past it, the pull waits
+ * for a person.
+ */
+function bringUpToDate(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  files: readonly string[],
+): void {
+  const issue = getIssueById(app.db, pull.id);
+  if (!issue || issue.state !== "open") return;
+  const agent = agentFor(app, issue);
+  if (!agent) return;
+  if (activeRunFor(app.db, "agent", issue.id) !== undefined) return;
+  const tries = automaticRunsSince(
+    app.db,
+    issue.id,
+    lastHumanWord(app, issue, agent),
+  );
+  if (tries >= CHECK_FAILED_LIMIT) return;
+  queueAgentRun(app, repo, issue, agent, "conflict", undefined, {
+    notBefore: new Date().toISOString(),
+    attempt: 0,
+    summary: `main moved: ${files.join(", ")}`,
+  });
+}
+
 /**
  * Ship on green. An open pull whose head has a passing check and a passing
  * deploy, and nothing failed, lands as the person who turned autonomy on —
@@ -318,11 +374,16 @@ export async function landIfGreen(
   if (checks.some((c) => c.state !== "ok")) return false;
   const merged = await mergePull(app, by, repo, pull, "squash");
   if (!merged.ok) {
+    const why = mergeWhy(merged.error);
     log.info("green but not landed", {
       repo: `${repo.ownerName}/${repo.name}`,
       pull: pull.number,
-      why: String(merged.error),
+      why,
     });
+    // Main moved under a green pull: that is the agent's to fix, once per
+    // move, and never past the same limit a red check gets.
+    if (typeof merged.error !== "string" && merged.error.kind === "conflict")
+      bringUpToDate(app, repo, pull, merged.error.files);
     return false;
   }
   log.info("landed on green", {

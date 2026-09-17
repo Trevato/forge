@@ -89,6 +89,7 @@ const REASONS: Record<string, string> = {
   assigned: "assigned",
   feedback: "after feedback",
   check_failed: "after a failed check",
+  conflict: "after main moved",
 };
 
 /** Why a run exists, as a phrase that follows its title. */

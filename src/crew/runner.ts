@@ -417,6 +417,13 @@ async function work(
       reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
       since,
       checkSummary: failedCheck?.run?.summary,
+      conflictFiles:
+        reason === "conflict"
+          ? run.summary
+              .replace(/^main moved: /, "")
+              .split(", ")
+              .filter((f) => f !== "")
+          : undefined,
       checkKind:
         failedCheck?.run?.kind === "check" ||
         failedCheck?.run?.kind === "deploy"

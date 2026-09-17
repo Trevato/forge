@@ -13,7 +13,7 @@ import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Review, ReviewComment } from "../core/reviews.ts";
 
-export type RunReason = "assigned" | "feedback" | "check_failed";
+export type RunReason = "assigned" | "feedback" | "check_failed" | "conflict";
 
 export interface BriefInput {
   readonly agent: Agent;
@@ -108,6 +108,8 @@ export interface TaskInput extends BriefInput {
   readonly checkSummary?: string | undefined;
   /** What failed: the preview's deploy, or the repository's own check. */
   readonly checkKind?: "deploy" | "check" | undefined;
+  /** For `conflict`: the files main and the branch both changed. */
+  readonly conflictFiles?: readonly string[] | undefined;
 }
 
 /**
@@ -154,6 +156,16 @@ function taskBody(input: TaskInput): string {
     out.push(
       "",
       `Work it on the branch \`${input.branch}\` and push when done.`,
+    );
+    return out.join("\n");
+  }
+
+  if (input.reason === "conflict") {
+    const files = input.conflictFiles ?? [];
+    out.push(
+      `Your pull #${issue.number} is green, but \`main\` moved and the branch no longer merges cleanly${files.length > 0 ? `: ${files.join(", ")}` : "."}`,
+      "",
+      `Merge \`main\` into \`${input.branch}\`, resolve the conflicts keeping what both sides meant, make sure the tests pass, and push again.`,
     );
     return out.join("\n");
   }

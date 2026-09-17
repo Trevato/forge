@@ -77,9 +77,13 @@ asked, under **Settings → Autonomy**:
   pull waits for a person's look.
 - **Autonomous.** The same, and a pull whose head has a passing check and
   a passing deploy lands as the person who turned autonomy on — with their
-  review and check requirements still enforced inside the merge. When
-  nothing is ready and nothing is in flight, the map has run dry: the
-  planner is given the direction.
+  review and check requirements still enforced inside the merge. A green
+  pull that no longer merges because `main` moved under it sends its agent
+  one run (`conflict`, naming the files) to merge `main` into the branch;
+  one waiting is enough, and those tries stop at the same limit a failing
+  check does, after which the pull waits for a person. When nothing is
+  ready and nothing is in flight, the map has run dry: the planner is
+  given the direction.
 
 Everything it does, it does as that person, through the same actions they
 would take by hand — an assignment, a merge — so every run and every
