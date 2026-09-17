@@ -271,4 +271,32 @@ describe("checks", () => {
       "check failed: forge.json: check must be an object",
     );
   });
+  test("an open pull whose head was never checked is checked when the service boots", async () => {
+    await checks.stop();
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "quiet",
+      message: "Quiet",
+      files: [
+        { path: "QUIET.md", content: "quiet\n" },
+        { path: "forge.json", content: checkJson("test -f QUIET.md") },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    // Opened while no checks service was listening: nothing asked for a check.
+    const opened = await openPull(app, alice, repo, {
+      title: "Quiet",
+      baseBranch: "main",
+      headBranch: "quiet",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect(
+      listRuns(app.db, repo.id, { kind: "check", limit: 50 }).filter(
+        (r) => r.commitOid === opened.value.headOid,
+      ),
+    ).toHaveLength(0);
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    const done = await settled((r) => r.commitOid === opened.value.headOid);
+    expect(done.reason).toBe("boot");
+    expect(done.state).toBe("ok");
+  }, 60_000);
 });

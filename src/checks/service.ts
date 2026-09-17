@@ -20,6 +20,7 @@ import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  checksForHead,
   claimRun,
   createRun,
   finishRun,
@@ -144,6 +145,47 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       if (run.state !== "queued" || inFlight.has(run.id)) continue;
       const repo = getRepoById(app.db, run.repoId);
       if (repo) start(run, repo);
+    }
+  }
+
+  /**
+   * An open pull whose head was never checked — the event that should have
+   * asked landed while a forge was on its way out, or before this forge
+   * existed — is asked for on boot. A pull that stays unchecked would never
+   * land on green, however green it is.
+   */
+  async function catchUp(): Promise<void> {
+    const heads = app.db
+      .query<
+        { repo_id: string; issue_id: string; number: number; head_oid: string },
+        []
+      >(
+        `SELECT issue.repo_id, issue.id AS issue_id, issue.number, pull.head_oid
+           FROM pull JOIN issue ON issue.id = pull.issue_id
+          WHERE issue.state = 'open' AND pull.merged_at IS NULL
+          ORDER BY issue.created_at DESC LIMIT 200`,
+      )
+      .all();
+    for (const head of heads) {
+      if (head.head_oid === "") continue;
+      if (checksForHead(app.db, head.issue_id, head.head_oid).length > 0)
+        continue;
+      const repo = getRepoById(app.db, head.repo_id);
+      if (!repo) continue;
+      try {
+        await request(
+          repo,
+          `pull-${head.number}`,
+          head.head_oid,
+          "boot",
+          head.issue_id,
+        );
+      } catch (error) {
+        log.error("check could not be requested on boot", {
+          pull: head.number,
+          error: String(error),
+        });
+      }
     }
   }
 
@@ -367,6 +409,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     if (!stopped) pickUp();
   }, TICK_MS);
   pickUp();
+  void catchUp();
 
   const handle: ChecksHandle = {
     request,
