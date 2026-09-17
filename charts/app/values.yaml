@@ -40,7 +40,7 @@ forge:
   # runs fit a 4Gi pod with room to spare. Two runs OOM-killed a 2Gi pod
   # once and four did so at once (2026-09-17), so this number and the
   # memory limit below move together.
-  crewConcurrency: 4
+  crewConcurrency: 5
   # App deploys at once.
   appsConcurrency: 3
 

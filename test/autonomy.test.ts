@@ -170,8 +170,10 @@ describe("a repository on its own", () => {
         setIssueState(app, alice, repo, getIssue(app.db, repo.id, n)!, "closed")
           .ok,
       ).toBe(true);
-    // A run left running would mean "wait"; none is.
-    expect(await driveRepo(app, fresh())).toBe("planned");
+    // The planner already holds the direction: the map went thin during
+    // the picks above and planning started alongside building, before it
+    // ran dry. A dry map with the planner on it is "idle", not asked again.
+    expect(await driveRepo(app, fresh())).toBe("idle");
     const direction = getIssueById(app.db, fresh().directionIssueId!)!;
     expect(direction.title).toContain("Direction: Pull the engine out");
     expect(direction.assigneeId).toBe(atlas.id);

@@ -191,6 +191,13 @@ function taskBody(input: TaskInput): string {
           ]
         : []),
       "",
+      "Judge it against this list, strictly — one miss is a change request:",
+      "- Security: identity comes from the forge's signed headers and is verified, never trusted from a cookie or a query; every write checks who; inputs are validated and outputs escaped; no secret in the repository; no shell or SQL built from user text.",
+      "- Tests: every behaviour the change adds has a test that would fail without it, and `bun test` is green in the diff.",
+      "- Both doors: what a person can do on the page they can do in `src/tty.ts` too, and the README says how to use it.",
+      "- Clean: small modules named after one concept, no dead code, no commented-out code, no TODOs left as work, no new dependency without a reason in the pull.",
+      "- True to the direction: it does what the issue asked and nothing the direction did not, and the preview shows it working.",
+      "",
       "Then submit exactly one review through the forge's API and stop:",
       `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/pulls/${issue.number}/reviews" -d '{"state":"approved","body":"..."}'`,
       `Approve when it does what the direction asks, works in the preview, and looks right. Otherwise use "changes_requested" with a body a builder can act on: what does not work, and the one thing to fix first, concrete. You get two rounds of changes on a pull; after that it lands as it is, so if something is left, open an issue for it with the API instead. One review, then stop; your last message is not read by anyone.`,
