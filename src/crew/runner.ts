@@ -328,7 +328,11 @@ async function work(
   // the agent's to move.
   const fork = await forkFor(app, agent, repo, write);
   if (!fork.ok) return { state: "failed", summary: fork.error };
-  if (pull !== undefined && pull.headRepoId !== fork.value.id)
+  // A reviewer reads a pull it did not write: the diff comes to it in the
+  // brief, its clone is its own fork at a scratch branch, and it pushes
+  // nothing. The pull's branch is not its to move, and it never tries.
+  const reviewing = reason === "review";
+  if (pull !== undefined && !reviewing && pull.headRepoId !== fork.value.id)
     return {
       state: "failed",
       summary:
@@ -347,7 +351,7 @@ async function work(
     };
   const continuing = pull !== undefined && pull.mergedAt !== null;
   const branch =
-    pull !== undefined && !continuing
+    pull !== undefined && !continuing && !reviewing
       ? pull.headBranch
       : run.branch || branchFor(agent, issue);
   if (!isSafeRef(branch))
