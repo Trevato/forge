@@ -237,6 +237,34 @@ export function joinMany(db: Database, issues: readonly Issue[]): Pull[] {
   return out;
 }
 
+/**
+ * The newest merged pulls across several repositories, newest merge first
+ * — what a wall of the crews' work shows as landed. One read over the
+ * pull rows, then the issues they are.
+ */
+export function mergedPullsForRepos(
+  db: Database,
+  repoIds: readonly string[],
+  limit = 12,
+): Pull[] {
+  const unique = [...new Set(repoIds)].slice(0, 400);
+  if (unique.length === 0) return [];
+  const ids = db
+    .query<{ issue_id: string }, (string | number)[]>(
+      `SELECT pull.issue_id FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE pull.merged_at IS NOT NULL
+         AND issue.repo_id IN (${unique.map((_, n) => `?${n + 1}`).join(",")})
+       ORDER BY pull.merged_at DESC LIMIT ?${unique.length + 1}`,
+    )
+    .all(...unique, Math.min(Math.max(limit, 1), 100))
+    .map((r) => r.issue_id);
+  const issues = getIssuesByIds(db, ids);
+  return joinMany(
+    db,
+    ids.map((id) => issues.get(id)).filter((i): i is Issue => i !== undefined),
+  );
+}
+
 /** The pull rows for a page of issues, keyed by issue id. */
 export function pullsForIssues(
   db: Database,
