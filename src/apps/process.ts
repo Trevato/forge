@@ -105,6 +105,12 @@ export function appEnv(input: {
       // Printed verbatim by an app that tells people how to reach its
       // terminal; a guessed form (`you@app.host`) reaches the forge instead.
       ...(input.ssh === undefined ? {} : { FORGE_APP_SSH: input.ssh }),
+      // The key the forge signs identities with (`x-forge-identity` on
+      // every request it proxies). Handed on from the forge's own
+      // environment until the proxy signs with a key of its own.
+      ...(process.env["FORGE_APP_IDENTITY_KEY"] === undefined
+        ? {}
+        : { FORGE_APP_IDENTITY_KEY: process.env["FORGE_APP_IDENTITY_KEY"] }),
     }),
   };
   // The operator's login name is for the keychain (an agent's Claude Code

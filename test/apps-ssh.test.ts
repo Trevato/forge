@@ -24,6 +24,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { appsScreen } from "../src/tui/screens/apps.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { IDENTITY_KEY, signedAs } from "./helpers/identity.ts";
 import { settleApp } from "./helpers/tui.ts";
 
 const SSH = "/usr/bin/ssh";
@@ -104,6 +105,7 @@ describe("a terminal for every app, over ssh", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     ssh = await serveForgeSsh(app, { port: 0, hostname: "127.0.0.1" });
+    process.env["FORGE_APP_IDENTITY_KEY"] = IDENTITY_KEY;
     runtime = new AppsRuntime(app, {
       domain: "apps.test",
       scheme: "http",
@@ -180,7 +182,7 @@ describe("a terminal for every app, over ssh", () => {
     const posted = await fetch(`${servers.url}/notes`, {
       method: "POST",
       body: form,
-      headers: { host: "hello.apps.test" },
+      headers: { host: "hello.apps.test", ...signedAs(alice) },
       redirect: "manual",
     });
     expect(posted.status).toBe(303);

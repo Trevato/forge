@@ -33,6 +33,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { IDENTITY_KEY, signedAs } from "./helpers/identity.ts";
 
 const clientEnv = {
   ...process.env,
@@ -107,6 +108,9 @@ describe("apps: production, previews, data, gates, crew", () => {
     work = await mkdtemp(join(tmpdir(), "forge-apps-work-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    // Every app the runtime boots is handed this key; the tests sign as
+    // the forge would.
+    process.env["FORGE_APP_IDENTITY_KEY"] = IDENTITY_KEY;
     runtime = new AppsRuntime(app, {
       domain: DOMAIN,
       scheme: "http",
@@ -159,18 +163,56 @@ describe("apps: production, previews, data, gates, crew", () => {
     expect(html).toContain("<h1>hello</h1>");
     expect(html).toContain("production");
     expect(html).toContain(run.commitOid.slice(0, 7));
+    // A stranger is offered the forge's door; a signed identity is greeted.
+    expect(html).toContain("/__forge/signin");
+    const greeted = await (
+      await viaHost(`hello.${DOMAIN}`, "/", {
+        headers: signedAs(alice, "admin"),
+      })
+    ).text();
+    expect(greeted).toContain("<b>alice</b>");
+    expect(greeted).toContain("/__forge/signout");
   }, 90_000);
 
   test("the proxy carries a form post; production data persists", async () => {
     const form = new FormData();
     form.set("body", "first note in production");
+    // Anonymous, the app takes nothing; as alice, it keeps the note.
+    const refused = await viaHost(`hello.${DOMAIN}`, "/notes", {
+      method: "POST",
+      body: form,
+    });
+    expect(refused.status).toBe(303);
+    expect(await (await viaHost(`hello.${DOMAIN}`)).text()).not.toContain(
+      "first note in production",
+    );
     const posted = await viaHost(`hello.${DOMAIN}`, "/notes", {
       method: "POST",
       body: form,
+      headers: signedAs(alice),
     });
     expect(posted.status).toBe(303);
     const html = await (await viaHost(`hello.${DOMAIN}`)).text();
     expect(html).toContain("first note in production");
+    expect(html).toContain("alice ·");
+    // The same data at the other doors: JSON, and MCP tools.
+    const listed = (await (
+      await viaHost(`hello.${DOMAIN}`, "/api/notes")
+    ).json()) as { body: string; author_name: string }[];
+    expect(listed.map((n) => n.body)).toEqual(["first note in production"]);
+    expect(listed[0]?.author_name).toBe("alice");
+    const mcp = (await (
+      await viaHost(`hello.${DOMAIN}`, "/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      })
+    ).json()) as { result: { tools: { name: string }[] } };
+    expect(mcp.result.tools.map((t) => t.name)).toEqual([
+      "list_notes",
+      "add_note",
+      "delete_note",
+    ]);
   });
 
   test("a hostname that is no app falls through to the forge", async () => {
@@ -220,6 +262,7 @@ describe("apps: production, previews, data, gates, crew", () => {
     await viaHost(`hello--${pull.number}.${DOMAIN}`, "/notes", {
       method: "POST",
       body: form,
+      headers: signedAs(alice),
     });
     expect(
       await (await viaHost(`hello--${pull.number}.${DOMAIN}`)).text(),
