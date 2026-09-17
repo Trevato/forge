@@ -127,6 +127,7 @@ export const utilities = /* css */ `
 .spacer { flex: 1; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
+.stack-tight { gap: 4px; }
 .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mt { margin-top: 12px; }
 .mb { margin-bottom: 12px; }

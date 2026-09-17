@@ -571,7 +571,7 @@ export async function studioApp(
   const liveTone: Tone =
     state === "running" ? "success" : state === "failed" ? "danger" : "default";
   const head = html`<div class="page-head studio-head">
-    <div class="stack" style="gap: 4px">
+    <div class="stack stack-tight">
       <h1>
         ${repo.name}
         <span

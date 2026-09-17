@@ -377,13 +377,21 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   for (const repo of listAutonomousRepos(app.db)) {
     try {
       await sweepGreen(app, repo);
-      const did = await driveRepo(
-        app,
-        getRepoById(app.db, repo.id) ?? repo,
-        now,
-      );
-      if (did === "picked" || did === "planned")
-        log.info("tick", { repo: `${repo.ownerName}/${repo.name}`, did });
+      const current = getRepoById(app.db, repo.id) ?? repo;
+      const did = await driveRepo(app, current, now);
+      // Every tick says what it did and why, so an app that sits still is
+      // never a mystery: the numbers behind "idle" are on the line.
+      const status = autonomyStatus(app, current, now);
+      const graph = repoGraph(app.db, current.id);
+      log.info("tick", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        did,
+        ready: readyNow(graph).length,
+        active: status.active,
+        slots: status.slots,
+        spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
+        ...(status.paused === null ? {} : { paused: status.paused }),
+      });
     } catch (error) {
       log.error("autonomy tick failed", {
         repo: `${repo.ownerName}/${repo.name}`,
