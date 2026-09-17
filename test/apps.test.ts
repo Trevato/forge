@@ -34,7 +34,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { IDENTITY_KEY, signedAs } from "./helpers/identity.ts";
+import { grantedCookie } from "./helpers/identity.ts";
 
 const clientEnv = {
   ...process.env,
@@ -112,7 +112,6 @@ describe("apps: production, previews, data, gates, crew", () => {
     servers = await serve(app);
     // Every app the runtime boots is handed this key; the tests sign as
     // the forge would.
-    process.env["FORGE_APP_IDENTITY_KEY"] = IDENTITY_KEY;
     runtime = new AppsRuntime(app, {
       domain: DOMAIN,
       scheme: "http",
@@ -169,7 +168,9 @@ describe("apps: production, previews, data, gates, crew", () => {
     expect(html).toContain("/__forge/signin");
     const greeted = await (
       await viaHost(`hello.${DOMAIN}`, "/", {
-        headers: signedAs(alice, "admin"),
+        headers: {
+          cookie: await grantedCookie(app, servers.url, alice, record),
+        },
       })
     ).text();
     expect(greeted).toContain("<b>alice</b>");
@@ -191,7 +192,7 @@ describe("apps: production, previews, data, gates, crew", () => {
     const posted = await viaHost(`hello.${DOMAIN}`, "/notes", {
       method: "POST",
       body: form,
-      headers: signedAs(alice),
+      headers: { cookie: await grantedCookie(app, servers.url, alice, record) },
     });
     expect(posted.status).toBe(303);
     const html = await (await viaHost(`hello.${DOMAIN}`)).text();
@@ -264,7 +265,15 @@ describe("apps: production, previews, data, gates, crew", () => {
     await viaHost(`hello--${pull.number}.${DOMAIN}`, "/notes", {
       method: "POST",
       body: form,
-      headers: signedAs(alice),
+      headers: {
+        cookie: await grantedCookie(
+          app,
+          servers.url,
+          alice,
+          record,
+          `pull-${pull.number}`,
+        ),
+      },
     });
     expect(
       await (await viaHost(`hello--${pull.number}.${DOMAIN}`)).text(),

@@ -1,24 +1,34 @@
 /**
- * Being the forge for an app: the identity headers the proxy signs for
- * every request it hands on (the scaffold's `src/who.ts` verifies them).
- * A suite puts `IDENTITY_KEY` in its environment before the runtime starts,
- * and `appEnv` hands it to every app it boots as `FORGE_APP_IDENTITY_KEY`.
+ * Being someone to an app under test. The proxy names a visitor only from
+ * a grant it signed itself, and drops any identity headers a client sends,
+ * so a test that wants to be alice goes in the way alice would: through
+ * `/apps/open`, which vouches for her and answers with the grant cookie.
  */
 
-import { createHmac } from "node:crypto";
+import { openEnvUrl } from "../../src/actions/apps.ts";
+import type { App } from "../../src/app.ts";
+import type { AppRecord } from "../../src/core/apps.ts";
+import { getRepoById } from "../../src/core/repos.ts";
+import type { User } from "../../src/core/users.ts";
 
-export const IDENTITY_KEY = "forge-tests-identity-key";
-
-export function signedAs(
-  user: { readonly id: string; readonly username: string },
-  role: "user" | "admin" = "user",
-  key = IDENTITY_KEY,
-): Record<string, string> {
-  const identity = `${user.id}|${user.username}|${role}|${Date.now() + 60_000}`;
-  return {
-    "x-forge-identity": identity,
-    "x-forge-signature": createHmac("sha256", key)
-      .update(identity)
-      .digest("base64url"),
-  };
+export async function grantedCookie(
+  app: App,
+  base: string,
+  user: User,
+  record: AppRecord,
+  env = "production",
+): Promise<string> {
+  const repo = getRepoById(app.db, record.repoId);
+  if (!repo) throw new Error("no repository for the app");
+  const link = openEnvUrl(app, user, repo, env);
+  if (!link.ok) throw new Error(`no grant: ${String(link.error)}`);
+  const url = new URL(link.value);
+  const granted = await fetch(`${base}${url.pathname}${url.search}`, {
+    headers: { host: url.host },
+    redirect: "manual",
+  });
+  const cookie = (granted.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+  if (cookie === "")
+    throw new Error(`the grant set no cookie (${granted.status})`);
+  return cookie;
 }

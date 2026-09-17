@@ -21,7 +21,7 @@ import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { identityKey } from "./proxy.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
-import { canRead, getRepoById } from "../core/repos.ts";
+import { canRead, canWrite, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SshSession } from "../ssh/server.ts";
@@ -156,7 +156,12 @@ export async function runAppTty(
   env["TERM"] = host.term;
   env["COLORTERM"] = "truecolor";
   env["FORGE_APP_TTY"] = "1";
+  // The terminal's identity, the same three tiers the proxy speaks: a
+  // guest is nobody, a reader is a user, a writer of the repository is admin.
   env["FORGE_APP_USER"] = user?.username ?? "";
+  env["FORGE_APP_USER_ID"] = user?.id ?? "";
+  env["FORGE_APP_USER_ROLE"] =
+    user === undefined ? "" : canWrite(forge.db, repo, user) ? "admin" : "user";
   const proc = Bun.spawn(["/bin/sh", "-c", `exec ${live.tty}`], {
     terminal,
     env,
