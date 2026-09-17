@@ -189,6 +189,27 @@ function fitColumns(
 }
 
 /**
+ * The line between a list and its preview — down the preview's left edge
+ * when the two sit side by side, across its top when they stack — and the
+ * pane the preview has left to draw in. One rule, so the work screen and the
+ * stash screen cannot divide the same two panes two ways.
+ */
+export function dividedAside(
+  s: Surface,
+  r: Rect,
+  c: Tokens,
+  stacked: boolean,
+): Rect {
+  const line = style(c.border, c.bg);
+  if (stacked) {
+    for (let x = r.x; x < r.x + r.w; x++) s.set(x, r.y, G.h, line, r.x + r.w);
+    return { x: r.x, y: r.y + 1, w: r.w, h: Math.max(0, r.h - 1) };
+  }
+  for (let y = r.y; y < r.y + r.h; y++) s.set(r.x, y, G.v, line);
+  return { x: r.x + 2, y: r.y, w: Math.max(0, r.w - 2), h: r.h };
+}
+
+/**
  * A section header — the host above a repo list — in the same dim treatment
  * the work screen gives `CHANGED` and `NEW`, because they are the same thing:
  * a label for the rows under it, not a row of its own.

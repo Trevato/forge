@@ -133,3 +133,51 @@ export function center(r: Rect, w: number, h: number): Rect {
 export function contains(r: Rect, x: number, y: number): boolean {
   return x >= r.x && y >= r.y && x < r.x + r.w && y < r.y + r.h;
 }
+
+// ---- the terminal it is in ----
+//
+// Three numbers decide every screen's shape, and they live here so that
+// every screen folds at the same width and no screen invents its own.
+
+/** From this many columns a list sits beside its detail; below, they stack. */
+export const TWO_PANE_COLS = 100;
+/** Under this, a frame cannot be laid out at all: one line says so instead. */
+export const MIN_COLS = 40;
+export const MIN_ROWS = 10;
+/** A stacked aside needs this much height before it is worth a share. */
+const STACK_MIN_ROWS = 12;
+
+export interface Beside {
+  readonly main: Rect;
+  /** Absent when the terminal is too short to stack: the main pane has it all. */
+  readonly aside: Rect | undefined;
+  /** True when the aside sits under the main pane rather than beside it. */
+  readonly stacked: boolean;
+}
+
+/**
+ * A list beside its detail pane — or, below `TWO_PANE_COLS`, the same two
+ * stacked with the detail underneath. The old rule was to draw the list alone
+ * on a narrow terminal, which threw away the pane that said what the cursor
+ * was on; a phone-sized window is not a reason to show less, only to show it
+ * in a column.
+ *
+ * `main` and `aside` are the wide constraints; `below` is the aside's share of
+ * the height when stacked (two fifths unless the screen says otherwise). Too
+ * short to stack at all and the aside is dropped — the one case where showing
+ * less is the honest answer.
+ */
+export function beside(
+  area: Rect,
+  wide: boolean,
+  o: { main: Constraint; aside: Constraint; below?: Constraint },
+): Beside {
+  if (wide) {
+    const [main, aside] = split(area, "h", [o.main, o.aside]);
+    return { main: main!, aside, stacked: false };
+  }
+  if (area.h < STACK_MIN_ROWS)
+    return { main: area, aside: undefined, stacked: true };
+  const [main, aside] = split(area, "v", [fill(1), o.below ?? pct(40)]);
+  return { main: main!, aside, stacked: true };
+}

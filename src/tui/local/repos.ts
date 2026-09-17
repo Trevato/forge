@@ -15,7 +15,7 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import { G } from "../term/screen.ts";
 import { ago, drawFacts, Filter, ListState } from "../screens/common.ts";
-import { fill, len, split } from "../ui/layout.ts";
+import { beside, fill, len, split } from "../ui/layout.ts";
 import { card, emptyState } from "../ui/widgets.ts";
 import type { Tokens } from "../ui/theme.ts";
 import {
@@ -127,13 +127,12 @@ export function reposScreen(local: Local, ctx: Ctx): Screen {
       ]);
       if (shared !== null) drawHeader(s, head!, c, shared);
       const rows = items.map((entry) => rowFor(c, entry, shared !== null));
-      if (!ctx.twoPane) {
-        drawRows(s, rest!, c, list, COLUMNS, rows);
-        return;
-      }
-      const [left, right] = split(rest!, "h", [fill(3), fill(2)]);
-      drawRows(s, left!, c, list, COLUMNS, rows);
-      drawDetail(s, right!, c, current());
+      const { main: left, aside: right } = beside(rest!, ctx.twoPane, {
+        main: fill(3),
+        aside: fill(2),
+      });
+      drawRows(s, left, c, list, COLUMNS, rows);
+      if (right !== undefined) drawDetail(s, right, c, current());
     },
     key(e) {
       if (task.blocked) return true;
