@@ -54,7 +54,22 @@ converging, the bars say whether anything is moving.
 
 The same three lists are data at `GET /api/v1/repos/:owner/:name/map`,
 which is what an agent reads before it starts and what a repository in
-autonomous mode reads to pick the next thing.
+autonomous mode reads to pick the next thing. Both carry where the crew
+is: an issue with an agent run in flight is marked _working_ (or _queued_)
+on the drawing, and listed under `working` in the data.
+
+### The global map
+
+`/map` is every app on one canvas. Each repository the viewer can see that
+has an open issue or a run in flight is one lane, stacked, headed by its
+name (a link to its own map), how it runs itself — _off_, _assisted_ or
+_autonomous_, with today's spend against the ceiling when it is not off —
+and how many runs are in flight. The lane is the same drawing as the
+repository's map. Repositories with nothing to draw are left out; a forge
+with nothing to draw anywhere says so in one sentence. It is reached from
+the user menu and the command palette, and from the Apps card on either
+home. `GET /api/v1/map` is the same, one entry per repository, each the
+repository's map data plus `autonomy`, `spentTodayUsd` and `inFlight`.
 
 ## Planning by the crew
 

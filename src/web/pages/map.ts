@@ -8,8 +8,13 @@
  *
  * Drawn on the server as SVG, laid out by hand: a plan bigger than the
  * few hundred issues this handles is not one a person reads.
+ *
+ * The global map at `/map` is the same drawing once per repository the
+ * viewer can see, stacked: one canvas for every app, and where the crew is
+ * marked on it.
  */
 
+import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
@@ -21,20 +26,24 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import type { Repo } from "../../core/repos.ts";
+import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
+import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
   loadRepo,
   notFoundPage,
+  pageHead,
   repoBase,
   repoHeader,
   repoPalette,
+  signInFirst,
 } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { icon } from "../ui.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
+import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 
 // ---- layout ----
 
@@ -163,11 +172,31 @@ function trim(text: string, max = 24): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
 
+/**
+ * Where the crew is: each issue with an agent run in flight, by issue id.
+ * A running run outranks a queued one on the same issue. Issue ids are
+ * forge-wide, so one map serves every repository's drawing at once.
+ */
+export function crewMarks(runs: readonly Run[]): Map<string, RunState> {
+  const marks = new Map<string, RunState>();
+  for (const run of runs)
+    if (run.issueId !== null && marks.get(run.issueId) !== "running")
+      marks.set(run.issueId, run.state);
+  return marks;
+}
+
+export interface Emphasis {
+  readonly ready: Set<string>;
+  readonly critical: Set<string>;
+  /** Issues the crew is on right now; see `crewMarks`. */
+  readonly crew: Map<string, RunState>;
+}
+
 export function drawMap(
   repo: Repo,
   graph: Graph,
   placed: Layout,
-  emphasis: { ready: Set<string>; critical: Set<string> },
+  emphasis: Emphasis,
 ): Html {
   if (placed.nodes.length === 0)
     return html`<div class="map-empty">
@@ -206,13 +235,25 @@ export function drawMap(
           : "waiting";
     const px = x(n.column);
     const py = y(n.row);
+    // The crew's marker: the studio's word for the run, and a dot while it
+    // actually runs. Quiet on purpose; the node's colour still says ready.
+    const run = emphasis.crew.get(n.issue.id);
     return html`<a
       class="map-node"
       data-state="${state}"
       data-crit="${emphasis.critical.has(n.issue.id) ? "1" : "0"}"
+      ${run ? html`data-run="${run}"` : null}
       href="${base}/issues/${n.issue.number}"
     >
       <rect x="${px}" y="${py}" width="${W}" height="${H}" rx="7" />
+      ${run === "running"
+        ? html`<circle
+            class="map-crew-dot"
+            cx="${px + W - 13}"
+            cy="${py + 13}"
+            r="3.5"
+          />`
+        : null}
       <text class="map-title" x="${px + 12}" y="${py + 19}">
         ${trim(n.issue.title)}
       </text>
@@ -223,6 +264,12 @@ export function drawMap(
           : state === "ready"
             ? " · ready"
             : ""}${n.issue.assigneeName ? ` · ${n.issue.assigneeName}` : ""}
+        ${run
+          ? html` ·
+              <tspan class="map-crew"
+                >${run === "running" ? "working" : "queued"}</tspan
+              >`
+          : null}
       </text>
     </a>`;
   });
@@ -323,6 +370,8 @@ export const mapCss = /* css */ `
 .map-node text { font-family: var(--font); pointer-events: none; }
 .map-title { font-size: 12.5px; font-weight: 560; fill: var(--fg); }
 .map-sub { font-size: 11px; fill: var(--fg-muted, var(--fg)); opacity: .72; }
+.map-crew { fill: var(--accent); }
+.map-crew-dot { fill: var(--accent); }
 .map-edge { fill: none; stroke: var(--border); stroke-width: 1.4; }
 .map-edge-crit { stroke: var(--accent); stroke-width: 2; }
 .map-list h2 { font-size: 13px; margin: 0 0 6px; }
@@ -338,7 +387,23 @@ export const mapCss = /* css */ `
 .map-legend i.ready { background: color-mix(in srgb, var(--accent) 14%, var(--bg)); border-color: var(--accent); }
 .map-legend i.done { background: color-mix(in srgb, var(--merged) 12%, var(--bg)); }
 .map-legend i.crit { border: 2px solid var(--accent); background: transparent; }
+.map-legend i.crew { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border-color: var(--accent); vertical-align: 0; }
+.map-lane + .map-lane { margin-top: 28px; }
+.map-lane-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 0 0 8px; }
+.map-lane-head h2 { font-size: 15px; margin: 0; }
+.map-lane-head h2 a { color: inherit; }
 `;
+
+/** The swatches under a drawing: what each colour and mark means. */
+function legend(): Html {
+  return html`<div class="map-legend">
+    <span><i class="ready"></i>ready now</span>
+    <span><i></i>waiting</span>
+    <span><i class="done"></i>done</span>
+    <span><i class="crit"></i>critical path</span>
+    <span><i class="crew"></i>the crew is on it</span>
+  </div>`;
+}
 
 /** One line on how the repository runs itself, when it does. */
 function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
@@ -368,6 +433,7 @@ export function mapPage(ctx: Ctx): Response {
   const blocked = blockedOn(graph);
   const critical = criticalPath(graph);
   const placed = layout(graph);
+  const crew = crewMarks(listActiveRuns(ctx.app.db, [repo.id]));
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -382,13 +448,9 @@ export function mapPage(ctx: Ctx): Response {
         ${drawMap(repo, graph, placed, {
           ready: new Set(ready.map((r) => r.issue.id)),
           critical: new Set(critical.map((i) => i.id)),
+          crew,
         })}
-        <div class="map-legend">
-          <span><i class="ready"></i>ready now</span>
-          <span><i></i>waiting</span>
-          <span><i class="done"></i>done</span>
-          <span><i class="crit"></i>critical path</span>
-        </div>
+        ${legend()}
       </div>
       <aside>
         ${graph.issues.length === 0
@@ -438,8 +500,15 @@ export function mapPage(ctx: Ctx): Response {
   });
 }
 
-/** The map as data, for the crew and the tick: the same three lists. */
-export function mapJson(repo: Repo, graph: Graph): Record<string, unknown> {
+/**
+ * The map as data, for the crew and the tick: the same three lists, and
+ * `working`, the issues the crew is on right now.
+ */
+export function mapJson(
+  repo: Repo,
+  graph: Graph,
+  crew: Map<string, RunState> = new Map(),
+): Record<string, unknown> {
   const brief = (i: Issue) => ({
     number: i.number,
     title: i.title,
@@ -458,11 +527,116 @@ export function mapJson(repo: Repo, graph: Graph): Record<string, unknown> {
       waitsFor: r.waitsFor,
     })),
     critical: criticalPath(graph).map((i) => i.number),
+    working: graph.issues.filter((i) => crew.has(i.id)).map((i) => i.number),
     issues: graph.issues.map(brief),
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);
       const b = graph.issues.find((i) => i.id === e.blockedById);
       return { issue: a?.number, blockedBy: b?.number };
     }),
+  };
+}
+
+// ---- every app on one canvas ----
+
+interface Lane {
+  readonly repo: Repo;
+  readonly graph: Graph;
+  /** Agent runs queued or running here now. */
+  readonly inFlight: number;
+  /** Set when the repository runs itself; `off` has no spend to show. */
+  readonly status: AutonomyStatus | undefined;
+}
+
+interface Lanes {
+  readonly lanes: Lane[];
+  readonly crew: Map<string, RunState>;
+}
+
+/**
+ * One lane per repository the viewer can see that has something to draw:
+ * an open issue, or a run in flight. The rest are left out rather than
+ * drawn empty, so the page is as long as the work and no longer. One read
+ * for every run in flight; a graph only for the lanes that stay.
+ */
+export function globalLanes(app: App, viewer: User | undefined): Lanes {
+  const db = app.db;
+  const repos = listReposVisibleTo(db, viewer, { limit: 200 });
+  const runs = listActiveRuns(
+    db,
+    repos.map((r) => r.id),
+  );
+  const inFlight = new Map<string, number>();
+  for (const run of runs)
+    inFlight.set(run.repoId, (inFlight.get(run.repoId) ?? 0) + 1);
+  const lanes: Lane[] = [];
+  for (const repo of repos) {
+    const flying = inFlight.get(repo.id) ?? 0;
+    if ((repo.counts?.openIssues ?? 0) === 0 && flying === 0) continue;
+    lanes.push({
+      repo,
+      graph: repoGraph(db, repo.id),
+      inFlight: flying,
+      status: repo.autonomy === "off" ? undefined : autonomyStatus(app, repo),
+    });
+  }
+  return { lanes, crew: crewMarks(runs) };
+}
+
+/** A lane: the repository's name, how it runs itself, and its map. */
+function laneHtml(lane: Lane, crew: Map<string, RunState>): Html {
+  const { repo, graph, status } = lane;
+  const spend =
+    status === undefined
+      ? ""
+      : ` · $${status.spentTodayUsd.toFixed(2)} of $${status.ceilingUsd.toFixed(0)} today`;
+  const flying =
+    lane.inFlight === 0
+      ? ""
+      : ` · ${lane.inFlight} ${lane.inFlight === 1 ? "run" : "runs"} in flight`;
+  return html`<section class="map-lane">
+    <header class="map-lane-head">
+      <h2>
+        <a href="${repoBase(repo)}/map">${repo.ownerName}/${repo.name}</a>
+      </h2>
+      <span class="muted small">${repo.autonomy}${spend}${flying}</span>
+    </header>
+    ${drawMap(repo, graph, layout(graph), {
+      ready: new Set(readyNow(graph).map((r) => r.issue.id)),
+      critical: new Set(criticalPath(graph).map((i) => i.id)),
+      crew,
+    })}
+  </section>`;
+}
+
+/** GET /map — every app the viewer can see, one lane each. */
+export function globalMapPage(ctx: Ctx): Response {
+  const viewer = ctx.auth.user;
+  if (!viewer) return signInFirst(ctx);
+  const { lanes, crew } = globalLanes(ctx.app, viewer);
+  const body = html`${pageHead("Map", {
+    sub: "Every app you can see, laid out by what waits for what. The left edge of each lane is ready now; a marked issue is where the crew is.",
+  })}
+  ${lanes.length === 0
+    ? html`<p class="muted">
+        Nothing to map: no open issues anywhere you can see, and nobody working.
+      </p>`
+    : html`${lanes.map((lane) => laneHtml(lane, crew))} ${legend()}`}`;
+  return page({ ctx, title: "Map", body, styleCss: mapCss });
+}
+
+/** GET /api/v1/map — the lanes as data, one entry per repository. */
+export function globalMapJson(
+  app: App,
+  viewer: User | undefined,
+): Record<string, unknown> {
+  const { lanes, crew } = globalLanes(app, viewer);
+  return {
+    repos: lanes.map((lane) => ({
+      ...mapJson(lane.repo, lane.graph, crew),
+      autonomy: lane.repo.autonomy,
+      spentTodayUsd: lane.status?.spentTodayUsd ?? null,
+      inFlight: lane.inFlight,
+    })),
   };
 }

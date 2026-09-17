@@ -157,6 +157,7 @@ export function appsCard(ctx: Ctx): Html {
   const head = html`${icon("rocket")}
     <h2>Apps</h2>
     <span class="spacer"></span>
+    ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
     ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`;
   if (entries.length === 0) {
     return card(
