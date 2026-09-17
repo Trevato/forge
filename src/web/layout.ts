@@ -216,12 +216,12 @@ function helpButton(): Html {
 // ---- palette index ----
 
 const STATIC_PALETTE: PaletteItem[] = [
-  { t: "Home", h: "/", c: "Go" },
-  { t: "Apps", h: "/apps", c: "Go" },
+  { t: "Home", h: "/", c: "Go to" },
+  { t: "Apps", h: "/apps", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
-  { t: "Search", h: "/search", c: "Go" },
+  { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
   { t: "SSH keys", h: "/settings/keys", c: "Settings" },
@@ -241,7 +241,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     ...repos.map((r) => ({
       t: `${r.ownerName}/${r.name}`,
       h: `/${r.ownerName}/${r.name}`,
-      c: "Repository",
+      c: "Repositories",
     })),
     ...STATIC_PALETTE,
   ];
@@ -251,20 +251,41 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   );
 }
 
+/**
+ * The palette is a combobox over a listbox inside a modal dialog: the input
+ * owns the focus and points at the highlighted row (`aria-activedescendant`,
+ * set by the script), the rows are options under group headings. Plain
+ * `type="text"`: a search field's own Escape (clear the box) would eat the
+ * one that should close the dialog.
+ */
 function overlays(): Html {
   return html`<dialog
       class="dialog palette"
       id="palette"
+      role="dialog"
+      aria-modal="true"
       aria-label="Command palette"
     >
       <input
         class="input palette-input"
-        type="search"
+        type="text"
+        role="combobox"
+        aria-expanded="true"
+        aria-haspopup="listbox"
+        aria-controls="palette-list"
+        aria-autocomplete="list"
         placeholder="Jump to a repository, page or action…"
-        aria-label="Command palette search"
+        aria-label="Command palette"
         autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
       />
-      <div class="palette-list" role="listbox" aria-label="Results"></div>
+      <div
+        class="palette-list"
+        id="palette-list"
+        role="listbox"
+        aria-label="Results"
+      ></div>
       <div class="palette-foot">
         ${kbd(["↑", "↓"])} navigate ${kbd(["↵"])} open ${kbd(["esc"])} close
       </div>

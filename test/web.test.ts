@@ -173,6 +173,23 @@ describe("web pages end to end", () => {
     expect(text).toContain("New repository");
   });
 
+  test("the command palette is a proper dialog: modal, a combobox over a listbox, its index as data", async () => {
+    const text = await (await fetch(base, { headers: { cookie } })).text();
+    expect(text).toMatch(
+      /<dialog[^>]*class="dialog palette"[^>]*id="palette"[^>]*role="dialog"[^>]*aria-modal="true"/,
+    );
+    expect(text).toMatch(
+      /<input[^>]*class="input palette-input"[^>]*type="text"[^>]*role="combobox"[^>]*aria-controls="palette-list"/,
+    );
+    expect(text).toMatch(/id="palette-list"\s+role="listbox"/);
+    expect(text).toContain(
+      '<script type="application/json" id="palette-index">',
+    );
+    // The script carries the scorer and consumes Escape itself.
+    expect(text).toContain("function fuzzyScore(");
+    expect(text).toContain("function openModal(");
+  });
+
   test("stylesheet is served with an etag", async () => {
     const first = await fetch(`${base}/assets/forge.css`);
     expect(first.headers.get("content-type")).toContain("text/css");

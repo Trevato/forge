@@ -268,16 +268,17 @@ function repoPalette(
   name: string,
   local: boolean,
 ): PaletteItem[] {
+  const here = "This repository";
   const items: PaletteItem[] = [
-    { t: `${name} — Code`, h: base, c: "This repo" },
-    { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },
-    { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
-    { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
+    { t: `${name} — Code`, h: base, c: here },
+    { t: `${name} — Issues`, h: `${base}/issues`, c: here },
+    { t: `${name} — Pull requests`, h: `${base}/pulls`, c: here },
+    { t: `${name} — Commits`, h: `${base}/commits`, c: here },
   ];
   if (local) {
     items.push(
-      { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
-      { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
+      { t: `${name} — New issue`, h: `${base}/issues/new`, c: here },
+      { t: `${name} — Settings`, h: `${base}/settings`, c: here },
     );
   }
   return items;

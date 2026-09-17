@@ -504,20 +504,42 @@ a.row:hover .row-title { color: var(--accent); }
   min-height: 48px; padding: 0 16px; background: none; font-size: 15px; box-shadow: none;
 }
 .palette .palette-input:focus { box-shadow: none; border-color: var(--border); }
-.palette-list { max-height: 46dvh; overflow-y: auto; padding: 6px; scrollbar-width: thin; }
+/* A height, not a ceiling: the dialog must not jump as rows come and go
+   under a query. */
+.palette-list {
+  height: min(46dvh, 420px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 6px; scrollbar-width: thin;
+}
+.palette-group + .palette-group { margin-top: 4px; }
+.palette-heading {
+  padding: 8px 10px 4px;
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--faint);
+}
 .palette-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 8px 10px; border: 0; border-radius: var(--radius-sm);
-  background: none; color: var(--fg); font-size: 14px; text-align: left; cursor: pointer;
+  background: none; color: var(--fg); font-size: 14px; text-align: left;
+  text-decoration: none; cursor: pointer;
 }
+.palette-item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .palette-item .ico { color: var(--faint); }
-.palette-item .cat { margin-left: auto; font-size: 12px; color: var(--faint); }
-.palette-item[aria-selected="true"], .palette-item:hover { background: var(--muted); }
+.palette-item .cat {
+  flex: none; max-width: 45%; margin-left: auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--faint);
+}
+/* One highlight. The pointer moves it (the script listens) rather than
+   painting a second one under the cursor; the finder keeps plain hover. */
+.palette-item[aria-selected="true"], .finder .palette-item:hover { background: var(--muted); }
 .palette-foot {
   display: flex; align-items: center; gap: 10px; padding: 8px 14px;
   border-top: 1px solid var(--border); font-size: 12px; color: var(--faint);
 }
-.palette-empty { padding: 24px; text-align: center; color: var(--muted-fg); font-size: 13px; }
+.palette-empty {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 100%; margin: 0; color: var(--muted-fg); font-size: 13px; text-align: center;
+}
 
 /* ---- toast / flash ---- */
 .toast {
