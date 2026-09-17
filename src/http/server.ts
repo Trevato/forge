@@ -108,6 +108,7 @@ import {
   runsList,
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
+import { boardPage } from "../web/pages/board.ts";
 import {
   agentCreate,
   agentDelete,
@@ -227,7 +228,7 @@ import {
   storeIdempotent,
   type StoredResponse,
 } from "../core/idempotency.ts";
-import { sseStream } from "./sse.ts";
+import { sseStream, viewerStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -352,6 +353,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/mode", modeSubmit);
   // Several asks, one decision — the studio's bar over its asks panel.
   router.add("POST", "/studio/asks", asksSubmit);
+  // The board: a live wall of the crews at work, for a second monitor.
+  router.add("GET", "/board", boardPage);
   router.add("GET", "/search", searchPage);
   // The JS-free half of every destructive action. Two literal segments, so it
   // is registered before /:owner/:name can claim the shape.
@@ -605,6 +608,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 
   // Live event stream for a repo the viewer can read.
+  // Everything the viewer may see, live. Pages with live regions listen here.
+  router.add("GET", "/events", (ctx) =>
+    viewerStream(ctx.app, ctx.auth.user, ctx.request),
+  );
+
   router.add("GET", "/:owner/:name/stream", (ctx) => {
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
     if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();

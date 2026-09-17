@@ -206,6 +206,24 @@ export function listDecisions(
   return rows.map(toDecision);
 }
 
+/** The newest decisions across several repositories, newest first. */
+export function listDecisionsForRepos(
+  db: Database,
+  repoIds: readonly string[],
+  limit = 12,
+): Decision[] {
+  const unique = [...new Set(repoIds)].slice(0, 400);
+  if (unique.length === 0) return [];
+  return db
+    .query<Row, (string | number)[]>(
+      `SELECT * FROM decision
+       WHERE repo_id IN (${unique.map((_, n) => `?${n + 1}`).join(",")})
+       ORDER BY created_at DESC, id DESC LIMIT ?${unique.length + 1}`,
+    )
+    .all(...unique, Math.min(500, Math.max(1, limit)))
+    .map(toDecision);
+}
+
 export interface DecisionStat {
   readonly kind: DecisionKind;
   readonly n: number;

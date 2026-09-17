@@ -99,6 +99,23 @@ still renders the dev landing unchanged. A forge with no public apps yet —
 most people's first visit — falls back to that same dev landing rather
 than showing an empty shelf.
 
+## The board
+
+`/board` is the home's _Happening now_ as a wall for a second monitor
+(**Focus** on that card opens it): no top bar, dark unless you chose a
+theme, four regions that fill the window. **Working now** is one card per
+run in flight — who, which app, what it is on, why, how long, what it has
+cost — ordered by when it started. **Landed** is the last dozen shipped
+changes across your apps, each with the app's production look on a phone.
+**Decided** is the last dozen entries in the decision ledger: which issue
+next, ship or show, try again — the answer, how sure the decider was, and
+what came of it. **Today** is one row per app that runs on its own: spend
+against the ceiling, runs, shipped, and whether it is paused. Every region
+is live — it swaps itself when a matching event lands, and the dot in the
+corner says whether the stream is connected. `?apps=a,b` narrows it to some
+apps. Keys: `f` fullscreen, `1`–`4` one region full-bleed, `0` all.
+Everything links somewhere; nothing needs a click.
+
 ## What the studio never does
 
 It never says _shipped_ before production redeployed, never hides that a

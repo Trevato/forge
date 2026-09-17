@@ -78,6 +78,8 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .skip:focus-visible { top: 10px; color: var(--primary-fg); }
 
 .shell { width: 100%; max-width: var(--page); margin: 0 auto; padding: 0 16px 96px; flex: 1; }
+/* A bare page owns the whole window: no width, no padding, no chrome. */
+.bare { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
 .topbar {
   position: sticky; top: 0; z-index: 20;
@@ -127,6 +129,7 @@ export const utilities = /* css */ `
 .spacer { flex: 1; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stack { display: flex; flex-direction: column; gap: 12px; }
+.stack-tight { gap: 4px; }
 .bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mt { margin-top: 12px; }
 .mb { margin-bottom: 12px; }

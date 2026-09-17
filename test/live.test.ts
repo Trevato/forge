@@ -1,60 +1,73 @@
+/**
+ * One stream per viewer: everything they may see, as it happens, with
+ * what they missed replayed first.
+ */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addComment, createIssue, listComments } from "../src/core/issues.ts";
-import { createRepo } from "../src/core/repos.ts";
-import { createUser } from "../src/core/users.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
-describe("live comment threads", () => {
+async function readEvents(
+  res: Response,
+  count: number,
+  timeoutMs = 5_000,
+): Promise<{ id: string; data: Record<string, unknown> }[]> {
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const out: { id: string; data: Record<string, unknown> }[] = [];
+  const deadline = Date.now() + timeoutMs;
+  while (out.length < count && Date.now() < deadline) {
+    const next = await Promise.race([
+      reader.read(),
+      Bun.sleep(deadline - Date.now()).then(() => ({
+        done: true,
+        value: undefined,
+      })),
+    ]);
+    if (next.done) break;
+    buffer += decoder.decode(next.value);
+    let at: number;
+    while ((at = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, at);
+      buffer = buffer.slice(at + 2);
+      const id = /^id: (.*)$/m.exec(frame)?.[1] ?? "";
+      const data = /^data: (.*)$/m.exec(frame)?.[1];
+      if (data !== undefined)
+        out.push({ id, data: JSON.parse(data) as Record<string, unknown> });
+    }
+  }
+  await reader.cancel().catch(() => {});
+  return out;
+}
+
+describe("the viewer's stream", () => {
   let dataDir: string;
   let app: App;
   let servers: Servers;
-  let base: string;
-  let userId = "";
-  let issueNumber = 0;
-  let firstCommentId = "";
+  let alice: User;
+  let cookie: string;
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-live-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    base = servers.url;
-    const user = await createUser(app.db, {
-      username: "liv",
-      email: "l@f.dev",
-      password: "live-thread-pass",
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: false,
     });
-    if (!user.ok) throw new Error("user");
-    userId = user.value.id;
-    const repo = await createRepo(app.db, app.reposRoot, {
-      ownerId: userId,
-      name: "proj",
-      visibility: "public",
-    });
-    if (!repo.ok) throw new Error("repo");
-    const issue = createIssue(app.db, {
-      repoId: repo.value.id,
-      authorId: userId,
-      title: "live",
-      body: "start",
-    });
-    if (!issue.ok) throw new Error("issue");
-    issueNumber = issue.value.number;
-    const c1 = addComment(app.db, {
-      issueId: issue.value.id,
-      authorId: userId,
-      body: "first comment",
-    });
-    addComment(app.db, {
-      issueId: issue.value.id,
-      authorId: userId,
-      body: "second comment",
-    });
-    if (!c1.ok) throw new Error("comment");
-    firstCommentId = c1.value.id;
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const session = createSession(app.db, alice.id);
+    cookie = `forge_session=${session.token}`;
   });
 
   afterAll(async () => {
@@ -63,62 +76,60 @@ describe("live comment threads", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the issue page wires up the live client", async () => {
-    const html = await (
-      await fetch(`${base}/liv/proj/issues/${issueNumber}`)
-    ).text();
-    expect(html).toContain('id="live"');
-    expect(html).toContain('id="conversation"');
-    expect(html).toContain('data-thread="issue"');
-    expect(html).toContain("new EventSource");
-    // Comments carry stable ids the client tracks.
-    expect(html).toContain("data-comment-id=");
-  });
-
-  test("the thread fragment returns only comments after the given id", async () => {
-    const frag = await (
-      await fetch(
-        `${base}/liv/proj/issues/${issueNumber}/thread?after=${firstCommentId}`,
-      )
-    ).text();
-    expect(frag).toContain("second comment");
-    expect(frag).not.toContain("first comment");
-    expect(frag).toContain("data-comment-id=");
-    // It's a fragment, not a full page.
-    expect(frag).not.toContain("<!doctype html>");
-  });
-
-  test("a fragment with after=<latest> is empty", async () => {
-    const issueId = app.db
-      .query<{ id: string }, [number]>("SELECT id FROM issue WHERE number = ?1")
-      .get(issueNumber)!.id;
-    const all = listComments(app.db, issueId);
-    const lastId = all[all.length - 1]!.id;
-    const frag = await (
-      await fetch(
-        `${base}/liv/proj/issues/${issueNumber}/thread?after=${lastId}`,
-      )
-    ).text();
-    expect(frag.trim()).toBe("");
-  });
-
-  test("the fragment respects repo visibility", async () => {
-    const repo = await createRepo(app.db, app.reposRoot, {
-      ownerId: userId,
-      name: "secret",
+  test("a private repository's events reach its reader and nobody else; the missed part is replayed", async () => {
+    const made = await createRepo(app, alice, {
+      name: "diary",
       visibility: "private",
     });
-    if (!repo.ok) throw new Error("repo");
-    const issue = createIssue(app.db, {
-      repoId: repo.value.id,
-      authorId: userId,
-      title: "x",
-      body: "",
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = made.value;
+    await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# diary\n" }],
     });
-    if (!issue.ok) throw new Error("issue");
-    const anon = await fetch(
-      `${base}/liv/secret/issues/${issue.value.number}/thread`,
+    const first = openIssue(app, alice, repo, { title: "One" });
+    if (!first.ok) throw new Error(String(first.error));
+
+    // A stranger's stream: nothing private on it, however long they wait.
+    const stranger = await fetch(`${servers.url}/events?since=0`);
+    expect(stranger.headers.get("content-type")).toContain("text/event-stream");
+    const nothing = await readEvents(stranger, 1, 800);
+    expect(nothing.length).toBe(0);
+
+    // The reader's stream, from the beginning: the opened issue is replayed.
+    const mine = await fetch(`${servers.url}/events?since=0`, {
+      headers: { cookie },
+    });
+    const replayed = await readEvents(mine, 1);
+    expect(replayed.length).toBeGreaterThanOrEqual(1);
+    expect(
+      replayed.some(
+        (e) =>
+          e.data["kind"] === "issue.opened" && e.data["repo"] === "alice/diary",
+      ),
+    ).toBe(true);
+
+    // Live: an event after the stream opened arrives, carrying its id.
+    const live = await fetch(`${servers.url}/events`, { headers: { cookie } });
+    await Bun.sleep(100);
+    const second = openIssue(app, alice, repo, { title: "Two" });
+    if (!second.ok) throw new Error(String(second.error));
+    const arrived = await readEvents(live, 1);
+    expect(arrived.length).toBe(1);
+    expect(arrived[0]!.data["kind"]).toBe("issue.opened");
+    expect(arrived[0]!.id).not.toBe("");
+    expect((arrived[0]!.data["payload"] as { number: number }).number).toBe(
+      second.value.number,
     );
-    expect(anon.status).toBe(404);
+  });
+
+  test("the studio pages carry live regions and the script that keeps them fresh", async () => {
+    const res = await fetch(`${servers.url}/`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+    });
+    const page = await res.text();
+    expect(page).toContain('id="live-asks"');
+    expect(page).toContain('data-live="run.*"');
+    expect(page).toContain("new EventSource('/events')");
   });
 });

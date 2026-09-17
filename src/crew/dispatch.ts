@@ -46,6 +46,7 @@ import {
   autonomyTick,
   landIfGreen,
   parkPull,
+  settleAgentRun,
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
 import { certain, decideOr } from "./decide.ts";
@@ -80,8 +81,13 @@ export interface CrewHandle {
   stop(options?: { drain?: boolean; drainMs?: number }): Promise<void>;
 }
 
-/** How long a draining crew waits for its runs before cutting them short. */
-const DRAIN_MS = 50 * 60_000;
+/**
+ * How long a draining crew waits for its runs before cutting them short.
+ * Short: a run cut here is queued again and resumes its own session on the
+ * forge that comes up next, so little is lost, while a long drain holds a
+ * whole pod's memory through a rollout and blocks the next one.
+ */
+const DRAIN_MS = 3 * 60_000;
 
 const handles = new WeakMap<App, CrewHandle>();
 
@@ -298,6 +304,22 @@ function route(app: App, event: ForgeEvent): void {
       return;
     }
     case "run.finished": {
+      if (event.payload["kind"] === "agent") {
+        // A builder's run that ends with nothing to show parks its issue.
+        const issueId = event.payload["issueId"];
+        const runId = event.payload["runId"];
+        const finished =
+          typeof runId === "string" ? getRun(app.db, runId) : undefined;
+        if (typeof issueId === "string")
+          settleAgentRun(app, repo, {
+            issueId,
+            state: String(event.payload["state"] ?? ""),
+            summary: String(event.payload["summary"] ?? ""),
+            reason: String(event.payload["reason"] ?? ""),
+            actorId: finished?.actorId ?? null,
+          });
+        return;
+      }
       if (
         event.payload["kind"] !== "deploy" &&
         event.payload["kind"] !== "check"

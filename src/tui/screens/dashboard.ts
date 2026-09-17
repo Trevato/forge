@@ -38,7 +38,7 @@ import type { Rect, Screen as Surface } from "../term/screen.ts";
 import { BOLD, style } from "../term/style.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { pad, truncate } from "../term/width.ts";
-import { fill, len, split } from "../ui/layout.ts";
+import { beside, fill, len, split } from "../ui/layout.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
 import { card, emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
@@ -105,6 +105,18 @@ interface OnYouItem {
 
 /** The apps card shows this many before it scrolls. */
 const APPS_ROWS = 5;
+/** The apps card is drawn only when the repositories keep at least this. */
+const REPOS_MIN_ROWS = 6;
+
+/** The `tab` order, whichever of these the frame had room for. */
+const ORDER: readonly PaneId[] = [
+  "apps",
+  "repos",
+  "activity",
+  "onyou",
+  "machine",
+  "orgs",
+];
 
 export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let repos: Repo[] = [];
@@ -184,19 +196,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
 
   /**
-   * The panes that exist right now. Below two columns only the repo list is
-   * drawn, so it is the only thing `tab` can reach — a focus ring on a card
-   * that is not on screen is worse than no focus ring. The apps card is only
-   * there when there is an app: an empty card saying so would take the rows
-   * the repositories need, and `a` is the way to the apps screen regardless.
+   * The panes the last frame drew, which is what `tab` can reach — a focus
+   * ring on a card that is not on screen is worse than no focus ring. The
+   * frame decides, not a rule repeated here: at two columns everything is
+   * up; narrower, the activity feed stacks under the repositories and the
+   * three small cards wait for a wider window; shorter still, the
+   * repositories have the whole body. The apps card is only there when there
+   * is an app and the repositories keep their rows — an empty card saying so
+   * would take the rows they need, and `a` opens the apps screen regardless.
    */
-  const panes = (): PaneId[] => {
-    if (!ctx.twoPane) return ["repos"];
-    const withApps: PaneId[] = apps.length > 0 ? ["apps"] : [];
-    return f.signedIn
-      ? [...withApps, "repos", "activity", "onyou", "machine", "orgs"]
-      : [...withApps, "repos", "activity"];
-  };
+  let drawn: ReadonlySet<PaneId> = new Set<PaneId>(["repos"]);
+  const panes = (): PaneId[] => ORDER.filter((pane) => drawn.has(pane));
 
   const at = (pane: PaneId): ListState => cursors[pane];
   const size = (pane: PaneId): number =>
@@ -344,15 +354,28 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const set = ctx.icons;
-      if (!panes().includes(focus)) focus = "repos";
-      const [left, right] = ctx.twoPane
-        ? split(area, "h", [fill(3), fill(2)])
-        : [area, undefined];
+      const { main, aside, stacked } = beside(area, ctx.twoPane, {
+        main: fill(3),
+        aside: fill(2),
+      });
+      const appsCard = Math.min(apps.length, APPS_ROWS) + 2;
       const appsH =
-        right === undefined || apps.length === 0
-          ? 0
-          : Math.min(apps.length, APPS_ROWS) + 2;
-      const [appsArea, box, list] = split(left!, "v", [
+        apps.length > 0 && main.h - appsCard - 1 >= REPOS_MIN_ROWS
+          ? appsCard
+          : 0;
+      // Decide what is on screen before drawing any of it: the focus ring is
+      // painted by the draws, and a window that just shrank may have taken
+      // the focused pane away, in which case the cursor lands on the
+      // repositories, which are always there.
+      const here = new Set<PaneId>(["repos"]);
+      if (appsH > 0) here.add("apps");
+      if (aside !== undefined) here.add("activity");
+      if (aside !== undefined && !stacked && f.signedIn)
+        here.add("onyou").add("machine").add("orgs");
+      drawn = here;
+      if (!here.has(focus)) focus = "repos";
+
+      const [appsArea, box, list] = split(main, "v", [
         len(appsH),
         len(1),
         fill(1),
@@ -360,9 +383,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (appsH > 0) drawApps(s, appsArea!, c, set);
       ctx.setCursor(filter.render(s, box!, c, "filter repositories"));
       drawRepos(s, list!, c, set);
-      if (right === undefined) return;
-
-      const [activity, onYouArea, machine, orgsArea] = split(right, "v", [
+      if (aside === undefined) return;
+      if (stacked) {
+        drawActivity(s, aside, c, set);
+        return;
+      }
+      const [activity, onYouArea, machine, orgsArea] = split(aside, "v", [
         fill(1),
         len(f.signedIn ? 6 : 0),
         len(6),

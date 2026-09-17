@@ -615,9 +615,31 @@ a pane with its own cursor: `tab` / `shift+tab` cycles, the focused one wears
 the accent frame, `j`/`k` move inside it and `enter` opens what it is pointing
 at — an activity row opens **the issue, pull or repository it is about**, a
 pin opens its repository, an organization opens its page. `d` on a pinned row
-unpins it (asking first). A click does all of the same. Below 100 columns only
-the repository list is drawn, so it is the only thing `tab` can reach: a focus
-ring on a card that is not on screen is worse than no focus ring.
+unpins it (asking first). A click does all of the same. Below 100 columns the
+activity feed stacks under the repository list and the three small cards wait
+for a wider window; shorter than twelve body rows, the repositories have the
+whole body. `tab` reaches exactly the panes the last frame drew: a focus ring
+on a card that is not on screen is worse than no focus ring.
+
+### 6·0a·1. Laid out for the terminal it is in
+
+Three numbers in `ui/layout.ts` decide every screen's shape, so every screen
+folds at the same width and none invents its own. At **100 columns** a list
+sits beside its detail; below, `beside()` stacks the two with the detail
+underneath (two fifths of the height unless the screen says otherwise), and
+drops it only when there are fewer than twelve rows to share. Under **40×10**
+no layout survives — a card is narrower than its title — so one line says what
+would help, and every screen keeps its state for the moment the window grows.
+
+A resize re-lays the current screen at once and loses nothing: a list keeps
+its cursor and scrolls it back into view, a log keeps the _line_ at the top
+of the reader's window whatever number of rows it now wraps to, and a program
+holding the pty (`$FORGE_EDITOR`, an app's `tty`) hears the new size before
+the UI does. Long text wraps or ends in an ellipsis at the width, never past
+it. A row's meta gives way before its title starves — the leading pieces
+(`metaOf` order: a commit, then a cost, then the time) go first, the last one
+last — and a table's ranked columns (`drop`) are given up lowest first, the
+same word `local/rows.ts` uses.
 
 An activity row is one line, not two, because a row is a thing you can put a
 cursor on: `who did what · the object`, with the time in a fixed right-hand

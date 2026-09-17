@@ -34,7 +34,9 @@ spec:
     spec:
       # An hour for an SSH session to end on its own before the old pod is
       # killed anyway.
-      terminationGracePeriodSeconds: 3600
+      # The crew drains for three minutes, then runs are cut and resume on
+      # the next pod; a little more than that here.
+      terminationGracePeriodSeconds: 300
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}

@@ -74,6 +74,13 @@ export interface PageOptions {
    * reader did not ask for steals their scroll position and their selection.
    */
   refresh?: { seconds: number; url?: string };
+  /**
+   * No topbar, no footer, no page width: a page that is the whole window
+   * (the board). The overlays stay, so the palette is still one chord away.
+   */
+  bare?: boolean;
+  /** The theme when the viewer has chosen none: for a page that is dark by nature. */
+  theme?: ThemeName;
 }
 
 // ---- topbar pieces ----
@@ -330,6 +337,74 @@ function flashToast(flash: Flash): Html {
   </div>`;
 }
 
+// ---- the chrome ----
+
+/** The skip link and the topbar: the wordmark, the crumbs, the tools. */
+function topbar(
+  ctx: Ctx,
+  theme: ThemeName | undefined,
+  crumbs: PageOptions["crumbs"],
+): Html {
+  const user = ctx.auth.user;
+  return html`<a class="skip" href="#main">Skip to content</a>
+    <header class="topbar" role="banner">
+      <a href="/" class="wordmark" data-shortcut="g h"
+        ><span class="mark"></span>forge</a
+      >
+      ${when(
+        crumbs,
+        (items) =>
+          html`<nav class="crumbs" aria-label="Location">
+            ${items.map(
+              (crumb, i) =>
+                html`${i > 0 ? html`<span class="sep">/</span>` : null}<a
+                    href="${crumb.href}"
+                    >${crumb.label}</a
+                  >`,
+            )}
+          </nav>`,
+      )}
+      <span class="spacer"></span>
+      <span class="topbar-tools">
+        ${searchBar()}${helpButton()}${modeToggle(ctx)}${themeMenu(theme)}
+        ${user
+          ? html`${newMenu()}${userMenu(
+              user,
+              ctx.auth.via === "edge"
+                ? {
+                    label: "Sign out",
+                    href: edgeLogoutUrl("/"),
+                    icon: "signOut",
+                  }
+                : { label: "Sign out", post: "/logout", icon: "signOut" },
+            )}`
+          : btn("Sign in", {
+              href:
+                ctx.app.config.edgeToken === undefined
+                  ? "/signin"
+                  : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
+            })}
+      </span>
+    </header>`;
+}
+
+function footer(): Html {
+  return html`<footer class="foot">
+    <span class="mark"></span>
+    <span>forge — your code, your machine</span>
+    <span class="spacer"></span>
+    <button
+      class="btn js-only"
+      data-variant="link"
+      data-size="sm"
+      type="button"
+      data-palette
+    >
+      Command palette
+    </button>
+  </footer>`;
+}
+
 // ---- the page ----
 
 export function page(options: PageOptions, status = 200): Response {
@@ -337,8 +412,7 @@ export function page(options: PageOptions, status = 200): Response {
   // while everything else stays forbidden.
   const nonce = secret();
   const { ctx } = options;
-  const theme = ctx.theme;
-  const user = ctx.auth.user;
+  const theme = ctx.theme ?? options.theme;
   const flash = readFlash(ctx.request);
   const scriptJs = options.scriptJs
     ? `${shellJs}\n${options.scriptJs}`
@@ -386,64 +460,12 @@ export function page(options: PageOptions, status = 200): Response {
           : null}
       </head>
       <body>
-        <a class="skip" href="#main">Skip to content</a>
-        <header class="topbar" role="banner">
-          <a href="/" class="wordmark" data-shortcut="g h"
-            ><span class="mark"></span>forge</a
-          >
-          ${when(
-            options.crumbs,
-            (items) =>
-              html`<nav class="crumbs" aria-label="Location">
-                ${items.map(
-                  (crumb, i) =>
-                    html`${i > 0 ? html`<span class="sep">/</span>` : null}<a
-                        href="${crumb.href}"
-                        >${crumb.label}</a
-                      >`,
-                )}
-              </nav>`,
-          )}
-          <span class="spacer"></span>
-          <span class="topbar-tools">
-            ${searchBar()}${helpButton()}${modeToggle(ctx)}${themeMenu(theme)}
-            ${user
-              ? html`${newMenu()}${userMenu(
-                  user,
-                  ctx.auth.via === "edge"
-                    ? {
-                        label: "Sign out",
-                        href: edgeLogoutUrl("/"),
-                        icon: "signOut",
-                      }
-                    : { label: "Sign out", post: "/logout", icon: "signOut" },
-                )}`
-              : btn("Sign in", {
-                  href:
-                    ctx.app.config.edgeToken === undefined
-                      ? "/signin"
-                      : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
-                })}
-          </span>
-        </header>
-        <main class="shell" id="main">
+        ${options.bare ? null : topbar(ctx, theme, options.crumbs)}
+        <main class="${options.bare ? "bare" : "shell"}" id="main">
           ${flash ? flashToast(flash) : null}${options.body}
         </main>
-        <footer class="foot">
-          <span class="mark"></span>
-          <span>forge — your code, your machine</span>
-          <span class="spacer"></span>
-          <button
-            class="btn js-only"
-            data-variant="link"
-            data-size="sm"
-            type="button"
-            data-palette
-          >
-            Command palette
-          </button>
-        </footer>
-        ${overlays()} ${paletteIndex(ctx, options.palette ?? [])}
+        ${options.bare ? null : footer()} ${overlays()}
+        ${paletteIndex(ctx, options.palette ?? [])}
         ${raw(`<script nonce="${nonce}">${scriptJs}</script>`)}
       </body>
     </html>`;

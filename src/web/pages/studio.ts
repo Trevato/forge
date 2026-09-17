@@ -78,7 +78,7 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { asksJs } from "../client.ts";
+import { asksJs, liveRegionsJs } from "../client.ts";
 import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
@@ -723,7 +723,7 @@ export async function studioApp(
   // why it is not up, and the deploy whose log says the rest.
   const live = envPhrase(production);
   const head = html`<div class="page-head studio-head">
-    <div class="stack" style="gap: 4px">
+    <div class="stack stack-tight">
       <h1>
         ${repo.name}
         ${badge(
@@ -1013,7 +1013,24 @@ export async function studioApp(
     })}
     ${head}
     <div class="dash">
-      <div class="dash-main stack">${tell} ${asks} ${previews} ${now}</div>
+      <div class="dash-main stack">
+        ${tell}
+        <div
+          id="live-asks"
+          data-live="run.*,pull.*,issue.*,check.*"
+          data-live-repo="${repo.ownerName}/${repo.name}"
+        >
+          ${asks}
+        </div>
+        ${previews}
+        <div
+          id="live-now"
+          data-live="run.*,pull.*,issue.*"
+          data-live-repo="${repo.ownerName}/${repo.name}"
+        >
+          ${now}
+        </div>
+      </div>
       <aside class="dash-rail stack">
         ${crewCard} ${weekCard} ${ownCard} ${more}
       </aside>
@@ -1026,7 +1043,7 @@ export async function studioApp(
     palette: repoPalette(repo),
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
   });
 }
 
@@ -1139,11 +1156,19 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     running.map((r) => r.actorId).filter((id): id is string => id !== null),
   );
   const byId = new Map(appRepos.map((r) => [r.id, r]));
+  // The board: the same runs as a wall for a second monitor.
+  const nowHead = html`${icon("activity")}
+    <h2>Happening now</h2>
+    <span class="spacer"></span>
+    ${btn("Focus", {
+      href: "/board",
+      size: "sm",
+      title: "The board: a live wall of the crews at work",
+    })}`;
   const now =
     running.length === 0
       ? card(html`<p class="muted small">Nobody is working right now.</p>`, {
-          head: html`${icon("activity")}
-            <h2>Happening now</h2>`,
+          head: nowHead,
         })
       : listCard(
           running.map((r) => {
@@ -1175,16 +1200,19 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
                 : {}),
             });
           }),
-          {
-            head: html`${icon("activity")}
-              <h2>Happening now</h2>`,
-          },
+          { head: nowHead },
         );
 
   const body = html`<div class="dash">
-    <div class="dash-main stack">${asks} ${apps}</div>
+    <div class="dash-main stack">
+      <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">${asks}</div>
+      <div id="live-apps" data-live="run.finished,pull.merged,pull.opened">
+        ${apps}
+      </div>
+    </div>
     <aside class="dash-rail stack">
-      ${now} ${onYouCard(ctx, user) ?? null}
+      <div id="live-now" data-live="run.*">${now}</div>
+      ${onYouCard(ctx, user) ?? null}
     </aside>
   </div>`;
   return page({
@@ -1192,7 +1220,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     title: "Studio",
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
   });
 }
 
