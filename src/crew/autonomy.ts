@@ -173,17 +173,24 @@ export async function driveRepo(
   const active = activeRuns(app, repo.id);
   // Slots bound the builders. A review is the reviewer's short pass on a
   // pull and never keeps a builder from picking the next issue.
-  const slotted = active.filter((r) => r.reason !== "review");
-  if (slotted.length >= repo.autonomySlots) return "full";
+  const planners = new Set(
+    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
+  );
+  const slotted = active.filter(
+    (r) =>
+      r.reason !== "review" && (r.actorId === null || !planners.has(r.actorId)),
+  );
+  if (slotted.length >= repo.autonomySlots) {
+    // The builders are busy; the planner can still refill the map.
+    if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
+    return "full";
+  }
 
   const busyIssues = new Set(active.map((r) => r.issueId));
   const inFlight = new Map<string, number>();
   for (const r of active)
     if (r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const planners = new Set(
-    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
-  );
   const graph = repoGraph(app.db, repo.id);
   const proposed = openPullsClosing(app.db, repo.id);
   const ready = readyNow(graph).filter(
@@ -223,15 +230,53 @@ export async function driveRepo(
       size: routed.size,
       by: routed.by,
     });
+    // Planning runs alongside building: when the ready list is thin, the
+    // planner is asked now, not when the builders have run it dry.
+    await planIfThin(app, repo, by, crew, active, ready.length - 1, now);
     return "picked";
   }
 
-  // Nothing is ready. When nothing is in flight either, the map has run dry:
-  // the planner is given the direction, not more often than the interval.
-  if (active.length > 0 || planner === undefined) return "idle";
-  if (repo.autonomyDirection.trim() === "") return "idle";
+  // Nothing is ready: the planner is asked, thin or dry, at most every
+  // REPLAN_AFTER_MS.
+  if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
+  return "idle";
+}
+
+/** The map is thin below this many ready issues; the planner refills it. */
+const THIN_MAP = 3;
+
+/**
+ * Give the planner the direction when the map is thin — fewer than a few
+ * ready issues — and no planning run is in flight, and the last one is
+ * old enough. Returns whether a planning run was set up. Planning runs
+ * alongside building: the builders are never waited for.
+ */
+function notPlanned(repo: Repo, why: string): false {
+  log.info("planner not asked", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    why,
+  });
+  return false;
+}
+
+async function planIfThin(
+  app: App,
+  repo: Repo,
+  by: User,
+  crew: readonly { agent: Agent; role: CrewRole }[],
+  active: readonly Run[],
+  ready: number,
+  now: Date,
+): Promise<boolean> {
+  if (ready >= THIN_MAP) return false;
+  const planner = crew.find((c) => c.role === "planner")?.agent;
+  if (planner === undefined) return notPlanned(repo, "no planner on the crew");
+  if (repo.autonomyDirection.trim() === "")
+    return notPlanned(repo, "no direction written");
   const direction = ensureDirectionIssue(app, by, repo);
-  if (!direction) return "idle";
+  if (!direction) return notPlanned(repo, "no direction issue");
+  if (active.some((r) => r.issueId === direction.id))
+    return notPlanned(repo, "a planning run is in flight");
   const lastPlan = app.db
     .query<{ state: string; created_at: string }, [string]>(
       `SELECT state, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
@@ -240,29 +285,33 @@ export async function driveRepo(
     .get(direction.id);
   if (lastPlan !== null && lastPlan !== undefined) {
     if (lastPlan.state === "queued" || lastPlan.state === "running")
-      return "idle";
+      return notPlanned(repo, "a planning run is in flight");
     if (
       now.getTime() - new Date(lastPlan.created_at).getTime() <
       REPLAN_AFTER_MS
     )
-      return "idle";
+      return notPlanned(repo, "planned recently");
   } else if (direction.assigneeId === planner.user.id) {
-    // Asked already; the crew has not picked it up yet.
-    return "idle";
+    return notPlanned(repo, "the planner already holds the direction");
   }
-  // Asking again is an assignment again: clear it first so the event fires.
   if (direction.assigneeId !== null) {
     const cleared = assignIssue(app, by, repo, direction, null);
-    if (!cleared.ok) return "idle";
+    if (!cleared.ok)
+      return notPlanned(repo, `could not clear: ${String(cleared.error)}`);
   }
   const current = getIssueById(app.db, direction.id) ?? direction;
   const assigned = assignIssue(app, by, repo, current, planner.user);
-  if (!assigned.ok) return "idle";
-  log.info("map ran dry; planner asked", {
-    repo: `${repo.ownerName}/${repo.name}`,
-    planner: planner.user.username,
-  });
-  return "planned";
+  if (!assigned.ok)
+    return notPlanned(repo, `could not assign: ${String(assigned.error)}`);
+  log.info(
+    ready === 0 ? "map ran dry; planner asked" : "map is thin; planner asked",
+    {
+      repo: `${repo.ownerName}/${repo.name}`,
+      planner: planner.user.username,
+      ready,
+    },
+  );
+  return true;
 }
 
 /**
