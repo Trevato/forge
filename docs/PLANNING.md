@@ -119,3 +119,46 @@ the same bounded number of tries the crew stops and waits for a person:
 autonomy re-queues nothing a person must decide. The map page says how it
 stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why it is
 paused when it is.
+
+## The decider
+
+Some of what the forge does is a decision, not a generation: which builder
+takes a sentence, how big it is, what kind of ask it is; whether a red
+check is the change's fault or the environment's; which option on a card a
+careful owner would pick. Every one has the same shape — a state, a set of
+questions each with fixed choices, a probability per choice out — and every
+one has a rule that answers it today. `crew/decide.ts` is that shape, and a
+**decider** is anything that answers it better.
+
+With `TYPESAFE_API_KEY` set, TypeSafe's Jev is the decider: a System One
+model that answers fixed-choice questions with calibrated probabilities in
+well under a second and never generates text. The forge asks it through
+`POST /v1/systemone` with the state as a record of named facts and each
+question as a `choice` with `criteria` — the options, and what each means.
+`TYPESAFE_MODEL` picks a model (`jev-latest` by default); `TYPESAFE_URL`
+points elsewhere for a stand-in.
+
+The rule is never gone. A decider that is absent, slow past its budget,
+errors, or names a choice outside the options leaves the rule's answer in
+place, and `by` says which answered. Nothing a decider says is acted on
+outside the choices the forge wrote down, which is what makes its answers
+safe to act on without a person.
+
+Where it decides today:
+
+- **Routing** (`crew/route.ts`): who takes what was told, its size (tiny,
+  small, large) and kind (bug, feature, question, chore). Asked when a
+  sentence is told in the studio and when a repository on its own picks
+  from the map. An issue already assigned to a builder keeps its builder;
+  the decider is not asked.
+- **A red check** (`crew/dispatch.ts`): from the tail of the check's log,
+  whether the change, the environment or the base branch failed. When it
+  is the environment's fault, at 70% or better, the check runs again once
+  instead of the agent reworking a change that is fine.
+- **Cards** (`web/pages/studio.ts`): which option on an "asks you" card is
+  likely right, so the card leads with it — _likely_, _probably_ or _maybe_
+  beside the button, the probability on hover. The person still decides.
+
+Every answer a decider gives is a log line — `decided by=typesafe ms=270
+answers=builder=mason@0.99 size=tiny@0.58 …` — so what it said and how
+long it took are always in the forge's log.

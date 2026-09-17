@@ -668,7 +668,7 @@ function dashboard(ctx: Ctx, user: User): Html {
   </div>`;
 }
 
-export function home(ctx: Ctx): Response {
+export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   // Studio by default: apps, the crew, what asks you. `?mode=dev` on the
   // home is the one-off way in without switching the browser.
@@ -677,7 +677,7 @@ export function home(ctx: Ctx): Response {
     ctx.mode === "studio" &&
     ctx.url.searchParams.get("mode") !== "dev"
   )
-    return studioHome(ctx, user);
+    return await studioHome(ctx, user);
   return page({
     ctx,
     title: "forge",

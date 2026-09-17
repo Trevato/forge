@@ -105,7 +105,7 @@ describe("a repository on its own", () => {
   });
 
   test("off does nothing; on, the widest-freeing ready issue goes to the freest builder", async () => {
-    expect(driveRepo(app, fresh())).toBe("off");
+    expect(await driveRepo(app, fresh())).toBe("off");
     const on = await updateRepoSettings(app, alice, repo, {
       autonomy: "autonomous",
       autonomyDirection: "Pull the engine out of the game.",
@@ -114,7 +114,7 @@ describe("a repository on its own", () => {
       autonomyBy: alice.id,
     });
     expect(on.ok).toBe(true);
-    expect(driveRepo(app, fresh())).toBe("picked");
+    expect(await driveRepo(app, fresh())).toBe("picked");
     // The renderer holds the scene graph up, so it goes first; with nothing
     // in flight the builders tie and mason sorts first by name.
     const renderer = getIssue(app.db, repo.id, 1)!;
@@ -122,7 +122,7 @@ describe("a repository on its own", () => {
     expect(getIssue(app.db, repo.id, 2)!.assigneeId).toBeNull();
   });
 
-  test("slots are the WIP limit; a run in flight fills the one slot", () => {
+  test("slots are the WIP limit; a run in flight fills the one slot", async () => {
     const run = createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -131,17 +131,17 @@ describe("a repository on its own", () => {
       reason: "assigned",
     });
     claimRun(app.db, run.id);
-    expect(driveRepo(app, fresh())).toBe("full");
+    expect(await driveRepo(app, fresh())).toBe("full");
     // With two slots the next ready issue goes to the other builder.
     app.db
       .query("UPDATE repo SET autonomy_slots = 2 WHERE id = ?1")
       .run(repo.id);
-    expect(driveRepo(app, fresh())).toBe("picked");
+    expect(await driveRepo(app, fresh())).toBe("picked");
     expect(getIssue(app.db, repo.id, 2)!.assigneeId).toBe(scout.id);
     finishRun(app.db, run.id, { state: "ok", summary: "done", costUsd: 4 });
   });
 
-  test("the ceiling pauses picking until midnight and says so", () => {
+  test("the ceiling pauses picking until midnight and says so", async () => {
     const spent = createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -155,7 +155,7 @@ describe("a repository on its own", () => {
     expect(status.spentTodayUsd).toBeCloseTo(11, 5);
     expect(status.paused).toBe("ceiling");
     expect(status.resumesAt).not.toBeNull();
-    expect(driveRepo(app, fresh())).toBe("paused");
+    expect(await driveRepo(app, fresh())).toBe("paused");
     app.db
       .query("UPDATE repo SET autonomy_ceiling_usd = 100 WHERE id = ?1")
       .run(repo.id);
@@ -171,15 +171,15 @@ describe("a repository on its own", () => {
           .ok,
       ).toBe(true);
     // A run left running would mean "wait"; none is.
-    expect(driveRepo(app, fresh())).toBe("planned");
+    expect(await driveRepo(app, fresh())).toBe("planned");
     const direction = getIssueById(app.db, fresh().directionIssueId!)!;
     expect(direction.title).toContain("Direction: Pull the engine out");
     expect(direction.assigneeId).toBe(atlas.id);
     // Asked, it is not asked again until the interval passes, and the
     // direction issue is never picked as work for a builder.
-    expect(driveRepo(app, fresh())).toBe("idle");
+    expect(await driveRepo(app, fresh())).toBe("idle");
     const later = new Date(Date.now() + 7 * 60 * 60_000);
-    expect(driveRepo(app, fresh(), later)).toBe("idle");
+    expect(await driveRepo(app, fresh(), later)).toBe("idle");
     const planned = createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -188,14 +188,14 @@ describe("a repository on its own", () => {
       reason: "assigned",
     });
     claimRun(app.db, planned.id);
-    expect(driveRepo(app, fresh(), later)).toBe("idle");
+    expect(await driveRepo(app, fresh(), later)).toBe("idle");
     finishRun(app.db, planned.id, {
       state: "ok",
       summary: "planned",
       costUsd: 1,
     });
-    expect(driveRepo(app, fresh())).toBe("idle");
-    expect(driveRepo(app, fresh(), later)).toBe("planned");
+    expect(await driveRepo(app, fresh())).toBe("idle");
+    expect(await driveRepo(app, fresh(), later)).toBe("planned");
     expect(getIssueById(app.db, direction.id)!.assigneeId).toBe(atlas.id);
   });
 
@@ -261,7 +261,7 @@ describe("a repository on its own", () => {
     });
     if (!opened.ok) throw new Error(String(opened.error));
     // Proposed, so not ready for a builder: the tick has nothing to pick.
-    expect(driveRepo(app, fresh())).not.toBe("picked");
+    expect(await driveRepo(app, fresh())).not.toBe("picked");
     expect(getIssue(app.db, repo.id, todo.value.number)!.assigneeId).toBeNull();
 
     // Green: the sweep lands it, and the issue it closes closes.
@@ -295,7 +295,7 @@ describe("a repository on its own", () => {
       summary: "no changes pushed: this needs a decision on the protocol",
       costUsd: 0.2,
     });
-    expect(driveRepo(app, fresh())).not.toBe("picked");
+    expect(await driveRepo(app, fresh())).not.toBe("picked");
     expect(
       getIssue(app.db, repo.id, stuck.value.number)!.assigneeId,
     ).toBeNull();

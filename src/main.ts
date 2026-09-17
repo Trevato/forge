@@ -18,6 +18,7 @@ import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
+import { typeSafeDecider } from "./crew/decide.ts";
 import { pruneTokens } from "./core/tokens.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
@@ -65,6 +66,18 @@ const app = createApp({
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
     : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),
+  // TYPESAFE_API_KEY makes TypeSafe's Jev the forge's decider: fixed-choice
+  // questions get calibrated answers instead of the rules'. Without it the
+  // rules answer, as ever.
+  ...((process.env.TYPESAFE_API_KEY ?? "").trim() === ""
+    ? {}
+    : {
+        decider: typeSafeDecider({
+          apiKey: (process.env.TYPESAFE_API_KEY ?? "").trim(),
+          url: process.env.TYPESAFE_URL,
+          model: process.env.TYPESAFE_MODEL,
+        }),
+      }),
 });
 
 await reconcile(app);

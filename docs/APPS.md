@@ -460,6 +460,8 @@ works the crew page says so, in words, before anyone assigns anything.
 | `FORGE_CLAUDE_CONFIG_DIR` | Claude Code's own               | a `CLAUDE_CONFIG_DIR` for runs, when wanted       |
 | `ANTHROPIC_API_KEY`       | —                               | handed to agent runs when set                     |
 | `CLAUDE_CODE_OAUTH_TOKEN` | —                               | handed to agent runs when set                     |
+| `TYPESAFE_API_KEY`        | —                               | TypeSafe's Jev answers fixed-choice decisions     |
+| `TYPESAFE_MODEL`          | `jev-latest`                    | the TypeSafe model to ask                         |
 
 The public URL apps and agents are told about the forge is `FORGE_URL` when
 set, else `http://<FORGE_HOST>:<PORT>`; its scheme and port are what app

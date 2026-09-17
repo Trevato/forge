@@ -16,6 +16,7 @@ import type { App } from "../app.ts";
 import { assignIssue, openIssue } from "../actions/issues.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
+import { pickBuilder, routeIssue } from "./route.ts";
 import { readyNow, repoGraph } from "../core/dependencies.ts";
 import { getIssueById, type Issue } from "../core/issues.ts";
 import {
@@ -111,27 +112,6 @@ export function autonomyStatus(
   };
 }
 
-/**
- * Which builder takes an issue. The issue's own assignee when it is a
- * builder here; otherwise the builder with the least in flight, then by
- * name. One function, one fixed answer space: the place a faster or wiser
- * decider plugs in later.
- */
-export function pickBuilder(
-  issue: Issue,
-  builders: readonly Agent[],
-  inFlight: ReadonlyMap<string, number>,
-): Agent | undefined {
-  if (builders.length === 0) return undefined;
-  const own = builders.find((b) => b.user.id === issue.assigneeId);
-  if (own) return own;
-  return [...builders].sort(
-    (a, b) =>
-      (inFlight.get(a.user.id) ?? 0) - (inFlight.get(b.user.id) ?? 0) ||
-      a.user.username.localeCompare(b.user.username),
-  )[0];
-}
-
 export type Drove = "off" | "paused" | "full" | "picked" | "planned" | "idle";
 
 /**
@@ -139,7 +119,11 @@ export type Drove = "off" | "paused" | "full" | "picked" | "planned" | "idle";
  * log and for tests; the effects are an assignment (which the crew turns
  * into a run) or a planner given the direction.
  */
-export function driveRepo(app: App, repo: Repo, now = new Date()): Drove {
+export async function driveRepo(
+  app: App,
+  repo: Repo,
+  now = new Date(),
+): Promise<Drove> {
   if (repo.autonomy === "off") return "off";
   const status = autonomyStatus(app, repo, now);
   if (status.paused !== null) return "paused";
@@ -171,8 +155,9 @@ export function driveRepo(app: App, repo: Repo, now = new Date()): Drove {
   );
   const next = ready[0];
   if (next !== undefined) {
-    const builder = pickBuilder(next.issue, builders, inFlight);
-    if (!builder) return "paused";
+    const routed = await routeIssue(app, repo, next.issue, crew, inFlight);
+    if (!routed) return "paused";
+    const builder = routed.builder;
     // Assigning is the event that starts a run. An issue already carrying
     // the builder's name is assigned afresh so the event fires once more.
     if (next.issue.assigneeId === builder.user.id) {
@@ -193,6 +178,8 @@ export function driveRepo(app: App, repo: Repo, now = new Date()): Drove {
       repo: `${repo.ownerName}/${repo.name}`,
       issue: next.issue.number,
       agent: builder.user.username,
+      size: routed.size,
+      by: routed.by,
     });
     return "picked";
   }
@@ -294,7 +281,11 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
   for (const repo of listAutonomousRepos(app.db)) {
     try {
       await sweepGreen(app, repo);
-      const did = driveRepo(app, getRepoById(app.db, repo.id) ?? repo, now);
+      const did = await driveRepo(
+        app,
+        getRepoById(app.db, repo.id) ?? repo,
+        now,
+      );
       if (did === "picked" || did === "planned")
         log.info("tick", { repo: `${repo.ownerName}/${repo.name}`, did });
     } catch (error) {
@@ -340,6 +331,8 @@ export async function landIfGreen(
   });
   return true;
 }
+
+export { pickBuilder };
 
 export function roleOf(app: App, repo: Repo, agent: Agent): CrewRole {
   return (
