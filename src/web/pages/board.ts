@@ -442,8 +442,7 @@ export const boardCss = /* css */ `
 .board-live { display: inline-flex; align-items: center; }
 .board-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--faint); transition: background-color 200ms var(--ease), box-shadow 200ms var(--ease); }
 .board-live[data-state="open"] .board-dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
-.board-live[data-state="reconnecting"] .board-dot { background: var(--attn); animation: board-blink 1s ease-in-out infinite; }
-@keyframes board-blink { 50% { opacity: .3; } }
+.board-live[data-state="reconnecting"] .board-dot { background: var(--attn); }
 .board-clock { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted-fg); min-width: 5ch; text-align: right; }
 .board-grid { flex: 1; display: grid; gap: var(--pad); padding: 12px var(--pad) var(--pad); min-height: 0; }
 .board-region { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -479,12 +478,14 @@ ${widths}
 .board-state::before { content: ""; width: 8px; height: 8px; border-radius: 999px; background: var(--faint); }
 .board-run[data-state="working"] { border-color: color-mix(in srgb, var(--accent) 38%, var(--border)); }
 .board-run[data-state="working"] .board-state { color: var(--accent); }
-.board-run[data-state="working"] .board-state::before { background: var(--accent); animation: board-pulse 1.6s ease-in-out infinite; }
+.board-run[data-state="working"] .board-state::before { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .board-run[data-state="working"] .board-elapsed { color: var(--accent); }
 .board-run[data-state="queued"] .board-elapsed { color: var(--muted-fg); }
 .board-run[data-state="paused"] .board-state { color: var(--attn); }
 .board-run[data-state="paused"] .board-state::before { background: var(--attn); }
-@keyframes board-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 24%, transparent); } }
+/* Nothing on the wall animates on its own. A perpetual animation keeps the
+   browser painting every frame all day — three pulsing dots measured at over
+   100% CPU under software rendering. The ticking clocks are the sign of life. */
 
 /* Landed: the production look on a phone, the change, who, when. */
 .board-landed { grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 14px; align-items: center; padding: 10px 14px; }

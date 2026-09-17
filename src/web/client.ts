@@ -1624,10 +1624,13 @@ export const boardJs = /* js */ `
       if (t) el.textContent = ago(Math.max(0, (now - t) / 1000));
     });
   }
+  // One interval for the page, set once: each tick reads whatever cards are
+  // on the wall right then, so a swap never arms a second clock.
   window.setInterval(tick, 1000);
   tick();
   // A swapped region carries fresh rows: their clocks start at once, and
-  // the heading glows for a moment so a glance catches what moved.
+  // the heading glows for a moment so a glance catches what moved. Nothing
+  // here fetches or emits: the stream cannot echo a swap.
   doc.addEventListener('forge:swapped', function (e) {
     tick();
     var region = e.target && e.target.closest ? e.target.closest('.board-region') : null;
