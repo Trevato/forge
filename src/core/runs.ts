@@ -474,7 +474,7 @@ export function automaticRunsSince(
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
        WHERE kind = 'agent' AND issue_id = ?1 AND created_at > ?2
-         AND reason IN ('check_failed')`,
+         AND reason IN ('check_failed','conflict')`,
     )
     .get(issueId, since);
   return row?.n ?? 0;

@@ -400,7 +400,7 @@ async function whoseFault(
     : "change";
 }
 
-function agentFor(app: App, issue: Issue): Agent | undefined {
+export function agentFor(app: App, issue: Issue): Agent | undefined {
   if (issue.assigneeId !== null) {
     const assigned = getAgent(app.db, issue.assigneeId);
     if (assigned) return assigned;
@@ -409,7 +409,7 @@ function agentFor(app: App, issue: Issue): Agent | undefined {
 }
 
 /** When a person last said anything on the conversation, or its start. */
-function lastHumanWord(app: App, issue: Issue, agent: Agent): string {
+export function lastHumanWord(app: App, issue: Issue, agent: Agent): string {
   let latest = issue.createdAt;
   for (const c of listComments(app.db, issue.id)) {
     if (c.authorName !== agent.user.username && c.createdAt > latest)
@@ -512,7 +512,9 @@ function taskOf(
   const agent = run.actorId ? getAgent(app.db, run.actorId) : undefined;
   if (!issue || !repo || !agent || issue.state !== "open") return undefined;
   const reason: RunReason =
-    run.reason === "feedback" || run.reason === "check_failed"
+    run.reason === "feedback" ||
+    run.reason === "check_failed" ||
+    run.reason === "conflict"
       ? run.reason
       : "assigned";
   return { issue, repo, agent, reason };
