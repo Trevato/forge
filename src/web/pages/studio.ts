@@ -79,6 +79,7 @@ import {
   listCard,
   pill,
   row,
+  servedPhrase,
   time,
   userTag,
   type Tone,
@@ -497,9 +498,14 @@ export async function studioApp(
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
   const state = production?.state ?? "stopped";
+  const servedAfter = production ? servedPhrase(production) : undefined;
   const liveWord =
     state === "running"
-      ? "live"
+      ? production?.error !== undefined
+        ? "serving · tests failed"
+        : servedAfter !== undefined
+          ? `live ${servedAfter}`
+          : "live"
       : state === "failed"
         ? "not up"
         : state === "stopped"

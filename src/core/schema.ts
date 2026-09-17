@@ -730,4 +730,10 @@ export const migrations: readonly string[] = [
   CREATE INDEX decision_issue ON decision(issue_id, kind, created_at);
   CREATE INDEX decision_repo ON decision(repo_id, created_at);
   `,
+
+  // 23 — the moment a deploy started serving: set once, at the swap-in,
+  // distinct from `finished_at` which waits on the tests beside it.
+  `
+  ALTER TABLE run ADD COLUMN serving_at TEXT;
+  `,
 ];

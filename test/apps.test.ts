@@ -17,7 +17,11 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { envDir } from "../src/apps/data.ts";
 import { newApp, openEnvUrl, updateAppSettings } from "../src/actions/apps.ts";
 import { addToCrew, createAgent, listCrew } from "../src/actions/crew.ts";
-import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import {
+  assignIssue,
+  openIssue,
+  setIssueState,
+} from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { forkRepo } from "../src/actions/repos.ts";
 import {
@@ -543,6 +547,9 @@ describe("apps: production, previews, data, gates, crew", () => {
       env: `pull-${opened.value.number}`,
     }).find((r) => r.commitOid === committed.value.commitOid);
     expect(run?.state).toBe("running");
+    // The deploy answered and swapped in well before its tests could have
+    // finished, so `servingAt` is already recorded on the still-open run.
+    expect(run?.servingAt).not.toBeNull();
 
     const done = await settled(
       (r) =>
@@ -550,6 +557,11 @@ describe("apps: production, previews, data, gates, crew", () => {
         r.commitOid === committed.value.commitOid,
     );
     expect(done.state).toBe("ok");
+    expect(done.servingAt).not.toBeNull();
+    expect(Date.parse(done.servingAt!)).toBeLessThan(
+      Date.parse(done.finishedAt!),
+    );
+
     // Close it out: a later test counts open previews and expects only the
     // one it opens itself.
     const merged = await mergePull(
@@ -644,6 +656,43 @@ describe("apps: production, previews, data, gates, crew", () => {
     expect(signout.headers.get("location")).toBe("/");
     expect(signout.headers.get("set-cookie") ?? "").toContain("Max-Age=0");
   }, 90_000);
+
+  test("a deploy that never answers leaves servingAt null", async () => {
+    const committed = await commitToBranch(app, alice, repo, {
+      branch: "never-answers",
+      base: repo.defaultBranch,
+      message: "Never answers",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            { app: { run: "sleep 30", health: "/", ready: 1 } },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const opened = await openPull(app, alice, repo, {
+      title: "Never answers",
+      baseBranch: repo.defaultBranch,
+      headBranch: "never-answers",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const failed = await settled(latest(`pull-${opened.value.number}`));
+    expect(failed.state).toBe("failed");
+    expect(failed.servingAt).toBeNull();
+
+    // Close it — a pull that never comes up is not this test's to leave
+    // open for the next one, which counts what git still has open.
+    expect(setIssueState(app, alice, repo, opened.value, "closed").ok).toBe(
+      true,
+    );
+  }, 20_000);
 
   test("the crew: an agent reads and writes its repo, never the default branch, never a merge", async () => {
     const made = await createAgent(app, alice, {

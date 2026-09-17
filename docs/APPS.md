@@ -75,7 +75,11 @@ around it. None is advisory.
    `running` — checking, not blocking — until `test` finishes and decides
    `ok` or `failed`. A deployment that answers is what was asked for; the
    suite going green is confirmed a few seconds later, not stood in front
-   of the door.
+   of the door. That instant is recorded, not just logged: the run's
+   `servingAt` is stamped once, at the swap-in, distinct from `startedAt`
+   (the deploy's own start) and `finishedAt` (which waits on `test`
+   beside it) — so how long a change took to reach its preview is a
+   number the forge can read back, not a line buried in the log.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
    visibility), and it is set apart from the repository's own: the code can
@@ -373,8 +377,9 @@ either derived or ephemeral:
 ```
 
 Rows: `app` (repo, slug, access, preview_data), `app_env` (name, sealed
-value), `run` (repo, kind, issue, commit, state, summary, cost, timings),
-`agent` (user, model, brief, budget), and `issue.assignee_id`. The current deployment of each environment is in
+value), `run` (repo, kind, issue, commit, state, summary, cost, timings —
+`startedAt`, `servingAt`, `finishedAt`), `agent` (user, model, brief,
+budget), and `issue.assignee_id`. The current deployment of each environment is in
 memory only: a process is not state, and a restart rebuilds every
 environment from the default branch and the open pulls, exactly as
 `core/reconcile.ts` rebuilds the index from git.

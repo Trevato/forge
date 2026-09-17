@@ -65,6 +65,7 @@ import {
   listCard,
   row,
   selectField,
+  servedPhrase,
   sha,
   time,
   userLink,
@@ -477,6 +478,7 @@ const envFacts = (base: string, env: EnvStatus): Html =>
     ${when(env.commitOid !== "", () =>
       sha(env.commitOid, `${base}/commit/${env.commitOid}`),
     )}
+    ${when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`)}
     ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
     ${when(
       env.runId,

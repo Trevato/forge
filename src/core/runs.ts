@@ -52,6 +52,8 @@ export interface Run {
   readonly turns: number;
   readonly createdAt: string;
   readonly startedAt: string | null;
+  /** When this deploy's environment started serving — set once, at the swap-in. */
+  readonly servingAt: string | null;
   readonly finishedAt: string | null;
 }
 
@@ -75,6 +77,7 @@ interface RunRow {
   turns: number;
   created_at: string;
   started_at: string | null;
+  serving_at: string | null;
   finished_at: string | null;
 }
 
@@ -98,6 +101,7 @@ const toRun = (r: RunRow): Run => ({
   turns: r.turns,
   createdAt: r.created_at,
   startedAt: r.started_at,
+  servingAt: r.serving_at,
   finishedAt: r.finished_at,
 });
 
@@ -158,6 +162,21 @@ export function claimRun(db: Database, runId: string): Run | undefined {
       `UPDATE run SET state = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
          heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'queued'`,
+    )
+    .run(runId).changes;
+  return changes > 0 ? getRun(db, runId) : undefined;
+}
+
+/**
+ * Record the instant a deploy's environment started serving — the swap-in,
+ * not the tests finishing beside it. Set once: a second call, on a run
+ * already stamped, changes nothing.
+ */
+export function markServing(db: Database, runId: string): Run | undefined {
+  const changes = db
+    .query(
+      `UPDATE run SET serving_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE id = ?1 AND state = 'running' AND serving_at IS NULL`,
     )
     .run(runId).changes;
   return changes > 0 ? getRun(db, runId) : undefined;

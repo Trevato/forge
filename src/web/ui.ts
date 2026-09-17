@@ -10,7 +10,7 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import type { EnvState } from "../apps/runtime.ts";
+import type { EnvState, EnvStatus } from "../apps/runtime.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
@@ -49,6 +49,20 @@ export function time(iso: string): Html {
   return html`<time datetime="${at.toISOString()}" title="${exact}"
     >${timeAgo(iso)}</time
   >`;
+}
+
+/**
+ * How long a deployment took to start serving, worded for a person:
+ * `3.4s after the push`. Undefined until it has — never a zero.
+ */
+export function servedPhrase(env: EnvStatus): string | undefined {
+  if (env.servingAt === undefined || env.deployStartedAt === undefined)
+    return undefined;
+  const ms = Math.max(
+    0,
+    Date.parse(env.servingAt) - Date.parse(env.deployStartedAt),
+  );
+  return `${(ms / 1000).toFixed(1)}s after the push`;
 }
 
 /** Bytes, three significant figures, never more precision than is true. */

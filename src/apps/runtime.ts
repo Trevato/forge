@@ -31,6 +31,7 @@ import {
   CHECK_KINDS,
   failAbandonedRuns,
   finishRun,
+  markServing,
   type Run,
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
@@ -84,6 +85,10 @@ export interface EnvStatus {
   /** The run that produced this state — a link to its log. */
   readonly runId?: string | undefined;
   readonly since?: string | undefined;
+  /** The instant this deployment started serving, set once at the swap-in. */
+  readonly servingAt?: string | undefined;
+  /** The deploy run's own start — the reference `servingAt` is measured from. */
+  readonly deployStartedAt?: string | undefined;
   readonly error?: string | undefined;
   /**
    * A running environment whose deploy is still checking itself: its tests
@@ -104,6 +109,19 @@ interface Live {
   readonly manifest: AppManifest;
   /** Unset while tests are still running or there are none; the message once they fail. */
   readonly testsFailed?: string | undefined;
+  /**
+   * The instant this deployment started serving, set once at the swap-in —
+   * unset on the value `bringUp` returns, which does not yet know it.
+   */
+  readonly servingAt?: string | undefined;
+  /** The deploy run's own start — the reference `servingAt` is measured from. */
+  readonly deployStartedAt?: string | null | undefined;
+}
+
+/** How long between two instants, in seconds to one decimal place: `3.4s`. */
+function elapsedSeconds(fromIso: string, toIso: string): string {
+  const ms = Math.max(0, Date.parse(toIso) - Date.parse(fromIso));
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 /** A running environment, as a terminal session needs it. */
@@ -223,9 +241,17 @@ export class AppsRuntime {
         state: "deploying",
         commitOid: state.deploying.run.commitOid,
         url,
-        ...(state.live === undefined ? {} : { port: state.live.handle.port }),
+        ...(state.live === undefined
+          ? {}
+          : {
+              port: state.live.handle.port,
+              since: state.live.since,
+              servingAt: state.live.servingAt,
+              ...(state.live.deployStartedAt === null
+                ? {}
+                : { deployStartedAt: state.live.deployStartedAt }),
+            }),
         runId: state.deploying.run.id,
-        ...(state.live === undefined ? {} : { since: state.live.since }),
       };
     }
     if (state.live !== undefined) {
@@ -237,10 +263,14 @@ export class AppsRuntime {
         port: state.live.handle.port,
         runId: swapped ? state.deploying!.run.id : state.live.runId,
         since: state.live.since,
+        servingAt: state.live.servingAt,
+        ...(state.live.deployStartedAt === null
+          ? {}
+          : { deployStartedAt: state.live.deployStartedAt }),
         ...(swapped ? { note: "serving — still verifying its tests" } : {}),
         ...(state.live.testsFailed === undefined
           ? {}
-          : { error: `serving — its tests failed: ${state.live.testsFailed}` }),
+          : { error: `serving · tests failed: ${state.live.testsFailed}` }),
       };
     }
     return {
@@ -601,20 +631,30 @@ export class AppsRuntime {
     // It answers: swap it in now, before its tests are done. `state.deploying`
     // stays set — the run is still open, and a stop or a teardown must still
     // be able to reach in and kill the test step — until they finish below.
+    // `servingAt` is stamped here, at the swap-in, the same instant the log
+    // says so — never the moment the tests beside it finish.
     const previous = state.live;
-    state.live = outcome.value;
+    const served = markServing(this.app.db, run.id);
+    const servingAt = served?.servingAt ?? new Date().toISOString();
+    const deployStartedAt = claimed.startedAt;
+    const live: Live = { ...outcome.value, servingAt, deployStartedAt };
+    state.live = live;
     state.lastError = undefined;
     if (previous !== undefined) {
       write(
         `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
       );
       await previous.handle.stop();
-      if (previous.dir !== outcome.value.dir)
+      if (previous.dir !== live.dir)
         rmSync(previous.dir, { recursive: true, force: true });
     }
-    this.watch(state, repo, outcome.value);
+    this.watch(state, repo, live);
     const url = this.urlFor(state.app, state.env);
-    write(`serving ${url}`);
+    write(
+      deployStartedAt
+        ? `serving ${url} — ${elapsedSeconds(deployStartedAt, servingAt)} after the deploy started`
+        : `serving ${url}`,
+    );
 
     const tested = await outcome.tested;
     state.deploying = undefined;
@@ -630,8 +670,7 @@ export class AppsRuntime {
     }
     // The tests failed, but the deployment that answered is what was asked
     // for: it keeps serving, and the run — the check a pull shows — fails.
-    if (state.live === outcome.value)
-      state.live = { ...outcome.value, testsFailed: tested.error };
+    if (state.live === live) state.live = { ...live, testsFailed: tested.error };
     const done = finishRun(this.app.db, run.id, {
       state: "failed",
       summary: `test: ${tested.error}`,
