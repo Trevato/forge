@@ -13,9 +13,8 @@ import type { EnvName } from "../src/apps/data.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openPull } from "../src/actions/pulls.ts";
+import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { getAppByRepo } from "../src/core/apps.ts";
 import { getIssue, listIssues } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
@@ -491,6 +490,120 @@ describe("the studio", () => {
       await rm(dataDir2, { recursive: true, force: true });
     }
   });
+});
+
+describe("every open pull's preview on the studio page", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let base: string;
+  let cookie: string;
+  let repo: Repo;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-previews-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "studio-previews.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    await runtime.start();
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, a.value, {
+      name: "widget",
+      visibility: "public",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"widget","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "widget" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  }, 30_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("an open pull's preview host and open link render; none do once nothing is open", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const before = await (await get("/alice/widget")).text();
+    expect(before).not.toContain("<h2>Previews</h2>");
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/x",
+      base: repo.defaultBranch,
+      message: "Add X",
+      files: [{ path: "X.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add X",
+      body: "",
+      baseBranch: repo.defaultBranch,
+      headBranch: "feature/x",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+
+    const page = await (await get("/alice/widget")).text();
+    expect(page).toContain("<h2>Previews</h2>");
+    expect(page).toContain(`href="/alice/widget/app/pull-${pull.number}/open"`);
+    expect(page).toContain(`#${pull.number} Add X`);
+
+    const merged = await mergePull(app, alice, repo, pull, "squash");
+    expect(merged.ok).toBe(true);
+    const after = await (await get("/alice/widget")).text();
+    expect(after).not.toContain("<h2>Previews</h2>");
+    expect(after).not.toContain(`pull-${pull.number}/open`);
+  }, 30_000);
 });
 
 describe("the studio home does not wait on the decider", () => {

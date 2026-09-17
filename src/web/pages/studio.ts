@@ -19,7 +19,13 @@ import {
 } from "../../actions/issues.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { tellCrew } from "../../actions/crew.ts";
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { envPull, previewEnv } from "../../apps/data.ts";
+import {
+  appsRuntime,
+  type AppsRuntime,
+  type EnvState,
+  type EnvStatus,
+} from "../../apps/runtime.ts";
 import { listCrewRoles, type Agent } from "../../core/agents.ts";
 import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import {
@@ -95,7 +101,6 @@ import {
   type Tone,
 } from "../ui.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { previewEnv } from "../../apps/data.ts";
 import { lookNow, lookThumb, lookUrl } from "./looks.ts";
 import { onYouCard } from "./site.ts";
 
@@ -582,6 +587,87 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
   planned: "map",
 };
 
+// ---- previews: every open pull's preview, one click away ----
+
+/** The three words the studio uses for a preview, whatever its check says. */
+function previewBadge(state: EnvState | undefined): Html {
+  if (state === "running")
+    return badge("live", { tone: "success", icon: "play" });
+  if (state === "deploying")
+    return badge("starting", { tone: "attn", icon: "loader" });
+  return badge("not up", {
+    ...(state === "failed" ? { tone: "danger" as const } : {}),
+    icon: "square",
+  });
+}
+
+/**
+ * One open pull's preview, as one row: its host is the click, its state is
+ * the badge, and a check still running or a check that failed says so right
+ * there — the row never hides a preview that is serving.
+ */
+function previewRow(
+  base: string,
+  runtime: AppsRuntime | undefined,
+  record: AppRecord,
+  pull: Pull,
+  env: EnvStatus | undefined,
+): Html {
+  const href =
+    runtime === undefined
+      ? undefined
+      : `${base}/app/${previewEnv(pull.number)}/open`;
+  const host =
+    runtime === undefined
+      ? undefined
+      : runtime.urlFor(record, previewEnv(pull.number)).replace(/^https?:\/\//, "");
+  const bits: Html[] = [html`#${pull.number} ${pull.title}`];
+  if (env?.commitOid) bits.push(html`${env.commitOid.slice(0, 7)}`);
+  if (env?.since) bits.push(html`up ${time(env.since)}`);
+  const say = env?.error ?? env?.note;
+  if (say) bits.push(html`${say}`);
+  return row({
+    ...(href === undefined ? {} : { href, nav: true }),
+    lead: icon("rocket"),
+    title:
+      host === undefined
+        ? `#${pull.number} ${pull.title}`
+        : html`<span class="mono">${host}</span>`,
+    meta: bits.reduce((a, b) => html`${a} · ${b}`),
+    trail: previewBadge(env?.state),
+  });
+}
+
+/**
+ * Every open pull's preview, one row each, from the runtime's own `status()`
+ * — no per-pull query, so the list costs nothing extra as pulls pile up. A
+ * pull with no environment yet still gets a row, so the list matches the
+ * open pulls exactly.
+ */
+function previewsPanel(
+  base: string,
+  runtime: AppsRuntime | undefined,
+  record: AppRecord,
+  openPulls: readonly Pull[],
+  envs: readonly EnvStatus[],
+): Html | null {
+  if (openPulls.length === 0) return null;
+  const byPull = new Map(
+    envs
+      .filter((e) => e.env !== "production")
+      .map((e) => [envPull(e.env), e] as const),
+  );
+  return listCard(
+    openPulls.map((p) =>
+      previewRow(base, runtime, record, p, byPull.get(p.number)),
+    ),
+    {
+      head: html`${icon("rocket")}
+        <h2>Previews</h2>`,
+    },
+  );
+}
+
 // ---- the app in the studio ----
 
 export async function studioApp(
@@ -629,6 +715,7 @@ export async function studioApp(
   // ---- the app itself ----
   const runtime = appsRuntime(ctx.app);
   const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
+  const previews = previewsPanel(base, runtime, record, openPulls, envs);
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
   const writer = canWrite(db, repo, ctx.auth.user);
@@ -926,7 +1013,7 @@ export async function studioApp(
     })}
     ${head}
     <div class="dash">
-      <div class="dash-main stack">${tell} ${asks} ${now}</div>
+      <div class="dash-main stack">${tell} ${asks} ${previews} ${now}</div>
       <aside class="dash-rail stack">
         ${crewCard} ${weekCard} ${ownCard} ${more}
       </aside>
