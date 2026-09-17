@@ -11,10 +11,13 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { listCrewRoles, setCrewRole } from "../src/core/agents.ts";
 import { getIssueById } from "../src/core/issues.ts";
+import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import {
   certain,
@@ -25,6 +28,11 @@ import {
   type Decider,
 } from "../src/crew/decide.ts";
 import { kindByWords, routeIssue, sizeByWords } from "../src/crew/route.ts";
+import {
+  decisionsFor,
+  pendingLeans,
+  withLikely,
+} from "../src/web/pages/studio.ts";
 
 const Q = {
   builder: { options: ["mason", "scout"], about: "who" },
@@ -348,5 +356,134 @@ describe("routing an issue", () => {
     expect(kept?.by).toBe("rule");
     expect(asked).toHaveLength(1);
     withJev.close();
+  });
+});
+
+describe("a studio card's lean", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let repo: Repo;
+  let pull: Pull;
+  let calls: number;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-lean-"));
+    calls = 0;
+    const decider: Decider = {
+      name: "fake",
+      async decide(_state, questions) {
+        calls++;
+        const options = questions["option"]!.options;
+        return {
+          option: {
+            choice: options[0]!,
+            p: 0.9,
+            probabilities: Object.fromEntries(
+              options.map((o, i) => [o, i === 0 ? 0.9 : 0.05]),
+            ),
+          },
+        } as never;
+      },
+    };
+    app = createApp({ dataDir, port: 0, decider });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, {
+      name: "leans",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const scoutAgent = await createAgent(app, alice, { username: "scout" });
+    if (!scoutAgent.ok) throw new Error(String(scoutAgent.error));
+    expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/x",
+      base: "main",
+      message: "Add x",
+      files: [{ path: "x.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Add x",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/x",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+  });
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const ctx = () => ({ app, auth: { user: alice, via: "session" } }) as never;
+
+  test("reading the card makes no decider call; the answer it asked for shows on the next read", async () => {
+    const first = withLikely(ctx(), decisionsFor(ctx(), [repo]));
+    const card = first.find((d) => d.pull?.id === pull.id);
+    expect(card).toBeDefined();
+    expect(card?.likely).toBeUndefined();
+    expect(calls).toBe(0);
+    await pendingLeans();
+    expect(calls).toBe(1);
+    const second = withLikely(ctx(), decisionsFor(ctx(), [repo]));
+    expect(second.find((d) => d.pull?.id === pull.id)?.likely).toEqual({
+      option: "ship",
+      p: 0.9,
+    });
+    expect(calls).toBe(1);
+  });
+
+  test("a lean is dropped once the pull's head moves, and asked for again", async () => {
+    app.db
+      .query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1")
+      .run(pull.id, "0".repeat(40));
+    const leaned = withLikely(ctx(), decisionsFor(ctx(), [repo]));
+    const card = leaned.find((d) => d.pull?.id === pull.id);
+    expect(card).toBeDefined();
+    expect(card?.likely).toBeUndefined();
+    await pendingLeans();
+    expect(calls).toBe(2);
+  });
+
+  test("no decider configured: no lean, ever, and nothing asked", async () => {
+    const withoutDecider = createApp({ dataDir, port: 0 });
+    const anon = {
+      app: withoutDecider,
+      auth: { user: alice, via: "session" },
+    } as never;
+    const asks = withLikely(anon, decisionsFor(anon, [repo]));
+    const card = asks.find((d) => d.pull?.id === pull.id);
+    expect(card).toBeDefined();
+    expect(card?.likely).toBeUndefined();
+    await pendingLeans();
+    expect(calls).toBe(2);
+    withoutDecider.close();
   });
 });

@@ -16,8 +16,10 @@ import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
+import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { pendingLeans } from "../src/web/pages/studio.ts";
 
 describe("the studio", () => {
   let dataDir: string;
@@ -367,5 +369,140 @@ describe("the studio", () => {
     const after = await (await get("/alice/notes")).text();
     expect(after).not.toContain('class="studio-ask-pick"');
     expect(after).not.toContain('action="/studio/asks"');
+  });
+});
+
+describe("the studio home does not wait on the decider", () => {
+  const DECIDER_MS = 800;
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let cookie: string;
+  let calls: number;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-lean-"));
+    calls = 0;
+    const decider: Decider = {
+      name: "slow",
+      async decide(_state, questions) {
+        calls++;
+        await Bun.sleep(DECIDER_MS);
+        const options = questions["option"]!.options;
+        return {
+          option: {
+            choice: options[0]!,
+            p: 0.9,
+            probabilities: Object.fromEntries(
+              options.map((o, i) => [o, i === 0 ? 0.9 : 0.05]),
+            ),
+          },
+        } as never;
+      },
+    };
+    app = createApp({ dataDir, port: 0, decider });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "leans",
+      visibility: "private",
+      description: "for the lean",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"leans","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "leans" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, alice, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
+    const scoutUser = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/x",
+      base: "main",
+      message: "Add x",
+      files: [{ path: "x.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scoutUser, repo, {
+      title: "Add x",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/x",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("answers well under the decider's own time, with no call made while rendering, and the second render carries the lean the first one asked for", async () => {
+    const started = Date.now();
+    const home = await (await get("/")).text();
+    expect(Date.now() - started).toBeLessThan(DECIDER_MS / 2);
+    expect(calls).toBe(0);
+    expect(home).toContain("Ship");
+    expect(home).not.toContain("by the decider");
+    await pendingLeans();
+    expect(calls).toBe(1);
+    const again = await (await get("/")).text();
+    expect(again).toContain("by the decider");
   });
 });

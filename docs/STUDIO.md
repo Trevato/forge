@@ -60,6 +60,15 @@ the green ones, close the stopped ones — as one decision (`POST
 never leaves the page: the row looks busy until it lands, then goes; one
 that could not be done stays, with the reason on it.
 
+When a decider is configured, an ask card's own option can carry a **lean**
+— a small word (_likely_, _probably_, _maybe_) beside the option a careful
+owner would pick, from asking the decider the same question a person is
+looking at. The lean is never why the page waits: a card renders with
+whatever lean is already known, and a card with none yet is asked for after
+the page is on its way to the browser, so the answer is there on a later
+render, not this one. A forge with no decider configured shows no lean and
+asks nothing, exactly as before deciders existed.
+
 **Now** lists what was told and not yet picked up, every open pull with its
 state, and the last runs, each in one of the five words with who and when.
 A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone

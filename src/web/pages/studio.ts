@@ -49,11 +49,16 @@ import {
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
-import { latestDecision } from "../../core/decisions.ts";
+import {
+  latestDecision,
+  latestLean,
+  recordDecision,
+} from "../../core/decisions.ts";
 import { routeIssue } from "../../crew/route.ts";
-import { certain, decideOr } from "../../crew/decide.ts";
+import { certain, decideOr, type Decider } from "../../crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
+import { createLog } from "../../kernel/log.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -124,28 +129,46 @@ const CARD_OPTIONS: Record<DecisionKind, Readonly<Record<string, string>>> = {
   paused: { settings: "Raise the ceiling.", wait: "Wait for midnight." },
 };
 
+const log = createLog("studio");
+
+/** A pull's head oid, or "" for a card with no commit to key a lean on. */
+const headOf = (d: Decision): string => d.pull?.headOid ?? "";
+
+/** One background ask per card+head, so a page rendered by many people at
+ * once never fans out past one call per card. Cleared once answered. */
+const leanInFlight = new Map<string, Promise<void>>();
+
+/** A pause before asking, long enough that the response for the render
+ * which triggered the ask is on its way out first — the point is that the
+ * decider is never on the request's critical path, not that the ask is
+ * instant. */
+const LEAN_ASK_DELAY_MS = 50;
+
 /**
- * Ask the decider which option on each card is likely right, so the card
- * can lead with it. Bounded to a short wait: a page is being drawn.
+ * Ask the decider which option on a card is likely right, off the request
+ * path — after this turn of the event loop, never inside it — and remember
+ * the answer keyed to the head it was about. A rule's answer is not worth
+ * remembering: it is what the page would have shown anyway.
  */
-export async function withLikely(
-  ctx: Ctx,
-  decisions: readonly Decision[],
-): Promise<Decision[]> {
-  const decider = ctx.app.config.decider;
-  if (decider === undefined || decisions.length === 0) return [...decisions];
-  return Promise.all(
-    decisions.map(async (d) => {
-      const options = Object.keys(CARD_OPTIONS[d.kind]);
-      const decided = await decideOr(
+function scheduleLean(ctx: Ctx, d: Decision, decider: Decider): void {
+  const head = headOf(d);
+  const key = `${d.id}@${head}`;
+  if (leanInFlight.has(key)) return;
+  const options = Object.keys(CARD_OPTIONS[d.kind]);
+  const state = {
+    card: d.kind,
+    head,
+    repository: `${d.repo.ownerName}/${d.repo.name}`,
+    situation: d.says,
+    ...(d.pull === undefined
+      ? {}
+      : { change: d.pull.title, description: d.pull.body.slice(0, 800) }),
+  };
+  const asked = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      decideOr(
         decider,
-        {
-          repository: `${d.repo.ownerName}/${d.repo.name}`,
-          situation: d.says,
-          ...(d.pull === undefined
-            ? {}
-            : { change: d.pull.title, description: d.pull.body.slice(0, 800) }),
-        },
+        state,
         {
           option: {
             options,
@@ -154,19 +177,65 @@ export async function withLikely(
           },
         },
         () => ({ option: certain(options, options[0]!) }),
-        800,
-      );
-      return decided.by === "rule"
-        ? d
-        : {
-            ...d,
-            likely: {
-              option: decided.answers.option.choice,
-              p: decided.answers.option.p,
-            },
-          };
-    }),
-  );
+      )
+        .then((decided) => {
+          if (decided.by === "rule") return;
+          recordDecision(ctx.app.db, {
+            kind: "lean",
+            repoId: d.repo.id,
+            issueId: d.pull?.id,
+            state,
+            answer: decided.answers.option.choice,
+            p: decided.answers.option.p,
+            by: decided.by,
+            ms: decided.ms,
+          });
+        })
+        .catch((error) =>
+          log.warn("lean not recorded", { id: d.id, error: String(error) }),
+        )
+        .finally(() => {
+          leanInFlight.delete(key);
+          resolve();
+        });
+    }, LEAN_ASK_DELAY_MS);
+  });
+  leanInFlight.set(key, asked);
+}
+
+/** Test hook: every ask scheduled so far, answered or not. The page itself
+ * never waits on this — only a test that wants the next render to have it. */
+export function pendingLeans(): Promise<unknown> {
+  return Promise.allSettled([...leanInFlight.values()]);
+}
+
+/**
+ * Every card with the lean already known about it, read with no wait; a
+ * card whose lean is unknown, or whose head has moved past the one it was
+ * asked about, is asked for off the request path (`scheduleLean`) so a
+ * later render has it. A forge with no decider does nothing here, exactly
+ * as before.
+ */
+export function withLikely(
+  ctx: Ctx,
+  decisions: readonly Decision[],
+): Decision[] {
+  const decider = ctx.app.config.decider;
+  if (decider === undefined) return [...decisions];
+  return decisions.map((d) => {
+    const lean = latestLean(
+      ctx.app.db,
+      d.repo.id,
+      d.pull?.id ?? null,
+      d.kind,
+      headOf(d),
+    );
+    if (lean === undefined) {
+      scheduleLean(ctx, d, decider);
+      return d;
+    }
+    return { ...d, likely: { option: lean.answer, p: lean.p } };
+  });
 }
 
 /** When a person last spoke on a conversation, or its start. */
@@ -471,7 +540,7 @@ export async function studioApp(
       const i = getIssueById(db, r.issueId);
       if (i) issues.set(r.issueId, i);
     }
-  const decisions = await withLikely(ctx, decisionsFor(ctx, [repo]));
+  const decisions = withLikely(ctx, decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
   const pullChecks = latestRunsForIssues(
     db,
@@ -850,7 +919,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       .map((r) => r.actorId)
       .filter((id): id is string => id !== null),
   );
-  const decisions = await withLikely(ctx, decisionsFor(ctx, appRepos));
+  const decisions = withLikely(ctx, decisionsFor(ctx, appRepos));
   const asksByRepo = new Map<string, number>();
   for (const d of decisions)
     asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
