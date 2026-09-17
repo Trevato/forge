@@ -47,7 +47,9 @@ edge: the least work that still has to happen one thing after another.
 someone is, and one word:
 
 - _ready_ — open, and nothing open stands in front of it.
-- _working_ — the crew has a run in flight on it; the card breathes.
+- _working_ — the crew has a run in flight on it; the card wears a soft
+  accent ring. Nothing on the map animates on its own: an animation inside
+  a large inline SVG repaints the whole drawing every frame.
 - _blocked_ — open, waiting for something open.
 - _waiting_ — an open pull would close it: proposed, not landed.
 - _parked_ — the last word on it is the crew parking it; a quiet warning

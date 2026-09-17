@@ -906,8 +906,9 @@ export const mapCss = /* css */ `
 .map-node:hover .map-card { stroke: var(--border-strong); }
 .map-node[data-state="working"]:hover .map-card { stroke: var(--accent); }
 .map-node:focus-visible .map-card { stroke: var(--accent); stroke-width: 2; }
-.map-breath { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: .35; animation: map-breath 2.8s var(--ease) infinite; }
-@keyframes map-breath { 0%, 100% { opacity: .18; } 50% { opacity: .6; } }
+/* A soft outer ring, static: any animation inside a large inline SVG
+   repaints the whole drawing every frame, whatever property it touches. */
+.map-breath { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: .35; }
 .map-title { font-size: 12.5px; font-weight: 560; fill: var(--fg); transition: fill 120ms var(--ease); }
 .map-node:hover .map-title { fill: var(--accent); }
 .map-node[data-state="done"] .map-title, .map-node[data-state="done"] .map-meta, .map-node[data-state="done"] .map-word { fill: var(--faint); }
@@ -1461,7 +1462,7 @@ export function globalMapPage(ctx: Ctx): Response {
   const lanes = globalLanes(ctx.app, viewer);
   const width = Math.max(0, ...lanes.map((l) => drawingWidth(l.placed)));
   const body = html`${pageHead("Map", {
-      sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a breathing card is where the crew is.",
+      sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a ringed card is where the crew is.",
     })}
     <div id="map-lanes" class="map-lanes" data-live="${LIVE_KINDS}">
       ${lanes.length === 0

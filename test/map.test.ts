@@ -304,7 +304,7 @@ describe("the map, per app and across the forge", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("a card says its word, who is on it, and breathes while the crew works", async () => {
+  test("a card says its word, who is on it, and wears a ring while the crew works", async () => {
     const cookie = await signIn("alice");
     const page = await (
       await fetch(`${base}/alice/engine/map`, { headers: { cookie } })
