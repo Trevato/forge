@@ -169,13 +169,19 @@ import { steerRepoRun } from "../actions/runs.ts";
 import { linkIssue, unlinkIssue } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
-import { mapJson } from "../web/pages/map.ts";
+import { crewMarks, globalMapJson, mapJson } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import type { Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import { listAssignedTo } from "../core/issues.ts";
-import { checksForHead, getRun, isTerminal, type Run } from "../core/runs.ts";
+import {
+  checksForHead,
+  getRun,
+  isTerminal,
+  listActiveRuns,
+  type Run,
+} from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
@@ -1547,12 +1553,23 @@ export function apiRoutes(router: Router<Handler>): void {
       return new Response(null, { status: 204 });
     },
   );
-  // The map as data: ready now, blocked on, the critical path, every edge.
+  // The map as data: ready now, blocked on, the critical path, every edge,
+  // and where the crew is.
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(mapJson(repo, repoGraph(ctx.app.db, repo.id)));
+    return json(
+      mapJson(
+        repo,
+        repoGraph(ctx.app.db, repo.id),
+        crewMarks(listActiveRuns(ctx.app.db, [repo.id])),
+      ),
+    );
   });
+  // Every repository the caller can see, one entry each: the global map.
+  router.add("GET", "/api/v1/map", (ctx) =>
+    json(globalMapJson(ctx.app, ctx.auth.user)),
+  );
 
   // The decision ledger: what the crew's decider answered and what came of
   // it, newest first, with the week summed up per kind.
