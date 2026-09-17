@@ -438,6 +438,33 @@ serving that commit, but the run still fails the check, and the page says
 in words that it is serving code whose tests failed. A push makes new runs;
 older ones are history, not status.
 
+### The look
+
+When a deploy comes up green the forge takes a picture of it — the page at
+`/`, at a phone's width (390×844) and a laptop's (1280×800) — and keeps the
+pictures beside the commit they are of, so a person judges a change from
+what it is rather than from what it says. The pull page shows both under
+the checks, with the commit and a word when the head has moved since; the
+studio's ask row leads with the phone picture; an app's studio head shows
+how production looks now. Pictures are served at
+`/:owner/:name/looks/<env>/<commit>/{phone,desktop}.png` with the
+repository's own read access, cached by commit.
+
+The picture is what the repository's owner would see: headless Chromium is
+pointed at the forge's own listener with the app's hostname resolved to
+loopback, through the grant door, so the app renders for a signed-in admin
+exactly as when the owner opens it. It is taken as the page loads — what an
+app draws after that is not in it — and one at a time, forge-wide, bounded
+in time and memory. A look is best-effort: it never blocks a check or fails
+a run; one that could not be taken is recorded with its reason, and the
+page says "no picture" honestly. One look per environment and head; a
+newer head replaces one still waiting; one that waited ten minutes is
+dropped. The pictures live as long as the environment: a preview's go when
+its pull closes. Files live under `<data>/looks/<app id>/<env>/`; rows in
+`look`. The browser is `chromium` (or `chromium-browser`, `google-chrome`)
+on `PATH`, `FORGE_CHROMIUM`, or the Mac's own; the image ships one. A forge
+without one says so once at boot, and on every pull.
+
 ## The crew
 
 An agent is created once (`New agent`: a name, a model, a brief) and given
@@ -532,6 +559,7 @@ works the crew page says so, in words, before anyone assigns anything.
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
 | `FORGE_CLAUDE`            | `claude` on `PATH`              | the Claude Code binary                            |
 | `FORGE_CLAUDE_CONFIG_DIR` | Claude Code's own               | a `CLAUDE_CONFIG_DIR` for runs, when wanted       |
+| `FORGE_CHROMIUM`          | `chromium` on `PATH`            | the browser the look is taken with                |
 | `ANTHROPIC_API_KEY`       | —                               | handed to agent runs when set                     |
 | `CLAUDE_CODE_OAUTH_TOKEN` | —                               | handed to agent runs when set                     |
 | `TYPESAFE_API_KEY`        | —                               | TypeSafe's Jev answers fixed-choice decisions     |

@@ -22,6 +22,12 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { pendingLeans } from "../src/web/pages/studio.ts";
 
 describe("the studio", () => {
+  test("the asks script posts to the form's action attribute: a control named action shadows form.action", async () => {
+    const { asksJs } = await import("../src/web/client.ts");
+    expect(asksJs).not.toContain("form.action,");
+    expect(asksJs).toContain("getAttribute('action')");
+  });
+
   let dataDir: string;
   let app: App;
   let servers: Servers;

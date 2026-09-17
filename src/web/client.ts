@@ -73,7 +73,7 @@ export const pollJs = /* js */ `
   var tries = 0;
   function ask() {
     if (tries++ > 200) return;
-    fetch(form.action, {
+    fetch(form.getAttribute('action') || location.href, {
       method: 'POST',
       headers: { accept: 'application/json' },
       body: new FormData(form),
@@ -170,7 +170,7 @@ export const asksJs = /* js */ `
     var verb = pressed ? (pressed.name === 'action' ? pressed.value : pressed.textContent.trim().toLowerCase()) : 'do that';
     rows.forEach(function (li) { note(li, ''); });
     busy(rows, true);
-    fetch(form.action, { method: 'POST', headers: { accept: 'application/json' }, body: body })
+    fetch(form.getAttribute('action') || location.href, { method: 'POST', headers: { accept: 'application/json' }, body: body })
       .then(function (r) {
         return r.json().catch(function () { return { ok: false, error: 'That could not be done (' + r.status + ').' }; });
       })

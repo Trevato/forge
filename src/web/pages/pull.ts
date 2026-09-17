@@ -93,6 +93,7 @@ import {
   type Entry,
 } from "./thread.ts";
 import { previewCard } from "./apps.ts";
+import { lookCard } from "./looks.ts";
 import { pullState } from "./pulls.ts";
 import { crewActivityCard } from "./runs.ts";
 
@@ -685,7 +686,8 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   // The checks are the deploy runs of the live head, read here for the same
   // reason the review gate is: the box and the merge answer one question.
   const check = checkSummary(ctx.app.db, pull.id, status.headOid);
-  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const record = getAppByRepo(ctx.app.db, repo.id);
+  const isApp = record !== undefined;
   const threads = pullThreads(ctx.app, pull);
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -779,6 +781,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
       </div>
     </div>
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
+    ${when(record, (r) => lookCard(ctx, repo, r, pull, status.headOid))}
     <div class="split">
       <div>
         ${talk.node}

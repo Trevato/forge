@@ -50,9 +50,11 @@ import {
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import {
+  decisionStats,
   latestDecision,
   latestLean,
   recordDecision,
+  type DecisionStat,
 } from "../../core/decisions.ts";
 import { routeIssue } from "../../crew/route.ts";
 import { certain, decideOr, type Decider } from "../../crew/decide.ts";
@@ -89,6 +91,9 @@ import {
   userTag,
   type Tone,
 } from "../ui.ts";
+import { looksForApps } from "../../core/looks.ts";
+import { previewEnv } from "../../apps/data.ts";
+import { lookNow, lookThumb, lookUrl } from "./looks.ts";
 import { onYouCard } from "./site.ts";
 
 // ---- decisions: what asks a person ----
@@ -112,6 +117,8 @@ export interface Decision {
   readonly short: string;
   /** The option the decider thinks is right, and how sure; none for a rule. */
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
+  /** The preview pictured on a phone, when the forge has taken one. */
+  readonly picture?: string | undefined;
 }
 
 /** The options a card offers, by name, as the decider sees them. */
@@ -269,6 +276,25 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     pulls.map((p) => p.id),
   );
   const joined = new Map(joinMany(db, pulls).map((p) => [p.id, p]));
+  // The pictures, in one read: a green pull's row leads with its preview.
+  const records = appsForRepos(db, [...byId.keys()]);
+  const looks = looksForApps(
+    db,
+    [...records.values()].map((r) => r.id),
+  );
+  const pictureOf = (repo: Repo, pull: Pull): string | undefined => {
+    const record = records.get(repo.id);
+    if (record === undefined) return undefined;
+    const env = previewEnv(pull.number);
+    const look = looks.find(
+      (l) =>
+        l.appId === record.id &&
+        l.env === env &&
+        l.kind === "phone" &&
+        l.error === null,
+    );
+    return look && lookUrl(repoBase(repo), env, look.commitOid, "phone");
+  };
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -301,6 +327,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
       const shown =
         repo.autonomy === "autonomous" &&
         latestDecision(db, issue.id, "land")?.answer === "show";
+      const picture = pictureOf(repo, pull);
       if (repo.autonomy !== "autonomous" || shown)
         out.push({
           kind: "look",
@@ -314,6 +341,7 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
           short: shown
             ? `green; the decider asks you to look first`
             : `${who} finished it; the check is green`,
+          ...(picture === undefined ? {} : { picture }),
         });
     }
   }
@@ -472,6 +500,31 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
 // ---- studio words for what the crew is doing ----
 
 /**
+ * The week's decisions in one line: how many, how many the decider took
+ * rather than the rule, and what came of the ones that are known.
+ * "12 · 11 by typesafe · shipped 5, shown 2, stopped 1"
+ */
+function decisionWords(stats: readonly DecisionStat[]): Html {
+  const n = stats.reduce((s, k) => s + k.n, 0);
+  const decided = stats.reduce((s, k) => s + k.decided, 0);
+  const by = stats
+    .flatMap((k) => Object.entries(k.outcomes))
+    .reduce<Record<string, number>>((acc, [o, c]) => {
+      acc[o] = (acc[o] ?? 0) + c;
+      return acc;
+    }, {});
+  const outcomes = Object.entries(by)
+    .sort((a, b) => b[1] - a[1])
+    .map(([o, c]) => `${o} ${c}`)
+    .join(", ");
+  return html`${n}
+    <span class="muted"
+      >· ${decided} by the
+      decider${outcomes === "" ? "" : ` · ${outcomes}`}</span
+    >`;
+}
+
+/**
  * The one control a live run has: a person who can write here stops a
  * running one or takes a queued one back off the board. Nothing for runs
  * that are over, or for readers.
@@ -555,6 +608,7 @@ export async function studioApp(
     state: "closed",
     limit: 100,
   }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
+  const ledgerWeek = decisionStats(db, repo.id, week);
   const autonomy =
     repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
   const moving = runs.some(
@@ -613,6 +667,7 @@ export async function studioApp(
       </p>
     </div>
     <span class="spacer"></span>
+    ${lookNow(ctx, repo, record)}
     ${btn("Open the app", {
       href: `${base}/app/production/open`,
       variant: "primary",
@@ -821,6 +876,12 @@ export async function studioApp(
             >`
           : null}
       </dd>
+      ${when(
+        ledgerWeek.length > 0,
+        () =>
+          html`<dt>Decided</dt>
+            <dd>${decisionWords(ledgerWeek)}</dd>`,
+      )}
     </dl>`,
     {
       head: html`${icon("activity")}
@@ -1063,9 +1124,8 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
     d.kind === "stopped" ? "alert" : d.kind === "look" ? "eye" : "clock";
   // The title links; the row itself does not, because it holds controls
   // and a control inside an anchor is not HTML a browser will keep together.
-  const title = d.pull
-    ? html`<a href="${base}/pulls/${d.pull.number}">${d.pull.title}</a>`
-    : html`<a href="${base}">${d.repo.name}</a>`;
+  const href = d.pull ? `${base}/pulls/${d.pull.number}` : base;
+  const title = html`<a href="${href}">${d.pull?.title ?? d.repo.name}</a>`;
   return row({
     lead: html`<input
         class="studio-ask-pick"
@@ -1075,7 +1135,7 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
         data-kind="${d.kind}"
         data-repo="${base}"
         aria-label="Select: ${d.pull?.title ?? d.repo.name}"
-      />${icon(glyph)}`,
+      />${d.picture === undefined ? icon(glyph) : lookThumb(href, d.picture)}`,
     title,
     titleAttr: d.says,
     meta: html`${d.repo.name}${d.pull ? html` #${d.pull.number}` : null} ·

@@ -1,9 +1,13 @@
-# One Bun process, run from source. The host provides two binaries the forge
-# asks for: git, and `claude` for the crew (a Node program, hence node + npm).
-# package.json's dependency list is empty, so there is nothing to install.
+# One Bun process, run from source. The host provides three binaries the
+# forge asks for: git, `claude` for the crew (a Node program, hence node +
+# npm), and chromium for the look — a picture of every green preview
+# (docs/APPS.md). Chromium and a font to draw with add about 450 MB to the
+# image; it is the largest thing here by far, and the only way to see a page
+# as a browser does. package.json's dependency list is empty, so there is
+# nothing to install.
 FROM oven/bun:1.3-debian
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm tini \
+ && apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm tini chromium fonts-liberation \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code \
  && npm cache clean --force
