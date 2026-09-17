@@ -6,6 +6,7 @@
  */
 export const MODELS: readonly { id: string; label: string }[] = [
   { id: "", label: "Default — the runner's" },
+  { id: "claude-fable-5-1", label: "Fable — the most intelligent" },
   { id: "opus", label: "Opus — the most capable" },
   { id: "sonnet", label: "Sonnet — capable and quick" },
   { id: "haiku", label: "Haiku — the quickest" },
