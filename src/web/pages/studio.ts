@@ -41,7 +41,9 @@ import {
   type Run,
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
-import { autonomyStatus, pickBuilder } from "../../crew/autonomy.ts";
+import { autonomyStatus } from "../../crew/autonomy.ts";
+import { routeIssue } from "../../crew/route.ts";
+import { certain, decideOr } from "../../crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -85,6 +87,68 @@ export interface Decision {
   readonly who: string;
   /** Three sentences at most: what, why, what happens next. */
   readonly says: string;
+  /** The option the decider thinks is right, and how sure; none for a rule. */
+  readonly likely?: { readonly option: string; readonly p: number } | undefined;
+}
+
+/** The options a card offers, by name, as the decider sees them. */
+const CARD_OPTIONS: Record<DecisionKind, Readonly<Record<string, string>>> = {
+  stopped: {
+    say: "Tell the builder what to try; the check can pass with guidance.",
+    close: "Close it; the change is not worth more tries.",
+    look: "A person should read the change before deciding.",
+  },
+  look: {
+    ship: "Ship it; the change is green and small enough to land on its check.",
+    say: "Say what is off; something in it needs a change first.",
+    preview: "Open the preview first; it must be seen before shipping.",
+  },
+  paused: { settings: "Raise the ceiling.", wait: "Wait for midnight." },
+};
+
+/**
+ * Ask the decider which option on each card is likely right, so the card
+ * can lead with it. Bounded to a short wait: a page is being drawn.
+ */
+export async function withLikely(
+  ctx: Ctx,
+  decisions: readonly Decision[],
+): Promise<Decision[]> {
+  const decider = ctx.app.config.decider;
+  if (decider === undefined || decisions.length === 0) return [...decisions];
+  return Promise.all(
+    decisions.map(async (d) => {
+      const options = Object.keys(CARD_OPTIONS[d.kind]);
+      const decided = await decideOr(
+        decider,
+        {
+          repository: `${d.repo.ownerName}/${d.repo.name}`,
+          situation: d.says,
+          ...(d.pull === undefined
+            ? {}
+            : { change: d.pull.title, description: d.pull.body.slice(0, 800) }),
+        },
+        {
+          option: {
+            options,
+            about: "Which of these a careful owner of the app would pick.",
+            describe: CARD_OPTIONS[d.kind],
+          },
+        },
+        () => ({ option: certain(options, options[0]!) }),
+        800,
+      );
+      return decided.by === "rule"
+        ? d
+        : {
+            ...d,
+            likely: {
+              option: decided.answers.option.choice,
+              p: decided.answers.option.p,
+            },
+          };
+    }),
+  );
 }
 
 /** When a person last spoke on a conversation, or its start. */
@@ -159,6 +223,33 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
   return out;
 }
 
+/** The variant a card's button takes: primary when the decider leans to it. */
+function leanVariant(
+  d: Decision,
+  option: string,
+  fallback: "primary" | undefined,
+): { variant?: "primary" } {
+  const variant =
+    d.likely === undefined
+      ? fallback
+      : d.likely.option === option
+        ? "primary"
+        : undefined;
+  return variant === undefined ? {} : { variant };
+}
+
+/** A word beside the leaned-to option: how sure, in plain terms. */
+function leanNote(d: Decision, option: string): Html | null {
+  if (d.likely === undefined || d.likely.option !== option) return null;
+  const sure =
+    d.likely.p >= 0.85 ? "likely" : d.likely.p >= 0.6 ? "probably" : "maybe";
+  return html`<span
+    class="muted small studio-lean"
+    title="${Math.round(d.likely.p * 100)}% by the decider"
+    >${sure}</span
+  >`;
+}
+
 function decisionOptions(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const pull = d.pull;
@@ -182,23 +273,37 @@ function decisionOptions(ctx: Ctx, d: Decision): Html {
           placeholder="Tell ${d.who} what to try"
           required
         />
-        ${btn("Send", { size: "sm", variant: "primary" })}
+        ${btn("Send", { size: "sm", ...leanVariant(d, "say", "primary") })}
+        ${leanNote(d, "say")}
       </form>
       <form method="post" action="${base}/pulls/${pull.number}/state">
         <input type="hidden" name="state" value="closed" />
-        ${btn("Close it", { size: "sm" })}
+        ${btn("Close it", {
+          size: "sm",
+          ...leanVariant(d, "close", undefined),
+        })}
+        ${leanNote(d, "close")}
       </form>
       ${btn("See the change", {
         href: `${base}/pulls/${pull.number}`,
         size: "sm",
-      })}`;
+        ...leanVariant(d, "look", undefined),
+      })}
+      ${leanNote(d, "look")}`;
   if (d.kind === "look" && pull)
-    return html`${when(preview, (href) =>
-        btn("Open the preview", { href, size: "sm" }),
+    return html`${when(
+        preview,
+        (href) =>
+          html`${btn("Open the preview", {
+            href,
+            size: "sm",
+            ...leanVariant(d, "preview", undefined),
+          })}${leanNote(d, "preview")}`,
       )}
       <form method="post" action="${base}/pulls/${pull.number}/ship">
         <input type="hidden" name="pull" value="${pull.number}" />
-        ${btn("Ship it", { size: "sm", variant: "primary" })}
+        ${btn("Ship it", { size: "sm", ...leanVariant(d, "ship", "primary") })}
+        ${leanNote(d, "ship")}
       </form>
       <form
         method="post"
@@ -213,7 +318,8 @@ function decisionOptions(ctx: Ctx, d: Decision): Html {
           placeholder="Not like this — say what is off"
           required
         />
-        ${btn("Send", { size: "sm" })}
+        ${btn("Send", { size: "sm", ...leanVariant(d, "say", undefined) })}
+        ${leanNote(d, "say")}
       </form>`;
   return html`${btn("Settings", {
     href: `${base}/settings/autonomy`,
@@ -259,7 +365,11 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
 
 // ---- the app in the studio ----
 
-export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
+export async function studioApp(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const crew = listCrewRoles(db, repo.id);
@@ -275,7 +385,7 @@ export function studioApp(ctx: Ctx, repo: Repo, record: AppRecord): Response {
       const i = getIssueById(db, r.issueId);
       if (i) issues.set(r.issueId, i);
     }
-  const decisions = decisionsFor(ctx, [repo]);
+  const decisions = await withLikely(ctx, decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
   const pullChecks = latestRunsForIssues(
     db,
@@ -634,7 +744,7 @@ function avatarOf(username: string): Html {
  * across all of them, and what a person put on you. Built from the same
  * rows and cards as the rest of the forge, so it reads as the forge.
  */
-export function studioHome(ctx: Ctx, user: User): Response {
+export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const db = ctx.app.db;
   const repos = listReposVisibleTo(db, user, { limit: 200 });
   const records = appsForRepos(
@@ -655,7 +765,7 @@ export function studioHome(ctx: Ctx, user: User): Response {
       .map((r) => r.actorId)
       .filter((id): id is string => id !== null),
   );
-  const decisions = decisionsFor(ctx, appRepos);
+  const decisions = await withLikely(ctx, decisionsFor(ctx, appRepos));
   const asksByRepo = new Map<string, number>();
   for (const d of decisions)
     asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
@@ -831,16 +941,16 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
       message: "That could not be told.",
     });
   const crew = listCrewRoles(ctx.app.db, repo.id);
-  const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const inFlight = new Map<string, number>();
   for (const r of listRuns(ctx.app.db, repo.id, { kind: "agent", limit: 50 }))
     if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const builder = pickBuilder(opened.value, builders, inFlight);
-  if (builder === undefined)
+  const routed = await routeIssue(ctx.app, repo, opened.value, crew, inFlight);
+  if (routed === undefined)
     return flashTo(ctx, base, {
       message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
     });
+  const builder = routed.builder;
   const assigned = assignIssue(
     ctx.app,
     ctx.auth.user,
@@ -850,7 +960,7 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   );
   return flashTo(ctx, base, {
     message: assigned.ok
-      ? `${builder.user.username} is on it. Watch it work below.`
+      ? `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`
       : `Told as #${opened.value.number}, but ${builder.user.username} could not take it.`,
   });
 }
@@ -951,6 +1061,7 @@ export const studioCss = /* css */ `
 .studio-decision-options { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .studio-decision-options form { display: flex; gap: 6px; align-items: center; margin: 0; }
 .studio-say .input { min-width: 240px; }
+.studio-lean { margin-left: 2px; }
 .studio-rail { display: grid; gap: 18px; align-content: start; }
 .studio-rail h3 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 6px; font-weight: 600; }
 .studio-crew { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }

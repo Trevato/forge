@@ -5,6 +5,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { Decider } from "./crew/decide.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { migrations } from "./core/schema.ts";
@@ -44,6 +45,12 @@ export interface ForgeConfig {
    * the button that sends them to it. Unset, it is "the platform".
    */
   edgeName?: string;
+  /**
+   * What answers the forge's fixed-choice questions — which builder, how
+   * big, whose fault — better than its rules do (`crew/decide.ts`). None
+   * means the rules answer.
+   */
+  decider?: Decider;
   /**
    * The SSH host key's fingerprint, once the listener is up — what a person
    * compares against the one their client prints on first connect. Written

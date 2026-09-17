@@ -39,6 +39,9 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { sandboxAvailable } from "./sandbox.ts";
 import { AUTONOMY_TICK_MS, autonomyTick, landIfGreen } from "./autonomy.ts";
+import { checksFor } from "../checks/service.ts";
+import { certain, decideOr } from "./decide.ts";
+import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
 import {
   executeAgentRun,
@@ -286,7 +289,39 @@ function route(app: App, event: ForgeEvent): void {
         });
         return;
       }
-      queueAgentRun(app, repo, issue, agent, "check_failed");
+      // Whose fault: the change, or the environment the check ran in? A
+      // flaky runner or a broken base is not the agent's to rework; the
+      // check runs again instead, once, and the agent's tries are not spent.
+      const runId = event.payload["runId"];
+      // Without a decider the rule answers at once, and the rework queues
+      // in the same tick the event landed — nothing waits on a promise.
+      if (app.config.decider === undefined || typeof runId !== "string") {
+        queueAgentRun(app, repo, issue, agent, "check_failed");
+        return;
+      }
+      void whoseFault(app, runId).then((fault) => {
+        const checks = checksFor(app);
+        const kind = event.payload["kind"];
+        const commit = event.payload["commitOid"];
+        const env = event.payload["env"];
+        if (
+          fault === "environment" &&
+          kind === "check" &&
+          checks !== undefined &&
+          typeof commit === "string" &&
+          typeof env === "string" &&
+          !retriedChecks.has(`${issue.id}:${commit}`)
+        ) {
+          retriedChecks.add(`${issue.id}:${commit}`);
+          log.info(
+            "check looked like the environment's fault; running it again",
+            { issue: issue.number },
+          );
+          void checks.request(repo, env, commit, "retry", issue.id);
+          return;
+        }
+        queueAgentRun(app, repo, issue, agent, "check_failed");
+      });
       return;
     }
     case "pull.closed":
@@ -303,6 +338,49 @@ function route(app: App, event: ForgeEvent): void {
 }
 
 /** The agent an issue or pull belongs to: the assignee, or the pull's author. */
+/** Checks already run again once for a head; a second red is real. */
+const retriedChecks = new Set<string>();
+
+/**
+ * Whose fault a red check is, from the tail of its log: the change
+ * (the agent reworks it), the environment (the check runs again), or the
+ * base branch (a person's). The rule says the change; a decider may know
+ * better from the log — a network timeout, a missing tool, a flake.
+ */
+async function whoseFault(
+  app: App,
+  runId: string | undefined,
+): Promise<"change" | "environment" | "base"> {
+  const decider = app.config.decider;
+  if (decider === undefined || runId === undefined) return "change";
+  const tail = readRunLog(app.config.dataDir, runId)
+    .lines.join("\n")
+    .slice(-4_000);
+  const options = ["change", "environment", "base"] as const;
+  const decided = await decideOr(
+    decider,
+    { checkLogTail: tail },
+    {
+      cause: {
+        options,
+        about:
+          "Why the repository's check failed, judging from the end of its log.",
+        describe: {
+          change:
+            "The code under test is wrong: a failing assertion, a type error, a bug the change introduced.",
+          environment:
+            "The place it ran failed, not the code: a timeout, a network error, a missing tool, a flaky runner, a full disk.",
+          base: "The base branch itself is broken; the change is not what fails.",
+        },
+      },
+    },
+    () => ({ cause: certain(options, "change") }),
+  );
+  return decided.answers.cause.p >= 0.7
+    ? (decided.answers.cause.choice as "change" | "environment" | "base")
+    : "change";
+}
+
 function agentFor(app: App, issue: Issue): Agent | undefined {
   if (issue.assigneeId !== null) {
     const assigned = getAgent(app.db, issue.assigneeId);

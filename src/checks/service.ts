@@ -64,6 +64,12 @@ const TICK_MS = 5_000;
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
+const handles = new WeakMap<App, ChecksHandle>();
+
+/** The checks service of this forge, if one was started. */
+export const checksFor = (app: App): ChecksHandle | undefined =>
+  handles.get(app);
+
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const gate = new Gate(options.concurrency ?? 1);
   const inFlight = new Map<
@@ -362,7 +368,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   }, TICK_MS);
   pickUp();
 
-  return {
+  const handle: ChecksHandle = {
     request,
     stop: async () => {
       stopped = true;
@@ -372,4 +378,6 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       await Promise.all([...inFlight.values()].map((f) => f.promise));
     },
   };
+  handles.set(app, handle);
+  return handle;
 }

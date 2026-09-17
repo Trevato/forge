@@ -6,3 +6,6 @@ dist/
 
 # agent worktrees are separate checkouts, merged via git
 .claude/worktrees/
+
+# a TypeSafe API key, kept beside the forge, never in it
+typesafe-api-key

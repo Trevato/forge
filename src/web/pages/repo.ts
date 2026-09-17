@@ -849,7 +849,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   // what it asks. Dev mode is the code, as ever.
   if (ctx.mode === "studio") {
     const record = getAppByRepo(ctx.app.db, repo.id);
-    if (record !== undefined) return studioApp(ctx, repo, record);
+    if (record !== undefined) return await studioApp(ctx, repo, record);
   }
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
