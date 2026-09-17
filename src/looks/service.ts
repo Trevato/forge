@@ -12,8 +12,14 @@
  * environment does — a preview's go when its pull closes.
  */
 
-import { readFileSync } from "node:fs";
-import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
 import { isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
@@ -54,16 +60,38 @@ export interface LooksOptions {
 /** The share of the memory limit in use, read from cgroup v2, if this is a container. */
 export function cgroupMemoryPressure(): number | undefined {
   try {
-    const current = Number(
-      readFileSync("/sys/fs/cgroup/memory.current", "utf8"),
-    );
-    const max = readFileSync("/sys/fs/cgroup/memory.max", "utf8").trim();
-    if (!Number.isFinite(current) || max === "max") return undefined;
-    const limit = Number(max);
-    return limit > 0 ? current / limit : undefined;
+    const read = (name: string): string =>
+      readFileSync(`/sys/fs/cgroup/${name}`, "utf8");
+    let stat = "";
+    try {
+      stat = read("memory.stat");
+    } catch {
+      // A cgroup without the breakdown: the total will have to do.
+    }
+    return memoryPressure(stat, read("memory.max"), read("memory.current"));
   } catch {
     return undefined;
   }
+}
+
+/**
+ * The share of the limit the container truly holds. `memory.current`
+ * counts the page cache too — every git object and database page read
+ * lately, which the kernel hands back the moment anyone needs it — and a
+ * forge that reads its repositories all day sits above any ceiling by that
+ * number for good. The anonymous pages are what would have to give.
+ */
+export function memoryPressure(
+  stat: string,
+  max: string,
+  current: string,
+): number | undefined {
+  if (max.trim() === "max") return undefined;
+  const limit = Number(max);
+  if (!(limit > 0)) return undefined;
+  const anon = /^anon (\d+)$/m.exec(stat);
+  const used = anon === null ? Number(current) : Number(anon[1]);
+  return Number.isFinite(used) ? used / limit : undefined;
 }
 
 /** Above this share of the limit, a look waits. */
@@ -83,6 +111,11 @@ const CAPTURE_TIMEOUT_MS = 20_000;
 const GRANT_TTL_MS = 60_000;
 
 export const looksRoot = (dataDir: string): string => join(dataDir, "looks");
+
+/** Where a picture is written while it is being taken. */
+const STAGING = ".taking";
+const stagingRoot = (dataDir: string): string =>
+  join(looksRoot(dataDir), STAGING);
 
 /** Where a picture lives, relative to the data directory. */
 export const lookPath = (
@@ -238,10 +271,18 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent("/")}`;
       const path = lookPath(item.appId, item.env, item.commitOid, kind);
       const out = join(dataDir, path);
-      mkdirSync(dirname(out), { recursive: true });
+      // Taken to one side and moved in whole. A pull that closes while its
+      // picture is being taken sweeps its environment's folder away, and a
+      // browser told to write into a folder that is gone has no picture to
+      // give; this way the sweep and the picture never meet.
+      const staged = join(
+        stagingRoot(dataDir),
+        `${item.appId}-${item.env}-${item.commitOid}-${kind}.png`,
+      );
+      mkdirSync(dirname(staged), { recursive: true });
       const taken = await capture({
         url,
-        out,
+        out: staged,
         ...LOOK_SIZES[kind],
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
@@ -251,8 +292,22 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         commitOid: item.commitOid,
       };
       if (taken.ok) {
+        // The environment moved on while the picture was taken: it shows
+        // a page nobody serves now, and goes the way of its folder.
+        const still = runtime.envStatus(record, item.env);
+        if (
+          stopped ||
+          still?.state !== "running" ||
+          still.commitOid !== item.commitOid
+        ) {
+          rmSync(staged, { force: true });
+          return;
+        }
+        mkdirSync(dirname(out), { recursive: true });
+        renameSync(staged, out);
         recordLook(app.db, { ...row, kind, path });
       } else {
+        rmSync(staged, { force: true });
         allOk = false;
         log.warn("no picture", {
           app: record.slug,
@@ -295,6 +350,11 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     if (!existsSync(root)) return;
     const known = new Map(listApps(app.db).map((r) => [r.id, r]));
     for (const appId of readdirSync(root)) {
+      // Half-taken pictures of a forge that stopped mid-shot.
+      if (appId === STAGING) {
+        rmSync(join(root, appId), { recursive: true, force: true });
+        continue;
+      }
       const record = known.get(appId);
       if (record === undefined) {
         rmSync(join(root, appId), { recursive: true, force: true });

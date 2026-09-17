@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -197,6 +197,11 @@ describe("the look", () => {
     // The browser was pointed at the grant door on the forge's own port,
     // and the grant names the owner as an admin.
     expect(calls).toHaveLength(2);
+    // Taken to one side and moved in whole: nothing half-written lives
+    // under the environment, and nothing is left behind on the side.
+    for (const call of calls)
+      expect(call.out).toContain(join("looks", ".taking"));
+    expect(readdirSync(join(dataDir, "looks", ".taking"))).toEqual([]);
     const phone = calls.find((c) => c.width === 390)!;
     expect(phone.height).toBe(844);
     expect(calls.find((c) => c.width === 1280)?.height).toBe(800);
@@ -433,12 +438,24 @@ describe("the look", () => {
     expect(home).toContain(`class="look-thumb"`);
   }, 120_000);
 
-  test("under memory pressure a look waits its turn rather than being the straw", async () => {
-    const { cgroupMemoryPressure } = await import("../src/looks/service.ts");
+  test("memory pressure is what the container truly holds, never its page cache", async () => {
+    const { cgroupMemoryPressure, memoryPressure } =
+      await import("../src/looks/service.ts");
     // Not a container here: unknown pressure is no pressure.
     expect(
       cgroupMemoryPressure() === undefined || cgroupMemoryPressure()! >= 0,
     ).toBe(true);
+    // 3.4 GB by the total, 2 GB of it held: a picture goes ahead under a
+    // 0.7 ceiling. The cache is the kernel's to give back.
+    const stat = "anon 2000000000\nfile 1400000000\nkernel 1000\n";
+    expect(memoryPressure(stat, "4000000000\n", "3400000000\n")).toBeCloseTo(
+      0.5,
+    );
+    // No breakdown to read: the total is what there is.
+    expect(memoryPressure("", "4000000000\n", "3400000000\n")).toBeCloseTo(
+      0.85,
+    );
+    expect(memoryPressure(stat, "max\n", "3400000000\n")).toBeUndefined();
   });
 
   const chromium = findChromium();
