@@ -530,6 +530,22 @@ export async function reviewFirst(
     return "ship";
   }
   if (last?.state === "changes_requested") return "wait";
+  // A reviewer that could not run — the run failed before a verdict — is
+  // not asked again for this head: autonomous lands, and the log says so.
+  const tried = app.db
+    .query<
+      { state: string; summary: string },
+      [string, string]
+    >("SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason = 'review' AND summary = ?2 ORDER BY created_at DESC LIMIT 1")
+    .get(pull.id, `review at ${pull.headOid.slice(0, 7)}`);
+  if (tried?.state === "failed" || tried?.state === "cancelled") {
+    log.warn("the reviewer could not review it; landing without", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      pull: pull.number,
+      why: tried.summary,
+    });
+    return "ship";
+  }
   // Two rounds of changes are the reviewer's say; after that it lands,
   // and what is left is the reviewer's to open as an issue.
   const rounds = listReviews(app.db, pull.id).filter(

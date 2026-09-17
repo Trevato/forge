@@ -380,6 +380,43 @@ describe("the decision ledger", () => {
     expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
     expect(reviews()[0]!.state).toBe("cancelled");
 
+    // A reviewer whose run failed before a verdict is not asked again for
+    // that head: the pull lands.
+    setCrewRole(app.db, repo.id, sentinel.id, "reviewer");
+    const branch3 = await commitToBranch(app, alice, repo, {
+      branch: "feature/taxes",
+      base: "main",
+      message: "Taxes",
+      files: [{ path: "taxes.ts", content: "export const taxes = true;\n" }],
+    });
+    if (!branch3.ok) throw new Error(JSON.stringify(branch3.error));
+    const opened3 = await openPull(app, scout, repo, {
+      title: "Taxes",
+      baseBranch: "main",
+      headBranch: "feature/taxes",
+    });
+    if (!opened3.ok) throw new Error(String(opened3.error));
+    const check3 = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: opened3.value.id,
+      env: `pull-${opened3.value.number}`,
+      commitOid: opened3.value.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check3.id);
+    finishRun(app.db, check3.id, { state: "ok", summary: "check passed" });
+    expect(await landIfGreen(app, fresh(), opened3.value)).toBe(false);
+    const reviewRun = listRuns(app.db, repo.id, { kind: "agent" }).find(
+      (r) => r.issueId === opened3.value.id && r.reason === "review",
+    )!;
+    claimRun(app.db, reviewRun.id);
+    finishRun(app.db, reviewRun.id, {
+      state: "failed",
+      summary: reviewRun.summary,
+    });
+    expect(await landIfGreen(app, fresh(), opened3.value)).toBe(true);
+
     // Without a reviewer on the crew, a shown pull lands: autonomous means autonomous.
     setCrewRole(app.db, repo.id, sentinel.id, "builder");
     const branch2 = await commitToBranch(app, alice, repo, {
