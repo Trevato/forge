@@ -52,6 +52,8 @@ export function eventVerb(event: ForgeEvent): string {
       ? `put ${who} on the crew`
       : `took ${who} off the crew`;
   }
+  if (kind === "app.serving")
+    return `started serving ${environment(payload["env"])}`;
   if (kind === "app.stopped") return `stopped ${environment(payload["env"])}`;
   if (kind === "app.env_set" || kind === "app.env_deleted") {
     const name = payload["name"];

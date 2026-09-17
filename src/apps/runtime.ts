@@ -674,6 +674,25 @@ export class AppsRuntime {
         ? `serving ${url} — ${elapsedSeconds(deployStartedAt, servingAt)} after the deploy started`
         : `serving ${url}`,
     );
+    // The same statement the log line above just made, on the bus: a
+    // subscriber (the looks service) must never be able to take the
+    // deploy path down with it.
+    try {
+      this.app.bus.append({
+        kind: "app.serving",
+        repoId: repo.id,
+        payload: {
+          app: state.app.slug,
+          env: state.env,
+          commitOid: live.commitOid,
+          servingAt,
+          ...(deployStartedAt === null ? {} : { deployStartedAt }),
+          testsRunning: live.manifest.test !== null,
+        },
+      });
+    } catch (error) {
+      log.error("could not publish app.serving", { error: String(error) });
+    }
 
     const tested = await outcome.tested;
     state.deploying = undefined;

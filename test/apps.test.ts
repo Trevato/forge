@@ -35,6 +35,7 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import type { AppRecord } from "../src/core/apps.ts";
+import { listEvents } from "../src/core/events.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
@@ -557,6 +558,18 @@ describe("apps: production, previews, data, gates, crew", () => {
     // finished, so `servingAt` is already recorded on the still-open run.
     expect(run?.servingAt).not.toBeNull();
 
+    // `app.serving` published the same instant, with the tests it started
+    // beside still going — this is what a preview's look is taken from.
+    const serving = listEvents(app.db, { repoId: repo.id, limit: 200 }).find(
+      (e) =>
+        e.kind === "app.serving" &&
+        e.payload["env"] === `pull-${opened.value.number}` &&
+        e.payload["commitOid"] === committed.value.commitOid,
+    );
+    expect(serving).toBeDefined();
+    expect(serving?.payload["servingAt"]).toBe(run?.servingAt);
+    expect(serving?.payload["testsRunning"]).toBe(true);
+
     const done = await settled(
       (r) =>
         r.env === `pull-${opened.value.number}` &&
@@ -692,6 +705,15 @@ describe("apps: production, previews, data, gates, crew", () => {
     const failed = await settled(latest(`pull-${opened.value.number}`));
     expect(failed.state).toBe("failed");
     expect(failed.servingAt).toBeNull();
+    // It never swapped in, so it never published the event a look is
+    // taken from — the same reason it is pictureless.
+    expect(
+      listEvents(app.db, { repoId: repo.id, limit: 200 }).some(
+        (e) =>
+          e.kind === "app.serving" &&
+          e.payload["env"] === `pull-${opened.value.number}`,
+      ),
+    ).toBe(false);
 
     // Close it — a pull that never comes up is not this test's to leave
     // open for the next one, which counts what git still has open.

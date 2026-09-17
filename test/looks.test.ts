@@ -23,6 +23,7 @@ import { envDataDir, previewEnv } from "../src/apps/data.ts";
 import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import type { AppRecord } from "../src/core/apps.ts";
+import { listEvents } from "../src/core/events.ts";
 import { looksForEnv, type Look } from "../src/core/looks.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -388,6 +389,109 @@ describe("the look", () => {
       await web(`/alice/hello/pulls/${unpictured.number}`, aliceCookie)
     ).text();
     expect(page).not.toContain("<h2>Look</h2>");
+  });
+
+  test("a look is taken from `app.serving`, while the deploy's tests are still running, and a red check afterward does not remove it", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "slow-red-test",
+      base: repo.defaultBranch,
+      message: "Slow, then red, test",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                run: "bun run src/server.ts",
+                test: "sleep 2 && exit 1",
+                tty: "bun run src/tty.ts",
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Slow, then red, test",
+      baseBranch: repo.defaultBranch,
+      headBranch: "slow-red-test",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const commitOid = branch.value.commitOid;
+
+    // Pictured well before the two-second test step could have finished —
+    // the run is still open, checking.
+    const rows = await pictured(env, commitOid);
+    expect(rows.every((l) => l.error === null)).toBe(true);
+    const run = listRuns(app.db, repo.id, { env }).find(
+      (r) => r.commitOid === commitOid,
+    );
+    expect(run?.state).toBe("running");
+    const serving = listEvents(app.db, { repoId: repo.id, limit: 200 }).find(
+      (e) => e.kind === "app.serving" && e.payload["commitOid"] === commitOid,
+    );
+    expect(serving?.payload["env"]).toBe(env);
+    expect(serving?.payload["testsRunning"]).toBe(true);
+
+    // The test then finishes red; the run fails, but the picture already
+    // taken of what is serving is untouched.
+    const failed = await settled(
+      (r) => r.env === env && r.commitOid === commitOid,
+    );
+    expect(failed.state).toBe("failed");
+    expect(
+      looksForEnv(app.db, record.id, env).filter(
+        (l) => l.commitOid === commitOid && l.error === null,
+      ),
+    ).toHaveLength(2);
+
+    expect(
+      (await setIssueStateThrough(app, alice, repo, opened.value, "closed"))
+        .ok,
+    ).toBe(true);
+  }, 30_000);
+
+  test("two events for one environment, back to back, leave one queued look — at the newer commit", async () => {
+    const before = calls.length;
+    const live = runtime.envStatus(record, "production");
+    if (live === undefined) throw new Error("production is not live");
+    const superseded = `${"0".repeat(39)}1`;
+    // Same tick, before the queue's pump has run at all: the second
+    // replaces the first in `enqueue` rather than both being taken.
+    app.bus.append({
+      kind: "app.serving",
+      repoId: repo.id,
+      payload: {
+        env: "production",
+        commitOid: superseded,
+        servingAt: new Date().toISOString(),
+        testsRunning: true,
+      },
+    });
+    app.bus.append({
+      kind: "app.serving",
+      repoId: repo.id,
+      payload: {
+        env: "production",
+        commitOid: live.commitOid,
+        servingAt: new Date().toISOString(),
+        testsRunning: false,
+      },
+    });
+    await looks.idle();
+    // The superseded commit was never even looked at: production's own
+    // head was already pictured (from the first test), so nothing new
+    // was captured for it either.
+    expect(calls.length).toBe(before);
+    expect(
+      looksForEnv(app.db, record.id, "production").some(
+        (l) => l.commitOid === superseded,
+      ),
+    ).toBe(false);
   });
 
   test("the studio's look ask leads with the phone picture, and the app's head shows production", async () => {

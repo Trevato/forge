@@ -1,8 +1,11 @@
 /**
- * The look (docs/APPS.md): when an environment's deploy comes up green,
- * the forge takes a picture of it at phone and desktop width, as the
+ * The look (docs/APPS.md): when an environment's deploy answers and swaps
+ * in, the forge takes a picture of it at phone and desktop width, as the
  * repository's owner would see it, and keeps the pictures beside the
- * commit they are of. A person judges a change from what it is.
+ * commit they are of. A person judges a change from what it is — the
+ * moment it starts serving, not the moment its tests, still running
+ * beside it, happen to finish (and a preview whose tests then fail keeps
+ * the picture it already has).
  *
  * Best-effort by design: a look never blocks a check, never fails a run,
  * and a picture that could not be taken is a row that says why, so a page
@@ -129,6 +132,23 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     if (stopped || event.repoId === null) return;
     const payload = event.payload;
     switch (event.kind) {
+      // The instant a deploy answers and swaps in — the look is of what
+      // is serving, not of whether its tests, still running beside it,
+      // turn out green.
+      case "app.serving": {
+        const env = payload["env"];
+        const commitOid = payload["commitOid"];
+        if (typeof env !== "string" || !isEnvName(env)) return;
+        if (typeof commitOid !== "string" || commitOid === "") return;
+        const record = getAppByRepo(app.db, event.repoId);
+        if (!record) return;
+        enqueue({ appId: record.id, env, commitOid, at: Date.now() });
+        return;
+      }
+      // Kept for an environment brought up by a forge from before this
+      // event existed: its deploy never published `app.serving`, so this
+      // is the only signal it has. For one deployed since, `app.serving`
+      // already queued the same commit — `enqueue` below dedupes it.
       case "run.finished": {
         if (payload["kind"] !== "deploy" || payload["state"] !== "ok") return;
         const env = payload["env"];
@@ -153,12 +173,19 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     }
   }
 
-  /** One waiting look per environment: a newer head takes the older's place. */
+  /**
+   * One waiting look per environment: a newer head takes the older's
+   * place. The same head queued twice — `app.serving` and then
+   * `run.finished` for the one deploy — is one entry, not two.
+   */
   function enqueue(item: Pending): void {
     const at = queue.findIndex(
       (q) => q.appId === item.appId && q.env === item.env,
     );
-    if (at !== -1) queue.splice(at, 1);
+    if (at !== -1) {
+      if (queue[at]!.commitOid === item.commitOid) return;
+      queue.splice(at, 1);
+    }
     queue.push(item);
     if (pumping) return;
     pumping = true;
