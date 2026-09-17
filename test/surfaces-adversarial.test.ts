@@ -632,10 +632,11 @@ describe("surfaces adversarial: web", () => {
     );
     const block = contentStyle.slice(start, end === -1 ? undefined : end);
     // Any px width at or above ~320 would itself force a phone to scroll
-    // sideways; small fixed sizes (icon slots, borders) are fine.
-    const wide = [...block.matchAll(/(?:min-)?width:\s*(\d+)px/g)].filter(
-      ([, n]) => Number(n) >= 300,
-    );
+    // sideways; small fixed sizes (icon slots, borders) are fine, and so is
+    // a max-width or a media query, which only ever narrows.
+    const wide = [
+      ...block.matchAll(/(?<![-\w])(?:min-)?width:\s*(\d+)px/g),
+    ].filter(([, n]) => Number(n) >= 300);
     expect(wide).toEqual([]);
   });
 

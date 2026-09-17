@@ -452,7 +452,27 @@ function route(app: App, event: ForgeEvent): void {
         resolveOpen(app.db, pull.id, "land", "closed");
         resolveOpen(app.db, pull.id, "retry", "closed");
       }
-      forgetWorkdir(app, repo, pull);
+      // A run still at work on it has nothing left to land: it stops here.
+      // Its clone is not pulled from under it — a run whose floor is gone
+      // fails at its next git call — the runner lets the clone go itself,
+      // once the run is over and the pull is not open.
+      let atWork = false;
+      for (const live of listActive(app.db, "agent")) {
+        if (live.repoId !== repo.id) continue;
+        if (live.issueId !== pull.id && live.branch !== pull.headBranch)
+          continue;
+        const cancelled = cancelRun(
+          app.db,
+          live.id,
+          event.kind === "pull.merged" ? "the pull landed" : "the pull closed",
+        );
+        if (cancelled) announceRun(app, cancelled);
+        if (live.state === "running") {
+          abortAgentRun(live.id);
+          atWork = true;
+        }
+      }
+      if (!atWork) forgetWorkdir(app, repo, pull);
       return;
     }
     default:

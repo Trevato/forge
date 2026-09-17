@@ -70,6 +70,7 @@ export function systemPrompt(input: BriefInput): string {
       "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with at least three ready issues, every time.",
       '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was.',
       "- Assign nobody and push nothing: the map is the result. The direction issue stays open.",
+      "- The forge's API works; open no issue to try it. Every issue you open is work a builder is given.",
       "- Finish with a short message that lists what you opened, in order, and what is ready now.",
     );
   }
