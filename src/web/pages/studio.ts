@@ -48,7 +48,11 @@ import {
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
-import { latestDecision } from "../../core/decisions.ts";
+import {
+  decisionStats,
+  latestDecision,
+  type DecisionStat,
+} from "../../core/decisions.ts";
 import { routeIssue } from "../../crew/route.ts";
 import { certain, decideOr } from "../../crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
@@ -401,6 +405,31 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
 // ---- studio words for what the crew is doing ----
 
 /**
+ * The week's decisions in one line: how many, how many the decider took
+ * rather than the rule, and what came of the ones that are known.
+ * "12 · 11 by typesafe · shipped 5, shown 2, stopped 1"
+ */
+function decisionWords(stats: readonly DecisionStat[]): Html {
+  const n = stats.reduce((s, k) => s + k.n, 0);
+  const decided = stats.reduce((s, k) => s + k.decided, 0);
+  const by = stats
+    .flatMap((k) => Object.entries(k.outcomes))
+    .reduce<Record<string, number>>((acc, [o, c]) => {
+      acc[o] = (acc[o] ?? 0) + c;
+      return acc;
+    }, {});
+  const outcomes = Object.entries(by)
+    .sort((a, b) => b[1] - a[1])
+    .map(([o, c]) => `${o} ${c}`)
+    .join(", ");
+  return html`${n}
+    <span class="muted"
+      >· ${decided} by the
+      decider${outcomes === "" ? "" : ` · ${outcomes}`}</span
+    >`;
+}
+
+/**
  * The one control a live run has: a person who can write here stops a
  * running one or takes a queued one back off the board. Nothing for runs
  * that are over, or for readers.
@@ -484,6 +513,7 @@ export async function studioApp(
     state: "closed",
     limit: 100,
   }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
+  const ledgerWeek = decisionStats(db, repo.id, week);
   const autonomy =
     repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
   const moving = runs.some(
@@ -745,6 +775,12 @@ export async function studioApp(
             >`
           : null}
       </dd>
+      ${when(
+        ledgerWeek.length > 0,
+        () =>
+          html`<dt>Decided</dt>
+            <dd>${decisionWords(ledgerWeek)}</dd>`,
+      )}
     </dl>`,
     {
       head: html`${icon("activity")}
