@@ -26,6 +26,7 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
+import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
@@ -37,6 +38,7 @@ import {
   getRun,
   markServing,
   noteRunProgress,
+  type Run,
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import type { Decider } from "../src/crew/decide.ts";
@@ -2190,6 +2192,237 @@ describe("working: a run's own page in the studio", () => {
     expect(page).not.toContain('id="run-stop"');
     expect(page).not.toContain(">Stop<");
     expect(page).not.toContain(">Cancel run<");
+  });
+});
+
+/**
+ * Issue #65: a public app's studio page is the app, not the owner's books.
+ * `canSeeOwnerFacts` (`src/core/repos.ts`) is the one predicate — the same
+ * as `canWrite` today — that every surface carrying money, the crew or the
+ * decision ledger must ask before it computes or renders one of those.
+ */
+describe("a stranger sees the app, not the owner's books", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let alice: User;
+  let ownerCookie: string;
+  let strangerCookie: string;
+  let run: Run;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie?: string) =>
+    fetch(`${base}${path}`, {
+      headers: {
+        cookie: cookie === undefined ? "forge_mode=studio" : `${cookie}; forge_mode=studio`,
+      },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-public-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const c = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!c.ok) throw new Error(c.error);
+    ownerCookie = await signIn("alice");
+    strangerCookie = await signIn("carol");
+    const made = await createRepo(app, alice, {
+      name: "beacon",
+      visibility: "public",
+      description: "a light that stays on",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "beacon\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "beacon" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, alice, { username: "keeper" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    expect(addToCrew(app, alice, repo, "keeper").ok).toBe(true);
+    const on = await updateRepoSettings(app, alice, repo, {
+      autonomy: "assisted",
+      autonomyDirection: "",
+      autonomyCeilingUsd: 25,
+      autonomySlots: 2,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+
+    const tell = openIssue(app, alice, repo, { title: "Trim the wick" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "keeper/trim-the-wick",
+      base: "main",
+      message: "Trim the wick",
+      files: [{ path: "WICK.md", content: "trim\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Trim the wick",
+      body: `Closes #${tell.value.number}`,
+      baseBranch: "main",
+      headBranch: "keeper/trim-the-wick",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const keeperId = getUserByName(app.db, "keeper")!.id;
+    run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      branch: "keeper/trim-the-wick",
+      actorId: keeperId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    run =
+      finishRun(app.db, run.id, {
+        state: "ok",
+        summary: `opened pull #${opened.value.number}`,
+        costUsd: 42.5,
+        turns: 7,
+      }) ?? run;
+    const merged = await mergePull(app, alice, repo, opened.value, "squash");
+    if (!merged.ok) throw new Error(String(merged.error));
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: repo.id,
+      issueId: tell.value.id,
+      state: { card: "ask", head: opened.value.headOid },
+      answer: "ship",
+      p: 0.9,
+      by: "rule",
+      ms: 3,
+    });
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("anonymous and read-only visitors get the app, not the owner's numbers; the owner still gets everything", async () => {
+    const anon = await (await get("/alice/beacon")).text();
+    const stranger = await (await get("/alice/beacon", strangerCookie)).text();
+    const owner = await (await get("/alice/beacon", ownerCookie)).text();
+
+    for (const page of [anon, stranger]) {
+      expect(page).not.toMatch(/\$\d/);
+      expect(page).not.toContain("keeper");
+      expect(page).not.toContain(">Decided<");
+      expect(page).not.toContain(">On its own<");
+      expect(page).not.toContain(">Slots<");
+      expect(page).not.toContain("Nobody yet");
+      // The app itself is still there: what it is, that it shipped, a way in.
+      expect(page).toContain("a light that stays on");
+      expect(page).toContain(">Shipped<");
+      expect(page).toContain("1 change");
+      expect(page).toContain("Open the app");
+    }
+
+    expect(owner).toContain("$42.50");
+    expect(owner).toContain("keeper");
+    expect(owner).toContain(">On its own<");
+    expect(owner).toContain(">Decided<");
+  });
+
+  test("the app's live fragment carries no owner fact either", async () => {
+    const fragment = await (await get("/alice/beacon/app/state")).text();
+    expect(fragment).not.toMatch(/\$\d/);
+    expect(fragment).not.toContain("keeper");
+  });
+
+  test("a run's own page hides cost, turns and the crew's name from a stranger and from an anonymous reader; the JSON API redacts the run the same way", async () => {
+    const anonPage = await (await get(`/alice/beacon/runs/${run.id}`)).text();
+    const strangerPage = await (
+      await get(`/alice/beacon/runs/${run.id}`, strangerCookie)
+    ).text();
+    for (const page of [anonPage, strangerPage]) {
+      expect(page).not.toContain("$42.50");
+      expect(page).not.toContain("7 turns");
+      expect(page).not.toContain("keeper");
+      expect(page).toContain('data-who="the crew"');
+    }
+    const ownerPage = await (
+      await get(`/alice/beacon/runs/${run.id}`, ownerCookie)
+    ).text();
+    expect(ownerPage).toContain("$42.50");
+    expect(ownerPage).toContain("7 turns");
+    expect(ownerPage).toContain('data-who="keeper"');
+
+    const asStranger = (await (
+      await get(`/api/v1/repos/alice/beacon/runs/${run.id}`, strangerCookie)
+    ).json()) as { costUsd: number; turns: number };
+    expect(asStranger.costUsd).toBe(0);
+    expect(asStranger.turns).toBe(0);
+    const asOwner = (await (
+      await get(`/api/v1/repos/alice/beacon/runs/${run.id}`, ownerCookie)
+    ).json()) as { costUsd: number; turns: number };
+    expect(asOwner.costUsd).toBe(42.5);
+    expect(asOwner.turns).toBe(7);
+
+    const listAsStranger = (await (
+      await get(`/api/v1/repos/alice/beacon/runs`, strangerCookie)
+    ).json()) as { items: { costUsd: number }[] };
+    expect(listAsStranger.items.every((r) => r.costUsd === 0)).toBe(true);
+
+    const tailAsStranger = await (
+      await get(
+        `/api/v1/repos/alice/beacon/runs/${run.id}/log?follow=1`,
+        strangerCookie,
+      )
+    ).text();
+    expect(tailAsStranger).toContain("event: done");
+    expect(tailAsStranger).not.toContain("42.5");
+    const tailAsOwner = await (
+      await get(
+        `/api/v1/repos/alice/beacon/runs/${run.id}/log?follow=1`,
+        ownerCookie,
+      )
+    ).text();
+    expect(tailAsOwner).toContain("42.5");
+  });
+
+  test("the studio home names the crew for the owner, but only 'the crew' for a signed-in reader of the same public app", async () => {
+    const asStranger = await (await get("/", strangerCookie)).text();
+    expect(asStranger).not.toContain("keeper");
+    expect(asStranger).toContain("beacon");
+    const asOwner = await (await get("/", ownerCookie)).text();
+    expect(asOwner).toContain("keeper");
+    expect(asOwner).toContain("beacon");
   });
 });
 

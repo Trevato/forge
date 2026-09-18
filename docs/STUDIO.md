@@ -53,6 +53,23 @@ current about deployments: a deploy run for the app being viewed refetches
 the head card and previews list in place, so a change serving in its
 preview shows up without a reload.
 
+**The owner's facts and the public's.** What an app *is* — its description,
+whether it is live, its address, the look, *Open the app*, and how many
+changes it has shipped — is the point of a public app and stays on the
+page for anyone who can read the repository, signed in or not. What
+running it *costs* — every dollar figure, the day's ceiling and slot
+count, the decision ledger, and who is on the crew — is the owner's own
+book-keeping, not the app's, and is computed at all only for a viewer who
+can write to the repository: `canSeeOwnerFacts` (`src/core/repos.ts`,
+today exactly `canWrite`) is the one predicate every surface asks before
+it renders or even queries one of these — the studio page, its live
+`/app/state` fragment, a run's own page and its JSON and live-tail
+answers over the API, and the board. What is happening now still reads as
+the app's own story for such a viewer — a change being built, a preview
+coming up — but by "the crew" rather than an agent's own name, and never
+with a run's cost, turns or steer box. A private repository is unaffected:
+it already answers only to people who can read it at all.
+
 **The box** is the front door. A sentence becomes an issue — the first line
 its title, the rest its body — and the routing decision hands it to a
 builder: the builder with the least in flight, then by name. That is one
@@ -225,7 +242,11 @@ against the ceiling, runs, shipped, and whether it is paused. Every region
 is live — it swaps itself when a matching event lands, and the dot in the
 corner says whether the stream is connected. `?apps=a,b` narrows it to some
 apps. Keys: `f` fullscreen, `1`–`4` one region full-bleed, `0` all.
-Everything links somewhere; nothing needs a click.
+Everything links somewhere; nothing needs a click. The board is a wall for
+apps you can write to: a public app someone else owns can still appear in
+it (`listReposVisibleTo` includes every public repo), but its cost, and
+whoever is on its crew, never do — that row says only "the crew" and
+carries no dollar figure, same `canSeeOwnerFacts` as the app's own page.
 
 ## What the studio never does
 

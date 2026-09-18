@@ -612,6 +612,22 @@ export function canWrite(
 }
 
 /**
+ * Money, the crew roster, autonomy limits and a run's own cost describe
+ * running the app, not what it is — a stranger who can only read a public
+ * app sees what it does and what it has shipped, never what it costs or
+ * who is on it. The same test as `canWrite`, named for what it decides
+ * here, so every surface that shows one of these facts asks this one
+ * question rather than inventing its own.
+ */
+export function canSeeOwnerFacts(
+  db: Database,
+  repo: Repo,
+  user: User | undefined,
+): boolean {
+  return canWrite(db, repo, user);
+}
+
+/**
  * Which of these repositories the user may write — `canWrite` for many rows
  * in one query per chunk, through `REPO_WRITABLE`. The dashboard's inbox
  * asks this for every crew pull it shows; asked per row that was a

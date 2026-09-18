@@ -50,7 +50,7 @@ import {
   pullForBranch,
   type Pull,
 } from "../../core/pulls.ts";
-import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
   activeRunFor,
@@ -300,12 +300,16 @@ function lastHumanWord(ctx: Ctx, issue: Issue, agentName: string): string {
  * stopped (red past the crew's own limit since a person last spoke), or
  * green and waiting for a look. Plus a repository paused at its ceiling.
  */
-export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
+export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
   const db = ctx.app.db;
   const out: Decision[] = [];
-  const byId = new Map(repos.map((r) => [r.id, r]));
   const user = ctx.auth.user;
   if (!user) return out;
+  // Shipping, closing and the day's ceiling are the owner's own decisions —
+  // a reader who cannot write here is never asked to make one, and never
+  // sees the dollar figure a "paused" card would otherwise carry.
+  const repos = allRepos.filter((r) => canSeeOwnerFacts(db, r, user));
+  const byId = new Map(repos.map((r) => [r.id, r]));
   const pulls = listOpenAgentPullsVisibleTo(db, user, 50).filter((p) =>
     byId.has(p.repoId),
   );
@@ -578,7 +582,7 @@ function decisionWords(stats: readonly DecisionStat[]): Html {
 function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
   if (run.state !== "running" && run.state !== "queued") return null;
   if (run.kind !== "agent") return null;
-  if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return null;
+  if (!canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)) return null;
   return html`<form
     method="post"
     action="${repoBase(repo)}/runs/${run.id}/cancel"
@@ -856,7 +860,7 @@ function appPanels(
   const previews = previewsPanel(base, runtime, record, openPulls, envs);
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
-  const writer = canWrite(db, repo, ctx.auth.user);
+  const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
   // The state in one word, and under it the same facts the App page shows —
   // why it is not up, and the deploy whose log says the rest.
   const live = envPhrase(production);
@@ -924,6 +928,10 @@ export async function studioApp(
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
+  // Money, the crew roster, autonomy limits and the decision ledger are the
+  // owner's facts, not the app's — a viewer who cannot write here reads this
+  // page as a stranger, whatever else they can see of the repository.
+  const ownerFacts = canSeeOwnerFacts(db, repo, ctx.auth.user);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
@@ -946,23 +954,32 @@ export async function studioApp(
   const decisions = withLikely(ctx, decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-  const weekRuns = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
-    (r) => r.createdAt >= week,
-  );
-  const spent = weekRuns.reduce((s, r) => s + r.costUsd, 0);
   const shipped = listPulls(db, repo.id, {
     state: "closed",
     limit: 100,
   }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
-  const ledgerWeek = decisionStats(db, repo.id, week);
+  // The rest is spend, worked out only for a viewer who is going to see it.
+  const weekRuns = ownerFacts
+    ? listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
+        (r) => r.createdAt >= week,
+      )
+    : [];
+  const spent = weekRuns.reduce((s, r) => s + r.costUsd, 0);
+  const ledgerWeek = ownerFacts ? decisionStats(db, repo.id, week) : [];
   const autonomy =
-    repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
+    !ownerFacts || repo.autonomy === "off"
+      ? undefined
+      : autonomyStatus(ctx.app, repo);
 
   // ---- the app itself ----
   const { head, previews } = appPanels(ctx, repo, record, openPulls);
 
   // ---- the box ----
-  const tell = html`<form
+  // Telling the crew, and who takes it, is the owner's own front door — a
+  // stranger sees the app, not who is behind it.
+  const tell = !ownerFacts
+    ? null
+    : html`<form
     class="card comment-form studio-tell"
     method="post"
     action="${base}/tell"
@@ -1018,16 +1035,21 @@ export async function studioApp(
       (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
     )
     .slice(0, 6);
+  // Who is on the crew is an owner's fact same as its roster card — a
+  // viewer who cannot write here reads "Now" as the app's own story, never
+  // by the agent's name.
+  const nameFor = (name: string): string => (ownerFacts ? name : "the crew");
   const nowRows: Html[] = [
     ...(await Promise.all(
       openPulls.map(async (p) => {
         const { word, note } = await pullWord(wordCtx, p);
+        const who = nameFor(p.authorName);
         return row({
           href: `${base}/pulls/${p.number}`,
           nav: true,
-          lead: avatarOf(p.authorName),
+          lead: avatarOf(who),
           title: p.title,
-          meta: html`${p.authorName} · ${note} · ${time(p.createdAt)}`,
+          meta: html`${who} · ${note} · ${time(p.createdAt)}`,
           trail: wordBadge(word),
         });
       }),
@@ -1035,10 +1057,9 @@ export async function studioApp(
     ...(await Promise.all(
       rowsNow.map(async (r) => {
         const { word, note } = await runWord(wordCtx, r);
-        const who =
-          r.actorId === null
-            ? "crew"
-            : (actors.get(r.actorId)?.username ?? "crew");
+        const who = nameFor(
+          r.actorId === null ? "crew" : (actors.get(r.actorId)?.username ?? "crew"),
+        );
         const about = r.issueId === null ? undefined : issues.get(r.issueId);
         const stop = stopForm(ctx, repo, r);
         return row({
@@ -1059,17 +1080,18 @@ export async function studioApp(
         });
       }),
     )),
-    ...waiting.map((i) =>
-      row({
+    ...waiting.map((i) => {
+      const who = nameFor(i.assigneeName ?? "crew");
+      return row({
         href: `${base}/issues/${i.number}`,
         nav: true,
-        lead: avatarOf(i.assigneeName ?? "crew"),
+        lead: avatarOf(who),
         title: i.title,
-        meta: html`${i.assigneeName} · told ${time(i.createdAt)}, not picked up
+        meta: html`${who} · told ${time(i.createdAt)}, not picked up
         yet`,
         trail: wordBadge("waiting"),
-      }),
-    ),
+      });
+    }),
   ];
   const now =
     nowRows.length === 0
@@ -1094,8 +1116,12 @@ export async function studioApp(
   );
 
   // ---- the rail ----
-  const crewCard =
-    crew.length === 0
+  // Crew, spend and autonomy are the owner's facts; a viewer who cannot
+  // write here gets only the shipped count, never the roster, the money or
+  // the ledger — and the page never asks for the rest on their behalf.
+  const crewCard = !ownerFacts
+    ? null
+    : crew.length === 0
       ? card(
           html`<p class="muted small">
             Nobody yet. <a href="${base}/settings/crew">Add someone.</a>
@@ -1125,65 +1151,74 @@ export async function studioApp(
           },
         );
   const weekCard = card(
-    html`<dl>
-      <dt>Shipped</dt>
-      <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
-      <dt>Runs</dt>
-      <dd>${weekRuns.length}</dd>
-      <dt>Spent</dt>
-      <dd>
-        $${spent.toFixed(2)}${shipped > 0
-          ? html` <span class="muted"
-              >· $${(spent / shipped).toFixed(2)} per shipped change</span
-            >`
-          : null}
-      </dd>
-      ${when(
-        ledgerWeek.length > 0,
-        () =>
-          html`<dt>Decided</dt>
-            <dd>${decisionWords(ledgerWeek)}</dd>`,
-      )}
-    </dl>`,
+    !ownerFacts
+      ? html`<dl>
+          <dt>Shipped</dt>
+          <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+        </dl>`
+      : html`<dl>
+          <dt>Shipped</dt>
+          <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+          <dt>Runs</dt>
+          <dd>${weekRuns.length}</dd>
+          <dt>Spent</dt>
+          <dd>
+            $${spent.toFixed(2)}${shipped > 0
+              ? html` <span class="muted"
+                  >· $${(spent / shipped).toFixed(2)} per shipped change</span
+                >`
+              : null}
+          </dd>
+          ${when(
+            ledgerWeek.length > 0,
+            () =>
+              html`<dt>Decided</dt>
+                <dd>${decisionWords(ledgerWeek)}</dd>`,
+          )}
+        </dl>`,
     {
       head: html`${icon("activity")}
         <h2>This week</h2>`,
       extra: "about",
     },
   );
-  const ownCard = card(
-    autonomy === undefined
-      ? html`<p class="muted small">
-          Off. <a href="${base}/settings/autonomy">Turn it on</a> and the crew
-          works what is ready without being asked.
-        </p>`
-      : html`<dl>
-          <dt>Mode</dt>
-          <dd>${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"}</dd>
-          <dt>Today</dt>
-          <dd>
-            $${autonomy.spentTodayUsd.toFixed(2)} of
-            $${autonomy.ceilingUsd.toFixed(0)}
-          </dd>
-          <dt>Slots</dt>
-          <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
-          ${autonomy.paused
-            ? html`<dt>Paused</dt>
-                <dd>
-                  ${autonomy.paused === "ceiling"
-                    ? "at the ceiling, until 00:00 UTC"
-                    : autonomy.paused}
-                </dd>`
-            : null}
-        </dl>`,
-    {
-      head: html`${icon("play")}
-        <h2>On its own</h2>
-        <span class="spacer"></span>
-        ${btn("Change", { href: `${base}/settings/autonomy`, size: "sm" })}`,
-      extra: "about",
-    },
-  );
+  const ownCard = !ownerFacts
+    ? null
+    : card(
+        autonomy === undefined
+          ? html`<p class="muted small">
+              Off. <a href="${base}/settings/autonomy">Turn it on</a> and the
+              crew works what is ready without being asked.
+            </p>`
+          : html`<dl>
+              <dt>Mode</dt>
+              <dd>
+                ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"}
+              </dd>
+              <dt>Today</dt>
+              <dd>
+                $${autonomy.spentTodayUsd.toFixed(2)} of
+                $${autonomy.ceilingUsd.toFixed(0)}
+              </dd>
+              <dt>Slots</dt>
+              <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
+              ${autonomy.paused
+                ? html`<dt>Paused</dt>
+                    <dd>
+                      ${autonomy.paused === "ceiling"
+                        ? "at the ceiling, until 00:00 UTC"
+                        : autonomy.paused}
+                    </dd>`
+                : null}
+            </dl>`,
+        {
+          head: html`${icon("play")}
+            <h2>On its own</h2>
+            <span class="spacer"></span>
+            ${btn("Change", { href: `${base}/settings/autonomy`, size: "sm" })}`,
+          extra: "about",
+        },
+      );
   const more = html`<p class="muted small">
     <a href="${base}/map">The map</a> ·
     <a href="${base}/issues">Everything told</a> ·
@@ -1257,12 +1292,18 @@ export async function studioRun(
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
+  const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
   const actor =
     run.actorId === null ? undefined : getUserById(db, run.actorId);
   const issue =
     run.issueId === null ? undefined : getIssueById(db, run.issueId);
-  const who = actor?.username ?? "an agent";
-  const title = runTitle(run, actor?.username, issue);
+  // Who is on the crew is an owner's fact, same as the app's own page — a
+  // viewer who cannot write here reads the transcript as the crew's own
+  // work, never by the agent's name (title, every line, the live stream's
+  // `data-who`, the running pulse). The steer box below is writer-only
+  // already, so it only ever renders with the real name.
+  const who = writer ? (actor?.username ?? "an agent") : "the crew";
+  const title = runTitle(run, writer ? actor?.username : "the crew", issue);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
@@ -1271,7 +1312,6 @@ export async function studioRun(
   };
   const { word } = await runWord(wordCtx, run);
   const unfinished = !isTerminal(run.state);
-  const writer = canWrite(db, repo, ctx.auth.user);
   const duration = durationText(run);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
   const shown = lines.slice(-RUN_TRANSCRIPT_CAP);
@@ -1300,12 +1340,22 @@ export async function studioRun(
             >#${i.number} ${i.title}</a
           >`,
       )}
-      <span class="num" id="run-cost" ${run.costUsd > 0 ? null : html`hidden`}
-        >${costText(run.costUsd)} spent</span
-      >
-      <span class="num" id="run-turns" ${run.turns > 0 ? null : html`hidden`}
-        >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
-      >
+      ${when(
+        writer,
+        () =>
+          html`<span
+              class="num"
+              id="run-cost"
+              ${run.costUsd > 0 ? null : html`hidden`}
+              >${costText(run.costUsd)} spent</span
+            >
+            <span
+              class="num"
+              id="run-turns"
+              ${run.turns > 0 ? null : html`hidden`}
+              >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
+            >`,
+      )}
       ${when(
         duration,
         (d) =>
@@ -2197,6 +2247,12 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const db = ctx.app.db;
   const { repos: appRepos, records } = appsOf(ctx, user);
   const runtime = appsRuntime(ctx.app);
+  // A public app you can only read appears here too, but who is on its
+  // crew is its owner's fact, not yours to see — same predicate as the
+  // app's own page.
+  const ownerFacts = new Set(
+    appRepos.filter((r) => canSeeOwnerFacts(db, r, user)).map((r) => r.id),
+  );
   // One read for the newest run of every app, one for who ran them: the
   // home must not get slower as the apps grow.
   const latestRuns = latestAgentRunsForRepos(
@@ -2233,7 +2289,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
             latest,
           );
     const who =
-      latest?.actorId == null
+      latest?.actorId == null || !ownerFacts.has(repo.id)
         ? undefined
         : actors.get(latest.actorId)?.username;
     const asks = asksByRepo.get(repo.id) ?? 0;
@@ -2318,10 +2374,11 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       : listCard(
           running.map((r) => {
             const repo = byId.get(r.repoId)!;
-            const who =
+            const actorName =
               r.actorId === null
                 ? "crew"
                 : (runActors.get(r.actorId)?.username ?? "crew");
+            const who = ownerFacts.has(repo.id) ? actorName : "the crew";
             const stop = stopForm(ctx, repo, r);
             return row({
               ...(stop
