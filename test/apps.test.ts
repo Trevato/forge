@@ -1206,3 +1206,95 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.value.issue).toBeUndefined();
   });
 });
+
+describe("New app: the form asks for the sentence, and names it (issue #60)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let cookie: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-appname-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const created = await createUser(app.db, {
+      username: "nadia",
+      email: "nadia@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "nadia",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  function submitNewApp(fields: Record<string, string>) {
+    return fetch(`${base}/apps/new`, {
+      method: "POST",
+      headers: { cookie },
+      body: new URLSearchParams({
+        owner: "",
+        name: "",
+        visibility: "private",
+        agent: "",
+        ...fields,
+      }),
+      redirect: "manual",
+    });
+  }
+
+  test("a sentence alone creates an app named its slug", async () => {
+    const res = await submitNewApp({
+      description: "Keep a shared grocery list",
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(
+      "/nadia/keep-a-shared-grocery-list",
+    );
+  });
+
+  test("a second app from the same sentence gets a distinct name", async () => {
+    const res = await submitNewApp({
+      description: "Keep a shared grocery list",
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(
+      "/nadia/keep-a-shared-grocery-list-2",
+    );
+  });
+
+  test("a sentence a slug cannot carry asks for a name, sentence intact", async () => {
+    const res = await submitNewApp({ description: "!!! ??? ..." });
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    expect(text).toContain("make a name from");
+    expect(text).toContain("!!! ??? ...");
+  });
+
+  test("an explicit name wins over the derived one", async () => {
+    const res = await submitNewApp({
+      name: "groceries",
+      description: "Keep a shared grocery list",
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/nadia/groceries");
+  });
+});

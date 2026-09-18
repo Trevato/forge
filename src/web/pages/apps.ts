@@ -21,6 +21,7 @@ import {
 } from "../../actions/apps.ts";
 import { listAllAgents, listCrew } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
+import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
@@ -237,10 +238,20 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
 
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
-      sub: "A repository with a small working app in it, running in production a few seconds from now.",
+      sub: "A repository with a small working app in it: a first issue from your sentence, a crew member on it, production at its hostname, and a preview for every change.",
     })}
     ${card(
       html`<form method="post" action="/apps/new">
+        ${formField({
+          label: "What should it do?",
+          name: "description",
+          type: "textarea",
+          rows: 3,
+          value: values.description,
+          required: true,
+          autofocus: true,
+          hint: "A sentence is enough — it becomes the first issue, and the agent you pick below starts on it.",
+        })}
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -254,22 +265,12 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
           label: "Name",
           name: "name",
           value: values.name,
-          required: true,
-          autofocus: true,
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
           hint:
             domain === undefined
-              ? "Letters, digits, dots, dashes and underscores. The hostname is made from it."
-              : `Letters, digits, dots, dashes and underscores. It runs at <name>${appHostSuffix(domain)}.`,
+              ? "Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; the hostname is made from it."
+              : `Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; it runs at <name>${appHostSuffix(domain)}.`,
           ...(error ? { error } : {}),
-        })}
-        ${formField({
-          label: "What should it do?",
-          name: "description",
-          type: "textarea",
-          rows: 3,
-          value: values.description,
-          hint: "Optional. A sentence is enough — it becomes the first issue, and the agent you pick below starts on it.",
         })}
         ${selectField({
           label: "Visibility",
@@ -352,8 +353,16 @@ export function newAppPage(ctx: Ctx): Response {
         ? PICK_AGENT
         : "",
     }),
+    scriptJs: appNameJs,
   });
 }
+
+/** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
+const NO_NAME_ERROR =
+  "That doesn't leave anything to make a name from — type one below.";
+
+/** How many suffixed names (`x-2`, `x-3`, …) a derived name will try before giving up. */
+const MAX_NAME_ATTEMPTS = 30;
 
 const NEW_APP_ERRORS: Record<string, string> = {
   name_taken: "That owner already has a repository by that name.",
@@ -381,8 +390,23 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     agent: field(form, "agent"),
   };
   const pickAgent = values.agent === PICK_AGENT;
-  const made = await newApp(ctx.app, ctx.auth.user, {
-    name: values.name,
+  // An explicit name is never second-guessed; left blank, the sentence
+  // names the app — and the server derives that name itself (never trusting
+  // whatever the field carried in): the field is only a client-side preview.
+  const explicitName = values.name.trim();
+  const base = explicitName === "" ? deriveAppName(values.description) : explicitName;
+  if (base === undefined) {
+    return page(
+      {
+        ctx,
+        title: "New app",
+        body: newAppForm(ctx, values, NO_NAME_ERROR),
+        scriptJs: appNameJs,
+      },
+      422,
+    );
+  }
+  const rest = {
     owner: values.owner,
     description: values.description,
     visibility: values.visibility === "public" ? "public" : "private",
@@ -391,7 +415,20 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       : values.agent === ""
         ? {}
         : { agent: values.agent }),
-  });
+  } as const;
+  let made = await newApp(ctx.app, ctx.auth.user, { ...rest, name: base });
+  // A derived name that collides tries `base-2`, `base-3`, … — the same
+  // `name_taken` check an explicit name gets, just run more than once.
+  for (
+    let n = 2;
+    explicitName === "" && !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS;
+    n++
+  ) {
+    made = await newApp(ctx.app, ctx.auth.user, {
+      ...rest,
+      name: `${base}-${n}`,
+    });
+  }
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
       return new Response("forbidden", { status: 403 });
@@ -404,6 +441,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
           values,
           NEW_APP_ERRORS[made.error] ?? "That app could not be created.",
         ),
+        scriptJs: appNameJs,
       },
       422,
     );

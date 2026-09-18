@@ -113,11 +113,12 @@ around it. None is advisory.
 
 What a person sees, in order:
 
-1. **New app.** A name, and — optionally — a sentence about what it should
-   do. The forge creates the repository with a small working app in it,
-   makes it an app, and starts production. Seconds later there is a URL.
-   If a sentence was given, it becomes the first issue, assigned to an agent
-   on the crew, and the agent starts.
+1. **New app.** A sentence about what it should do — that's the one thing
+   that's required. The forge derives a name from it (shown, editable,
+   before you submit) unless you set one yourself, creates the repository
+   with a small working app in it, makes it an app, and starts production.
+   Seconds later there is a URL. The sentence becomes the first issue,
+   assigned to an agent on the crew, and the agent starts.
 2. **A pull appears**, opened by the agent, with a preview. Open the preview
    (a link, or a QR code from a phone), use it. Leave feedback as review
    comments and a verdict. Request changes and the agent picks it up in the
