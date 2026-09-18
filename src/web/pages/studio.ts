@@ -23,6 +23,7 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { mergePull } from "../../actions/pulls.ts";
+import { terminalFor } from "../../actions/apps.ts";
 import { tellCrew } from "../../actions/crew.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
 import {
@@ -112,6 +113,7 @@ import {
   seg,
   sha,
   stateBadge,
+  terminalLine,
   time,
   userLink,
   userTag,
@@ -885,6 +887,12 @@ function appPanels(
               >`}
       </p>
       ${when(production, (env) => envFacts(base, env))}
+      ${when(writer, () =>
+        terminalLine(
+          terminalFor(ctx.app, record, "production", production),
+          ctx.app.config.sshHostKey,
+        ),
+      )}
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}

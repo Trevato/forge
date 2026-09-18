@@ -377,6 +377,28 @@ export function envFacts(
 }
 
 /**
+ * An environment's terminal, as copyable monospace text with the host key
+ * fingerprint beside it — so a first connection can be trusted deliberately
+ * — or one line saying the terminal is off, when there is no command to
+ * show. Every page that names a way in draws this one, never its own words
+ * for "off".
+ */
+export function terminalLine(
+  command: string | undefined,
+  fingerprint?: string | undefined,
+): Html {
+  if (command === undefined)
+    return html`<p class="muted small">The terminal is off.</p>`;
+  return html`<p class="terminal-line">
+    <code class="mono">${command}</code>
+    ${when(
+      fingerprint,
+      (fp) => html`<span class="muted small">host key ${fp}</span>`,
+    )}
+  </p>`;
+}
+
+/**
  * The two things a writer can do to an environment. Both are POST forms —
  * the routes they post to make the same-origin check — and a reader is
  * handed nothing at all.

@@ -1440,12 +1440,150 @@ describe("the studio head says why the app is not up", () => {
         runId: deploy,
         since: new Date(Date.now() - 60_000).toISOString(),
         testsFailed: "1 of 3 tests failed",
+        manifest: { tty: null },
       },
     });
     const mine = await head(writer);
     expect(mine).toContain("serving · tests failed");
     expect(mine).not.toContain("not up");
     expect(mine).toContain("serving · tests failed: 1 of 3 tests failed");
+  });
+});
+
+/**
+ * The studio app page's Terminal — the one door an operator has into what
+ * is running. `terminalFor` (`src/actions/apps.ts`) is the single fact both
+ * this page and the dev App page read; this only checks it is drawn (or
+ * withheld) correctly, not recomputed.
+ */
+describe("the studio app page's terminal", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let record: AppRecord;
+  let runtime: AppsRuntime;
+  let writer: string;
+  let reader: string;
+
+  interface Slot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    readonly live?: unknown;
+  }
+  const putLive = (tty: string | null): void => {
+    (runtime as unknown as { envs: Map<string, Slot> }).envs.set(
+      `${record.id}/production`,
+      {
+        app: record,
+        env: "production",
+        chain: Promise.resolve(),
+        restarts: [],
+        live: {
+          commitOid: "a".repeat(40),
+          handle: { port: 4321 },
+          runId: "fake",
+          since: new Date().toISOString(),
+          manifest: { tty },
+        },
+      },
+    );
+  };
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const appPage = (cookie: string) =>
+    fetch(`${base}/alice/beacon`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-terminal-"));
+    app = createApp({ dataDir, port: 0, host: "forge.example" });
+    app.config.sshPort = 2222;
+    app.config.sshHostKey = "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "apps.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    writer = await signIn("alice");
+    reader = await signIn("bob");
+    const made = await createRepo(app, a.value, {
+      name: "beacon",
+      visibility: "public",
+      description: "a light that stays on",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "beacon\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "beacon" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a writer sees the exact command and the host key; a reader sees neither", async () => {
+    putLive("bun run src/tty.ts");
+    const mine = await appPage(writer);
+    expect(mine).toContain("ssh -p 2222 beacon@forge.example");
+    expect(mine).toContain(
+      "host key SHA256:abcdefghijklmnopqrstuvwxyz",
+    );
+    const theirs = await appPage(reader);
+    expect(theirs).not.toContain("ssh -p 2222 beacon@forge.example");
+    expect(theirs).not.toContain("The terminal is off");
+  });
+
+  test("an app with no tty says the terminal is off, to a writer only", async () => {
+    putLive(null);
+    const mine = await appPage(writer);
+    expect(mine).toContain("The terminal is off");
+    expect(mine).not.toContain("ssh -p 2222 beacon@forge.example");
+    const theirs = await appPage(reader);
+    expect(theirs).not.toContain("The terminal is off");
   });
 });
 
@@ -1621,6 +1759,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
         handle: { port: 4321 },
         runId: deployRun.id,
         since: new Date().toISOString(),
+        manifest: { tty: null },
       },
     });
     const live = await (await get("/alice/vault/app/state", owner)).text();
@@ -1651,6 +1790,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
         servingAt,
         createdAt,
         deployStartedAt,
+        manifest: { tty: null },
       },
     });
 
@@ -1669,6 +1809,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
         servingAt,
         createdAt: deployStartedAt,
         deployStartedAt,
+        manifest: { tty: null },
       },
     });
     const prompt = await (await get("/alice/vault/app/state", owner)).text();
@@ -1685,6 +1826,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
         since: servingAt,
         servingAt,
         deployStartedAt,
+        manifest: { tty: null },
       },
     });
     const pressed = await (await get("/alice/vault/app/state", owner)).text();
@@ -1895,6 +2037,7 @@ describe("words come from facts, not from run.summary", () => {
                 handle: { port: 4321 },
                 runId: "fake",
                 since: new Date().toISOString(),
+                manifest: { tty: null },
               },
             }
           : {}),

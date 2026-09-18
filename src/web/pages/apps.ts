@@ -16,8 +16,8 @@ import {
   newApp,
   openEnvUrl,
   redeployEnv,
-  sshCommandFor,
   stopEnv,
+  terminalFor,
 } from "../../actions/apps.ts";
 import { listAllAgents, listCrew } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
@@ -69,6 +69,7 @@ import {
   row,
   selectField,
   sha,
+  terminalLine,
   time,
   userLink,
   field as formField,
@@ -557,7 +558,10 @@ export function appPage(ctx: Ctx): Response {
   const runs = listed.ok ? listed.value : [];
   const crew = listCrew(ctx.app, ctx.auth.user, repo);
   const url = appsRuntime(ctx.app)?.urlFor(record, "production");
-  const ssh = sshCommandFor(ctx.app, record, "production");
+  const production = envs.find((env) => env.env === "production");
+  const ssh = writer
+    ? terminalFor(ctx.app, record, "production", production)
+    : undefined;
   // The same rows the runs page draws, from the same two grouped reads: a
   // table's first column folds into a sliver at phone width, a row does not.
   const runsHead = html`${icon("activity")}
@@ -616,10 +620,10 @@ export function appPage(ctx: Ctx): Response {
           : html`<a href="${base}/app/production/open" class="mono">${url}</a>`}
       </dd>
       ${when(
-        ssh !== undefined,
+        writer,
         () =>
           html`<dt>Terminal</dt>
-            <dd><code class="mono">${ssh ?? ""}</code></dd>`,
+            <dd>${terminalLine(ssh, ctx.app.config.sshHostKey)}</dd>`,
       )}
       <dt>Access</dt>
       <dd>
@@ -718,8 +722,17 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
           : "No preview yet — one starts when this pull request's head deploys.";
     return card(html`<p class="muted small">${why}</p>`, { head });
   }
+  // A preview's terminal is a different login from production's — its own
+  // command, shown only to a writer, same as the app page's.
+  const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   return card(
     html`${envFacts(base, env)}
+      ${when(writer, () =>
+        terminalLine(
+          terminalFor(ctx.app, view.value.app, env.env, env),
+          ctx.app.config.sshHostKey,
+        ),
+      )}
       <div class="bar mt">
         ${btn("Open preview", {
           href: `${base}/app/${env.env}/open`,

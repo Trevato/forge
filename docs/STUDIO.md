@@ -70,6 +70,17 @@ coming up — but by "the crew" rather than an agent's own name, and never
 with a run's cost, turns or steer box. A private repository is unaffected:
 it already answers only to people who can read it at all.
 
+**The terminal** is the same operator's door, so it sits beside the same
+facts: a writer sees the exact `ssh …` command production answers to,
+copyable, with the forge's host key fingerprint beside it, or one line
+saying the terminal is off — no SSH listener on this forge, or this
+app's `forge.json` declares no `tty` (`docs/APPS.md`, _A terminal for
+every app_). A pull's own preview card shows its own command the same
+way, since a preview answers to a different login than production's. A
+reader sees none of this. Both surfaces call the one function that knows
+the fact, `terminalFor` (`src/actions/apps.ts`), so the dev App page and
+the studio page never carry two ideas of what the command is.
+
 **The box** is the front door. A sentence becomes an issue — the first line
 its title, the rest its body — and the routing decision hands it to a
 builder: the builder with the least in flight, then by name. That is one

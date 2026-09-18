@@ -361,8 +361,6 @@ export interface AppView {
   readonly environments: EnvStatus[];
   /** Whether a runtime is serving at all (`FORGE_APPS=0` means no). */
   readonly serving: boolean;
-  /** `ssh -p 2222 notes@host` — how to reach production's terminal, when SSH is on. */
-  readonly ssh: string | undefined;
 }
 
 /**
@@ -377,6 +375,23 @@ export function sshCommandFor(
 ): string | undefined {
   // Without a runtime nothing can answer that ssh, so there is no command.
   return appsRuntime(app)?.sshFor(record, env);
+}
+
+/**
+ * The one fact behind every "Terminal" line a page draws: the exact command,
+ * or undefined when there is nothing to show — SSH is off on this forge, or
+ * this environment's app declares no `tty`. A status that has never been
+ * live does not know its `tty` yet, so the command still shows; the
+ * environment's own state already says it is not running.
+ */
+export function terminalFor(
+  app: App,
+  record: AppRecord,
+  env: EnvName,
+  status: EnvStatus | undefined,
+): string | undefined {
+  if (status?.tty === null) return undefined;
+  return sshCommandFor(app, record, env);
 }
 
 /** What is running, for anyone who can see the repository. */
@@ -394,7 +409,6 @@ export function appView(
     app: record,
     environments: runtime === undefined ? [] : runtime.status(record),
     serving: runtime !== undefined,
-    ssh: sshCommandFor(app, record, "production"),
   });
 }
 

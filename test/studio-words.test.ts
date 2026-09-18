@@ -264,6 +264,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       handle: { port: 4321 },
       runId: check.id,
       since: new Date().toISOString(),
+      manifest: { tty: null },
     });
 
     // A merged change, production caught up to it — the studio's *shipped*.
@@ -314,6 +315,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       handle: { port: 4321 },
       runId: deploy.id,
       since: new Date().toISOString(),
+      manifest: { tty: null },
     });
   });
 

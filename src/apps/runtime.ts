@@ -110,6 +110,12 @@ export interface EnvStatus {
    * already answers.
    */
   readonly note?: string | undefined;
+  /**
+   * The app's own `tty` command, once known live — `null` when its
+   * `forge.json` declares none. Unset while never live, since a checkout
+   * that has not started has not said either way.
+   */
+  readonly tty?: string | null | undefined;
 }
 
 interface Live {
@@ -284,6 +290,7 @@ export class AppsRuntime {
               since: state.live.since,
               servingAt: state.live.servingAt,
               createdAt: state.live.createdAt,
+              tty: state.live.manifest.tty,
               ...(state.live.deployStartedAt === null
                 ? {}
                 : { deployStartedAt: state.live.deployStartedAt }),
@@ -302,6 +309,7 @@ export class AppsRuntime {
         since: state.live.since,
         servingAt: state.live.servingAt,
         createdAt: state.live.createdAt,
+        tty: state.live.manifest.tty,
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
