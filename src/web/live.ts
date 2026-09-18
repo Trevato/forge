@@ -135,6 +135,14 @@ export const liveClientJs = /* js */ `
     return isApp && data && data.kind && data.kind.indexOf('run.') === 0 &&
       data.payload && data.payload.kind === 'deploy';
   }
+  // 'app.serving' fires at the swap-in — the instant a preview answers —
+  // which is seconds to half a minute before its tests (and so its
+  // run.finished) are done. It carries no run.kind, so it is matched on its
+  // own kind and on the app/env it names, never on a deploy run's shape.
+  function isServing(data) {
+    return isApp && data && data.kind === 'app.serving' && data.payload &&
+      typeof data.payload.app === 'string' && typeof data.payload.env === 'string';
+  }
   function refreshApp() {
     if (appBusy) { appQueued = true; return; }
     appBusy = true;
@@ -160,7 +168,7 @@ export const liveClientJs = /* js */ `
   function onEvent(e) {
     var data;
     try { data = JSON.parse(e.data); } catch (_) { return; }
-    if (isDeploy(data)) { refreshApp(); return; }
+    if (isDeploy(data) || isServing(data)) { refreshApp(); return; }
     if (relevant(data) && conv && (data.kind === thread + '.commented')) {
       appendNew();
     } else if (relevant(data) || !thread) {
@@ -175,7 +183,7 @@ export const liveClientJs = /* js */ `
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
     'branch.created', 'branch.deleted',
     'label.created', 'label.updated', 'label.deleted',
-    'run.queued', 'run.started', 'run.finished',
+    'run.queued', 'run.started', 'run.finished', 'app.serving',
     'app.created', 'app.updated', 'app.deleted', 'app.stopped',
     'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
   ];

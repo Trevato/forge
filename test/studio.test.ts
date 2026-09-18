@@ -34,6 +34,7 @@ import {
   claimRun,
   createRun,
   finishRun,
+  getRun,
   markServing,
   noteRunProgress,
 } from "../src/core/runs.ts";
@@ -1465,6 +1466,69 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(live).not.toContain("starting");
     expect(live).toContain(">live<");
     expect(live).toContain(link);
+  });
+
+  test("app.serving reaches the repo's stream with the shape the live client keys on, the instant the swap-in happens — before its run has finished", async () => {
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "deadbeef",
+      reason: "push",
+    });
+    claimRun(app.db, deployRun.id);
+    const served = markServing(app.db, deployRun.id);
+    expect(served?.servingAt).toBeDefined();
+
+    const stream = await fetch(`${base}/alice/vault/stream`, {
+      headers: { cookie: owner },
+    });
+    await Bun.sleep(50);
+
+    // The exact append `AppsRuntime` makes at the swap-in (runtime.ts),
+    // republished here so the test does not have to spin up a real deploy.
+    app.bus.append({
+      kind: "app.serving",
+      repoId: repo.id,
+      payload: {
+        app: record.slug,
+        env: "production",
+        commitOid: deployRun.commitOid,
+        servingAt: served!.servingAt,
+        testsRunning: true,
+      },
+    });
+
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let event: Record<string, unknown> | undefined;
+    const deadline = Date.now() + 5_000;
+    while (!event && Date.now() < deadline) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value);
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        if (!/^event: app\.serving$/m.test(frame)) continue;
+        const data = /^data: (.*)$/m.exec(frame)?.[1];
+        if (data !== undefined) event = JSON.parse(data);
+      }
+    }
+    await reader.cancel().catch(() => {});
+    expect(event).toBeDefined();
+    expect(event?.["kind"]).toBe("app.serving");
+    const payload = event?.["payload"] as Record<string, unknown>;
+    expect(payload["app"]).toBe(record.slug);
+    expect(payload["env"]).toBe("production");
+    expect(payload["commitOid"]).toBe(deployRun.commitOid);
+    expect(payload["servingAt"]).toBe(served!.servingAt);
+    expect(payload["testsRunning"]).toBe(true);
+
+    // finishRun never ran: run.finished has not fired, yet app.serving
+    // already has. That gap is the whole point of the issue.
+    expect(getRun(app.db, deployRun.id)?.state).toBe("running");
   });
 });
 

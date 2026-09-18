@@ -104,6 +104,10 @@ describe("live browsing pages", () => {
     expect(html).toContain('id="live"');
     expect(html).toContain('data-app="1"');
     expect(html).toContain("new EventSource");
+    // `app.serving` fires at the swap-in, seconds to half a minute before
+    // the deploy run's own `run.finished` — the client must listen for it
+    // directly, not only learn a preview is live once its tests are done.
+    expect(html).toContain("app.serving");
   });
 
   test("the studio home wires up asks, apps, now and on-you as live regions, signed in; a signed-out visitor gets neither", async () => {
