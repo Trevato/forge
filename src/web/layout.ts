@@ -29,7 +29,8 @@ import {
 import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { icon, themeGlyph } from "./icons.ts";
-import { btn, iconBtn, kbd, menu, type MenuItem } from "./ui.ts";
+import { appsOf, askCountFor } from "./studio/asks.ts";
+import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -140,6 +141,34 @@ function modeToggle(ctx: Ctx): Html {
   return html`<span class="mode-toggle" role="group" aria-label="Studio or dev">
     ${one("studio", "studio")}${one("dev", "dev")}
   </span>`;
+}
+
+/**
+ * What asks the signed-in person, across every app they can land — the
+ * same set the home's own "Asks you" panel counts (`askCountFor`, the
+ * cheap query beside `decisionsFor`), never built from the cards
+ * themselves. Studio only; dev's top bar never carries it. With nothing
+ * asking, the wrapper stays in the document — so a live swap on a page
+ * that already streams (the home, an app, the map, the board) can still
+ * find it by id and fill it in — but nothing renders inside it: a zero is
+ * not a fact worth a badge.
+ */
+function asksBadge(ctx: Ctx): Html {
+  const user = ctx.auth.user;
+  if (!user || ctx.mode !== "studio") return html``;
+  const count = askCountFor(ctx, appsOf(ctx, user).repos);
+  return html`<span id="topbar-asks" data-live="run.*,pull.*,issue.*,check.*"
+    >${when(
+      count,
+      (n) =>
+        html`<a
+          class="topbar-asks"
+          href="/"
+          title="${n} thing${n === 1 ? "" : "s"} ask you"
+          >${pill(`${n} asks you`, "accent")}</a
+        >`,
+    )}</span
+  >`;
 }
 
 function newMenu(): Html {
@@ -353,6 +382,7 @@ function topbar(
       <a href="/" class="wordmark" data-shortcut="g h"
         ><span class="mark"></span>forge</a
       >
+      ${asksBadge(ctx)}
       ${when(
         crumbs,
         (items) =>

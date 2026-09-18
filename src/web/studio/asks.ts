@@ -8,6 +8,7 @@
  */
 
 import { previewEnv } from "../../apps/data.ts";
+import { crewForRepos } from "../../core/agents.ts";
 import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
 import { latestDecision } from "../../core/decisions.ts";
 import {
@@ -17,14 +18,15 @@ import {
 } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import { joinMany, type Pull } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
   activeRunFor,
   automaticRunsSince,
   latestRunsForIssues,
 } from "../../core/runs.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
+import type { User } from "../../core/users.ts";
+import { spentTodayForRepos } from "../../crew/autonomy.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -32,6 +34,16 @@ import { html, when, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import { lookThumb, lookUrl } from "../pages/looks.ts";
 import { leanNote, leanVariant } from "./leans.ts";
+
+/** The apps a person can see, as repositories, with their records. */
+export function appsOf(ctx: Ctx, user: User) {
+  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  return { repos: repos.filter((r) => records.has(r.id)), records };
+}
 
 
 export type DecisionKind = "stopped" | "look" | "paused";
@@ -70,13 +82,36 @@ function lastHumanWord(ctx: Ctx, issue: Issue, agentName: string): string {
 }
 
 /**
+ * A candidate ask, classified but not yet worded or pictured: the set
+ * `decisionsFor` and `askCountFor` both build from, so a count can never
+ * disagree with the list it is a count of.
+ */
+interface AskCandidate {
+  readonly kind: DecisionKind;
+  readonly repo: Repo;
+  readonly pull?: Pull;
+  readonly who: string;
+  /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
+  readonly tries?: number;
+  readonly stoppedByDecider?: boolean;
+}
+
+/**
  * The crew's open pulls the viewer may land, sorted into what asks them:
  * stopped (red past the crew's own limit since a person last spoke), or
  * green and waiting for a look. Plus a repository paused at its ceiling.
+ * Every read here is bounded by the pulls a person can see or the
+ * repositories handed in — never by a loop that queries once per app: the
+ * ceiling check reads spend and crew for every repository in one query
+ * each (`spentTodayForRepos`, `crewForRepos`), not `autonomyStatus` per
+ * repository.
  */
-export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
+function askCandidatesFor(
+  ctx: Ctx,
+  allRepos: readonly Repo[],
+): AskCandidate[] {
   const db = ctx.app.db;
-  const out: Decision[] = [];
+  const out: AskCandidate[] = [];
   const user = ctx.auth.user;
   if (!user) return out;
   // Shipping, closing and the day's ceiling are the owner's own decisions —
@@ -92,25 +127,6 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
     pulls.map((p) => p.id),
   );
   const joined = new Map(joinMany(db, pulls).map((p) => [p.id, p]));
-  // The pictures, in one read: a green pull's row leads with its preview.
-  const records = appsForRepos(db, [...byId.keys()]);
-  const looks = looksForApps(
-    db,
-    [...records.values()].map((r) => r.id),
-  );
-  const pictureOf = (repo: Repo, pull: Pull): string | undefined => {
-    const record = records.get(repo.id);
-    if (record === undefined) return undefined;
-    const env = previewEnv(pull.number);
-    const look = looks.find(
-      (l) =>
-        l.appId === record.id &&
-        l.env === env &&
-        l.kind === "phone" &&
-        l.error === null,
-    );
-    return look && lookUrl(repoBase(repo), env, look.commitOid, "phone");
-  };
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -131,47 +147,110 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
       )
         out.push({
           kind: "stopped",
-          id: `stopped:${pull.id}`,
           repo,
           pull,
           who,
-          says: stopped
-            ? `${who}'s check failed and the crew's decider stopped rather than spend another run. Say what to try, or close it.`
-            : `${who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
-          short: stopped
-            ? `the check failed; the decider stopped for you`
-            : `${who} tried ${tries + 1} times; the check still fails`,
+          tries,
+          stoppedByDecider: stopped,
         });
     } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
       // Autonomous repositories look at their own green pulls: the decider,
       // then the crew's reviewer. Everything else waits for a person.
-      const picture = pictureOf(repo, pull);
-      out.push({
-        kind: "look",
-        id: `look:${pull.id}`,
-        repo,
-        pull,
-        who,
-        says: `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
-        short: `${who} finished it; the check is green`,
-        ...(picture === undefined ? {} : { picture }),
-      });
+      out.push({ kind: "look", repo, pull, who });
     }
   }
+  const crew = crewForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  const spent = spentTodayForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
   for (const repo of repos) {
-    if (repo.autonomy === "off") continue;
-    const s = autonomyStatus(ctx.app, repo);
-    if (s.paused === "ceiling")
-      out.push({
-        kind: "paused",
-        id: `paused:${repo.id}`,
-        repo,
-        who: "the crew",
-        says: `${repo.name} reached its $${dollars(s.ceilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
-        short: `at its $${dollars(s.ceilingUsd)} ceiling until 00:00 UTC`,
-      });
+    // Only a ceiling pause is an ask — "nobody" and "no crew" are settings
+    // problems, not a decision, so neither needs its own grouped read.
+    if (repo.autonomy === "off" || repo.autonomyBy === null) continue;
+    if ((crew.get(repo.id)?.length ?? 0) === 0) continue;
+    if ((spent.get(repo.id) ?? 0) >= repo.autonomyCeilingUsd)
+      out.push({ kind: "paused", repo, who: "the crew" });
   }
   return out;
+}
+
+/**
+ * What asks the viewer, across every app they can land — the count the
+ * topbar carries. The same candidates `decisionsFor` builds its cards
+ * from, with no picture read and no text built: cheap on every page, not
+ * only the home's.
+ */
+export function askCountFor(ctx: Ctx, allRepos: readonly Repo[]): number {
+  return askCandidatesFor(ctx, allRepos).length;
+}
+
+export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
+  const db = ctx.app.db;
+  const candidates = askCandidatesFor(ctx, allRepos);
+  // The pictures, in one read: a green pull's row leads with its preview.
+  const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
+  const records = appsForRepos(db, repoIds);
+  const looks = looksForApps(
+    db,
+    [...records.values()].map((r) => r.id),
+  );
+  const pictureOf = (repo: Repo, pull: Pull): string | undefined => {
+    const record = records.get(repo.id);
+    if (record === undefined) return undefined;
+    const env = previewEnv(pull.number);
+    const look = looks.find(
+      (l) =>
+        l.appId === record.id &&
+        l.env === env &&
+        l.kind === "phone" &&
+        l.error === null,
+    );
+    return look && lookUrl(repoBase(repo), env, look.commitOid, "phone");
+  };
+  return candidates.map((c): Decision => {
+    if (c.kind === "stopped" && c.pull) {
+      const tries = c.tries ?? 0;
+      const stopped = c.stoppedByDecider ?? false;
+      return {
+        kind: "stopped",
+        id: `stopped:${c.pull.id}`,
+        repo: c.repo,
+        pull: c.pull,
+        who: c.who,
+        says: stopped
+          ? `${c.who}'s check failed and the crew's decider stopped rather than spend another run. Say what to try, or close it.`
+          : `${c.who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
+        short: stopped
+          ? `the check failed; the decider stopped for you`
+          : `${c.who} tried ${tries + 1} times; the check still fails`,
+      };
+    }
+    if (c.kind === "look" && c.pull) {
+      const picture = pictureOf(c.repo, c.pull);
+      return {
+        kind: "look",
+        id: `look:${c.pull.id}`,
+        repo: c.repo,
+        pull: c.pull,
+        who: c.who,
+        says: `${c.who} finished "${c.pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
+        short: `${c.who} finished it; the check is green`,
+        ...(picture === undefined ? {} : { picture }),
+      };
+    }
+    return {
+      kind: "paused",
+      id: `paused:${c.repo.id}`,
+      repo: c.repo,
+      who: "the crew",
+      says: `${c.repo.name} reached its $${dollars(c.repo.autonomyCeilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
+      short: `at its $${dollars(c.repo.autonomyCeilingUsd)} ceiling until 00:00 UTC`,
+    };
+  });
 }
 // ---- deciding several at once ----
 

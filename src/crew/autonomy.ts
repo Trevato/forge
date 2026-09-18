@@ -119,6 +119,39 @@ export function spentToday(
   );
 }
 
+/**
+ * Agent spend since UTC midnight for many repositories at once, keyed by
+ * repo id — one query, for a count that must not slow down as the apps
+ * grow (the topbar's ask count is the reason this exists).
+ */
+export function spentTodayForRepos(
+  db: App["db"],
+  repoIds: readonly string[],
+  now = new Date(),
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const unique = [...new Set(repoIds)];
+  if (unique.length === 0) return out;
+  const since = startOfTodayUtc(now).toISOString();
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        { repo_id: string; spent: number | null },
+        string[]
+      >(
+        `SELECT repo_id, SUM(cost_usd) AS spent FROM run
+         WHERE kind = 'agent' AND created_at >= ?${batch.length + 1}
+           AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         GROUP BY repo_id`,
+      )
+      .all(...batch, since);
+    for (const row of rows) out.set(row.repo_id, row.spent ?? 0);
+  }
+  return out;
+}
+
 function activeRuns(app: App, repoId: string) {
   return listActive(app.db, "agent").filter((r) => r.repoId === repoId);
 }

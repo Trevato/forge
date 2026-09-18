@@ -8,8 +8,7 @@
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
-import { appsForRepos } from "../../core/apps.ts";
-import { canSeeOwnerFacts, listReposVisibleTo } from "../../core/repos.ts";
+import { canSeeOwnerFacts } from "../../core/repos.ts";
 import { latestAgentRunsForRepos, listActiveRuns } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -32,7 +31,7 @@ import {
   type Tone,
 } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
-import { asksPanel, decisionsFor } from "./asks.ts";
+import { appsOf, asksPanel, decisionsFor } from "./asks.ts";
 import { withLikely } from "./leans.ts";
 import { stopForm } from "./run.ts";
 import { studioCss } from "./style.ts";
@@ -234,14 +233,4 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     styleCss: studioCss,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
   });
-}
-
-/** The apps a person can see, as repositories, with their records. */
-export function appsOf(ctx: Ctx, user: User) {
-  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
-  const records = appsForRepos(
-    ctx.app.db,
-    repos.map((r) => r.id),
-  );
-  return { repos: repos.filter((r) => records.has(r.id)), records };
 }

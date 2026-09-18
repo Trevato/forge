@@ -1275,6 +1275,205 @@ describe("the studio home keeps itself current", () => {
 });
 
 /**
+ * The top bar's own count of what asks the signed-in person — carried on
+ * every studio page, from `askCountFor` (`src/web/studio/asks.ts`), the
+ * cheap query beside `decisionsFor` the home itself uses.
+ */
+describe("the top bar carries the count of what asks you", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let aliceCookie: string;
+  let bobCookie: string;
+  let carolCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const home = (cookie: string, mode: "studio" | "dev" = "studio") =>
+    fetch(`${base}/`, {
+      headers: { cookie: `${cookie}; forge_mode=${mode}` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  const askPull = async (
+    owner: User,
+    who: User,
+    repository: Repo,
+    name: string,
+    outcome: "ok" | "failed",
+  ): Promise<Pull> => {
+    const branch = await commitToBranch(app, owner, repository, {
+      branch: `ask/${name}`,
+      base: "main",
+      message: `Ask ${name}`,
+      files: [{ path: `${name}.md`, content: `${name}\n` }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, who, repository, {
+      title: `Ask ${name}`,
+      body: "",
+      baseBranch: "main",
+      headBranch: `ask/${name}`,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repository.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: outcome, summary: `check ${outcome}` });
+    if (outcome === "failed") {
+      await Bun.sleep(5);
+      for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
+        const tried = createRun(app.db, {
+          repoId: repository.id,
+          kind: "agent",
+          issueId: pull.id,
+          reason: "check_failed",
+          actorId: who.id,
+        });
+        claimRun(app.db, tried.id);
+        finishRun(app.db, tried.id, { state: "failed", summary: "still red" });
+      }
+    }
+    return pull;
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-topbar-asks-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    const bob = b.value;
+    const c = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!c.ok) throw new Error(c.error);
+    aliceCookie = await signIn("alice");
+    bobCookie = await signIn("bob");
+    carolCookie = await signIn("carol");
+
+    const made = await createRepo(app, alice, {
+      name: "signals",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "s\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "signals" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, alice, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
+    const scoutUser = getUserByName(app.db, "scout")!;
+
+    // Bob's own app: two asks of his — a green pull waiting for a look,
+    // and one stopped past the crew's own limit.
+    const otherMade = await createRepo(app, bob, {
+      name: "widget",
+      visibility: "public",
+      description: "",
+    });
+    if (!otherMade.ok) throw new Error(String(otherMade.error));
+    const other = otherMade.value;
+    const otherSeeded = await commitToBranch(app, bob, other, {
+      message: "Start",
+      files: [{ path: "README.md", content: "w\n" }],
+    });
+    if (!otherSeeded.ok) throw new Error(JSON.stringify(otherSeeded.error));
+    const otherEnabled = await enableApp(app, bob, other, { slug: "widget" });
+    if (!otherEnabled.ok) throw new Error(String(otherEnabled.error));
+    const otherAgent = await createAgent(app, alice, { username: "helper" });
+    if (!otherAgent.ok) throw new Error(String(otherAgent.error));
+    expect(addToCrew(app, bob, other, "helper").ok).toBe(true);
+    const helperUser = getUserByName(app.db, "helper")!;
+    await askPull(bob, helperUser, other, "widget-look", "ok");
+    await askPull(bob, helperUser, other, "widget-stopped", "failed");
+
+    // A private app of alice's own, with a real ask on it too — never
+    // bob's to see, let alone count: it is private, and he is on no crew.
+    await askPull(alice, scoutUser, repo, "signals-look", "ok");
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("in studio, the bar carries the count for a person with two asks, linking to the home, and it equals the home's own list length", async () => {
+    const page = await home(bobCookie);
+    const picks = page.match(/class="studio-ask-pick"/g)?.length ?? 0;
+    expect(picks).toBe(2);
+    expect(page).toContain('id="topbar-asks"');
+    expect(page).toMatch(
+      /class="topbar-asks"[\s\S]{0,80}href="\/"[\s\S]{0,120}data-tone="accent"[\s\S]{0,20}>2 asks you</,
+    );
+  });
+
+  test("the bar never counts an app a person cannot land: alice's own ask on her private app never reaches bob's count", async () => {
+    // Alice really does have an ask of her own; bob's stays at his own two.
+    const alicePage = await home(aliceCookie);
+    expect(alicePage).toMatch(/1 asks you|2 asks you/);
+    const bobPage = await home(bobCookie);
+    expect(bobPage).toContain("2 asks you");
+    expect(bobPage).not.toContain("signals");
+  });
+
+  test("carries nothing for a person with none: the bar shows nothing, not a zero", async () => {
+    const page = await home(carolCookie);
+    expect(page).not.toContain('class="topbar-asks"');
+    expect(page).toMatch(/<span id="topbar-asks" data-live="[^"]*"\s*>\s*<\/span/);
+  });
+
+  test("dev mode's top bar is unchanged: no count, at all, even for a person with asks", async () => {
+    const page = await home(bobCookie, "dev");
+    expect(page).not.toContain("topbar-asks");
+  });
+});
+
+/**
  * The studio head of an app that is not up: the same facts the App page
  * shows — why, the deploy that says the rest, and the way to try again.
  */

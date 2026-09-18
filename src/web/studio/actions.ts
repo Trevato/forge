@@ -23,8 +23,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { flashOrJson, flashTo, redirect } from "../layout.ts";
 import { isMode, modeCookie } from "../mode.ts";
-import { BULK, decisionsFor, isBulkAction, takes } from "./asks.ts";
-import { appsOf } from "./home.ts";
+import { appsOf, BULK, decisionsFor, isBulkAction, takes } from "./asks.ts";
 
 /** A merge refusal in a person's words. */
 function mergeWords(error: unknown): string {

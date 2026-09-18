@@ -239,6 +239,15 @@ is the same flow as ever. `/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 
+The top bar carries the same count, on every studio page: a pill beside the
+wordmark, linking here, naming how many things ask the signed-in person —
+`askCountFor` (`src/web/studio/asks.ts`), the candidates `decisionsFor`
+itself builds its cards from, before either the words or a preview picture
+are read, so the two can never disagree. With nothing asking, the bar shows
+nothing rather than a zero. It is studio's own; dev's top bar never carries
+it. On a page that already streams (the home, an app, the map, the board)
+the bar's own live region rides that same stream — no second connection.
+
 The home keeps itself current. *Asks you*, *your apps*, *happening now* and
 *on you* are each a live region (`data-live`, `src/web/client.ts`): a deploy
 serving, a pull opening, closing or merging, a run starting or ending, or an
