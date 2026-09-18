@@ -48,10 +48,24 @@ An app's home in the studio (`/:owner/:name`, when the repository is an
 app) shows, top to bottom: what it serves and where; the box; what asks
 you; what is happening now. Beside it, who is on the crew and what each is
 for, this week's numbers (shipped, runs, spend, spend per shipped change),
-and how the repository runs itself, when it does. The page keeps itself
+and how the repository runs itself, when it does — each **Change** button
+leading to the one place both are set. The page keeps itself
 current about deployments: a deploy run for the app being viewed refetches
 the head card and previews list in place, so a change serving in its
 preview shows up without a reload.
+
+**How this app runs itself** (`/:owner/:name/settings`, in studio, on an
+app) is that one place: the crew, each with their role in the studio's
+words (builds, reviews, plans) and their brief, with add, change-role and
+remove, and beside it whether the app is assisted or autonomous, the day's
+ceiling, how many may work at once, and whether it is paused and why. It is
+a studio page over the very same actions dev's Crew and Autonomy settings
+already use (`src/actions/crew.ts`, `updateRepoSettings`) — same
+same-origin check, same authorization, same errors; nothing here decides a
+mutation a second way. *The rest of the settings* — visibility, the
+default branch, branch protection, labels, webhooks, environment
+variables, deploy keys, danger — stays dev's, one link away
+(`?mode=dev`), where the tab strip still has Crew and Autonomy of its own.
 
 **The owner's facts and the public's.** What an app *is* — its description,
 whether it is live, its address, the look, *Open the app*, and how many
@@ -63,8 +77,12 @@ book-keeping, not the app's, and is computed at all only for a viewer who
 can write to the repository: `canSeeOwnerFacts` (`src/core/repos.ts`,
 today exactly `canWrite`) is the one predicate every surface asks before
 it renders or even queries one of these — the studio page, its live
-`/app/state` fragment, a run's own page and its JSON and live-tail
-answers over the API, and the board. What is happening now still reads as
+`/app/state` fragment, its own crew-and-autonomy settings page, a run's
+own page and its JSON and live-tail answers over the API, and the board.
+The forms that change either render only for who the underlying actions
+would let post — an admin, exactly as dev's pages already require — so a
+writer who is not an admin sees the same facts with no controls that would
+just come back refused. What is happening now still reads as
 the app's own story for such a viewer — a change being built, a preview
 coming up — but by "the crew" rather than an agent's own name, and never
 with a run's cost, turns or steer box. A private repository is unaffected:

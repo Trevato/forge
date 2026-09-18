@@ -268,7 +268,7 @@ export async function studioApp(
     : crew.length === 0
       ? card(
           html`<p class="muted small">
-            Nobody yet. <a href="${base}/settings/crew">Add someone.</a>
+            Nobody yet. <a href="${base}/settings">Add someone.</a>
           </p>`,
           {
             head: html`${icon("bot")}
@@ -291,7 +291,7 @@ export async function studioApp(
             head: html`${icon("bot")}
               <h2>Crew</h2>
               <span class="spacer"></span>
-              ${btn("Change", { href: `${base}/settings/crew`, size: "sm" })}`,
+              ${btn("Change", { href: `${base}/settings`, size: "sm" })}`,
           },
         );
   const weekCard = card(
@@ -331,7 +331,7 @@ export async function studioApp(
     : card(
         autonomy === undefined
           ? html`<p class="muted small">
-              Off. <a href="${base}/settings/autonomy">Turn it on</a> and the
+              Off. <a href="${base}/settings">Turn it on</a> and the
               crew works what is ready without being asked.
             </p>`
           : html`<dl>
@@ -359,7 +359,7 @@ export async function studioApp(
           head: html`${icon("play")}
             <h2>On its own</h2>
             <span class="spacer"></span>
-            ${btn("Change", { href: `${base}/settings/autonomy`, size: "sm" })}`,
+            ${btn("Change", { href: `${base}/settings`, size: "sm" })}`,
           extra: "about",
         },
       );

@@ -2589,6 +2589,80 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(asOwner).toContain("keeper");
     expect(asOwner).toContain("beacon");
   });
+
+  const post = (path: string, body: Record<string, string>, cookie: string) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        cookie: `${cookie}; forge_mode=studio`,
+        origin: base,
+      },
+      body: new URLSearchParams(body),
+      redirect: "manual",
+    });
+
+  test("the studio's settings page renders the crew and the ceiling for a writer, with the same numbers the app page shows", async () => {
+    const owner = await (await get("/alice/beacon/settings", ownerCookie)).text();
+    expect(owner).toContain("keeper");
+    expect(owner).toContain(">Crew<");
+    expect(owner).toContain(">On its own<");
+    expect(owner).toMatch(/\$42\.50\s+of\s+\$25/);
+    expect(owner).toContain("Remove");
+    expect(owner).toContain("Save");
+    expect(owner).toContain("The rest of the settings");
+  });
+
+  test("a reader without write sees no crew and no controls on the settings page; one who cannot read gets not-found", async () => {
+    const stranger = await (
+      await get("/alice/beacon/settings", strangerCookie)
+    ).text();
+    expect(stranger).not.toContain("keeper");
+    expect(stranger).not.toMatch(/\$\d/);
+    expect(stranger).not.toContain("Add to crew");
+    expect(stranger).not.toContain("<select");
+
+    const anon = await get("/alice/beacon/settings");
+    expect(anon.status).toBe(200);
+    const anonText = await anon.text();
+    expect(anonText).not.toContain("keeper");
+
+    const noSuchRepo = await get("/alice/no-such-app/settings", strangerCookie);
+    expect(noSuchRepo.status).toBe(404);
+  });
+
+  test("a reader's post to the crew action is refused, exactly as dev's page refuses it", async () => {
+    const refused = await post(
+      "/alice/beacon/settings/crew",
+      { agent: "keeper" },
+      strangerCookie,
+    );
+    expect(refused.status).toBe(404);
+  });
+
+  test("a role change made from the studio settings page lands exactly as dev's page does", async () => {
+    const roleChange = await post(
+      "/alice/beacon/settings/crew/keeper/role",
+      { role: "reviewer" },
+      ownerCookie,
+    );
+    expect(roleChange.status).toBe(303);
+    expect(roleChange.headers.get("location")).toBe(
+      "/alice/beacon/settings/crew",
+    );
+    const after = await (
+      await get("/alice/beacon/settings", ownerCookie)
+    ).text();
+    expect(after).toContain("reviews");
+  });
+
+  test("?mode=dev on the settings route still renders dev's settings pages", async () => {
+    const dev = await (
+      await get("/alice/beacon/settings?mode=dev", ownerCookie)
+    ).text();
+    expect(dev).toContain(">General<");
+    expect(dev).toContain("Description");
+    expect(dev).not.toContain("Add to crew");
+  });
 });
 
 /**
