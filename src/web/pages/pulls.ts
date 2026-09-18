@@ -53,7 +53,7 @@ import {
 } from "../ui.ts";
 import { refSet } from "./refs.ts";
 import { threadRow } from "./issues.ts";
-import { studioChanges } from "./studio.ts";
+import { studioChanges } from "../studio/lists.ts";
 import { originGlyph } from "./thread.ts";
 
 const PER_PAGE = 25;

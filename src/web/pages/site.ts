@@ -39,7 +39,7 @@ import {
 } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
-import { studioHome } from "./studio.ts";
+import { studioHome } from "../studio/home.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {

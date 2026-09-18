@@ -77,13 +77,13 @@ import {
 } from "../web/pages/issues.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
-  appStateFragment,
   asksSubmit,
   modeSubmit,
   saySubmit,
   shipSubmit,
   tellSubmit,
-} from "../web/pages/studio.ts";
+} from "../web/studio/actions.ts";
+import { appStateFragment } from "../web/studio/previews.ts";
 import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {

@@ -37,7 +37,7 @@ import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
-import { studioApp } from "./studio.ts";
+import { studioApp } from "../studio/app.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";

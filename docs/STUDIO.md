@@ -20,7 +20,7 @@ Every word on a studio page is one thing in git, and dev mode shows it.
 | **asks you** | a pull the crew stopped on, or a green one for a look   |
 
 Every word above is decided in one place (`runWord` and `pullWord`,
-`src/web/pages/studio.ts`), from facts — never from a run's own summary
+`src/web/studio/words.ts`), from facts — never from a run's own summary
 text, which stays the note beside the word. A run's word comes from its
 state, and once it is over, from what it produced: a pull, judged by
 `pullWord`, or nothing to show, which is *planned* rather than a guess at
@@ -137,7 +137,7 @@ steered mid-run (see `docs/APPS.md`, _Runs_).
 issue numbers, labels, milestones and branch names replaced by the same
 five words the rest of the studio speaks. Each is a page of rows, newest
 first: who has it (the assignee, the author, or who ran it), when it last
-moved, its state as `wordBadge` draws it (`src/web/pages/studio.ts`), and
+moved, its state as `wordBadge` draws it (`src/web/studio/words.ts`), and
 one link — the row itself — to the tell, the change or the transcript. The
 app page's own footer (`the map · everything told · every change`, and
 *Every run* above **Now**) and the repository header (`Told`, `Look`, in
@@ -167,7 +167,7 @@ does yet), what it is waiting on and what waits on it (`dependenciesOf`,
 `src/core/dependencies.ts`, each a link, read-only here), and what the
 crew has done with it — every agent run, newest first, who ran it, how
 long it went, what it cost and its state in the studio's own word
-(`tellWord`, `src/web/pages/studio.ts`), its title opening the transcript
+(`tellWord`, `src/web/studio/tell.ts`), its title opening the transcript
 — and the pull that closes it, with its check and a link into its
 preview, when one exists. The sentence itself, and the reply, are the
 conversation dev's page shows too (`conversation`/`composer`,
@@ -201,7 +201,7 @@ mode, renders exactly what it always has.
 `/:owner/:name/pulls/:n` on an app, in the studio, is the change itself —
 never its diff. The title and the opening post in the author's own words,
 who made it and when, the check in the studio's five words (`pullWord`,
-`src/web/pages/studio.ts`) with its deploy one click away, the preview's
+`src/web/studio/words.ts`) with its deploy one click away, the preview's
 state with the link that opens it (`previewCard`, the same card the aside
 carries in dev), and the look at phone and desktop width when one has been
 taken (`lookCard`, docs/APPS.md). Below that the same decision an ask card

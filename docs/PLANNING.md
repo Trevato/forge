@@ -252,7 +252,7 @@ material: whether the decider beats the rule is a query, not an opinion.
   whether the change, the environment or the base branch failed. When it
   is the environment's fault, at 70% or better, the check runs again once
   instead of the agent reworking a change that is fine.
-- **Cards** (`web/pages/studio.ts`): which option on an "asks you" card is
+- **Cards** (`web/studio/leans.ts`): which option on an "asks you" card is
   likely right, so the card leads with it — _likely_, _probably_ or _maybe_
   beside the button, the probability on hover. The person still decides.
 

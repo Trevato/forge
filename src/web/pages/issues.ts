@@ -63,7 +63,8 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
-import { studioTell, studioTells } from "./studio.ts";
+import { studioTells } from "../studio/lists.ts";
+import { studioTell } from "../studio/tell.ts";
 
 const PER_PAGE = 25;
 

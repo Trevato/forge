@@ -96,7 +96,7 @@ import { previewCard } from "./apps.ts";
 import { lookCard } from "./looks.ts";
 import { pullState } from "./pulls.ts";
 import { crewActivityCard } from "./runs.ts";
-import { studioPull } from "./studio.ts";
+import { studioPull } from "../studio/change.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {

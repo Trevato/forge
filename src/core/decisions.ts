@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { id as newId } from "../kernel/id.ts";
 
 /** `lean` is which option on a studio ask card a careful owner would pick
- * — see `web/pages/studio.ts`, which stores `{ card, head }` in `state` so
+ * — see `web/studio/leans.ts`, which stores `{ card, head }` in `state` so
  * `latestLean` can tell a fresh answer from one about a head that moved. */
 export type DecisionKind = "next" | "land" | "retry" | "lean";
 

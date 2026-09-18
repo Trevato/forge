@@ -37,7 +37,8 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { studioRun, studioRuns } from "./studio.ts";
+import { studioRuns } from "../studio/lists.ts";
+import { studioRun } from "../studio/run.ts";
 import {
   btn,
   empty,
