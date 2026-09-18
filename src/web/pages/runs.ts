@@ -37,7 +37,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { studioRun } from "./studio.ts";
+import { studioRun, studioRuns } from "./studio.ts";
 import {
   btn,
   empty,
@@ -256,9 +256,18 @@ export function crewActivityCard(ctx: Ctx, repo: Repo, issue: Issue): Html {
 const PER_PAGE = 30;
 
 // GET /:owner/:name/runs
-export function runsList(ctx: Ctx): Response {
+export async function runsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  // In the studio "every run" is the run list in the studio's own words —
+  // the same rule `runPage` follows for one run. `?mode=dev` is the
+  // one-off way to dev's list without switching the browser.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio) {
+    const record = getAppByRepo(ctx.app.db, repo.id);
+    if (record !== undefined) return await studioRuns(ctx, repo, record);
+  }
   const base = repoBase(repo);
   const q = ctx.url.searchParams;
   const kindRaw = q.get("kind");

@@ -102,6 +102,34 @@ A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone
 who can write here; its title opens the transcript, where the agent can be
 steered mid-run (see `docs/APPS.md`, _Runs_).
 
+## The three lists
+
+`/:owner/:name/issues`, `/pulls` and `/runs` on an app, in the studio, are
+*everything told*, *every change* and *every run* — dev's tabs with dev's
+issue numbers, labels, milestones and branch names replaced by the same
+five words the rest of the studio speaks. Each is a page of rows, newest
+first: who has it (the assignee, the author, or who ran it), when it last
+moved, its state as `wordBadge` draws it (`src/web/pages/studio.ts`), and
+one link — the row itself — to the tell, the change or the transcript. The
+app page's own footer (`the map · everything told · every change`, and
+*Every run* above **Now**) and the repository header (`Told`, `Look`, in
+place of dev's `Issues`, `Pulls`) both land here; the header's own tabs
+keep dev's names, and dev's `Commits`/`Branches` stay dev's alone.
+
+A row's word comes from `tellWord`, `pullWord` or `runWord` — the one place
+each is decided, never re-derived here. `?word=told|working|look|shipped|
+stopped` is a link at the top of each list, never a form, so a filtered
+view has its own address to share; with no `word` the list shows what is
+open and moving — told, working and look, never shipped or stopped, the
+same split "Open" draws elsewhere. `waiting` and `planned` — a merged pull
+production has not caught up to yet, or a run with nothing to show —
+still read as *working*: still moving, not one of the five a list links to
+on its own. Paging is the underlying list's own cursor, unchanged; a word
+filter narrows the page it lands on rather than inventing a second scheme.
+`?mode=dev` on any of the three is dev's list, exactly as it always has
+been; a repository that is not an app renders dev's list here regardless
+of mode, since there is no studio to switch to.
+
 ## A tell, on its own page
 
 `/:owner/:name/issues/:number` on an app, in the studio, is a tell — one

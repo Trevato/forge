@@ -63,7 +63,7 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
-import { studioTell } from "./studio.ts";
+import { studioTell, studioTells } from "./studio.ts";
 
 const PER_PAGE = 25;
 
@@ -291,6 +291,15 @@ export function sourceQuery(
 export async function issuesList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  // In the studio "everything told" is the issue list in the studio's own
+  // words — the same rule `issuePage` follows for one tell. `?mode=dev` is
+  // the one-off way to dev's list without switching the browser.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio) {
+    const record = getAppByRepo(ctx.app.db, repo.id);
+    if (record !== undefined) return await studioTells(ctx, repo, record);
+  }
   const scope = localScope(ctx, repo);
   const base = scope.base;
   const query = readQuery(ctx);

@@ -437,6 +437,142 @@ describe("the studio", () => {
     expect(studioCookie).toContain("<h2>Depends on</h2>");
   });
 
+  test("everything told is the issue list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "List test: not picked up yet",
+      body: "waits for the crew",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+
+    const page = await (await get("/alice/notes/issues")).text();
+    expect(page).toContain("List test: not picked up yet");
+    expect(page).toContain('data-word="told"');
+    expect(page).not.toContain("Clear filters");
+    expect(page).not.toContain('name="label"');
+    expect(page).not.toContain(
+      `>#${told.value.number} opened`,
+    );
+    expect(page).toContain(`href="/alice/notes/issues?word=told"`);
+
+    const filtered = await (
+      await get("/alice/notes/issues?word=told")
+    ).text();
+    expect(filtered).toContain("List test: not picked up yet");
+    const other = await (
+      await get("/alice/notes/issues?word=shipped")
+    ).text();
+    expect(other).not.toContain("List test: not picked up yet");
+
+    const dev = await (
+      await get("/alice/notes/issues", { cookie: `${cookie}; forge_mode=dev` })
+    ).text();
+    expect(dev).toContain(`>#${told.value.number} opened`);
+    expect(dev).not.toContain("data-word=");
+  });
+
+  test("every change is the pull list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/list-change",
+      base: "main",
+      message: "List change",
+      files: [{ path: "LIST_CHANGE.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "List test: a green change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/list-change",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+
+    const page = await (await get("/alice/notes/pulls")).text();
+    expect(page).toContain("List test: a green change");
+    expect(page).toContain('data-word="look"');
+    expect(page).not.toContain(
+      `${pull.headBranch} &rarr; ${pull.baseBranch}`,
+    );
+    expect(page).not.toContain(`${pull.headBranch}`);
+
+    const filtered = await (
+      await get("/alice/notes/pulls?word=look")
+    ).text();
+    expect(filtered).toContain("List test: a green change");
+    const other = await (
+      await get("/alice/notes/pulls?word=shipped")
+    ).text();
+    expect(other).not.toContain("List test: a green change");
+
+    const dev = await (
+      await get("/alice/notes/pulls", { cookie: `${cookie}; forge_mode=dev` })
+    ).text();
+    expect(dev).toContain(pull.headBranch);
+    expect(dev).not.toContain("data-word=");
+  });
+
+  test("every run is the run list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scout.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+
+    const page = await (await get("/alice/notes/runs")).text();
+    expect(page).toContain('data-word="working"');
+    expect(page).toContain(`href="/alice/notes/runs/${run.id}"`);
+
+    const filtered = await (
+      await get("/alice/notes/runs?word=working")
+    ).text();
+    expect(filtered).toContain(`href="/alice/notes/runs/${run.id}"`);
+    const other = await (
+      await get("/alice/notes/runs?word=shipped")
+    ).text();
+    expect(other).not.toContain(`href="/alice/notes/runs/${run.id}"`);
+
+    finishRun(app.db, run.id, { state: "failed", summary: "boom" });
+    const dev = await (
+      await get("/alice/notes/runs", { cookie: `${cookie}; forge_mode=dev` })
+    ).text();
+    expect(dev).toContain("Failed");
+    expect(dev).not.toContain("data-word=");
+  });
+
+  test("issues, pulls and runs on a repository that is not an app render exactly what they render today, even in studio mode", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainlists",
+      visibility: "private",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+
+    const issues = await (await get("/alice/plainlists/issues")).text();
+    expect(issues).not.toContain(">Told<");
+    expect(issues).not.toContain("See dev's list");
+
+    const pulls = await (await get("/alice/plainlists/pulls")).text();
+    expect(pulls).not.toContain(">Look<");
+    expect(pulls).not.toContain("See dev's list");
+
+    const runs = await (await get("/alice/plainlists/runs")).text();
+    expect(runs).not.toContain(">Working<");
+    expect(runs).not.toContain("See dev's list");
+  });
+
   test("a reader without access gets the forge's not-found on a tell, exactly as dev", async () => {
     const told = openIssue(app, alice, repo, { title: "Private work" });
     if (!told.ok) throw new Error(String(told.error));

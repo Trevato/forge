@@ -162,17 +162,19 @@ export function scopeHeader(
       shortcut: "g c",
     },
     {
-      label: "Issues",
+      // Studio names its own lists — told, not issues; dev's tabs are
+      // unchanged in dev mode and on a repository that is not an app.
+      label: studio ? "Told" : "Issues",
       href: `${base}/issues`,
-      icon: "issue",
+      icon: studio ? "clock" : "issue",
       ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
       current: active === "issues",
       shortcut: "g i",
     },
     {
-      label: "Pulls",
+      label: studio ? "Look" : "Pulls",
       href: `${base}/pulls`,
-      icon: "pull",
+      icon: studio ? "eye" : "pull",
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
       shortcut: "g p",

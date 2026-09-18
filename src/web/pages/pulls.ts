@@ -6,6 +6,7 @@
  */
 
 import { openPull } from "../../actions/pulls.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import {
   commentCounts,
   issueCounts,
@@ -52,6 +53,7 @@ import {
 } from "../ui.ts";
 import { refSet } from "./refs.ts";
 import { threadRow } from "./issues.ts";
+import { studioChanges } from "./studio.ts";
 import { originGlyph } from "./thread.ts";
 
 const PER_PAGE = 25;
@@ -123,6 +125,15 @@ function verdictMark(summary: ReviewSummary | undefined): Html {
 export async function pullsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  // In the studio "every change" is the pull list in the studio's own
+  // words — the same rule `pullPage` follows for one change. `?mode=dev` is
+  // the one-off way to dev's list without switching the browser.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio) {
+    const record = getAppByRepo(ctx.app.db, repo.id);
+    if (record !== undefined) return await studioChanges(ctx, repo, record);
+  }
   const base = repoBase(repo);
   const db = ctx.app.db;
   const params = ctx.url.searchParams;
