@@ -350,10 +350,9 @@ export async function runPage(ctx: Ctx): Promise<Response> {
   const { run, lines, truncated } = found.value;
   // In the studio, working is a run: who is on it, the tell it came from,
   // what it has cost, and the box to steer it — the same rule `repoHome`
-  // and `pullPage` follow. `?mode=dev` is the one-off way to the transcript
-  // dev already renders, without switching the browser.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  // and `pullPage` follow. `?mode=dev` on the URL is the escape hatch to
+  // the transcript dev already renders, resolved once for `ctx.mode`.
+  const studio = ctx.mode === "studio";
   if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
     return await studioRun(ctx, repo, run, lines, truncated);
   const base = repoBase(repo);

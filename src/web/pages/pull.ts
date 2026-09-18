@@ -668,10 +668,9 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   if (found instanceof Response) return found;
   const { repo, pull } = found;
   // In the studio a change is judged by what it does, not its diff — the
-  // same rule `repoHome` follows for an app's own page. `?mode=dev` is the
-  // one-off way to the diff without switching the browser, same as home.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  // same rule `repoHome` follows for an app's own page. `?mode=dev` on the
+  // URL is the escape hatch to the diff, resolved once for `ctx.mode`.
+  const studio = ctx.mode === "studio";
   if (studio) {
     const record = getAppByRepo(ctx.app.db, repo.id);
     if (record !== undefined) return await studioPull(ctx, repo, pull, record);

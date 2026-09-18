@@ -772,10 +772,9 @@ function dashboard(ctx: Ctx, user: User): Html {
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   // Studio by default: apps, the crew, what asks you. `?mode=dev` on the
-  // home is the one-off way in without switching the browser — for a
-  // stranger as much as for someone signed in.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  // home is the escape hatch — for a stranger as much as for someone
+  // signed in — resolved once for `ctx.mode`.
+  const studio = ctx.mode === "studio";
   if (user !== undefined && studio) return await studioHome(ctx, user);
   return page({
     ctx,

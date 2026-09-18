@@ -84,7 +84,7 @@ import {
   shipSubmit,
   tellSubmit,
 } from "../web/pages/studio.ts";
-import { DEFAULT_MODE, isMode } from "../web/mode.ts";
+import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
@@ -810,6 +810,26 @@ function withRateHeaders(
   return response;
 }
 
+/**
+ * `?mode=studio` or `?mode=dev` on any URL sets the cookie, exactly like the
+ * toggle's POST — a link someone is handed must work as a switch by itself,
+ * not just for the one page it lands on.
+ */
+function withModeCookie(
+  response: Response,
+  mode: Mode | undefined,
+  secure: boolean,
+): Response {
+  if (mode === undefined) return response;
+  try {
+    response.headers.append("set-cookie", modeCookie(mode, secure));
+  } catch {
+    // Same tradeoff as the rate headers: a frozen header set should not
+    // fail the request.
+  }
+  return response;
+}
+
 const REPLAYABLE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /**
@@ -1092,7 +1112,14 @@ export async function serve(app: App): Promise<Servers> {
       }
 
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      const modeCookie = cookieValue(request, "forge_mode") ?? "";
+      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
+      // `?mode=` on the URL is the escape hatch: a plain link a person is
+      // handed switches the browser by itself, the same way the toggle's
+      // POST does, so it must work in both directions with no form.
+      const modeParam = url.searchParams.get("mode");
+      const modeOverride = isMode(modeParam) ? modeParam : undefined;
+      const mode =
+        modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
       const invoke = (into: Request): Response | Promise<Response> =>
         matched.handler({
           app,
@@ -1101,14 +1128,17 @@ export async function serve(app: App): Promise<Servers> {
           params: matched.params,
           auth,
           theme: isThemeName(themeCookie) ? themeCookie : undefined,
-          mode: isMode(modeCookie) ? modeCookie : DEFAULT_MODE,
+          mode,
         });
 
       const response =
         credential === undefined
           ? await invoke(request)
           : await withIdempotency(app, request, url, credential, invoke);
-      return withRateHeaders(response, verdict);
+      return withRateHeaders(
+        withModeCookie(response, modeOverride, url.protocol === "https:"),
+        verdict,
+      );
     },
     error(error) {
       app.log.error("unhandled request error", { error: String(error) });

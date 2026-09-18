@@ -206,8 +206,9 @@ change's size, unlike the page it links to.
 `/` in the studio: what asks you across every app you can land, what is on
 you (issues and pulls a person assigned to you), and your apps — each with
 whether it is live, what the crew last did there, and a way in. **New app**
-is the same flow as ever. `/?mode=dev` is the repositories list without
-switching the browser.
+is the same flow as ever. `/?mode=dev` is the repositories list, and — like
+the toggle in the top bar — it switches this browser to dev from then on;
+`/?mode=studio` switches it back, the same way.
 
 The home keeps itself current. *Asks you*, *your apps*, *happening now* and
 *on you* are each a live region (`data-live`, `src/web/client.ts`): a deploy
@@ -223,7 +224,8 @@ Signed out, `/` in the studio is a stranger's front door, not the dev
 pitch: a shelf of the public apps actually serving — name, one line of
 description, live state, and production's own picture, linking straight to
 the app. Sign in and Create an account stay one click away; `/?mode=dev`
-still renders the dev landing unchanged. A forge with no public apps yet —
+still renders the dev landing, and switches this browser to dev, same as
+the toggle. A forge with no public apps yet —
 most people's first visit — falls back to that same dev landing rather
 than showing an empty shelf.
 

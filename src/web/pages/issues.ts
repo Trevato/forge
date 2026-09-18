@@ -481,10 +481,9 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
   const { repo, issue } = found;
   // In the studio a tell is one sentence someone said, not dev's labels and
   // dependency form — the same rule `pullPage` follows for a change.
-  // `?mode=dev` is the one-off way to dev's page without switching the
-  // browser, same as there.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  // `?mode=dev` on the URL is the escape hatch to dev's page, resolved
+  // once for `ctx.mode`.
+  const studio = ctx.mode === "studio";
   if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
     return await studioTell(ctx, repo, issue);
   const base = repoBase(repo);

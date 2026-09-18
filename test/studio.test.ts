@@ -142,24 +142,46 @@ describe("the studio", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("home is the studio with the cookie and the repositories without; the switch is a cookie", async () => {
-    const plain = await (
-      await fetch(`${base}/`, { headers: { cookie } })
+  test("home is the studio by default with no cookie at all; ?mode= is a link that switches this browser, both ways", async () => {
+    const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
+    const plain = await plainResponse.text();
+    expect(plain).toContain("Your apps");
+    expect(plain).toContain("notes");
+    expect(plain).not.toContain("<h1>Your repositories</h1>");
+    expect(plainResponse.headers.get("set-cookie")).toBeNull();
+
+    // `?mode=studio` is a no-op switch here, but it still sets the cookie —
+    // the same link works from a dev-cookied browser too.
+    const toStudio = await fetch(`${base}/?mode=studio`, { headers: { cookie } });
+    expect(toStudio.headers.get("set-cookie")).toContain("forge_mode=studio");
+
+    const devResponse = await fetch(`${base}/?mode=dev`, { headers: { cookie } });
+    const dev = await devResponse.text();
+    expect(dev).toContain("<h1>Your repositories</h1>");
+    expect(dev).not.toContain("Your apps");
+    expect(devResponse.headers.get("set-cookie")).toContain("forge_mode=dev");
+
+    // `?mode=dev` still wins for this browser even once studio's cookie is set.
+    const stillDev = await (
+      await fetch(`${base}/?mode=dev`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
     ).text();
-    expect(plain).not.toContain("<h1>Studio</h1>");
-    const home = await (await get("/")).text();
-    expect(home).toContain("Studio");
-    expect(home).toContain("notes");
-    expect(home).toContain("New app");
-    const dev = await (await get("/?mode=dev")).text();
-    expect(dev).not.toContain("<h1>Studio</h1>");
-    const flipped = await post("/mode", { mode: "dev", back: "/" });
-    expect(flipped.status).toBe(303);
-    expect(flipped.headers.get("set-cookie")).toContain("forge_mode=dev");
+    expect(stillDev).toContain("<h1>Your repositories</h1>");
+
+    // And the link's switch stuck: this browser stays in dev with no query.
+    const devCookie = (devResponse.headers.get("set-cookie") ?? "").split(
+      ";",
+    )[0]!;
     const asDev = await (
-      await get("/", { cookie: `${cookie}; forge_mode=dev` })
+      await fetch(`${base}/`, { headers: { cookie: `${cookie}; ${devCookie}` } })
     ).text();
-    expect(asDev).not.toContain("<h1>Studio</h1>");
+    expect(asDev).toContain("<h1>Your repositories</h1>");
+
+    // The toggle's own POST still flips it back, cookie and all.
+    const flipped = await post("/mode", { mode: "studio", back: "/" });
+    expect(flipped.status).toBe(303);
+    expect(flipped.headers.get("set-cookie")).toContain("forge_mode=studio");
     const bad = await post("/mode", { mode: "neither", back: "/" });
     expect(bad.headers.get("set-cookie")).toContain("forge_mode=;");
   });

@@ -268,7 +268,9 @@ mechanical rather than advisory.
 what "ready now" means to a person and to the crew.
 
 `docs/STUDIO.md` is the forge with apps as the unit: tell, working, look,
-shipped, asks you — and the switch to dev.
+shipped, asks you. It is the front door — a browser with no `forge_mode`
+cookie lands there — and the switch to dev, in the top bar or `?mode=dev`
+on any URL, is one click either way.
 
 ## Develop
 
