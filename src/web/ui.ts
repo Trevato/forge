@@ -51,18 +51,43 @@ export function time(iso: string): Html {
   >`;
 }
 
+/** Seconds to one decimal: `3.4s`. A clock that ran backwards reads `0.0s`. */
+function seconds(ms: number): string {
+  return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+}
+
+/** The wait a phrase bothers to name: under this it is noise, not news. */
+const QUEUED_FLOOR_MS = 1_000;
+
 /**
  * How long a deployment took to start serving, worded for a person:
- * `3.4s after the push`. Undefined until it has — never a zero.
+ * `3.4s after the push` — measured from the instant the push created the
+ * deploy run, so however long it waited for a permit is inside the number.
+ * When that wait was a second or more it is named too, because the number
+ * is otherwise a puzzle: `6.1s after the push · 2.4s queued`.
+ *
+ * A deploy no push asked for (a redeploy someone pressed, a boot reconcile)
+ * has no push to measure from: it is measured from its own start and says
+ * so, the same sentence its log makes. Undefined until it serves — never a
+ * zero, and never a negative when two clocks disagree.
  */
 export function servedPhrase(env: EnvStatus): string | undefined {
-  if (env.servingAt === undefined || env.deployStartedAt === undefined)
-    return undefined;
-  const ms = Math.max(
-    0,
-    Date.parse(env.servingAt) - Date.parse(env.deployStartedAt),
-  );
-  return `${(ms / 1000).toFixed(1)}s after the push`;
+  if (env.servingAt === undefined) return undefined;
+  const servedAt = Date.parse(env.servingAt);
+  const pushedAt = env.createdAt === undefined ? NaN : Date.parse(env.createdAt);
+  const startedAt =
+    env.deployStartedAt === undefined ? NaN : Date.parse(env.deployStartedAt);
+  const pushed = Number.isFinite(pushedAt);
+  const from = pushed ? pushedAt : startedAt;
+  if (!Number.isFinite(servedAt) || !Number.isFinite(from)) return undefined;
+  const phrase = `${seconds(servedAt - from)} ${
+    pushed ? "after the push" : "after the deploy started"
+  }`;
+  if (!pushed || !Number.isFinite(startedAt)) return phrase;
+  const queued = startedAt - pushedAt;
+  return queued >= QUEUED_FLOOR_MS
+    ? `${phrase} · ${seconds(queued)} queued`
+    : phrase;
 }
 
 /**

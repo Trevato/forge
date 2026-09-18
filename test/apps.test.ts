@@ -558,6 +558,14 @@ describe("apps: production, previews, data, gates, crew", () => {
     // finished, so `servingAt` is already recorded on the still-open run.
     expect(run?.servingAt).not.toBeNull();
 
+    // The pull's push created this run: the status carries that instant, so
+    // the words a page prints measure from the push and not from the permit
+    // the gate handed out however much later.
+    expect(status?.createdAt).toBe(run!.createdAt);
+    expect(Date.parse(status!.deployStartedAt!)).toBeGreaterThanOrEqual(
+      Date.parse(status!.createdAt!),
+    );
+
     // `app.serving` published the same instant, with the tests it started
     // beside still going — this is what a preview's look is taken from.
     const serving = listEvents(app.db, { repoId: repo.id, limit: 200 }).find(
@@ -851,6 +859,11 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(production.state).toBe("ok");
     expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
+    // No push asked for this one, so it carries no push instant to claim:
+    // a boot reconcile is worded from the deploy's own start.
+    const booted = runtime.envStatus(record, "production");
+    expect(booted?.createdAt).toBeUndefined();
+    expect(booted?.deployStartedAt).toBeDefined();
     const openPreviews = listRuns(app.db, repo.id, { kind: "deploy" }).filter(
       (r) => r.reason === "boot" && r.env !== "production",
     );

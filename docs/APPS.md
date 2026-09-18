@@ -83,7 +83,14 @@ around it. None is advisory.
    `servingAt` is stamped once, at the swap-in, distinct from `startedAt`
    (the deploy's own start) and `finishedAt` (which waits on `test`
    beside it) — so how long a change took to reach its preview is a
-   number the forge can read back, not a line buried in the log.
+   number the forge can read back, not a line buried in the log. A page
+   words that number from `createdAt`, the instant the push created the
+   run, because the deploy may have waited on the concurrency gate for a
+   permit first: `servedPhrase` (`web/ui.ts`) says `6.1s after the push ·
+   2.4s queued` and is the only place it is worded. The deploy's own log
+   line stays measured from `startedAt` and says `after the deploy
+   started`; a deploy no push asked for — a redeploy someone pressed, a
+   boot reconcile — is worded the same way and never claims a push.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
    visibility), and it is set apart from the repository's own: the code can

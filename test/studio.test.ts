@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { previewEnv, type EnvName } from "../src/apps/data.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { linkIssue } from "../src/actions/dependencies.ts";
@@ -43,6 +43,7 @@ import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { pendingLeans, pullWord, runWord, type WordCtx } from "../src/web/pages/studio.ts";
+import { servedPhrase } from "../src/web/ui.ts";
 import { repoDir } from "../src/git/repos.ts";
 
 /** One transparent pixel, dropped where a look would sit. */
@@ -1468,6 +1469,69 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(live).toContain(link);
   });
 
+  test("the head measures from the push, not from the permit it waited for: a deploy queued 5s reads 6.0s after the push and names the wait", async () => {
+    const createdAt = new Date(Date.now() - 20_000).toISOString();
+    const deployStartedAt = new Date(Date.parse(createdAt) + 5_000).toISOString();
+    const servingAt = new Date(Date.parse(deployStartedAt) + 1_000).toISOString();
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "cafebabe",
+      reason: "push",
+    });
+    claimRun(app.db, deployRun.id);
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    putEnv("production", {
+      live: {
+        commitOid: "cafebabe",
+        handle: { port: 4322 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt,
+      },
+    });
+
+    const head = await (await get("/alice/vault/app/state", owner)).text();
+    expect(head).toContain("live 6.0s after the push · 5.0s queued");
+    expect(head).not.toContain("1.0s after the push");
+
+    // The same deployment with no wait for a permit says only the one
+    // number, exactly as it always has.
+    putEnv("production", {
+      live: {
+        commitOid: "cafebabe",
+        handle: { port: 4322 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt: deployStartedAt,
+        deployStartedAt,
+      },
+    });
+    const prompt = await (await get("/alice/vault/app/state", owner)).text();
+    expect(prompt).toContain("live 1.0s after the push");
+    expect(prompt).not.toContain("queued");
+
+    // A deploy no push asked for — a redeploy someone pressed — carries no
+    // push instant, and its words never claim one.
+    putEnv("production", {
+      live: {
+        commitOid: "cafebabe",
+        handle: { port: 4322 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        deployStartedAt,
+      },
+    });
+    const pressed = await (await get("/alice/vault/app/state", owner)).text();
+    expect(pressed).toContain("live 1.0s after the deploy started");
+    expect(pressed).not.toContain("after the push");
+  });
+
   test("app.serving reaches the repo's stream with the shape the live client keys on, the instant the swap-in happens — before its run has finished", async () => {
     const deployRun = createRun(app.db, {
       repoId: repo.id,
@@ -1990,5 +2054,85 @@ describe("working: a run's own page in the studio", () => {
     expect(page).not.toContain('id="run-stop"');
     expect(page).not.toContain(">Stop<");
     expect(page).not.toContain(">Cancel run<");
+  });
+});
+
+/**
+ * The one function every page words a deployment's speed with. The pages
+ * above prove it reaches the studio; these prove what it says at the edges,
+ * where a real deploy is awkward to arrange.
+ */
+describe("servedPhrase", () => {
+  const env = (extra: Partial<EnvStatus>): EnvStatus => ({
+    env: "production",
+    state: "running",
+    commitOid: "cafebabe",
+    url: "http://vault.apps.test",
+    ...extra,
+  });
+
+  test("says nothing at all until the deployment serves", () => {
+    expect(
+      servedPhrase(
+        env({
+          createdAt: "2026-01-01T00:00:00.000Z",
+          deployStartedAt: "2026-01-01T00:00:02.000Z",
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  test("clocks that disagree clamp to zero rather than printing a negative", () => {
+    expect(
+      servedPhrase(
+        env({
+          createdAt: "2026-01-01T00:00:00.300Z",
+          deployStartedAt: "2026-01-01T00:00:00.300Z",
+          servingAt: "2026-01-01T00:00:00.000Z",
+        }),
+      ),
+    ).toBe("0.0s after the push");
+    // A start before the push it answers is skew too: no negative wait.
+    expect(
+      servedPhrase(
+        env({
+          createdAt: "2026-01-01T00:00:05.000Z",
+          deployStartedAt: "2026-01-01T00:00:00.000Z",
+          servingAt: "2026-01-01T00:00:06.000Z",
+        }),
+      ),
+    ).toBe("1.0s after the push");
+  });
+
+  test("a wait under a second is noise: the phrase reads as it always has", () => {
+    expect(
+      servedPhrase(
+        env({
+          createdAt: "2026-01-01T00:00:00.000Z",
+          deployStartedAt: "2026-01-01T00:00:00.900Z",
+          servingAt: "2026-01-01T00:00:04.300Z",
+        }),
+      ),
+    ).toBe("4.3s after the push");
+  });
+
+  test("a push with no start recorded is still measured from the push", () => {
+    expect(
+      servedPhrase(
+        env({
+          createdAt: "2026-01-01T00:00:00.000Z",
+          servingAt: "2026-01-01T00:00:02.500Z",
+        }),
+      ),
+    ).toBe("2.5s after the push");
+  });
+
+  test("a deployment with neither instant, and an unreadable one, say nothing", () => {
+    expect(servedPhrase(env({ servingAt: "2026-01-01T00:00:02.500Z" }))).toBeUndefined();
+    expect(
+      servedPhrase(
+        env({ createdAt: "not a time", servingAt: "2026-01-01T00:00:02.500Z" }),
+      ),
+    ).toBeUndefined();
   });
 });

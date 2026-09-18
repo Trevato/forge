@@ -93,7 +93,14 @@ export interface EnvStatus {
   readonly since?: string | undefined;
   /** The instant this deployment started serving, set once at the swap-in. */
   readonly servingAt?: string | undefined;
-  /** The deploy run's own start — the reference `servingAt` is measured from. */
+  /**
+   * The instant the push created this deploy run — what a person means by
+   * "after the push", and the reference `servedPhrase` measures from. Unset
+   * for a deploy no push asked for (a redeploy someone pressed, a boot
+   * reconcile), so the words for those never claim a push that never was.
+   */
+  readonly createdAt?: string | undefined;
+  /** The deploy run's own start — after however long it waited for a permit. */
   readonly deployStartedAt?: string | undefined;
   readonly error?: string | undefined;
   /**
@@ -120,9 +127,19 @@ interface Live {
    * unset on the value `bringUp` returns, which does not yet know it.
    */
   readonly servingAt?: string | undefined;
-  /** The deploy run's own start — the reference `servingAt` is measured from. */
+  /** The instant the push created this deploy run, when a push did. */
+  readonly createdAt?: string | undefined;
+  /** The deploy run's own start — the reference the deploy log measures from. */
   readonly deployStartedAt?: string | null | undefined;
 }
+
+/**
+ * The deploy reasons a ref moving created: for these the run's `createdAt`
+ * is the instant of the push that asked for the deploy, so the wait for a
+ * permit sits inside the number the studio prints. A redeploy someone
+ * pressed, a crash restart, and a boot or enable reconcile are not pushes.
+ */
+const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
 
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {
@@ -266,6 +283,7 @@ export class AppsRuntime {
               port: state.live.handle.port,
               since: state.live.since,
               servingAt: state.live.servingAt,
+              createdAt: state.live.createdAt,
               ...(state.live.deployStartedAt === null
                 ? {}
                 : { deployStartedAt: state.live.deployStartedAt }),
@@ -283,6 +301,7 @@ export class AppsRuntime {
         runId: swapped ? state.deploying!.run.id : state.live.runId,
         since: state.live.since,
         servingAt: state.live.servingAt,
+        createdAt: state.live.createdAt,
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
@@ -656,7 +675,18 @@ export class AppsRuntime {
     const served = markServing(this.app.db, run.id);
     const servingAt = served?.servingAt ?? new Date().toISOString();
     const deployStartedAt = claimed.startedAt;
-    const live: Live = { ...outcome.value, servingAt, deployStartedAt };
+    // The run was created the instant the push asked for it; it started when
+    // the gate handed it a permit. Both travel with the deployment: the log
+    // below is measured from the start, the studio's phrase from the push.
+    const createdAt = PUSH_REASONS.includes(run.reason)
+      ? run.createdAt
+      : undefined;
+    const live: Live = {
+      ...outcome.value,
+      servingAt,
+      createdAt,
+      deployStartedAt,
+    };
     state.live = live;
     state.lastError = undefined;
     if (previous !== undefined) {
