@@ -50,12 +50,7 @@ import {
   pullForBranch,
   type Pull,
 } from "../../core/pulls.ts";
-import {
-  canWrite,
-  getRepoById,
-  listReposVisibleTo,
-  type Repo,
-} from "../../core/repos.ts";
+import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
   activeRunFor,
@@ -1507,13 +1502,6 @@ export async function studioPull(
     (d) => d.pull?.id === pull.id,
   );
 
-  const headRepo = pull.crossRepo
-    ? getRepoById(db, pull.headRepoId)
-    : undefined;
-  const headLabel = headRepo
-    ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
-    : pull.headBranch;
-
   const head = html`<div class="issue-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
     <div class="issue-meta">
@@ -1531,7 +1519,6 @@ export async function studioPull(
             >${icon("external")}view on origin</a
           >`,
       )}
-      <span class="mono">${headLabel} → ${pull.baseBranch}</span>
     </div>
   </div>`;
 
@@ -1560,10 +1547,7 @@ export async function studioPull(
     ),
   );
 
-  const talk = conversation(ctx, repo, pull, {
-    openVerb: html`wants to merge <span class="mono">${headLabel}</span> into
-      <span class="mono">${pull.baseBranch}</span> ·`,
-  });
+  const talk = conversation(ctx, repo, pull, { openVerb: "opened this" });
 
   const body = html`${repoHeader(ctx, repo, "pulls", {
       compact: true,
