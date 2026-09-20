@@ -222,6 +222,32 @@ describe("the studio", () => {
     expect(dev).toContain(">Commits<");
   });
 
+  test("the studio's design is in the stylesheet, not in every page", async () => {
+    // The rules are static, so they belong in the file the browser caches.
+    // A studio page carries no <style> at all — only a page that computes CSS
+    // for this request (label colors) is allowed one.
+    for (const path of ["/", "/alice/notes", "/apps"]) {
+      const html = await (await get(path)).text();
+      expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
+      expect(html).not.toContain("<style");
+    }
+
+    const sheet = await fetch(`${base}/assets/forge.css`);
+    expect(sheet.headers.get("content-type")).toContain("text/css");
+    const css = await sheet.text();
+    expect(css).toContain(".studio-tell textarea");
+    expect(css).toContain(".studio-bulk-count");
+    expect(css).toContain("@keyframes studio-flash");
+    expect(css).toContain('.board-fill[data-w="100"]');
+    // In the `components` layer, last: an inline block used to win over every
+    // layer, and last in `components` is the nearest place that still reads
+    // the same — a `content` rule or a utility must keep out-specifying them.
+    for (const rule of [".studio-tell textarea", ".board-h"]) {
+      expect(css.indexOf(rule)).toBeGreaterThan(css.indexOf("@layer components {"));
+      expect(css.indexOf(rule)).toBeLessThan(css.indexOf("@layer content {"));
+    }
+  });
+
   test("telling the crew opens an issue and hands it to a builder", async () => {
     const told = await post("/alice/notes/tell", {
       text: "Make the notes page load in under a second on my phone.\n\nIt takes three seconds now.",
@@ -2977,7 +3003,15 @@ describe("working: a run's own page in the studio", () => {
     const page = await (
       await get(`/alice/engine/runs/${run.id}`, writerCookie)
     ).text();
-    expect(page).toContain('data-word="look"');
+    // The badge itself, not a stylesheet that happens to mention the word:
+    // this read `data-word="look"` until the studio's rules moved out of the
+    // page, and matched `.studio-list li[data-word="look"]` in the inline
+    // <style>, never the badge. The pull has no deploy of this head, so its
+    // word is `waiting` — and the point stands either way: the word came
+    // from the pull found by branch, not from the summary (`planned` is what
+    // a run with nothing to show would say).
+    expect(page).toMatch(/data-word="waiting"\s+id="run-word"/);
+    expect(page).not.toContain('data-word="planned"');
     expect(page).not.toContain('id="run-stop"');
     expect(page).not.toContain(">Stop<");
     expect(page).not.toContain(">Cancel run<");

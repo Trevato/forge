@@ -45,7 +45,6 @@ import { withLikely } from "./leans.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
-import { studioCss } from "./style.ts";
 import { pullWord, runWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
@@ -500,7 +499,6 @@ export async function studioApp(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}\n${appTailJs}`,
     // The no-script half of the tail: while the crew's run goes, the page
     // refreshes itself, the way the run's own page does; the script above

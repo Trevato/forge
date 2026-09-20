@@ -29,7 +29,6 @@ import { btn, icon } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle } from "../pages/runs.ts";
 import { logBox, RUN_TRANSCRIPT_CAP } from "./log.ts";
-import { studioCss } from "./style.ts";
 import { runWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
@@ -263,7 +262,6 @@ export async function studioRun(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: studioRunJs,
     // The no-script half of a live log: while the run is going, the page
     // refreshes itself; the script above removes this the moment it runs.

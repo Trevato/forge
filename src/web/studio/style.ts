@@ -1,12 +1,15 @@
 /**
- * The studio's page stylesheet: the one `styleCss` block every studio page
- * hands `page()`, assembled from named parts the way `web/style.ts` assembles
- * the served sheet from `style/*`. Each part is named for the concept whose
- * markup it styles, and they are joined in the order they were served when
- * this was one block at the bottom of `pages/studio.ts`, so the sheet is
- * byte-for-byte the string it has always been. `bulkCss` is not written here
- * at all: it is derived from the same table the bulk route enforces
- * (`asks.ts`).
+ * The studio's slice of the served stylesheet (`web/style.ts` assembles it
+ * in, beside `style/*`). These rules are the studio's design, identical for
+ * every visitor and every request, so they belong in the file the browser
+ * caches — not in a `<style>` block on every studio page.
+ *
+ * Each part is named for the concept whose markup it styles. They land in the
+ * `components` layer, last, which is where an inline block's rules used to
+ * win from: nothing else in the sheet styles a `.studio-*` selector, and the
+ * few rules that reach a shared class (`.badge`, `.row-lead`, `.env-facts`)
+ * set properties those components do not. `bulkCss` is not written here at
+ * all: it is derived from the same table the bulk route enforces (`asks.ts`).
  *
  * `shell` and `rail` hold rules nothing in this directory draws any more,
  * and `rows` all but two of them. They are kept exactly as they were because
@@ -16,9 +19,8 @@
 
 import { bulkCss } from "./asks.ts";
 
-/** A part as written: the newline that opens the template belongs to the
- * sheet, the one that closes it does not. */
-const part = (css: string): string => css.slice(0, -1);
+/** A part as written, without the newlines the template literal adds. */
+const part = (css: string): string => css.trim();
 
 /** The first studio's own two-column shell, and the preview box it drew. */
 const shell = part(/* css */ `
@@ -102,7 +104,7 @@ const rail = part(/* css */ `
 .studio-crew li span { opacity: .85; }
 `);
 
-export const studioCss = `${[
+export const studioCss = `@layer components {\n${[
   shell,
   tellBox,
   appHead,
@@ -110,6 +112,6 @@ export const studioCss = `${[
   wordBadges,
   rows,
   asks,
-  `\n${bulkCss}`,
+  bulkCss,
   rail,
-].join("")}\n`;
+].join("\n\n")}\n}`;

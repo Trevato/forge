@@ -32,7 +32,6 @@ import { lookCard } from "../pages/looks.ts";
 import { pullState } from "../pages/pulls.ts";
 import { composer, conversation, originGlyph } from "../pages/thread.ts";
 import { decisionActions, decisionForm, decisionsFor } from "./asks.ts";
-import { studioCss } from "./style.ts";
 import { pullWord, wordBadge, type WordCtx } from "./words.ts";
 
 /** What a conflicted change's own page says: the base it no longer merges
@@ -199,7 +198,6 @@ export async function studioPull(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: liveClientJs,
   });
 }

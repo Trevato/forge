@@ -55,7 +55,6 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { shelfRows } from "../studio/shelf.ts";
-import { studioCss } from "../studio/style.ts";
 import {
   badge,
   btn,
@@ -282,7 +281,7 @@ async function studioAppsList(ctx: Ctx): Promise<Response> {
           action: create,
         })
       : listCard(rows)}`;
-  return page({ ctx, title: "Apps", body, styleCss: studioCss });
+  return page({ ctx, title: "Apps", body });
 }
 
 // ---- new app ----

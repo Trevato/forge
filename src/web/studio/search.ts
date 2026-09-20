@@ -33,7 +33,6 @@ import {
   type Tone,
 } from "../ui.ts";
 import { appsOf } from "./asks.ts";
-import { studioCss } from "./style.ts";
 
 const APP_LIMIT = 20;
 const CHANGE_LIMIT = 20;
@@ -146,7 +145,6 @@ export function studioSearchPage(ctx: Ctx): Response {
     return page({
       ctx,
       title: "Studio search",
-      styleCss: studioCss,
       body: html`${pageHead("Search")} ${form}
       ${empty({
         icon: "search",
@@ -202,7 +200,6 @@ export function studioSearchPage(ctx: Ctx): Response {
   return page({
     ctx,
     title: `Studio search · ${query}`,
-    styleCss: studioCss,
     body,
   });
 }

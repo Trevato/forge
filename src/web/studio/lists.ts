@@ -37,7 +37,6 @@ import {
   time,
 } from "../ui.ts";
 import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
-import { studioCss } from "./style.ts";
 import { tellWord } from "./tell.ts";
 import {
   pullWord,
@@ -211,7 +210,6 @@ export async function studioTells(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: liveClientJs,
   });
 }
@@ -300,7 +298,6 @@ export async function studioChanges(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: liveClientJs,
   });
 }
@@ -415,7 +412,6 @@ export async function studioRuns(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: liveClientJs,
   });
 }

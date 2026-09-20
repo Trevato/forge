@@ -37,7 +37,6 @@ import {
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, reasonWords } from "../pages/runs.ts";
 import { composer, conversation, originGlyph } from "../pages/thread.ts";
-import { studioCss } from "./style.ts";
 import {
   pullWord,
   runWord,
@@ -301,7 +300,6 @@ export async function studioTell(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    styleCss: studioCss,
     scriptJs: liveClientJs,
   });
 }

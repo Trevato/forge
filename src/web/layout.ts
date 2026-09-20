@@ -47,7 +47,11 @@ export interface PageOptions {
   crumbs?: { label: string; href: string }[];
   body: Html;
   /**
-   * Page-specific CSS (e.g. dynamic label colors). Emitted in a nonce'd
+   * CSS this request computed: label colors mixed from the labels actually
+   * on the page (`labelCss`) are the case this exists for. A rule that is
+   * the same for every visitor belongs in the served stylesheet
+   * (`web/style.ts`), which the browser already has — the studio's and the
+   * board's used to be sent from here and now live there. Emitted in a nonce'd
    * <style> the strict CSP allows. Must be trusted CSS the page generated —
    * never unescaped user text.
    */

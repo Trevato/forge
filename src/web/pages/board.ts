@@ -154,7 +154,6 @@ export function boardPage(ctx: Ctx): Response {
     body,
     bare: true,
     theme: "dark",
-    styleCss: boardCss,
     scriptJs: `${liveRegionsJs}\n${boardJs}`,
   });
 }
@@ -452,7 +451,14 @@ const widths = Array.from(
   (_, n) => `.board-fill[data-w="${n}"] { width: ${n}%; }`,
 ).join("\n");
 
+/**
+ * The board's own components, assembled into the served stylesheet by
+ * `web/style.ts` rather than sent inline with the page. Every rule here is
+ * a `.board-*` selector nothing else in the sheet mentions, so the
+ * `components` layer is where they read the same as they always did.
+ */
 export const boardCss = /* css */ `
+@layer components {
 .board { --pad: clamp(16px, 2.2vw, 32px); display: flex; flex-direction: column; min-height: 100dvh; font-size: 16px; }
 .board-top { display: flex; align-items: center; gap: 14px; padding: 14px var(--pad) 0; color: var(--faint); font-size: 13px; }
 .board-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -0.03em; font-size: 15px; color: var(--muted-fg); }
@@ -569,4 +575,5 @@ ${widths}
 .board[data-focus] .board-region { display: none; }
 .board[data-focus="working"] #working, .board[data-focus="landed"] #landed,
 .board[data-focus="decided"] #decided, .board[data-focus="today"] #today { display: flex; }
+}
 `;

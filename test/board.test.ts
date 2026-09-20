@@ -136,6 +136,10 @@ describe("the board", () => {
     expect(html).toContain('id="board-clock"');
     expect(html).toContain("new EventSource('/events')");
     expect(html).toContain("requestFullscreen");
+    // A wall left open all day fetches its 13 KB of rules once, with the rest
+    // of the design, instead of carrying them inline on every reload.
+    expect(html).not.toContain("<style");
+    expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
     // A viewer who chose a theme keeps it.
     const paper = await (
       await get("/board", { cookie: `${cookie}; forge_theme=paper` })

@@ -22,7 +22,6 @@ import { appsOf, asksPanel, decisionsFor } from "./asks.ts";
 import { withLikely } from "./leans.ts";
 import { stopForm } from "./run.ts";
 import { shelfRows } from "./shelf.ts";
-import { studioCss } from "./style.ts";
 
 /**
  * The home in the studio: what asks you first, then your apps as a shelf of
@@ -149,7 +148,6 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ctx,
     title: "Studio",
     body,
-    styleCss: studioCss,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
   });
 }
