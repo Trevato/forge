@@ -621,18 +621,21 @@ export const studioRunJs = /* js */ `
 `;
 
 /**
- * The tail beside a running row on the app's own page in the studio
- * (\`studio/app.ts\`, \`#app-run-tail\`): the same lines a run's own page
- * streams, a handful at a time, so a person on the app's page sees the crew
- * at work without opening the run. \`data-cap\` bounds what stays in the DOM
- * as new lines arrive — a chatty agent left open cannot grow the page
- * without bound. There is exactly one of these on a page at once, so it
- * opens one more stream beside the app's own state stream and the page's
- * live regions, never one per row.  It carries no controls of its own: Stop
- * lives on the row, the full transcript is one click away, and the row's own
- * word swaps in once the run is over (the page's existing live region for
- * "Now" already repaints on \`run.*\`) — this only ever appends lines and
- * stops.
+ * The tail beside a running row, or in the head card, on the app's own page
+ * in the studio (\`studio/app.ts\`, \`studio/previews.ts\`, \`#app-run-tail\`):
+ * the same lines a run's own page streams, a handful at a time, so a person
+ * on the app's page sees the crew at work — or the app itself coming up,
+ * before any agent has touched it — without opening the run. \`data-cap\`
+ * bounds what stays in the DOM as new lines arrive — a chatty run left open
+ * cannot grow the page without bound. There is exactly one of these on a
+ * page at once (an agent run's own work outranks a background deploy, so
+ * only one of the two ever renders the id), so it opens one more stream
+ * beside the app's own state stream and the page's live regions, never one
+ * per row. It carries no controls of its own: Stop lives on the row, the
+ * full transcript is one click away, and the row's own word — or the head
+ * card's own state — swaps in once the run is over (the page's existing
+ * live regions already repaint on \`run.*\`) — this only ever appends lines
+ * and stops.
  */
 export const appTailJs = /* js */ `
 (function () {

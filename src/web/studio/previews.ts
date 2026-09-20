@@ -18,7 +18,9 @@ import {
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { listPulls, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { listRuns } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
+import { readRunLog } from "../../runs/log.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
@@ -35,6 +37,7 @@ import {
   time,
 } from "../ui.ts";
 import { lookNow } from "../pages/looks.ts";
+import { LOG_TAIL_CAP, logBox } from "./log.ts";
 
 /** The three words the studio uses for a preview, whatever its check says. */
 function previewBadge(state: EnvState | undefined): Html {
@@ -116,6 +119,38 @@ function previewsPanel(
 }
 
 /**
+ * Production coming up, tailed: while its deploy is running and no agent
+ * run has the crew's own tail already (`studio/app.ts`'s "Now" panel), the
+ * head card gets the same peek at the log a running agent run gets beside
+ * its row — the app's own first thirty seconds are not a blank page. The
+ * agent's run wins the one stream this page opens when both are going: it
+ * is the crew's own answer to something asked, where a deploy is often
+ * background (a redeploy after an unrelated push), and it is already what
+ * "Now" shows.
+ */
+function deployTail(
+  ctx: Ctx,
+  repo: Repo,
+  production: EnvStatus | undefined,
+): Html | undefined {
+  if (production?.state !== "deploying" || production.runId === undefined)
+    return undefined;
+  const agentBusy = listRuns(ctx.app.db, repo.id, {
+    kind: "agent",
+    limit: 8,
+  }).some((r) => r.state === "running");
+  if (agentBusy) return undefined;
+  return logBox({
+    id: "app-run-tail",
+    who: "the deploy",
+    cap: LOG_TAIL_CAP,
+    lines: readRunLog(ctx.app.config.dataDir, production.runId).lines,
+    stream: `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${production.runId}/log?follow=1`,
+    className: "log-tail",
+  });
+}
+
+/**
  * The head card and the previews list: what production is doing, and every
  * open pull's own environment. One function, called for the page's first
  * paint and for the fragment a deploy event refreshes in place
@@ -126,7 +161,7 @@ export function appPanels(
   repo: Repo,
   record: AppRecord,
   openPulls: readonly Pull[],
-): { head: Html; previews: Html | null } {
+): { head: Html; previews: Html | null; deployTailing: boolean } {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
@@ -135,6 +170,7 @@ export function appPanels(
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
   const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
+  const tail = deployTail(ctx, repo, production);
   // The state in one word, and under it the same facts the App page shows —
   // why it is not up, and the deploy whose log says the rest.
   const live = envPhrase(production);
@@ -165,6 +201,7 @@ export function appPanels(
           ctx.app.config.sshHostKey,
         ),
       )}
+      ${tail ?? null}
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
@@ -175,7 +212,7 @@ export function appPanels(
     })}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
-  return { head, previews };
+  return { head, previews, deployTailing: tail !== undefined };
 }
 
 /**

@@ -3132,6 +3132,201 @@ describe("the app's page tails the crew's log while it works", () => {
 });
 
 /**
+ * Issue #145: the run a brand-new app is waiting on is its first deploy, not
+ * an agent's — the head card tails production's own deploy the same way a
+ * running row is tailed, and yields to an agent run's own tail when one is
+ * also going, so the page never opens two streams for one repo.
+ */
+describe("the app's page tails the deploy that is bringing it alive", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let runtime: AppsRuntime;
+  let repo: Repo;
+  let record: AppRecord;
+  let owner: string;
+  let scoutId: string;
+
+  interface PreviewSlot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    deploying?: unknown;
+    live?: unknown;
+    lastError?: string;
+    lastRunId?: string;
+  }
+  const putEnv = (
+    env: EnvName,
+    slot: Omit<PreviewSlot, "app" | "env" | "chain" | "restarts">,
+  ): void => {
+    (runtime as unknown as { envs: Map<string, PreviewSlot> }).envs.set(
+      `${record.id}/${env}`,
+      { app: record, env, chain: Promise.resolve(), restarts: [], ...slot },
+    );
+  };
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-deploy-tail-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "deploytail.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    owner = await signIn("alice");
+    const made = await createRepo(app, a.value, {
+      name: "kindling",
+      visibility: "private",
+      description: "a new app",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "kindling\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "kindling" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+    const scout = await createAgent(app, a.value, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    scoutId = scout.value.user.id;
+    expect(addToCrew(app, a.value, repo, "scout").ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a production deploy under way, with no agent run going, is tailed in the head card and named as the deploy's own stream", async () => {
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "f00dcafe",
+      reason: "boot",
+    });
+    claimRun(app.db, deployRun.id);
+    appendRunLog(app.config.dataDir, deployRun.id, "checking out f00dcafe");
+    appendRunLog(app.config.dataDir, deployRun.id, "install …");
+    putEnv("production", {
+      deploying: {
+        run: { id: deployRun.id, commitOid: "f00dcafe" },
+        abort: new AbortController(),
+      },
+    });
+
+    const page = await (await get("/alice/kindling", owner)).text();
+    expect(page).toContain('id="app-run-tail"');
+    expect(page).toContain('data-who="the deploy"');
+    expect(page).toContain(
+      `data-stream="/api/v1/repos/alice/kindling/runs/${deployRun.id}/log?follow=1"`,
+    );
+    expect(page).toContain("install …");
+    // No script, no problem: the page keeps refreshing while the deploy
+    // goes — the actual meta tag, not just the script's own selector text.
+    expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+  });
+
+  test("an agent run at work outranks a background deploy: the page follows the crew, never both", async () => {
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "d0d0d0d0",
+      reason: "push",
+    });
+    claimRun(app.db, deployRun.id);
+    appendRunLog(app.config.dataDir, deployRun.id, "deploying d0d0d0d0");
+    putEnv("production", {
+      deploying: {
+        run: { id: deployRun.id, commitOid: "d0d0d0d0" },
+        abort: new AbortController(),
+      },
+    });
+
+    const tell = openIssue(app, getUserByName(app.db, "alice")!, repo, {
+      title: "Add a footer",
+    });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const agentRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, agentRun.id);
+    appendRunLog(app.config.dataDir, agentRun.id, "scout is on it");
+
+    const page = await (await get("/alice/kindling", owner)).text();
+    // Exactly one tail, and it is the crew's own run — never the deploy's.
+    expect(page.match(/id="app-run-tail"/g)?.length).toBe(1);
+    expect(page).not.toContain('data-who="the deploy"');
+    expect(page).toContain(
+      `data-stream="/api/v1/repos/alice/kindling/runs/${agentRun.id}/log?follow=1"`,
+    );
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    finishRun(app.db, agentRun.id, { state: "ok", summary: "planned" });
+  });
+
+  test("with neither a deploy nor an agent run going, the page carries no tail at all", async () => {
+    putEnv("production", {
+      live: {
+        commitOid: "d0d0d0d0",
+        handle: { port: 4501 },
+        runId: "irrelevant",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+    const page = await (await get("/alice/kindling", owner)).text();
+    expect(page).not.toContain('id="app-run-tail"');
+    expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
+  });
+});
+
+/**
  * Issue #65: a public app's studio page is the app, not the owner's books.
  * `canSeeOwnerFacts` (`src/core/repos.ts`) is the one predicate — the same
  * as `canWrite` today — that every surface carrying money, the crew or the
