@@ -30,7 +30,7 @@ import { boardJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, icon, time } from "../ui.ts";
-import { lookUrl } from "./looks.ts";
+import { lookUrl, thumbLook } from "./looks.ts";
 
 // ---- words ----
 
@@ -273,15 +273,12 @@ function landed(ctx: Ctx, scope: Scope): Html {
   const pictureOf = (repo: Repo): string | undefined => {
     const record = scope.records.get(repo.id);
     if (record === undefined) return undefined;
-    const look = looks.find(
-      (l) =>
-        l.appId === record.id &&
-        l.env === "production" &&
-        l.kind === "phone" &&
-        l.error === null,
+    const look = thumbLook(
+      looks.filter((l) => l.appId === record.id && l.env === "production"),
     );
     return (
-      look && lookUrl(repoBase(repo), "production", look.commitOid, "phone")
+      look &&
+      lookUrl(repoBase(repo), "production", look.commitOid, look.kind)
     );
   };
   const rows = pulls.map((pull: Pull) => {

@@ -40,6 +40,13 @@ export const lookUrl = (
 const pictured = (looks: readonly Look[], kind: LookKind): Look | undefined =>
   looks.find((l) => l.kind === kind && l.error === null);
 
+/**
+ * The picture for a small slot: the dedicated thumb, or — for a commit
+ * taken before it existed — the phone shot a thumbnail loaded before.
+ */
+export const thumbLook = (looks: readonly Look[]): Look | undefined =>
+  pictured(looks, "thumb") ?? pictured(looks, "phone");
+
 // GET /:owner/:name/looks/:env/:commit/:kind.png
 export function lookImage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
@@ -136,29 +143,33 @@ export function lookCard(
   );
 }
 
-/** How production looks now, small, for the app's studio head. */
+/**
+ * How production looks now, small, for the app's studio head — the
+ * dedicated thumb, or a commit from before it existed still shows what it
+ * always showed. It is the first picture on the app's own page, so it is
+ * not lazy: a person opening the app wants to see it at once.
+ */
 export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
-  const look = pictured(
-    looksForEnv(ctx.app.db, record.id, "production"),
-    "desktop",
-  );
+  const looks = looksForEnv(ctx.app.db, record.id, "production");
+  const look = pictured(looks, "thumb") ?? pictured(looks, "desktop");
   if (look === undefined) return html``;
   const base = repoBase(repo);
+  const size = LOOK_SIZES[look.kind];
   return html`<a
     class="look-now"
     href="${base}/app/production/open"
     title="How it looks now, at ${look.commitOid.slice(0, 7)}"
   >
     <img
-      src="${lookUrl(base, "production", look.commitOid, "desktop")}"
-      width="${LOOK_SIZES.desktop.width}"
-      height="${LOOK_SIZES.desktop.height}"
+      src="${lookUrl(base, "production", look.commitOid, look.kind)}"
+      width="${size.width}"
+      height="${size.height}"
       alt="${repo.name} as it looks now"
     />
   </a>`;
 }
 
-/** A phone picture as a thumbnail that opens the pull. */
+/** A small picture as a thumbnail that opens the pull. */
 export function lookThumb(href: string, src: string): Html {
   return html`<a class="look-thumb" href="${href}"
     ><img src="${src}" width="30" height="40" alt="" loading="lazy"

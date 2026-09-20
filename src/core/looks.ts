@@ -8,18 +8,23 @@
 import type { Database } from "bun:sqlite";
 import { id as newId } from "../kernel/id.ts";
 
-/** The two widths a page is pictured at. */
-export type LookKind = "phone" | "desktop";
-export const LOOK_KINDS: readonly LookKind[] = ["phone", "desktop"];
+/** The three widths a page is pictured at. */
+export type LookKind = "phone" | "desktop" | "thumb";
+export const LOOK_KINDS: readonly LookKind[] = ["phone", "desktop", "thumb"];
 export const isLookKind = (value: string): value is LookKind =>
   (LOOK_KINDS as readonly string[]).includes(value);
 
-/** The two widths, as a person holds them: a phone, and a laptop's window. */
+/**
+ * The three widths, as a person holds them: a phone, a laptop's window, and
+ * a thumbnail — taken at the size a slot actually shows, at desktop's own
+ * aspect, rather than a full picture squeezed into a small box.
+ */
 export const LOOK_SIZES: Readonly<
   Record<LookKind, { readonly width: number; readonly height: number }>
 > = {
   phone: { width: 390, height: 844 },
   desktop: { width: 1280, height: 800 },
+  thumb: { width: 200, height: 125 },
 };
 
 export interface Look {

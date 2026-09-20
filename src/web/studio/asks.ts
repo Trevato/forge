@@ -32,7 +32,7 @@ import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
-import { lookThumb, lookUrl } from "../pages/looks.ts";
+import { lookThumb, lookUrl, thumbLook } from "../pages/looks.ts";
 import { leanNote, leanVariant } from "./leans.ts";
 
 /** The apps a person can see, as repositories, with their records — the
@@ -203,14 +203,10 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
     const record = records.get(repo.id);
     if (record === undefined) return undefined;
     const env = previewEnv(pull.number);
-    const look = looks.find(
-      (l) =>
-        l.appId === record.id &&
-        l.env === env &&
-        l.kind === "phone" &&
-        l.error === null,
+    const look = thumbLook(
+      looks.filter((l) => l.appId === record.id && l.env === env),
     );
-    return look && lookUrl(repoBase(repo), env, look.commitOid, "phone");
+    return look && lookUrl(repoBase(repo), env, look.commitOid, look.kind);
   };
   return candidates.map((c): Decision => {
     if (c.kind === "stopped" && c.pull) {

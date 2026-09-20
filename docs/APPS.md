@@ -454,13 +454,16 @@ older ones are history, not status.
 ### The look
 
 When a deploy comes up green the forge takes a picture of it — the page at
-`/`, at a phone's width (390×844) and a laptop's (1280×800) — and keeps the
-pictures beside the commit they are of, so a person judges a change from
-what it is rather than from what it says. The pull page shows both under
-the checks, with the commit and a word when the head has moved since; the
-studio's ask row leads with the phone picture; an app's studio head shows
-how production looks now. Pictures are served at
-`/:owner/:name/looks/<env>/<commit>/{phone,desktop}.png` with the
+`/`, at a phone's width (390×844), a laptop's (1280×800), and a thumb's
+(200×125, desktop's own aspect, small) — and keeps the pictures beside the
+commit they are of, so a person judges a change from what it is rather than
+from what it says. The pull page shows the phone and desktop pair under the
+checks, with the commit and a word when the head has moved since; the
+studio's ask row and the board's landed row lead with the thumb; an app's
+studio head shows how production looks now, with the thumb too. A thumb
+missing on a commit pictured before it existed falls back to the phone shot
+that slot used to load, so nothing goes blank. Pictures are served at
+`/:owner/:name/looks/<env>/<commit>/{phone,desktop,thumb}.png` with the
 repository's own read access, cached by commit.
 
 The picture is what the repository's owner would see: headless Chromium is

@@ -1,8 +1,8 @@
 /**
- * The look (docs/APPS.md): a green deploy is pictured at phone and desktop
- * width, once per head, as the owner would see it; the pictures are served
- * with the repository's own read access and shown on the pull, on the
- * studio's ask row and in the app's head; a picture that could not be
+ * The look (docs/APPS.md): a green deploy is pictured at phone, desktop
+ * and thumb width, once per head, as the owner would see it; the pictures
+ * are served with the repository's own read access and shown on the pull,
+ * on the studio's ask row and in the app's head; a picture that could not be
  * taken is recorded as such and the page says so; a closed pull's pictures
  * go with its preview. A stand-in capturer drives all of that; a real
  * Chromium, when this machine has one, proves the browser end.
@@ -121,13 +121,13 @@ describe("the look", () => {
         : undefined;
     });
 
-  /** Both looks of a commit, once they are recorded — pictured or not. */
+  /** All three looks of a commit, once they are recorded — pictured or not. */
   const pictured = (env: string, commitOid: string): Promise<Look[]> =>
     until(() => {
       const rows = looksForEnv(app.db, record.id, env).filter(
         (l) => l.commitOid === commitOid,
       );
-      return rows.length === 2 ? rows : undefined;
+      return rows.length === 3 ? rows : undefined;
     }, 30_000);
 
   beforeAll(async () => {
@@ -183,11 +183,15 @@ describe("the look", () => {
   let first = "";
   let second = "";
 
-  test("a green deploy is pictured at both widths, as the owner, once per head; a newer head replaces", async () => {
+  test("a green deploy is pictured at all three widths, as the owner, once per head; a newer head replaces", async () => {
     const production = await settled((r) => r.env === "production");
     expect(production.state).toBe("ok");
     const rows = await pictured("production", production.commitOid);
-    expect(rows.map((l) => l.kind).sort()).toEqual(["desktop", "phone"]);
+    expect(rows.map((l) => l.kind).sort()).toEqual([
+      "desktop",
+      "phone",
+      "thumb",
+    ]);
     for (const look of rows) {
       expect(look.error).toBeNull();
       expect(look.path).toBe(
@@ -197,7 +201,7 @@ describe("the look", () => {
     }
     // The browser was pointed at the grant door on the forge's own port,
     // and the grant names the owner as an admin.
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     // Taken to one side and moved in whole: nothing half-written lives
     // under the environment, and nothing is left behind on the side.
     for (const call of calls)
@@ -206,6 +210,7 @@ describe("the look", () => {
     const phone = calls.find((c) => c.width === 390)!;
     expect(phone.height).toBe(844);
     expect(calls.find((c) => c.width === 1280)?.height).toBe(800);
+    expect(calls.find((c) => c.width === 200)?.height).toBe(125);
     const url = new URL(phone.url);
     expect(url.host).toBe(`hello.${DOMAIN}:${servers.port}`);
     expect(url.pathname).toBe("/__forge/grant");
@@ -234,9 +239,9 @@ describe("the look", () => {
     pull = opened.value;
     const env = previewEnv(pull.number);
     expect((await settled((r) => r.env === env)).state).toBe("ok");
-    expect(await pictured(env, first)).toHaveLength(2);
-    expect(calls).toHaveLength(4);
-    expect(new URL(calls[2]!.url).hostname).toBe(
+    expect(await pictured(env, first)).toHaveLength(3);
+    expect(calls).toHaveLength(6);
+    expect(new URL(calls[3]!.url).hostname).toBe(
       `hello--${pull.number}.${DOMAIN}`,
     );
 
@@ -246,8 +251,8 @@ describe("the look", () => {
       (await settled((r) => r.env === env && r.reason === "redeploy")).state,
     ).toBe("ok");
     await looks.idle();
-    expect(calls).toHaveLength(4);
-    expect(looksForEnv(app.db, record.id, env)).toHaveLength(2);
+    expect(calls).toHaveLength(6);
+    expect(looksForEnv(app.db, record.id, env)).toHaveLength(3);
 
     // A newer head is pictured, and the older head's pictures go.
     const again = await commitToBranch(app, alice, repo, {
@@ -260,8 +265,8 @@ describe("the look", () => {
     expect(
       (await settled((r) => r.env === env && r.commitOid === second)).state,
     ).toBe("ok");
-    expect(await pictured(env, second)).toHaveLength(2);
-    expect(calls).toHaveLength(6);
+    expect(await pictured(env, second)).toHaveLength(3);
+    expect(calls).toHaveLength(9);
     await until(() =>
       looksForEnv(app.db, record.id, env).every((l) => l.commitOid === second)
         ? true
@@ -452,7 +457,7 @@ describe("the look", () => {
       looksForEnv(app.db, record.id, env).filter(
         (l) => l.commitOid === commitOid && l.error === null,
       ),
-    ).toHaveLength(2);
+    ).toHaveLength(3);
 
     expect(
       (await setIssueStateThrough(app, alice, repo, opened.value, "closed"))
@@ -499,7 +504,7 @@ describe("the look", () => {
     ).toBe(false);
   });
 
-  test("the studio's look ask leads with the phone picture, and the app's head shows production", async () => {
+  test("the studio's look ask leads with the thumb picture, and the app's head shows production", async () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
@@ -529,17 +534,44 @@ describe("the look", () => {
       `<a class="look-thumb" href="/alice/hello/pulls/${ask.number}"`,
     );
     expect(page).toContain(
-      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/phone.png"`,
+      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/thumb.png"`,
     );
     const production = looksForEnv(app.db, record.id, "production").find(
-      (l) => l.kind === "desktop",
+      (l) => l.kind === "thumb",
     )!;
     expect(page).toContain(`class="look-now"`);
     expect(page).toContain(
-      `src="/alice/hello/looks/production/${production.commitOid}/desktop.png"`,
+      `src="/alice/hello/looks/production/${production.commitOid}/thumb.png"`,
     );
     const home = await (await web("/", studio)).text();
     expect(home).toContain(`class="look-thumb"`);
+
+    // A commit pictured before the thumb kind existed has only its phone
+    // and desktop rows — this is exactly that, with the thumb dropped —
+    // and every slot that would show a thumb falls back to what it showed
+    // before, rather than going blank.
+    app.db
+      .query(
+        `DELETE FROM look WHERE app_id = ?1 AND env = ?2 AND kind = 'thumb'`,
+      )
+      .run(record.id, env);
+    app.db
+      .query(
+        `DELETE FROM look WHERE app_id = ?1 AND env = 'production' AND kind = 'thumb'`,
+      )
+      .run(record.id);
+    const fallback = await (await web("/alice/hello", studio)).text();
+    expect(fallback).toContain(
+      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/phone.png"`,
+    );
+    const productionDesktop = looksForEnv(
+      app.db,
+      record.id,
+      "production",
+    ).find((l) => l.kind === "desktop")!;
+    expect(fallback).toContain(
+      `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png"`,
+    );
   }, 120_000);
 
   test("memory pressure is what the container truly holds, never its page cache", async () => {
