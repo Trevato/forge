@@ -3487,6 +3487,80 @@ describe("previewLatency: the median seconds from push to serving", () => {
     expect(withGap.queueMedianSeconds).toBeCloseTo(2, 2);
     expect(withGap.bootMedianSeconds).toBeCloseTo(6, 2);
   });
+
+  test("a deploy that finished without ever serving is counted apart, never in the median; one still running is counted as neither", () => {
+    const now = Date.now() + 20_000_000; // clear of the earlier tests' windows
+    const since = new Date(now - 60_000).toISOString();
+
+    // Two served deploys, 4s and 6s.
+    [4, 6].forEach((d, i) => {
+      const createdAt = new Date(now + i * 1_000).toISOString();
+      seedDeploy(
+        createdAt,
+        null,
+        new Date(Date.parse(createdAt) + d * 1_000).toISOString(),
+      );
+    });
+    const clean = previewLatency(app.db, repo.id, since)!;
+    expect(clean.n).toBe(2);
+    expect(clean.failedN).toBe(0);
+    expect(clean.medianSeconds).toBeCloseTo(5, 2);
+
+    // A deploy still queued: neither served nor finished. Moves neither number.
+    const inFlight = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(inFlight.id, new Date(now + 2_000).toISOString());
+    const withInFlight = previewLatency(app.db, repo.id, since)!;
+    expect(withInFlight.n).toBe(2);
+    expect(withInFlight.failedN).toBe(0);
+    expect(withInFlight.medianSeconds).toBeCloseTo(5, 2);
+
+    // A deploy that finished but never served — counted as failed, never a
+    // zero-second deploy pulling the median down.
+    const failed = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(failed.id, new Date(now + 3_000).toISOString());
+    claimRun(app.db, failed.id);
+    finishRun(app.db, failed.id, { state: "failed", summary: "build failed" });
+    const withFailed = previewLatency(app.db, repo.id, since)!;
+    expect(withFailed.n).toBe(2);
+    expect(withFailed.failedN).toBe(1);
+    expect(withFailed.medianSeconds).toBeCloseTo(5, 2);
+
+    // A cancelled deploy that never served also counts as failed.
+    const cancelled = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(cancelled.id, new Date(now + 4_000).toISOString());
+    claimRun(app.db, cancelled.id);
+    app.db
+      .query("UPDATE run SET state = 'cancelled', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1")
+      .run(cancelled.id);
+    const withCancelled = previewLatency(app.db, repo.id, since)!;
+    expect(withCancelled.n).toBe(2);
+    expect(withCancelled.failedN).toBe(2);
+    expect(withCancelled.medianSeconds).toBeCloseTo(5, 2);
+  });
+
+  test("a week with only never-served deploys still reports the failed count, with no median to give", () => {
+    const now = Date.now() + 30_000_000;
+    const since = new Date(now - 60_000).toISOString();
+
+    const failed = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(failed.id, new Date(now).toISOString());
+    claimRun(app.db, failed.id);
+    finishRun(app.db, failed.id, { state: "failed", summary: "build failed" });
+
+    const latency = previewLatency(app.db, repo.id, since)!;
+    expect(latency).toBeDefined();
+    expect(latency.n).toBe(0);
+    expect(latency.failedN).toBe(1);
+    expect(latency.medianSeconds).toBeUndefined();
+  });
 });
 
 describe("the studio's own words for how fast a change reaches its preview", () => {
@@ -3616,6 +3690,41 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     expect(page).toContain("2.0s waiting");
     // Only 3 of the 4 served deploys carried a `started_at`: the split says so.
     expect(page).toContain("6.0s coming up (3 of 4)");
+
+    // A clean week — every deploy served — reads exactly as it always has:
+    // no mention of failures, no empty clause left dangling.
+    expect(page).not.toContain("never reached a preview");
+    expect(page).not.toContain("0 failed");
+  });
+
+  test("a deploy that finished without ever serving is counted and worded, and links to the runs list", async () => {
+    const before = await (await get("/alice/trickle")).text();
+
+    const failed = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      reason: "push",
+    });
+    claimRun(app.db, failed.id);
+    finishRun(app.db, failed.id, { state: "failed", summary: "build failed" });
+
+    const after = await (await get("/alice/trickle")).text();
+    expect(after).toContain("1 of 5 never reached a preview");
+    expect(after).toContain(`href="/alice/trickle/runs?kind=deploy"`);
+
+    // A deploy still running moves neither the served count nor the failed
+    // count: it is neither served nor finished.
+    const inFlight = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      reason: "push",
+    });
+    claimRun(app.db, inFlight.id);
+    const withInFlight = await (await get("/alice/trickle")).text();
+    expect(withInFlight).toContain("1 of 5 never reached a preview");
+    expect(withInFlight).not.toBe(before);
   });
 });
 

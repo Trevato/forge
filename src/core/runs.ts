@@ -621,15 +621,21 @@ export function latestAgentRunsForRepos(
  * and the count it is drawn from, plus the same walk split at `started_at`
  * — the wait to be picked up, and the boot once it was. The split is its
  * own two medians, not half of the total's; they will not sum to it.
+ * Beside them, how many of this window's deploys finished without ever
+ * serving — counted, never folded into the median a dead deploy says
+ * nothing about.
  */
 export interface PreviewLatency {
-  readonly medianSeconds: number;
+  /** Undefined only when nothing served in the window — `n` is then 0. */
+  readonly medianSeconds: number | undefined;
   readonly n: number;
   /** Undefined when no served deploy in the window also has a `started_at`. */
   readonly queueMedianSeconds: number | undefined;
   readonly bootMedianSeconds: number | undefined;
   /** How many of `n` carried a `started_at` and so fed the split. */
   readonly splitN: number;
+  /** Deploys in the window that finished (`ok`, `failed` or `cancelled`) without ever serving. A deploy still queued or running is neither served nor counted here. */
+  readonly failedN: number;
 }
 
 const median = (xs: readonly number[]): number => {
@@ -641,11 +647,14 @@ const median = (xs: readonly number[]): number => {
  * The median seconds from push (`created_at`) to serving (`serving_at`)
  * over this repo's deploys since `since` — the same reference instant
  * `servedPhrase` (`web/ui.ts`) words a single deploy from. A deploy that
- * never served says nothing about speed and is left out, never a zero;
- * one that served but never records a `started_at` feeds the total but
- * not the split. One query, bounded by `limit` and served by the
- * `run_repo` index (it walks newest-first and stops at the cap), never a
- * scan of the table.
+ * never served says nothing about speed and is left out of the median,
+ * never a zero; one that served but never records a `started_at` feeds
+ * the total but not the split. Beside the median, the same walk counts
+ * deploys that finished — `ok`, `failed` or `cancelled` — without ever
+ * serving; one still `queued` or `running` is neither, and counts as
+ * neither. One query, bounded by `limit` and served by the `run_repo`
+ * index (it walks newest-first and stops at the cap), never a scan of
+ * the table.
  */
 export function previewLatency(
   db: Database,
@@ -655,36 +664,46 @@ export function previewLatency(
 ): PreviewLatency | undefined {
   const rows = db
     .query<
-      { secs: number; queueSecs: number | null; bootSecs: number | null },
+      {
+        secs: number | null;
+        queueSecs: number | null;
+        bootSecs: number | null;
+        finished: 0 | 1;
+      },
       [string, string, number]
     >(
-      `SELECT (julianday(serving_at) - julianday(created_at)) * 86400 AS secs,
-              CASE WHEN started_at IS NOT NULL
+      `SELECT CASE WHEN serving_at IS NOT NULL
+                   THEN (julianday(serving_at) - julianday(created_at)) * 86400 END AS secs,
+              CASE WHEN serving_at IS NOT NULL AND started_at IS NOT NULL
                    THEN (julianday(started_at) - julianday(created_at)) * 86400 END AS queueSecs,
-              CASE WHEN started_at IS NOT NULL
-                   THEN (julianday(serving_at) - julianday(started_at)) * 86400 END AS bootSecs
+              CASE WHEN serving_at IS NOT NULL AND started_at IS NOT NULL
+                   THEN (julianday(serving_at) - julianday(started_at)) * 86400 END AS bootSecs,
+              state IN ('ok','failed','cancelled') AS finished
          FROM run
-        WHERE repo_id = ?1 AND kind = 'deploy' AND serving_at IS NOT NULL
+        WHERE repo_id = ?1 AND kind = 'deploy'
           AND created_at >= ?2
         ORDER BY id DESC LIMIT ?3`,
     )
     .all(repoId, since, limit);
-  if (rows.length === 0) return undefined;
-  const secs = rows.map((r) => r.secs).sort((a, b) => a - b);
-  const queueSecs = rows
+  const served = rows.filter((r) => r.secs !== null);
+  const failedN = rows.filter((r) => r.secs === null && r.finished === 1).length;
+  if (served.length === 0 && failedN === 0) return undefined;
+  const secs = served.map((r) => r.secs!).sort((a, b) => a - b);
+  const queueSecs = served
     .map((r) => r.queueSecs)
     .filter((s): s is number => s !== null)
     .sort((a, b) => a - b);
-  const bootSecs = rows
+  const bootSecs = served
     .map((r) => r.bootSecs)
     .filter((s): s is number => s !== null)
     .sort((a, b) => a - b);
   return {
-    medianSeconds: median(secs),
+    medianSeconds: secs.length === 0 ? undefined : median(secs),
     n: secs.length,
     queueMedianSeconds: queueSecs.length === 0 ? undefined : median(queueSecs),
     bootMedianSeconds: bootSecs.length === 0 ? undefined : median(bootSecs),
     splitN: queueSecs.length,
+    failedN,
   };
 }
 

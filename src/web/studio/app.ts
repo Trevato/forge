@@ -81,11 +81,29 @@ const PREVIEW_LATENCY_MIN = 3;
  * rather than printing one from a run or two. Below the total, the same
  * walk split at `started_at` — waiting to be picked up, then coming up —
  * each its own median, not a piece of the total that ought to add up.
+ * When some of the week's deploys finished without ever serving, the line
+ * says how many of how many and links to them — a clean week reads exactly
+ * as it always has, no `0 failed`, no empty clause.
  */
-function previewLatencyWords(latency: PreviewLatency | undefined): Html {
-  if (latency === undefined || latency.n < PREVIEW_LATENCY_MIN)
+function previewLatencyWords(
+  latency: PreviewLatency | undefined,
+  failedHref: string,
+): Html {
+  const failedClause =
+    latency !== undefined && latency.failedN > 0
+      ? html`<a href="${failedHref}">${latency.failedN} of ${
+          latency.n + latency.failedN
+        } never reached a preview</a>`
+      : null;
+  const failedSuffix =
+    failedClause === null ? "" : html` · ${failedClause}`;
+  if (
+    latency === undefined ||
+    latency.n < PREVIEW_LATENCY_MIN ||
+    latency.medianSeconds === undefined
+  )
     return html`<span class="muted small"
-      >not enough deploys this week to say</span
+      >not enough deploys this week to say${failedSuffix}</span
     >`;
   const split =
     latency.queueMedianSeconds === undefined ||
@@ -97,7 +115,7 @@ function previewLatencyWords(latency: PreviewLatency | undefined): Html {
           ? ` (${latency.splitN} of ${latency.n})`
           : ""} · `;
   return html`reaches its preview in ${latency.medianSeconds.toFixed(1)}s
-    <span class="muted">· ${split}${latency.n} deploys</span>`;
+    <span class="muted">· ${split}${latency.n} deploys${failedSuffix}</span>`;
 }
 
 export async function studioApp(
@@ -343,7 +361,7 @@ export async function studioApp(
           <dt>Runs</dt>
           <dd>${weekTotals.runs}</dd>
           <dt>Preview</dt>
-          <dd>${previewLatencyWords(weekLatency)}</dd>
+          <dd>${previewLatencyWords(weekLatency, `${base}/runs?kind=deploy`)}</dd>
           <dt>Spent</dt>
           <dd>
             $${spent.toFixed(2)}${shipped > 0
