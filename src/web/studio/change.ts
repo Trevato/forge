@@ -9,7 +9,7 @@
 
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
-import type { Pull } from "../../core/pulls.ts";
+import { pullStatus, type Pull } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
 import { checkSummary } from "../../core/runs.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -19,6 +19,7 @@ import { html, when } from "../html.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
+  btn,
   card,
   icon,
   originTag,
@@ -33,6 +34,15 @@ import { composer, conversation, originGlyph } from "../pages/thread.ts";
 import { decisionActions, decisionForm, decisionsFor } from "./asks.ts";
 import { studioCss } from "./style.ts";
 import { pullWord, wordBadge, type WordCtx } from "./words.ts";
+
+/** What a conflicted change's own page says: the base it no longer merges
+ * into, the first few files (bounded, so a huge conflict never floods the
+ * page), and what fixes it. */
+function conflictWords(baseBranch: string, files: readonly string[]): string {
+  const shown = files.slice(0, 3).join(", ");
+  const more = files.length > 3 ? `, and ${files.length - 3} more` : "";
+  return `it conflicts with ${baseBranch} in ${shown}${more} — bring the branch up to date and it can land`;
+}
 
 /**
  * GET /:owner/:name/pulls/:number in studio mode: a change is judged by
@@ -58,7 +68,20 @@ export async function studioPull(
     runtime: appsRuntime(ctx.app),
     record,
   };
-  const { word, note } = await pullWord(wordCtx, pull);
+  const { word, note: checkNote } = await pullWord(wordCtx, pull);
+  // Whether this change still merges into its base is asked here, on its own
+  // page, and nowhere a list of changes renders — a git call per open pull
+  // would undo the home's own bound (`askCandidatesFor`). Only an open,
+  // unmerged pull can conflict; a merged or closed one already has its word.
+  const status =
+    pull.mergedAt === null && pull.state !== "closed"
+      ? await pullStatus(wordCtx.dir, pull)
+      : undefined;
+  const conflicted =
+    status !== undefined && !status.mergeable && status.conflicts.length > 0;
+  const note = conflicted
+    ? conflictWords(pull.baseBranch, status.conflicts)
+    : checkNote;
   // Before a merge the deploy worth linking is the preview's own check;
   // after, it is production's — the preview's run may already be torn
   // down, and the word above is judged by production regardless.
@@ -111,10 +134,25 @@ export async function studioPull(
     </p>`,
   );
 
+  // A conflicted change never offers Ship as though it would work — pressing
+  // it would only be refused. The button that helps posts to the very same
+  // route (`/ship`): `shipSubmit` already turns a conflict there into the
+  // crew bringing the branch up to date, so nothing new is written, only said
+  // sooner and in plain words.
   const decisionSection = when(decision, (d) =>
     card(
-      html`<p>${d.says}</p>
-        <div class="bar mt">${decisionActions(ctx, d)}</div>`,
+      conflicted && d.kind === "look" && d.pull
+        ? html`<p>${d.who} finished "${d.pull.title}", but ${conflictWords(
+            pull.baseBranch,
+            status!.conflicts,
+          )}.</p>
+            <div class="bar mt">
+              <form method="post" action="${thread}/ship">
+                ${btn("Bring up to date", { size: "sm", variant: "primary" })}
+              </form>
+            </div>`
+        : html`<p>${d.says}</p>
+            <div class="bar mt">${decisionActions(ctx, d)}</div>`,
       {
         head: html`${icon("alert")}
           <h2>Decide</h2>`,

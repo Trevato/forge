@@ -354,6 +354,101 @@ describe("the studio", () => {
     expect(merged.ok).toBe(true);
   });
 
+  test("a change that no longer merges into its base says so, and offers no Ship — a mergeable green pull is unchanged", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const base1 = await commitToBranch(app, alice, repo, {
+      message: "Add a file two branches will fight over",
+      files: [{ path: "CONFLICT.md", content: "base\n" }],
+    });
+    if (!base1.ok) throw new Error(JSON.stringify(base1.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/conflicting",
+      base: "main",
+      message: "Scout's edit",
+      files: [{ path: "CONFLICT.md", content: "base\nscout\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    // Main moves the same line the other way underneath the open branch.
+    const onMain = await commitToBranch(app, alice, repo, {
+      message: "Main's edit",
+      files: [{ path: "CONFLICT.md", content: "base\nmain\n" }],
+    });
+    if (!onMain.ok) throw new Error(JSON.stringify(onMain.error));
+
+    const opened = await openPull(app, scout, repo, {
+      title: "Conflicting change",
+      body: "This will not merge cleanly.",
+      baseBranch: "main",
+      headBranch: "feature/conflicting",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed in 1s" });
+
+    const studio = await (
+      await get(`/alice/notes/pulls/${pull.number}`)
+    ).text();
+    // Green check alone never reads as ready: the page says it conflicts,
+    // names the file, and says what fixes it — and offers no Ship.
+    expect(studio).toContain("conflicts with main");
+    expect(studio).toContain("CONFLICT.md");
+    expect(studio).toContain("bring the branch up to date");
+    expect(studio).not.toContain("Ship");
+    expect(studio).toContain("Bring up to date");
+    // Still one of the five words — no sixth badge invented for this.
+    expect(studio).toContain('data-word="look"');
+
+    setIssueState(app, alice, repo, pull, "closed");
+
+    // A mergeable green pull is unchanged by any of this.
+    const clean = await commitToBranch(app, alice, repo, {
+      branch: "feature/studio-clean",
+      base: "main",
+      message: "Clean change",
+      files: [{ path: "CLEAN.md", content: "clean\n" }],
+    });
+    if (!clean.ok) throw new Error(JSON.stringify(clean.error));
+    const openedClean = await openPull(app, scout, repo, {
+      title: "Clean change",
+      body: "Merges fine.",
+      baseBranch: "main",
+      headBranch: "feature/studio-clean",
+    });
+    if (!openedClean.ok) throw new Error(String(openedClean.error));
+    const cleanPull = openedClean.value;
+    const cleanRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: cleanPull.id,
+      env: `pull-${cleanPull.number}`,
+      commitOid: cleanPull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, cleanRun.id);
+    finishRun(app.db, cleanRun.id, {
+      state: "ok",
+      summary: "check passed in 1s",
+    });
+    const cleanStudio = await (
+      await get(`/alice/notes/pulls/${cleanPull.number}`)
+    ).text();
+    expect(cleanStudio).not.toContain("conflicts with main");
+    expect(cleanStudio).toContain("Ship");
+    expect(cleanStudio).toContain("green — ready for a look");
+
+    const merged = await mergePull(app, alice, repo, cleanPull, "squash");
+    expect(merged.ok).toBe(true);
+  });
+
   test("a pull on a repository that is not an app renders exactly what it renders today, even in studio mode", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainrepo",
