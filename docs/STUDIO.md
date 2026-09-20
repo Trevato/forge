@@ -242,6 +242,13 @@ same flow as ever. `/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 
+**Apps** in the top bar and *All N apps* on the home both land on `/apps`
+(`src/web/pages/apps.ts`), which in the studio is the whole shelf — every
+row the same `shelfRows` the home draws, never a second copy of them — with
+how many there are and a filter for whether they are live, each a link
+carrying `?live=1` rather than a form, and **New app** beside them.
+`?mode=dev` on the same URL is dev's table of repositories, unchanged.
+
 The top bar carries the same count, on every studio page: a pill beside the
 wordmark, linking here, naming how many things ask the signed-in person —
 `askCountFor` (`src/web/studio/asks.ts`), the candidates `decisionsFor`

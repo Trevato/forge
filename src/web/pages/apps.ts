@@ -54,6 +54,8 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { shelfRows } from "../studio/shelf.ts";
+import { studioCss } from "../studio/style.ts";
 import {
   badge,
   btn,
@@ -67,6 +69,7 @@ import {
   icon,
   listCard,
   row,
+  seg,
   selectField,
   sha,
   terminalLine,
@@ -187,7 +190,10 @@ export function appsCard(ctx: Ctx): Html {
 }
 
 // GET /apps
-export function appsList(ctx: Ctx): Response {
+export async function appsList(ctx: Ctx): Promise<Response> {
+  // In the studio, the same list a person's home links to is the shelf,
+  // not dev's table — `?mode=dev` still renders what follows, unchanged.
+  if (ctx.mode === "studio") return await studioAppsList(ctx);
   const entries = appsForViewer(ctx);
   const create = ctx.auth.user
     ? btn("New app", {
@@ -211,6 +217,72 @@ export function appsList(ctx: Ctx): Response {
       })
     : listCard(entries.map(appRow))}`;
   return page({ ctx, title: "Apps", body });
+}
+
+/**
+ * GET /apps in the studio: every app the viewer can land, drawn as the
+ * shelf (`shelfRows`, `studio/shelf.ts`) — the same row the home's *Your
+ * apps* card draws, never a second copy of it. `?live=1` is a link, not a
+ * form, narrowing the shelf to what production is actually serving; with
+ * neither filter it's every app, newest first. Visibility and the owner's
+ * facts are exactly `appsForViewer`'s and `shelfRows`'s own — a signed-out
+ * viewer gets the public shelf, and a reader who cannot write to an app
+ * never sees its crew or its cost.
+ */
+async function studioAppsList(ctx: Ctx): Promise<Response> {
+  const entries = appsForViewer(ctx);
+  const liveCount = entries.filter(
+    (e) => e.production?.state === "running",
+  ).length;
+  const live = ctx.url.searchParams.get("live") === "1";
+  const shown = live
+    ? entries.filter((e) => e.production?.state === "running")
+    : entries;
+  const create = ctx.auth.user
+    ? btn("New app", {
+        href: "/apps/new",
+        variant: "primary",
+        size: "sm",
+        icon: "plus",
+        shortcut: "c",
+      })
+    : btn("Sign in to make one", { href: "/signin", size: "sm" });
+  const filters =
+    entries.length === 0
+      ? null
+      : html`<div class="filters mb">
+          ${seg([
+            {
+              label: "All",
+              href: "/apps",
+              current: !live,
+              count: entries.length,
+            },
+            {
+              label: "Live",
+              href: "/apps?live=1",
+              current: live,
+              count: liveCount,
+            },
+          ])}
+        </div>`;
+  const rows = await shelfRows(
+    ctx,
+    shown.map((e) => e.repo),
+  );
+  const body = html`${pageHead("Apps", { actions: create })}
+    ${filters}
+    ${shown.length === 0
+      ? empty({
+          icon: "rocket",
+          title: live ? "Nothing is live" : "Nothing runs here yet",
+          note: live
+            ? "Nothing is serving right now — clear the filter to see every app."
+            : "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
+          action: create,
+        })
+      : listCard(rows)}`;
+  return page({ ctx, title: "Apps", body, styleCss: studioCss });
 }
 
 // ---- new app ----

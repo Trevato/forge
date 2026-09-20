@@ -889,6 +889,74 @@ describe("the studio", () => {
     expect(after).not.toContain('action="/studio/asks"');
   });
 
+  test("/apps in the studio is the shelf, not dev's table: an app the viewer can land, never one they cannot, and no dev table markup; ?mode=dev is unchanged", async () => {
+    const bob = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!bob.ok) throw new Error(bob.error);
+    const hidden = await createRepo(app, bob.value, {
+      name: "hidden",
+      visibility: "private",
+      description: "bob's own, not alice's crew",
+    });
+    if (!hidden.ok) throw new Error(String(hidden.error));
+    const seededHidden = await commitToBranch(app, bob.value, hidden.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content:
+            '{"name":"hidden","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seededHidden.ok) throw new Error(JSON.stringify(seededHidden.error));
+    const enabledHidden = await enableApp(app, bob.value, hidden.value, {
+      slug: "hidden",
+    });
+    if (!enabledHidden.ok) throw new Error(String(enabledHidden.error));
+    const bobCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "bob",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const bobGet = (path: string, extra: Record<string, string> = {}) =>
+      fetch(`${base}${path}`, {
+        headers: { cookie: `${bobCookie}; forge_mode=studio`, ...extra },
+        redirect: "manual",
+      });
+
+    // Bob can land his own app, but alice never crewed him onto "notes" —
+    // private and none of his — so the shelf omits it.
+    const studio = await (await bobGet("/apps")).text();
+    expect(studio).toContain('href="/bob/hidden"');
+    expect(studio).not.toContain('href="/alice/notes"');
+    expect(studio).not.toContain("not serving");
+    expect(studio).toContain('href="/apps?live=1"');
+
+    const dev = await (
+      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` })
+    ).text();
+    expect(dev).toContain(
+      "Repositories that run. Production follows the default branch",
+    );
+    expect(dev).not.toContain('href="/apps?live=1"');
+  });
+
   test("signed out in studio, / leads with the public apps that are serving — their look, not a private one's", async () => {
     // A second app, public, with a picture of its production. "notes" stays
     // private, so its presence (or absence) is the negative case below.
