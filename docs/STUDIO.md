@@ -156,11 +156,20 @@ issue numbers, labels, milestones and branch names replaced by the same
 five words the rest of the studio speaks. Each is a page of rows, newest
 first: who has it (the assignee, the author, or who ran it), when it last
 moved, its state as `wordBadge` draws it (`src/web/studio/words.ts`), and
-one link — the row itself — to the tell, the change or the transcript. The
-app page's own footer (`the map · everything told · every change`, and
-*Every run* above **Now**) and the repository header (`Told`, `Look`, in
-place of dev's `Issues`, `Pulls`) both land here; the header's own tabs
-keep dev's names, and dev's `Commits`/`Branches` stay dev's alone.
+one link — the row itself — to the tell, the change or the transcript.
+`/:owner/:name/tells` and `/:owner/:name/changes` are the studio's own
+nouns for the first two lists — the same handler, the same authorization,
+the same `?word=` filter and paging, not a second copy of the page; a
+viewer the studio list does not apply to (dev mode, `?mode=dev`, or a
+repository that is not an app) is sent on to `/issues` or `/pulls`, dev's
+own address, rather than the two ever growing a second address of their
+own. The app page's own footer (`the map · everything told · every
+change`, and *Every run* above **Now**) and the repository header's tabs
+(`Told`, `Look`, in place of dev's `Issues`, `Pulls`) link to `/tells` and
+`/changes` in studio mode; a tell or a change keeps its own
+`/issues/:number` / `/pulls/:number` address either way, and dev's
+`Commits`/`Branches` stay dev's alone. `/runs` has no second noun — the
+studio and dev share the one address there.
 
 A row's word comes from `tellWord`, `pullWord` or `runWord` — the one place
 each is decided, never re-derived here. `?word=told|working|look|shipped|

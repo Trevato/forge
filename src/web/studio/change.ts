@@ -197,7 +197,7 @@ export async function studioPull(
     ctx,
     title: `${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: liveClientJs,

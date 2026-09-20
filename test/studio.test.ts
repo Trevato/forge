@@ -714,6 +714,129 @@ describe("the studio", () => {
     expect(runs).not.toContain("See dev's list");
   });
 
+  test("/tells and /changes are the studio's own doors onto the same lists /issues and /pulls reach — same words, same filter, same paging", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "Door test: a tell",
+      body: "reached through /tells too",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+
+    const viaIssues = await (await get("/alice/notes/issues")).text();
+    const viaTells = await (await get("/alice/notes/tells")).text();
+    expect(viaTells).toContain("Door test: a tell");
+    expect(viaTells).toContain('data-word="told"');
+    // Self-links (the word filter, paging) follow whichever door was used,
+    // so a dev URL asked for in studio mode still answers exactly as it
+    // does today.
+    expect(viaTells).toContain(`href="/alice/notes/tells?word=told"`);
+    expect(viaIssues).toContain(`href="/alice/notes/issues?word=told"`);
+
+    const filtered = await (
+      await get("/alice/notes/tells?word=told")
+    ).text();
+    expect(filtered).toContain("Door test: a tell");
+    const other = await (
+      await get("/alice/notes/tells?word=shipped")
+    ).text();
+    expect(other).not.toContain("Door test: a tell");
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/door-test",
+      base: "main",
+      message: "Door test change",
+      files: [{ path: "DOOR_TEST.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Door test: a change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/door-test",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const doorPull = opened.value;
+    const doorCheck = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: doorPull.id,
+      env: `pull-${doorPull.number}`,
+      commitOid: doorPull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, doorCheck.id);
+    finishRun(app.db, doorCheck.id, { state: "ok", summary: "check passed" });
+
+    const viaPulls = await (await get("/alice/notes/pulls")).text();
+    const viaChanges = await (await get("/alice/notes/changes")).text();
+    expect(viaChanges).toContain("Door test: a change");
+    expect(viaChanges).toContain('data-word="look"');
+    expect(viaChanges).toContain(`href="/alice/notes/changes?word=look"`);
+    expect(viaPulls).toContain(`href="/alice/notes/pulls?word=look"`);
+
+    const changeFiltered = await (
+      await get("/alice/notes/changes?word=look")
+    ).text();
+    expect(changeFiltered).toContain("Door test: a change");
+    const changeOther = await (
+      await get("/alice/notes/changes?word=shipped")
+    ).text();
+    expect(changeOther).not.toContain("Door test: a change");
+  });
+
+  test("/tells and /changes send a dev-mode viewer, or ?mode=dev, on to /issues and /pulls — the one canonical dev address", async () => {
+    const devTells = await get("/alice/notes/tells", {
+      cookie: `${cookie}; forge_mode=dev`,
+    });
+    expect(devTells.status).toBe(303);
+    expect(devTells.headers.get("location")).toBe("/alice/notes/issues");
+
+    const devChanges = await get("/alice/notes/changes", {
+      cookie: `${cookie}; forge_mode=dev`,
+    });
+    expect(devChanges.status).toBe(303);
+    expect(devChanges.headers.get("location")).toBe("/alice/notes/pulls");
+
+    const escapeTells = await fetch(`${base}/alice/notes/tells?mode=dev`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+    expect(escapeTells.status).toBe(303);
+    expect(escapeTells.headers.get("location")).toBe(
+      "/alice/notes/issues?mode=dev",
+    );
+  });
+
+  test("/tells and /changes on a repository that is not an app send a studio viewer on to /issues and /pulls too", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "doorlists",
+      visibility: "private",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+
+    const tells = await get("/alice/doorlists/tells");
+    expect(tells.status).toBe(303);
+    expect(tells.headers.get("location")).toBe("/alice/doorlists/issues");
+
+    const changes = await get("/alice/doorlists/changes");
+    expect(changes.status).toBe(303);
+    expect(changes.headers.get("location")).toBe("/alice/doorlists/pulls");
+  });
+
+  test("a reader without access gets the forge's not-found on /tells and /changes, exactly as /issues and /pulls", async () => {
+    const anonTells = await fetch(`${base}/alice/notes/tells`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+    expect(anonTells.status).toBe(404);
+
+    const anonChanges = await fetch(`${base}/alice/notes/changes`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+    expect(anonChanges.status).toBe(404);
+  });
+
   test("a reader without access gets the forge's not-found on a tell, exactly as dev", async () => {
     const told = openIssue(app, alice, repo, { title: "Private work" });
     if (!told.ok) throw new Error(String(told.error));

@@ -170,7 +170,7 @@ function settingsPageResponse(
       ctx,
       title: `${title} · ${repo.name}`,
       crumbs: crumbsFor(repo),
-      palette: repoPalette(repo),
+      palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,

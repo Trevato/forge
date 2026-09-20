@@ -304,7 +304,7 @@ describe("web pages end to end", () => {
   });
 
   test("a path under no route at all gets the forge's page for a browser, and no_route for anyone else", async () => {
-    const browser = await fetch(`${base}/ada/engine/tells`, {
+    const browser = await fetch(`${base}/ada/engine/frobnicate`, {
       headers: {
         accept:
           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -323,12 +323,12 @@ describe("web pages end to end", () => {
 
     // No Accept header at all — a plain script or `curl` — keeps the JSON
     // contract, same as before this page existed.
-    const plain = await fetch(`${base}/ada/engine/tells`);
+    const plain = await fetch(`${base}/ada/engine/frobnicate`);
     expect(plain.status).toBe(404);
     expect(plain.headers.get("content-type")).toContain("application/json");
     const body = (await plain.json()) as { error: string; message: string };
     expect(body.error).toBe("no_route");
-    expect(body.message).toContain("/ada/engine/tells");
+    expect(body.message).toContain("/ada/engine/frobnicate");
 
     // An API path is unchanged even for a browser's own Accept header.
     const api = await fetch(`${base}/api/v1/nonsense`, {

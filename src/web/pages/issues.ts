@@ -63,7 +63,7 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
-import { studioTells } from "../studio/lists.ts";
+import { studioListRecord, studioTells } from "../studio/lists.ts";
 import { studioTell } from "../studio/tell.ts";
 
 const PER_PAGE = 25;
@@ -295,12 +295,8 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
   // In the studio "everything told" is the issue list in the studio's own
   // words — the same rule `issuePage` follows for one tell. `?mode=dev` is
   // the one-off way to dev's list without switching the browser.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
-  if (studio) {
-    const record = getAppByRepo(ctx.app.db, repo.id);
-    if (record !== undefined) return await studioTells(ctx, repo, record);
-  }
+  const record = studioListRecord(ctx, repo);
+  if (record !== undefined) return await studioTells(ctx, repo, record);
   const scope = localScope(ctx, repo);
   const base = scope.base;
   const query = readQuery(ctx);
@@ -420,7 +416,7 @@ export function newIssuePage(ctx: Ctx): Response {
     ctx,
     title: `New issue · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "issues", {
         compact: true,
         ownTitle: true,
@@ -545,7 +541,7 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `${issue.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: labelCss([...all, ...applied]),
     scriptJs: liveClientJs,

@@ -834,7 +834,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,

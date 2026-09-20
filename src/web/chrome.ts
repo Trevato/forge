@@ -165,7 +165,7 @@ export function scopeHeader(
       // Studio names its own lists — told, not issues; dev's tabs are
       // unchanged in dev mode and on a repository that is not an app.
       label: studio ? "Told" : "Issues",
-      href: `${base}/issues`,
+      href: studio ? `${base}/tells` : `${base}/issues`,
       icon: studio ? "clock" : "issue",
       ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
       current: active === "issues",
@@ -173,7 +173,7 @@ export function scopeHeader(
     },
     {
       label: studio ? "Look" : "Pulls",
-      href: `${base}/pulls`,
+      href: studio ? `${base}/changes` : `${base}/pulls`,
       icon: studio ? "eye" : "pull",
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
@@ -283,14 +283,26 @@ export function scopeHeader(
 
 export { hostOf };
 
-/** This repo's own rows for the command palette. */
-export function repoPalette(repo: Repo): PaletteItem[] {
+/** This repo's own rows for the command palette — the studio's nouns for a
+ * studio-mode viewer of an app, so the palette never sends someone to a
+ * list under a name the address bar would not use. */
+export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
   const base = repoBase(repo);
   const name = `${repo.ownerName}/${repo.name}`;
+  const studio =
+    ctx.mode === "studio" && getAppByRepo(ctx.app.db, repo.id) !== undefined;
   return [
     { t: `${name} — Code`, h: base, c: "This repo" },
-    { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },
-    { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
+    {
+      t: `${name} — ${studio ? "Told" : "Issues"}`,
+      h: studio ? `${base}/tells` : `${base}/issues`,
+      c: "This repo",
+    },
+    {
+      t: `${name} — ${studio ? "Changes" : "Pull requests"}`,
+      h: studio ? `${base}/changes` : `${base}/pulls`,
+      c: "This repo",
+    },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
     { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
     { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },

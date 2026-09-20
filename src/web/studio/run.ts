@@ -283,7 +283,7 @@ export async function studioRun(
     ctx,
     title: `${title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: studioRunJs,

@@ -334,7 +334,7 @@ export async function runsList(ctx: Ctx): Promise<Response> {
     ctx,
     title: `Runs · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     scriptJs: liveClientJs,
   });
@@ -536,7 +536,7 @@ export async function runPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `${title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     scriptJs: runLogJs,
     // The no-script half of a live log: while the run is going, the page

@@ -1239,7 +1239,7 @@ export function mapPage(ctx: Ctx): Response {
     ctx,
     title: `Map · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: mapCss,
     scriptJs: `${liveRegionsJs}\n${mapViewJs}`,

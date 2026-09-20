@@ -761,7 +761,7 @@ export function appPage(ctx: Ctx): Response {
     ctx,
     title: `App · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     scriptJs: liveClientJs,
   });

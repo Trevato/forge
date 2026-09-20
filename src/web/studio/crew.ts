@@ -253,7 +253,7 @@ export function studioCrewSettings(
     ctx,
     title: `Settings · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
   });
 }

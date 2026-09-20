@@ -8,16 +8,23 @@
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
-import type { AppRecord } from "../../core/apps.ts";
+import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { listIssues, type Issue } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
 import { listRuns } from "../../core/runs.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
+import {
+  crumbsFor,
+  loadRepo,
+  notFoundPage,
+  repoBase,
+  repoHeader,
+  repoPalette,
+} from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { page } from "../layout.ts";
+import { page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
@@ -99,6 +106,18 @@ function pagedHref(base: string, filter: WordFilter | undefined, cursor: string)
 }
 
 /**
+ * The one rule for whether a viewer sees the studio's own list on this repo:
+ * studio mode, no `?mode=dev` escape hatch, and an app to have a studio word
+ * for — the same check `issuesList`/`pullsList` make before falling back to
+ * dev's own list.
+ */
+export function studioListRecord(ctx: Ctx, repo: Repo): AppRecord | undefined {
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  return studio ? getAppByRepo(ctx.app.db, repo.id) : undefined;
+}
+
+/**
  * GET /:owner/:name/issues in the studio: everything told, one row per
  * issue in its studio word — who has it, when it last moved, and the tell
  * itself as the row's own link. No labels, no milestones. `?word=` narrows
@@ -166,13 +185,17 @@ export async function studioTells(
           ),
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
+  // Self-links follow whichever noun reached this page — `/tells` from the
+  // studio's own door, `/issues` when a dev URL is asked for in studio mode
+  // — so paging never jumps a reader to the other address mid-list.
+  const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div class="mt">
-      ${wordFilterBar(`${base}/issues`, filter)} ${list}
+      ${wordFilterBar(listBase, filter)} ${list}
       ${pager(
         fetched.length === LIST_PAGE && lastNumber !== undefined
-          ? { next: pagedHref(`${base}/issues`, filter, String(lastNumber)) }
+          ? { next: pagedHref(listBase, filter, String(lastNumber)) }
           : {},
       )}
     </div>
@@ -186,7 +209,7 @@ export async function studioTells(
     ctx,
     title: `Everything told · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: liveClientJs,
@@ -251,13 +274,17 @@ export async function studioChanges(
           ),
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
+  // Self-links follow whichever noun reached this page — `/changes` from the
+  // studio's own door, `/pulls` when a dev URL is asked for in studio mode
+  // — so paging never jumps a reader to the other address mid-list.
+  const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
     <div class="mt">
-      ${wordFilterBar(`${base}/pulls`, filter)} ${list}
+      ${wordFilterBar(listBase, filter)} ${list}
       ${pager(
         fetched.length === LIST_PAGE && lastNumber !== undefined
-          ? { next: pagedHref(`${base}/pulls`, filter, String(lastNumber)) }
+          ? { next: pagedHref(listBase, filter, String(lastNumber)) }
           : {},
       )}
     </div>
@@ -271,11 +298,40 @@ export async function studioChanges(
     ctx,
     title: `Every change · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * GET /:owner/:name/tells — the studio's own door onto the same list
+ * `/issues` reaches: `issuesList` and this route both resolve through
+ * `studioListRecord`/`studioTells`, so there is exactly one page, never a
+ * second copy of it. A viewer for whom the studio's own list does not apply
+ * (dev mode, `?mode=dev`, or a repository that is not an app) is sent to
+ * `/issues` — dev's own address is the one canonical URL for dev's own list,
+ * so this noun never grows a second, dev-flavoured address of its own.
+ */
+export async function tellsList(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  const record = studioListRecord(ctx, repo);
+  if (record === undefined)
+    return redirect(`${repoBase(repo)}/issues${ctx.url.search}`);
+  return await studioTells(ctx, repo, record);
+}
+
+/** GET /:owner/:name/changes — the studio's own door onto the same list
+ * `/pulls` reaches. See `tellsList` for the rule. */
+export async function changesList(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  const record = studioListRecord(ctx, repo);
+  if (record === undefined)
+    return redirect(`${repoBase(repo)}/pulls${ctx.url.search}`);
+  return await studioChanges(ctx, repo, record);
 }
 
 /**
@@ -357,7 +413,7 @@ export async function studioRuns(
     ctx,
     title: `Every run · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: liveClientJs,

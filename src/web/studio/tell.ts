@@ -299,7 +299,7 @@ export async function studioTell(
     ctx,
     title: `${issue.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: liveClientJs,

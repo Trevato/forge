@@ -404,8 +404,8 @@ export async function studioApp(
       );
   const more = html`<p class="muted small">
     <a href="${base}/map">The map</a> ·
-    <a href="${base}/issues">Everything told</a> ·
-    <a href="${base}/pulls">Every change</a>
+    <a href="${base}/tells">Everything told</a> ·
+    <a href="${base}/changes">Every change</a>
   </p>`;
 
   const body = html`${repoHeader(ctx, repo, "code", {
@@ -441,7 +441,7 @@ export async function studioApp(
     ctx,
     title: `${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
