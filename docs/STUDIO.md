@@ -7,6 +7,20 @@ commits, branches, runs — unchanged. The switch is in the top bar and is a
 cookie on that browser; the URLs are the same in both, so a link works
 whichever way its reader sees.
 
+Finding something never leaves the page you're on. `/` focuses the search
+box in the top bar, unless a field already has focus; `Cmd/Ctrl-K` opens the
+command palette from anywhere, a field included. The box takes its query to
+`/search` (`studioSearchPage`, `src/web/studio/search.ts`): apps first,
+matched by name, owner or description, then every change and tell whose
+title mentions the word, each saying which app it's on — the same
+visibility as the rest of the studio, so a signed-out reader sees only the
+public apps a signed-out reader would. The palette starts from a short local
+index — your own apps, then places and actions like Home, Apps, Map, New
+app — and past two characters asks that very same search, folding its apps,
+changes and tells in under their own headings (`rankPalette`,
+`src/web/palette.ts`), so what it turns up can never disagree with the page
+behind it.
+
 ## Five words
 
 Every word on a studio page is one thing in git, and dev mode shows it.
@@ -47,9 +61,16 @@ page: the studio only offers principled moves.
 An app's home in the studio (`/:owner/:name`, when the repository is an
 app) shows, top to bottom: what it serves and where; the box; what asks
 you; what is happening now. Beside it, who is on the crew and what each is
-for, this week's numbers (shipped, runs, spend, spend per shipped change),
-and how the repository runs itself, when it does — each **Change** button
-leading to the one place both are set. The page keeps itself
+for, this week's numbers — shipped, runs, spend, spend per shipped change,
+and how fast a change reaches its preview, worded as `reaches its preview in
+6.1s` and split beneath it into waiting to be picked up and coming up, each
+its own median (`previewLatencyWords`, `src/web/studio/app.ts`) — and how
+the repository runs itself, when it does — each **Change** button leading to
+the one place both are set. Below three served deploys this week the line
+says there are not enough to trust a median, rather than printing one from a
+run or two; when some of the week's deploys never reached a preview at all,
+it adds how many of how many, linking to them, and says nothing extra in a
+clean week. The page keeps itself
 current about deployments: a deploy run for the app being viewed refetches
 the head card and previews list in place, so a change serving in its
 preview shows up without a reload.
@@ -247,7 +268,12 @@ whether it is live, what the crew last did there, and a way in. That row is
 a *shelf row* (`src/web/studio/shelf.ts`): one function turns repositories
 into rows, from grouped reads, so every page that lists apps lists them the
 same way and the home only decides the card around them. **New app** is the
-same flow as ever. `/?mode=dev` is the repositories list, and — like
+same form either way (`/apps/new`); once the sentence becomes a repository
+it lands on the app's own page, `/:owner/:name/app` (`appPage`,
+`src/web/pages/apps.ts`) — not this shelf, and not the studio's five-word
+home for it. Its first paint carries the flash saying where it's starting,
+each environment as it comes up, the hostname and terminal, the crew, and
+its recent runs. `/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 
