@@ -1280,7 +1280,7 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
     });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe(
-      "/nadia/keep-a-shared-grocery-list/app",
+      "/nadia/keep-a-shared-grocery-list",
     );
   });
 
@@ -1290,7 +1290,7 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
     });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe(
-      "/nadia/keep-a-shared-grocery-list-2/app",
+      "/nadia/keep-a-shared-grocery-list-2",
     );
   });
 
@@ -1308,7 +1308,7 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
       description: "Keep a shared grocery list",
     });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/nadia/groceries/app");
+    expect(res.headers.get("location")).toBe("/nadia/groceries");
   });
 });
 
@@ -1367,7 +1367,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("POST /apps/new redirects to the app's page, which shows the name, the URL and the first issue", async () => {
+  test("in studio mode, POST /apps/new redirects to the studio's app page, which shows the name, the URL and the first issue", async () => {
     const submitted = await fetch(`${base}/apps/new`, {
       method: "POST",
       headers: { cookie, origin: base },
@@ -1381,7 +1381,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
       redirect: "manual",
     });
     expect(submitted.status).toBe(303);
-    expect(submitted.headers.get("location")).toBe("/priya/planner/app");
+    expect(submitted.headers.get("location")).toBe("/priya/planner");
     const flash = (submitted.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(flash).toStartWith("forge_flash=");
 
@@ -1391,7 +1391,35 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
     expect(landed.status).toBe(200);
     const html = await landed.text();
     expect(html).toContain("planner");
-    expect(html).toContain(`http://planner.${DOMAIN}:${servers.port}`);
+    expect(html).toContain(`planner.${DOMAIN}:${servers.port}`);
+    expect(html).toContain("#1 is assigned to bot.");
+  });
+
+  test("in dev mode, POST /apps/new redirects to dev's app page, chosen from ctx.mode", async () => {
+    const submitted = await fetch(`${base}/apps/new`, {
+      method: "POST",
+      headers: { cookie: `${cookie}; forge_mode=dev`, origin: base },
+      body: new URLSearchParams({
+        owner: "priya",
+        name: "tracker",
+        description: "Track expenses",
+        visibility: "private",
+        agent: "bot",
+      }),
+      redirect: "manual",
+    });
+    expect(submitted.status).toBe(303);
+    expect(submitted.headers.get("location")).toBe("/priya/tracker/app");
+    const flash = (submitted.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(flash).toStartWith("forge_flash=");
+
+    const landed = await fetch(`${base}${submitted.headers.get("location")}`, {
+      headers: { cookie: `${cookie}; forge_mode=dev; ${flash}` },
+    });
+    expect(landed.status).toBe(200);
+    const html = await landed.text();
+    expect(html).toContain("tracker");
+    expect(html).toContain(`http://tracker.${DOMAIN}:${servers.port}`);
     expect(html).toContain("#1 is assigned to bot.");
   });
 

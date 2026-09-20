@@ -531,7 +531,10 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       : plan
         ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
         : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
-  return flashTo(ctx, `${repoBase(repo)}/app`, { message: `${first}${second}` });
+  // The studio's app page (repoHome, once the record exists) is where this
+  // moment belongs; dev mode keeps the controls' page.
+  const target = ctx.mode === "studio" ? repoBase(repo) : `${repoBase(repo)}/app`;
+  return flashTo(ctx, target, { message: `${first}${second}` });
 }
 
 // ---- the repo home's strip ----

@@ -164,7 +164,7 @@ describe("apps, runs and the crew on the web", () => {
       },
     });
     expect(created.status).toBe(303);
-    expect(created.headers.get("location")).toBe("/alice/hello/app");
+    expect(created.headers.get("location")).toBe("/alice/hello");
     expect(flashOf(created)).toContain(
       `hello is starting at http://hello.${DOMAIN}:${servers.port}`,
     );
@@ -172,11 +172,10 @@ describe("apps, runs and the crew on the web", () => {
     expect(hello).toBeDefined();
     expect(getAppByRepo(app.db, hello.id)?.slug).toBe("hello");
 
-    // The repo home wears the strip and the App tab.
+    // The studio's app page — the repo home for a repository that is an
+    // app — carries the same URL, in a link to open it.
     const home = await bodyOf(alice, "/alice/hello");
-    expect(home).toContain('class="app-strip"');
     expect(home).toContain('href="/alice/hello/app/production/open"');
-    expect(home).toContain('href="/alice/hello/app"');
     // A plain repository wears neither.
     const plain = await web(alice, "/new", {
       form: { owner: "alice", name: "plain", visibility: "private" },
