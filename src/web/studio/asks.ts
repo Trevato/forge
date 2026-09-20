@@ -35,8 +35,9 @@ import { btn, card, icon, row } from "../ui.ts";
 import { lookThumb, lookUrl } from "../pages/looks.ts";
 import { leanNote, leanVariant } from "./leans.ts";
 
-/** The apps a person can see, as repositories, with their records. */
-export function appsOf(ctx: Ctx, user: User) {
+/** The apps a person can see, as repositories, with their records — the
+ * same visibility a signed-out reader gets from `listReposVisibleTo` too. */
+export function appsOf(ctx: Ctx, user: User | undefined) {
   const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
   const records = appsForRepos(
     ctx.app.db,

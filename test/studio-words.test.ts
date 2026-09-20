@@ -333,6 +333,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
       { word: "working", path: `/alice/vocab/runs/${runId}` },
       { word: "look", path: `/alice/vocab/pulls/${openPullNumber}` },
       { word: "shipped", path: `/alice/vocab/pulls/${mergedPullNumber}` },
+      // A word from the app's own description, not its name — proving the
+      // search reaches the description, not just a name match.
+      { word: "search", path: "/search?q=catch" },
     ];
 
     for (const p of pages) {
@@ -377,6 +380,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
         visible,
         `${p.word} (${p.path}) named the merged branch "${mergedBranch}"`,
       ).not.toContain(mergedBranch);
+      // The search itself: "catch" is only in the app's description, never
+      // its name, so finding it here proves the description is reached.
+      if (p.word === "search") expect(visible).toContain("vocab");
     }
 
     // A run id is a key, not a headline: it rides hrefs (the dev link, the

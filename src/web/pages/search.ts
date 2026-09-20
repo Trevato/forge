@@ -24,6 +24,7 @@ import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { page } from "../layout.ts";
 import { browseBase } from "../scope.ts";
+import { studioSearchPage } from "../studio/search.ts";
 import {
   badge,
   btn,
@@ -229,6 +230,13 @@ function section(
  * connected origin, which is not a thing to do on every keystroke.
  */
 export async function searchPage(ctx: Ctx): Promise<Response> {
+  // In the studio a search is over apps, changes and tells, in the studio's
+  // own words — the same rule every other studio page follows. `?mode=dev`
+  // is the one-off way to dev's box without switching the browser.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio) return studioSearchPage(ctx);
+
   const params = ctx.url.searchParams;
   const query = (params.get("q") ?? "").trim();
   const kind = searchKind(params.get("kind"));

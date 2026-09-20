@@ -3558,3 +3558,169 @@ describe("this week's runs and spend are counted by the database, not read off a
     expect(page).toContain("$0.00");
   });
 });
+
+describe("finding things in the studio: /search", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let aliceCookie: string;
+  let widgets: Repo;
+  let tellNumber: number;
+  let changeNumber: number;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-search-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    aliceCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+    const made = await createRepo(app, alice, {
+      name: "widgets",
+      visibility: "public",
+      description: "Sell handmade wooden chess sets",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    widgets = made.value;
+    const seeded = await commitToBranch(app, alice, widgets, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, widgets, { slug: "widgets" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    const told = openIssue(app, alice, widgets, {
+      title: "Add a chess clock timer",
+      body: "Players want a clock.",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    tellNumber = told.value.number;
+
+    const branchMade = await commitToBranch(app, alice, widgets, {
+      branch: "chess-clock",
+      base: widgets.defaultBranch,
+      message: "Add clock",
+      files: [{ path: "clock.ts", content: "export {};\n" }],
+    });
+    if (!branchMade.ok) throw new Error(JSON.stringify(branchMade.error));
+    const opened = await openPull(app, alice, widgets, {
+      title: "Wire up the chess clock",
+      body: "",
+      baseBranch: widgets.defaultBranch,
+      headBranch: "chess-clock",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    changeNumber = opened.value.number;
+
+    // A private app, another owner's — never in alice's or a stranger's
+    // results, however much its description matches.
+    const bob = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!bob.ok) throw new Error(bob.error);
+    const secret = await createRepo(app, bob.value, {
+      name: "secret",
+      visibility: "private",
+      description: "A private chess engine",
+    });
+    if (!secret.ok) throw new Error(String(secret.error));
+    const secretSeeded = await commitToBranch(app, bob.value, secret.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!secretSeeded.ok) throw new Error(JSON.stringify(secretSeeded.error));
+    const secretEnabled = await enableApp(app, bob.value, secret.value, {
+      slug: "secret",
+    });
+    if (!secretEnabled.ok) throw new Error(String(secretEnabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const asAlice = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${aliceCookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+  const anonymous = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+  // The topbar carries the palette's own list of apps on every page, so an
+  // assertion about the *results* reads the main content, not the whole
+  // document.
+  const mainOf = (html: string): string =>
+    html.match(/<main[^>]*id="main"[\s\S]*?<\/main>/)?.[0] ?? html;
+
+  test("an app is found by a word from its own description", async () => {
+    const res = await asAlice("/search?q=chess");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("widgets");
+    expect(html).toContain("chess sets");
+    // Bob's private app matches the same word but is never the viewer's to see.
+    expect(html).not.toContain("secret");
+  });
+
+  test("a change and a tell are found too, each saying which app they belong to", async () => {
+    const html = await (await asAlice("/search?q=chess")).text();
+    expect(html).toContain("Add a chess clock timer");
+    expect(html).toContain(`/alice/widgets/issues/${tellNumber}`);
+    expect(html).toContain("Wire up the chess clock");
+    expect(html).toContain(`/alice/widgets/pulls/${changeNumber}`);
+    expect(html).toContain("alice/widgets");
+  });
+
+  test("an empty query is an empty result, not an error page", async () => {
+    const res = await asAlice("/search");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(mainOf(html)).not.toContain("widgets");
+  });
+
+  test("an overlong query is bounded, not a crash", async () => {
+    const res = await asAlice(`/search?q=${"chess ".repeat(100)}`);
+    expect(res.status).toBe(200);
+  });
+
+  test("signed out, the same public visibility as dev's own search", async () => {
+    const html = await (await anonymous("/search?q=chess")).text();
+    expect(html).toContain("widgets");
+    expect(html).not.toContain("secret");
+  });
+
+  test("?mode=dev on the same route still answers in dev's own words", async () => {
+    const html = await (await asAlice("/search?q=chess&mode=dev")).text();
+    expect(html).toContain("Repositories");
+    expect(html).toContain("Issues and pull requests");
+  });
+});

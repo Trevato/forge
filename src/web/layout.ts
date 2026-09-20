@@ -252,7 +252,7 @@ function helpButton(): Html {
 
 // ---- palette index ----
 
-const STATIC_PALETTE: PaletteItem[] = [
+const STATIC_PALETTE_DEV: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
@@ -267,21 +267,45 @@ const STATIC_PALETTE: PaletteItem[] = [
 ];
 
 /**
+ * The studio's own verbs: no "New repository" or "New organization" — dev's
+ * own way of making one, which would land a studio reader on dev's own form
+ * unannounced. "Asks you" goes to the home, where the asks panel lives.
+ */
+const STATIC_PALETTE_STUDIO: PaletteItem[] = [
+  { t: "Home", h: "/", c: "Go to" },
+  { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Map", h: "/map", c: "Go to" },
+  { t: "Asks you", h: "/", c: "Go to" },
+  { t: "New app", h: "/apps/new", c: "Create" },
+  { t: "Search", h: "/search", c: "Go to" },
+  { t: "Account settings", h: "/settings", c: "Settings" },
+  { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
+  { t: "SSH keys", h: "/settings/keys", c: "Settings" },
+  { t: "Origins", h: "/settings/origins", c: "Settings" },
+];
+
+/**
  * The palette index rides as a `<script type="application/json">` data block.
  * The HTML spec stops parsing such a block as script, so the CSP never
  * applies and no nonce is needed — but `</script` must not appear inside it,
  * which escaping `<` guarantees.
+ *
+ * In the studio the by-name rows are apps, not every repository — the same
+ * visibility (`appsOf` is `listReposVisibleTo` underneath), just apps first.
  */
 function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
+  const studio = ctx.mode === "studio";
+  const repos = studio
+    ? appsOf(ctx, ctx.auth.user).repos.slice(0, 30)
+    : listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r) => ({
       t: `${r.ownerName}/${r.name}`,
       h: `/${r.ownerName}/${r.name}`,
-      c: "Repositories",
+      c: studio ? "Apps" : "Repositories",
     })),
-    ...STATIC_PALETTE,
+    ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
   ];
   const json = JSON.stringify({ items }).replaceAll("<", "\\u003c");
   return raw(
