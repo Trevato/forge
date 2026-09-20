@@ -108,6 +108,26 @@ describe("live browsing pages", () => {
     // the deploy run's own `run.finished` — the client must listen for it
     // directly, not only learn a preview is live once its tests are done.
     expect(html).toContain("app.serving");
+    // The polite region a swap must speak into — the one place a screen
+    // reader learns a preview just went live.
+    expect(html).toContain('id="live-status"');
+  });
+
+  test("the client script sets the status when the app fragment swaps, not only on the generic New-activity fallback", async () => {
+    const { liveClientJs } = await import("../src/web/live.ts");
+    // `onEvent` returns straight out of `refreshApp()` for a deploy/serving
+    // event (`live.ts`), so it never reaches the fallback branch's
+    // `status.textContent = 'New activity on this page'` — the swap itself
+    // must set the status, in the same sentence the swapped-in card shows.
+    const refreshApp = liveClientJs.slice(
+      liveClientJs.indexOf("function refreshApp"),
+      liveClientJs.indexOf("function onEvent"),
+    );
+    expect(refreshApp).toContain("status.textContent");
+    // A fragment identical to what's already on screen must not announce
+    // anything: the sentence is built from what changed, not fetched anew
+    // every time.
+    expect(refreshApp).toContain("announceSwap");
   });
 
   test("the studio home wires up asks, apps, now and on-you as live regions, signed in; a signed-out visitor gets neither", async () => {

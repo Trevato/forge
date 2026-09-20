@@ -47,6 +47,13 @@ const appHead = part(/* css */ `
 .studio-head form { display: inline-flex; }
 `);
 
+/** A card the live client just swapped in place (`live.ts`): a background
+ * flash, never a resize, so the page never shifts under a reader. */
+const justChanged = part(/* css */ `
+#app-head.studio-just-changed, #app-previews.studio-just-changed { animation: studio-flash 1.1s var(--ease); border-radius: var(--radius); }
+@keyframes studio-flash { 0% { background-color: color-mix(in srgb, var(--accent) 14%, transparent); } 100% { background-color: transparent; } }
+`);
+
 /** One of the five words, as a badge (`words.ts`). */
 const wordBadges = part(/* css */ `
 .badge[data-variant="accent"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
@@ -99,6 +106,7 @@ export const studioCss = `${[
   shell,
   tellBox,
   appHead,
+  justChanged,
   wordBadges,
   rows,
   asks,
