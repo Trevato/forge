@@ -6,13 +6,19 @@
  * test that nothing else says the git word instead.
  *
  * To register a new studio page for this check: add one row to `pages`
- * (built in the test below, once the fixture that gives it something real
- * to show exists) with the studio word it speaks and the path to fetch.
+ * (built at the end of `beforeAll`, once the fixture has given it something
+ * real to show) with the studio word it speaks and the path to fetch.
  * Nothing else in this file changes — the same forbidden-vocabulary,
- * chrome, header and size assertions walk it too. A route not yet wired
- * into the router (`http/server.ts`) answers 404 and is skipped rather
- * than failed, so a row for a page still being built does not block this
- * file from landing first.
+ * chrome, header and size assertions walk it, and so does the `?mode=dev`
+ * test below, which is why a row carries the dev words the same path still
+ * says in dev's own face: the table is the one place a page is added, and
+ * the proof it is not vacuous comes with it. Whatever a row needs to be
+ * worth fetching — a second tell, a second change, a run that stopped, a
+ * run still going — the one `beforeAll` seeds; there is no second seeding
+ * helper, and no row is worth a page of setup of its own. A route not
+ * yet wired into the router (`http/server.ts`) answers 404 and is skipped
+ * rather than failed, so a row for a page still being built does not block
+ * this file from landing first.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -109,6 +115,31 @@ const pageContent = (html: string): string =>
  * file diff cost the studio pull page before it had its own render. */
 const MAX_BODY_BYTES = 300_000;
 
+/** One studio page this file walks: what to fetch, and what proves the
+ * fetch was worth making. `shows`/`hides` are literal HTML, checked against
+ * the whole response — they are about which rows landed on the page (a
+ * `?word=` filter or a `cursor` page that narrowed nothing proves nothing),
+ * never about vocabulary. `dev` is the other half: the words dev's own face
+ * still says at the same path with `?mode=dev`, so a clean studio page can
+ * never be clean merely because it rendered nothing. */
+interface StudioPage {
+  /** The studio word this page speaks — the label in a failure message. */
+  readonly word: string;
+  /** The path to fetch, `?word=` or `cursor=` and all. */
+  readonly path: string;
+  /** Literal HTML the studio's page must carry. */
+  readonly shows?: readonly string[];
+  /** Literal HTML it must not carry. */
+  readonly hides?: readonly string[];
+  /** Dev's own words the same path still says at `?mode=dev`, when dev has
+   * a page of its own there. */
+  readonly dev?: readonly string[];
+}
+
+/** `?mode=dev` added to a path that may already carry a query. */
+const asDev = (path: string): string =>
+  `${path}${path.includes("?") ? "&" : "?"}mode=dev`;
+
 describe("dev's vocabulary never reaches a studio page", () => {
   let dataDir: string;
   let app: App;
@@ -118,11 +149,23 @@ describe("dev's vocabulary never reaches a studio page", () => {
   let cookie: string;
   let record: AppRecord;
   let tellNumber: number;
+  let tellTitle: string;
+  let untouchedNumber: number;
+  let untouchedTitle: string;
   let runId: string;
+  let stoppedRunId: string;
+  let workingRunId: string;
   let openPullNumber: number;
+  let openPullTitle: string;
+  let secondChangeNumber: number;
+  let secondChangeTitle: string;
   let mergedPullNumber: number;
   let openBranch: string;
   let mergedBranch: string;
+  /** Every branch this fixture made. No studio page names one of them. */
+  const branches: string[] = [];
+  /** The table every test below walks. Filled at the end of `beforeAll`. */
+  let pages: readonly StudioPage[];
 
   interface EnvSlot {
     readonly app: AppRecord;
@@ -206,9 +249,22 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(addToCrew(app, a.value, repo, "scout").ok).toBe(true);
     const scoutUser = getUserByName(app.db, "scout")!;
 
+    // A tell nobody has picked up — the one row the issue list's own *told*
+    // filter has to keep, since the tell below is claimed by a run and a
+    // change before this fixture is done. Opened first, so its number is the
+    // lower one and it is also what a `cursor` page of the list lands on.
+    untouchedTitle = "List test: nobody has picked this up";
+    const untouched = openIssue(app, a.value, repo, {
+      title: untouchedTitle,
+      body: "Still only said.",
+    });
+    if (!untouched.ok) throw new Error(String(untouched.error));
+    untouchedNumber = untouched.value.number;
+
     // A tell, assigned, with a run — the studio's *tell* and *working*.
+    tellTitle = "Make the export button work";
     const told = openIssue(app, a.value, repo, {
-      title: "Make the export button work",
+      title: tellTitle,
       body: "It does nothing right now.",
     });
     if (!told.ok) throw new Error(String(told.error));
@@ -234,6 +290,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
 
     // An open pull with a green check and a preview — the studio's *look*.
     openBranch = "add-export";
+    branches.push(openBranch);
     const openBranchMade = await commitToBranch(app, a.value, repo, {
       branch: openBranch,
       base: repo.defaultBranch,
@@ -241,8 +298,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
       files: [{ path: "export.ts", content: "export {};\n" }],
     });
     if (!openBranchMade.ok) throw new Error(JSON.stringify(openBranchMade.error));
+    openPullTitle = "Add the export button";
     const opened = await openPull(app, scoutUser, repo, {
-      title: "Add the export button",
+      title: openPullTitle,
       body: `Closes #${tellNumber}.`,
       baseBranch: repo.defaultBranch,
       headBranch: openBranch,
@@ -269,6 +327,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
 
     // A merged change, production caught up to it — the studio's *shipped*.
     mergedBranch = "faster-notes";
+    branches.push(mergedBranch);
     const mergedBranchMade = await commitToBranch(app, a.value, repo, {
       branch: mergedBranch,
       base: repo.defaultBranch,
@@ -317,6 +376,160 @@ describe("dev's vocabulary never reaches a studio page", () => {
       since: new Date().toISOString(),
       manifest: { tty: null },
     });
+
+    // A second open change, nothing checked yet, and a run that stopped:
+    // the rows a `?word=` filter and a `cursor` page of the two lists have
+    // to leave behind for their narrowing to mean anything. Opened last, so
+    // each is the newest of its list and the cursor that skips it is the
+    // one a reader's own "next" link would carry.
+    const secondBranch = "tidy-the-shelf";
+    branches.push(secondBranch);
+    const secondBranchMade = await commitToBranch(app, a.value, repo, {
+      branch: secondBranch,
+      base: repo.defaultBranch,
+      message: "Tidy",
+      files: [{ path: "TIDY.md", content: "tidy\n" }],
+    });
+    if (!secondBranchMade.ok)
+      throw new Error(JSON.stringify(secondBranchMade.error));
+    secondChangeTitle = "Tidy the shelf up";
+    const second = await openPull(app, a.value, repo, {
+      title: secondChangeTitle,
+      body: "",
+      baseBranch: repo.defaultBranch,
+      headBranch: secondBranch,
+    });
+    if (!second.ok) throw new Error(String(second.error));
+    secondChangeNumber = second.value.number;
+
+    const stopped = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutUser.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, stopped.id);
+    finishRun(app.db, stopped.id, {
+      state: "failed",
+      summary: "stopped before it finished",
+    });
+    stoppedRunId = stopped.id;
+
+    // A run still going, newest of the three: the row the `cursor` page of
+    // the run list has to drop. Without it a cursor row would pass on the
+    // word filter's work — the stopped run above is already off the bare
+    // list — and prove nothing about paging at all.
+    const working = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutUser.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, working.id);
+    workingRunId = working.id;
+
+    const repoPath = "/alice/vocab";
+    // Every studio page, one row each. A new studio page goes here — the
+    // path it answers at, the word it speaks, and dev's own words at the
+    // same path — and nothing else in this file changes.
+    pages = [
+      { word: "home", path: "/" },
+      { word: "app", path: repoPath },
+      {
+        word: "tell",
+        path: `${repoPath}/issues/${tellNumber}`,
+        dev: ["<h2>Labels</h2>"],
+      },
+      { word: "working", path: `${repoPath}/runs/${runId}` },
+      {
+        word: "look",
+        path: `${repoPath}/pulls/${openPullNumber}`,
+        dev: ["diff-table", openBranch],
+      },
+      {
+        word: "shipped",
+        path: `${repoPath}/pulls/${mergedPullNumber}`,
+        dev: ["diff-table"],
+      },
+      // A word from the app's own description, not its name — the app's own
+      // row coming back for it proves the search reaches the description,
+      // not just a name match.
+      { word: "search", path: "/search?q=catch", shows: [`href="${repoPath}"`] },
+      // Everything told, every change, every run (#95): the three studio
+      // lists, each as a person meets it — the bare list, the word filter
+      // they click, and the `cursor` page their "next" link hands them.
+      {
+        word: "tells",
+        path: `${repoPath}/issues`,
+        shows: [untouchedTitle, tellTitle],
+        dev: [`>#${tellNumber} opened`],
+      },
+      {
+        word: "tells (told)",
+        path: `${repoPath}/issues?word=told`,
+        shows: [untouchedTitle],
+        hides: [tellTitle],
+        dev: [`>#${tellNumber} opened`],
+      },
+      {
+        word: "tells (next page)",
+        path: `${repoPath}/issues?cursor=${tellNumber}`,
+        shows: [untouchedTitle],
+        hides: [tellTitle],
+        dev: [`>#${untouchedNumber} opened`],
+      },
+      {
+        word: "changes",
+        path: `${repoPath}/pulls`,
+        shows: [openPullTitle, secondChangeTitle],
+        dev: [openBranch],
+      },
+      {
+        word: "changes (look)",
+        path: `${repoPath}/pulls?word=look`,
+        shows: [openPullTitle],
+        hides: [secondChangeTitle],
+        dev: [openBranch],
+      },
+      {
+        word: "changes (next page)",
+        path: `${repoPath}/pulls?cursor=${secondChangeNumber}`,
+        shows: [openPullTitle],
+        hides: [secondChangeTitle],
+        dev: [openBranch],
+      },
+      {
+        word: "runs",
+        path: `${repoPath}/runs`,
+        shows: [
+          `href="${repoPath}/runs/${runId}"`,
+          `href="${repoPath}/runs/${workingRunId}"`,
+        ],
+        // The stopped run is not open and moving, so the bare list leaves it
+        // out — the filter below is where it shows up.
+        hides: [`href="${repoPath}/runs/${stoppedRunId}"`],
+        dev: ["Done"],
+      },
+      {
+        word: "runs (stopped)",
+        path: `${repoPath}/runs?word=stopped`,
+        shows: [`href="${repoPath}/runs/${stoppedRunId}"`],
+        hides: [
+          `href="${repoPath}/runs/${runId}"`,
+          `href="${repoPath}/runs/${workingRunId}"`,
+        ],
+        dev: ["Done"],
+      },
+      {
+        word: "runs (next page)",
+        // Past the newest run, which is one the bare list would otherwise
+        // show — so only the cursor can be what dropped it.
+        path: `${repoPath}/runs?cursor=${workingRunId}`,
+        shows: [`href="${repoPath}/runs/${runId}"`],
+        hides: [`href="${repoPath}/runs/${workingRunId}"`],
+        dev: ["Done"],
+      },
+    ];
   });
 
   afterAll(async () => {
@@ -325,19 +538,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("home, app, tell, working, look and shipped: no dev word, the studio chrome, the security floor, and a page a diff would never fit in", async () => {
-    const pages: { word: string; path: string }[] = [
-      { word: "home", path: "/" },
-      { word: "app", path: "/alice/vocab" },
-      { word: "tell", path: `/alice/vocab/issues/${tellNumber}` },
-      { word: "working", path: `/alice/vocab/runs/${runId}` },
-      { word: "look", path: `/alice/vocab/pulls/${openPullNumber}` },
-      { word: "shipped", path: `/alice/vocab/pulls/${mergedPullNumber}` },
-      // A word from the app's own description, not its name — proving the
-      // search reaches the description, not just a name match.
-      { word: "search", path: "/search?q=catch" },
-    ];
-
+  test("every studio page — home, app, tell, working, look, shipped, search and the three lists: no dev word, the studio chrome, the security floor, and a page a diff would never fit in", async () => {
     for (const p of pages) {
       const res = await fetch(`${base}${p.path}`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
@@ -372,17 +573,29 @@ describe("dev's vocabulary never reaches a studio page", () => {
           `${p.word} (${p.path}) said dev's word ${pattern} — ${because}`,
         ).not.toMatch(pattern);
       }
-      expect(
-        visible,
-        `${p.word} (${p.path}) named the open branch "${openBranch}"`,
-      ).not.toContain(openBranch);
-      expect(
-        visible,
-        `${p.word} (${p.path}) named the merged branch "${mergedBranch}"`,
-      ).not.toContain(mergedBranch);
-      // The search itself: "catch" is only in the app's description, never
-      // its name, so finding it here proves the description is reached.
-      if (p.word === "search") expect(visible).toContain("vocab");
+      for (const branch of branches) {
+        expect(
+          visible,
+          `${p.word} (${p.path}) named the branch "${branch}"`,
+        ).not.toContain(branch);
+      }
+
+      // Which rows landed. A page that rendered nothing at all would pass
+      // every vocabulary assertion above, and so would a `?word=` filter or
+      // a `cursor` that narrowed nothing — these two are what say the page
+      // showed the rows it was asked for and only those.
+      for (const shown of p.shows ?? []) {
+        expect(
+          html,
+          `${p.word} (${p.path}) is missing "${shown}" — the page showed less than it was asked for`,
+        ).toContain(shown);
+      }
+      for (const hidden of p.hides ?? []) {
+        expect(
+          html,
+          `${p.word} (${p.path}) still carries "${hidden}" — the filter or the cursor narrowed nothing`,
+        ).not.toContain(hidden);
+      }
     }
 
     // A run id is a key, not a headline: it rides hrefs (the dev link, the
@@ -400,13 +613,38 @@ describe("dev's vocabulary never reaches a studio page", () => {
   });
 
   test("?mode=dev on the same routes still carries dev's own words — the assertions above are real, not vacuous", async () => {
-    const dev = await (
-      await fetch(`${base}/alice/vocab/pulls/${openPullNumber}?mode=dev`, {
+    let proved = 0;
+    for (const p of pages) {
+      if (p.dev === undefined) continue;
+      const res = await fetch(`${base}${asDev(p.path)}`, {
         headers: { cookie },
         redirect: "manual",
-      })
-    ).text();
-    expect(dev).toContain("diff-table");
-    expect(dev).toContain(openBranch);
+      });
+      if (res.status === 404) continue;
+      expect(res.status, `${p.word} (${asDev(p.path)}) did not answer`).toBe(
+        200,
+      );
+      // Dev's own words, read where the studio's are read: inside `<main>`,
+      // so the shared client script's own literals can never stand in for a
+      // page that said nothing.
+      const visible = pageContent(await res.text());
+      for (const word of p.dev) {
+        expect(
+          visible,
+          `${p.word} (${asDev(p.path)}) lost dev's word "${word}" — the studio row for this path proves nothing`,
+        ).toContain(word);
+      }
+      // And it is dev's page, not the studio's: the studio word badge is the
+      // one thing every studio render puts on a row or a header.
+      expect(
+        visible,
+        `${p.word} (${asDev(p.path)}) rendered the studio's own word badge`,
+      ).not.toContain('data-word="');
+      proved += 1;
+    }
+    // Every row that named dev words was actually reached: the 404 skip
+    // above is for a page still being built, never a way for a row to stop
+    // proving itself once it exists.
+    expect(proved).toBe(pages.filter((p) => p.dev !== undefined).length);
   });
 });

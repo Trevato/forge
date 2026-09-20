@@ -290,7 +290,7 @@ export async function studioChanges(
     </div>
     <p class="muted small mt">
       <a href="${base}/pulls?mode=dev">${icon("code")}See dev's list</a> —
-      branch names and the diff, dev's own way.
+      where each change lives and its diff, dev's own way.
     </p>
     ${liveMount({ repo: base })}`;
 
