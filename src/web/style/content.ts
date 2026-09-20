@@ -649,6 +649,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .run-summary { margin: 10px 0 0; text-wrap: pretty; }
 .run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .run-actions form { display: inline-flex; }
+/* A tail beside a running row (studio/app.ts): the same log, a peek at it
+   — fixed height so nothing around it shifts as lines arrive, and it
+   scrolls itself rather than the page. */
+.log-tail-row { padding: 0 14px 10px; }
+.run-log.log-tail { max-height: 8.5em; min-height: 0; margin: 6px 0 0; font-size: 12.5px; }
 .table .truncate { max-width: 34ch; display: inline-block; vertical-align: bottom; }
 .agent-brief { white-space: pre-wrap; font-size: 13px; color: var(--muted-fg); max-height: 6.5em; overflow: hidden; }
 

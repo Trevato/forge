@@ -27,7 +27,8 @@ import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, icon } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
-import { costText, durationText, logLine, runTitle } from "../pages/runs.ts";
+import { costText, durationText, runTitle } from "../pages/runs.ts";
+import { logBox, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { studioCss } from "./style.ts";
 import { runWord, wordBadge, type WordCtx } from "./words.ts";
 
@@ -51,10 +52,6 @@ export function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
   </form>`;
 }
 
-
-/** At most this many of the run's own lines held in the page at once — the
- * live script drops the oldest as a new one lands, past this. */
-const RUN_TRANSCRIPT_CAP = 400;
 
 /**
  * GET /:owner/:name/runs/:id in the studio: who is on it, the tell it came
@@ -95,8 +92,6 @@ export async function studioRun(
   const unfinished = !isTerminal(run.state);
   const duration = durationText(run);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
-  const shown = lines.slice(-RUN_TRANSCRIPT_CAP);
-  const hidden = lines.length - shown.length;
 
   // The pull this run's tell has become, once one exists: the tell itself
   // when the run is already a pull's own (feedback, a failed check, a
@@ -188,41 +183,24 @@ export async function studioRun(
         </p>`,
     )}
     ${when(
-      shown.length === 0,
+      lines.length === 0,
       () =>
         html`<p class="muted small" id="run-empty">
           Nothing has been logged yet.
         </p>`,
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
-      <div
-        class="run-log"
-        id="run-log"
-        data-who="${who}"
-        data-cap="${RUN_TRANSCRIPT_CAP}"
-        ${unfinished ? html`data-stream="${stream}"` : null}
-      >
-        ${when(
-          hidden > 0,
-          () =>
-            html`<p class="muted small">
-              Holding the last ${RUN_TRANSCRIPT_CAP} lines here; the run's own
-              log keeps the rest.
-            </p>`,
-        )}
-        ${shown.map((l) => logLine(l, who))}
-        ${when(
-          run.state === "running",
-          () =>
-            html`<div class="ln ln-pulse" id="run-pulse">
-              <span class="who">${who}</span
-              ><span class="txt"><i></i><i></i><i></i></span>
-            </div>`,
-        )}
-        <button type="button" class="run-jump" id="run-jump" hidden>
+      ${logBox({
+        id: "run-log",
+        who,
+        cap: RUN_TRANSCRIPT_CAP,
+        lines,
+        ...(unfinished ? { stream } : {}),
+        pulse: run.state === "running",
+        extra: html`<button type="button" class="run-jump" id="run-jump" hidden>
           newer below
-        </button>
-      </div>
+        </button>`,
+      })}
       ${when(
         writer && run.kind === "agent" && issue !== undefined,
         () =>

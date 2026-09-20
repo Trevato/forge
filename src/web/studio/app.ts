@@ -24,8 +24,9 @@ import { getUsersByIds } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import { readRunLog } from "../../runs/log.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
-import { asksJs, liveRegionsJs } from "../client.ts";
+import { appTailJs, asksJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -41,6 +42,7 @@ import {
 } from "../ui.ts";
 import { asksPanel, decisionsFor } from "./asks.ts";
 import { withLikely } from "./leans.ts";
+import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
 import { studioCss } from "./style.ts";
@@ -238,6 +240,58 @@ export async function studioApp(
   // viewer who cannot write here reads "Now" as the app's own story, never
   // by the agent's name.
   const nameFor = (name: string): string => (ownerFacts ? name : "the crew");
+
+  // The one run actually going, if any: its row gets a tail of its own
+  // log — the last handful of lines, streamed live — beside it. Only one,
+  // so the page never opens a stream per row.
+  const activeRun = rowsNow.find(
+    (r) => r.kind === "agent" && r.state === "running",
+  );
+  const activeTail = activeRun
+    ? logBox({
+        id: "app-run-tail",
+        who: nameFor(
+          activeRun.actorId === null
+            ? "crew"
+            : (actors.get(activeRun.actorId)?.username ?? "crew"),
+        ),
+        cap: LOG_TAIL_CAP,
+        lines: readRunLog(ctx.app.config.dataDir, activeRun.id).lines,
+        stream: `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${activeRun.id}/log?follow=1`,
+        className: "log-tail",
+      })
+    : undefined;
+
+  const runRows: Html[] = [];
+  for (const r of rowsNow) {
+    const { word, note } = await runWord(wordCtx, r);
+    const who = nameFor(
+      r.actorId === null ? "crew" : (actors.get(r.actorId)?.username ?? "crew"),
+    );
+    const about = r.issueId === null ? undefined : issues.get(r.issueId);
+    const stop = stopForm(ctx, repo, r);
+    runRows.push(
+      row({
+        ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
+        lead: avatar(who),
+        title: stop
+          ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
+          : (about?.title ?? note),
+        meta: html`${who} · ${word === "working" ? "working now" : note}
+        ${word === "working"
+          ? null
+          : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
+        trail: stop
+          ? html`<span class="studio-ask-actions"
+              >${wordBadge(word)} ${stop}</span
+            >`
+          : wordBadge(word),
+      }),
+    );
+    if (activeTail !== undefined && r.id === activeRun?.id)
+      runRows.push(html`<li class="log-tail-row">${activeTail}</li>`);
+  }
+
   const nowRows: Html[] = [
     ...(await Promise.all(
       openPulls.map(async (p) => {
@@ -253,32 +307,7 @@ export async function studioApp(
         });
       }),
     )),
-    ...(await Promise.all(
-      rowsNow.map(async (r) => {
-        const { word, note } = await runWord(wordCtx, r);
-        const who = nameFor(
-          r.actorId === null ? "crew" : (actors.get(r.actorId)?.username ?? "crew"),
-        );
-        const about = r.issueId === null ? undefined : issues.get(r.issueId);
-        const stop = stopForm(ctx, repo, r);
-        return row({
-          ...(stop ? {} : { href: `${base}/runs/${r.id}`, nav: true }),
-          lead: avatar(who),
-          title: stop
-            ? html`<a href="${base}/runs/${r.id}">${about?.title ?? note}</a>`
-            : (about?.title ?? note),
-          meta: html`${who} · ${word === "working" ? "working now" : note}
-          ${word === "working"
-            ? null
-            : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
-          trail: stop
-            ? html`<span class="studio-ask-actions"
-                >${wordBadge(word)} ${stop}</span
-              >`
-            : wordBadge(word),
-        });
-      }),
-    )),
+    ...runRows,
     ...waiting.map((i) => {
       const who = nameFor(i.assigneeName ?? "crew");
       return row({
@@ -462,6 +491,10 @@ export async function studioApp(
     palette: repoPalette(ctx, repo),
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}\n${appTailJs}`,
+    // The no-script half of the tail: while the crew's run goes, the page
+    // refreshes itself, the way the run's own page does; the script above
+    // removes this the moment it can stream lines instead.
+    ...(activeRun ? { refresh: { seconds: 5 } } : {}),
   });
 }

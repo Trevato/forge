@@ -49,6 +49,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { pendingLeans, pullWord, runWord, type WordCtx } from "../src/web/pages/studio.ts";
 import { servedPhrase } from "../src/web/ui.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { appendRunLog } from "../src/runs/log.ts";
 
 /** One transparent pixel, dropped where a look would sit. */
 const PNG = Buffer.from(
@@ -2980,6 +2981,153 @@ describe("working: a run's own page in the studio", () => {
     expect(page).not.toContain('id="run-stop"');
     expect(page).not.toContain(">Stop<");
     expect(page).not.toContain(">Cancel run<");
+  });
+});
+
+/**
+ * Issue #88: the app's page tails the crew's log while it works — the last
+ * handful of lines beside the running row, live, bounded, and with a
+ * no-script fallback that behaves like the run page's own. Its own repo and
+ * app, so no other test's still-running run ever counts as "the active run"
+ * here.
+ */
+describe("the app's page tails the crew's log while it works", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let alice: User;
+  let scoutId: string;
+  let writerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-tail-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    writerCookie = await signIn("alice");
+    readerCookie = await signIn("bob");
+    const made = await createRepo(app, a.value, {
+      name: "engine",
+      visibility: "private",
+      description: "an app that builds",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "engine\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "engine" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, a.value, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    scoutId = scout.value.user.id;
+    expect(addToCrew(app, a.value, repo, "scout").ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the app's page carries the tail of the active run's log, bounded, and refreshes without a script", async () => {
+    const tell = openIssue(app, alice, repo, { title: "Speed up boot" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    for (let i = 0; i < 9; i++)
+      appendRunLog(app.config.dataDir, run.id, `line ${i}`);
+
+    const page = await (await get("/alice/engine", writerCookie)).text();
+    expect(page).toContain('id="app-run-tail"');
+    expect(page).toContain(
+      `data-stream="/api/v1/repos/alice/engine/runs/${run.id}/log?follow=1"`,
+    );
+    // Bounded on the first paint too: only the last handful made it, and
+    // the box says so.
+    expect(page).not.toContain(">line 0<");
+    expect(page).toContain(">line 8<");
+    expect(page).toContain("Holding the last 6 lines here");
+    // No script, no problem: the page keeps refreshing while the run goes.
+    expect(page).toContain('http-equiv="refresh"');
+
+    const stream = await get(
+      `/api/v1/repos/alice/engine/runs/${run.id}/log?follow=1`,
+      writerCookie,
+    );
+    expect(stream.status).toBe(200);
+
+    finishRun(app.db, run.id, { state: "ok", summary: "planned" });
+    const settled = await (await get("/alice/engine", writerCookie)).text();
+    expect(settled).not.toContain('id="app-run-tail"');
+  });
+
+  test("a reader without access gets the forge's not-found from the page and from the tail's own stream", async () => {
+    const tell = openIssue(app, alice, repo, { title: "Private boot work" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    appendRunLog(app.config.dataDir, run.id, "line 0");
+
+    const page = await get("/alice/engine", readerCookie);
+    expect(page.status).toBe(404);
+    const stream = await get(
+      `/api/v1/repos/alice/engine/runs/${run.id}/log?follow=1`,
+      readerCookie,
+    );
+    expect(stream.status).toBe(404);
+    finishRun(app.db, run.id, { state: "ok", summary: "planned" });
   });
 });
 
