@@ -531,7 +531,7 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       : plan
         ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
         : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
-  return flashTo(ctx, repoBase(repo), { message: `${first}${second}` });
+  return flashTo(ctx, `${repoBase(repo)}/app`, { message: `${first}${second}` });
 }
 
 // ---- the repo home's strip ----

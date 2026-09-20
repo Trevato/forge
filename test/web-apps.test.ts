@@ -154,7 +154,7 @@ describe("apps, runs and the crew on the web", () => {
     );
   });
 
-  test("New app creates the app and lands on the repository, URL in hand", async () => {
+  test("New app creates the app and lands on its own page, URL in hand", async () => {
     const created = await web(alice, "/apps/new", {
       form: {
         owner: "alice",
@@ -164,7 +164,7 @@ describe("apps, runs and the crew on the web", () => {
       },
     });
     expect(created.status).toBe(303);
-    expect(created.headers.get("location")).toBe("/alice/hello");
+    expect(created.headers.get("location")).toBe("/alice/hello/app");
     expect(flashOf(created)).toContain(
       `hello is starting at http://hello.${DOMAIN}:${servers.port}`,
     );
