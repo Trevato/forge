@@ -14,6 +14,7 @@ import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import {
+  agentRunTotals,
   latestRunsForIssues,
   listRuns,
   previewLatency,
@@ -125,13 +126,12 @@ export async function studioApp(
     state: "closed",
     limit: 100,
   }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
-  // The rest is spend, worked out only for a viewer who is going to see it.
-  const weekRuns = ownerFacts
-    ? listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
-        (r) => r.createdAt >= week,
-      )
-    : [];
-  const spent = weekRuns.reduce((s, r) => s + r.costUsd, 0);
+  // The rest is spend, worked out only for a viewer who is going to see it —
+  // counted by the database over the whole week, not off a page of rows.
+  const weekTotals = ownerFacts
+    ? agentRunTotals(db, repo.id, week)
+    : { runs: 0, spentUsd: 0 };
+  const spent = weekTotals.spentUsd;
   const ledgerWeek = ownerFacts ? decisionStats(db, repo.id, week) : [];
   const weekLatency = ownerFacts
     ? previewLatency(db, repo.id, week)
@@ -330,7 +330,7 @@ export async function studioApp(
           <dt>Shipped</dt>
           <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
           <dt>Runs</dt>
-          <dd>${weekRuns.length}</dd>
+          <dd>${weekTotals.runs}</dd>
           <dt>Preview</dt>
           <dd>${previewLatencyWords(weekLatency)}</dd>
           <dt>Spent</dt>

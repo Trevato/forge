@@ -32,6 +32,7 @@ import { recordLook } from "../src/core/looks.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { setDirectionIssue, type Repo } from "../src/core/repos.ts";
 import {
+  agentRunTotals,
   claimRun,
   createRun,
   finishRun,
@@ -3201,5 +3202,136 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     const one = await (await get("/alice/trickle")).text();
     expect(one).toContain("not enough deploys this week to say");
     expect(one).not.toContain("reaches its preview in");
+  });
+});
+
+describe("this week's runs and spend are counted by the database, not read off a page of runs", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let busy: Repo;
+  let ownerCookie: string;
+
+  /** How many agent runs this week — more than `listRuns` would ever hand back. */
+  const RUNS = 250;
+  /** What each of them cost, in the float dollars the column holds. */
+  const COST = 0.13;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-week-totals-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ownerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+    for (const name of ["busy", "quiet"] as const) {
+      const made = await createRepo(app, alice, {
+        name,
+        visibility: "private",
+        description: "",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      const seeded = await commitToBranch(app, alice, made.value, {
+        message: "Start",
+        files: [{ path: "README.md", content: "start\n" }],
+      });
+      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+      const enabled = await enableApp(app, alice, made.value, { slug: name });
+      if (!enabled.ok) throw new Error(String(enabled.error));
+      if (name === "busy") busy = made.value;
+    }
+
+    const keeper = await createAgent(app, alice, { username: "keeper" });
+    if (!keeper.ok) throw new Error(String(keeper.error));
+    expect(addToCrew(app, alice, busy, "keeper").ok).toBe(true);
+    const keeperId = getUserByName(app.db, "keeper")!.id;
+
+    // 250 agent runs inside the week — past the 200 `listRuns` will return —
+    // and one fat run ten days back that the window must leave out.
+    for (let i = 0; i < RUNS; i++) {
+      const r = createRun(app.db, {
+        repoId: busy.id,
+        kind: "agent",
+        actorId: keeperId,
+        reason: "assigned",
+      });
+      claimRun(app.db, r.id);
+      finishRun(app.db, r.id, { state: "ok", summary: "did a thing", costUsd: COST });
+    }
+    const old = createRun(app.db, {
+      repoId: busy.id,
+      kind: "agent",
+      actorId: keeperId,
+      reason: "assigned",
+    });
+    claimRun(app.db, old.id);
+    finishRun(app.db, old.id, { state: "ok", summary: "last month", costUsd: 99 });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(old.id, new Date(Date.now() - 10 * 24 * 60 * 60_000).toISOString());
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${ownerCookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  test("the aggregate counts every run in the window, skips the one outside it, and is 0 for a week with none", () => {
+    const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    const totals = agentRunTotals(app.db, busy.id, week);
+    expect(totals.runs).toBe(RUNS);
+    expect(totals.spentUsd).toBeCloseTo(RUNS * COST, 6);
+
+    // The whole ledger, window opened wide: the old run is there after all.
+    const ever = agentRunTotals(app.db, busy.id, "2000-01-01T00:00:00.000Z");
+    expect(ever.runs).toBe(RUNS + 1);
+    expect(ever.spentUsd).toBeCloseTo(RUNS * COST + 99, 6);
+
+    // SUM over no rows is NULL; a repository with no runs reads zero.
+    const none = agentRunTotals(app.db, "no-such-repo", week);
+    expect(none).toEqual({ runs: 0, spentUsd: 0 });
+  });
+
+  test("the app page says 250 runs and the sum of all 250, not the last 200", async () => {
+    const page = await (await get("/alice/busy")).text();
+    expect(page).toMatch(/Runs<\/dt>\s*<dd>250<\/dd>/);
+    expect(page).toContain(`$${(RUNS * COST).toFixed(2)}`);
+    // What the 200-row read would have said, and the run outside the window.
+    expect(page).not.toContain(`$${(200 * COST).toFixed(2)}`);
+    expect(page).not.toContain("$99.00");
+  });
+
+  test("an app with no runs this week reads 0 and $0.00, never blank", async () => {
+    const page = await (await get("/alice/quiet")).text();
+    expect(page).toMatch(/Runs<\/dt>\s*<dd>0<\/dd>/);
+    expect(page).toContain("$0.00");
   });
 });

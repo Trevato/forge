@@ -567,6 +567,32 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
   );
 }
 
+/** One repository's agent runs over a window: what "this week" is made of. */
+export interface AgentRunTotals {
+  readonly runs: number;
+  readonly spentUsd: number;
+}
+
+/**
+ * How many agent runs a repository has had since an instant, and what they
+ * cost — counted by the database, not by listing rows and adding them up in
+ * JavaScript. `SUM` over no rows is `NULL`, so a quiet week reads `0`, and
+ * the float dollars are summed once here and rounded once where printed.
+ */
+export function agentRunTotals(
+  db: Database,
+  repoId: string,
+  since: string,
+): AgentRunTotals {
+  const row = db
+    .query<{ runs: number; spent: number | null }, [string, string]>(
+      `SELECT COUNT(*) AS runs, SUM(cost_usd) AS spent FROM run
+        WHERE repo_id = ?1 AND kind = 'agent' AND created_at >= ?2`,
+    )
+    .get(repoId, since);
+  return { runs: row?.runs ?? 0, spentUsd: row?.spent ?? 0 };
+}
+
 /** The newest agent run of each repository, in one query. */
 export function latestAgentRunsForRepos(
   db: Database,
