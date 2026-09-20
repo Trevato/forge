@@ -206,7 +206,13 @@ Two lessons Forgejo is still paying for, designed in up front:
   code. Six premade themes ship (three light, three dark); "system" follows
   the OS. The switcher is a plain form POST with a cookie — script only makes
   it instant. shadcn's essence without Tailwind: tokens, radii, spacing scale,
-  semantic colors. Strict CSP on every response.
+  semantic colors.
+- **A security floor at the boundary, not per responder**: one wrapper around
+  everything the forge answers for itself (`securityFloor`, `http/respond.ts`)
+  puts `nosniff` and `referrer-policy: same-origin` on every response, and an
+  inert `default-src 'none'` CSP on every non-document one — JSON, CSS,
+  redirects. A page keeps the nonce'd policy it writes for itself, and an
+  app's proxied response is carried untouched: its headers are its own.
 - **Mobile-first**: layouts compose from a single column up; touch targets
   ≥44px; the fast paths (open issue, comment, review a diff, merge) are
   designed on a phone frame first and enhanced for desktop.

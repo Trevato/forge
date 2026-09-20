@@ -13,6 +13,8 @@ import {
   type IconName,
 } from "../src/web/icons.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
+import { highlightAsset } from "../src/web/asset.ts";
+import { securityFloor } from "../src/http/respond.ts";
 import { THEME_NAMES } from "../src/design/themes.ts";
 
 describe("html template", () => {
@@ -640,5 +642,114 @@ describe("readiness", () => {
     expect(draining.status).toBe(503);
     expect(await draining.text()).toBe("draining");
     expect((await fetch(`${servers.url}/`)).status).toBe(200);
+  });
+});
+
+const FLOOR_POLICY =
+  "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+
+/**
+ * The floor, on one response: never sniffed, never a referrer off-site, and
+ * — unless the body is a document with a policy of its own — inert.
+ */
+function expectFloor(what: string, response: Response): void {
+  const label = `${what}: `;
+  expect(label + response.headers.get("x-content-type-options")).toBe(
+    label + "nosniff",
+  );
+  expect(label + response.headers.get("referrer-policy")).toBe(
+    label + "same-origin",
+  );
+  const policy = response.headers.get("content-security-policy") ?? "";
+  expect(label + (policy === "" ? "(none)" : "(a policy)")).toBe(
+    label + "(a policy)",
+  );
+  const html = (response.headers.get("content-type") ?? "").startsWith(
+    "text/html",
+  );
+  if (!html) expect(label + policy).toBe(label + FLOOR_POLICY);
+}
+
+describe("the security floor is on every response", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-floor-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("one of each kind the forge serves carries it", async () => {
+    const asset = await highlightAsset();
+    expect(asset).not.toBeNull();
+
+    const page = await fetch(`${base}/`);
+    expect(page.status).toBe(200);
+    expectFloor("html page", page);
+    // An HTML body keeps the nonce'd policy it writes for itself: the floor
+    // adds the other two headers and does not touch a policy already there.
+    expect(page.headers.get("content-security-policy")).toContain("nonce-");
+
+    const list = await fetch(`${base}/api/v1/repos`);
+    expect(list.status).toBe(200);
+    expectFloor("json", list);
+
+    const missing = await fetch(`${base}/api/v1/repos/nobody/nothing`);
+    expect(missing.status).toBe(404);
+    expectFloor("error json", missing);
+
+    const typo = await fetch(`${base}/no/such/route`, {
+      headers: { accept: "application/json" },
+    });
+    expect(typo.status).toBe(404);
+    expect(((await typo.json()) as { error: string }).error).toBe("no_route");
+    expectFloor("no_route json", typo);
+
+    const stylesheet = await fetch(`${base}/assets/forge.css`);
+    expect(stylesheet.status).toBe(200);
+    expectFloor("stylesheet", stylesheet);
+
+    const built = await fetch(`${base}${asset!.path}`);
+    expect(built.status).toBe(200);
+    expectFloor("built asset", built);
+
+    const redirect = await fetch(`${base}/theme`, {
+      method: "POST",
+      body: new URLSearchParams({ theme: "dark" }),
+      redirect: "manual",
+    });
+    expect(redirect.status).toBe(303);
+    expectFloor("redirect", redirect);
+
+    const health = await fetch(`${base}/healthz`);
+    expect(health.status).toBe(200);
+    expectFloor("healthz", health);
+  });
+
+  test("a responder that set one of these keeps its own value", () => {
+    const own = securityFloor(
+      new Response("<p>fragment</p>", {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "default-src 'none'; sandbox",
+          "referrer-policy": "no-referrer",
+        },
+      }),
+    );
+    expect(own.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox",
+    );
+    expect(own.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(own.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });

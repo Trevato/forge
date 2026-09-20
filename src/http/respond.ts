@@ -96,6 +96,49 @@ export function prefersHtml(request: Request, pathname: string): boolean {
 }
 
 /**
+ * The policy for a body that is not a document: nothing loads, nothing
+ * frames it, no base tag redirects a relative URL inside it. JSON carrying
+ * repository names and comment text a person typed is the case that wants
+ * it — if a browser is ever talked into treating such a body as markup,
+ * this is what refuses to fetch or run anything it names.
+ */
+const FLOOR_POLICY =
+  "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+
+/**
+ * The security floor every response the forge writes leaves with: never
+ * sniffed into another type, never a referrer sent off-site, and — unless
+ * the body is a document that wrote its own policy — inert.
+ *
+ * A responder that already set one of these keeps its value: `page()` has a
+ * nonce'd policy that must survive, and a fragment has a sandboxed one. The
+ * headers are set on the response that exists rather than on a copy of it,
+ * so a stream (the log follow, SSE) is never re-read — the same trade the
+ * rate-limit headers make one seam up.
+ */
+export function securityFloor(response: Response): Response {
+  try {
+    const headers = response.headers;
+    if (!headers.has("x-content-type-options"))
+      headers.set("x-content-type-options", "nosniff");
+    if (!headers.has("referrer-policy"))
+      headers.set("referrer-policy", "same-origin");
+    // What left decides, not what was asked for: an HTML body writes the
+    // only policy that can name its own nonce, and `default-src 'none'`
+    // over a page would strip it of its stylesheet.
+    const html = (response.headers.get("content-type") ?? "").startsWith(
+      "text/html",
+    );
+    if (!html && !headers.has("content-security-policy"))
+      headers.set("content-security-policy", FLOOR_POLICY);
+  } catch {
+    // An immutable header set — a response the forge is only carrying —
+    // keeps the headers it came with, which is the right answer anyway.
+  }
+  return response;
+}
+
+/**
  * Map an action's error to a response: the three access errors have fixed
  * shapes; anything else is a validation code the caller chose a status for.
  */

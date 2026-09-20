@@ -99,7 +99,8 @@ src/
               updates reach its origin — and contents.ts is the whole edit
               (files, a new branch, a pull) as one call
   http/       router, request context (Ctx/auth), respond (json/error shapes,
-              scope floors, pagination), api (every /api/v1 route), server
+              scope floors, pagination, `securityFloor` — the headers every
+              response leaves with), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
   design/     shared design tokens: themes (palettes both surfaces render)
   origins/    other forges as one Provider interface: discover (version-endpoint

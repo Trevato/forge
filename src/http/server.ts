@@ -219,7 +219,14 @@ import {
   type Ctx,
   type Handler,
 } from "./context.ts";
-import { apiError, json, noRoute, notFound, prefersHtml } from "./respond.ts";
+import {
+  apiError,
+  json,
+  noRoute,
+  notFound,
+  prefersHtml,
+  securityFloor,
+} from "./respond.ts";
 import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
 import {
   MAX_KEY_LENGTH,
@@ -1096,86 +1103,21 @@ export async function serve(app: App): Promise<Servers> {
       const runtime = appsRuntime(app);
       if (runtime !== undefined) {
         const target = resolveAppHost(app, runtime.options.domain, request);
-        if (target === "unknown")
-          return new Response("not found", { status: 404 });
-        if (target !== undefined)
+        // A preview's headers are the app's business: what `proxyApp`
+        // carries back leaves exactly as the app wrote it, which is why the
+        // floor below sits after this return and not around it.
+        if (target !== undefined && target !== "unknown")
           return proxyApp(runtime, request, target, server);
+        if (target === "unknown")
+          return securityFloor(new Response("not found", { status: 404 }));
       }
-      const url = publicUrl(request, app.config.url);
-      if (url.pathname === "/healthz") return healthResponse();
-      const matched = router.match(request.method, url.pathname);
-      if (!matched) {
-        // A path under no route at all is what a mistyped or stale studio
-        // URL lands on. A browser gets the forge's own page for it, same as
-        // any other 404; an API client — anything outside `/api/` that never
-        // said it wanted HTML — keeps the `no_route` body, distinct from
-        // `not_found` so it can tell a typo from a resource that is really
-        // gone. The page is rendered from a viewer-less `Ctx`: resolving a
-        // session or token here would spend a database read on a path that,
-        // by construction, cannot belong to a signed-in-only route, at the
-        // cost of the topbar reading "Sign in" even for someone who is.
-        if (prefersHtml(request, url.pathname)) {
-          const themeCookie = cookieValue(request, "forge_theme") ?? "";
-          const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
-          const anonCtx: Ctx = {
-            app,
-            request,
-            url,
-            params: {},
-            auth: { user: undefined, scope: undefined, via: "none" },
-            theme: isThemeName(themeCookie) ? themeCookie : undefined,
-            mode: isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE,
-          };
-          return notFoundPage(anonCtx);
-        }
-        return noRoute(request.method, url.pathname);
-      }
-      const auth = await resolveAuth(app, request);
-
-      // The two things standing between one runaway agent and everybody
-      // else's latency, applied before a handler runs and after auth is
-      // known — a limit needs an identity, and a replay needs a credential.
-      const credential = tokenCredential(request, auth);
-      const verdict =
-        credential === undefined
-          ? undefined
-          : limiter.take(credential, auth.scope ?? "ro");
-      if (verdict !== undefined && !verdict.allowed) {
-        return withRateHeaders(tooManyRequests(verdict), verdict);
-      }
-
-      const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
-      // `?mode=` on the URL is the escape hatch: a plain link a person is
-      // handed switches the browser by itself, the same way the toggle's
-      // POST does, so it must work in both directions with no form.
-      const modeParam = url.searchParams.get("mode");
-      const modeOverride = isMode(modeParam) ? modeParam : undefined;
-      const mode =
-        modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
-      const invoke = (into: Request): Response | Promise<Response> =>
-        matched.handler({
-          app,
-          request: into,
-          url,
-          params: matched.params,
-          auth,
-          theme: isThemeName(themeCookie) ? themeCookie : undefined,
-          mode,
-        });
-
-      const response =
-        credential === undefined
-          ? await invoke(request)
-          : await withIdempotency(app, request, url, credential, invoke);
-      return withRateHeaders(
-        withModeCookie(response, modeOverride, url.protocol === "https:"),
-        verdict,
-      );
+      // Everything the forge answers for itself leaves through this one
+      // door, so a responder added next year cannot forget the floor.
+      return securityFloor(await answer(app, router, limiter, request));
     },
     error(error) {
       app.log.error("unhandled request error", { error: String(error) });
-      return json({ error: "internal" }, 500);
+      return securityFloor(json({ error: "internal" }, 500));
     },
   });
 
@@ -1201,4 +1143,89 @@ export async function serve(app: App): Promise<Servers> {
       rmSync(app.socketPath, { force: true });
     },
   };
+}
+
+/**
+ * One request against the forge's own routes: health, the route that
+ * matched or the two shapes of "no route", the limiter, and the handler.
+ * The response it returns has not been given the security floor yet — that
+ * is the caller's single door, above.
+ */
+async function answer(
+  app: App,
+  router: Router<Handler>,
+  limiter: RateLimiter,
+  request: Request,
+): Promise<Response> {
+  const url = publicUrl(request, app.config.url);
+  if (url.pathname === "/healthz") return healthResponse();
+  const matched = router.match(request.method, url.pathname);
+  if (!matched) {
+    // A path under no route at all is what a mistyped or stale studio
+    // URL lands on. A browser gets the forge's own page for it, same as
+    // any other 404; an API client — anything outside `/api/` that never
+    // said it wanted HTML — keeps the `no_route` body, distinct from
+    // `not_found` so it can tell a typo from a resource that is really
+    // gone. The page is rendered from a viewer-less `Ctx`: resolving a
+    // session or token here would spend a database read on a path that,
+    // by construction, cannot belong to a signed-in-only route, at the
+    // cost of the topbar reading "Sign in" even for someone who is.
+    if (prefersHtml(request, url.pathname)) {
+      const themeCookie = cookieValue(request, "forge_theme") ?? "";
+      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
+      const anonCtx: Ctx = {
+        app,
+        request,
+        url,
+        params: {},
+        auth: { user: undefined, scope: undefined, via: "none" },
+        theme: isThemeName(themeCookie) ? themeCookie : undefined,
+        mode: isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE,
+      };
+      return notFoundPage(anonCtx);
+    }
+    return noRoute(request.method, url.pathname);
+  }
+  const auth = await resolveAuth(app, request);
+
+  // The two things standing between one runaway agent and everybody
+  // else's latency, applied before a handler runs and after auth is
+  // known — a limit needs an identity, and a replay needs a credential.
+  const credential = tokenCredential(request, auth);
+  const verdict =
+    credential === undefined
+      ? undefined
+      : limiter.take(credential, auth.scope ?? "ro");
+  if (verdict !== undefined && !verdict.allowed) {
+    return withRateHeaders(tooManyRequests(verdict), verdict);
+  }
+
+  const themeCookie = cookieValue(request, "forge_theme") ?? "";
+  const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
+  // `?mode=` on the URL is the escape hatch: a plain link a person is
+  // handed switches the browser by itself, the same way the toggle's
+  // POST does, so it must work in both directions with no form.
+  const modeParam = url.searchParams.get("mode");
+  const modeOverride = isMode(modeParam) ? modeParam : undefined;
+  const mode =
+    modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
+  const invoke = (into: Request): Response | Promise<Response> =>
+    matched.handler({
+      app,
+      request: into,
+      url,
+      params: matched.params,
+      auth,
+      theme: isThemeName(themeCookie) ? themeCookie : undefined,
+      mode,
+    });
+
+  const response =
+    credential === undefined
+      ? await invoke(request)
+      : await withIdempotency(app, request, url, credential, invoke);
+  return withRateHeaders(
+    withModeCookie(response, modeOverride, url.protocol === "https:"),
+    verdict,
+  );
 }
