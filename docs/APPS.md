@@ -496,7 +496,11 @@ outbox with a sweep behind the wake-up:
   lands as a new pull that names the one it continues.
 - **A failed check.** A deploy that fails on the agent's pull, or the
   repository's own check failing on it, starts a follow-up with the log's
-  tail. Bounded by rule 7.
+  tail. Bounded by rule 7. A failure the crew reads as the place it ran —
+  a timeout, a missing tool, a flaky runner — runs the check again once
+  for that commit instead, and spends none of the pull's tries; a second
+  red on the same commit is taken at face value, and what the pull is
+  parked with says which of the two failed.
 
 Forks follow their parents. A fork's default branch is a copy of the
 parent's until someone commits on it, and while that is so the parent

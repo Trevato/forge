@@ -234,11 +234,15 @@ Where it decides today:
   lands by rule. The decider reads the pull against the direction and may
   say _show_: the pull stays open and appears in the studio as a look,
   saying the decider asked. One answer per head; a new push is asked again.
-- **Try again or stop** (`crew/dispatch.ts`, `retryOrStop`): a failed check
-  gets another automatic run by rule, up to the limit. The decider reads
-  the failure, the log's tail and the count, and may stop sooner, before
-  the run's money is spent; the pull then waits for a person as a stopped
-  ask.
+- **Whose fault, and try again or stop** (`crew/dispatch.ts`,
+  `judgeFailedCheck`): a failed check gets another automatic run by rule,
+  up to the limit. The decider reads the failure, the log's tail and the
+  count and answers both at once — whether another try is worth its money,
+  and whether the change, the environment or the base branch is what
+  failed. The cause is settled before anything is parked: an environmental
+  failure runs the check again (below) whatever the verdict, so a flaky
+  runner never throws a change away. Otherwise _stop_ waits for a person as
+  a stopped ask, and the parked reason says which of the two it was.
 
 **The ledger.** Each of these is written to the `decision` table
 (`core/decisions.ts`): what the decider saw, what it answered and with what
@@ -248,10 +252,13 @@ or red, a picked issue shipped. `GET /api/v1/repos/:owner/:name/decisions`
 lists it with the week summed per kind. It is the value function's raw
 material: whether the decider beats the rule is a query, not an opinion.
 
-- **A red check** (`crew/dispatch.ts`): from the tail of the check's log,
-  whether the change, the environment or the base branch failed. When it
-  is the environment's fault, at 70% or better, the check runs again once
-  instead of the agent reworking a change that is fine.
+- **A red check** (`crew/dispatch.ts`): the `cause` half of the decision
+  above — from the tail of the check's log, whether the change, the
+  environment or the base branch failed. At 70% or better the
+  environment's fault runs the check again, once per head commit, instead
+  of the agent reworking a change that is fine or the pull being parked
+  for someone else's bad luck. A second red on the same commit is real:
+  the pull parks, saying the environment.
 - **Cards** (`web/studio/leans.ts`): which option on an "asks you" card is
   likely right, so the card leads with it — _likely_, _probably_ or _maybe_
   beside the button, the probability on hover. The person still decides.
