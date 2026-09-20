@@ -1,134 +1,42 @@
 /**
- * The home in the studio: what asks you first, then every app as one row
- * carrying a real signal — live or not, what the crew last did there, how
- * many things wait on you — and beside it what is happening right now across
- * all of them, and what a person put on you. Built from the same rows and
- * cards as the rest of the forge, from grouped reads only, so the page does
- * not get slower as the apps grow.
+ * The home in the studio: what asks you first, then every app as a shelf
+ * row (`shelf.ts` draws those — the row is not this page's to decide), and
+ * beside it what is happening right now across all of them, and what a
+ * person put on you. Built from the same rows and cards as the rest of the
+ * forge, from grouped reads only, so the page does not get slower as the
+ * apps grow.
  */
 
-import { appsRuntime } from "../../apps/runtime.ts";
-import { canSeeOwnerFacts } from "../../core/repos.ts";
-import { latestAgentRunsForRepos, listActiveRuns } from "../../core/runs.ts";
+import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { listActiveRuns } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
-import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { asksJs, liveRegionsJs } from "../client.ts";
 import { html, when } from "../html.ts";
 import { page } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
-import {
-  btn,
-  card,
-  dot,
-  empty,
-  icon,
-  listCard,
-  pill,
-  row,
-  time,
-  type Tone,
-} from "../ui.ts";
+import { btn, card, empty, icon, listCard, row, time } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
 import { appsOf, asksPanel, decisionsFor } from "./asks.ts";
 import { withLikely } from "./leans.ts";
 import { stopForm } from "./run.ts";
+import { shelfRows } from "./shelf.ts";
 import { studioCss } from "./style.ts";
-import { runWord } from "./words.ts";
 
 /**
- * The home in the studio: what asks you first, then every app as one row
- * that carries a real signal — live or not, what the crew last did there,
- * how many things wait on you — and beside it what is happening right now
- * across all of them, and what a person put on you. Built from the same
- * rows and cards as the rest of the forge, so it reads as the forge.
+ * The home in the studio: what asks you first, then your apps as a shelf of
+ * rows — and beside it what is happening right now across all of them, and
+ * what a person put on you. Built from the same rows and cards as the rest
+ * of the forge, so it reads as the forge.
  */
 export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const db = ctx.app.db;
-  const { repos: appRepos, records } = appsOf(ctx, user);
-  const runtime = appsRuntime(ctx.app);
-  // A public app you can only read appears here too, but who is on its
-  // crew is its owner's fact, not yours to see — same predicate as the
-  // app's own page.
-  const ownerFacts = new Set(
-    appRepos.filter((r) => canSeeOwnerFacts(db, r, user)).map((r) => r.id),
-  );
-  // One read for the newest run of every app, one for who ran them: the
-  // home must not get slower as the apps grow.
-  const latestRuns = latestAgentRunsForRepos(
-    db,
-    appRepos.map((r) => r.id),
-  );
-  const actors = getUsersByIds(
-    db,
-    [...latestRuns.values()]
-      .map((r) => r.actorId)
-      .filter((id): id is string => id !== null),
-  );
+  const { repos: appRepos } = appsOf(ctx, user);
+  // Read once, shown twice: the panel below is these same asks, and the
+  // shelf counts them into each row's pill.
   const decisions = withLikely(ctx, decisionsFor(ctx, appRepos));
-  const asksByRepo = new Map<string, number>();
-  for (const d of decisions)
-    asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
-
-  const appRows = await Promise.all(appRepos.map(async (repo) => {
-    const record = records.get(repo.id)!;
-    const envs = runtime === undefined ? [] : runtime.status(record);
-    const production = envs.find((e) => e.env === "production");
-    const state = production?.state ?? "stopped";
-    const latest = latestRuns.get(repo.id);
-    const word =
-      latest === undefined
-        ? undefined
-        : await runWord(
-            {
-              db,
-              dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-              runtime,
-              record,
-            },
-            latest,
-          );
-    const who =
-      latest?.actorId == null || !ownerFacts.has(repo.id)
-        ? undefined
-        : actors.get(latest.actorId)?.username;
-    const asks = asksByRepo.get(repo.id) ?? 0;
-    const tone: Tone =
-      state === "running"
-        ? "success"
-        : state === "failed"
-          ? "danger"
-          : "default";
-    const happening =
-      latest === undefined || word === undefined
-        ? html`<span class="muted">quiet — tell the crew something</span>`
-        : html`<span class="studio-word" data-word="${word.word}"
-              >${word.word}</span
-            >
-            ${who ? html`· ${who}` : null}
-            ${word.word === "working"
-              ? html`· now`
-              : html`· ${time(latest.finishedAt ?? latest.createdAt)}`}`;
-    return row({
-      href: repoBase(repo),
-      nav: true,
-      lead: dot(tone),
-      title: repo.name,
-      titleAttr: repo.description || repo.name,
-      meta: html`${repo.description
-        ? html`${repo.description} · `
-        : null}${happening}`,
-      trail: html`${asks > 0 ? pill(`${asks} asks you`, "accent") : null}
-        <span class="badge" data-tone="${tone}"
-          >${state === "running"
-            ? "live"
-            : state === "stopped"
-              ? "not running"
-              : state}</span
-        >`,
-    });
-  }));
+  const appRows = await shelfRows(ctx, appRepos, { decisions });
 
   const apps =
     appRows.length === 0
@@ -158,6 +66,16 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     running.map((r) => r.actorId).filter((id): id is string => id !== null),
   );
   const byId = new Map(appRepos.map((r) => [r.id, r]));
+  // Who is working is the owner's fact, not a stranger's to read — the same
+  // predicate the shelf row uses, asked only of the apps with a run in
+  // flight.
+  const ownerFacts = new Set(
+    [...new Set(running.map((r) => r.repoId))]
+      .map((id) => byId.get(id))
+      .filter((r): r is Repo => r !== undefined)
+      .filter((r) => canSeeOwnerFacts(db, r, user))
+      .map((r) => r.id),
+  );
   // The board: the same runs as a wall for a second monitor.
   const nowHead = html`${icon("activity")}
     <h2>Happening now</h2>

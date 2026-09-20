@@ -234,8 +234,11 @@ change's size, unlike the page it links to.
 
 `/` in the studio: what asks you across every app you can land, what is on
 you (issues and pulls a person assigned to you), and your apps — each with
-whether it is live, what the crew last did there, and a way in. **New app**
-is the same flow as ever. `/?mode=dev` is the repositories list, and — like
+whether it is live, what the crew last did there, and a way in. That row is
+a *shelf row* (`src/web/studio/shelf.ts`): one function turns repositories
+into rows, from grouped reads, so every page that lists apps lists them the
+same way and the home only decides the card around them. **New app** is the
+same flow as ever. `/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 

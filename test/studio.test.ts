@@ -188,6 +188,26 @@ describe("the studio", () => {
     expect(bad.headers.get("set-cookie")).toContain("forge_mode=;");
   });
 
+  /**
+   * The shelf row, byte for byte: whoever draws it (`studio/shelf.ts`) and
+   * from wherever, an app on a shelf is a dot, its name, its one line, what
+   * the crew last did there, the badge for whether it is live, and a link
+   * into it. This pins the rendering so a move of the code cannot quietly
+   * move the page.
+   */
+  test("an app is one row on the shelf: a dot, its name and line, what the crew last did, the way in", async () => {
+    const home = await (await get("/")).text();
+    const at = home.indexOf('href="/alice/notes"');
+    expect(at).toBeGreaterThan(-1);
+    const start = home.lastIndexOf("<li>", at);
+    const shelfRow = home.slice(start, home.indexOf("</li>", at) + 5);
+    // The bytes the home rendered before the row moved into its own
+    // module, escaped so no formatter can reflow them.
+    expect(shelfRow).toBe(
+      "<li>\n    <a href=\"/alice/notes\" class=\"row\"\n  \n  data-nav tabindex=\"-1\"><span class=\"row-lead\"><span\n    class=\"dot\"\n    \n  ></span></span>\n    <span class=\"row-main\">\n      <span\n        class=\"row-title\"\n        title=\"a place for notes\"\n        >notes</span\n      >\n      <span class=\"row-meta\">a place for notes · <span class=\"muted\">quiet — tell the crew something</span></span>\n    </span>\n    <span class=\"row-trail\">\n        <span class=\"badge\" data-tone=\"default\"\n          >not running</span\n        ></span></a>\n  </li>",
+    );
+  });
+
   test("an app's home is the app in the studio, and the code in dev", async () => {
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toContain("Tell the crew");

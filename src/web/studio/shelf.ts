@@ -1,0 +1,137 @@
+/**
+ * An app as one row on a shelf: its name and the one line under it, a dot
+ * and a badge for whether it is live, what the crew last did there and when,
+ * a pill for how many things it asks of you, and the way in — the row the
+ * studio's home draws its *Your apps* card from, and the one every other
+ * page that lists apps draws too, so an app looks the same wherever it is
+ * shelved. Hand over repositories, get rows; nothing here knows what card
+ * they land in.
+ *
+ * Every read is made once for the whole shelf and never once per row: the
+ * app records in one query, the newest run of every app in one, who ran them
+ * in one, the asks in one pass. The words are gathered together because
+ * `runWord` reads git. A caller that has already read what asks the viewer —
+ * the home draws its asks panel from the same list — hands that list in
+ * rather than paying for it twice.
+ */
+
+import { appsRuntime } from "../../apps/runtime.ts";
+import { appsForRepos } from "../../core/apps.ts";
+import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { latestAgentRunsForRepos } from "../../core/runs.ts";
+import { getUsersByIds } from "../../core/users.ts";
+import { repoDir } from "../../git/repos.ts";
+import type { Ctx } from "../../http/context.ts";
+import { repoBase } from "../chrome.ts";
+import { html, type Html } from "../html.ts";
+import { dot, pill, row, time, type Tone } from "../ui.ts";
+import { decisionsFor, type Decision } from "./asks.ts";
+import { withLikely } from "./leans.ts";
+import { runWord } from "./words.ts";
+
+/** Reads the caller has already made, so the shelf does not make them again. */
+export interface ShelfReads {
+  /** What asks the viewer across these apps — the asks pill counts them. */
+  readonly decisions?: readonly Decision[] | undefined;
+}
+
+/**
+ * These repositories as shelf rows, in the order they were handed in.
+ */
+export async function shelfRows(
+  ctx: Ctx,
+  repos: readonly Repo[],
+  reads: ShelfReads = {},
+): Promise<Html[]> {
+  const db = ctx.app.db;
+  const user = ctx.auth.user;
+  const runtime = appsRuntime(ctx.app);
+  const records = appsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  // A public app you can only read appears here too, but who is on its
+  // crew is its owner's fact, not yours to see — same predicate as the
+  // app's own page.
+  const ownerFacts = new Set(
+    repos.filter((r) => canSeeOwnerFacts(db, r, user)).map((r) => r.id),
+  );
+  // One read for the newest run of every app, one for who ran them: the
+  // shelf must not get slower as the apps grow.
+  const latestRuns = latestAgentRunsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  const actors = getUsersByIds(
+    db,
+    [...latestRuns.values()]
+      .map((r) => r.actorId)
+      .filter((id): id is string => id !== null),
+  );
+  const decisions = reads.decisions ?? withLikely(ctx, decisionsFor(ctx, repos));
+  const asksByRepo = new Map<string, number>();
+  for (const d of decisions)
+    asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
+
+  return await Promise.all(repos.map(async (repo) => {
+    const record = records.get(repo.id);
+    const envs =
+      runtime === undefined || record === undefined
+        ? []
+        : runtime.status(record);
+    const production = envs.find((e) => e.env === "production");
+    const state = production?.state ?? "stopped";
+    const latest = latestRuns.get(repo.id);
+    const word =
+      latest === undefined
+        ? undefined
+        : await runWord(
+            {
+              db,
+              dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+              runtime,
+              record,
+            },
+            latest,
+          );
+    const who =
+      latest?.actorId == null || !ownerFacts.has(repo.id)
+        ? undefined
+        : actors.get(latest.actorId)?.username;
+    const asks = asksByRepo.get(repo.id) ?? 0;
+    const tone: Tone =
+      state === "running"
+        ? "success"
+        : state === "failed"
+          ? "danger"
+          : "default";
+    const happening =
+      latest === undefined || word === undefined
+        ? html`<span class="muted">quiet — tell the crew something</span>`
+        : html`<span class="studio-word" data-word="${word.word}"
+              >${word.word}</span
+            >
+            ${who ? html`· ${who}` : null}
+            ${word.word === "working"
+              ? html`· now`
+              : html`· ${time(latest.finishedAt ?? latest.createdAt)}`}`;
+    return row({
+      href: repoBase(repo),
+      nav: true,
+      lead: dot(tone),
+      title: repo.name,
+      titleAttr: repo.description || repo.name,
+      meta: html`${repo.description
+        ? html`${repo.description} · `
+        : null}${happening}`,
+      trail: html`${asks > 0 ? pill(`${asks} asks you`, "accent") : null}
+        <span class="badge" data-tone="${tone}"
+          >${state === "running"
+            ? "live"
+            : state === "stopped"
+              ? "not running"
+              : state}</span
+        >`,
+    });
+  }));
+}
