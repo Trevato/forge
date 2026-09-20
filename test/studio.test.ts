@@ -3107,6 +3107,29 @@ describe("the app's page tails the crew's log while it works", () => {
     expect(settled).not.toContain('id="app-run-tail"');
   });
 
+  test("a log far larger than the tail's cap still ends the page at its true last line", async () => {
+    const tell = openIssue(app, alice, repo, { title: "Long-running build" });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    // Far past a byte cap sized for a handful of lines (old default: 512KB).
+    for (let i = 0; i < 2000; i++)
+      appendRunLog(app.config.dataDir, run.id, `line ${i}`);
+
+    const page = await (await get("/alice/engine", writerCookie)).text();
+    expect(page).not.toContain(">line 1993<");
+    expect(page).toContain(">line 1999<");
+    expect(page).toContain("Holding the last 6 lines here");
+
+    finishRun(app.db, run.id, { state: "ok", summary: "planned" });
+  });
+
   test("a reader without access gets the forge's not-found from the page and from the tail's own stream", async () => {
     const tell = openIssue(app, alice, repo, { title: "Private boot work" });
     if (!tell.ok) throw new Error(String(tell.error));

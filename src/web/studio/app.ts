@@ -24,7 +24,7 @@ import { getUsersByIds } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { readRunLog } from "../../runs/log.ts";
+import { readRunLogTail } from "../../runs/log.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { appTailJs, asksJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
@@ -265,7 +265,8 @@ export async function studioApp(
             : (actors.get(activeRun.actorId)?.username ?? "crew"),
         ),
         cap: LOG_TAIL_CAP,
-        lines: readRunLog(ctx.app.config.dataDir, activeRun.id).lines,
+        lines: readRunLogTail(ctx.app.config.dataDir, activeRun.id, LOG_TAIL_CAP)
+          .lines,
         stream: `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${activeRun.id}/log?follow=1`,
         className: "log-tail",
       })

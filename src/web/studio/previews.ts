@@ -20,7 +20,7 @@ import { listPulls, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { listRuns } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
-import { readRunLog } from "../../runs/log.ts";
+import { readRunLogTail } from "../../runs/log.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
@@ -144,7 +144,8 @@ function deployTail(
     id: "app-run-tail",
     who: "the deploy",
     cap: LOG_TAIL_CAP,
-    lines: readRunLog(ctx.app.config.dataDir, production.runId).lines,
+    lines: readRunLogTail(ctx.app.config.dataDir, production.runId, LOG_TAIL_CAP)
+      .lines,
     stream: `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${production.runId}/log?follow=1`,
     className: "log-tail",
   });

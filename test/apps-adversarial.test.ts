@@ -59,6 +59,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import {
   appendRunLog,
   readRunLog,
+  readRunLogTail,
   runLogListenerCount,
   subscribeRunLog,
 } from "../src/runs/log.ts";
@@ -344,6 +345,42 @@ describe("run log: redaction, truncation, and the listener seam", () => {
     // Every remaining line must be whole: none may be a mid-word fragment
     // of "line N" that a byte cut would otherwise leave.
     for (const line of lines) expect(line).toMatch(/^line \d+$/);
+  });
+
+  test("readRunLogTail reads a bounded slice and still ends at the true last line", () => {
+    const runId = "test-run-tail";
+    // Far more lines than fit in a window sized for a handful of them.
+    for (let i = 0; i < 20_000; i++) appendRunLog(dataDir, runId, `line ${i}`);
+    const { lines, truncated } = readRunLogTail(dataDir, runId, 6);
+    expect(truncated).toBe(true);
+    expect(lines.length).toBeLessThan(20_000);
+    expect(lines.at(-1)).toBe("line 19999");
+    expect(lines.slice(-6)).toEqual(
+      [19994, 19995, 19996, 19997, 19998, 19999].map((i) => `line ${i}`),
+    );
+  });
+
+  test("readRunLogTail still returns at least the cap's worth of lines when a line is near the max length", () => {
+    const runId = "test-run-tail-long-lines";
+    // Lines this long are rare (real logs run 1KB-45KB total) but the cap
+    // must not assume otherwise: it is sized from MAX_LINE, not a guess.
+    for (let i = 0; i < 8; i++)
+      appendRunLog(dataDir, runId, `${i}-`.repeat(8000));
+    const { lines, truncated } = readRunLogTail(dataDir, runId, 6);
+    expect(lines.length).toBeGreaterThanOrEqual(6);
+    expect(truncated).toBe(true);
+    // Every line kept must be whole: none may be a mid-repeat fragment left
+    // by a byte cut landing inside it.
+    for (const line of lines) expect(line).toMatch(/^(\d-)+$/);
+    expect(lines.at(-1)).toBe("7-".repeat(8000));
+  });
+
+  test("readRunLogTail on a log shorter than the cap returns every line, untruncated", () => {
+    const runId = "test-run-tail-short";
+    appendRunLog(dataDir, runId, "only line");
+    const { lines, truncated } = readRunLogTail(dataDir, runId, 6);
+    expect(lines).toEqual(["only line"]);
+    expect(truncated).toBe(false);
   });
 
   test("subscribe/abort a thousand times leaves no listener behind", () => {
