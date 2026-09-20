@@ -15,6 +15,7 @@ import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
 import {
   checkSummary,
+  type CheckDetail,
   type CheckSummary,
   type Run,
 } from "../../core/runs.ts";
@@ -86,15 +87,34 @@ function mergedPullWord(
   return { word: "waiting", note: "merged; waiting for production to redeploy" };
 }
 
+/**
+ * What failed, in a sentence: the counts `parseBunTestFailure` already
+ * recognised, stored with the run — never re-read from its log here — and
+ * the first few names it kept, escaped as text like any other value
+ * (`html`, `web/html.ts`) wherever this lands on a page.
+ */
+function detailNote(detail: CheckDetail): string {
+  const more = detail.failed - detail.names.length;
+  const names = detail.names.join(", ") + (more > 0 ? `, and ${more} more` : "");
+  return `${detail.passed} passed, ${detail.failed} failed: ${names}`;
+}
+
 /** A single open pull's check, in the studio's own words — never dev's
  * "Checks passed/failed": the same five words as the rest of the page. */
 function checkRunWord(check: CheckSummary): { word: Word; note: string } {
   if (check.state === "ok")
     return { word: "look", note: "green — ready for a look" };
-  if (check.state === "failed")
-    return check.run?.servingAt != null
-      ? { word: "stopped", note: "serving, but the check failed" }
-      : { word: "stopped", note: "failed before it answered" };
+  if (check.state === "failed") {
+    const base =
+      check.run?.servingAt != null
+        ? "serving, but the check failed"
+        : "failed before it answered";
+    const detail = check.run?.checkDetail;
+    return {
+      word: "stopped",
+      note: detail ? `${base} — ${detailNote(detail)}` : base,
+    };
+  }
   if (check.state === "running")
     return {
       word: "working",

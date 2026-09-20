@@ -36,6 +36,8 @@ import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { childEnv, runStep } from "../apps/process.ts";
+import { parseBunTestFailure } from "./bun-test.ts";
+import type { CheckDetail } from "../core/runs.ts";
 
 const log = createLog("checks");
 
@@ -284,6 +286,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         summary: outcome.ok
           ? `check passed in ${seconds}s`
           : `check failed: ${outcome.error}`,
+        ...(outcome.ok || outcome.detail === undefined
+          ? {}
+          : { checkDetail: outcome.detail }),
       });
       write(outcome.ok ? `passed in ${seconds}s` : `failed: ${outcome.error}`);
       if (done) announceRun(app, done);
@@ -297,7 +302,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     repo: Repo,
     write: (line: string) => void,
     signal: AbortSignal,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<
+    | { ok: true }
+    | { ok: false; error: string; detail?: CheckDetail | undefined }
+  > {
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
@@ -337,14 +345,26 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         });
         if (!installed.ok) return { ok: false, error: installed.error };
       }
+      // The check step's own lines are kept beside what `write` already
+      // logs, so a failure can be summarised once here — never by reading
+      // the log back, on this run or any later render of it.
+      const checkLines: string[] = [];
       const ran = await runStep("check", manifest.run, {
         cwd: dir,
         env,
-        log: write,
+        log: (line) => {
+          checkLines.push(line);
+          write(line);
+        },
         signal,
         timeoutMs: manifest.timeout * 1000,
       });
-      if (!ran.ok) return { ok: false, error: ran.error };
+      if (!ran.ok)
+        return {
+          ok: false,
+          error: ran.error,
+          detail: parseBunTestFailure(checkLines),
+        };
       return { ok: true };
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });

@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
+import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import {
   pickNext,
   startChecks,
@@ -32,6 +33,47 @@ import { readRunLog } from "../src/runs/log.ts";
 
 const checkJson = (run: string, extra = ""): string =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""${extra}}}\n`;
+
+describe("parseBunTestFailure: a convenience over one known runner, not a general protocol", () => {
+  test("bun test's own tail: the counts, and the failing names bounded to a few", () => {
+    const lines = [
+      "bun test v1.3.14 (0d9b296a)",
+      "",
+      "check.test.ts:",
+      "(fail) first [0.16ms]",
+      "(fail) second [0.07ms]",
+      "(fail) third [0.05ms]",
+      "(fail) fourth [0.04ms]",
+      "",
+      " 3 pass",
+      " 4 fail",
+      " 7 expect() calls",
+      "Ran 7 tests across 1 file. [51.00ms]",
+    ];
+    expect(parseBunTestFailure(lines)).toEqual({
+      passed: 3,
+      failed: 4,
+      names: ["first", "second", "third"],
+    });
+  });
+
+  test("a name arbitrary text from a subprocess, kept verbatim — escaping is the page's job, not the parser's", () => {
+    const lines = ["(fail) <script>alert(1)</script> [1.00ms]", " 0 pass", " 1 fail", "Ran 1 test across 1 file. [1.00ms]"];
+    expect(parseBunTestFailure(lines)?.names).toEqual([
+      "<script>alert(1)</script>",
+    ]);
+  });
+
+  test("output that is not bun test's own shape is not guessed at", () => {
+    expect(
+      parseBunTestFailure(["$ test -f NOPE.md", "test: NOPE.md: No such file or directory"]),
+    ).toBeUndefined();
+    // A `pass` line with no `fail` line beside it is not this shape either.
+    expect(parseBunTestFailure([" 5 pass", "Ran 5 tests across 1 file."])).toBeUndefined();
+    // All green: nothing failed, so there is nothing to summarise.
+    expect(parseBunTestFailure([" 5 pass", " 0 fail", "Ran 5 tests across 1 file."])).toBeUndefined();
+  });
+});
 
 describe("checks", () => {
   let dataDir: string;
@@ -148,6 +190,9 @@ describe("checks", () => {
     expect(failed.env).toBe(`pull-${pull.number}`);
     expect(failed.reason).toBe("pull");
     expect(failed.summary).toBe("check failed: check exited with code 1");
+    // `test -f` is not `bun test`: its output is not this shape, so nothing
+    // is guessed at it.
+    expect(failed.checkDetail).toBeNull();
     expect(
       checksForHead(app.db, pull.id, branched.value.commitOid)[0]?.id,
     ).toBe(failed.id);
@@ -164,6 +209,43 @@ describe("checks", () => {
     expect(passed.state).toBe("ok");
     expect(passed.reason).toBe("push");
   }, 60_000);
+
+  test("a bun test failure in the check step is summarised: how many passed, how many failed, and their names", async () => {
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "red-tests",
+      message: "A check that runs bun test, with two failures",
+      files: [
+        { path: "forge.json", content: checkJson("bun test check.test.ts") },
+        {
+          path: "check.test.ts",
+          content: [
+            'import { test, expect } from "bun:test";',
+            'test("a passing test", () => { expect(1).toBe(1); });',
+            'test("first failing test", () => { expect(1).toBe(2); });',
+            'test("second failing test", () => { expect(1).toBe(2); });',
+            "",
+          ].join("\n"),
+        },
+      ],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Red tests",
+      baseBranch: "main",
+      headBranch: "red-tests",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const failed = await settled(
+      (r) => r.issueId === pull.id && r.commitOid === branched.value.commitOid,
+    );
+    expect(failed.state).toBe("failed");
+    expect(failed.checkDetail).toEqual({
+      passed: 1,
+      failed: 2,
+      names: ["first failing test", "second failing test"],
+    });
+  }, 30_000);
 
   test("a fork's pull is checked at the base's snapshot, and follows the fork's pushes", async () => {
     const forked = await forkRepo(app, bob, repo);

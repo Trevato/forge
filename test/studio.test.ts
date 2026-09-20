@@ -354,6 +354,64 @@ describe("the studio", () => {
     expect(merged.ok).toBe(true);
   });
 
+  test("a failed check's own page says what failed — the counts and the first names, bounded, and escaped as text", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/red-check",
+      base: "main",
+      message: "A change whose check goes red",
+      files: [{ path: "RED.md", content: "red\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "A change whose check goes red",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/red-check",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, {
+      state: "failed",
+      summary: "check failed: check exited with code 1",
+      checkDetail: {
+        passed: 274,
+        failed: 4,
+        names: [
+          "a pull closed under a running agent > the clone goes after it",
+          "<script>alert(1)</script>",
+          "a third one",
+        ],
+      },
+    });
+
+    const studio = await (
+      await get(`/alice/notes/pulls/${pull.number}`)
+    ).text();
+    expect(studio).toContain("data-word=\"stopped\"");
+    expect(studio).toContain("274 passed, 4 failed");
+    expect(studio).toContain(
+      "a pull closed under a running agent &gt; the clone goes after it",
+    );
+    // A fourth failing test beyond the bound is only counted, not named.
+    expect(studio).toContain("and 1 more");
+    // A test name is arbitrary text from a subprocess: it reaches the page
+    // escaped, never as markup a browser would run.
+    expect(studio).not.toContain("<script>alert(1)</script>");
+    expect(studio).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    // The link to the run's full log is unchanged: a summary, not a
+    // replacement for it.
+    expect(studio).toContain(`href="/alice/notes/runs/${run.id}"`);
+  });
+
   test("a change that no longer merges into its base says so, and offers no Ship — a mergeable green pull is unchanged", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const base1 = await commitToBranch(app, alice, repo, {

@@ -21,6 +21,18 @@ export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
 export const isTerminal = (state: RunState): boolean =>
   RUN_TERMINAL.includes(state);
 
+/**
+ * What a failed check's own output said, recognised once as the run
+ * finishes (`checks/bun-test.ts`) and never re-parsed: the pass/fail
+ * counts, and the first few failing names — already bounded, so a run with
+ * forty failures still fits on one line wherever this is shown.
+ */
+export interface CheckDetail {
+  readonly passed: number;
+  readonly failed: number;
+  readonly names: readonly string[];
+}
+
 export interface Run {
   readonly id: string;
   readonly repoId: string;
@@ -50,6 +62,8 @@ export interface Run {
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
   readonly turns: number;
+  /** A failed check's own detail, when its output was recognised; null otherwise. */
+  readonly checkDetail: CheckDetail | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   /** When this deploy's environment started serving — set once, at the swap-in. */
@@ -75,6 +89,7 @@ interface RunRow {
   attempt: number;
   heartbeat_at: string | null;
   turns: number;
+  check_detail: string;
   created_at: string;
   started_at: string | null;
   serving_at: string | null;
@@ -99,6 +114,7 @@ const toRun = (r: RunRow): Run => ({
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
+  checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
   servingAt: r.serving_at,
@@ -196,13 +212,15 @@ export function finishRun(
     sessionId?: string | undefined;
     costUsd?: number | undefined;
     turns?: number | undefined;
+    /** A failed check's own detail, when its output was recognised. */
+    checkDetail?: CheckDetail | undefined;
   },
 ): Run | undefined {
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3,
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
-         turns = COALESCE(?6, turns),
+         turns = COALESCE(?6, turns), check_detail = ?7,
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'running'`,
     )
@@ -213,6 +231,7 @@ export function finishRun(
       outcome.sessionId ?? null,
       outcome.costUsd ?? null,
       outcome.turns ?? null,
+      outcome.checkDetail ? JSON.stringify(outcome.checkDetail) : "",
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
