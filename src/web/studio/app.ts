@@ -334,7 +334,9 @@ export async function studioApp(
     nowRows.length === 0
       ? card(
           html`<p class="muted small">
-            Nothing yet. Tell the crew something.
+            ${deployTailing
+              ? "Production is coming up — the log above has it."
+              : "Nothing yet. Tell the crew something."}
           </p>`,
           {
             head: html`${icon("activity")}

@@ -3320,6 +3320,12 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
     // No script, no problem: the page keeps refreshing while the deploy
     // goes — the actual meta tag, not just the script's own selector text.
     expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+    // Issue #163: the deploy is plainly going, in the head card above — "Now"
+    // does not also claim nothing is happening, and it does not open a
+    // second stream of the same lines to say so.
+    expect(page).not.toContain("Nothing yet");
+    expect(page).toContain("Production is coming up");
+    expect(page.match(/id="app-run-tail"/g)?.length).toBe(1);
 
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
   });
@@ -3380,6 +3386,150 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
     const page = await (await get("/alice/kindling", owner)).text();
     expect(page).not.toContain('id="app-run-tail"');
     expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
+  });
+});
+
+/**
+ * Issue #163: "Now" is built from agent runs alone, so a fresh app with a
+ * deploy going and nothing else read as if nothing were happening — right
+ * beside the head card tailing that very deploy. "Now"'s empty state now
+ * says otherwise when the head card is tailing a deploy, and keeps its
+ * ordinary wording when nothing at all is going.
+ */
+describe(`"Now" while production is coming up and nothing else is`, () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let runtime: AppsRuntime;
+  let repo: Repo;
+  let record: AppRecord;
+  let owner: string;
+
+  interface PreviewSlot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    deploying?: unknown;
+    live?: unknown;
+    lastError?: string;
+    lastRunId?: string;
+  }
+  const putEnv = (
+    env: EnvName,
+    slot: Omit<PreviewSlot, "app" | "env" | "chain" | "restarts">,
+  ): void => {
+    (runtime as unknown as { envs: Map<string, PreviewSlot> }).envs.set(
+      `${record.id}/${env}`,
+      { app: record, env, chain: Promise.resolve(), restarts: [], ...slot },
+    );
+  };
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-now-empty-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "nowempty.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    owner = await signIn("alice");
+    const made = await createRepo(app, a.value, {
+      name: "ember",
+      visibility: "private",
+      description: "a new app",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "ember\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "ember" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a running deploy and no agent run: \"Now\" does not say nothing is happening, and opens no second tail", async () => {
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "eae580a",
+      reason: "boot",
+    });
+    claimRun(app.db, deployRun.id);
+    appendRunLog(app.config.dataDir, deployRun.id, "deploy in progress");
+    putEnv("production", {
+      deploying: {
+        run: { id: deployRun.id, commitOid: "eae580a" },
+        abort: new AbortController(),
+      },
+    });
+
+    const page = await (await get("/alice/ember", owner)).text();
+    expect(page).not.toContain("Nothing yet");
+    expect(page).toContain("Production is coming up");
+    // Exactly one tail on the page — the head card's, not a second one in
+    // "Now".
+    expect(page.match(/id="app-run-tail"/g)?.length).toBe(1);
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+  });
+
+  test("with nothing going at all, \"Now\" reads exactly as it does today", async () => {
+    putEnv("production", {
+      live: {
+        commitOid: "eae580a",
+        handle: { port: 4502 },
+        runId: "irrelevant",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+
+    const page = await (await get("/alice/ember", owner)).text();
+    expect(page).toContain("Nothing yet. Tell the crew something.");
+    expect(page).not.toContain('id="app-run-tail"');
   });
 });
 

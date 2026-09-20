@@ -125,8 +125,9 @@ function previewsPanel(
  * its row — the app's own first thirty seconds are not a blank page. The
  * agent's run wins the one stream this page opens when both are going: it
  * is the crew's own answer to something asked, where a deploy is often
- * background (a redeploy after an unrelated push), and it is already what
- * "Now" shows.
+ * background (a redeploy after an unrelated push). When "Now" would
+ * otherwise sit empty, its own empty state points back up at this tail
+ * rather than opening a second stream of the same lines.
  */
 function deployTail(
   ctx: Ctx,
