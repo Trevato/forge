@@ -16,6 +16,10 @@ export const components = /* css */ `
   display: inline-flex; flex: none; width: 16px; height: 16px;
   align-items: center; justify-content: center; vertical-align: -0.15em;
 }
+/* The page's drawings, defined once each at the end of <body> (\`iconSprite\`,
+   src/web/icons.ts). A <symbol> never renders where it is defined, but the
+   <svg> holding them would take a line box, so it is taken out of flow. */
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 
 /* ---- button ---- */
 .btn {

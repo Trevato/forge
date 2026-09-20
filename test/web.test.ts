@@ -6,6 +6,12 @@ import { createApp, type App } from "../src/app.ts";
 import { health } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
+import {
+  icon,
+  iconSprite,
+  inlineIcons,
+  type IconName,
+} from "../src/web/icons.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
 import { THEME_NAMES } from "../src/design/themes.ts";
 
@@ -98,6 +104,173 @@ describe("markdown", () => {
     // A lone pipe line is a sentence, not a table.
     expect(renderMarkdown("| just text |").text).toContain("<p>| just text |");
     expect(renderMarkdown("a | b").text).toContain("<p>a | b</p>");
+  });
+});
+
+describe("icons", () => {
+  test("the slot is a reference; the drawing is defined once, on the symbol", () => {
+    expect(icon("issue").text).toBe(
+      `<svg class="ico ico-issue" width="16" height="16" aria-hidden="true" ` +
+        `focusable="false"><use href="#i-issue"/></svg>`,
+    );
+    // The spinner's class is what the CSS animation reaches for, and both
+    // sizes `icon()` offers still stamp the slot they sit in.
+    expect(icon("loader").text).toContain('class="ico ico-loader"');
+    expect(icon("issue", 20).text).toContain('width="20" height="20"');
+
+    const sprite = iconSprite(icon("issue").text.repeat(4)).text;
+    expect(sprite.match(/<symbol /g)).toHaveLength(1);
+    expect(sprite).toContain(
+      `<symbol id="i-issue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"`,
+    );
+    expect(sprite).toContain('<circle cx="12" cy="12" r="1"/>');
+    // Markup with no icons defines none at all.
+    expect(iconSprite("<p>a page of words</p>").text).toBe("");
+  });
+
+  test("a fragment carries its drawings inline, referencing no sprite", () => {
+    const inlined = inlineIcons(icon("issue").text);
+    expect(inlined).not.toContain("<use");
+    expect(inlined).not.toContain("symbol");
+    // A nested <svg> with the drawing's viewBox is what <use> instantiates.
+    expect(inlined).toContain(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"`,
+    );
+    expect(inlined).toContain('<circle cx="12" cy="12" r="1"/>');
+    expect(inlined).toContain('class="ico ico-issue"');
+  });
+
+  test("a hundred uses of twenty drawings weigh twenty drawings", () => {
+    // The census the front door showed: 98 uses, 20 distinct.
+    const census: [IconName, number][] = [
+      ["issue", 18],
+      ["check", 17],
+      ["fork", 17],
+      ["pull", 15],
+      ["rocket", 7],
+      ["repo", 5],
+      ["user", 2],
+      ["comment", 2],
+      ["clock", 2],
+      ["branch", 2],
+      ["commit", 2],
+      ["search", 1],
+      ["plus", 1],
+      ["help", 1],
+      ["signOut", 1],
+      ["users", 1],
+      ["map", 1],
+      ["settings", 1],
+      ["key", 1],
+      ["lock", 1],
+    ];
+    const markup = census
+      .map(([name, count]) => icon(name).text.repeat(count))
+      .join("");
+    const shipped = markup.length + iconSprite(markup).text.length;
+    // What the same page would weigh with a drawing per use.
+    const perUse = inlineIcons(markup).length;
+    expect(perUse - shipped).toBeGreaterThan(15_000);
+  });
+});
+
+describe("a page ships each drawing once", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let cookie = "";
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-icons-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const signup = await fetch(`${base}/signup`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "ada",
+        email: "ada@forge.local",
+        password: "analytical-engine",
+      }),
+      redirect: "manual",
+    });
+    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const mode = await fetch(`${base}/mode`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ mode: "studio", back: "/" }),
+      redirect: "manual",
+    });
+    cookie = `${cookie}; ${(mode.headers.get("set-cookie") ?? "").split(";")[0]}`;
+    await fetch(`${base}/new`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ name: "engine", visibility: "public" }),
+      redirect: "manual",
+    });
+    for (let n = 0; n < 12; n++) {
+      await fetch(`${base}/ada/engine/issues/new`, {
+        method: "POST",
+        headers: { cookie, origin: base },
+        body: new URLSearchParams({ title: `bug ${n}`, body: "a body" }),
+        redirect: "manual",
+      });
+    }
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a list of a dozen rows sends the row's drawing once, not a dozen times", async () => {
+    const text = await (
+      await fetch(`${base}/ada/engine/issues`, { headers: { cookie } })
+    ).text();
+    expect(text.match(/<use href="#i-issue"\/>/g)!.length).toBeGreaterThan(11);
+    // The drawing itself — the issue glyph's inner dot — exactly once.
+    expect(text.match(/<circle cx="12" cy="12" r="1"\/>/g)).toHaveLength(1);
+    expect(text.match(/<symbol id="i-issue"/g)).toHaveLength(1);
+  });
+
+  test("what a page defines is exactly what it used — no more, no less", async () => {
+    for (const path of ["/", "/ada/engine/issues", "/settings"]) {
+      const text = await (
+        await fetch(`${base}${path}`, { headers: { cookie } })
+      ).text();
+      const used = new Set(
+        [...text.matchAll(/<use href="#i-([A-Za-z]+)"\/>/g)].map((m) => m[1]),
+      );
+      const defined = [...text.matchAll(/<symbol id="i-([A-Za-z]+)"/g)].map(
+        (m) => m[1],
+      );
+      expect(defined.length).toBe(used.size); // each defined once
+      expect(new Set(defined)).toEqual(used); // and nothing else shipped
+      expect(used.size).toBeGreaterThan(0);
+    }
+    // The front door is not the settings page's icons: a page with three
+    // drawings does not ship twenty.
+    const home = await (await fetch(base, { headers: { cookie } })).text();
+    expect(home).not.toContain('id="i-webhook"');
+  });
+
+  test("the thread fragment inlines its own drawings", async () => {
+    await fetch(`${base}/ada/engine/issues/1/comments`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ intent: "comment", body: "I can repro." }),
+      redirect: "manual",
+    });
+    const fragment = await (
+      await fetch(`${base}/ada/engine/issues/1/thread?after=`, {
+        headers: { cookie },
+      })
+    ).text();
+    expect(fragment).toContain("I can repro.");
+    expect(fragment).toContain('class="ico ico-comment"');
+    expect(fragment).not.toContain("<use href=");
   });
 });
 

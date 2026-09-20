@@ -28,7 +28,7 @@ import {
 } from "./flash.ts";
 import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
-import { icon, themeGlyph } from "./icons.ts";
+import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
 import { appsOf, askCountFor } from "./studio/asks.ts";
 import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
@@ -474,6 +474,17 @@ export function page(options: PageOptions, status = 200): Response {
     ? `${shellJs}\n${options.scriptJs}`
     : shellJs;
 
+  // The body's markup, built before the document so the icons it used can be
+  // counted: every `icon()` left a `<use>` behind, and the sprite defining
+  // them goes last, after the markup that references it (legal, and resolved
+  // once the document is parsed). Only what this page used ships.
+  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs)}
+    <main class="${options.bare ? "bare" : "shell"}" id="main">
+      ${flash ? flashToast(flash) : null}${options.body}
+    </main>
+    ${options.bare ? null : footer()} ${overlays()}
+    ${paletteIndex(ctx, options.palette ?? [])}`;
+
   const doc = html`<!doctype html>
     <html lang="en" ${theme ? html`data-theme="${theme}"` : null}>
       <head>
@@ -516,12 +527,7 @@ export function page(options: PageOptions, status = 200): Response {
           : null}
       </head>
       <body>
-        ${options.bare ? null : topbar(ctx, theme, options.crumbs)}
-        <main class="${options.bare ? "bare" : "shell"}" id="main">
-          ${flash ? flashToast(flash) : null}${options.body}
-        </main>
-        ${options.bare ? null : footer()} ${overlays()}
-        ${paletteIndex(ctx, options.palette ?? [])}
+        ${shell}${iconSprite(shell.text)}
         ${raw(`<script nonce="${nonce}">${scriptJs}</script>`)}
       </body>
     </html>`;
@@ -567,9 +573,13 @@ export function redirect(
  * sandbox CSP is the point: this markup is inserted into a live document, so
  * it is served with a policy that would make it inert if anything ever
  * navigated to it directly.
+ *
+ * Its icons are inlined rather than referenced: a fragment cannot count on
+ * the sprite of the document it is being dropped into, and must not add ids
+ * to it (`inlineIcons`, `icons.ts`).
  */
 export function fragment(body: Html, status = 200): Response {
-  return new Response(body.text, {
+  return new Response(inlineIcons(body.text), {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",

@@ -12,16 +12,31 @@
  * fixed 16px slot by `.ico` so a row's baseline never moves when one appears.
  * Icons are decorative: they carry `aria-hidden`, and any control that shows
  * only an icon must carry its own `aria-label`.
+ *
+ * A drawing is sent once per page, not once per use. `icon()` renders the
+ * 16px slot with a one-line `<use>` inside it; the page's markup is read for
+ * those references and `iconSprite()` emits one `<symbol>` per distinct icon
+ * the page actually used, at the end of `<body>` (`layout.ts`) — legal, and
+ * resolved fine by a `<use>` earlier in the document. The stroke, the fill
+ * and the viewBox ride on the `<symbol>`, so the slot itself is four
+ * attributes; `currentColor` still resolves against whatever colour the
+ * `<use>` sits in, which is what keeps every theme working.
+ *
+ * A fragment (`layout.fragment()`) is markup dropped into a document it does
+ * not own, so it cannot reference a sprite it did not ship: `inlineIcons()`
+ * expands every reference back into the nested `<svg>` a `<use>` would have
+ * instantiated anyway — same pixels, no ids to collide.
  */
 
 import { raw, type Html } from "./html.ts";
 
-const svg = (paths: string, size: number, name = ""): Html =>
+/** What the drawing needs, on the symbol rather than on every slot. */
+const DRAW = `viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"`;
+
+const svg = (name: string, size: number): Html =>
   raw(
-    `<svg class="ico${name === "" ? "" : ` ico-${name}`}" width="${size}" height="${size}" viewBox="0 0 24 24" ` +
-      `fill="none" stroke="currentColor" stroke-width="1.75" ` +
-      `stroke-linecap="round" stroke-linejoin="round" ` +
-      `aria-hidden="true" focusable="false">${paths}</svg>`,
+    `<svg class="ico ico-${name}" width="${size}" height="${size}" ` +
+      `aria-hidden="true" focusable="false"><use href="#i-${name}"/></svg>`,
   );
 
 const PATHS = {
@@ -96,7 +111,50 @@ export type IconName = keyof typeof PATHS;
 
 /** One icon, in the standard 16px slot (20px for empty-state headers). */
 export function icon(name: IconName, size: 16 | 20 = 16): Html {
-  return svg(PATHS[name], size, name);
+  return svg(name, size);
+}
+
+/** The reference `icon()` leaves behind, and the only thing read back. */
+const REFERENCE = /<use href="#i-([A-Za-z]+)"\/>/g;
+
+/** Every icon this markup references, once each, in first-seen order. */
+function referenced(markup: string): IconName[] {
+  const names: IconName[] = [];
+  for (const match of markup.matchAll(REFERENCE)) {
+    const name = match[1];
+    if (name === undefined || !(name in PATHS)) continue;
+    if (!names.includes(name as IconName)) names.push(name as IconName);
+  }
+  return names;
+}
+
+/**
+ * The drawings a page used, defined once each. Sat at the end of `<body>`
+ * (`layout.ts`), zero-sized by `.sprite` so it can never move a layout;
+ * `<symbol>` content is never rendered where it is defined, only where a
+ * `<use>` instantiates it.
+ */
+export function iconSprite(markup: string): Html {
+  const names = referenced(markup);
+  if (names.length === 0) return raw("");
+  const symbols = names
+    .map((name) => `<symbol id="i-${name}" ${DRAW}>${PATHS[name]}</symbol>`)
+    .join("");
+  return raw(
+    `<svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">${symbols}</svg>`,
+  );
+}
+
+/**
+ * The same markup with every reference expanded in place — for a fragment,
+ * which lands in a document whose sprite is none of its business. A nested
+ * `<svg>` with the drawing's viewBox is exactly what `<use>` on a `<symbol>`
+ * instantiates, so the pixels are the same either way.
+ */
+export function inlineIcons(markup: string): string {
+  return markup.replace(REFERENCE, (whole, name: string) =>
+    name in PATHS ? `<svg ${DRAW}>${PATHS[name as IconName]}</svg>` : whole,
+  );
 }
 
 /** The half-filled circle that opens the theme menu — a glyph, not a Lucide icon. */

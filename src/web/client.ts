@@ -1922,6 +1922,12 @@ export const liveRegionsJs = /* js */ `
       .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
       .then(function (text) {
         var fresh = new DOMParser().parseFromString(text, 'text/html');
+        // The fresh page's drawings come across first: a region swapping in
+        // an icon this page never painted would otherwise point at a
+        // <symbol> the document does not have (src/web/icons.ts).
+        var theirSprite = fresh.querySelector('.sprite');
+        var mySprite = document.querySelector('.sprite');
+        if (theirSprite && mySprite) mySprite.replaceWith(theirSprite);
         ids.forEach(function (id) {
           var mine = document.getElementById(id);
           var theirs = fresh.getElementById(id);

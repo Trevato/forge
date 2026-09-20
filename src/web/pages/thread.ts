@@ -21,7 +21,7 @@ import { listEvents } from "../../core/events.ts";
 import type { Issue, Label } from "../../core/issues.ts";
 import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
-import type { IconName as Glyph } from "../icons.ts";
+import { inlineIcons, type IconName as Glyph } from "../icons.ts";
 import {
   getUserById,
   getUserByName,
@@ -253,7 +253,9 @@ export function threadComment(
 /**
  * GET …/thread?after=<id> — the comments the page has not seen, as a bare
  * fragment. Served under a `sandbox` CSP with nothing else allowed, so the
- * fragment can only ever be what it is: markup to append.
+ * fragment can only ever be what it is: markup to append. Its icons are
+ * inlined, like any fragment's: the page's sprite is not this markup's to
+ * reference (`inlineIcons`, `../icons.ts`).
  */
 export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
   const repo = loadRepo(ctx);
@@ -273,7 +275,7 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
       originKind: glyph,
     }),
   )}`;
-  return new Response(fragment.text, {
+  return new Response(inlineIcons(fragment.text), {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
