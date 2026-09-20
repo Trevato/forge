@@ -60,6 +60,10 @@ export async function studioPull(
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
+  // Dev's own address for this change, and the only one the page *posts*
+  // to: ship, say and the escape to the diff all live under
+  // `/pulls/:number`, whether a reader arrived there or at
+  // `/changes/:number` (`changeHref`, nouns.ts).
   const thread = `${base}/pulls/${pull.number}`;
   const wordCtx: WordCtx = {
     db,

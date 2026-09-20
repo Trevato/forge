@@ -8,7 +8,7 @@
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
-import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
+import type { AppRecord } from "../../core/apps.ts";
 import { listIssues, type Issue } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import type { Repo } from "../../core/repos.ts";
@@ -37,6 +37,7 @@ import {
   time,
 } from "../ui.ts";
 import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
+import { changeHref, studioRecord, tellHref } from "./nouns.ts";
 import { tellWord } from "./tell.ts";
 import {
   pullWord,
@@ -105,18 +106,6 @@ function pagedHref(base: string, filter: WordFilter | undefined, cursor: string)
 }
 
 /**
- * The one rule for whether a viewer sees the studio's own list on this repo:
- * studio mode, no `?mode=dev` escape hatch, and an app to have a studio word
- * for — the same check `issuesList`/`pullsList` make before falling back to
- * dev's own list.
- */
-export function studioListRecord(ctx: Ctx, repo: Repo): AppRecord | undefined {
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
-  return studio ? getAppByRepo(ctx.app.db, repo.id) : undefined;
-}
-
-/**
  * GET /:owner/:name/issues in the studio: everything told, one row per
  * issue in its studio word — who has it, when it last moved, and the tell
  * itself as the row's own link. No labels, no milestones. `?word=` narrows
@@ -172,7 +161,7 @@ export async function studioTells(
       : listCard(
           rows.map(({ issue, info }) =>
             row({
-              href: `${base}/issues/${issue.number}`,
+              href: tellHref(base, issue.number),
               nav: true,
               lead: avatar(issue.assigneeName ?? "crew"),
               title: issue.title,
@@ -261,7 +250,7 @@ export async function studioChanges(
       : listCard(
           rows.map(({ pull, info }) =>
             row({
-              href: `${base}/pulls/${pull.number}`,
+              href: changeHref(base, pull.number),
               nav: true,
               lead: avatar(pull.authorName),
               title: pull.title,
@@ -305,7 +294,7 @@ export async function studioChanges(
 /**
  * GET /:owner/:name/tells — the studio's own door onto the same list
  * `/issues` reaches: `issuesList` and this route both resolve through
- * `studioListRecord`/`studioTells`, so there is exactly one page, never a
+ * `studioRecord`/`studioTells`, so there is exactly one page, never a
  * second copy of it. A viewer for whom the studio's own list does not apply
  * (dev mode, `?mode=dev`, or a repository that is not an app) is sent to
  * `/issues` — dev's own address is the one canonical URL for dev's own list,
@@ -314,7 +303,7 @@ export async function studioChanges(
 export async function tellsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const record = studioListRecord(ctx, repo);
+  const record = studioRecord(ctx, repo);
   if (record === undefined)
     return redirect(`${repoBase(repo)}/issues${ctx.url.search}`);
   return await studioTells(ctx, repo, record);
@@ -325,7 +314,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
 export async function changesList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const record = studioListRecord(ctx, repo);
+  const record = studioRecord(ctx, repo);
   if (record === undefined)
     return redirect(`${repoBase(repo)}/pulls${ctx.url.search}`);
   return await studioChanges(ctx, repo, record);

@@ -33,6 +33,7 @@ import {
   type Tone,
 } from "../ui.ts";
 import { appsOf } from "./asks.ts";
+import { changeHref, tellHref } from "./nouns.ts";
 
 const APP_LIMIT = 20;
 const CHANGE_LIMIT = 20;
@@ -76,9 +77,15 @@ function appRow(ctx: Ctx, repo: Repo, record: AppRecord, query: string): Html {
 
 type LocalIssueHit = IssueHit & { source: "local" };
 
+/** Where the hit lives, in the studio's own nouns — every hit here is on
+ * an app (`appsOf` is what was searched), so the studio's address is the
+ * one this page can hand out without ever sending a reader somewhere the
+ * page behind it would not. */
 function issueHitHref(hit: LocalIssueHit): string {
-  const segment = hit.kind === "issue" ? "issues" : "pulls";
-  return `/${hit.repo.owner}/${hit.repo.name}/${segment}/${hit.number}`;
+  const base = `/${hit.repo.owner}/${hit.repo.name}`;
+  return hit.kind === "issue"
+    ? tellHref(base, hit.number)
+    : changeHref(base, hit.number);
 }
 
 /** A change or a tell: which app it belongs to, and its own studio link —

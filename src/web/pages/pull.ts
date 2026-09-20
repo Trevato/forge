@@ -61,7 +61,7 @@ import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { renderMarkdown } from "../markdown.ts";
 import type { IconName as Glyph } from "../icons.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
@@ -97,6 +97,7 @@ import { lookCard } from "./looks.ts";
 import { pullState } from "./pulls.ts";
 import { crewActivityCard } from "./runs.ts";
 import { studioPull } from "../studio/change.ts";
+import { studioRecord } from "../studio/nouns.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
 function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
@@ -668,13 +669,13 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   if (found instanceof Response) return found;
   const { repo, pull } = found;
   // In the studio a change is judged by what it does, not its diff — the
-  // same rule `repoHome` follows for an app's own page. `?mode=dev` on the
-  // URL is the escape hatch to the diff, resolved once for `ctx.mode`.
-  const studio = ctx.mode === "studio";
-  if (studio) {
-    const record = getAppByRepo(ctx.app.db, repo.id);
-    if (record !== undefined) return await studioPull(ctx, repo, pull, record);
-  }
+  // same rule `repoHome` follows for an app's own page, and the same rule
+  // `changePage` below asks before opening this very page under the
+  // studio's own noun. `?mode=dev` on the URL is the escape hatch to the
+  // diff, resolved once for `ctx.mode`.
+  const studioApp = studioRecord(ctx, repo);
+  if (studioApp !== undefined)
+    return await studioPull(ctx, repo, pull, studioApp);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const base = repoBase(repo);
   const thread = `${base}/pulls/${pull.number}`;
@@ -839,6 +840,30 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * GET /:owner/:name/changes/:number — the studio's own noun for the page
+ * `/pulls/:number` already reaches. The page is `studioPull`, rendered from
+ * here exactly as `pullPage` renders it: one handler each, never a second
+ * copy of the page, and the same `pullContext` for who may see it, so a
+ * reader who may not gets the forge's not-found at either address.
+ *
+ * A viewer the studio's change does not apply to — dev mode, `?mode=dev`,
+ * or a repository that is not an app — is sent on to `/pulls/:number`,
+ * dev's own address, the same rule `changesList` follows for the list.
+ * `/pulls/:number` asked for in studio mode answers where it stands, as it
+ * always has; this door adds an address, it never closes one. The forms on
+ * the page post where they have always posted.
+ */
+export async function changePage(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const { repo, pull } = found;
+  const record = studioRecord(ctx, repo);
+  if (record === undefined)
+    return redirect(`${repoBase(repo)}/pulls/${pull.number}${ctx.url.search}`);
+  return await studioPull(ctx, repo, pull, record);
 }
 
 // GET /:owner/:name/pulls/:number/thread?after=<id>

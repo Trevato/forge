@@ -74,6 +74,7 @@ import {
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
+  tellPage,
 } from "../web/pages/issues.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
@@ -120,6 +121,7 @@ import {
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
 import {
+  changePage,
   pullCommentSubmit,
   pullMergeSubmit,
   pullPage,
@@ -537,11 +539,15 @@ export function buildRouter(): Router<Handler> {
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
   router.add("GET", "/:owner/:name/issues", issuesList);
-  // The studio's own noun for the same list — everything told. A tell or a
-  // change keeps its `/issues/:number` / `/pulls/:number` address; only the
-  // list itself gains a second door (`tellsList`/`changesList` redirect to
-  // dev's own address when the studio's list does not apply).
+  // The studio's own nouns for the same list and the same page — everything
+  // told, and one tell. Each is a second door onto the one handler, never a
+  // second copy of the page; `/issues` and `/issues/:number` stay dev's own
+  // canonical addresses and answer exactly as they always have, in both
+  // modes (`tellsList`/`tellPage` redirect there when the studio does not
+  // apply). The literal /tells is registered before /tells/:number for the
+  // same reason /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
+  router.add("GET", "/:owner/:name/tells/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", issuePage);
@@ -575,8 +581,11 @@ export function buildRouter(): Router<Handler> {
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   router.add("GET", "/:owner/:name/pulls", pullsList);
-  // The studio's own noun for the same list — every change.
+  // The studio's own nouns for the same list and the same page — every
+  // change, and one change. See the tells above for the rule; the forms
+  // that ship, close and comment keep posting under /pulls/:number.
   router.add("GET", "/:owner/:name/changes", changesList);
+  router.add("GET", "/:owner/:name/changes/:number", changePage);
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);

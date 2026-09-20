@@ -42,6 +42,12 @@ import {
 } from "../ui.ts";
 import { asksPanel, decisionsFor } from "./asks.ts";
 import { withLikely } from "./leans.ts";
+import {
+  changeHref,
+  changesHref,
+  tellHref,
+  tellsHref,
+} from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
@@ -307,7 +313,7 @@ export async function studioApp(
         const { word, note } = await pullWord(wordCtx, p);
         const who = nameFor(p.authorName);
         return row({
-          href: `${base}/pulls/${p.number}`,
+          href: changeHref(base, p.number),
           nav: true,
           lead: avatar(who),
           title: p.title,
@@ -320,7 +326,7 @@ export async function studioApp(
     ...waiting.map((i) => {
       const who = nameFor(i.assigneeName ?? "crew");
       return row({
-        href: `${base}/issues/${i.number}`,
+        href: tellHref(base, i.number),
         nav: true,
         lead: avatar(who),
         title: i.title,
@@ -462,8 +468,8 @@ export async function studioApp(
       );
   const more = html`<p class="muted small">
     <a href="${base}/map">The map</a> ·
-    <a href="${base}/tells">Everything told</a> ·
-    <a href="${base}/changes">Every change</a>
+    <a href="${tellsHref(base)}">Everything told</a> ·
+    <a href="${changesHref(base)}">Every change</a>
   </p>`;
 
   const body = html`${repoHeader(ctx, repo, "code", {

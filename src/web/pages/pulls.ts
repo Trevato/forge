@@ -52,7 +52,8 @@ import {
 } from "../ui.ts";
 import { refSet } from "./refs.ts";
 import { threadRow } from "./issues.ts";
-import { studioChanges, studioListRecord } from "../studio/lists.ts";
+import { studioChanges } from "../studio/lists.ts";
+import { studioRecord } from "../studio/nouns.ts";
 import { originGlyph } from "./thread.ts";
 
 const PER_PAGE = 25;
@@ -127,7 +128,7 @@ export async function pullsList(ctx: Ctx): Promise<Response> {
   // In the studio "every change" is the pull list in the studio's own
   // words — the same rule `pullPage` follows for one change. `?mode=dev` is
   // the one-off way to dev's list without switching the browser.
-  const record = studioListRecord(ctx, repo);
+  const record = studioRecord(ctx, repo);
   if (record !== undefined) return await studioChanges(ctx, repo, record);
   const base = repoBase(repo);
   const db = ctx.app.db;

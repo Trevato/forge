@@ -37,6 +37,7 @@ import {
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, reasonWords } from "../pages/runs.ts";
 import { composer, conversation, originGlyph } from "../pages/thread.ts";
+import { changeHref, tellHref } from "./nouns.ts";
 import {
   pullWord,
   runWord,
@@ -105,7 +106,7 @@ function tellDependencies(base: string, issue: Issue, db: Ctx["app"]["db"]): Htm
         (i) =>
           html`<li data-state="${i.state}">
             ${icon(i.state === "closed" ? "issueClosed" : "issue")}
-            <a href="${base}/issues/${i.number}">${i.title}</a>
+            <a href="${tellHref(base, i.number)}">${i.title}</a>
             <span class="muted small">#${i.number}</span>
           </li>`,
       )}
@@ -187,7 +188,7 @@ async function tellClosingPull(
   const { word, note } = await pullWord(wordCtx, pull);
   return html`${card(
     html`<p>
-      <a href="${base}/pulls/${pull.number}">${pull.title}</a>
+      <a href="${changeHref(base, pull.number)}">${pull.title}</a>
       ${wordBadge(word)} <span class="muted small">${note}</span>
     </p>`,
     { head: html`${icon("pull")} <h2>Closes with</h2>` },
@@ -210,6 +211,10 @@ export async function studioTell(
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
+  // Dev's own address for this tell, and the only one the page *posts* to:
+  // the reply, the close and the escape to dev all live under
+  // `/issues/:number`, whether a reader arrived there or at `/tells/:number`
+  // (`tellHref`, nouns.ts). The write surface does not move with the noun.
   const thread = `${base}/issues/${issue.number}`;
   const direction = repo.directionIssueId === issue.id;
   const closingPull = openPullsClosing(db, repo.id).get(issue.number);

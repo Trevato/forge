@@ -5,7 +5,6 @@
  */
 
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
-import { getAppByRepo } from "../../core/apps.ts";
 import {
   issueCounts,
   labelsFor,
@@ -30,7 +29,7 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { localScope, type RepoScope } from "../scope.ts";
 import {
@@ -63,7 +62,8 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
-import { studioListRecord, studioTells } from "../studio/lists.ts";
+import { studioTells } from "../studio/lists.ts";
+import { studioRecord } from "../studio/nouns.ts";
 import { studioTell } from "../studio/tell.ts";
 
 const PER_PAGE = 25;
@@ -295,7 +295,7 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
   // In the studio "everything told" is the issue list in the studio's own
   // words — the same rule `issuePage` follows for one tell. `?mode=dev` is
   // the one-off way to dev's list without switching the browser.
-  const record = studioListRecord(ctx, repo);
+  const record = studioRecord(ctx, repo);
   if (record !== undefined) return await studioTells(ctx, repo, record);
   const scope = localScope(ctx, repo);
   const base = scope.base;
@@ -477,11 +477,11 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
   if (found instanceof Response) return found;
   const { repo, issue } = found;
   // In the studio a tell is one sentence someone said, not dev's labels and
-  // dependency form — the same rule `pullPage` follows for a change.
-  // `?mode=dev` on the URL is the escape hatch to dev's page, resolved
-  // once for `ctx.mode`.
-  const studio = ctx.mode === "studio";
-  if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
+  // dependency form — the same rule `pullPage` follows for a change, and the
+  // same rule `tellPage` below asks before opening this very page under the
+  // studio's own noun. `?mode=dev` on the URL is the escape hatch to dev's
+  // page, resolved once for `ctx.mode`.
+  if (studioRecord(ctx, repo) !== undefined)
     return await studioTell(ctx, repo, issue);
   const base = repoBase(repo);
   const thread = `${base}/issues/${issue.number}`;
@@ -546,6 +546,32 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
     styleCss: labelCss([...all, ...applied]),
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * GET /:owner/:name/tells/:number — the studio's own noun for the page
+ * `/issues/:number` already reaches. The page is `studioTell`, rendered
+ * from here exactly as `issuePage` renders it: one handler each, never a
+ * second copy of the page, and the same `threadContext` for who may see it,
+ * so a reader who may not gets the forge's not-found at either address.
+ *
+ * A viewer the studio's tell does not apply to — dev mode, `?mode=dev`, or
+ * a repository that is not an app — is sent on to `/issues/:number`, dev's
+ * own address, the same rule `tellsList` follows for the list. The other
+ * direction never bounces: `/issues/:number` asked for in studio mode
+ * answers the studio's page where it stands, so every link ever written to
+ * it keeps working and no reader is redirected out of a URL they were
+ * handed.
+ */
+export async function tellPage(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  const { repo, issue } = found;
+  if (studioRecord(ctx, repo) === undefined)
+    return redirect(
+      `${repoBase(repo)}/issues/${issue.number}${ctx.url.search}`,
+    );
+  return await studioTell(ctx, repo, issue);
 }
 
 // GET /:owner/:name/issues/:number/thread?after=<id>

@@ -17,7 +17,6 @@ import {
   runLog,
   steerRepoRun,
 } from "../../actions/runs.ts";
-import { getAppByRepo } from "../../core/apps.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
@@ -38,6 +37,7 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { studioRuns } from "../studio/lists.ts";
+import { studioRecord } from "../studio/nouns.ts";
 import { studioRun } from "../studio/run.ts";
 import {
   btn,
@@ -263,12 +263,8 @@ export async function runsList(ctx: Ctx): Promise<Response> {
   // In the studio "every run" is the run list in the studio's own words —
   // the same rule `runPage` follows for one run. `?mode=dev` is the
   // one-off way to dev's list without switching the browser.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
-  if (studio) {
-    const record = getAppByRepo(ctx.app.db, repo.id);
-    if (record !== undefined) return await studioRuns(ctx, repo, record);
-  }
+  const record = studioRecord(ctx, repo);
+  if (record !== undefined) return await studioRuns(ctx, repo, record);
   const base = repoBase(repo);
   const q = ctx.url.searchParams;
   const kindRaw = q.get("kind");
@@ -353,8 +349,7 @@ export async function runPage(ctx: Ctx): Promise<Response> {
   // what it has cost, and the box to steer it — the same rule `repoHome`
   // and `pullPage` follow. `?mode=dev` on the URL is the escape hatch to
   // the transcript dev already renders, resolved once for `ctx.mode`.
-  const studio = ctx.mode === "studio";
-  if (studio && getAppByRepo(ctx.app.db, repo.id) !== undefined)
+  if (studioRecord(ctx, repo) !== undefined)
     return await studioRun(ctx, repo, run, lines, truncated);
   const base = repoBase(repo);
   const actor =

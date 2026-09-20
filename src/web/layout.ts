@@ -311,7 +311,11 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     })),
     ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
   ];
-  const json = JSON.stringify({ items }).replaceAll("<", "\\u003c");
+  // `studio` rides along so the palette's *remote* rows — what the search
+  // API found, folded in the browser — build the same addresses the server
+  // just rendered (`tellHref`/`changeHref`, `src/web/studio/nouns.ts`). The
+  // palette can never hand out a noun the page behind it would not.
+  const json = JSON.stringify({ items, studio }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
   );

@@ -34,6 +34,7 @@ import { html, when, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import { lookThumb, lookUrl, thumbLook } from "../pages/looks.ts";
 import { leanNote, leanVariant } from "./leans.ts";
+import { changeHref } from "./nouns.ts";
 
 /** The apps a person can see, as repositories, with their records — the
  * same visibility a signed-out reader gets from `listReposVisibleTo` too. */
@@ -319,7 +320,7 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
         : `${base}/app/pull-${pull.number}/open`;
   if (d.kind === "stopped" && pull)
     return html`${btn("Tell them", {
-      href: `${base}/pulls/${pull.number}#comment-body`,
+      href: `${changeHref(base, pull.number)}#comment-body`,
       size: "sm",
       ...leanVariant(d, "say", "primary"),
     })}${leanNote(d, "say")}
@@ -329,7 +330,7 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
       ...leanVariant(d, "close", undefined),
     })}${leanNote(d, "close")}
     ${btn("See", {
-      href: `${base}/pulls/${pull.number}`,
+      href: changeHref(base, pull.number),
       size: "sm",
       ...leanVariant(d, "look", undefined),
     })}${leanNote(d, "look")}`;
@@ -349,7 +350,7 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
         })}${leanNote(d, "preview")}`,
     )}
     ${btn("Not like this", {
-      href: `${base}/pulls/${pull.number}#comment-body`,
+      href: `${changeHref(base, pull.number)}#comment-body`,
       size: "sm",
       ...leanVariant(d, "say", undefined),
     })}${leanNote(d, "say")}`;
@@ -366,7 +367,7 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
     d.kind === "stopped" ? "alert" : d.kind === "look" ? "eye" : "clock";
   // The title links; the row itself does not, because it holds controls
   // and a control inside an anchor is not HTML a browser will keep together.
-  const href = d.pull ? `${base}/pulls/${d.pull.number}` : base;
+  const href = d.pull ? changeHref(base, d.pull.number) : base;
   const title = html`<a href="${href}">${d.pull?.title ?? d.repo.name}</a>`;
   return row({
     lead: html`<input

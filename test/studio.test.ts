@@ -604,7 +604,8 @@ describe("the studio", () => {
     expect(studio).toContain("scout");
     expect(studio).toContain("has it");
     expect(studio).toContain("Ground work");
-    expect(studio).toContain(`href="/alice/notes/issues/${blocker.value.number}"`);
+    // What it waits on, in the studio's own noun (#158).
+    expect(studio).toContain(`href="/alice/notes/tells/${blocker.value.number}"`);
     expect(studio).toContain('data-word="working"');
     expect(studio).toContain("$0.12");
     expect(studio).toContain('id="comment-body"');
@@ -920,6 +921,144 @@ describe("the studio", () => {
       redirect: "manual",
     });
     expect(anonChanges.status).toBe(404);
+  });
+
+  test("/tells/:number and /changes/:number reach the same pages /issues/:number and /pulls/:number reach — one page, the same anchors, and forms that still post to dev's own address", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "Door test: one tell",
+      body: "reached through /tells/:number too",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const n = told.value.number;
+
+    const viaTell = await get(`/alice/notes/tells/${n}`);
+    expect(viaTell.status).toBe(200);
+    const tellHtml = await viaTell.text();
+    const viaIssue = await (await get(`/alice/notes/issues/${n}`)).text();
+    // The same page: the studio's tell, never dev's labels or dependency
+    // form, and never a second copy of the markup.
+    expect(tellHtml).toContain("Door test: one tell");
+    expect(tellHtml).toContain('data-word="told"');
+    expect(tellHtml).not.toContain("<h2>Labels</h2>");
+    expect(viaIssue).toContain('data-word="told"');
+    // The write surface does not move with the noun: the reply, the close
+    // and the escape to dev all still point at /issues/:number.
+    expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/comments"`);
+    expect(tellHtml).toContain(`href="/alice/notes/issues/${n}?mode=dev"`);
+    // An anchor into the conversation still lands — the composer is on the
+    // page either door was used.
+    expect(tellHtml).toContain('id="comment-body"');
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/one-change-door",
+      base: "main",
+      message: "One change door",
+      files: [{ path: "ONE_DOOR.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Door test: one change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/one-change-door",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const p = opened.value.number;
+
+    const viaChange = await get(`/alice/notes/changes/${p}`);
+    expect(viaChange.status).toBe(200);
+    const changeHtml = await viaChange.text();
+    expect(changeHtml).toContain("Door test: one change");
+    // The studio's change, not dev's diff.
+    expect(changeHtml).not.toContain("diff-table");
+    expect(changeHtml).toContain(`action="/alice/notes/pulls/${p}/comments"`);
+    expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}?mode=dev"`);
+    expect(changeHtml).toContain('id="comment-body"');
+
+    // Dev's own addresses answer the studio's pages where they stand — a
+    // link already written to one is never bounced anywhere.
+    const stillIssue = await get(`/alice/notes/issues/${n}`);
+    expect(stillIssue.status).toBe(200);
+    const stillPull = await get(`/alice/notes/pulls/${p}`);
+    expect(stillPull.status).toBe(200);
+
+    // The three lists, the app page and the search box all hand out the
+    // studio's noun, so a person is never given two addresses for one thing.
+    const tells = await (await get("/alice/notes/tells")).text();
+    expect(tells).toContain(`href="/alice/notes/tells/${n}"`);
+    const changes = await (await get("/alice/notes/changes")).text();
+    expect(changes).toContain(`href="/alice/notes/changes/${p}"`);
+    const appPage = await (await get("/alice/notes")).text();
+    expect(appPage).toContain(`href="/alice/notes/changes/${p}"`);
+    const search = await (await get("/search?q=Door+test")).text();
+    expect(search).toContain(`/alice/notes/tells/${n}`);
+    expect(search).toContain(`/alice/notes/changes/${p}`);
+    // The palette's remote rows are folded in the browser; the index tells
+    // the script which mode it is in, so it folds the same nouns.
+    expect(appPage).toContain('"studio":true');
+  });
+
+  test("/tells/:number and /changes/:number send a dev-mode viewer, ?mode=dev, and a repository that is not an app on to /issues/:number and /pulls/:number", async () => {
+    const told = openIssue(app, alice, repo, { title: "Door test: dev's way" });
+    if (!told.ok) throw new Error(String(told.error));
+    const n = told.value.number;
+
+    const devTell = await get(`/alice/notes/tells/${n}`, {
+      cookie: `${cookie}; forge_mode=dev`,
+    });
+    expect(devTell.status).toBe(303);
+    expect(devTell.headers.get("location")).toBe(`/alice/notes/issues/${n}`);
+
+    const escape = await get(`/alice/notes/tells/${n}?mode=dev`);
+    expect(escape.status).toBe(303);
+    expect(escape.headers.get("location")).toBe(
+      `/alice/notes/issues/${n}?mode=dev`,
+    );
+
+    const plain = await createRepo(app, alice, {
+      name: "doorpages",
+      visibility: "private",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const plainTold = openIssue(app, alice, plain.value, {
+      title: "Not an app",
+    });
+    if (!plainTold.ok) throw new Error(String(plainTold.error));
+    const plainTell = await get(
+      `/alice/doorpages/tells/${plainTold.value.number}`,
+    );
+    expect(plainTell.status).toBe(303);
+    expect(plainTell.headers.get("location")).toBe(
+      `/alice/doorpages/issues/${plainTold.value.number}`,
+    );
+  });
+
+  test("a reader without access gets the forge's not-found on /tells/:number and /changes/:number, exactly as /issues/:number and /pulls/:number", async () => {
+    const told = openIssue(app, alice, repo, { title: "Door test: private" });
+    if (!told.ok) throw new Error(String(told.error));
+    const n = told.value.number;
+
+    const anonTell = await fetch(`${base}/alice/notes/tells/${n}`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+    expect(anonTell.status).toBe(404);
+    const anonIssue = await fetch(`${base}/alice/notes/issues/${n}`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+    expect(anonIssue.status).toBe(anonTell.status);
+
+    // A number that is not a tell is not a tell at either address, and a
+    // change's number is not one under the tell's own noun.
+    const missing = await get("/alice/notes/tells/99999");
+    expect(missing.status).toBe(404);
+    const anonChange = await fetch(`${base}/alice/notes/changes/1`, {
+      headers: { cookie: "forge_mode=studio" },
+      redirect: "manual",
+    });
+    expect(anonChange.status).toBe(404);
   });
 
   test("a reader without access gets the forge's not-found on a tell, exactly as dev", async () => {
@@ -2990,7 +3129,8 @@ describe("working: a run's own page in the studio", () => {
       await get(`/alice/engine/runs/${run.id}`, writerCookie)
     ).text();
     expect(page).toContain("Fix the flicker on load");
-    expect(page).toContain(`href="/alice/engine/issues/${tell.value.number}"`);
+    // The tell it came from, in the studio's own noun (#158).
+    expect(page).toContain(`href="/alice/engine/tells/${tell.value.number}"`);
     expect(page).toContain("$0.42 spent");
     expect(page).toContain('data-word="working"');
     expect(page).toContain('id="run-steer"');
@@ -4654,9 +4794,9 @@ describe("finding things in the studio: /search", () => {
   test("a change and a tell are found too, each saying which app they belong to", async () => {
     const html = await (await asAlice("/search?q=chess")).text();
     expect(html).toContain("Add a chess clock timer");
-    expect(html).toContain(`/alice/widgets/issues/${tellNumber}`);
+    expect(html).toContain(`/alice/widgets/tells/${tellNumber}`);
     expect(html).toContain("Wire up the chess clock");
-    expect(html).toContain(`/alice/widgets/pulls/${changeNumber}`);
+    expect(html).toContain(`/alice/widgets/changes/${changeNumber}`);
     expect(html).toContain("alice/widgets");
   });
 

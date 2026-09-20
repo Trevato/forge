@@ -24,6 +24,7 @@ import {
   whereRow,
   type RepoScope,
 } from "./scope.ts";
+import { changesHref, tellsHref } from "./studio/nouns.ts";
 import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
@@ -165,7 +166,7 @@ export function scopeHeader(
       // Studio names its own lists — told, not issues; dev's tabs are
       // unchanged in dev mode and on a repository that is not an app.
       label: studio ? "Told" : "Issues",
-      href: studio ? `${base}/tells` : `${base}/issues`,
+      href: studio ? tellsHref(base) : `${base}/issues`,
       icon: studio ? "clock" : "issue",
       ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
       current: active === "issues",
@@ -173,7 +174,7 @@ export function scopeHeader(
     },
     {
       label: studio ? "Look" : "Pulls",
-      href: studio ? `${base}/changes` : `${base}/pulls`,
+      href: studio ? changesHref(base) : `${base}/pulls`,
       icon: studio ? "eye" : "pull",
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
@@ -295,12 +296,12 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
     { t: `${name} — Code`, h: base, c: "This repo" },
     {
       t: `${name} — ${studio ? "Told" : "Issues"}`,
-      h: studio ? `${base}/tells` : `${base}/issues`,
+      h: studio ? tellsHref(base) : `${base}/issues`,
       c: "This repo",
     },
     {
       t: `${name} — ${studio ? "Changes" : "Pull requests"}`,
-      h: studio ? `${base}/changes` : `${base}/pulls`,
+      h: studio ? changesHref(base) : `${base}/pulls`,
       c: "This repo",
     },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },

@@ -440,11 +440,26 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/issues/${tellNumber}`,
         dev: ["<h2>Labels</h2>"],
       },
+      // The studio's own nouns for the same two pages (#158): one handler
+      // each, so what is walked here is the very page above under the
+      // address the studio's own links hand out. No `dev` half — `?mode=dev`
+      // at these addresses is a redirect to dev's own (`/issues/:number`,
+      // `/pulls/:number`), which the row above already proves.
+      {
+        word: "tell (the studio's noun)",
+        path: `${repoPath}/tells/${tellNumber}`,
+        shows: [tellTitle],
+      },
       { word: "working", path: `${repoPath}/runs/${runId}` },
       {
         word: "look",
         path: `${repoPath}/pulls/${openPullNumber}`,
         dev: ["diff-table", openBranch],
+      },
+      {
+        word: "look (the studio's noun)",
+        path: `${repoPath}/changes/${openPullNumber}`,
+        shows: [openPullTitle],
       },
       {
         word: "shipped",
@@ -477,6 +492,16 @@ describe("dev's vocabulary never reaches a studio page", () => {
         shows: [untouchedTitle],
         hides: [tellTitle],
         dev: [`>#${untouchedNumber} opened`],
+      },
+      {
+        word: "tells (the studio's noun)",
+        path: `${repoPath}/tells`,
+        shows: [untouchedTitle, tellTitle],
+      },
+      {
+        word: "changes (the studio's noun)",
+        path: `${repoPath}/changes`,
+        shows: [openPullTitle, secondChangeTitle],
       },
       {
         word: "changes",
