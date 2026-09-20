@@ -50,8 +50,50 @@ export const forbidden = () =>
   apiError("forbidden", 403, "your credentials lack the scope for this action");
 // A path matching no route at all — distinct from a missing resource, so a
 // client can tell a typo'd URL from a resource that genuinely isn't there.
+// The message survives into the HTML 404 too (`src/web/chrome.ts`), as a
+// code comment there rather than a header a person would never read.
 export const noRoute = (method: string, path: string) =>
   apiError("no_route", 404, `no ${method} route for ${path}`);
+
+/**
+ * One media range beats another only when it names it (or a wildcard that
+ * reaches it) at a strictly higher `q`; a tie — including the everything
+ * range curl sends by default — favours the type this forge answered with
+ * before this distinction existed, so a script that never asked for HTML
+ * keeps getting JSON.
+ */
+function acceptQuality(accept: string, type: string): number {
+  const [group, kind] = type.split("/");
+  let best = -1;
+  for (const range of accept.split(",")) {
+    const [rawType, ...params] = range.split(";");
+    const candidate = (rawType ?? "").trim().toLowerCase();
+    const [rg, rk] = candidate.split("/");
+    if (rg !== "*" && rg !== group) continue;
+    if (rg !== "*" && rk !== "*" && rk !== kind) continue;
+    let q = 1;
+    for (const param of params) {
+      const [key, value] = param.split("=").map((s) => s.trim());
+      if (key === "q" && value !== undefined) q = Number(value);
+    }
+    if (Number.isFinite(q) && q > best) best = q;
+  }
+  return best;
+}
+
+/**
+ * Whether a request, judged by `Accept` alone, would rather have the forge's
+ * own page than a JSON error — a browser addressing a typo'd or moved URL,
+ * not a script or `curl` that never said otherwise.
+ */
+export function prefersHtml(request: Request, pathname: string): boolean {
+  if (pathname.startsWith("/api/")) return false;
+  const accept = request.headers.get("accept");
+  if (!accept) return false;
+  return (
+    acceptQuality(accept, "text/html") > acceptQuality(accept, "application/json")
+  );
+}
 
 /**
  * Map an action's error to a response: the three access errors have fixed

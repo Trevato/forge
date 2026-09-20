@@ -302,6 +302,42 @@ describe("web pages end to end", () => {
       expect(text).toContain("404");
     }
   });
+
+  test("a path under no route at all gets the forge's page for a browser, and no_route for anyone else", async () => {
+    const browser = await fetch(`${base}/ada/engine/tells`, {
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    expect(browser.status).toBe(404);
+    expect(browser.headers.get("content-type")).toContain("text/html");
+    expect(browser.headers.get("content-security-policy")).toContain(
+      "default-src 'none'",
+    );
+    expect(browser.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(browser.headers.get("referrer-policy")).toBeTruthy();
+    const html = await browser.text();
+    expect(html).toContain("404");
+    expect(html).toContain("Go home");
+
+    // No Accept header at all — a plain script or `curl` — keeps the JSON
+    // contract, same as before this page existed.
+    const plain = await fetch(`${base}/ada/engine/tells`);
+    expect(plain.status).toBe(404);
+    expect(plain.headers.get("content-type")).toContain("application/json");
+    const body = (await plain.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_route");
+    expect(body.message).toContain("/ada/engine/tells");
+
+    // An API path is unchanged even for a browser's own Accept header.
+    const api = await fetch(`${base}/api/v1/nonsense`, {
+      headers: { accept: "text/html,*/*;q=0.8" },
+    });
+    expect(api.headers.get("content-type")).toContain("application/json");
+    const apiBody = (await api.json()) as { error: string };
+    expect(apiBody.error).toBe("no_route");
+  });
 });
 
 describe("themes", () => {
