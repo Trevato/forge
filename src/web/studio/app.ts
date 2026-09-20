@@ -78,15 +78,26 @@ const PREVIEW_LATENCY_MIN = 3;
  * How fast a change has reached its preview this week, worded like the
  * reference instant in `servedPhrase` (`web/ui.ts`): "reaches its preview
  * in 6.1s". Too few served deploys to trust a median, and the line says so
- * rather than printing one from a run or two.
+ * rather than printing one from a run or two. Below the total, the same
+ * walk split at `started_at` — waiting to be picked up, then coming up —
+ * each its own median, not a piece of the total that ought to add up.
  */
 function previewLatencyWords(latency: PreviewLatency | undefined): Html {
   if (latency === undefined || latency.n < PREVIEW_LATENCY_MIN)
     return html`<span class="muted small"
       >not enough deploys this week to say</span
     >`;
+  const split =
+    latency.queueMedianSeconds === undefined ||
+    latency.bootMedianSeconds === undefined
+      ? null
+      : html`${latency.queueMedianSeconds.toFixed(1)}s waiting,
+        ${latency.bootMedianSeconds.toFixed(1)}s coming up${latency.splitN <
+        latency.n
+          ? ` (${latency.splitN} of ${latency.n})`
+          : ""} · `;
   return html`reaches its preview in ${latency.medianSeconds.toFixed(1)}s
-    <span class="muted">· ${latency.n} deploys</span>`;
+    <span class="muted">· ${split}${latency.n} deploys</span>`;
 }
 
 export async function studioApp(

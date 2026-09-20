@@ -616,19 +616,36 @@ export function latestAgentRunsForRepos(
   return out;
 }
 
-/** How fast this app's deploys have reached their preview: the median, and the count it is drawn from. */
+/**
+ * How fast this app's deploys have reached their preview: the total median
+ * and the count it is drawn from, plus the same walk split at `started_at`
+ * — the wait to be picked up, and the boot once it was. The split is its
+ * own two medians, not half of the total's; they will not sum to it.
+ */
 export interface PreviewLatency {
   readonly medianSeconds: number;
   readonly n: number;
+  /** Undefined when no served deploy in the window also has a `started_at`. */
+  readonly queueMedianSeconds: number | undefined;
+  readonly bootMedianSeconds: number | undefined;
+  /** How many of `n` carried a `started_at` and so fed the split. */
+  readonly splitN: number;
 }
+
+const median = (xs: readonly number[]): number => {
+  const mid = Math.floor(xs.length / 2);
+  return xs.length % 2 === 0 ? (xs[mid - 1]! + xs[mid]!) / 2 : xs[mid]!;
+};
 
 /**
  * The median seconds from push (`created_at`) to serving (`serving_at`)
  * over this repo's deploys since `since` — the same reference instant
  * `servedPhrase` (`web/ui.ts`) words a single deploy from. A deploy that
- * never served says nothing about speed and is left out, never a zero.
- * One query, bounded by `limit` and served by the `run_repo` index (it
- * walks newest-first and stops at the cap), never a scan of the table.
+ * never served says nothing about speed and is left out, never a zero;
+ * one that served but never records a `started_at` feeds the total but
+ * not the split. One query, bounded by `limit` and served by the
+ * `run_repo` index (it walks newest-first and stops at the cap), never a
+ * scan of the table.
  */
 export function previewLatency(
   db: Database,
@@ -636,22 +653,39 @@ export function previewLatency(
   since: string,
   limit = 500,
 ): PreviewLatency | undefined {
-  const secs = db
-    .query<{ secs: number }, [string, string, number]>(
-      `SELECT (julianday(serving_at) - julianday(created_at)) * 86400 AS secs
+  const rows = db
+    .query<
+      { secs: number; queueSecs: number | null; bootSecs: number | null },
+      [string, string, number]
+    >(
+      `SELECT (julianday(serving_at) - julianday(created_at)) * 86400 AS secs,
+              CASE WHEN started_at IS NOT NULL
+                   THEN (julianday(started_at) - julianday(created_at)) * 86400 END AS queueSecs,
+              CASE WHEN started_at IS NOT NULL
+                   THEN (julianday(serving_at) - julianday(started_at)) * 86400 END AS bootSecs
          FROM run
         WHERE repo_id = ?1 AND kind = 'deploy' AND serving_at IS NOT NULL
           AND created_at >= ?2
         ORDER BY id DESC LIMIT ?3`,
     )
-    .all(repoId, since, limit)
-    .map((r) => r.secs)
+    .all(repoId, since, limit);
+  if (rows.length === 0) return undefined;
+  const secs = rows.map((r) => r.secs).sort((a, b) => a - b);
+  const queueSecs = rows
+    .map((r) => r.queueSecs)
+    .filter((s): s is number => s !== null)
     .sort((a, b) => a - b);
-  if (secs.length === 0) return undefined;
-  const mid = Math.floor(secs.length / 2);
-  const medianSeconds =
-    secs.length % 2 === 0 ? (secs[mid - 1]! + secs[mid]!) / 2 : secs[mid]!;
-  return { medianSeconds, n: secs.length };
+  const bootSecs = rows
+    .map((r) => r.bootSecs)
+    .filter((s): s is number => s !== null)
+    .sort((a, b) => a - b);
+  return {
+    medianSeconds: median(secs),
+    n: secs.length,
+    queueMedianSeconds: queueSecs.length === 0 ? undefined : median(queueSecs),
+    bootMedianSeconds: bootSecs.length === 0 ? undefined : median(bootSecs),
+    splitN: queueSecs.length,
+  };
 }
 
 /** Agent runs queued or running across many repositories, newest first. */

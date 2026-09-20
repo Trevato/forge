@@ -3184,12 +3184,21 @@ describe("previewLatency: the median seconds from push to serving", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  /** A deploy run stamped with a known push instant and, unless null, a known serving instant. */
-  const seedDeploy = (createdAt: string, servingAt: string | null): void => {
+  /** A deploy run stamped with a known push instant and, unless null, known started/serving instants. */
+  const seedDeploy = (
+    createdAt: string,
+    startedAt: string | null,
+    servingAt: string | null,
+  ): void => {
     const deploy = createRun(app.db, { repoId: repo.id, kind: "deploy" });
     app.db
       .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
       .run(deploy.id, createdAt);
+    if (startedAt !== null) {
+      app.db
+        .query("UPDATE run SET started_at = ?2 WHERE id = ?1")
+        .run(deploy.id, startedAt);
+    }
     if (servingAt !== null) {
       app.db
         .query("UPDATE run SET serving_at = ?2 WHERE id = ?1")
@@ -3207,12 +3216,13 @@ describe("previewLatency: the median seconds from push to serving", () => {
     // Before the window: a very slow deploy that must not pull the median up.
     seedDeploy(
       new Date(now - 10 * 24 * 60 * 60_000).toISOString(),
+      null,
       new Date(now - 10 * 24 * 60 * 60_000 + 600_000).toISOString(),
     );
     expect(previewLatency(app.db, repo.id, since)).toBeUndefined();
 
     // A deploy that never served is left out, not counted as a zero.
-    seedDeploy(new Date(now).toISOString(), null);
+    seedDeploy(new Date(now).toISOString(), null, null);
     expect(previewLatency(app.db, repo.id, since)).toBeUndefined();
 
     // Three served deploys, seeded out of order: an odd-count median.
@@ -3221,6 +3231,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
       const createdAt = new Date(now + i * 1_000).toISOString();
       seedDeploy(
         createdAt,
+        null,
         new Date(Date.parse(createdAt) + d * 1_000).toISOString(),
       );
     });
@@ -3232,11 +3243,58 @@ describe("previewLatency: the median seconds from push to serving", () => {
     const createdAt = new Date(now + 3_000).toISOString();
     seedDeploy(
       createdAt,
+      null,
       new Date(Date.parse(createdAt) + 10_000).toISOString(),
     );
     const even = previewLatency(app.db, repo.id, since)!;
     expect(even.n).toBe(4);
     expect(even.medianSeconds).toBeCloseTo(5, 2);
+
+    // None of the above carried a `started_at`: the split has nothing to say.
+    expect(even.queueMedianSeconds).toBeUndefined();
+    expect(even.bootMedianSeconds).toBeUndefined();
+    expect(even.splitN).toBe(0);
+  });
+
+  test("the split between waiting to be picked up and coming up, seeded beside a total", () => {
+    const now = Date.now() + 10_000_000; // clear of the previous test's window
+    const since = new Date(now - 60_000).toISOString();
+
+    // Three deploys with known queue and boot segments: (queue, boot) in seconds.
+    const segments: readonly (readonly [number, number])[] = [
+      [1, 3],
+      [2, 6],
+      [3, 9],
+    ];
+    segments.forEach(([queue, boot], i) => {
+      const createdAt = now + i * 1_000;
+      const startedAt = createdAt + queue * 1_000;
+      const servingAt = startedAt + boot * 1_000;
+      seedDeploy(
+        new Date(createdAt).toISOString(),
+        new Date(startedAt).toISOString(),
+        new Date(servingAt).toISOString(),
+      );
+    });
+    const full = previewLatency(app.db, repo.id, since)!;
+    expect(full.n).toBe(3);
+    expect(full.splitN).toBe(3);
+    expect(full.queueMedianSeconds).toBeCloseTo(2, 2);
+    expect(full.bootMedianSeconds).toBeCloseTo(6, 2);
+
+    // A fourth, served deploy with no `started_at`: it feeds the total but
+    // is left out of the split, never counted as a zero-length queue or boot.
+    const createdAt = now + 3_000;
+    seedDeploy(
+      new Date(createdAt).toISOString(),
+      null,
+      new Date(createdAt + 100_000).toISOString(),
+    );
+    const withGap = previewLatency(app.db, repo.id, since)!;
+    expect(withGap.n).toBe(4);
+    expect(withGap.splitN).toBe(3);
+    expect(withGap.queueMedianSeconds).toBeCloseTo(2, 2);
+    expect(withGap.bootMedianSeconds).toBeCloseTo(6, 2);
   });
 });
 
@@ -3317,6 +3375,56 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     const one = await (await get("/alice/trickle")).text();
     expect(one).toContain("not enough deploys this week to say");
     expect(one).not.toContain("reaches its preview in");
+  });
+
+  test("the split reads as the total's explanation, and says when it is drawn from fewer deploys", async () => {
+    const seedDeploy = (
+      createdAt: string,
+      startedAt: string | null,
+      servingAt: string,
+    ): void => {
+      const deploy = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+      app.db
+        .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+        .run(deploy.id, createdAt);
+      if (startedAt !== null) {
+        app.db
+          .query("UPDATE run SET started_at = ?2 WHERE id = ?1")
+          .run(deploy.id, startedAt);
+      }
+      app.db
+        .query("UPDATE run SET serving_at = ?2 WHERE id = ?1")
+        .run(deploy.id, servingAt);
+    };
+    // Three deploys with a known queue and boot each.
+    const now = Date.now();
+    const segments: readonly (readonly [number, number])[] = [
+      [1, 3],
+      [2, 6],
+      [3, 9],
+    ];
+    segments.forEach(([queue, boot], i) => {
+      const createdAt = now + i * 1_000;
+      const startedAt = createdAt + queue * 1_000;
+      const servingAt = startedAt + boot * 1_000;
+      seedDeploy(
+        new Date(createdAt).toISOString(),
+        new Date(startedAt).toISOString(),
+        new Date(servingAt).toISOString(),
+      );
+    });
+    // A fourth, served deploy with no `started_at`: it feeds the total but
+    // is left out of the split.
+    seedDeploy(
+      new Date(now + 3_000).toISOString(),
+      null,
+      new Date(now + 100_000).toISOString(),
+    );
+    const page = await (await get("/alice/trickle")).text();
+    expect(page).toContain("4 deploys");
+    expect(page).toContain("2.0s waiting");
+    // Only 3 of the 4 served deploys carried a `started_at`: the split says so.
+    expect(page).toContain("6.0s coming up (3 of 4)");
   });
 });
 
