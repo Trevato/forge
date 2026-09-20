@@ -11,6 +11,9 @@ import { join } from "node:path";
  */
 describe("a pull closed under a running agent", () => {
   test("the run is cancelled, and its clone goes after it, not before", async () => {
+    // Cancellation must beat the fake agent's think by a wide margin, not
+    // by luck: the think, the run timeout and this test's own deadline are
+    // three different numbers, none of them close to another.
     const { createApp } = await import("../src/app.ts");
     const { serve } = await import("../src/http/server.ts");
     const { startCrew } = await import("../src/crew/dispatch.ts");
@@ -28,7 +31,9 @@ describe("a pull closed under a running agent", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-landing-"));
     const app = createApp({ dataDir, port: 0 });
     const servers = await serve(app);
-    // An agent that settles in for a long think.
+    // An agent that settles in for a long think — long enough that it
+    // cannot possibly finish on its own before the test does, so the only
+    // way the run ends is by being cancelled.
     const fake = join(dataDir, "fake-claude");
     writeFileSync(
       fake,
@@ -36,7 +41,7 @@ describe("a pull closed under a running agent", () => {
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
 IFS= read -r first
 echo '{"type":"system","subtype":"init","session_id":"s3","model":"fake"}'
-sleep 60
+sleep 1800
 `,
     );
     chmodSync(fake, 0o755);
@@ -46,12 +51,14 @@ sleep 60
       binary: fake,
       concurrency: 1,
       budgetUsd: 1,
-      runTimeoutMs: 60_000,
+      // Far past anything this test waits for: the run's own timeout must
+      // never be what ends it here, only the pull closing.
+      runTimeoutMs: 10 * 60_000,
     });
     const until = async <T>(
       read: () => T | undefined,
       what: string,
-      ms = 20_000,
+      ms = 10_000,
     ): Promise<T> => {
       const deadline = Date.now() + ms;
       while (Date.now() < deadline) {
@@ -124,20 +131,29 @@ sleep 60
       const clone = workdirFor(dataDir, bot, repo, 1);
       await until(() => (existsSync(clone) ? true : undefined), "the clone");
 
-      // The pull closes under it.
+      // The pull closes under it. Cancelling is a signal, not a wait for
+      // the agent to notice on its own — it must land in a few seconds,
+      // not sometime before the fake agent's 1800-second think ends.
+      const closedAt = Date.now();
       expect(setIssueState(app, alice, repo, asIssue, "closed").ok).toBe(true);
-      const ended = await until(() => {
-        const r = listRuns(app.db, repo.id, { kind: "agent" }).find(
-          (x) => x.id === run.id,
-        );
-        return r && r.state !== "running" ? r : undefined;
-      }, "the run's end");
+      const ended = await until(
+        () => {
+          const r = listRuns(app.db, repo.id, { kind: "agent" }).find(
+            (x) => x.id === run.id,
+          );
+          return r && r.state !== "running" ? r : undefined;
+        },
+        "the run's end",
+        5_000,
+      );
+      expect(Date.now() - closedAt).toBeLessThan(5_000);
       expect(ended.state).toBe("cancelled");
       expect(ended.summary).toBe("the pull closed");
       // The clone went with the run, once the run was over.
       await until(
         () => (existsSync(clone) ? undefined : true),
         "the clone's end",
+        5_000,
       );
       const log = readFileSync(join(dataDir, "runs", `${run.id}.log`), "utf8");
       expect(log).not.toContain("the run failed");
@@ -154,5 +170,5 @@ sleep 60
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  });
+  }, 25_000);
 });

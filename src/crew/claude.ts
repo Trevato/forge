@@ -139,6 +139,10 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    // Its own session, so a cancel can reach whatever it spawned in turn
+    // (a tool call left running) and not just the agent itself: a signal
+    // to one pid never touches a grandchild holding stdout open.
+    detached: true,
   });
   // What the agent hears: the prompt first, then whatever a person says
   // while it works. Each is a user turn; the session ends when the forge
@@ -243,13 +247,23 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     // `user` records are tool results: long and mostly file contents.
   };
 
+  // Signals the whole process group (a negative pid), so anything the
+  // agent spawned in turn goes with it; falls back to the process alone
+  // if the group is already gone.
+  const signalGroup = (sig: "SIGTERM" | "SIGKILL"): void => {
+    try {
+      process.kill(-proc.pid, sig);
+    } catch {
+      proc.kill(sig);
+    }
+  };
   let why: "timeout" | "cancelled" | undefined;
   const stopChild = (): void => {
     closeInput();
-    proc.kill("SIGTERM");
+    signalGroup("SIGTERM");
     setTimeout(() => {
       if (proc.exitCode === null && proc.signalCode === null)
-        proc.kill("SIGKILL");
+        signalGroup("SIGKILL");
     }, 5_000);
   };
   const timer = setTimeout(() => {
