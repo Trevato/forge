@@ -434,7 +434,16 @@ describe("dev's vocabulary never reaches a studio page", () => {
     // same path — and nothing else in this file changes.
     pages = [
       { word: "home", path: "/" },
-      { word: "app", path: repoPath },
+      {
+        // The repo header's tab strip (every studio page carries it): the
+        // tab to the changes list names its own noun, never the five-word
+        // "look" a green pull earns, and never that word's own eye icon —
+        // both stay the picture card's and the word badge's alone (#172).
+        word: "app",
+        path: repoPath,
+        shows: [`href="#i-pull"/></svg>Changes`],
+        hides: [`href="#i-eye"/></svg>Look`, `>Look<`],
+      },
       {
         word: "tell",
         path: `${repoPath}/issues/${tellNumber}`,

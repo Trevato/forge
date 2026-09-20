@@ -173,9 +173,12 @@ export function scopeHeader(
       shortcut: "g i",
     },
     {
-      label: studio ? "Look" : "Pulls",
+      // "Look" is the five-word state a green pull is in, and the name of
+      // the picture card on one — not the noun for this list, which is the
+      // same one `/changes` and "Every change" already use.
+      label: studio ? "Changes" : "Pulls",
       href: studio ? changesHref(base) : `${base}/pulls`,
-      icon: studio ? "eye" : "pull",
+      icon: "pull",
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
       shortcut: "g p",

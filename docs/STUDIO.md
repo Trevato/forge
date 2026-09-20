@@ -196,13 +196,18 @@ a tell's dependencies and the change that closes it, a run's own tell, the
 search box and the command palette — so a person is never handed two
 addresses for one thing. The app page's own footer (`the map · everything
 told · every change`, and *Every run* above **Now**) and the repository
-header's tabs (`Told`, `Look`, in place of dev's `Issues`, `Pulls`) link
+header's tabs (`Told`, `Changes`, in place of dev's `Issues`, `Pulls`) link
 to `/tells` and `/changes`; dev's `Commits`/`Branches` stay dev's alone.
 `/runs` has no second noun — the studio and dev share the one address
 there. What a page *posts* to never moves with the noun: ship, close,
 comment and decide keep posting under `/issues/:number` and
 `/pulls/:number`, which is what `form-action 'self'` and the same-origin
 checks are written against.
+
+*Look* is spoken for by the five-word table above (a pull green and ready
+for a person's own look) and by the picture card on one (`lookCard`,
+docs/APPS.md, *The look*); the tab to this list, and the list itself, use
+*change* instead, so the word never means a third thing on the same page.
 
 A row's word comes from `tellWord`, `pullWord` or `runWord` — the one place
 each is decided, never re-derived here. `?word=told|working|look|shipped|
