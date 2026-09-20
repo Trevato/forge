@@ -38,6 +38,7 @@ import {
   getRun,
   markServing,
   noteRunProgress,
+  previewLatency,
   type Run,
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -2690,6 +2691,32 @@ describe("a stranger sees the app, not the owner's books", () => {
       by: "rule",
       ms: 3,
     });
+
+    // Three served deploys this week, median 4.0s, and a fourth that never
+    // answered — excluded, not a zero that would drag the median down.
+    const now = Date.now();
+    for (const [offsetMs, durationMs] of [
+      [0, 2_000],
+      [1_000, 4_000],
+      [2_000, 6_000],
+      [3_000, null],
+    ] as const) {
+      const deploy = createRun(app.db, {
+        repoId: repo.id,
+        kind: "deploy",
+        env: "production",
+        commitOid: "cafefeed",
+        reason: "push",
+      });
+      app.db
+        .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+        .run(deploy.id, new Date(now + offsetMs).toISOString());
+      if (durationMs !== null) {
+        app.db
+          .query("UPDATE run SET serving_at = ?2 WHERE id = ?1")
+          .run(deploy.id, new Date(now + offsetMs + durationMs).toISOString());
+      }
+    }
   });
 
   afterAll(async () => {
@@ -2715,12 +2742,20 @@ describe("a stranger sees the app, not the owner's books", () => {
       expect(page).toContain(">Shipped<");
       expect(page).toContain("1 change");
       expect(page).toContain("Open the app");
+      // The direction's own number is the same owner's-books fact as spend
+      // and the ledger: a stranger and an anonymous visitor see neither.
+      expect(page).not.toContain(">Preview<");
+      expect(page).not.toContain("reaches its preview");
     }
 
     expect(owner).toContain("$42.50");
     expect(owner).toContain("keeper");
     expect(owner).toContain(">On its own<");
     expect(owner).toContain(">Decided<");
+    // Three served deploys this week — 2.0s, 4.0s and 6.0s — median 4.0s;
+    // the fourth, never served, does not drag it toward zero.
+    expect(owner).toContain("reaches its preview in 4.0s");
+    expect(owner).toContain("· 3 deploys");
   });
 
   test("the app's live fragment carries no owner fact either", async () => {
@@ -2941,5 +2976,172 @@ describe("servedPhrase", () => {
         env({ createdAt: "not a time", servingAt: "2026-01-01T00:00:02.500Z" }),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("previewLatency: the median seconds from push to serving", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let repo: Repo;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-preview-latency-"));
+    app = createApp({ dataDir, port: 0 });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, {
+      name: "latency",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+  });
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  /** A deploy run stamped with a known push instant and, unless null, a known serving instant. */
+  const seedDeploy = (createdAt: string, servingAt: string | null): void => {
+    const deploy = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(deploy.id, createdAt);
+    if (servingAt !== null) {
+      app.db
+        .query("UPDATE run SET serving_at = ?2 WHERE id = ?1")
+        .run(deploy.id, servingAt);
+    }
+  };
+
+  test("no deploys, a never-served one, and the median of a growing set — all against one window", () => {
+    const now = Date.now();
+    const since = new Date(now - 60_000).toISOString();
+
+    // Nothing seeded yet: undefined, never a zero.
+    expect(previewLatency(app.db, repo.id, since)).toBeUndefined();
+
+    // Before the window: a very slow deploy that must not pull the median up.
+    seedDeploy(
+      new Date(now - 10 * 24 * 60 * 60_000).toISOString(),
+      new Date(now - 10 * 24 * 60 * 60_000 + 600_000).toISOString(),
+    );
+    expect(previewLatency(app.db, repo.id, since)).toBeUndefined();
+
+    // A deploy that never served is left out, not counted as a zero.
+    seedDeploy(new Date(now).toISOString(), null);
+    expect(previewLatency(app.db, repo.id, since)).toBeUndefined();
+
+    // Three served deploys, seeded out of order: an odd-count median.
+    const durations = [2, 6, 4]; // seconds
+    durations.forEach((d, i) => {
+      const createdAt = new Date(now + i * 1_000).toISOString();
+      seedDeploy(
+        createdAt,
+        new Date(Date.parse(createdAt) + d * 1_000).toISOString(),
+      );
+    });
+    const odd = previewLatency(app.db, repo.id, since)!;
+    expect(odd.n).toBe(3);
+    expect(odd.medianSeconds).toBeCloseTo(4, 2);
+
+    // A fourth deploy, 10s: the even-count median is the mean of the middle two.
+    const createdAt = new Date(now + 3_000).toISOString();
+    seedDeploy(
+      createdAt,
+      new Date(Date.parse(createdAt) + 10_000).toISOString(),
+    );
+    const even = previewLatency(app.db, repo.id, since)!;
+    expect(even.n).toBe(4);
+    expect(even.medianSeconds).toBeCloseTo(5, 2);
+  });
+});
+
+describe("the studio's own words for how fast a change reaches its preview", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let ownerCookie: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-preview-latency-page-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ownerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "trickle",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "trickle" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${ownerCookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  test("fewer than three served deploys this week says so plainly rather than a median of one", async () => {
+    const before = await (await get("/alice/trickle")).text();
+    expect(before).toContain("not enough deploys this week to say");
+    expect(before).not.toContain("reaches its preview in");
+
+    const deploy = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      reason: "push",
+    });
+    markServing(app.db, deploy.id);
+    const one = await (await get("/alice/trickle")).text();
+    expect(one).toContain("not enough deploys this week to say");
+    expect(one).not.toContain("reaches its preview in");
   });
 });

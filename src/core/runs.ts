@@ -590,6 +590,44 @@ export function latestAgentRunsForRepos(
   return out;
 }
 
+/** How fast this app's deploys have reached their preview: the median, and the count it is drawn from. */
+export interface PreviewLatency {
+  readonly medianSeconds: number;
+  readonly n: number;
+}
+
+/**
+ * The median seconds from push (`created_at`) to serving (`serving_at`)
+ * over this repo's deploys since `since` — the same reference instant
+ * `servedPhrase` (`web/ui.ts`) words a single deploy from. A deploy that
+ * never served says nothing about speed and is left out, never a zero.
+ * One query, bounded by `limit` and served by the `run_repo` index (it
+ * walks newest-first and stops at the cap), never a scan of the table.
+ */
+export function previewLatency(
+  db: Database,
+  repoId: string,
+  since: string,
+  limit = 500,
+): PreviewLatency | undefined {
+  const secs = db
+    .query<{ secs: number }, [string, string, number]>(
+      `SELECT (julianday(serving_at) - julianday(created_at)) * 86400 AS secs
+         FROM run
+        WHERE repo_id = ?1 AND kind = 'deploy' AND serving_at IS NOT NULL
+          AND created_at >= ?2
+        ORDER BY id DESC LIMIT ?3`,
+    )
+    .all(repoId, since, limit)
+    .map((r) => r.secs)
+    .sort((a, b) => a - b);
+  if (secs.length === 0) return undefined;
+  const mid = Math.floor(secs.length / 2);
+  const medianSeconds =
+    secs.length % 2 === 0 ? (secs[mid - 1]! + secs[mid]!) / 2 : secs[mid]!;
+  return { medianSeconds, n: secs.length };
+}
+
 /** Agent runs queued or running across many repositories, newest first. */
 export function listActiveRuns(
   db: Database,

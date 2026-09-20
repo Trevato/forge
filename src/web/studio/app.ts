@@ -13,7 +13,12 @@ import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
 import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
-import { latestRunsForIssues, listRuns } from "../../core/runs.ts";
+import {
+  latestRunsForIssues,
+  listRuns,
+  previewLatency,
+  type PreviewLatency,
+} from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -65,6 +70,24 @@ function decisionWords(stats: readonly DecisionStat[]): Html {
     >`;
 }
 
+/** Below this many served deploys a median is one or two points, not a trend. */
+const PREVIEW_LATENCY_MIN = 3;
+
+/**
+ * How fast a change has reached its preview this week, worded like the
+ * reference instant in `servedPhrase` (`web/ui.ts`): "reaches its preview
+ * in 6.1s". Too few served deploys to trust a median, and the line says so
+ * rather than printing one from a run or two.
+ */
+function previewLatencyWords(latency: PreviewLatency | undefined): Html {
+  if (latency === undefined || latency.n < PREVIEW_LATENCY_MIN)
+    return html`<span class="muted small"
+      >not enough deploys this week to say</span
+    >`;
+  return html`reaches its preview in ${latency.medianSeconds.toFixed(1)}s
+    <span class="muted">· ${latency.n} deploys</span>`;
+}
+
 export async function studioApp(
   ctx: Ctx,
   repo: Repo,
@@ -110,6 +133,9 @@ export async function studioApp(
     : [];
   const spent = weekRuns.reduce((s, r) => s + r.costUsd, 0);
   const ledgerWeek = ownerFacts ? decisionStats(db, repo.id, week) : [];
+  const weekLatency = ownerFacts
+    ? previewLatency(db, repo.id, week)
+    : undefined;
   const autonomy =
     !ownerFacts || repo.autonomy === "off"
       ? undefined
@@ -305,6 +331,8 @@ export async function studioApp(
           <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
           <dt>Runs</dt>
           <dd>${weekRuns.length}</dd>
+          <dt>Preview</dt>
+          <dd>${previewLatencyWords(weekLatency)}</dd>
           <dt>Spent</dt>
           <dd>
             $${spent.toFixed(2)}${shipped > 0
