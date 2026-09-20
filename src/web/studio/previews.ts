@@ -39,6 +39,34 @@ import {
 import { lookNow } from "../pages/looks.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 
+/**
+ * The primary button, offered only once production answers — a preview
+ * whose tests failed is still serving, so `running` is enough, `error`
+ * clear or not (#118). Anything short of that gets the same button shape,
+ * disabled, with the reason it is not there in its title: never a link to
+ * a host nothing is serving yet.
+ */
+function openAppBtn(base: string, env: EnvStatus | undefined): Html {
+  if (env?.state === "running")
+    return btn("Open the app", {
+      href: `${base}/app/production/open`,
+      variant: "primary",
+      icon: "external",
+    });
+  const reason =
+    env === undefined || env.state === "stopped"
+      ? "Not running"
+      : env.state === "deploying"
+        ? "Still deploying"
+        : "The last deploy failed";
+  return btn("Open the app", {
+    variant: "primary",
+    icon: "external",
+    disabled: true,
+    title: reason,
+  });
+}
+
 /** The three words the studio uses for a preview, whatever its check says. */
 function previewBadge(state: EnvState | undefined): Html {
   if (state === "running")
@@ -191,10 +219,12 @@ export function appPanels(
         ${repo.description || "No description yet."}
         ${url === undefined
           ? null
-          : html`·
-              <a href="${base}/app/production/open" class="mono"
-                >${url.replace(/^https?:\/\//, "")}</a
-              >`}
+          : production?.state === "running"
+            ? html`·
+                <a href="${base}/app/production/open" class="mono"
+                  >${url.replace(/^https?:\/\//, "")}</a
+                >`
+            : html`· <span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
       </p>
       ${when(production, (env) => envFacts(base, env))}
       ${when(writer, () =>
@@ -207,11 +237,7 @@ export function appPanels(
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
-    ${btn("Open the app", {
-      href: `${base}/app/production/open`,
-      variant: "primary",
-      icon: "external",
-    })}
+    ${openAppBtn(base, production)}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
   return { head, previews, deployTailing: tail !== undefined };

@@ -1913,6 +1913,7 @@ describe("the studio head says why the app is not up", () => {
     readonly chain: Promise<void>;
     readonly restarts: number[];
     readonly live?: unknown;
+    readonly deploying?: unknown;
     readonly lastError?: string;
     readonly lastRunId?: string;
   }
@@ -1994,7 +1995,7 @@ describe("the studio head says why the app is not up", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("a failed production says what failed, links its deploy, and offers Redeploy to a writer only", async () => {
+  test("a failed production says what failed, links its deploy, and offers Redeploy to a writer only — and offers no live link to the host", async () => {
     put({
       lastError: "the deploy failed: <install> exited 1",
       lastRunId: deploy,
@@ -2007,6 +2008,8 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).toContain(`href="/alice/notes/runs/${deploy}"`);
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
     expect(mine).toContain('action="/alice/notes/app/production/stop"');
+    expect(mine).not.toContain('href="/alice/notes/app/production/open"');
+    expect(mine).toContain('title="The last deploy failed"');
 
     const theirs = await head(reader);
     expect(theirs).toContain("not up");
@@ -2014,17 +2017,30 @@ describe("the studio head says why the app is not up", () => {
     expect(theirs).toContain(`href="/alice/notes/runs/${deploy}"`);
     expect(theirs).not.toContain("/app/production/redeploy");
     expect(theirs).not.toContain("/app/production/stop");
+    expect(theirs).not.toContain('href="/alice/notes/app/production/open"');
   });
 
-  test("a stopped production says it is not running and offers Redeploy, not Stop", async () => {
+  test("a stopped production says it is not running and offers Redeploy, not Stop — and no live link to the host", async () => {
     put({ lastRunId: deploy });
     const mine = await head(writer);
     expect(mine).toContain("not running");
     expect(mine).toContain('action="/alice/notes/app/production/redeploy"');
     expect(mine).not.toContain('action="/alice/notes/app/production/stop"');
+    expect(mine).not.toContain('href="/alice/notes/app/production/open"');
+    expect(mine).toContain('title="Not running"');
   });
 
-  test("a serving app with red tests still reads as serving, with the failure in its own words", async () => {
+  test("a deploying production says so where the button was, not a link to a host nothing is serving yet", async () => {
+    put({
+      deploying: { run: { id: deploy, commitOid: "0".repeat(40) } },
+    });
+    const mine = await head(writer);
+    expect(mine).toContain("starting");
+    expect(mine).not.toContain('href="/alice/notes/app/production/open"');
+    expect(mine).toContain('title="Still deploying"');
+  });
+
+  test("a serving app with red tests still reads as serving, with the failure in its own words, and is still open-able", async () => {
     put({
       live: {
         commitOid: "0".repeat(40),
@@ -2039,6 +2055,7 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).toContain("serving · tests failed");
     expect(mine).not.toContain("not up");
     expect(mine).toContain("serving · tests failed: 1 of 3 tests failed");
+    expect(mine).toContain('href="/alice/notes/app/production/open"');
   });
 });
 
@@ -2545,6 +2562,41 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     // finishRun never ran: run.finished has not fired, yet app.serving
     // already has. That gap is the whole point of the issue.
     expect(getRun(app.db, deployRun.id)?.state).toBe("running");
+  });
+
+  test("production's Open the app link appears only once it is serving, and the fragment after a swap flips it", async () => {
+    const link = 'href="/alice/vault/app/production/open"';
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "cafed00d",
+      reason: "push",
+    });
+    claimRun(app.db, deployRun.id);
+    putEnv("production", {
+      deploying: {
+        run: { id: deployRun.id, commitOid: "cafed00d" },
+        abort: new AbortController(),
+      },
+    });
+    const deploying = await (await get("/alice/vault/app/state", owner)).text();
+    expect(deploying).toContain("starting");
+    expect(deploying).not.toContain(link);
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    putEnv("production", {
+      live: {
+        commitOid: "cafed00d",
+        handle: { port: 4325 },
+        runId: deployRun.id,
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+    const serving = await (await get("/alice/vault/app/state", owner)).text();
+    expect(serving).toContain(">live<");
+    expect(serving).toContain(link);
   });
 });
 
