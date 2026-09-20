@@ -2,6 +2,22 @@
 
 A software forge you can read in an afternoon and mold by hand.
 
+It runs the apps it hosts, and a **crew** of agents builds them. You describe
+an app in a sentence; the sentence becomes an issue, and the agent it is
+assigned to works it in its own fork and opens a pull. Every push redeploys
+that pull's own preview — its own URL, on its own copy of production's data —
+and every deploy is the check on that pull. No agent can move the default
+branch, so the only way code reaches production is a merge a person made: the
+crew proposes, you decide what ships.
+
+That view is the **studio**, and it is the front door — a browser with no
+`forge_mode` cookie lands there. It speaks five words for the whole loop:
+_tell_, _working_, _look_, _shipped_, and _asks you_, the last being everything
+waiting on a person to answer. [`docs/STUDIO.md`](docs/STUDIO.md) is the tour;
+[`docs/APPS.md`](docs/APPS.md) is the contract for apps, previews and runs. The
+git underneath is one click away — the switch in the top bar, or `?mode=dev` on
+any URL — and it is the rest of this page.
+
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
 stays that way. Everything worth having is written here: the Result type, the
@@ -267,10 +283,9 @@ mechanical rather than advisory.
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew.
 
-`docs/STUDIO.md` is the forge with apps as the unit: tell, working, look,
-shipped, asks you. It is the front door — a browser with no `forge_mode`
-cookie lands there — and the switch to dev, in the top bar or `?mode=dev`
-on any URL, is one click either way.
+`docs/STUDIO.md` is the front door from the top of this page in full: the five
+words and where each is decided, the box, what asks you, the three lists, a
+tell, a run and a change each on its own page, and the board.
 
 ## Develop
 
