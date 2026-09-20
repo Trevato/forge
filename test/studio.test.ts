@@ -4448,3 +4448,159 @@ describe("finding things in the studio: /search", () => {
     expect(html).toContain("Issues and pull requests");
   });
 });
+
+describe("every studio page's headings form one outline", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let cookie: string;
+  let issueNumber: number;
+  let pullNumber: number;
+  let runId: string;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  /** Every `<hN>` tag in document order, and whether the outline it forms
+   * is one a heading-jumping reader can follow: exactly one `<h1>`, and
+   * never a level deeper than one past the deepest seen so far. */
+  function headingOutline(html: string): { levels: number[]; ok: boolean } {
+    const levels = [...html.matchAll(/<h([1-6])(?:[ >])/g)].map((m) =>
+      Number(m[1]),
+    );
+    const h1s = levels.filter((l) => l === 1).length;
+    let deepest = 0;
+    let skipped = false;
+    for (const level of levels) {
+      if (level > deepest + 1) skipped = true;
+      deepest = Math.max(deepest, level);
+    }
+    return { levels, ok: h1s === 1 && !skipped };
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-outline-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "outline",
+      visibility: "private",
+      description: "for the outline",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"outline","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "outline" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    const told = openIssue(app, alice, repo, {
+      title: "Outline test tell",
+      body: "for the heading walk",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    issueNumber = told.value.number;
+
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/outline",
+      base: "main",
+      message: "Outline change",
+      files: [{ path: "OUTLINE.md", content: "outline\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Outline test change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/outline",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    pullNumber = opened.value.number;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: alice.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "done" });
+    runId = run.id;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the studio home has exactly one h1, said in the studio's own words, and no skipped heading level", async () => {
+    const html = await (await get("/")).text();
+    const outline = headingOutline(html);
+    expect(outline.levels.filter((l) => l === 1).length).toBe(1);
+    expect(outline.ok).toBe(true);
+    expect(html).toMatch(/<h1 class="sr-only">Studio<\/h1>/);
+  });
+
+  test("the app page, the three lists, a tell, a change and a run each have one outline with no skipped level", async () => {
+    const pages: Record<string, string> = {
+      "the app page": "/alice/outline",
+      "everything told": "/alice/outline/tells",
+      "every change": "/alice/outline/changes",
+      "every run": "/alice/outline/runs",
+      "a tell": `/alice/outline/issues/${issueNumber}`,
+      "a change": `/alice/outline/pulls/${pullNumber}`,
+      "a run": `/alice/outline/runs/${runId}`,
+      "settings": "/alice/outline/settings",
+    };
+    for (const [name, path] of Object.entries(pages)) {
+      const html = await (await get(path)).text();
+      const outline = headingOutline(html);
+      if (
+        outline.levels[0] !== 1 ||
+        outline.levels.filter((l) => l === 1).length !== 1 ||
+        !outline.ok
+      )
+        throw new Error(`${name} (${path}): ${JSON.stringify(outline)}`);
+    }
+  });
+});

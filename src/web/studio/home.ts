@@ -124,7 +124,8 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
           { head: nowHead },
         );
 
-  const body = html`<div class="dash">
+  const body = html`<h1 class="sr-only">Studio</h1>
+  <div class="dash">
     <div class="dash-main stack">
       <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">${asks}</div>
       <div
