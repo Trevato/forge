@@ -34,6 +34,12 @@ bun install          # dev-only: types + tsc, no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222
 ```
 
+If your shell already has `FORGE_URL` set — a crew workspace sets it to the
+forge you work for — this forge takes it as its own canonical address and
+refuses every form a browser posts to `localhost`: run it with
+`env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
+will actually browse it.
+
 The first account you create becomes the admin — from the browser, the API, or
 a terminal (`ssh -p 2222 localhost` on a fresh forge offers to create it). Then:
 

@@ -1014,7 +1014,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 }
 
 export function logoutSubmit(ctx: Ctx): Response {
-  if (crossOrigin(ctx.request, ctx.url))
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
   const cookie = ctx.request.headers.get("cookie") ?? "";
   const match = cookie.match(/forge_session=([^;]+)/);

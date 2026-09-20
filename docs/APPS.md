@@ -180,6 +180,11 @@ The forge starts the app with:
 | `FORGE_APP_SSH`    | the exact `ssh …` that opens this environment's terminal, when SSH is on |
 | `FORGE_URL`        | the forge's own base URL                                                 |
 
+That last one is for the app to call the forge back on, not to run the forge
+software itself — a shell that already has it set (a crew workspace does)
+will make a locally-run forge refuse browser form posts as cross-site; see
+`README.md`'s "Run it".
+
 A terminal session (`tty`) gets the same variables plus `FORGE_APP_TTY=1`
 and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
 

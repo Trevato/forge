@@ -174,7 +174,8 @@ export function requireScope(
   needed: TokenScope,
 ): Response | undefined {
   if (!ctx.auth.user || ctx.auth.scope === undefined) return unauthorized();
-  if (browserAuth(ctx) && crossOrigin(ctx.request, ctx.url)) return forbidden();
+  if (browserAuth(ctx) && crossOrigin(ctx.request, ctx.url, ctx.app.log))
+    return forbidden();
   if (!scopeAllows(ctx.auth.scope, needed)) return forbidden();
   return undefined;
 }
@@ -191,7 +192,9 @@ export function requireAccount(
 ): Response | undefined {
   if (!ctx.auth.user) return unauthorized();
   if (browserAuth(ctx))
-    return crossOrigin(ctx.request, ctx.url) ? forbidden() : undefined;
+    return crossOrigin(ctx.request, ctx.url, ctx.app.log)
+      ? forbidden()
+      : undefined;
   if (ctx.auth.via === "password") return undefined;
   if (
     options.adminToken &&

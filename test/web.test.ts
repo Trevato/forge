@@ -753,3 +753,75 @@ describe("the security floor is on every response", () => {
     expect(own.headers.get("x-content-type-options")).toBe("nosniff");
   });
 });
+
+describe("a refused cross-origin mutation says why in the log", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-crossorigin-"));
+    app = createApp({ dataDir, port: 0, url: "https://forge.example" });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function post(
+    username: string,
+    origin: string | undefined,
+  ): Promise<{ status: number; logs: string }> {
+    const logs: string[] = [];
+    const wrote = (...args: unknown[]): void => {
+      logs.push(args.map(String).join(" "));
+    };
+    const real = { log: console.log, warn: console.warn, error: console.error };
+    console.log = wrote;
+    console.warn = wrote;
+    console.error = wrote;
+    let response: Response;
+    try {
+      response = await fetch(`${base}/signup`, {
+        method: "POST",
+        ...(origin === undefined ? {} : { headers: { origin } }),
+        body: new URLSearchParams({
+          username,
+          email: `${username}@forge.example`,
+          password: "not-from-here-either",
+        }),
+        redirect: "manual",
+      });
+    } finally {
+      console.log = real.log;
+      console.warn = real.warn;
+      console.error = real.error;
+    }
+    return { status: response.status, logs: logs.join("\n") };
+  }
+
+  test("a mismatched origin is refused and logged with both origins", async () => {
+    const { status, logs } = await post("mallory", base);
+    expect(status).toBe(403);
+    expect(logs).toContain("refused cross-origin mutation");
+    expect(logs).toContain(`origin=${base}`);
+    expect(logs).toContain("expected=https://forge.example");
+  });
+
+  test("the matching origin passes, and logs nothing about it", async () => {
+    const { status, logs } = await post("ada", "https://forge.example");
+    expect(status).toBe(303);
+    expect(logs).not.toContain("refused cross-origin mutation");
+  });
+
+  test("no Origin header at all also passes, and logs nothing about it", async () => {
+    const { status, logs } = await post("bob", undefined);
+    expect(status).toBe(303);
+    expect(logs).not.toContain("refused cross-origin mutation");
+  });
+});

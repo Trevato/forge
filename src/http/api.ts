@@ -775,7 +775,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("DELETE", "/api/v1/sessions", (ctx) => {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
-    if (crossOrigin(ctx.request, ctx.url)) return forbidden();
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     const token = cookieValue(ctx.request, "forge_session");
     if (token !== undefined) destroySession(ctx.app.db, token);
     return json({}, 200, {
@@ -859,7 +859,7 @@ export function apiRoutes(router: Router<Handler>): void {
       (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
       ctx.auth.user
     ) {
-      if (crossOrigin(ctx.request, ctx.url)) return forbidden();
+      if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
       user = ctx.auth.user;
     } else {
       const verified = await verifyPassword(

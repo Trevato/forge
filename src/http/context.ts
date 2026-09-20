@@ -7,6 +7,7 @@ import type { App } from "../app.ts";
 import type { TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import type { ThemeName } from "../design/themes.ts";
+import type { Log } from "../kernel/log.ts";
 import type { Mode } from "../web/mode.ts";
 
 export interface Auth {
@@ -55,10 +56,18 @@ export function publicUrl(request: Request, base: string | undefined): URL {
  * Browser CSRF: a session-cookie mutation must originate from this forge.
  * Browsers always send Origin on cross-site requests; a missing Origin
  * means a non-browser client, which cookies alone cannot impersonate.
+ *
+ * A mismatch is logged — one line, the two origins, nothing else — because
+ * the usual cause is `FORGE_URL` naming somewhere other than where the
+ * browser is (README's "Run it"), and that is otherwise silent: the response
+ * stays a terse `forbidden` on purpose, so the reason has to live in the log.
  */
-export function crossOrigin(request: Request, url: URL): boolean {
+export function crossOrigin(request: Request, url: URL, log?: Log): boolean {
   const origin = request.headers.get("origin");
-  return origin !== null && origin !== url.origin;
+  const mismatch = origin !== null && origin !== url.origin;
+  if (mismatch)
+    log?.warn("refused cross-origin mutation", { origin, expected: url.origin });
+  return mismatch;
 }
 
 /** One cookie's value from the request, or undefined when absent. */
