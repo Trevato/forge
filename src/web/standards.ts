@@ -28,21 +28,25 @@ function text(body: string, type = "text/plain; charset=utf-8"): Response {
   });
 }
 
-/** The address a vulnerability report goes to: configured, else the forge's first account. */
+/**
+ * Where a vulnerability report goes. An address is published only when the
+ * operator wrote one down for the purpose: a default must never put a
+ * person's email on the open web. Without one, the contact is the first
+ * account's page on this forge — already public, and a real way to reach
+ * whoever runs it.
+ */
 function securityContact(ctx: Ctx): string {
   const configured = process.env["FORGE_SECURITY_CONTACT"]?.trim();
   if (configured) return configured;
   const admin = ctx.app.db
     .query<
-      { email: string },
+      { username: string },
       []
-    >("SELECT email FROM user WHERE is_admin = 1 ORDER BY created_at LIMIT 1")
+    >("SELECT username FROM user WHERE is_admin = 1 ORDER BY created_at LIMIT 1")
     .get();
-  // An edge-made account has a noreply address; the forge itself is the
-  // only honest contact then.
-  if (admin !== null && !/@users\.noreply\./.test(admin.email))
-    return `mailto:${admin.email}`;
-  return ctx.url.origin;
+  return admin === null
+    ? `${ctx.url.origin}/`
+    : `${ctx.url.origin}/${admin.username}`;
 }
 
 /** GET /.well-known/security.txt */

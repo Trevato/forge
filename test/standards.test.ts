@@ -53,14 +53,25 @@ describe("what the open web expects", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("security.txt names the first account and a fixed expiry", async () => {
+  test("security.txt has a fixed expiry and never publishes an address by default", async () => {
     const res = await fetch(`${base}/.well-known/security.txt`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/plain");
     const body = await res.text();
-    expect(body).toContain("Contact: mailto:alice@forge.local");
+    // The first account's page, which is already public — never its email.
+    expect(body).toContain(`Contact: ${base}/alice`);
+    expect(body).not.toContain("alice@forge.local");
+    expect(body).not.toContain("mailto:");
     expect(body).toMatch(/Expires: \d{4}-01-01T00:00:00Z/);
     expect(body).toContain(`Canonical: ${base}/.well-known/security.txt`);
+    // An operator who wants an address published writes it down.
+    process.env["FORGE_SECURITY_CONTACT"] = "mailto:security@example.org";
+    try {
+      const set = await fetch(`${base}/.well-known/security.txt`).then((r) => r.text());
+      expect(set).toContain("Contact: mailto:security@example.org");
+    } finally {
+      delete process.env["FORGE_SECURITY_CONTACT"];
+    }
   });
 
   test("change-password sends a password manager to the right page", async () => {
