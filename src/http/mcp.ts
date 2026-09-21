@@ -29,6 +29,7 @@ import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
 import { bringUpToDate } from "../crew/autonomy.ts";
+import { audit } from "../contract/audit.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import { appsOf, decisionsFor, type Decision } from "../web/pages/studio.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -327,6 +328,52 @@ const TOOLS: readonly Tool[] = [
               ? "that run already ended"
               : "no such run here, or not yours to stop",
           );
+    },
+  },
+  {
+    name: "audit",
+    description:
+      "Who can do what, across every app you can see, read from each app's contract.json in git: per app, its identities and every resource × verb answered yes, own or no; or that its contract is unsound, with the problems; or that it has none and its doors are hand-written. Give `repo` for one app's table.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: {
+          ...REPO_ARG,
+          description:
+            "One app, as owner/name; every app you can see when absent.",
+        },
+      },
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const one =
+        typeof args["repo"] === "string" ? repoArg(ctx, user, args) : undefined;
+      if (one !== undefined && isAnswer(one)) return one;
+      const repos = one === undefined ? appsOf(ctx, user).repos : [one];
+      const audited = await Promise.all(
+        repos.map((repo) => audit(ctx.app.reposRoot, repo)),
+      );
+      return good(
+        audited.map((a) => ({
+          app: `${a.repo.ownerName}/${a.repo.name}`,
+          commit: a.oid ?? null,
+          standing: a.standing.kind,
+          ...(a.standing.kind === "unsound"
+            ? { problems: a.standing.problems }
+            : a.standing.kind === "sound"
+              ? {
+                  identities: a.standing.identities,
+                  open: a.standing.open.map((c) => `${c.resource}.${c.verb}`),
+                  cells: a.standing.cells.map((c) => ({
+                    resource: c.resource,
+                    verb: c.verb,
+                    as: c.as,
+                    answer: c.answer,
+                  })),
+                }
+              : {}),
+        })),
+      );
     },
   },
   {

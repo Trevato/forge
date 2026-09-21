@@ -472,6 +472,7 @@ const CONTRACT_JSON = `{
   },
   "resources": {
     "note": {
+      "api": "/api/notes",
       "can": {
         "create": "user",
         "read": "anon",
@@ -617,26 +618,80 @@ export function addNote(
   return ok(note);
 }
 
+/**
+ * One note, for \`who\` to do \`verb\` to. The door is asked before the row is
+ * looked for, so whoever may not is told that and never learns whether the
+ * row exists; whoever may, and asked for nothing, hears \`not_found\`.
+ */
+function noteFor(
+  db: Database,
+  who: Who,
+  verb: "read" | "update" | "delete",
+  id: number,
+  said: { signIn: string; no: string },
+): Result<Note> {
+  const note = Number.isInteger(id)
+    ? db.query<Note, [number]>("SELECT * FROM note WHERE id = ?1").get(id)
+    : null;
+  // With no row to show, the door is asked about a row of their own: whoever
+  // could not pass even then is refused, and learns nothing about what
+  // exists; whoever could is told there is no such note.
+  const row = note ?? { author_id: who.role === "anon" ? null : who.id };
+  if (permit(who, "note", verb, row) !== "yes")
+    return refuse(who, said.signIn, said.no);
+  if (note !== null) return ok(note);
+  if (!Number.isInteger(id))
+    return fail("invalid", "A note id is a whole number.");
+  return fail("not_found", "No such note.");
+}
+
+export function getNote(
+  db: Database,
+  who: Who,
+  input: { id: number },
+): Result<Note> {
+  return noteFor(db, who, "read", input.id, {
+    signIn: "Sign in to read this note.",
+    no: "You may not read this note.",
+  });
+}
+
+export function updateNote(
+  db: Database,
+  who: Who,
+  input: { id: number; body: string },
+): Result<Note> {
+  const found = noteFor(db, who, "update", input.id, {
+    signIn: "Sign in to edit a note.",
+    no: "Only the author or an admin can edit a note.",
+  });
+  if (!found.ok) return found;
+  const body = input.body.trim();
+  if (body.length === 0 || body.length > BODY_MAX)
+    return fail("invalid", \`A note is 1 to \${BODY_MAX} characters.\`);
+  const note = db
+    .query<
+      Note,
+      [string, number]
+    >("UPDATE note SET body = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2 RETURNING *")
+    .get(body, found.value.id)!;
+  emit("note.changed", note);
+  return ok(note);
+}
+
 export function deleteNote(
   db: Database,
   who: Who,
   input: { id: number },
 ): Result<{ id: number }> {
-  const note = Number.isInteger(input.id)
-    ? db.query<Note, [number]>("SELECT * FROM note WHERE id = ?1").get(input.id)
-    : null;
-  if (note === null || !canDelete(who, note)) {
-    // Whoever is not signed in hears that first, whatever they asked for.
-    if (who.role === "anon")
-      return fail("signin_required", "Sign in to remove a note.");
-    if (!Number.isInteger(input.id))
-      return fail("invalid", "A note id is a whole number.");
-    if (note === null) return fail("not_found", "No such note.");
-    return fail("forbidden", "Only the author or an admin can remove a note.");
-  }
-  db.query("DELETE FROM note WHERE id = ?1").run(note.id);
-  emit("note.removed", { id: note.id });
-  return ok({ id: note.id });
+  const found = noteFor(db, who, "delete", input.id, {
+    signIn: "Sign in to remove a note.",
+    no: "Only the author or an admin can remove a note.",
+  });
+  if (!found.ok) return found;
+  db.query("DELETE FROM note WHERE id = ?1").run(found.value.id);
+  emit("note.removed", { id: found.value.id });
+  return ok({ id: found.value.id });
 }
 
 /** Whether \`who\` may remove \`note\`: the table's answer, for the page and the terminal to draw from. */
@@ -1188,7 +1243,9 @@ import type { Database } from "bun:sqlite";
 import {
   addNote,
   deleteNote,
+  getNote,
   listNotes,
+  updateNote,
   type Failure,
   type Result,
 } from "./actions.ts";
@@ -1294,6 +1351,25 @@ export const routes: readonly Route[] = [
       return answer(
         addNote(c.db, c.who, { body: String(fields(body).body ?? "") }),
         201,
+      );
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/notes/:id",
+    handle: (c) => answer(getNote(c.db, c.who, { id: Number(c.params.id) })),
+  },
+  {
+    method: "PATCH",
+    path: "/api/notes/:id",
+    handle: async (c) => {
+      const body = await readJson(c.request);
+      if (body === undefined) return json({ error: "too_large" }, 413);
+      return answer(
+        updateNote(c.db, c.who, {
+          id: Number(c.params.id),
+          body: String(fields(body).body ?? ""),
+        }),
       );
     },
   },
@@ -2046,7 +2122,13 @@ import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { addNote, deleteNote, listNotes } from "./actions.ts";
+import {
+  addNote,
+  deleteNote,
+  getNote,
+  listNotes,
+  updateNote,
+} from "./actions.ts";
 import { actingAs, identities, table, type Verb } from "./can.ts";
 import { contract } from "./contract.ts";
 import { openDb } from "./db.ts";
@@ -2075,6 +2157,9 @@ const doors: Record<string, Partial<Record<Verb, (who: Who, authorId: string) =>
   note: {
     create: (who) => addNote(db, who, { body: "hello" }).ok,
     list: (who) => listNotes(db, who).ok,
+    read: (who, authorId) => getNote(db, who, { id: noteBy(authorId) }).ok,
+    update: (who, authorId) =>
+      updateNote(db, who, { id: noteBy(authorId), body: "changed" }).ok,
     delete: (who, authorId) => deleteNote(db, who, { id: noteBy(authorId) }).ok,
   },
 };
@@ -2083,10 +2168,14 @@ test("the contract names the identities the forge signs", () => {
   expect(identities(contract).sort()).toEqual(["admin", "anon", "user"]);
 });
 
-test("every resource in the contract has its doors here", () => {
+test("every resource in the contract has every door here", () => {
   expect(Object.keys(doors).sort()).toEqual(
     Object.keys(contract.resources).sort(),
   );
+  for (const resource of Object.keys(contract.resources))
+    expect(Object.keys(doors[resource] ?? {}).sort()).toEqual(
+      ["create", "delete", "list", "read", "update"],
+    );
 });
 
 test("every door answers as the table says, as every identity", () => {

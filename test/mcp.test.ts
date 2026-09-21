@@ -161,6 +161,7 @@ describe("the forge over MCP", () => {
       "say",
       "now",
       "stop",
+      "audit",
       "following",
       "take_updates",
       "converge",
@@ -189,6 +190,19 @@ describe("the forge over MCP", () => {
     expect((await tool(bobRw, "apps")).value).toEqual([]);
     expect(
       (await tool(bobRw, "following", { repo: "alice/game" })).error,
+    ).toContain("not_found");
+  });
+
+  test("audit reads each app's contract from git, or says it has none", async () => {
+    const all = await tool(ro, "audit");
+    expect(all.value).toHaveLength(1);
+    expect(all.value[0].app).toBe("alice/game");
+    expect(all.value[0].standing).toBe("unread");
+    const one = await tool(ro, "audit", { repo: "alice/game" });
+    expect(one.value[0].standing).toBe("unread");
+    expect((await tool(bobRw, "audit")).value).toEqual([]);
+    expect(
+      (await tool(bobRw, "audit", { repo: "alice/game" })).error,
     ).toContain("not_found");
   });
 

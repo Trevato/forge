@@ -48,6 +48,13 @@ export interface Role {
 export interface Resource {
   /** The least role each verb needs, or `nobody`. */
   readonly can: Readonly<Record<Verb, string>>;
+  /**
+   * The collection path of this resource's JSON API, when it has one: five
+   * doors follow by convention (`GET api` lists, `POST api` creates,
+   * `GET`/`PATCH`/`DELETE api/<id>` read, update and delete one), which is
+   * how the forge can knock on a running app and compare with the table.
+   */
+  readonly api?: string;
 }
 
 export interface Contract {
@@ -141,6 +148,8 @@ export type Read =
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 const NAME = /^[a-z][a-z0-9_]{0,39}$/;
+/** An absolute path of plain segments: no query, no dot-segments, no host. */
+const API_PATH = /^\/(?:[A-Za-z0-9_-]+\/)*[A-Za-z0-9_-]+$/;
 
 function readHeld(v: unknown): Held | undefined {
   if (!isObject(v)) return undefined;
@@ -187,7 +196,7 @@ export function readContract(text: string): Read {
   const resources: Record<string, Resource> = {};
   for (const [name, v] of Object.entries(raw["resources"])) {
     const can = isObject(v) && isObject(v["can"]) ? v["can"] : undefined;
-    if (!NAME.test(name) || can === undefined) {
+    if (!NAME.test(name) || !isObject(v) || can === undefined) {
       problems.push(`resource \`${name}\`: needs a name and a \`can\` table`);
       continue;
     }
@@ -201,7 +210,15 @@ export function readContract(text: string): Read {
     for (const extra of Object.keys(can))
       if (!VERBS.includes(extra as Verb))
         problems.push(`${name}.${extra}: not one of ${VERBS.join(", ")}`);
-    resources[name] = { can: cells };
+    const api = v["api"];
+    if (api !== undefined && (typeof api !== "string" || !API_PATH.test(api)))
+      problems.push(
+        `resource \`${name}\`: \`api\` is an absolute path of plain segments, like /api/${name}s`,
+      );
+    resources[name] =
+      typeof api === "string" && API_PATH.test(api)
+        ? { can: cells, api }
+        : { can: cells };
   }
   const contract: Contract = { roles, resources };
   problems.push(...check(contract));
