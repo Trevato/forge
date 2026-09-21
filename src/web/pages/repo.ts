@@ -628,6 +628,31 @@ function aboutCard(
 
 // ---- pages ----
 
+/**
+ * Studio's own word for a repository it otherwise has nothing to say about:
+ * no app record, so no head card, no box, no Now — just the code underneath,
+ * same as it always rendered. One line says so, and the one door out —
+ * `/settings/app`, the same "Run as an app" form Settings already carries —
+ * opens only for whoever could actually submit it, so a reader never sees a
+ * button that would just come back refused.
+ */
+function noAppCard(ctx: Ctx, repo: Repo): Html {
+  const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
+  return empty({
+    icon: "rocket",
+    title: "This repository has no app yet.",
+    ...(admin
+      ? {
+          action: btn("Run as an app", {
+            href: `${repoBase(repo)}/settings/app`,
+            variant: "primary",
+            icon: "rocket",
+          }),
+        }
+      : {}),
+  });
+}
+
 /** The tree, the README under it, and the ref switcher above both. */
 export async function renderCode(
   scope: RepoScope,
@@ -843,17 +868,18 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   // In the studio an app's home is the app: what it serves, who is on it,
-  // what it asks. Dev mode is the code, as ever.
-  if (ctx.mode === "studio") {
-    const record = getAppByRepo(ctx.app.db, repo.id);
-    if (record !== undefined) return await studioApp(ctx, repo, record);
-  }
+  // what it asks. Dev mode is the code, as ever. A repository with no app
+  // record has nothing of that to show — read once, used either way below.
+  const studioMode = ctx.mode === "studio";
+  const record = studioMode ? getAppByRepo(ctx.app.db, repo.id) : undefined;
+  if (record !== undefined) return await studioApp(ctx, repo, record);
+  const noApp = studioMode ? noAppCard(ctx, repo) : null;
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);
 
   if (refs.branches.length === 0) {
-    const body = html`${scopeHeader(ctx, scope, "code")}
+    const body = html`${scopeHeader(ctx, scope, "code")}${noApp}
       <div class="mt">
         ${empty({
           icon: "repo",
@@ -906,7 +932,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
 
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}
+  })}${noApp}
   ${appStrip(ctx, repo)} ${forkBar(ctx, repo)}
   ${await renderCode(scope, {
     refs,

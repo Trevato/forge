@@ -58,6 +58,18 @@ page: the studio only offers principled moves.
 
 ## The app
 
+`/:owner/:name` in the studio, on a repository with no app record, keeps
+the studio's own framing rather than silently becoming dev's code page: one
+card above the code says in one line that this repository has no app yet,
+with a door to make it one — `/settings/app`, the same "Run as an app" form
+Settings already carries — open only to whoever could submit it (`canAdmin`);
+a reader sees the sentence with no button that would just come back
+refused. `?mode=dev` on the same URL is unaffected: the card is the studio's
+own, never dev's. `/tells` and `/changes` on such a repository still send a
+studio viewer on to `/issues` and `/pulls`, as they do for any repository
+the studio does not apply to — the card names the one thing to do here,
+not a second front door onto lists that would be empty anyway.
+
 An app's home in the studio (`/:owner/:name`, when the repository is an
 app) shows, top to bottom: what it serves and where; the box; what asks
 you; what is happening now. Beside it, who is on the crew and what each is

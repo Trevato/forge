@@ -222,6 +222,51 @@ describe("the studio", () => {
     expect(dev).toContain(">Commits<");
   });
 
+  test("a repository with no app record keeps the studio's framing: one card, one door to make it one; ?mode=dev is unchanged, and an app itself never shows the card", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainhome",
+      visibility: "public",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const seeded = await commitToBranch(app, alice, plain.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+
+    const studio = await (await get("/alice/plainhome")).text();
+    expect(studio).toContain("This repository has no app yet.");
+    expect(studio).toContain(`href="/alice/plainhome/settings/app"`);
+    expect(studio).toContain("Run as an app");
+
+    // `?mode=dev` on the very same URL renders exactly what it always has:
+    // the code, no card above it at all.
+    const dev = await (
+      await get("/alice/plainhome", { cookie: `${cookie}; forge_mode=dev` })
+    ).text();
+    expect(dev).toContain("README.md");
+    expect(dev).toContain(">Commits<");
+    expect(dev).not.toContain("This repository has no app yet.");
+    expect(dev).not.toContain("Run as an app");
+
+    // A signed-out reader of the same public repository sees the same
+    // sentence but no door it could not walk through.
+    const stranger = await (
+      await fetch(`${base}/alice/plainhome`, {
+        headers: { cookie: "forge_mode=studio" },
+        redirect: "manual",
+      })
+    ).text();
+    expect(stranger).toContain("This repository has no app yet.");
+    expect(stranger).not.toContain("Run as an app");
+    expect(stranger).not.toContain(`href="/alice/plainhome/settings/app"`);
+
+    // An app itself never carries this card.
+    const app_ = await (await get("/alice/notes")).text();
+    expect(app_).not.toContain("This repository has no app yet.");
+  });
+
   test("the studio's design is in the stylesheet, not in every page", async () => {
     // The rules are static, so they belong in the file the browser caches.
     // A studio page carries no <style> at all — only a page that computes CSS
