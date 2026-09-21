@@ -13,11 +13,10 @@
 
 import {
   addComment,
-  assignIssue,
-  openIssue,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { mergePull } from "../../actions/pulls.ts";
+import { tell } from "../../actions/tell.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
 import { listCrewRoles, type Agent } from "../../core/agents.ts";
 import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -53,7 +52,6 @@ import {
   latestDecision,
   type DecisionStat,
 } from "../../core/decisions.ts";
-import { routeIssue } from "../../crew/route.ts";
 import { certain, decideOr } from "../../crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -1152,7 +1150,7 @@ function asksPanel(
 }
 
 /** The apps a person can see, as repositories, with their records. */
-function appsOf(ctx: Ctx, user: User) {
+export function appsOf(ctx: Ctx, user: User) {
   const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
   const records = appsForRepos(
     ctx.app.db,
@@ -1171,46 +1169,26 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const base = repoBase(repo);
-  const text = field(form, "text").trim();
-  if (text === "")
+  // The same act the forge's MCP `tell` tool performs (`actions/tell.ts`).
+  const told = await tell(ctx.app, ctx.auth.user, repo, field(form, "text"));
+  if (!told.ok)
     return flashTo(ctx, base, {
       tone: "danger",
-      message: "Say something first.",
+      message:
+        told.error === "empty"
+          ? "Say something first."
+          : "That could not be told.",
     });
-  const firstLine = text.split(/\n/)[0]!.trim();
-  const title =
-    firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
-  const opened = openIssue(ctx.app, ctx.auth.user, repo, {
-    title,
-    body: text === firstLine ? "" : text,
-  });
-  if (!opened.ok)
-    return flashTo(ctx, base, {
-      tone: "danger",
-      message: "That could not be told.",
-    });
-  const crew = listCrewRoles(ctx.app.db, repo.id);
-  const inFlight = new Map<string, number>();
-  for (const r of listRuns(ctx.app.db, repo.id, { kind: "agent", limit: 50 }))
-    if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
-      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const routed = await routeIssue(ctx.app, repo, opened.value, crew, inFlight);
+  const { issue, routed, assigned } = told.value;
   if (routed === undefined)
     return flashTo(ctx, base, {
       message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
     });
   const builder = routed.builder;
-  const assigned = assignIssue(
-    ctx.app,
-    ctx.auth.user,
-    repo,
-    opened.value,
-    builder.user,
-  );
   return flashTo(ctx, base, {
-    message: assigned.ok
+    message: assigned
       ? `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`
-      : `Told as #${opened.value.number}, but ${builder.user.username} could not take it.`,
+      : `Told as #${issue.number}, but ${builder.user.username} could not take it.`,
   });
 }
 

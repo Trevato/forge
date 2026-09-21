@@ -219,6 +219,7 @@ import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
+import { mcpRoutes } from "./mcp.ts";
 import {
   cookieValue,
   publicUrl,
@@ -539,6 +540,8 @@ export function buildRouter(): Router<Handler> {
   );
 
   // The JSON API lives in api.ts; its routes all sit under /api/v1.
+  // The forge as an MCP server: the studio's verbs for an assistant.
+  mcpRoutes(router);
   apiRoutes(router);
 
   // Issues (web). The literal /new is registered before /:number so it can

@@ -1,0 +1,374 @@
+/**
+ * The forge as an MCP server: one short JSON-RPC call per answer, a token
+ * and never a cookie, `ro` reads and `rw` acts, and every tool is the same
+ * action the pages call — so what a person may not do on a page they may
+ * not do here.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
+import { createApp as insertApp } from "../src/core/apps.ts";
+import { listIssues } from "../src/core/issues.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { createRun, listRuns } from "../src/core/runs.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+
+describe("the forge over MCP", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let bob: User;
+  let rw: string;
+  let ro: string;
+  let bobRw: string;
+  let game: Repo;
+  let nextId = 1;
+
+  const call = async (
+    token: string | null,
+    method: string,
+    params?: unknown,
+    extra: Record<string, string> = {},
+  ) => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(token === null ? {} : { authorization: `Bearer ${token}` }),
+        ...extra,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
+    });
+    return {
+      res,
+      body: res.status === 202 ? null : ((await res.json()) as any),
+    };
+  };
+  /** A tool's answer: its JSON value, or its error text. */
+  const tool = async (token: string, name: string, args: unknown = {}) => {
+    const { body } = await call(token, "tools/call", { name, arguments: args });
+    const text: string = body.result.content[0].text;
+    return body.result.isError === true
+      ? { error: text }
+      : { value: JSON.parse(text) };
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-mcp-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    bob = b.value;
+    rw = createToken(app.db, alice.id, "rw", "rw").token;
+    ro = createToken(app.db, alice.id, "ro", "ro").token;
+    bobRw = createToken(app.db, bob.id, "rw", "rw").token;
+    const made = await createRepo(app, alice, {
+      name: "game",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    game = made.value;
+    await commitToBranch(app, alice, game, {
+      message: "seed",
+      files: [{ path: "README.md", content: "# game\n" }],
+    });
+    const record = insertApp(app.db, {
+      repoId: game.id,
+      slug: "game",
+      access: "private",
+    });
+    if (!record.ok) throw new Error(record.error);
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a token is the only way in, and a stream is never offered", async () => {
+    const anon = await call(null, "tools/list");
+    expect(anon.res.status).toBe(401);
+    expect(anon.res.headers.get("www-authenticate")).toContain("Bearer");
+    const get = await fetch(`${base}/mcp`, {
+      headers: { authorization: `Bearer ${rw}` },
+    });
+    expect(get.status).toBe(405);
+    expect(get.headers.get("allow")).toBe("POST");
+  });
+
+  test("it speaks the protocol: initialize, a notification, ping, tools/list", async () => {
+    const init = await call(rw, "initialize", {
+      protocolVersion: "2025-03-26",
+      capabilities: {},
+      clientInfo: { name: "test", version: "0" },
+    });
+    expect(init.res.status).toBe(200);
+    expect(init.res.headers.get("content-type")).toContain("application/json");
+    expect(init.body.result.protocolVersion).toBe("2025-03-26");
+    expect(init.body.result.serverInfo.name).toBe("forge");
+    expect(init.body.result.capabilities.tools).toEqual({});
+    // A version it has never heard of gets the one it prefers.
+    const future = await call(rw, "initialize", {
+      protocolVersion: "2031-01-01",
+    });
+    expect(future.body.result.protocolVersion).toBe("2025-06-18");
+
+    const note = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${rw}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+    expect(note.status).toBe(202);
+    expect((await call(rw, "ping")).body.result).toEqual({});
+
+    const listed = await call(rw, "tools/list");
+    const names = listed.body.result.tools.map((t: { name: string }) => t.name);
+    expect(names).toEqual([
+      "apps",
+      "asks",
+      "decide",
+      "tell",
+      "say",
+      "now",
+      "stop",
+      "following",
+      "take_updates",
+      "converge",
+    ]);
+    const byName = new Map<string, any>(
+      listed.body.result.tools.map((t: any) => [t.name, t]),
+    );
+    expect(byName.get("asks").annotations.readOnlyHint).toBe(true);
+    expect(byName.get("tell").annotations.readOnlyHint).toBe(false);
+    expect(byName.get("tell").inputSchema.required).toEqual(["repo", "text"]);
+
+    expect((await call(rw, "nothing/here")).body.error.code).toBe(-32601);
+    expect(
+      (await call(rw, "tools/call", { name: "nope" })).body.error.code,
+    ).toBe(-32602);
+  });
+
+  test("apps and asks read what the studio reads", async () => {
+    const apps = await tool(ro, "apps");
+    expect(apps.value).toHaveLength(1);
+    expect(apps.value[0].app).toBe("alice/game");
+    expect(apps.value[0].asks).toBe(0);
+    expect((await tool(ro, "asks")).value).toEqual([]);
+    expect((await tool(ro, "now")).value).toEqual([]);
+    // Bob cannot see alice's private app: not in his list, not by name.
+    expect((await tool(bobRw, "apps")).value).toEqual([]);
+    expect(
+      (await tool(bobRw, "following", { repo: "alice/game" })).error,
+    ).toContain("not_found");
+  });
+
+  test("a read token may read and not act", async () => {
+    const refused = await tool(ro, "tell", {
+      repo: "alice/game",
+      text: "add a level",
+    });
+    expect(refused.error).toContain("forbidden");
+    expect(listIssues(app.db, game.id, { state: "open" })).toHaveLength(0);
+  });
+
+  test("tell is the studio's tell: an issue, a builder, a run", async () => {
+    const empty = await tool(rw, "tell", { repo: "alice/game", text: "   " });
+    expect(empty.error).toContain("empty");
+    const nobody = await tool(rw, "tell", {
+      repo: "alice/game",
+      text: "add a second level\n\nwith a boss at the end",
+    });
+    expect(nobody.value.says).toContain("Nobody is on the crew");
+    const [first] = listIssues(app.db, game.id, { state: "open" });
+    expect(first!.title).toBe("add a second level");
+    expect(first!.body).toContain("boss at the end");
+
+    const made = await createAgent(app, alice, {
+      username: "bot",
+      brief: "Be brief.",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, game, "bot").ok).toBe(true);
+    const told = await tool(rw, "tell", {
+      repo: "alice/game",
+      text: "fix the jump",
+    });
+    expect(told.value.says).toContain("bot is on it");
+    expect(told.value.page).toBe(
+      `${base}/alice/game/issues/${told.value.issue}`,
+    );
+    // Assigned to the builder, which is what starts a run where a crew is
+    // running; here there is none, so the run is queued by hand the way the
+    // crew's router would.
+    const jump = listIssues(app.db, game.id, { state: "open" }).find(
+      (i) => i.title === "fix the jump",
+    )!;
+    expect(jump.assigneeId).toBe(made.value.user.id);
+    expect(listRuns(app.db, game.id, { kind: "agent", limit: 5 })).toHaveLength(
+      0,
+    );
+    createRun(app.db, {
+      repoId: game.id,
+      kind: "agent",
+      issueId: jump.id,
+      actorId: made.value.user.id,
+      reason: "assigned",
+    });
+
+    const now = await tool(rw, "now");
+    expect(now.value).toHaveLength(1);
+    expect(now.value[0].app).toBe("alice/game");
+    expect(now.value[0].who).toBe("bot");
+    expect(now.value[0].on).toContain("fix the jump");
+
+    // Stop is the page's stop: exact, once, and only a writer's.
+    expect(
+      (await tool(bobRw, "stop", { repo: "alice/game", run: now.value[0].run }))
+        .error,
+    ).toContain("not_found");
+    const stopped = await tool(rw, "stop", {
+      repo: "alice/game",
+      run: now.value[0].run,
+    });
+    expect(stopped.value.says).toContain("Stopped run");
+    expect(
+      (await tool(rw, "stop", { repo: "alice/game", run: now.value[0].run }))
+        .error,
+    ).toContain("finished");
+    expect((await tool(rw, "now")).value).toEqual([]);
+  });
+
+  test("say lands on the conversation", async () => {
+    const [issue] = listIssues(app.db, game.id, { state: "open" });
+    const said = await tool(rw, "say", {
+      repo: "alice/game",
+      number: issue!.number,
+      text: "keep it under 50 lines",
+    });
+    expect(said.value.says).toBe(`Said on #${issue!.number}.`);
+    expect(
+      (await tool(rw, "say", { repo: "alice/game", number: 999, text: "x" }))
+        .error,
+    ).toContain("not_found");
+  });
+
+  test("decide refuses what is not waiting", async () => {
+    const gone = await tool(rw, "decide", {
+      ask: "look:nothing",
+      action: "ship",
+    });
+    expect(gone.error).toContain("no_such_ask");
+    const odd = await tool(rw, "decide", {
+      ask: "look:nothing",
+      action: "burn",
+    });
+    expect(odd.error).toContain("invalid_action");
+  });
+
+  test("following, take_updates and converge are the fork's page", async () => {
+    const pub = await createRepo(app, alice, {
+      name: "open",
+      visibility: "public",
+    });
+    if (!pub.ok) throw new Error(String(pub.error));
+    await commitToBranch(app, alice, pub.value, {
+      message: "seed",
+      files: [{ path: "README.md", content: "# open\n" }],
+    });
+    const forked = await forkRepo(app, bob, pub.value);
+    if (!forked.ok) throw new Error(String(forked.error));
+    const fresh = (r: Repo) => getRepoById(app.db, r.id)!;
+
+    expect(
+      (await tool(bobRw, "following", { repo: "alice/open" })).error,
+    ).toContain("not_a_fork");
+    expect(
+      (await tool(bobRw, "following", { repo: "bob/open" })).value.state,
+    ).toBe("synced");
+    // Both sides change the same file: a decision, so not git's to take.
+    await commitToBranch(app, bob, fresh(forked.value), {
+      message: "bob",
+      files: [{ path: "README.md", content: "# open, by bob\n" }],
+    });
+    await commitToBranch(app, alice, fresh(pub.value), {
+      message: "alice",
+      files: [{ path: "README.md", content: "# open, by alice\n" }],
+    });
+    const stands = await tool(bobRw, "following", { repo: "bob/open" });
+    expect(stands.value.state).toBe("diverged");
+    expect(stands.value.conflicts).toEqual(["README.md"]);
+    expect(
+      (await tool(bobRw, "take_updates", { repo: "bob/open" })).error,
+    ).toContain("conflict");
+    // Alice reads bob's public fork and may not move it.
+    expect(
+      (await tool(ro, "following", { repo: "bob/open" })).value.state,
+    ).toBe("diverged");
+    const carol = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    const carolRw = createToken(app.db, carol.value.id, "rw", "rw").token;
+    expect(
+      (await tool(carolRw, "take_updates", { repo: "bob/open" })).error,
+    ).toContain("write access");
+    expect(
+      (await tool(bobRw, "converge", { repo: "bob/open" })).value.kind,
+    ).toBe("no_crew");
+  });
+
+  test("a browser session is not a way in, even signed in", async () => {
+    const signin = await fetch(`${base}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: base,
+      },
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(cookie).toContain("=");
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie, origin: base },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    expect(res.status).toBe(401);
+  });
+});
