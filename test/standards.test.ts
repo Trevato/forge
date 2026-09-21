@@ -146,4 +146,14 @@ describe("what the open web expects", () => {
     expect(html).toContain('name="twitter:card" content="summary"');
     expect(html).toContain("viewport-fit=cover");
   });
+
+  test("the page's own policy lets a browser read what it links", async () => {
+    // default-src 'none' refuses a manifest like everything else; a link the
+    // policy blocks is a link that does nothing. Same for the icons.
+    const res = await fetch(`${base}/alice/open`);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("manifest-src 'self'");
+    expect(csp).toMatch(/img-src [^;]*'self'/);
+  });
 });

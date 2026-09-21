@@ -531,8 +531,10 @@ export function page(options: PageOptions, status = 200): Response {
     "content-type": "text/html; charset=utf-8",
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
-    // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    // event stream (EventSource) and fragment fetches reach same-origin, and
+    // manifest-src 'self' lets a browser read the forge's own web manifest —
+    // under default-src 'none' it is refused like everything else.
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; img-src 'self' data:; manifest-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
   });
