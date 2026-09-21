@@ -57,6 +57,8 @@ a.where-place:hover, button.where-place:hover {
   border-color: var(--border); background: var(--muted); color: var(--fg);
 }
 .where-place .ico { color: var(--faint); flex: none; }
+/* A thumb needs more than a 12px word to land on. */
+@media (pointer: coarse) { .where-place { min-height: 32px; padding: 4px 8px; } }
 .where-dot { font-size: 10px; line-height: 1; }
 .where-note { color: var(--faint); }
 /* Accent is interaction everywhere else in the product; here it is the one

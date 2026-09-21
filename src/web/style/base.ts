@@ -94,6 +94,7 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 }
 .wordmark {
   display: inline-flex; align-items: center; gap: 8px; flex: none;
+  min-height: 44px;
   font-weight: 660; letter-spacing: -0.03em; font-size: 15px;
 }
 .wordmark .mark {
@@ -104,7 +105,16 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .wordmark:hover { color: var(--fg); }
 .wordmark:hover .mark { transform: rotate(135deg); }
 .topbar .spacer { flex: 1; }
-.topbar-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+.topbar-tools { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+/* The page never scrolls sideways. A strip that must — the tabs, a code
+   table — scrolls inside its own box; nothing else may push the page wide.
+   clip, not hidden: hidden would make the body a scroll container and
+   unstick the topbar. */
+body { overflow-x: clip; }
+@media (max-width: 719px) {
+  .topbar { gap: 6px; padding-left: 12px; padding-right: 12px; }
+  .topbar-tools { gap: 4px; }
+}
 
 .foot {
   width: 100%; max-width: var(--page); margin: 0 auto;

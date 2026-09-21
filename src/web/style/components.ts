@@ -589,6 +589,9 @@ a.row:hover .row-title { color: var(--accent); }
   font-size: 14px; overflow: hidden;
 }
 .crumbs a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* On a phone the crumbs would be squeezed to "y… / c."; the page header
+   right below says where you are, in full. */
+@media (max-width: 719px) { .topbar .crumbs { display: none; } }
 .crumbs .sep { color: var(--faint); flex: none; }
 .crumbs [aria-current="page"] { font-weight: 550; }
 .crumbs.mono, .crumbs.mono a { font-family: var(--mono); font-size: 12.5px; }
@@ -704,7 +707,10 @@ a.row:hover .row-title { color: var(--accent); }
 /* Studio or dev: two buttons in the topbar, the chosen one filled. */
 .mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; height: 28px; align-self: center; }
 .mode-toggle form { display: contents; }
-.mode-toggle button { font: inherit; font-size: 12px; padding: 0 10px; border: 0; background: transparent; color: var(--fg); cursor: pointer; line-height: 26px; }
+.mode-toggle button { font: inherit; font-size: 12px; padding: 0 10px; border: 0; background: transparent; color: var(--fg); cursor: pointer; line-height: 26px; display: inline-flex; align-items: center; gap: 5px; }
+.mode-toggle button .ico { flex: none; }
+@media (max-width: 719px) { .mode-toggle button { padding: 0 9px; } }
+@media (pointer: coarse) { .mode-toggle { height: 36px; } .mode-toggle button { line-height: 34px; } }
 .mode-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .mode-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 `;
