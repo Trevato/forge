@@ -164,6 +164,33 @@ export const utilities = /* css */ `
   .hide-lg { display: none; }
 }
 
+/* viewport-fit=cover lets the page run to the glass, so the chrome steps
+   in from the notch, the rounded corners and the home indicator itself.
+   max() keeps the ordinary gutter wherever the inset is zero, which is
+   everywhere but a phone held sideways or an installed app. */
+@supports (padding: max(0px)) {
+  .topbar {
+    padding-top: max(8px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .shell {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
+  .foot { padding-bottom: max(36px, env(safe-area-inset-bottom)); }
+  @media (min-width: 720px) {
+    .topbar {
+      padding-left: max(24px, env(safe-area-inset-left));
+      padding-right: max(24px, env(safe-area-inset-right));
+    }
+    .shell {
+      padding-left: max(24px, env(safe-area-inset-left));
+      padding-right: max(24px, env(safe-area-inset-right));
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, *::before, *::after {
