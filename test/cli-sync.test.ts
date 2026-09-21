@@ -17,21 +17,21 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { hostDir } from "../src/cli/config.ts";
 import { changesBetween, type RepoReport, type SyncReport } from "../src/cli/sync.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 const CLI = new URL("../src/cli/main.ts", import.meta.url).pathname;
 
-const clientEnv = {
+const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Alice",
   GIT_AUTHOR_EMAIL: "alice@forge.local",
   GIT_COMMITTER_NAME: "Alice",
   GIT_COMMITTER_EMAIL: "alice@forge.local",
-  GIT_TERMINAL_PROMPT: "0",
-};
+});
 
 async function sh(args: string[], cwd: string): Promise<string> {
   const proc = Bun.spawn(args, {
     cwd,
-    env: { ...process.env, ...clientEnv },
+    env: clientEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

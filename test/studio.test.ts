@@ -5014,7 +5014,15 @@ describe("a person's own change ships from its own studio page", () => {
     ).text();
     expect(ownerPage).toContain("<h2>Decide</h2>");
     expect(ownerPage).toContain("Ship");
-    expect(ownerPage).toContain("The check is green.");
+    // The words a person's own green change is offered in are `asks.ts`'s
+    // (#224: a green change asks to be looked at whoever opened it, and the
+    // card says so without pretending somebody finished it for them). The
+    // `own` fallback in `studio/change.ts` — "The check is green." — is what
+    // an autonomous repository's own pull still gets, where the asks panel
+    // offers nothing.
+    expect(ownerPage).toContain(
+      "is green — ready for a look. Ship it, or say what is off.",
+    );
 
     const shipped = await post(
       `/alice/garden/pulls/${pull.number}/ship`,

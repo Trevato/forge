@@ -25,6 +25,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 /**
  * Adversarial push-through. The pusher is the attacker: a local writer on a
@@ -63,17 +64,13 @@ const read = async <T>(response: Response): Promise<T> =>
 // Captured before the PATH wrapper goes in, so the *client* git in these
 // tests is the real one and only the forge's spawns are recorded.
 const ORIGINAL_PATH = process.env.PATH ?? "/usr/bin:/bin";
-const clientEnv = {
-  ...process.env,
+const clientEnv = gitClientEnv({
   PATH: ORIGINAL_PATH,
   GIT_AUTHOR_NAME: "Alice",
   GIT_AUTHOR_EMAIL: "alice@forge.test",
   GIT_COMMITTER_NAME: "Alice",
   GIT_COMMITTER_EMAIL: "alice@forge.test",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function git(
   args: string[],

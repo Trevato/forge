@@ -15,17 +15,14 @@ import { listEvents } from "../src/core/events.ts";
 import { createSession, pruneSessions } from "../src/core/sessions.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "A",
   GIT_AUTHOR_EMAIL: "a@forge.test",
   GIT_COMMITTER_NAME: "A",
   GIT_COMMITTER_EMAIL: "a@forge.test",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function git(args: string[], cwd: string): Promise<string> {
   const p = Bun.spawn(["git", ...args], {

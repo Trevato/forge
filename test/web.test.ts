@@ -16,6 +16,7 @@ import { renderMarkdown } from "../src/web/markdown.ts";
 import { highlightAsset } from "../src/web/asset.ts";
 import { securityFloor } from "../src/http/respond.ts";
 import { THEME_NAMES } from "../src/design/themes.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {
@@ -285,16 +286,12 @@ describe("web pages end to end", () => {
   let cookie = "";
   let token = "";
 
-  const clientEnv = {
-    ...process.env,
+  const clientEnv = gitClientEnv({
     GIT_AUTHOR_NAME: "Ada",
     GIT_AUTHOR_EMAIL: "ada@forge.local",
     GIT_COMMITTER_NAME: "Ada",
     GIT_COMMITTER_EMAIL: "ada@forge.local",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
+  });
 
   async function shOk(args: string[], cwd: string): Promise<string> {
     const proc = Bun.spawn(args, {

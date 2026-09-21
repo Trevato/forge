@@ -12,6 +12,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 /**
  * Push-through: a `git push` to a mirror lands upstream, or it does not land
@@ -30,16 +31,12 @@ const basic = (user: string, secret: string): string =>
 const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
-const clientEnv = {
-  ...process.env,
+const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Alice",
   GIT_AUTHOR_EMAIL: "alice@forge.test",
   GIT_COMMITTER_NAME: "Alice",
   GIT_COMMITTER_EMAIL: "alice@forge.test",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function git(
   args: string[],

@@ -18,17 +18,14 @@ import { canRead, canWrite, canAdmin } from "../src/core/repos.ts";
 import { createRepo, getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "O",
   GIT_AUTHOR_EMAIL: "o@f.dev",
   GIT_COMMITTER_NAME: "O",
   GIT_COMMITTER_EMAIL: "o@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 describe("org & team core", () => {
   let dataDir: string;

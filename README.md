@@ -298,7 +298,22 @@ tell, a run and a change each on its own page, and the board.
 ```sh
 bun test              # protocol-level + adversarial suite
 bun x tsc --noEmit    # zero type errors is the standard
+bun run check         # exactly what the forge runs against every push
 ```
+
+`bun run check` is the gate: the same command `forge.json` declares, so what
+it says here is what the deploy will say. Two things it will not do:
+
+- **It never borrows your git configuration.** A test drives a real `git`
+  against a forge it booted a second ago, and builds that child's
+  environment rather than inheriting yours (`test/helpers/git-client.ts`) —
+  otherwise a `GIT_CONFIG_COUNT` in your shell (a crew run sets one, holding
+  its own forge credential) would send that credential to the test's server
+  and every push in the suite would come back `401`.
+- **It skips what this machine cannot run, out loud.** The OpenSSH interop
+  tests need `ssh` and `ssh-keygen`; without them the log says `SKIPPING:`
+  and names the tool (`test/helpers/tools.ts`). Install OpenSSH and they run
+  again — the skip is conditional on the binary, never on anything else.
 
 ## Shape
 

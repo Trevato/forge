@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 describe("diff engine + resource edge cases", () => {
   let dataDir: string;
@@ -18,16 +19,12 @@ describe("diff engine + resource edge cases", () => {
   let cookie = "";
   let token = "";
 
-  const clientEnv = {
-    ...process.env,
+  const clientEnv = gitClientEnv({
     GIT_AUTHOR_NAME: "Ada",
     GIT_AUTHOR_EMAIL: "ada@forge.local",
     GIT_COMMITTER_NAME: "Ada",
     GIT_COMMITTER_EMAIL: "ada@forge.local",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
+  });
 
   async function shOk(args: string[], cwd: string): Promise<string> {
     const proc = Bun.spawn(args, {

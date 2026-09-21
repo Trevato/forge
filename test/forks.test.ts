@@ -6,21 +6,14 @@ import { createApp, type App } from "../src/app.ts";
 import { deleteRepo, getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "F",
   GIT_AUTHOR_EMAIL: "f@f.dev",
   GIT_COMMITTER_NAME: "F",
   GIT_COMMITTER_EMAIL: "f@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  // The same reason the two above are neutered: an ambient GIT_CONFIG_COUNT
-  // (a crew run hands git an `http.extraHeader` for *its* forge) would send
-  // someone else's credential to the test server instead of the URL's.
-  GIT_CONFIG_COUNT: "0",
-};
+});
 
 describe("forks", () => {
   let dataDir: string;

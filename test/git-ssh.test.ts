@@ -32,10 +32,14 @@ import { runGitService, type GitChannel } from "../src/git/smart-ssh.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import type { SshServer } from "../src/ssh/server.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
+import { missing } from "./helpers/tools.ts";
 
 setLogLevel("error");
 
 const SSH_KEYGEN = "/usr/bin/ssh-keygen";
+/** The client half is the real OpenSSH; without it these skip, loudly. */
+const NO_OPENSSH = missing("/usr/bin/ssh", SSH_KEYGEN);
 
 interface Run {
   code: number;
@@ -43,7 +47,7 @@ interface Run {
   err: string;
 }
 
-describe("git over ssh", () => {
+describe.skipIf(NO_OPENSSH)("git over ssh", () => {
   let dataDir: string;
   let keyDir: string;
   let work: string;
@@ -53,17 +57,14 @@ describe("git over ssh", () => {
   let alice: User;
   let bob: User;
 
-  const env = (key: string): Record<string, string> => ({
-    ...(process.env as Record<string, string>),
-    GIT_SSH_COMMAND: `/usr/bin/ssh -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5`,
-    GIT_AUTHOR_NAME: "Tester",
-    GIT_AUTHOR_EMAIL: "tester@forge.test",
-    GIT_COMMITTER_NAME: "Tester",
-    GIT_COMMITTER_EMAIL: "tester@forge.test",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  });
+  const env = (key: string): Record<string, string> =>
+    gitClientEnv({
+      GIT_SSH_COMMAND: `/usr/bin/ssh -i ${key} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5`,
+      GIT_AUTHOR_NAME: "Tester",
+      GIT_AUTHOR_EMAIL: "tester@forge.test",
+      GIT_COMMITTER_NAME: "Tester",
+      GIT_COMMITTER_EMAIL: "tester@forge.test",
+    });
 
   /** `git push` is blocked at the shell level, so every client call spawns. */
   async function git(
@@ -310,7 +311,7 @@ describe("git over ssh", () => {
  * real ssh; what this isolates is the lifetime rule those tests cannot make
  * visible — whether the child outlives a peer that walked away.
  */
-describe("a git service outlives neither the channel nor the peer", () => {
+describe.skipIf(NO_OPENSSH)("a git service outlives neither the channel nor the peer", () => {
   let dataDir: string;
   let forge: Forge;
   let dir: string;

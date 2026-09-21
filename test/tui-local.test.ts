@@ -19,18 +19,17 @@ import {
 } from "../src/tui/term/terminal.ts";
 import { createLocalApp } from "../src/tui/local/app.ts";
 import { localBusy, localIdle } from "../src/tui/local/common.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 async function sh(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    env: {
-      ...process.env,
+    env: gitClientEnv({
       GIT_AUTHOR_NAME: "Ada",
       GIT_AUTHOR_EMAIL: "ada@forge.local",
       GIT_COMMITTER_NAME: "Ada",
       GIT_COMMITTER_EMAIL: "ada@forge.local",
-      LC_ALL: "C",
-    },
+    }),
     stdout: "pipe",
     stderr: "pipe",
   });

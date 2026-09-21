@@ -21,17 +21,14 @@ import {
   stubFor,
   type DiffViewOptions,
 } from "../src/web/diff-view.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const env = {
-  ...process.env,
+const env = gitClientEnv({
   GIT_AUTHOR_NAME: "D",
   GIT_AUTHOR_EMAIL: "d@f.dev",
   GIT_COMMITTER_NAME: "D",
   GIT_COMMITTER_EMAIL: "d@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function sh(args: string[], cwd: string): Promise<string> {
   const p = Bun.spawn(args, { cwd, env, stdout: "pipe", stderr: "pipe" });

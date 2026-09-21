@@ -15,17 +15,14 @@ import { reconcile } from "../src/core/reconcile.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "T",
   GIT_AUTHOR_EMAIL: "t@f.dev",
   GIT_COMMITTER_NAME: "T",
   GIT_COMMITTER_EMAIL: "t@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function shOk(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(args, {

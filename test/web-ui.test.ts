@@ -17,6 +17,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 const form = (fields: Record<string, string>) => new URLSearchParams(fields);
 
@@ -30,16 +31,12 @@ describe("web ui", () => {
   let stranger = "";
   let pullNumber = 0;
 
-  const gitEnv = {
-    ...process.env,
+  const gitEnv = gitClientEnv({
     GIT_AUTHOR_NAME: "Mel",
     GIT_AUTHOR_EMAIL: "mel@forge.local",
     GIT_COMMITTER_NAME: "Mel",
     GIT_COMMITTER_EMAIL: "mel@forge.local",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
+  });
 
   async function git(args: string[], cwd: string): Promise<number> {
     const proc = Bun.spawn(["git", ...args], {

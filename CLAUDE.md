@@ -62,6 +62,18 @@ bun run src/main.ts   # boots on :3000, data in ./data
 - **`git push` is blocked at the shell level.** In tests and scripts that need a
   git _client_, drive it through `Bun.spawn(["git", ...])`, never a shell push.
   See `test/app.test.ts` / `test/onboarding.test.ts` for the pattern.
+- **A test's git child gets a built environment, never the host's.** Use
+  `gitClientEnv` (`test/helpers/git-client.ts`) — `...process.env` carries
+  `GIT_CONFIG_COUNT` (git configuration no `GIT_CONFIG_GLOBAL=/dev/null`
+  turns off, and on a crew machine it holds that agent's forge credential)
+  into a child pointed at a forge that never issued it. Same rule as
+  `src/git/env.ts` server-side.
+- **A test that needs a binary this machine may lack skips, and says so.**
+  `describe.skipIf(missing("/usr/bin/ssh"))` (`test/helpers/tools.ts`) —
+  conditional on the tool, so nothing is lost where the tool is there, and
+  the reason is printed so a skip is never read as a pass.
+- **`bun run check` is the gate**, and it reads its command from
+  `forge.json`, so what you see is exactly what the push will be judged by.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.

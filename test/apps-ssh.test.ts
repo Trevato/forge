@@ -27,11 +27,14 @@ import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
 import { grantedCookie } from "./helpers/identity.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { missing } from "./helpers/tools.ts";
 
 const SSH = "/usr/bin/ssh";
 const SSH_KEYGEN = "/usr/bin/ssh-keygen";
+/** These drive the real OpenSSH client; without it they skip, loudly. */
+const NO_OPENSSH = missing(SSH, SSH_KEYGEN);
 
-describe("a terminal for every app, over ssh", () => {
+describe.skipIf(NO_OPENSSH)("a terminal for every app, over ssh", () => {
   let dataDir: string;
   let app: App;
   let servers: Servers;

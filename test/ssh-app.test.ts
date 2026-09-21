@@ -20,12 +20,15 @@ import { MSG, Writer } from "../src/ssh/wire.ts";
 import { createLog } from "../src/kernel/log.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import type { SshServer } from "../src/ssh/server.ts";
+import { missing } from "./helpers/tools.ts";
 
 setLogLevel("error");
 const log = createLog("ssh-app-test");
 
 const SSH = "/usr/bin/ssh";
 const SSH_KEYGEN = "/usr/bin/ssh-keygen";
+/** These drive the real OpenSSH client; without it they skip, loudly. */
+const NO_OPENSSH = missing(SSH, SSH_KEYGEN);
 
 /** Strip SGR, cursor moves and the rest of what a TUI paints. */
 function plain(bytes: Uint8Array): string {
@@ -87,7 +90,7 @@ async function connect(
   return { out: plain(await stdout), code };
 }
 
-describe("ssh into the forge", () => {
+describe.skipIf(NO_OPENSSH)("ssh into the forge", () => {
   let dataDir: string;
   let keyDir: string;
   let forge: Forge;
@@ -151,7 +154,7 @@ describe("ssh into the forge", () => {
   });
 });
 
-describe("channel write backpressure", () => {
+describe.skipIf(NO_OPENSSH)("channel write backpressure", () => {
   /** A channel whose peer granted a tiny window — the clone case, in small. */
   function harness(remoteWindow: number) {
     const sent: Uint8Array[] = [];
