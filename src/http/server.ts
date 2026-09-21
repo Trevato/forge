@@ -43,6 +43,14 @@ import {
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import {
+  changePassword,
+  iconPng,
+  robotsTxt,
+  securityTxt,
+  sitemapXml,
+  webManifest,
+} from "../web/standards.ts";
+import {
   blobPage,
   forksPage,
   forkSubmit,
@@ -336,6 +344,13 @@ export function buildRouter(): Router<Handler> {
   // Literal-prefix routes come before parameterized repo routes; the router
   // matches in insertion order.
   router.add("GET", "/assets/forge.css", stylesheet);
+  // What the open web expects of a site, from the forge's own facts.
+  router.add("GET", "/.well-known/security.txt", securityTxt);
+  router.add("GET", "/.well-known/change-password", changePassword);
+  router.add("GET", "/robots.txt", robotsTxt);
+  router.add("GET", "/sitemap.xml", sitemapXml);
+  router.add("GET", "/manifest.webmanifest", webManifest);
+  router.add("GET", "/icons/:spec.png", iconPng);
   // The highlighter bundle, content-addressed. A stale hash is a 404 rather
   // than a redirect: the page that asked for it names the hash it was built
   // with, so a miss means an old tab, and an old tab should reload.

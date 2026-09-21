@@ -42,6 +42,12 @@ export interface PageOptions {
   /** The request: user, theme and flash all come from here. */
   ctx: Ctx;
   title: string;
+  /**
+   * One sentence for the places that show a page before it is opened: a
+   * search result, a link unfurled in a chat. A repository's description,
+   * an issue's first line. Absent, the forge's own line stands in.
+   */
+  description?: string;
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
@@ -421,6 +427,15 @@ function footer(): Html {
 
 // ---- the page ----
 
+const SITE_LINE = "Your code, your machine.";
+
+/** The one sentence a page carries into a search result or an unfurled link. */
+function pageDescription(options: PageOptions): string {
+  const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";
+  const line = own === "" ? SITE_LINE : own;
+  return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
+}
+
 export function page(options: PageOptions, status = 200): Response {
   // A per-response nonce lets exactly this page's <style> and <script> run
   // while everything else stays forbidden.
@@ -436,8 +451,29 @@ export function page(options: PageOptions, status = 200): Response {
     <html lang="en" ${theme ? html`data-theme="${theme}"` : null}>
       <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
         <title>${options.title} · forge</title>
+        <meta name="description" content="${pageDescription(options)}" />
+        <meta property="og:site_name" content="forge" />
+        <meta property="og:type" content="website" />
+        <meta property="og:title" content="${options.title}" />
+        <meta property="og:description" content="${pageDescription(options)}" />
+        <meta
+          property="og:url"
+          content="${ctx.url.origin}${ctx.url.pathname}"
+        />
+        <meta
+          property="og:image"
+          content="${ctx.url.origin}/icons/forge-512.png"
+        />
+        <meta name="twitter:card" content="summary" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/icons/forge-180.png" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="forge" />
         ${when(
           options.refresh,
           (r) =>
