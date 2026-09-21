@@ -18,6 +18,15 @@ import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
 import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { audit, type Audited } from "../../contract/audit.ts";
+import {
+  contractChanges,
+  crossingsWaiting,
+  verdictChanges,
+  wallSentence,
+  type ContractChange,
+  type Crossing,
+  type VerdictChange,
+} from "../../contract/changes.ts";
 import type { Cell } from "../../contract/can.ts";
 import {
   latestProbes,
@@ -28,7 +37,7 @@ import { loadRepo, notFoundPage, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { badge, btn, card, empty, icon, time } from "../ui.ts";
+import { badge, btn, card, empty, icon, sha, time } from "../ui.ts";
 
 const AUDIT_LIMIT = 200;
 
@@ -57,6 +66,23 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
   const open = sound.reduce(
     (n, a) => n + (a.standing.kind === "sound" ? a.standing.open.length : 0),
     0,
+  );
+  // The third lens: what moved. Contracts that changed, pulls at the wall,
+  // apps whose doors started or stopped agreeing with their table.
+  const changes = (
+    await Promise.all(
+      audited
+        .filter((a) => a.standing.kind !== "unread")
+        .map((a) => contractChanges(ctx.app.reposRoot, a.repo)),
+    )
+  )
+    .flat()
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .slice(0, 30);
+  const crossings = crossingsWaiting(ctx.app.db, apps);
+  const verdicts = verdictChanges(
+    ctx.app.db,
+    sound.map((a) => ({ repo: a.repo, appId: records.get(a.repo.id)!.id })),
   );
   return page({
     ctx,
@@ -97,7 +123,8 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
                   canWrite(ctx.app.db, a.repo, ctx.auth.user),
               ),
             )}
-            ${when(unread.length > 0, () => unreadCard(unread))}`}`,
+            ${when(unread.length > 0, () => unreadCard(unread))}
+            ${changesSection(crossings, changes, verdicts)}`}`,
   });
 }
 
@@ -328,5 +355,191 @@ function unreadCard(unread: readonly Audited[]): Html {
         )}
       </ul>`,
     { head: html`<h3 class="audit-app">${icon("eye")} Unread</h3>` },
+  );
+}
+
+// ---- the third lens: what changed ----
+
+function changesSection(
+  crossings: readonly Crossing[],
+  changes: readonly ContractChange[],
+  verdicts: readonly VerdictChange[],
+): Html {
+  if (crossings.length === 0 && changes.length === 0 && verdicts.length === 0)
+    return html``;
+  return html`<h2 class="audit-h2">What changed</h2>
+    ${when(crossings.length > 0, () => crossingsCard(crossings))}
+    ${when(changes.length > 0, () => changesCard(changes))}
+    ${when(verdicts.length > 0, () => verdictsCard(verdicts))}`;
+}
+
+/** Pulls the crew left at the wall: each is a person's decision, waiting. */
+function crossingsCard(crossings: readonly Crossing[]): Html {
+  return card(
+    html`<ul class="list">
+      ${crossings.map(
+        (c) =>
+          html`<li>
+            <a
+              href="/${c.repo.ownerName}/${c.repo.name}/pulls/${c.pull.number}"
+              class="row"
+              data-nav
+              tabindex="-1"
+            >
+              <span class="row-lead">${icon("pull")}</span>
+              <span class="row-main">
+                <span class="row-title">${c.pull.title}</span>
+                <span class="row-meta"
+                  >${name(c.repo)} #${c.pull.number} · waiting since
+                  ${time(c.decision.createdAt)} ·
+                  ${c.cells.length === 1
+                    ? "one door opens"
+                    : `${c.cells.length} doors open`}
+                  wider</span
+                >
+              </span>
+              <span class="row-trail"
+                >${badge("at the wall", { tone: "attn" })}</span
+              >
+            </a>
+          </li>`,
+      )}
+    </ul>`,
+    {
+      pad: false,
+      tone: "attn",
+      head: html`<h3 class="audit-app">
+        ${icon("shield")} ${count(crossings.length, "pull waits", "pulls wait")}
+        at the wall
+      </h3>`,
+    },
+  );
+}
+
+/** Contract commits, newest first, each with what it did to the cells. */
+function changesCard(changes: readonly ContractChange[]): Html {
+  return card(
+    html`<ul class="list">
+      ${changes.map((c) => {
+        const what = c.removed
+          ? "the contract was removed"
+          : c.unsound
+            ? "the contract does not read"
+            : c.loosened.length === 0 && c.tightened.length === 0
+              ? "no cell changed"
+              : [
+                  c.loosened.length === 0
+                    ? ""
+                    : `${count(c.loosened.length, "door", "doors")} wider`,
+                  c.tightened.length === 0
+                    ? ""
+                    : `${count(c.tightened.length, "door", "doors")} narrower`,
+                ]
+                  .filter((s) => s !== "")
+                  .join(", ");
+        const tone =
+          c.removed || c.unsound
+            ? "danger"
+            : c.loosened.length > 0
+              ? "attn"
+              : c.tightened.length > 0
+                ? "success"
+                : "default";
+        return html`<li>
+          <div class="row audit-change">
+            <span class="row-lead">${icon("commit")}</span>
+            <span class="row-main">
+              <span class="row-title">${name(c.repo)}: ${c.subject}</span>
+              <span class="row-meta"
+                >${sha(
+                  c.oid,
+                  `/${c.repo.ownerName}/${c.repo.name}/commit/${c.oid}`,
+                )}
+                · ${c.author} · ${time(c.date)}</span
+              >
+              ${when(
+                c.loosened.length + c.tightened.length > 0,
+                () =>
+                  html`<ul class="audit-problems audit-cells">
+                    ${c.loosened.map(
+                      (l) => html`<li data-way="wider">${wallSentence(l)}</li>`,
+                    )}
+                    ${c.tightened.map(
+                      (l) =>
+                        html`<li data-way="narrower">
+                          ${l.resource}.${l.verb} as ${l.as}: was ${l.to}, now
+                          ${l.from === "absent" ? "gone" : l.from}
+                        </li>`,
+                    )}
+                  </ul>`,
+              )}
+            </span>
+            <span class="row-trail">${badge(what, { tone })}</span>
+          </div>
+        </li>`;
+      })}
+    </ul>`,
+    {
+      pad: false,
+      head: html`<h3 class="audit-app">
+        ${icon("history")}
+        ${count(changes.length, "contract change", "contract changes")}
+      </h3>`,
+    },
+  );
+}
+
+/** Where an app's doors started or stopped agreeing with its table. */
+function verdictsCard(verdicts: readonly VerdictChange[]): Html {
+  const word = (v: VerdictChange["to"]): string =>
+    v === "ok"
+      ? "obeys its table"
+      : v === "mismatch"
+        ? "disobeys its table"
+        : v === "down"
+          ? "was not running"
+          : "had no door to knock on";
+  return card(
+    html`<ul class="list">
+      ${verdicts.map(
+        (v) =>
+          html`<li>
+            <div class="row">
+              <span class="row-lead"
+                >${icon(
+                  v.to === "ok"
+                    ? "check"
+                    : v.to === "mismatch"
+                      ? "alert"
+                      : "clock",
+                )}</span
+              >
+              <span class="row-main">
+                <span class="row-title">${name(v.repo)} ${word(v.to)}</span>
+                <span class="row-meta"
+                  >${v.from === undefined
+                    ? "first knock"
+                    : `before: ${word(v.from)}`}
+                  · ${time(v.at)} at
+                  <code>${v.commitOid.slice(0, 7)}</code></span
+                >
+                ${when(
+                  v.said.length > 0,
+                  () =>
+                    html`<ul class="audit-problems audit-cells">
+                      ${v.said.map((s) => html`<li>${s}</li>`)}
+                    </ul>`,
+                )}
+              </span>
+            </div>
+          </li>`,
+      )}
+    </ul>`,
+    {
+      pad: false,
+      head: html`<h3 class="audit-app">
+        ${icon("activity")} Doors, over time
+      </h3>`,
+    },
   );
 }

@@ -288,6 +288,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .audit-said { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .audit-alarm { color: var(--danger); }
 .wall-cells { margin: 8px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
+.audit-h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin: 22px 0 10px; }
+.audit-cells { margin-top: 6px; font-family: var(--mono); font-size: 12px; }
+.audit-cells li[data-way="wider"] { color: var(--attn); }
+.audit-cells li[data-way="narrower"] { color: var(--success); }
+.audit-change .row-main { min-width: 0; }
 .wall-cells li + li { margin-top: 3px; }
 form.inline { display: inline; margin-left: auto; }
 .audit-problems li + li { margin-top: 4px; }

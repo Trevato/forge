@@ -13,6 +13,16 @@ import { createApp, type App } from "../src/app.ts";
 import { enableApp, newApp } from "../src/actions/apps.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { audit, standingOf } from "../src/contract/audit.ts";
+import {
+  contractChanges,
+  crossingsWaiting,
+  verdictChanges,
+} from "../src/contract/changes.ts";
+import { recordProbe } from "../src/contract/probes.ts";
+import { recordDecision } from "../src/core/decisions.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { openPull } from "../src/actions/pulls.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -179,5 +189,132 @@ describe("the audit reads every app's policy from git", () => {
       lone.close();
       await rm(empty, { recursive: true, force: true });
     }
+  });
+
+  test("what changed: contract commits, a crossing waiting, a verdict that flipped", async () => {
+    const notes = getRepo(app.db, "alice", "notes")!;
+    const record = getAppByRepo(app.db, notes.id)!;
+    // A commit that opens a door, then one that closes two.
+    const text = (
+      await (
+        await fetch(
+          `${servers.url}/api/v1/repos/alice/notes/contents/contract.json`,
+        )
+      ).json()
+    ).content as string;
+    const contract = JSON.parse(text) as {
+      resources: { note: { can: Record<string, string> } };
+    };
+    const wider = structuredClone(contract);
+    wider.resources.note.can.create = "anon";
+    const opened = await commitToBranch(app, alice, notes, {
+      message: "anyone may add",
+      files: [{ path: "contract.json", content: JSON.stringify(wider) }],
+    });
+    expect(opened.ok).toBe(true);
+    const narrower = structuredClone(wider);
+    narrower.resources.note.can.read = "user";
+    narrower.resources.note.can.list = "user";
+    const closed = await commitToBranch(app, alice, notes, {
+      message: "only the signed-in read",
+      files: [{ path: "contract.json", content: JSON.stringify(narrower) }],
+    });
+    expect(closed.ok).toBe(true);
+    const changes = await contractChanges(app.reposRoot, notes);
+    expect(changes.map((c) => c.subject)).toEqual([
+      "only the signed-in read",
+      "anyone may add",
+      expect.any(String),
+    ]);
+    expect(changes[0]!.loosened).toEqual([]);
+    expect(
+      changes[0]!.tightened.map((t) => `${t.verb}.${t.as}`).sort(),
+    ).toEqual(["list.anon", "read.anon"]);
+    expect(changes[1]!.loosened.map((l) => `${l.verb}.${l.as}`)).toEqual([
+      "create.anon",
+    ]);
+    // The first commit, the scaffold's: the floor's open cells are what was decided.
+    expect(changes[2]!.loosened.map((l) => `${l.verb}.${l.as}`).sort()).toEqual(
+      ["list.anon", "read.anon"],
+    );
+
+    // A pull at the wall, as the crew would leave it.
+    const branch = await commitToBranch(app, alice, notes, {
+      branch: "wider-still",
+      message: "anyone may delete",
+      files: [
+        {
+          path: "contract.json",
+          content: JSON.stringify({
+            ...narrower,
+            resources: {
+              note: { can: { ...narrower.resources.note.can, delete: "anon" } },
+            },
+          }),
+        },
+      ],
+    });
+    expect(branch.ok).toBe(true);
+    const pull = await openPull(app, alice, notes, {
+      title: "Anyone may delete",
+      baseBranch: "main",
+      headBranch: "wider-still",
+    });
+    if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: notes.id,
+      issueId: pull.value.id,
+      state: {
+        head: pull.value.headOid,
+        cells: ["note.delete as anon: was no, now yes"],
+      },
+      answer: "wall",
+      p: 1,
+      by: "wall",
+      ms: 0,
+    });
+    const waiting = crossingsWaiting(app.db, [notes]);
+    expect(waiting.map((c) => c.pull.title)).toEqual(["Anyone may delete"]);
+    expect(waiting[0]!.cells).toEqual(["note.delete as anon: was no, now yes"]);
+
+    // Two probes, the second disagreeing with the first.
+    recordProbe(app.db, record.id, {
+      repo: notes,
+      commitOid: "a".repeat(40),
+      at: "",
+      verdict: "ok",
+      knocks: [],
+      said: [],
+    });
+    recordProbe(app.db, record.id, {
+      repo: notes,
+      commitOid: "b".repeat(40),
+      at: "",
+      verdict: "mismatch",
+      knocks: [],
+      said: ["note.delete as anon: the table says no, the app said 404"],
+    });
+    const flips = verdictChanges(app.db, [{ repo: notes, appId: record.id }]);
+    expect(flips.map((f) => [f.from, f.to])).toEqual([
+      ["ok", "mismatch"],
+      [undefined, "ok"],
+    ]);
+
+    const body = await (
+      await fetch(`${servers.url}/audit`, { headers: { cookie } })
+    ).text();
+    expect(body).toContain("What changed");
+    expect(body).toContain("1 pull waits");
+    expect(body).toContain("Anyone may delete");
+    expect(body).toContain("only the signed-in read");
+    expect(body).toContain("2 doors narrower");
+    expect(body).toContain("1 door wider");
+    expect(body).toContain("Doors, over time");
+    expect(body).toContain("alice/notes disobeys its table");
+    // A stranger sees the public app's history too; the ledger row is about
+    // a public pull, so the crossing is as public as the pull.
+    const anon = await (await fetch(`${servers.url}/audit`)).text();
+    expect(anon).toContain("only the signed-in read");
   });
 });

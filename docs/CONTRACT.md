@@ -212,10 +212,20 @@ own: "it changes the policy: one door opens wider", with **Read the cells**,
 **Land it** and **Not like this**. The decider is never asked which way; a
 wall is a person's alone.
 
+## The third lens: what changed
+
+Policy is decided up front and left to hold, so a review asks what moved
+since the last look. The audit page's **What changed** (`src/contract/
+changes.ts`) is read from what already exists: the commits on each app's
+default branch that touched `contract.json`, each with the cells it opened
+wider or closed narrower; every pull still waiting at the wall, from the
+ledger; and every knock whose verdict differed from the one before it.
+Nothing is kept in step, so nothing can be forgotten.
+
 ## What is not here yet
 
-- The weekly policy review that batches crossings, and the third lens:
-  what changed, from contract diffs, crossings and probe history.
+- The weekly policy review as a routine: the same three lists, once a week,
+  as one issue for a person to sit down with.
 - `sync`, `limits` and events as contract fields. They join the table when
   something enforces them, not before.
 - Identities beyond `user` and `admin`. The forge signs one role today; the
