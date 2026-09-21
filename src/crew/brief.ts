@@ -35,6 +35,21 @@ export interface BriefInput {
   readonly resuming: boolean;
   /** What this agent is for on this repository; a planner writes maps. */
   readonly role?: CrewRole | undefined;
+  /**
+   * The policy in force: the app's contract as a table, when it has one.
+   * A builder is told the room it works in before it starts, so the doors
+   * it writes obey the cells and the cells it does not touch stay decided.
+   */
+  readonly policy?: PolicyBrief | undefined;
+}
+
+export interface PolicyBrief {
+  /** The identities the forge signs, floor first. */
+  readonly identities: readonly string[];
+  /** One line per resource: `note: create user · read anon · …`. */
+  readonly lines: readonly string[];
+  /** The contract does not read: an app built on it does not boot. */
+  readonly problems?: readonly string[] | undefined;
 }
 
 export function systemPrompt(input: BriefInput): string {
@@ -90,6 +105,7 @@ export function systemPrompt(input: BriefInput): string {
             `- The preview of your pull is at ${input.previewUrl} once it is up.`,
           ]),
     );
+    if (input.policy !== undefined) lines.push("", ...policyLines(input.policy));
   }
   lines.push(
     "",
@@ -366,3 +382,22 @@ export function issueOfBranch(
 
 const escapeRegExp = (s: string): string =>
   s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The policy in force, as the builder hears it: the table, the rule that
+ * every door obeys it, and the wall. Short on purpose — it is read on every
+ * run — and the same words the audit page uses.
+ */
+export function policyLines(policy: PolicyBrief): string[] {
+  if (policy.problems !== undefined)
+    return [
+      "This app's `contract.json` does not read, and an app built on it does not boot. Unless the issue is about something else entirely, fix the contract first and say so:",
+      ...policy.problems.map((p) => `- ${p}`),
+    ];
+  return [
+    "The policy in force — `contract.json`, who may do what — is decided, and every door obeys it through `permit` (`src/contract.ts`); the forge audits the table from git and knocks on the running app to check. Per resource, the least role each verb needs:",
+    ...policy.lines.map((l) => `- ${l}`),
+    `Identities the forge signs: ${policy.identities.join(", ")}. A role a row holds (an author) is what someone is to a row, not who they are.`,
+    "Never compare roles by hand in an action; ask `permit`. A new kind of person is a new role under an existing one. A cell loosened — anything an identity could not do before that it can after — is a wall: the forge shows that pull to a person and never lands it on its own, so do not loosen a cell unless the issue asks for exactly that, and say so in the pull.",
+  ];
+}

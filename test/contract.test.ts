@@ -11,6 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { policyLines } from "../src/crew/brief.ts";
 import {
   NOBODY,
   VERBS,
@@ -461,5 +462,24 @@ describe("what a new app is born with", () => {
         .map((c) => `${c.resource}.${c.verb}`)
         .sort(),
     ).toEqual(["note.list", "note.read"]);
+  });
+
+  test("the builder is briefed on the policy in force, and on the wall", () => {
+    const lines = policyLines({
+      identities: ["anon", "user", "admin"],
+      lines: ["note: create user · read anon · update author · delete author · list anon"],
+    }).join("\n");
+    expect(lines).toContain("who may do what — is decided");
+    expect(lines).toContain("- note: create user · read anon");
+    expect(lines).toContain("Identities the forge signs: anon, user, admin");
+    expect(lines).toContain("is a wall");
+    expect(lines).toContain("ask `permit`");
+    const broken = policyLines({
+      identities: [],
+      lines: [],
+      problems: ["note.create needs `ghost`, which is not declared"],
+    }).join("\n");
+    expect(broken).toContain("does not read");
+    expect(broken).toContain("- note.create needs `ghost`");
   });
 });

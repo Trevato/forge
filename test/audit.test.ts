@@ -196,12 +196,12 @@ describe("the audit reads every app's policy from git", () => {
     const record = getAppByRepo(app.db, notes.id)!;
     // A commit that opens a door, then one that closes two.
     const text = (
-      await (
+      (await (
         await fetch(
           `${servers.url}/api/v1/repos/alice/notes/contents/contract.json`,
         )
-      ).json()
-    ).content as string;
+      ).json()) as { content: string }
+    ).content;
     const contract = JSON.parse(text) as {
       resources: { note: { can: Record<string, string> } };
     };
@@ -316,5 +316,38 @@ describe("the audit reads every app's policy from git", () => {
     // a public pull, so the crossing is as public as the pull.
     const anon = await (await fetch(`${servers.url}/audit`)).text();
     expect(anon).toContain("only the signed-in read");
+  });
+
+  test("the table file: one row per cell, with what the door said", async () => {
+    const res = await fetch(`${servers.url}/audit.csv`, {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/csv");
+    const lines = (await res.text()).split("\r\n").filter((l) => l !== "");
+    expect(lines[0]).toBe(
+      "app,commit,standing,resource,verb,identity,answer,door",
+    );
+    // The scaffold's table, as the private app still has it.
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /^alice\/secret,[0-9a-f]{7},sound,note,create,anon,no,$/,
+      ),
+    );
+    expect(lines).toContainEqual(
+      expect.stringMatching(
+        /^alice\/secret,[0-9a-f]{7},sound,note,delete,user,own,$/,
+      ),
+    );
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^alice\/broken,[0-9a-f]{7},unsound,,,,,$/),
+    );
+    expect(lines).toContainEqual(
+      expect.stringMatching(/^alice\/bare,[0-9a-f]{7},unread,,,,,$/),
+    );
+    // A stranger's file has no private app in it.
+    const anon = await (await fetch(`${servers.url}/audit.csv`)).text();
+    expect(anon).not.toContain("secret");
+    expect(anon).toContain("alice/notes");
   });
 });

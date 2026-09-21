@@ -17,6 +17,7 @@ import type { Repo } from "../core/repos.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import {
+  VERBS,
   identities,
   readContract,
   table,
@@ -73,6 +74,38 @@ export function standingOf(text: string | undefined): Standing {
     cells,
     open: cells.filter((c) => c.as === floor && c.answer !== "no"),
   };
+}
+
+/** The identities of a sound standing: the floor, then the rest. */
+export function identitiesOf(standing: Standing): readonly string[] {
+  return standing.kind === "sound" ? standing.identities : [];
+}
+
+/**
+ * The policy as a builder is briefed on it: one line per resource with the
+ * least role each verb needs, or the problems when the contract does not
+ * read. Undefined for an app with no contract: nothing to brief.
+ */
+export async function policyBrief(
+  forge: { reposRoot: string },
+  repo: Repo,
+): Promise<
+  | {
+      identities: readonly string[];
+      lines: readonly string[];
+      problems?: readonly string[] | undefined;
+    }
+  | undefined
+> {
+  const { standing } = await audit(forge.reposRoot, repo);
+  if (standing.kind === "unread") return undefined;
+  if (standing.kind === "unsound")
+    return { identities: [], lines: [], problems: standing.problems };
+  const lines = Object.entries(standing.contract.resources).map(
+    ([resource, { can }]) =>
+      `${resource}: ${VERBS.map((verb) => `${verb} ${can[verb]}`).join(" · ")}`,
+  );
+  return { identities: standing.identities, lines };
 }
 
 /** Read one repository's policy at the tip of its default branch. */

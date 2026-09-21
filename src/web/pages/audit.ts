@@ -91,6 +91,12 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
       "Who can do what, across every app, read from each one's contract.",
     body: html`<div class="page-head">
         <h1>Audit</h1>
+        <span class="spacer"></span>
+        ${btn("Table file", {
+          href: "/audit.csv",
+          size: "sm",
+          icon: "download",
+        })}
         <p class="muted">
           Who can do what, read from each app's <code>contract.json</code> at
           its default branch. Nothing here is remembered: it is what the policy
@@ -279,6 +285,77 @@ function probeFoot(
           ${last.said.map((s) => html`<li>${s}</li>`)}
         </ul>`,
     )}`;
+}
+
+/**
+ * GET /audit.csv — the policy as a table file: one row per app, resource,
+ * verb and identity, with the answer and what the running app last said.
+ * A spreadsheet is a system people already use; this is the audit in it.
+ */
+export async function auditCsv(ctx: Ctx): Promise<Response> {
+  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
+    limit: AUDIT_LIMIT,
+  });
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  const apps = repos.filter((r) => records.has(r.id));
+  const audited = await Promise.all(
+    apps.map((repo) => audit(ctx.app.reposRoot, repo)),
+  );
+  const probed = latestProbes(
+    ctx.app.db,
+    apps.map((r) => records.get(r.id)!.id),
+  );
+  const cell = (v: string): string =>
+    /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  const rows: string[][] = [
+    [
+      "app",
+      "commit",
+      "standing",
+      "resource",
+      "verb",
+      "identity",
+      "answer",
+      "door",
+    ],
+  ];
+  for (const a of audited) {
+    const app = name(a.repo);
+    const commit = a.oid?.slice(0, 7) ?? "";
+    if (a.standing.kind !== "sound") {
+      rows.push([app, commit, a.standing.kind, "", "", "", "", ""]);
+      continue;
+    }
+    const last = probed.get(records.get(a.repo.id)!.id);
+    const door = (resource: string, verb: string, as: string): string => {
+      const knock = last?.knocks.find(
+        (k) => k.resource === resource && k.verb === verb && k.as === as,
+      );
+      return knock === undefined ? "" : knock.verdict;
+    };
+    for (const c of a.standing.cells)
+      rows.push([
+        app,
+        commit,
+        "sound",
+        c.resource,
+        c.verb,
+        c.as,
+        c.answer,
+        door(c.resource, c.verb, c.as),
+      ]);
+  }
+  const body = rows.map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
+  return new Response(body, {
+    headers: {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": 'attachment; filename="audit.csv"',
+      "cache-control": "private, no-store",
+    },
+  });
 }
 
 /** POST /audit/:owner/:name/probe — knock on one app now. */

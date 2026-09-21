@@ -59,6 +59,7 @@ import {
   wrapUpPrompt,
   type RunReason,
 } from "./brief.ts";
+import { policyBrief } from "../contract/audit.ts";
 import { BUDGET_REACHED, runClaude } from "./claude.ts";
 import { isRateLimited, MAX_PAUSES, resumeAt, whenText } from "./limits.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
@@ -460,6 +461,7 @@ async function work(
       record && runtime && pull && !continuing
         ? runtime.urlFor(record, previewEnv(pull.number))
         : undefined;
+    const policy = record === undefined ? undefined : await policyBrief(app, repo);
     const brief = {
       agent,
       repo,
@@ -469,6 +471,7 @@ async function work(
       forgeUrl: options.forgeUrl,
       isApp: record !== undefined,
       previewUrl,
+      policy,
       resuming: previous?.sessionId !== undefined && previous.sessionId !== "",
       role: crewRole(app.db, repo.id, agent.user.id),
     };

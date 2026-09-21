@@ -11,13 +11,13 @@ whichever way its reader sees.
 
 Every word on a studio page is one thing in git, and dev mode shows it.
 
-| studio says  | git underneath                                          |
-| ------------ | ------------------------------------------------------- |
-| **tell**     | an issue, assigned to a builder by the routing decision |
-| **working**  | a run, streaming its log                                |
-| **look**     | an open pull with a green check and a preview           |
-| **shipped**  | a merge to the default branch, production redeployed    |
-| **asks you** | a pull the crew stopped on, or a green one for a look   |
+| studio says  | git underneath                                                         |
+| ------------ | ---------------------------------------------------------------------- |
+| **tell**     | an issue, assigned to a builder by the routing decision                |
+| **working**  | a run, streaming its log                                               |
+| **look**     | an open pull with a green check and a preview                          |
+| **shipped**  | a merge to the default branch, production redeployed                   |
+| **asks you** | a pull the crew stopped on, a green one for a look, or one at the wall |
 
 These are also a kanban board: tell is the backlog, working is in progress,
 look is review, shipped is done, asks you is blocked. The crew's slot count

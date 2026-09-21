@@ -43,7 +43,7 @@ import {
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { activityAtom } from "../web/feeds.ts";
-import { auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
+import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import {
   changePassword,
   iconPng,
@@ -380,6 +380,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
   router.add("GET", "/audit", auditPage);
+  router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);
   router.add("POST", "/new", newRepoSubmit);
   router.add("GET", "/organizations/new", newOrgPage);

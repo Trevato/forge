@@ -222,6 +222,19 @@ wider or closed narrower; every pull still waiting at the wall, from the
 ledger; and every knock whose verdict differed from the one before it.
 Nothing is kept in step, so nothing can be forgotten.
 
+## The policy, carried
+
+Two more places the table reaches, so it is never only a page:
+
+- **The builder's brief.** A run on an app with a contract is told the
+  policy in force before it starts (`policyLines` in `src/crew/brief.ts`,
+  from `policyBrief`): one line per resource, the identities the forge
+  signs, that every door asks `permit`, and what the wall is. An app whose
+  contract does not read is told to fix that first.
+- **The table file.** `GET /audit.csv` is the audit as a spreadsheet: one
+  row per app, resource, verb and identity, with the answer and what the
+  door said when last knocked on. The viewer's apps only.
+
 ## What is not here yet
 
 - The weekly policy review as a routine: the same three lists, once a week,
