@@ -68,6 +68,7 @@ import {
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
+import { followingCard, followingOf } from "./following.ts";
 import { asksJs, liveRegionsJs } from "../client.ts";
 import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -862,11 +863,15 @@ export async function studioApp(
     <a href="${base}/pulls">Every change</a>
   </p>`;
 
+  // An app that follows another says so before anything else: whether
+  // it is in step is the first thing its owner wants to know.
+  const following = await followingOf(ctx, repo);
   const body = html`${repoHeader(ctx, repo, "code", {
       compact: true,
       ownTitle: true,
     })}
     ${head}
+    ${following === undefined ? null : followingCard(ctx, repo, following)}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}

@@ -8,7 +8,8 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { syncFork } from "../actions/forks.ts";
+import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
+import { convergeFork, convergeState } from "../crew/converge.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -116,6 +117,7 @@ import {
   listReposVisibleTo,
   type Repo,
   type RepoCounts,
+  canWrite,
   getRepoById,
 } from "../core/repos.ts";
 import { searchKind } from "../core/search.ts";
@@ -1125,6 +1127,122 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!forked.ok) return respondAccess(forked.error, 422);
     return json(forked.value, 201);
   });
+
+  // ── following. A fork's standing against its parent, read from git each
+  // time; taking updates is git's part, converging is the crew's.
+  router.add("GET", "/api/v1/repos/:owner/:name/following", async (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const relation = await relationOf(ctx.app, ctx.auth.user, repo);
+    if (relation === undefined)
+      return apiError("not_a_fork", 404, "this repository follows nothing");
+    const converge =
+      relation.state === "diverged" && !relation.clean
+        ? convergeState(ctx.app, repo, relation.parent)
+        : undefined;
+    return json({
+      parent: `${relation.parent.ownerName}/${relation.parent.name}`,
+      parentBranch: relation.parent.defaultBranch,
+      branch: repo.defaultBranch,
+      state: relation.state,
+      behind: relation.behind,
+      ahead: relation.ahead,
+      clean: relation.clean,
+      conflicts: relation.conflicts,
+      forkTip: relation.forkTip,
+      parentTip: relation.parentTip,
+      converge:
+        converge === undefined
+          ? null
+          : {
+              kind: converge.kind,
+              issue: "issue" in converge ? converge.issue.number : null,
+              pull: "pull" in converge ? converge.pull.number : null,
+              agent:
+                "agent" in converge && converge.agent !== undefined
+                  ? converge.agent.user.username
+                  : null,
+            },
+    });
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/following/take",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const took = await takeUpdates(ctx.app, ctx.auth.user, repo);
+      if (!took.ok) {
+        const e = took.error;
+        if (typeof e === "string")
+          return e === "not_a_fork"
+            ? apiError("not_a_fork", 404, "this repository follows nothing")
+            : respondAccess(e, 403);
+        if (e.kind === "conflict")
+          return json(
+            {
+              error: "conflict",
+              message: "both sides changed these files; the crew can converge",
+              files: e.files,
+            },
+            409,
+          );
+        return apiError(
+          e.kind,
+          409,
+          e.kind === "moved"
+            ? "something moved while this was read; try again"
+            : e.message,
+        );
+      }
+      return json(took.value);
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/following/converge",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+        return respondAccess("forbidden", 403);
+      const parent =
+        repo.forkParentId === null
+          ? undefined
+          : getRepoById(ctx.app.db, repo.forkParentId);
+      if (parent === undefined)
+        return apiError("not_a_fork", 404, "this repository follows nothing");
+      const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
+      const status =
+        outcome.kind === "queued"
+          ? 202
+          : outcome.kind === "working" || outcome.kind === "proposed"
+            ? 200
+            : outcome.kind === "ceiling"
+              ? 429
+              : outcome.kind === "nobody"
+                ? 403
+                : 409;
+      return json(
+        {
+          kind: outcome.kind,
+          issue: "issue" in outcome ? outcome.issue.number : null,
+          pull: "pull" in outcome ? outcome.pull.number : null,
+          agent:
+            "agent" in outcome && outcome.agent !== undefined
+              ? outcome.agent.user.username
+              : null,
+        },
+        status,
+      );
+    },
+  );
 
   // ── git reads. The agent arena showed the write path was complete but the
   // read path was missing, so automation couldn't inspect before acting.

@@ -10,7 +10,9 @@
 
 import type { Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
-import { syncFork } from "../../actions/forks.ts";
+import { takeUpdates } from "../../actions/forks.ts";
+import { forkRelation } from "../../core/following.ts";
+import { followingCard, followingOf, relationBadge } from "./following.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
@@ -83,12 +85,19 @@ export { pathCrumbs, refMenu, refSet, refSetFrom } from "./refs.ts";
  * GET /:owner/:name/forks — every fork of this repository the viewer may
  * see, newest first. The count on the repository page is the way in.
  */
-export function forksPage(ctx: Ctx): Response {
+export async function forksPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const forks = listForks(ctx.app.db, repo.id).filter((fork) =>
     canRead(ctx.app.db, fork, ctx.auth.user),
   );
+  // Each fork's standing is a few git questions; past a screenful the list
+  // says who forked and leaves the standing to each fork's own page.
+  const standings = new Map<string, Html>();
+  for (const fork of forks.slice(0, 30)) {
+    const relation = await forkRelation(ctx.app, fork, repo);
+    if (relation !== undefined) standings.set(fork.id, relationBadge(relation));
+  }
   const body = html`${repoHeader(ctx, repo, "code")}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
@@ -109,6 +118,9 @@ export function forksPage(ctx: Ctx): Response {
               meta: html`${fork.description === ""
                 ? null
                 : html`${fork.description} · `}${fork.visibility}`,
+              ...(standings.has(fork.id)
+                ? { trail: standings.get(fork.id)! }
+                : {}),
             }),
           ),
         )}`;
@@ -177,22 +189,28 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
-  // A native fork syncs from its parent; a mirror from its origin.
+  // A native fork takes from its parent; a mirror from its origin.
   if (repo.origin === null && repo.forkParentId !== null) {
-    const followed = await syncFork(ctx.app, ctx.auth.user, repo);
-    if (!followed.ok)
+    const took = await takeUpdates(ctx.app, ctx.auth.user, repo);
+    if (!took.ok) {
+      const e = took.error;
       return flashTo(ctx, repoBase(repo), {
         tone: "danger",
         message:
-          followed.error === "diverged"
-            ? `${repo.defaultBranch} has commits of its own; merge the parent's by hand.`
-            : followed.error === "not_a_fork"
+          typeof e === "string"
+            ? e === "not_a_fork"
               ? "This repository has no parent to follow."
-              : "You need write access to update this fork.",
+              : "You need write access to update this fork."
+            : e.kind === "conflict"
+              ? `${repo.defaultBranch} and the parent both changed ${e.files.join(", ")}; the crew can converge it.`
+              : e.kind === "moved"
+                ? "Something moved while this was read; try again."
+                : `Git could not take the updates: ${e.message}`,
       });
+    }
     return flashTo(ctx, repoBase(repo), {
-      message: followed.value.updated
-        ? `Updated ${repo.defaultBranch} to ${followed.value.to.slice(0, 7)}.`
+      message: took.value.updated
+        ? `${took.value.merged ? "Merged" : "Updated"} ${repo.defaultBranch} to ${took.value.to.slice(0, 7)}.`
         : "Already up to date with the parent.",
     });
   }
@@ -526,25 +544,13 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
           ${when(
             parent,
             (p) =>
+              // The standing and the one thing to do about it live in the
+              // Following card above the code; the rail only names the parent.
               html`<dt>Fork of</dt>
                 <dd>
                   <a href="/${p.ownerName}/${p.name}"
                     >${p.ownerName}/${p.name}</a
                   >
-                  ${when(
-                    canWrite(ctx.app.db, repo, ctx.auth.user),
-                    () =>
-                      html`<form
-                        method="post"
-                        action="${repoBase(repo)}/sync"
-                        class="inline"
-                      >
-                        ${btn("Update from parent", {
-                          size: "sm",
-                          icon: "sync",
-                        })}
-                      </form>`,
-                  )}
                 </dd>`,
           )}
           ${when(
@@ -856,10 +862,14 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   const entries = await scope.source.tree(ref, "");
   const tree = entries.ok ? entries.value : [];
 
+  const following = await followingOf(ctx, repo);
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
   })}
-  ${appStrip(ctx, repo)} ${forkBar(ctx, repo)}
+  ${appStrip(ctx, repo)}
+  ${following === undefined
+    ? forkBar(ctx, repo)
+    : followingCard(ctx, repo, following)}
   ${await renderCode(scope, {
     refs,
     ref,

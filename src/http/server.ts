@@ -41,6 +41,7 @@ import {
   themeSubmit,
 } from "../web/pages/site.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
+import { followingSubmit } from "../web/pages/following.ts";
 import {
   blobPage,
   forksPage,
@@ -664,6 +665,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // A fork takes what it follows: git's part by itself, the rest by the crew.
+  router.add("POST", "/:owner/:name/following", followingSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are
   // ordinary repo-scoped writes, not account-level ones.
   router.add("POST", "/:owner/:name/sync", repoSyncSubmit);

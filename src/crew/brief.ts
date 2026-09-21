@@ -18,6 +18,7 @@ export type RunReason =
   | "feedback"
   | "check_failed"
   | "conflict"
+  | "converge"
   | "review";
 
 export interface BriefInput {
@@ -116,8 +117,12 @@ export interface TaskInput extends BriefInput {
   readonly checkSummary?: string | undefined;
   /** What failed: the preview's deploy, or the repository's own check. */
   readonly checkKind?: "deploy" | "check" | undefined;
-  /** For `conflict`: the files main and the branch both changed. */
+  /** For `conflict` and `converge`: the files both sides changed. */
   readonly conflictFiles?: readonly string[] | undefined;
+  /** For `converge`: the parent this repository follows, and its branch. */
+  readonly following?:
+    | { readonly parent: string; readonly branch: string }
+    | undefined;
   /** For `review`: the pull's diff against its base, capped. */
   readonly reviewDiff?: string | undefined;
   /** For `review`: pictures of the preview at this head, phone and desktop. */
@@ -219,6 +224,26 @@ function taskBody(input: TaskInput): string {
       `Your pull #${issue.number} is green, but \`main\` moved and the branch no longer merges cleanly${files.length > 0 ? `: ${files.join(", ")}` : "."}`,
       "",
       `Merge \`main\` into \`${input.branch}\`, resolve the conflicts keeping what both sides meant, make sure the tests pass, and push again.`,
+    );
+    return out.join("\n");
+  }
+
+  if (input.reason === "converge") {
+    const files = input.conflictFiles ?? [];
+    const parent = input.following?.parent ?? "its parent";
+    const pbranch = input.following?.branch ?? "main";
+    const direction = input.repo.autonomyDirection.trim();
+    out.push(
+      `This repository follows ${parent}, and both have moved. Issue #${issue.number}: ${issue.title}`,
+      "",
+      issue.body || "(no description)",
+      "",
+      `The parent's \`${pbranch}\` is staged here at \`refs/following/${pbranch}\`. On the branch \`${input.branch}\`:`,
+      `1. \`git fetch origin refs/following/${pbranch} && git merge FETCH_HEAD\``,
+      `2. Resolve each conflict${files.length > 0 ? ` (${files.join(", ")})` : ""} keeping what both sides meant. Where they cannot both be kept, this repository's direction decides${direction === "" ? "" : `: ${direction}`}. Never drop this repository's own work to make a merge easy.`,
+      "3. Make sure the tests pass, then push.",
+      "",
+      `The forge opens the pull on your first push. Your report becomes its description: say, per file, which side won and why, and end it with \`Closes #${issue.number}\`.`,
     );
     return out.join("\n");
   }

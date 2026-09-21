@@ -491,11 +491,23 @@ async function work(
       since,
       checkSummary: failedCheck?.run?.summary,
       conflictFiles:
-        reason === "conflict"
+        reason === "conflict" || reason === "converge"
           ? run.summary
-              .replace(/^main moved: /, "")
+              .replace(/^(main|parent) moved: /, "")
               .split(", ")
               .filter((f) => f !== "")
+          : undefined,
+      following:
+        reason === "converge" && repo.forkParentId !== null
+          ? (() => {
+              const parent = getRepoById(app.db, repo.forkParentId);
+              return parent === undefined
+                ? undefined
+                : {
+                    parent: `${parent.ownerName}/${parent.name}`,
+                    branch: parent.defaultBranch,
+                  };
+            })()
           : undefined,
       ...(reason === "review" && pull
         ? await reviewInputs(app, repo, pull, record, bare)

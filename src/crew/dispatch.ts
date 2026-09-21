@@ -40,6 +40,7 @@ import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
+import { followDivergence } from "./converge.ts";
 import { sandboxAvailable } from "./sandbox.ts";
 import {
   AUTONOMY_TICK_MS,
@@ -139,6 +140,8 @@ export async function startCrew(
       });
     }
   });
+  // A fork whose parent moved past it is the crew's to converge.
+  const unfollow = followDivergence(app);
   // Repositories that run on their own take a turn once a minute, on the
   // same clock as the pump, so a pick becomes a run on the next tick.
   let lastAutonomy = 0;
@@ -164,6 +167,7 @@ export async function startCrew(
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      unfollow();
       if (options.drain === true && inFlight.size > 0) {
         // Let what is in flight finish: a run cut short is a person's
         // money spent twice. The new forge takes new work meanwhile.
@@ -690,6 +694,7 @@ function taskOf(
     run.reason === "feedback" ||
     run.reason === "check_failed" ||
     run.reason === "conflict" ||
+    run.reason === "converge" ||
     run.reason === "review"
       ? run.reason
       : "assigned";

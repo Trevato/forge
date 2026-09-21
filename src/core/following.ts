@@ -20,7 +20,16 @@ import type { Database } from "bun:sqlite";
 import type { EventBus, ForgeEvent } from "./events.ts";
 import { listOpenPullsFromHead, type Pull } from "./pulls.ts";
 import { getRepoById, listForks, type Repo } from "./repos.ts";
-import { fetchInto, mergeBase, resolveOid, writeRef } from "../git/merge.ts";
+import {
+  aheadCount,
+  fetchInto,
+  merge,
+  mergeBase,
+  mergeable,
+  resolveOid,
+  writeRef,
+  type MergeIdentity,
+} from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -70,13 +79,217 @@ export function follow(forge: Following): () => void {
     );
     if (moved.some((m) => m.ref === `refs/heads/${repo.defaultBranch}`))
       for (const fork of listForks(forge.db, repo.id))
-        fastForwardFork(forge, fork, repo, actor).catch((error) =>
-          log.error("fork could not follow its parent", {
-            fork: `${fork.ownerName}/${fork.name}`,
-            error: String(error),
-          }),
-        );
+        fastForwardFork(forge, fork, repo, actor)
+          .then((followed) => {
+            // A fork with work of its own cannot be moved; it is told the
+            // parent moved, and whoever listens (the crew, a card) takes it
+            // from there. The fast-forward is silent because it changed
+            // nothing the fork's owner would want to know about.
+            if (followed.ok) return;
+            forge.bus.append({
+              kind: "fork.diverged",
+              repoId: fork.id,
+              actorId: actor,
+              payload: {
+                parent: `${repo.ownerName}/${repo.name}`,
+                parentId: repo.id,
+              },
+            });
+          })
+          .catch((error) =>
+            log.error("fork could not follow its parent", {
+              fork: `${fork.ownerName}/${fork.name}`,
+              error: String(error),
+            }),
+          );
   });
+}
+
+/**
+ * Where a fork stands against its parent, at rest. `synced` is the copy
+ * nobody has touched; `behind` has nothing of its own and can simply move;
+ * `ahead` has its own work and the parent has not moved; `diverged` has
+ * both, and git says whether they still merge cleanly and, if not, which
+ * files need a decision. Every number is read from git each time — the
+ * database never caches a relationship it could get wrong.
+ */
+export type RelationState = "synced" | "behind" | "ahead" | "diverged";
+
+export interface ForkRelation {
+  readonly parent: Repo;
+  readonly state: RelationState;
+  /** Commits on the parent's default branch the fork does not have. */
+  readonly behind: number;
+  /** Commits on the fork's default branch the parent does not have. */
+  readonly ahead: number;
+  /** For `diverged`: whether git merges the two without a conflict. */
+  readonly clean: boolean;
+  /** For `diverged` and not clean: the files both sides changed. */
+  readonly conflicts: readonly string[];
+  readonly forkTip: string;
+  readonly parentTip: string;
+}
+
+export async function forkRelation(
+  forge: Pick<Following, "db" | "reposRoot">,
+  fork: Repo,
+  parent?: Repo,
+): Promise<ForkRelation | undefined> {
+  const p =
+    parent ??
+    (fork.forkParentId === null
+      ? undefined
+      : getRepoById(forge.db, fork.forkParentId));
+  if (p === undefined) return undefined;
+  const parentDir = repoDir(forge.reposRoot, p.ownerName, p.name);
+  const forkDir = repoDir(forge.reposRoot, fork.ownerName, fork.name);
+  const [parentTip, forkTip] = await Promise.all([
+    resolveOid(parentDir, `refs/heads/${p.defaultBranch}`),
+    resolveOid(forkDir, `refs/heads/${fork.defaultBranch}`),
+  ]);
+  const at = (
+    state: RelationState,
+    behind: number,
+    ahead: number,
+    clean = true,
+    conflicts: readonly string[] = [],
+  ): ForkRelation => ({
+    parent: p,
+    state,
+    behind,
+    ahead,
+    clean,
+    conflicts,
+    forkTip: forkTip ?? "",
+    parentTip: parentTip ?? "",
+  });
+  // An empty side has nothing to follow or to differ by.
+  if (parentTip === undefined || forkTip === undefined || parentTip === forkTip)
+    return at("synced", 0, 0);
+  // The parent's objects reach the fork through its alternates, so every
+  // question here is answered inside the fork without a fetch.
+  const base = await mergeBase(forkDir, forkTip, parentTip);
+  if (base === undefined) return at("diverged", 0, 0, false);
+  const [behind, ahead] = await Promise.all([
+    aheadCount(forkDir, forkTip, parentTip),
+    aheadCount(forkDir, parentTip, forkTip),
+  ]);
+  if (ahead === 0) return at("behind", behind, 0);
+  if (behind === 0) return at("ahead", 0, ahead);
+  const merged = await mergeable(forkDir, forkTip, parentTip);
+  if (merged.ok) return at("diverged", behind, ahead, true);
+  return at(
+    "diverged",
+    behind,
+    ahead,
+    false,
+    merged.error.kind === "conflict" ? merged.error.files : [],
+  );
+}
+
+export type TakeError =
+  | { kind: "conflict"; files: readonly string[] }
+  | { kind: "moved" }
+  | { kind: "git"; message: string };
+
+/**
+ * Take the parent's updates into the fork's default branch: a fast-forward
+ * when the fork has nothing of its own, a merge commit when it has and git
+ * merges cleanly, and a refusal naming the files when it does not. The
+ * merge is plumbing in the bare repo — no clone — and lands only if the
+ * fork's tip is still where it was read. What follows a push follows this.
+ */
+export async function takeUpdates(
+  forge: Following,
+  fork: Repo,
+  parent: Repo,
+  author: MergeIdentity & { readonly id: string },
+): Promise<Result<ForkSync & { merged: boolean }, TakeError>> {
+  const relation = await forkRelation(forge, fork, parent);
+  if (relation === undefined) return err({ kind: "git", message: "no parent" });
+  if (relation.state === "synced" || relation.state === "ahead")
+    return ok({
+      updated: false,
+      merged: false,
+      from: relation.forkTip,
+      to: relation.forkTip,
+    });
+  if (relation.state === "behind") {
+    const moved = await fastForwardFork(forge, fork, parent, author.id);
+    if (moved.ok) return ok({ ...moved.value, merged: false });
+    // Diverged between the read and the move: fall through to the merge.
+  }
+  const again = await forkRelation(forge, fork, parent);
+  if (again === undefined || again.state !== "diverged")
+    return err({ kind: "moved" });
+  if (!again.clean) return err({ kind: "conflict", files: again.conflicts });
+  const parentDir = repoDir(forge.reposRoot, parent.ownerName, parent.name);
+  const forkDir = repoDir(forge.reposRoot, fork.ownerName, fork.name);
+  // The parent's objects are visible through the alternates already; the
+  // fetch makes the fork own what its new commit points at.
+  const tip = await fetchInto(
+    forkDir,
+    parentDir,
+    `refs/heads/${parent.defaultBranch}`,
+  );
+  if (tip === undefined) return err({ kind: "git", message: "fetch failed" });
+  const ref = `refs/heads/${fork.defaultBranch}`;
+  const landed = await merge(forkDir, {
+    baseBranch: fork.defaultBranch,
+    baseOid: again.forkTip,
+    headOid: tip,
+    strategy: "merge",
+    message: `Take updates from ${parent.ownerName}/${parent.name}`,
+    author,
+  });
+  if (!landed.ok) {
+    if (landed.error.kind === "conflict")
+      return err({ kind: "conflict", files: landed.error.files });
+    if (landed.error.kind === "base_moved") return err({ kind: "moved" });
+    return err({
+      kind: "git",
+      message: landed.error.kind === "git" ? landed.error.message : "unsafe",
+    });
+  }
+  forge.bus.append({
+    kind: "push",
+    repoId: fork.id,
+    actorId: author.id,
+    payload: {
+      updates: [{ ref, oldOid: again.forkTip, newOid: landed.value.mergeOid }],
+      followed: `${parent.ownerName}/${parent.name}`,
+      merged: true,
+    },
+  });
+  return ok({
+    updated: true,
+    merged: true,
+    from: again.forkTip,
+    to: landed.value.mergeOid,
+  });
+}
+
+/**
+ * Stage the parent's default branch inside the fork at
+ * `refs/following/<branch>`, so a clone of the fork can fetch exactly what
+ * it is being asked to take — the crew's converge run does — without
+ * needing to read the parent at all. Answers the staged tip.
+ */
+export async function stageParent(
+  forge: Pick<Following, "reposRoot">,
+  fork: Repo,
+  parent: Repo,
+): Promise<string | undefined> {
+  const parentDir = repoDir(forge.reposRoot, parent.ownerName, parent.name);
+  const forkDir = repoDir(forge.reposRoot, fork.ownerName, fork.name);
+  const tip = await fetchInto(
+    forkDir,
+    parentDir,
+    `refs/heads/${parent.defaultBranch}`,
+  );
+  if (tip === undefined) return undefined;
+  const ref = `refs/following/${parent.defaultBranch}`;
+  return (await writeRef(forkDir, ref, tip)) ? tip : undefined;
 }
 
 /**
