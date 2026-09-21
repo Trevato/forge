@@ -29,7 +29,7 @@ import { setCrewRole } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
-import { getPull, type Pull } from "../src/core/pulls.ts";
+import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import { setDirectionIssue, type Repo } from "../src/core/repos.ts";
 import {
   agentRunTotals,
@@ -4656,6 +4656,150 @@ describe("this week's runs and spend are counted by the database, not read off a
     const page = await (await get("/alice/quiet")).text();
     expect(page).toMatch(/Runs<\/dt>\s*<dd>0<\/dd>/);
     expect(page).toContain("$0.00");
+  });
+});
+
+describe("this week's shipping is counted by the database, not read off a page of closed pulls", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let busy: Repo;
+  let ownerCookie: string;
+
+  /** How many changes landed this week — past the page of closed pulls the
+   * count used to be filtered out of. */
+  const SHIPPED = 150;
+  /** One agent run's cost, so the page prints a cost per shipped change. */
+  const SPENT = 30;
+
+  /** A pull row on a closed issue: `mergedAt` null is closed without a merge. */
+  const seedPull = (repo: Repo, title: string, mergedAt: string | null) => {
+    const opened = openIssue(app, alice, repo, { title });
+    if (!opened.ok) throw new Error(String(opened.error));
+    app.db
+      .query(
+        `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at)
+         VALUES (?1, 'main', ?2, 'a', 'b', ?3)`,
+      )
+      .run(opened.value.id, `f${opened.value.number}`, mergedAt);
+    app.db
+      .query("UPDATE issue SET kind = 'pull', state = 'closed' WHERE id = ?1")
+      .run(opened.value.id);
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-week-shipped-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ownerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+    for (const name of ["busy", "quiet"] as const) {
+      const made = await createRepo(app, alice, {
+        name,
+        visibility: "private",
+        description: "",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      const seeded = await commitToBranch(app, alice, made.value, {
+        message: "Start",
+        files: [{ path: "README.md", content: "start\n" }],
+      });
+      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+      const enabled = await enableApp(app, alice, made.value, { slug: name });
+      if (!enabled.ok) throw new Error(String(enabled.error));
+      if (name === "busy") busy = made.value;
+    }
+
+    // 150 changes landed inside the week — past the hundred closed pulls the
+    // page used to read — plus two that must not count: one closed without a
+    // merge, and one merged ten days back.
+    const now = Date.now();
+    for (let i = 0; i < SHIPPED; i++)
+      seedPull(busy, `landed ${i}`, new Date(now - i * 60_000).toISOString());
+    seedPull(busy, "abandoned", null);
+    seedPull(
+      busy,
+      "landed last week",
+      new Date(now - 10 * 24 * 60 * 60_000).toISOString(),
+    );
+
+    const keeper = await createAgent(app, alice, { username: "keeper" });
+    if (!keeper.ok) throw new Error(String(keeper.error));
+    expect(addToCrew(app, alice, busy, "keeper").ok).toBe(true);
+    const run = createRun(app.db, {
+      repoId: busy.id,
+      kind: "agent",
+      actorId: getUserByName(app.db, "keeper")!.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, {
+      state: "ok",
+      summary: "a week of work",
+      costUsd: SPENT,
+    });
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${ownerCookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  test("the aggregate counts the merged pulls in the window and nothing else", () => {
+    const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    expect(mergedPullCount(app.db, busy.id, week)).toBe(SHIPPED);
+
+    // Window opened wide: the older merge is there after all, the pull closed
+    // without a merge still is not.
+    expect(mergedPullCount(app.db, busy.id, "2000-01-01T00:00:00.000Z")).toBe(
+      SHIPPED + 1,
+    );
+
+    // COUNT over no rows is 0, and another repo's merges are never this one's.
+    expect(mergedPullCount(app.db, "no-such-repo", week)).toBe(0);
+  });
+
+  test("the app page says 150 changes shipped, not the 100 a page of closed pulls holds", async () => {
+    const page = await (await get("/alice/busy")).text();
+    expect(page).toMatch(/Shipped<\/dt>\s*<dd>150 changes<\/dd>/);
+    expect(page).not.toContain("100 changes");
+    // And the cost of a shipped change divides by all 150.
+    expect(page).toContain(`$${(SPENT / SHIPPED).toFixed(2)} per shipped change`);
+  });
+
+  test("an app that shipped nothing this week reads 0 changes and no cost per change", async () => {
+    const page = await (await get("/alice/quiet")).text();
+    expect(page).toMatch(/Shipped<\/dt>\s*<dd>0 changes<\/dd>/);
+    expect(page).not.toContain("per shipped change");
   });
 });
 

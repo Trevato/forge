@@ -288,6 +288,32 @@ export function mergedPullsForRepos(
   );
 }
 
+/**
+ * How many of a repository's pulls have landed since an instant — what
+ * "shipped this week" counts, and what the cost of a shipped change
+ * divides by. Counted by the database over the whole window, not off a
+ * page of closed pulls: past a hundred of those the week under-reports,
+ * and the cost per change reads high with nothing saying why.
+ *
+ * Closed is not shipped. A pull closed without a merge has no `merged_at`,
+ * and `NULL >= anything` is `NULL` — never true, so it never counts; the
+ * `IS NOT NULL` says so to the reader as well as the planner.
+ */
+export function mergedPullCount(
+  db: Database,
+  repoId: string,
+  since: string,
+): number {
+  const row = db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM issue JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.repo_id = ?1
+          AND pull.merged_at IS NOT NULL AND pull.merged_at >= ?2`,
+    )
+    .get(repoId, since);
+  return row?.n ?? 0;
+}
+
 /** The pull rows for a page of issues, keyed by issue id. */
 export function pullsForIssues(
   db: Database,

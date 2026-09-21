@@ -11,7 +11,11 @@ import { listCrewRoles } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
 import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
-import { listPulls, openPullsClosing } from "../../core/pulls.ts";
+import {
+  listPulls,
+  mergedPullCount,
+  openPullsClosing,
+} from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import {
   agentRunTotals,
@@ -158,10 +162,10 @@ export async function studioApp(
   const decisions = withLikely(ctx, decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-  const shipped = listPulls(db, repo.id, {
-    state: "closed",
-    limit: 100,
-  }).filter((p) => p.mergedAt !== null && p.mergedAt >= week).length;
+  // What landed this week, counted by the database like the runs and the
+  // spend below — a page of closed pulls would stop at a hundred and the
+  // cost per shipped change would read high off the short count.
+  const shipped = mergedPullCount(db, repo.id, week);
   // The rest is spend, worked out only for a viewer who is going to see it —
   // counted by the database over the whole week, not off a page of rows.
   const weekTotals = ownerFacts
