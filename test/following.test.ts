@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
+import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { relationOf, takeUpdates } from "../src/actions/forks.ts";
 import {
@@ -515,5 +517,140 @@ describe("a fork that follows its parent", () => {
     if (!pf.ok) throw new Error(String(pf.error));
     expect(await relationOf(app, bob, pf.value)).toBeUndefined();
     expect(await relationOf(app, alice, pf.value)).toBeDefined();
+  });
+});
+
+/**
+ * A merge moves its base with `update-ref`, which runs no hook and announces
+ * no push. Landing pulls is how a repository with a crew moves at all, so a
+ * fork that followed pushes only would never follow anything.
+ */
+describe("a landed pull moves the forks, like the push it amounts to", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let alice: User;
+  let bob: User;
+  let carol: User;
+  let parent: Repo;
+  let untouched: Repo;
+  let worked: Repo;
+  let checks: ChecksHandle;
+
+  const tip = (r: Repo) =>
+    resolveOid(
+      repoDir(app.reposRoot, r.ownerName, r.name),
+      `refs/heads/${r.defaultBranch}`,
+    );
+  async function until(what: () => Promise<boolean> | boolean, ms = 5000) {
+    const start = Date.now();
+    while (!(await what())) {
+      if (Date.now() - start > ms) throw new Error("not settled");
+      await Bun.sleep(40);
+    }
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-following-merge-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    const people: User[] = [];
+    for (const username of ["alice", "bob", "carol"]) {
+      const made = await createUser(app.db, {
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      people.push(made.value);
+    }
+    [alice, bob, carol] = people as [User, User, User];
+    const made = await createRepo(app, alice, {
+      name: "engine",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    parent = made.value;
+    const seeded = await commitToBranch(app, alice, parent, {
+      message: "seed",
+      files: [
+        { path: "README.md", content: "# engine\n" },
+        {
+          path: "forge.json",
+          content: '{"check": {"run": "test -f README.md", "install": ""}}\n',
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const one = await forkRepo(app, bob, parent);
+    const two = await forkRepo(app, carol, parent);
+    if (!one.ok || !two.ok) throw new Error("fork");
+    untouched = one.value;
+    worked = two.value;
+    const own = await commitToBranch(app, carol, worked, {
+      message: "carol's own",
+      files: [{ path: "mine.txt", content: "mine\n" }],
+    });
+    if (!own.ok) throw new Error(JSON.stringify(own.error));
+  }, 30_000);
+
+  afterAll(async () => {
+    await checks.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the untouched fork follows; the one with its own work is told", async () => {
+    const branched = await commitToBranch(app, alice, parent, {
+      branch: "feature",
+      message: "feature",
+      files: [{ path: "feature.txt", content: "yes\n" }],
+    });
+    expect(branched.ok).toBe(true);
+    const pull = await openPull(app, alice, parent, {
+      title: "Feature",
+      baseBranch: "main",
+      headBranch: "feature",
+    });
+    if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+    const before = await tip(untouched);
+    const mine = await tip(worked);
+
+    const merged = await mergePull(app, alice, parent, pull.value, "merge");
+    expect(merged.ok).toBe(true);
+    // The land itself announced no push on the parent: what follows is
+    // following the merge.
+    expect(
+      listEvents(app.db, { repoId: parent.id, limit: 50 }).filter(
+        (e) => e.kind === "push" && e.payload["merged"] === undefined,
+      ).length,
+    ).toBe(2);
+
+    const landed = await tip(parent);
+    expect(landed).not.toBe(before);
+    await until(async () => (await tip(untouched)) === landed);
+    const followed = listEvents(app.db, { repoId: untouched.id, limit: 20 })
+      .filter((e) => e.kind === "push")
+      .map((e) => e.payload["followed"]);
+    expect(followed).toContain("alice/engine");
+
+    await until(() =>
+      listEvents(app.db, { repoId: worked.id, limit: 20 }).some(
+        (e) => e.kind === "fork.diverged",
+      ),
+    );
+    // Its own work is exactly where carol left it.
+    expect(await tip(worked)).toBe(mine);
+  });
+
+  test("a copy of the parent's commit is not checked again; own work is", () => {
+    const checked = (r: Repo) =>
+      listRuns(app.db, r.id, { kind: "check", limit: 50 }).length;
+    expect(checked(untouched)).toBe(0);
+    expect(checked(worked)).toBe(1);
+    expect(checked(parent)).toBeGreaterThan(0);
   });
 });

@@ -318,6 +318,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const actor = event.actorId ?? undefined;
     switch (event.kind) {
       case "push": {
+        // A fork that silently followed holds its parent's commit, byte for
+        // byte: checking the copy proves nothing the parent's own check did
+        // not, once per fork, on every landed pull. A merge of the parent
+        // into the fork's own work is a new commit, and is checked.
+        if (
+          typeof event.payload["followed"] === "string" &&
+          event.payload["merged"] !== true
+        )
+          return;
         const updates = event.payload["updates"];
         if (!Array.isArray(updates)) return;
         for (const update of updates as { ref?: unknown; newOid?: unknown }[]) {

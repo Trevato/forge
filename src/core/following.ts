@@ -13,12 +13,14 @@
  * a mirror follows the origin.
  *
  * Both are subscribed by the app itself, so every push — over git, through
- * the API, from a sync — is followed the same way.
+ * the API, from a sync — is followed the same way. A landed pull is one
+ * more: the merge moves its base with `update-ref`, which announces no push,
+ * so it is read here as the push it amounts to.
  */
 
 import type { Database } from "bun:sqlite";
 import type { EventBus, ForgeEvent } from "./events.ts";
-import { listOpenPullsFromHead, type Pull } from "./pulls.ts";
+import { getPull, listOpenPullsFromHead, type Pull } from "./pulls.ts";
 import { getRepoById, listForks, type Repo } from "./repos.ts";
 import {
   aheadCount,
@@ -62,11 +64,27 @@ function movedBranches(event: ForgeEvent): Moved[] {
   return out;
 }
 
+/** The base a landed pull moved, as the one update a push would have named. */
+function landedBranch(db: Database, event: ForgeEvent): Moved[] {
+  const number = event.payload["number"];
+  const newOid = event.payload["mergeOid"];
+  if (event.repoId === null || typeof number !== "number") return [];
+  if (typeof newOid !== "string") return [];
+  const pull = getPull(db, event.repoId, number);
+  return pull === undefined
+    ? []
+    : [{ ref: `refs/heads/${pull.baseBranch}`, newOid }];
+}
+
 /** Subscribe both follows; returns the unsubscribe. */
 export function follow(forge: Following): () => void {
   return forge.bus.subscribe((event) => {
-    if (event.kind !== "push" || event.repoId === null) return;
-    const moved = movedBranches(event);
+    if (event.repoId === null) return;
+    if (event.kind !== "push" && event.kind !== "pull.merged") return;
+    const moved =
+      event.kind === "push"
+        ? movedBranches(event)
+        : landedBranch(forge.db, event);
     if (moved.length === 0) return;
     const repo = getRepoById(forge.db, event.repoId);
     if (repo === undefined) return;

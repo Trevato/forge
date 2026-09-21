@@ -6,6 +6,13 @@ the fork moving, fast-forward only, so a fork someone works on is left exactly
 as they left it (`src/core/following.ts`). This page is the rest of the story:
 what a fork with work of its own does when its parent moves, and what it shows.
 
+The parent "moving" is a push or a landed pull. A merge moves its base with
+`update-ref`, which announces no push, so following reads `pull.merged` as the
+push it amounts to; a repository whose crew lands pulls all day carries its
+forks along. A fork that followed silently holds the parent's commit byte for
+byte, so its check is not run again on the copy; a merge into the fork's own
+work is a new commit and is checked.
+
 ## The relationship, at rest
 
 Every view of a fork reads its standing from git; nothing about it is stored.
@@ -86,7 +93,7 @@ or the crew has parked it, 429 at the day's ceiling.
 
 ## On its own
 
-A parent push that cannot fast-forward a fork appends `fork.diverged` on the
+A parent move that cannot fast-forward a fork appends `fork.diverged` on the
 fork. The crew listens (`followDivergence`, subscribed by `startCrew`):
 
 - autonomy `off` — nothing; the fork's page says what happened and offers both
