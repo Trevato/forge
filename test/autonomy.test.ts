@@ -32,7 +32,37 @@ import {
   landIfGreen,
   pickBuilder,
   sweepGreen,
+  truncateAtWord,
 } from "../src/crew/autonomy.ts";
+import { MAX_TITLE } from "../src/core/issues.ts";
+
+describe("truncateAtWord", () => {
+  test("a direction that fits is passed through whole", () => {
+    const text = "a".repeat(40);
+    expect(truncateAtWord(text, 120)).toBe(text);
+  });
+
+  test("a direction that overflows is cut at a word boundary with an ellipsis", () => {
+    const text = (
+      "Make the studio the front door of the forge: a change is visible in its preview within seconds of each push (serve a deployed preview from every push and say so on the page) " +
+      "and every direction the crew has ever been given keeps going on"
+    ).slice(0, 200);
+    expect(text.length).toBe(200);
+    const cut = truncateAtWord(text, 120);
+    expect(cut.length).toBeLessThanOrEqual(120);
+    expect(cut.endsWith("…")).toBe(true);
+    const withoutEllipsis = cut.slice(0, -1);
+    expect(withoutEllipsis.endsWith(" ")).toBe(false);
+    expect(withoutEllipsis.endsWith("(")).toBe(false);
+    // The cut never falls inside a word: the character right after it in
+    // the source text is a space, or the word ended there anyway.
+    expect(text[withoutEllipsis.length]).toBe(" ");
+  });
+
+  test("Direction: plus the limit stays well under MAX_TITLE", () => {
+    expect("Direction: ".length + 120).toBeLessThanOrEqual(MAX_TITLE);
+  });
+});
 
 describe("a repository on its own", () => {
   let dataDir: string;

@@ -35,7 +35,12 @@ import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import { latestDecision, resolveOpen } from "../core/decisions.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
-import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
+import {
+  getIssue,
+  getIssueById,
+  MAX_TITLE,
+  type Issue,
+} from "../core/issues.ts";
 import {
   getPull,
   closesFromBody,
@@ -524,6 +529,28 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   return landed;
 }
 
+/** The label every direction issue's title starts with. Read elsewhere to
+ * find a repository's standing direction — keep it exactly as it is. */
+const DIRECTION_PREFIX = "Direction: ";
+/** How much of the direction fits in the title, capped so the title
+ * (prefix included) never exceeds `MAX_TITLE`. */
+const DIRECTION_TITLE_LIMIT = Math.min(120, MAX_TITLE - DIRECTION_PREFIX.length);
+
+/** Cuts `text` to at most `limit` characters at a word boundary, ending in
+ * "…" when something was cut — never mid-word, never a dangling "(" before
+ * the ellipsis. Text that already fits is returned unchanged. */
+export function truncateAtWord(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const ellipsis = "…";
+  const budget = Math.max(limit - ellipsis.length, 0);
+  let cut = text.slice(0, budget);
+  if (text[budget] !== " " && text[budget] !== undefined) {
+    const lastSpace = cut.lastIndexOf(" ");
+    cut = lastSpace === -1 ? "" : cut.slice(0, lastSpace);
+  }
+  return cut.replace(/[\s(]+$/, "") + ellipsis;
+}
+
 /**
  * The issue the planner works from: the direction, as an open issue the
  * run can be about. Made once, kept, and never counted as work.
@@ -538,7 +565,7 @@ function ensureDirectionIssue(
     if (existing && existing.state === "open") return existing;
   }
   const opened = openIssue(app, by, repo, {
-    title: `Direction: ${repo.autonomyDirection.trim().slice(0, 120)}`,
+    title: `${DIRECTION_PREFIX}${truncateAtWord(repo.autonomyDirection.trim(), DIRECTION_TITLE_LIMIT)}`,
     body: `${repo.autonomyDirection.trim()}\n\nThis issue carries the repository's direction. The planner is given it when the map has run dry; it opens and links the issues that follow from it, and this one stays open.`,
   });
   if (!opened.ok) return undefined;
