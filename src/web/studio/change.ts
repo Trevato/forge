@@ -10,7 +10,7 @@
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { pullStatus, type Pull } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import { checkSummary } from "../../core/runs.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -31,7 +31,12 @@ import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
 import { pullState } from "../pages/pulls.ts";
 import { composer, conversation, originGlyph } from "../pages/thread.ts";
-import { decisionActions, decisionForm, decisionsFor } from "./asks.ts";
+import {
+  decisionActions,
+  decisionForm,
+  decisionsFor,
+  type Decision,
+} from "./asks.ts";
 import { pullWord, wordBadge, type WordCtx } from "./words.ts";
 
 /** What a conflicted change's own page says: the base it no longer merges
@@ -99,9 +104,43 @@ export async function studioPull(
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
-  const decision = decisionsFor(ctx, [repo]).find(
+  const crewDecision = decisionsFor(ctx, [repo]).find(
     (d) => d.pull?.id === pull.id,
   );
+  // A person's own change carries no crew decision (`decisionsFor` reads
+  // agent pulls only — #208's territory), but the change's own page still
+  // owes its writer the same route and the same words, whoever opened it.
+  // Ready to offer means: nothing to fix first (or it does, and that fix is
+  // the conflict wording below), and shipping would not be refused for want
+  // of a green check under this repository's own setting (`requireChecks`,
+  // the same flag `shipSubmit` reads).
+  const writer = ctx.auth.user !== undefined && canWrite(db, repo, ctx.auth.user);
+  const openForOwner = writer && status !== undefined;
+  const ownReady =
+    crewDecision === undefined &&
+    openForOwner &&
+    (conflicted || word === "look" || !repo.requireChecks);
+  const own: Decision | undefined = ownReady
+    ? {
+        kind: "look",
+        id: `own:${pull.id}`,
+        repo,
+        pull,
+        who: pull.authorName,
+        says:
+          word === "look"
+            ? "The check is green. Look at the preview, then ship it or say what is off."
+            : "This app does not wait on the check to ship. Look at the preview, then ship it or say what is off.",
+        short: word === "look" ? "the check is green" : "ready to ship",
+      }
+    : undefined;
+  const decision = crewDecision ?? own;
+  // Nothing to offer yet, and nothing wrong either — the check just has not
+  // gone green, and this repository waits for that before it ships.
+  const ownNotReadyNote =
+    crewDecision === undefined && openForOwner && !conflicted && !ownReady
+      ? note
+      : undefined;
 
   const head = html`<div class="issue-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
@@ -141,11 +180,13 @@ export async function studioPull(
   // it would only be refused. The button that helps posts to the very same
   // route (`/ship`): `shipSubmit` already turns a conflict there into the
   // crew bringing the branch up to date, so nothing new is written, only said
-  // sooner and in plain words.
-  const decisionSection = when(decision, (d) =>
-    card(
-      conflicted && d.kind === "look" && d.pull
-        ? html`<p>${d.who} finished "${d.pull.title}", but ${conflictWords(
+  // sooner and in plain words. The same wording and the same button serve a
+  // person's own change (`own`, above) exactly as they serve the crew's — one
+  // card, one vocabulary, whoever opened the change.
+  const decisionBody =
+    decision !== undefined
+      ? conflicted && decision.kind === "look" && decision.pull
+        ? html`<p>${decision.who} finished "${decision.pull.title}", but ${conflictWords(
             pull.baseBranch,
             status!.conflicts,
           )}.</p>
@@ -154,13 +195,16 @@ export async function studioPull(
                 ${btn("Bring up to date", { size: "sm", variant: "primary" })}
               </form>
             </div>`
-        : html`<p>${d.says}</p>
-            <div class="bar mt">${decisionActions(ctx, d)}</div>`,
-      {
-        head: html`${icon("alert")}
-          <h2>Decide</h2>`,
-      },
-    ),
+        : html`<p>${decision.says}</p>
+            <div class="bar mt">${decisionActions(ctx, decision)}</div>`
+      : ownNotReadyNote !== undefined
+        ? html`<p class="muted small">Not ready to ship — ${ownNotReadyNote}.</p>`
+        : undefined;
+  const decisionSection = when(decisionBody, (body) =>
+    card(body, {
+      head: html`${icon("alert")}
+        <h2>Decide</h2>`,
+    }),
   );
 
   const talk = conversation(ctx, repo, pull, { openVerb: "opened this" });

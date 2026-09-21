@@ -4662,6 +4662,203 @@ describe("a stranger sees the app, not the owner's books", () => {
   });
 });
 
+/**
+ * Issue #211: the studio's own Decide card ships a person's own change too,
+ * not only the crew's — the same `/ship` route, the same conflict wording
+ * (`change.ts:145-157` before this), offered to a writer, whoever opened it.
+ */
+describe("a person's own change ships from its own studio page", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let ownerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+  const post = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-own-ship-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const r = await createUser(app.db, {
+      username: "eve",
+      email: "eve@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!r.ok) throw new Error(r.error);
+    ownerCookie = await signIn("alice");
+    readerCookie = await signIn("eve");
+    const made = await createRepo(app, alice, {
+      name: "garden",
+      visibility: "public",
+      description: "grown by hand, not by the crew",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content:
+            '{"name":"garden","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "garden" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a green change alice opened herself offers Ship to a writer, and nothing to a reader; shipping lands it and the page reads shipped", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/bench",
+      base: "main",
+      message: "Add a bench",
+      files: [{ path: "BENCH.md", content: "a place to sit\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add a bench",
+      body: "For sitting.",
+      baseBranch: "main",
+      headBranch: "feature/bench",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed in 1s" });
+
+    const readerPage = await (
+      await get(`/alice/garden/pulls/${pull.number}`, readerCookie)
+    ).text();
+    expect(readerPage).toContain('data-word="look"');
+    expect(readerPage).not.toContain("<h2>Decide</h2>");
+    expect(readerPage).not.toContain("Ship");
+
+    const ownerPage = await (
+      await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
+    ).text();
+    expect(ownerPage).toContain("<h2>Decide</h2>");
+    expect(ownerPage).toContain("Ship");
+    expect(ownerPage).toContain("The check is green.");
+
+    const shipped = await post(
+      `/alice/garden/pulls/${pull.number}/ship`,
+      ownerCookie,
+    );
+    expect(shipped.status).toBe(303);
+    expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
+    const after = await (
+      await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
+    ).text();
+    expect(after).toContain('data-word="shipped"');
+  });
+
+  test("a conflicted change alice opened herself offers the bring-up-to-date wording, never a Ship that would be refused", async () => {
+    const base1 = await commitToBranch(app, alice, repo, {
+      message: "Add a file two branches will fight over",
+      files: [{ path: "CONFLICT.md", content: "base\n" }],
+    });
+    if (!base1.ok) throw new Error(JSON.stringify(base1.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/own-conflict",
+      base: "main",
+      message: "Alice's edit",
+      files: [{ path: "CONFLICT.md", content: "base\nalice\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const onMain = await commitToBranch(app, alice, repo, {
+      message: "Main's edit",
+      files: [{ path: "CONFLICT.md", content: "base\nmain\n" }],
+    });
+    if (!onMain.ok) throw new Error(JSON.stringify(onMain.error));
+
+    const opened = await openPull(app, alice, repo, {
+      title: "Alice's conflicting change",
+      body: "This will not merge cleanly.",
+      baseBranch: "main",
+      headBranch: "feature/own-conflict",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed in 1s" });
+
+    const studio = await (
+      await get(`/alice/garden/pulls/${pull.number}`, ownerCookie)
+    ).text();
+    expect(studio).toContain("<h2>Decide</h2>");
+    expect(studio).toContain("conflicts with main");
+    expect(studio).toContain("bring the branch up to date");
+    expect(studio).toContain("Bring up to date");
+    expect(studio).not.toContain("Ship");
+  });
+});
+
 describe("the studio's crew panel on a forge with no agents yet", () => {
   let dataDir: string;
   let app: App;
