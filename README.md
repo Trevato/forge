@@ -258,6 +258,17 @@ what "ready now" means to a person and to the crew.
 `docs/STUDIO.md` is the forge with apps as the unit: tell, working, look,
 shipped, asks you — and the switch to dev.
 
+`docs/CONTRACT.md` is who may do what, as a table: an app's `contract.json`,
+the one evaluator every app decides with, the audit that reads it from git,
+the probe that knocks on the running app, and the wall a person alone
+crosses.
+
+`docs/FOLLOWING.md` is a fork that keeps up with its parent: where it
+stands, taking updates, and the crew's part when both sides moved.
+
+`docs/MCP.md` is the forge as a connector, and `docs/STANDARDS.md` is what
+it answers by default: `.well-known`, feeds, cards, the manifest.
+
 ## Develop
 
 ```sh
