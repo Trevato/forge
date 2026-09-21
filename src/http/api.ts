@@ -83,6 +83,7 @@ import {
   updateProfile,
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
+import { audienceFilter } from "../core/event_audience.ts";
 import { getReposByIds } from "../core/repos.ts";
 import {
   commentCounts,
@@ -1099,7 +1100,13 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/events", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(listEvents(ctx.app.db, { repoId: repo.id }));
+    // The outbox, as this reader is meant to see it: a webhook's URL and an
+    // app's variable names are the admins', not every reader's.
+    return json(
+      listEvents(ctx.app.db, { repoId: repo.id }).filter(
+        audienceFilter(ctx.app.db, ctx.auth.user),
+      ),
+    );
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {

@@ -11,6 +11,7 @@
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
+import { audienceFilter } from "../../core/event_audience.ts";
 import {
   getIssuesByRef,
   listAssignedTo,
@@ -202,6 +203,7 @@ function activityRail(
   // A run being queued or started is a moment, not a fact; the rail shows
   // what came of it. Read a little past twelve so the cut keeps its size.
   const events = listEventsVisibleTo(db, user, { limit: 24 })
+    .filter(audienceFilter(db, user))
     .filter((e: ForgeEvent) => !isTransientEvent(e.kind))
     .slice(0, 12);
   const byId = getReposByIds(

@@ -17,6 +17,7 @@
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
 import { listEventsVisibleTo } from "../core/events.ts";
+import { audienceFilter } from "../core/event_audience.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
@@ -172,6 +173,9 @@ export function viewerStream(
       at: event.createdAt,
     };
   };
+  // Readable is not the same as meant-for: configuration events are the
+  // admins', a person's own choices are theirs (`core/event_audience.ts`).
+  const meant = audienceFilter(app.db, viewer);
   const after =
     request.headers.get("last-event-id") ??
     new URL(request.url).searchParams.get("since") ??
@@ -182,10 +186,12 @@ export function viewerStream(
         afterId: after,
         limit: 200,
       }).reverse();
-      for (const event of missed) emit("forge", named(event), event.id);
+      for (const event of missed)
+        if (meant(event)) emit("forge", named(event), event.id);
     }
     return app.bus.subscribe((event: ForgeEvent) => {
       if (event.repoId === null || !visible(event.repoId)) return;
+      if (!meant(event)) return;
       emit("forge", named(event), event.id);
     });
   });
@@ -195,12 +201,15 @@ export function sseStream(
   app: App,
   repoId: string,
   request: Request,
+  viewer: User | undefined,
 ): Response {
+  const meant = audienceFilter(app.db, viewer);
   return eventStream(request, (emit) =>
     app.bus.subscribe((event: ForgeEvent) => {
       // The event id doubles as the SSE id, so a reconnecting client can
       // resume from where it stopped.
-      if (event.repoId === repoId) emit(event.kind, event, event.id);
+      if (event.repoId === repoId && meant(event))
+        emit(event.kind, event, event.id);
     }),
   );
 }

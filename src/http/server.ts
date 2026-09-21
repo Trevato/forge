@@ -637,7 +637,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/stream", (ctx) => {
     const repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
     if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFound();
-    return sseStream(ctx.app, repo.id, ctx.request);
+    return sseStream(ctx.app, repo.id, ctx.request, ctx.auth.user);
   });
 
   // Org team management (the literal "-" segment can't collide with a repo).

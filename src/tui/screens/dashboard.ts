@@ -23,6 +23,7 @@ import {
 import { listPins, pinnedRepoIds, type Pin } from "../../core/pins.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
+import { audienceFilter } from "../../core/event_audience.ts";
 import { eventActor } from "../../design/activity.ts";
 import {
   canRead,
@@ -158,7 +159,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     // filter in JS: on a forge with any traffic at all, sixty events can be
     // sixty events in repos this session cannot see, and the old shape drew
     // an empty card. The predicate belongs in the query.
-    const visible = listEventsVisibleTo(f.db, f.user, { limit: 40 });
+    const visible = listEventsVisibleTo(f.db, f.user, { limit: 40 }).filter(
+      audienceFilter(f.db, f.user),
+    );
     feed = feedItems(f, visible);
     ctx.invalidate();
   };
