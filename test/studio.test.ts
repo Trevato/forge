@@ -1525,6 +1525,88 @@ describe("the studio", () => {
     expect(dev).toContain("Your code, your machine");
   });
 
+  test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
+    // A public app of alice's own, distinct from "notes" (private) and
+    // "beacon" (made public by an earlier test) — self-contained so this
+    // test does not lean on another test's state.
+    const madePublic = await createRepo(app, alice, {
+      name: "lighthouse",
+      visibility: "public",
+      description: "everybody can see this one",
+    });
+    if (!madePublic.ok) throw new Error(String(madePublic.error));
+    const seeded = await commitToBranch(app, alice, madePublic.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"lighthouse","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, madePublic.value, {
+      slug: "lighthouse",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    // Erin just signed up: no apps of her own, but the forge already has a
+    // public one.
+    const erin = await createUser(app.db, {
+      username: "erin",
+      email: "erin@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!erin.ok) throw new Error(erin.error);
+    const erinCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "erin",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const erinGet = (path: string) =>
+      fetch(`${base}${path}`, {
+        headers: { cookie: `${erinCookie}; forge_mode=studio` },
+        redirect: "manual",
+      });
+
+    // Erin's front door: the empty state and New app, never alice's public
+    // app — #69's case, finally reachable.
+    const erinHome = await (await erinGet("/")).text();
+    expect(erinHome).toContain("No apps yet");
+    expect(erinHome).toContain('href="/apps/new"');
+    expect(erinHome).not.toContain('href="/alice/lighthouse"');
+    expect(erinHome).not.toContain("tell the crew something");
+
+    // Alice's own front door still leads with it.
+    const aliceHome = await (await get("/")).text();
+    expect(aliceHome).toContain('href="/alice/lighthouse"');
+
+    // /apps hides nothing: both see it, and it names its owner since neither
+    // request is alice's own view of her own row — erin's outright, and
+    // even alice's own listing spells it the same way for every row beside
+    // her own.
+    const erinApps = await (await erinGet("/apps")).text();
+    expect(erinApps).toContain('href="/alice/lighthouse"');
+    expect(erinApps).toContain(
+      '<span class="muted">alice/</span>lighthouse',
+    );
+
+    const aliceApps = await (await get("/apps")).text();
+    expect(aliceApps).toContain('href="/alice/lighthouse"');
+  });
+
   test("a forge with no public apps falls back to the dev landing, signed out in studio", async () => {
     const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-empty-"));
     const app2 = createApp({ dataDir: dataDir2, port: 0 });

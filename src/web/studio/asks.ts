@@ -18,7 +18,12 @@ import {
 } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import { joinMany, type Pull } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import {
+  canSeeOwnerFacts,
+  listReposVisibleTo,
+  listReposWritableTo,
+  type Repo,
+} from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
   activeRunFor,
@@ -36,10 +41,12 @@ import { lookThumb, lookUrl, thumbLook } from "../pages/looks.ts";
 import { leanNote, leanVariant } from "./leans.ts";
 import { changeHref } from "./nouns.ts";
 
-/** The apps a person can see, as repositories, with their records — the
- * same visibility a signed-out reader gets from `listReposVisibleTo` too. */
-export function appsOf(ctx: Ctx, user: User | undefined) {
-  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
+/** Repos narrowed to those with an app record, with the records — the one
+ * join `appsOf` and `writableAppsOf` share. */
+function appsFiltered(
+  ctx: Ctx,
+  repos: readonly Repo[],
+): { repos: Repo[]; records: ReturnType<typeof appsForRepos> } {
   const records = appsForRepos(
     ctx.app.db,
     repos.map((r) => r.id),
@@ -47,6 +54,22 @@ export function appsOf(ctx: Ctx, user: User | undefined) {
   return { repos: repos.filter((r) => records.has(r.id)), records };
 }
 
+/** The apps a person can see, as repositories, with their records — the
+ * same visibility a signed-out reader gets from `listReposVisibleTo` too.
+ * Everyone's public apps sit in this list beside the viewer's own: right
+ * for search, the palette and the asks count, wrong for a shelf headed
+ * "your apps" — that reading is `writableAppsOf`. */
+export function appsOf(ctx: Ctx, user: User | undefined) {
+  return appsFiltered(ctx, listReposVisibleTo(ctx.app.db, user, { limit: 200 }));
+}
+
+/** The apps a person can write — their own, or their organisations' — as
+ * repositories, with their records. This is "your apps": the studio home's
+ * shelf and its cost line, never widened by what a stranger merely made
+ * public. */
+export function writableAppsOf(ctx: Ctx, user: User | undefined) {
+  return appsFiltered(ctx, listReposWritableTo(ctx.app.db, user, { limit: 200 }));
+}
 
 export type DecisionKind = "stopped" | "look" | "paused";
 

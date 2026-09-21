@@ -488,6 +488,40 @@ export function listReposVisibleTo(
   return withCounts(db, rows);
 }
 
+/**
+ * Repos this viewer may write: their own, or an org's through a team with
+ * write or admin access — `REPO_WRITABLE`, the SQL twin of `canWrite`, for a
+ * list of rows rather than one permission check per row. An anonymous viewer
+ * writes nothing.
+ */
+export function listReposWritableTo(
+  db: Database,
+  viewer: User | undefined,
+  options: ListReposOptions = {},
+): Repo[] {
+  if (!viewer) return [];
+  const params: (string | number)[] = [viewer.id];
+  let where = REPO_WRITABLE;
+  if (options.query !== undefined && options.query.trim() !== "") {
+    params.push(`%${likeEscape(options.query.trim())}%`);
+    const p = params.length;
+    where += ` AND (repo.name LIKE ?${p} ESCAPE '\\' COLLATE NOCASE
+      OR user.username LIKE ?${p} ESCAPE '\\' COLLATE NOCASE)`;
+  }
+  if (options.cursor !== undefined) {
+    params.push(options.cursor);
+    where += ` AND repo.id < ?${params.length}`;
+  }
+  params.push(pageLimit(options.limit));
+  const rows = db
+    .query<RepoRow, (string | number)[]>(
+      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+    )
+    .all(...params)
+    .map(toRepo);
+  return withCounts(db, rows);
+}
+
 /** Repos owned by one user or org, visible to the viewer. */
 export function listReposByOwner(
   db: Database,

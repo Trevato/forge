@@ -145,13 +145,19 @@ export async function shelfRows(
       production?.failedDeploy !== undefined
         ? "attn"
         : envTone(production?.state);
+    // Telling the crew something is a writer's move — a reader who can only
+    // see this app is never invited to it, the same floor `ownerFacts` holds
+    // for who worked and what it cost.
+    const canTell = ownerFacts.has(repo.id);
     const happening =
       word === undefined
         ? stuck.has(repo.id)
           ? html`<span class="muted"
               >told — nobody on the crew to take it</span
             >`
-          : html`<span class="muted">quiet — tell the crew something</span>`
+          : canTell
+            ? html`<span class="muted">quiet — tell the crew something</span>`
+            : html`<span class="muted">quiet</span>`
         : html`<span class="studio-word" data-word="${word.word}"
               >${word.word}</span
             >
@@ -161,11 +167,17 @@ export async function shelfRows(
               : useOpenPull
                 ? html`· ${time(openPull.updatedAt)}`
                 : html`· ${time(latest!.finishedAt ?? latest!.createdAt)}`}`;
+    // Two apps can share a bare name across owners — a row for one that is
+    // not the viewer's own names its owner, everywhere a row can appear.
+    const mine = user !== undefined && repo.ownerId === user.id;
+    const title = mine
+      ? repo.name
+      : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`;
     return row({
       href: repoBase(repo),
       nav: true,
       lead: dot(tone),
-      title: repo.name,
+      title,
       titleAttr: repo.description || repo.name,
       meta: html`${repo.description
         ? html`${repo.description} · `

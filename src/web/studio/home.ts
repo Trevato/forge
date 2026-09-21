@@ -10,7 +10,6 @@
 import { appsRuntime } from "../../apps/runtime.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { openPullsForRepos, type Pull } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, writableRepoIds, type Repo } from "../../core/repos.ts";
 import { listActiveRuns } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
@@ -23,7 +22,7 @@ import { page } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
 import { btn, card, empty, icon, listCard, row, time } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
-import { appsOf, asksPanel, decisionsFor } from "./asks.ts";
+import { asksPanel, decisionsFor, writableAppsOf } from "./asks.ts";
 import { withLikely } from "./leans.ts";
 import { changeHref } from "./nouns.ts";
 import { stopForm } from "./run.ts";
@@ -38,44 +37,40 @@ import { pullWord, wordBadge, type WordCtx } from "./words.ts";
  */
 export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const db = ctx.app.db;
-  const { repos: appRepos, records } = appsOf(ctx, user);
+  // The front door leads with what the viewer can write — their own apps
+  // and their organisations' — never widened by a stranger's public app
+  // (`writableAppsOf`, not the visibility every reader gets from `appsOf`).
+  const { repos: appRepos, records } = writableAppsOf(ctx, user);
   const runtime = appsRuntime(ctx.app);
   // Read once, shown twice: the panel below is these same asks, and the
   // shelf counts them into each row's pill.
   const decisions = withLikely(ctx, decisionsFor(ctx, appRepos));
   const appRows = await shelfRows(ctx, appRepos, { decisions });
 
-  // What the crew cost today, across the apps the viewer can write, and how
-  // many of those are paused at their ceiling right now — the owner's first
-  // question at the front door, answered in one bounded read each
-  // (`writableRepoIds`, `spentTodayForRepos`, `crewForRepos`), never a
-  // query or an `autonomyStatus` call per app. A reader who cannot write
-  // any of these apps sees no money at all, the same floor an app's own
-  // page holds (`canSeeOwnerFacts`).
-  const writable = writableRepoIds(
-    db,
-    user,
-    appRepos.map((r) => r.id),
-  );
-  const costRepos = appRepos.filter((r) => writable.has(r.id));
-  const costLine = when(costRepos.length > 0, () => {
+  // What the crew cost today across every app on the shelf, and how many
+  // are paused at their ceiling right now — the owner's first question at
+  // the front door, in one bounded read each (`spentTodayForRepos`,
+  // `crewForRepos`), never a query or an `autonomyStatus` call per app.
+  // Every app here is already one the viewer can write, so no further
+  // filter is needed to keep the money to the owner's own.
+  const costLine = when(appRepos.length > 0, () => {
     const spentToday = spentTodayForRepos(
       db,
-      costRepos.map((r) => r.id),
+      appRepos.map((r) => r.id),
     );
     const crew = crewForRepos(
       db,
-      costRepos.map((r) => r.id),
+      appRepos.map((r) => r.id),
     );
-    const spentUsd = costRepos.reduce(
+    const spentUsd = appRepos.reduce(
       (sum, r) => sum + (spentToday.get(r.id) ?? 0),
       0,
     );
-    const paused = costRepos.filter((r) =>
+    const paused = appRepos.filter((r) =>
       isPausedAtCeiling(r, crew, spentToday),
     ).length;
-    const noun = `app${costRepos.length === 1 ? "" : "s"}`;
-    return html`<p class="small muted studio-cost">$${spentUsd.toFixed(2)} spent today across ${costRepos.length} ${noun} you can write · ${paused} paused at <a href="/map">their ceiling</a></p>`;
+    const noun = `app${appRepos.length === 1 ? "" : "s"}`;
+    return html`<p class="small muted studio-cost">$${spentUsd.toFixed(2)} spent today across ${appRepos.length} ${noun} you can write · ${paused} paused at <a href="/map">their ceiling</a></p>`;
   });
 
   const apps =
@@ -106,16 +101,8 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     running.map((r) => r.actorId).filter((id): id is string => id !== null),
   );
   const byId = new Map(appRepos.map((r) => [r.id, r]));
-  // Who is working is the owner's fact, not a stranger's to read — the same
-  // predicate the shelf row uses, asked only of the apps with a run in
-  // flight.
-  const ownerFacts = new Set(
-    [...new Set(running.map((r) => r.repoId))]
-      .map((id) => byId.get(id))
-      .filter((r): r is Repo => r !== undefined)
-      .filter((r) => canSeeOwnerFacts(db, r, user))
-      .map((r) => r.id),
-  );
+  // Who is working is shown by name here because every app on this shelf is
+  // already one the viewer can write — nothing here is a stranger's app.
   // The board: the same runs as a wall for a second monitor.
   const nowHead = html`${icon("activity")}
     <h2>Happening now</h2>
@@ -137,11 +124,10 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       ? listCard(
           running.map((r) => {
             const repo = byId.get(r.repoId)!;
-            const actorName =
+            const who =
               r.actorId === null
                 ? "crew"
                 : (runActors.get(r.actorId)?.username ?? "crew");
-            const who = ownerFacts.has(repo.id) ? actorName : "the crew";
             const stop = stopForm(ctx, repo, r);
             return row({
               ...(stop
