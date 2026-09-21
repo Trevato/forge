@@ -449,6 +449,34 @@ describe("dev's vocabulary never reaches a studio page", () => {
     claimRun(app.db, working.id);
     workingRunId = working.id;
 
+    // A second app with nothing told yet — the map's own empty state, what
+    // a new app sees, which the crowded "vocab" repo above can never show.
+    const blankRepo = await createRepo(app, a.value, {
+      name: "blank",
+      visibility: "private",
+      description: "nothing told yet",
+    });
+    if (!blankRepo.ok) throw new Error(String(blankRepo.error));
+    const blankSeeded = await commitToBranch(app, a.value, blankRepo.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"blank","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!blankSeeded.ok) throw new Error(JSON.stringify(blankSeeded.error));
+    const blankEnabled = await enableApp(app, a.value, blankRepo.value, {
+      slug: "blank",
+    });
+    if (!blankEnabled.ok) throw new Error(String(blankEnabled.error));
+
     const repoPath = "/alice/vocab";
     // Every studio page, one row each. A new studio page goes here — the
     // path it answers at, the word it speaks, and dev's own words at the
@@ -501,6 +529,28 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "shipped",
         path: `${repoPath}/pulls/${mergedPullNumber}`,
         dev: ["diff-table"],
+      },
+      {
+        // #197: the map used to link every card to dev's `/issues/:number`
+        // regardless of mode — the one studio page mode-blind about it.
+        word: "map",
+        path: `${repoPath}/map`,
+        shows: [
+          tellTitle,
+          untouchedTitle,
+          `href="${repoPath}/tells/${tellNumber}"`,
+          `href="${repoPath}/tells/${untouchedNumber}"`,
+        ],
+        hides: [
+          `href="${repoPath}/issues/${tellNumber}"`,
+          `href="${repoPath}/issues/${untouchedNumber}"`,
+        ],
+      },
+      {
+        // The empty case: what a new app's map says before anything is told.
+        word: "map (empty)",
+        path: "/alice/blank/map",
+        shows: ["No tells to map yet."],
       },
       // A word from the app's own description, not its name — the app's own
       // row coming back for it proves the search reaches the description,
