@@ -144,6 +144,22 @@ function operatorVars(
 }
 
 /**
+ * The forge's own directories stripped from a line of output — the data
+ * directory, the app's id, the environment and the per-commit checkout are
+ * the forge's private layout, not the app's; a stack trace naming
+ * `dir/src/server.ts:1:11` reads as `src/server.ts:1:11` instead, the path
+ * the app's own source control knows. Applied where output is captured, not
+ * filtered — a line with no match passes through whole, so a message never
+ * loses its stack for the sake of hiding a directory.
+ */
+function stripForgeDirs(dirs: readonly string[], line: string): string {
+  return dirs.reduce(
+    (out, dir) => out.split(`${dir}/`).join("").split(dir).join("."),
+    line,
+  );
+}
+
+/**
  * Run a step to completion, streaming its output. A non-zero exit, a
  * timeout, or an abort is an Err with the reason a person would want.
  */
@@ -166,6 +182,8 @@ export async function runStep(
     stdout: "pipe",
     stderr: "pipe",
   });
+  const scrub = (line: string): void =>
+    options.log(stripForgeDirs([options.cwd], line));
   const timeoutMs = options.timeoutMs ?? STEP_TIMEOUT_MS;
   let why: string | undefined;
   const timer = setTimeout(() => {
@@ -180,8 +198,8 @@ export async function runStep(
   else options.signal.addEventListener("abort", onAbort, { once: true });
   try {
     const [, , code] = await Promise.all([
-      pump(proc.stdout, options.log),
-      pump(proc.stderr, options.log),
+      pump(proc.stdout, scrub),
+      pump(proc.stderr, scrub),
       proc.exited,
     ]);
     if (why !== undefined) return err(why);
@@ -262,7 +280,8 @@ export async function startProcess(
   });
   // Output is pumped for the life of the process, not just the start.
   const recent: string[] = [];
-  const remember = (line: string): void => {
+  const remember = (raw: string): void => {
+    const line = stripForgeDirs([input.dir, input.dataDir], raw);
     recent.push(line);
     if (recent.length > 20) recent.shift();
     log(line);

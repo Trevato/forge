@@ -1095,6 +1095,131 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
   }, 60_000);
 });
 
+describe("a start failure is said in the app's own terms, not the forge's paths (issue #202)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let alice: User;
+  let cookie: string;
+  const DOMAIN = "leaky.test";
+
+  async function settled(
+    where: (run: Run) => boolean,
+    repoId: string,
+    timeoutMs = 30_000,
+  ): Promise<Run> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
+        where,
+      );
+      if (
+        run &&
+        (run.state === "ok" ||
+          run.state === "failed" ||
+          run.state === "cancelled")
+      )
+        return run;
+      await Bun.sleep(50);
+    }
+    throw new Error("run did not settle in time");
+  }
+
+  const FORGE_JSON = JSON.stringify({
+    app: { run: "bun run src/server.ts", install: "", health: "/", ready: 3 },
+  });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-leaky-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: DOMAIN,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 2,
+    });
+    await runtime.start();
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+    cookie = (
+      (
+        await fetch(`${servers.url}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+  }, 30_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a deploy whose app throws on import names its own file, never the forge's data directory or the app's id", async () => {
+    const made = await createRepo(app, alice, {
+      name: "throws",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value;
+    const committed = await commitToBranch(app, alice, repo, {
+      message: "An app that throws on import",
+      files: [
+        { path: "forge.json", content: FORGE_JSON },
+        { path: "src/server.ts", content: `throw new Error("boom");\n` },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    const enabled = enableApp(app, alice, repo, {});
+    expect(enabled.ok).toBe(true);
+    if (!enabled.ok) return;
+    const record = enabled.value;
+
+    const run = await settled((r) => r.env === "production", repo.id);
+    expect(run.state).toBe("failed");
+
+    const notForgePaths = (text: string): void => {
+      expect(text).toContain("src/server.ts");
+      expect(text).not.toContain(dataDir);
+      expect(text).not.toContain(record.id);
+    };
+
+    // The error the runtime stores — the same one a run's summary and the
+    // studio's head card both draw from — names the app's own file.
+    const status = runtime.envStatus(record, "production");
+    notForgePaths(status?.error ?? "");
+    notForgePaths(run.summary ?? "");
+
+    const { lines } = readRunLog(dataDir, run.id);
+    notForgePaths(lines.join("\n"));
+
+    // The studio's app page renders the same error in its head, for a
+    // reader who never asked to see the forge's own filesystem.
+    const page = await fetch(`${servers.url}/${repo.ownerName}/${repo.name}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+    });
+    expect(page.status).toBe(200);
+    notForgePaths(await page.text());
+  }, 60_000);
+});
+
 describe("New app: turn the sentence into a plan and pick the crew", () => {
   let dataDir: string;
   let app: App;
