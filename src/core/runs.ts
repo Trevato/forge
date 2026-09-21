@@ -168,6 +168,30 @@ export function getRun(db: Database, runId: string): Run | undefined {
 }
 
 /**
+ * Several runs by id, in one query — for a caller that already has a batch
+ * of run ids from elsewhere (an environment's `runId`, a `failedDeploy`'s)
+ * and wants the rows without asking once per id.
+ */
+export function getRunsByIds(
+  db: Database,
+  runIds: readonly string[],
+): Map<string, Run> {
+  const out = new Map<string, Run>();
+  const unique = [...new Set(runIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...batch);
+    for (const row of rows) out.set(row.id, toRun(row));
+  }
+  return out;
+}
+
+/**
  * Take a queued run. The UPDATE's WHERE is the claim: a second worker's
  * changes count is zero and it moves on. Returns the run as running, or
  * undefined when someone else has it (or it was cancelled meanwhile).

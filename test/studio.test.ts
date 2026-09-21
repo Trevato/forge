@@ -4324,6 +4324,224 @@ describe("an open change is never quiet on the front door", () => {
 });
 
 /**
+ * Issue #215: once a merged change closes, it drops out of
+ * `openPullsForRepos`, and before this the shelf and the rail had nothing
+ * left to say about it but "quiet" — the row's *happening* half spoke only
+ * for an agent run, never a deploy. `productionFact` (`words.ts`) reads
+ * production's own status for the fact a merge or a push leaves behind:
+ * the deploy that landed, or one that failed behind what still serves.
+ */
+describe("a deploy that just landed is news on the front door", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let runtime: AppsRuntime;
+  let repo: Repo;
+  let record: AppRecord;
+  let quietRepo: Repo;
+  let alice: User;
+  let cookie: string;
+  let deployRun: Run;
+
+  interface PreviewSlot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    deploying?: unknown;
+    live?: unknown;
+    lastError?: string;
+    lastRunId?: string;
+  }
+  const putEnv = (
+    appRecord: AppRecord,
+    env: EnvName,
+    slot: Omit<PreviewSlot, "app" | "env" | "chain" | "restarts">,
+  ): void => {
+    (runtime as unknown as { envs: Map<string, PreviewSlot> }).envs.set(
+      `${appRecord.id}/${env}`,
+      { app: appRecord, env, chain: Promise.resolve(), restarts: [], ...slot },
+    );
+  };
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  const shelfRowFor = (home: string, href: string): string => {
+    const at = home.indexOf(`href="${href}"`);
+    expect(at).toBeGreaterThan(-1);
+    const start = home.lastIndexOf("<li>", at);
+    return home.slice(start, home.indexOf("</li>", at) + 5);
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-shipped-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    // Uncalled `.start()`: this runtime never subscribes to the bus, so
+    // nothing here spins a real process — its `envs` are only ever what
+    // `putEnv` puts there, the same fiction the live-fragment tests use.
+    runtime = new AppsRuntime(app, {
+      domain: "shipped.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+    const made = await createRepo(app, alice, {
+      name: "sap",
+      visibility: "private",
+      description: "a sap for notes",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "sap\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "sap" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+
+    deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "6c99218",
+      reason: "merge",
+      actorId: alice.id,
+    });
+    claimRun(app.db, deployRun.id);
+    deployRun =
+      finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" }) ??
+      deployRun;
+    const servingAt = new Date().toISOString();
+    putEnv(record, "production", {
+      live: {
+        commitOid: "6c99218",
+        handle: { port: 4321 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt: servingAt,
+        manifest: { tty: null },
+      },
+    });
+
+    // A second app, otherwise identical, that never shipped — the control
+    // that must keep reading quiet.
+    const madeQuiet = await createRepo(app, alice, {
+      name: "quiet2",
+      visibility: "private",
+      description: "says nothing",
+    });
+    if (!madeQuiet.ok) throw new Error(String(madeQuiet.error));
+    const seededQuiet = await commitToBranch(app, alice, madeQuiet.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "quiet\n" }],
+    });
+    if (!seededQuiet.ok) throw new Error(JSON.stringify(seededQuiet.error));
+    const enabledQuiet = await enableApp(app, alice, madeQuiet.value, {
+      slug: "quiet2",
+    });
+    if (!enabledQuiet.ok) throw new Error(String(enabledQuiet.error));
+    quietRepo = madeQuiet.value;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the shelf row reads shipped, with who and when, not quiet", async () => {
+    const home = await (await get("/")).text();
+    const shelfRow = shelfRowFor(home, "/alice/sap");
+    expect(shelfRow).not.toContain("quiet — tell the crew something");
+    expect(shelfRow).toContain('data-word="shipped"');
+    expect(shelfRow).toContain("alice");
+  });
+
+  test('"Happening now" links to what shipped instead of reporting silence', async () => {
+    const home = await (await get("/")).text();
+    expect(home).not.toContain("Nobody is working right now.");
+    expect(home).toContain(`href="/alice/sap/runs/${deployRun.id}"`);
+  });
+
+  test("an app with no recent deploy still reads quiet", async () => {
+    const home = await (await get("/")).text();
+    const shelfRow = shelfRowFor(home, `/alice/${quietRepo.name}`);
+    expect(shelfRow).toContain("quiet — tell the crew something");
+  });
+
+  test("a deploy no push asked for is not news: a redeploy or the boot reconcile does not read shipped", async () => {
+    const restartedAt = new Date().toISOString();
+    putEnv(record, "production", {
+      live: {
+        commitOid: "6c99218",
+        handle: { port: 4321 },
+        runId: deployRun.id,
+        since: restartedAt,
+        servingAt: restartedAt,
+        // No `createdAt`: nothing asked a push for this one — a redeploy
+        // someone pressed, or the boot reconcile every restart runs.
+        manifest: { tty: null },
+      },
+    });
+    const home = await (await get("/")).text();
+    const shelfRow = shelfRowFor(home, "/alice/sap");
+    expect(shelfRow).not.toContain('data-word="shipped"');
+    expect(shelfRow).toContain("quiet — tell the crew something");
+  });
+
+  test("a deploy older than the news window reads quiet again, not shipped forever", async () => {
+    const old = new Date(Date.now() - 25 * 60 * 60_000).toISOString();
+    putEnv(record, "production", {
+      live: {
+        commitOid: "6c99218",
+        handle: { port: 4321 },
+        runId: deployRun.id,
+        since: old,
+        servingAt: old,
+        createdAt: old,
+        manifest: { tty: null },
+      },
+    });
+    const home = await (await get("/")).text();
+    const shelfRow = shelfRowFor(home, "/alice/sap");
+    expect(shelfRow).not.toContain('data-word="shipped"');
+    expect(shelfRow).toContain("quiet — tell the crew something");
+  });
+});
+
+/**
  * Issue #65: a public app's studio page is the app, not the owner's books.
  * `canSeeOwnerFacts` (`src/core/repos.ts`) is the one predicate — the same
  * as `canWrite` today — that every surface carrying money, the crew or the

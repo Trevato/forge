@@ -26,7 +26,7 @@ import { asksPanel, decisionsFor, writableAppsOf } from "./asks.ts";
 import { withLikely } from "./leans.ts";
 import { changeHref } from "./nouns.ts";
 import { stopForm } from "./run.ts";
-import { shelfRows } from "./shelf.ts";
+import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { pullWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
@@ -45,7 +45,10 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   // Read once, shown twice: the panel below is these same asks, and the
   // shelf counts them into each row's pill.
   const decisions = withLikely(ctx, decisionsFor(ctx, appRepos));
-  const appRows = await shelfRows(ctx, appRepos, { decisions });
+  // Read once, shown twice again: a shipped or failed deploy is a row's own
+  // word, and — when nothing is running and no change waits — the rail's.
+  const productionFacts = productionFactsForRepos(ctx, appRepos);
+  const appRows = await shelfRows(ctx, appRepos, { decisions, productionFacts });
 
   // What the crew cost today across every app on the shelf, and how many
   // are paused at their ceiling right now — the owner's first question at
@@ -98,7 +101,10 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   );
   const runActors = getUsersByIds(
     db,
-    running.map((r) => r.actorId).filter((id): id is string => id !== null),
+    [
+      ...running.map((r) => r.actorId),
+      ...[...productionFacts.values()].map((f) => f.actorId),
+    ].filter((id): id is string => id !== null),
   );
   const byId = new Map(appRepos.map((r) => [r.id, r]));
   // Who is working is shown by name here because every app on this shelf is
@@ -118,6 +124,15 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const openPulls: readonly Pull[] =
     running.length === 0
       ? [...openPullsForRepos(db, appRepos.map((r) => r.id)).values()]
+      : [];
+  // Still nothing waiting for a look: a deploy that just landed or just
+  // failed is news too, newest first — the same facts the shelf's rows
+  // read, shared rather than asked for twice.
+  const shipped =
+    running.length === 0 && openPulls.length === 0
+      ? [...productionFacts.entries()]
+          .sort(([, a], [, b]) => (a.at < b.at ? 1 : -1))
+          .slice(0, 10)
       : [];
   const now =
     running.length > 0
@@ -153,11 +168,8 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
           }),
           { head: nowHead },
         )
-      : openPulls.length === 0
-        ? card(html`<p class="muted small">Nobody is working right now.</p>`, {
-            head: nowHead,
-          })
-        : listCard(
+      : openPulls.length > 0
+        ? listCard(
             await Promise.all(
               openPulls.slice(0, 10).map(async (pull) => {
                 const repo = byId.get(pull.repoId)!;
@@ -182,7 +194,30 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
               }),
             ),
             { head: nowHead },
-          );
+          )
+        : shipped.length > 0
+          ? listCard(
+              shipped.map(([repoId, fact]) => {
+                const repo = byId.get(repoId)!;
+                const href = `${repoBase(repo)}/runs/${fact.runId}`;
+                const who =
+                  fact.actorId === null
+                    ? "crew"
+                    : (runActors.get(fact.actorId)?.username ?? "crew");
+                return row({
+                  href,
+                  nav: true,
+                  lead: icon(fact.word === "shipped" ? "check" : "alert"),
+                  title: html`<a href="${href}">${who} · ${repo.name}</a>`,
+                  meta: html`${fact.note} · ${time(fact.at)}`,
+                  trail: wordBadge(fact.word),
+                });
+              }),
+              { head: nowHead },
+            )
+          : card(html`<p class="muted small">Nobody is working right now.</p>`, {
+              head: nowHead,
+            });
 
   const body = html`<h1 class="sr-only">Studio</h1>
     ${costLine}

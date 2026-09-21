@@ -186,6 +186,91 @@ export async function runWord(
   return { word: "planned", note: run.summary || "nothing to show yet" };
 }
 
+/**
+ * How long a production deploy stays news on the shelf and the front door's
+ * rail, once nothing has happened since: long enough to survive a coffee
+ * break after shipping, short enough that a deploy from last week does not
+ * crowd out *quiet* as the invitation to tell the crew something. A run in
+ * flight or an open change is never bounded this way — only the one fact
+ * here that has no other way to expire.
+ */
+export const DEPLOY_NEWS_MS = 24 * 60 * 60_000;
+
+/** The one production fact worth telling beside a run or a change: a deploy
+ * that just landed, or one that just failed. */
+export interface ProductionFact {
+  readonly word: Extract<Word, "shipped" | "stopped">;
+  readonly note: string;
+  readonly actorId: string | null;
+  /** The deploy run this fact is about — a link to its log. */
+  readonly runId: string;
+  /** The instant to sort and print this fact by. */
+  readonly at: string;
+}
+
+/**
+ * The rule the front door's *happening* half follows for a deploy, decided
+ * once so the next case (a stalled deploy, a rollback) rebases on this
+ * rather than growing a fifth special case: production's own status names
+ * two candidate facts — the deploy now serving, and, when a newer one was
+ * attempted and failed behind it, that failure (#200's case) — and this
+ * picks whichever is news, preferring the failure when both are and the
+ * failure is not older. Neither counts once `DEPLOY_NEWS_MS` has passed
+ * without anything newer.
+ *
+ * A deploy no push asked for — a redeploy someone pressed, the boot
+ * reconcile every restart runs — carries no `createdAt` (`apps/runtime.ts`'s
+ * `PUSH_REASONS`), so it is never news: a person would not call it one, and
+ * without this the front door would read *shipped* after every restart.
+ *
+ * `runs` is the batch lookup of whatever run ids `production` names, read
+ * once for the whole shelf by the caller — never a query here.
+ */
+export function productionFact(
+  production: EnvStatus | undefined,
+  runs: ReadonlyMap<string, Run>,
+  now = Date.now(),
+): ProductionFact | undefined {
+  if (production === undefined) return undefined;
+  const news = (at: string | undefined): at is string =>
+    at !== undefined && now - Date.parse(at) <= DEPLOY_NEWS_MS;
+
+  const failedRun =
+    production.failedDeploy === undefined
+      ? undefined
+      : runs.get(production.failedDeploy.runId);
+  const failedAt = failedRun?.finishedAt ?? failedRun?.createdAt;
+  const failed: ProductionFact | undefined =
+    production.failedDeploy !== undefined && failedRun !== undefined && news(failedAt)
+      ? {
+          word: "stopped",
+          note: `${production.failedDeploy.commitOid.slice(0, 7)} did not come up — ${production.failedDeploy.error}`,
+          actorId: failedRun.actorId,
+          runId: failedRun.id,
+          at: failedAt!,
+        }
+      : undefined;
+
+  const shippedAt = production.servingAt ?? production.createdAt;
+  const shipped: ProductionFact | undefined =
+    production.state === "running" &&
+    production.createdAt !== undefined &&
+    production.runId !== undefined &&
+    news(shippedAt)
+      ? {
+          word: "shipped",
+          note: `production is serving ${production.commitOid.slice(0, 7)}`,
+          actorId: runs.get(production.runId)?.actorId ?? null,
+          runId: production.runId,
+          at: shippedAt!,
+        }
+      : undefined;
+
+  if (failed !== undefined && shipped !== undefined)
+    return failed.at >= shipped.at ? failed : shipped;
+  return failed ?? shipped;
+}
+
 const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
   working: "loader",
   look: "eye",
