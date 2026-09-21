@@ -233,8 +233,12 @@ edit it. \`src/contract.test.ts\` acts as every identity at every door and
 fails when a door and the table disagree.
 
 A new kind of person is a new role in the table, under an existing one. A
-change to a cell is a change of policy: say so in the pull's description,
-and never loosen a cell toward \`anon\` without a person having asked for it.
+change to a cell is a change of policy: say so in the pull's description.
+A cell loosened — anything an identity could not do before that it can
+after — is a wall: the forge shows the pull to a person and never lands it
+on its own. Do not loosen a cell unless the issue asks for exactly that;
+prefer a new role under an existing one, or a new resource, to widening a
+door that was decided.
 
 To add a concept:
 
