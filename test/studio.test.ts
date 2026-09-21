@@ -5226,6 +5226,225 @@ describe("a person's own change ships from its own studio page", () => {
   });
 });
 
+/**
+ * Issue #190: a shipped change's studio page offers Take it back to a
+ * writer, behind the studio's existing confirm, and pressing it opens a new
+ * change that undoes it.
+ */
+describe("take it back: the studio's verb on a shipped change", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let ownerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+  const post = (path: string, cookie: string, origin = base) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { cookie, origin },
+      redirect: "manual",
+    });
+
+  const shipChange = async (
+    branch: string,
+    title: string,
+    content: string,
+  ): Promise<Pull> => {
+    const committed = await commitToBranch(app, alice, repo, {
+      branch,
+      base: "main",
+      message: title,
+      files: [{ path: "code.txt", content }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const opened = await openPull(app, alice, repo, {
+      title,
+      baseBranch: "main",
+      headBranch: branch,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const merged = await mergePull(app, alice, repo, opened.value, "squash");
+    if (!merged.ok) throw new Error(JSON.stringify(merged.error));
+    return getPull(app.db, repo.id, opened.value.number)!;
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-take-back-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const r = await createUser(app.db, {
+      username: "eve",
+      email: "eve@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!r.ok) throw new Error(r.error);
+    ownerCookie = await signIn("alice");
+    readerCookie = await signIn("eve");
+    const made = await createRepo(app, alice, {
+      name: "orchard",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content:
+            '{"name":"orchard","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+        { path: "code.txt", content: "alpha\n" },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "orchard" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a shipped change offers Take it back to a writer, not to a reader, and not while it is still open", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/loud",
+      base: "main",
+      message: "Make it loud",
+      files: [{ path: "code.txt", content: "alpha\nBETA\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Make it loud",
+      baseBranch: "main",
+      headBranch: "feature/loud",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+
+    const whileOpen = await (
+      await get(`/alice/orchard/pulls/${pull.number}`, ownerCookie)
+    ).text();
+    expect(whileOpen).not.toContain("Take it back");
+
+    const merged = await mergePull(app, alice, repo, pull, "squash");
+    if (!merged.ok) throw new Error(JSON.stringify(merged.error));
+
+    const ownerPage = await (
+      await get(`/alice/orchard/pulls/${pull.number}`, ownerCookie)
+    ).text();
+    expect(ownerPage).toContain("Take it back");
+    expect(ownerPage).toContain(
+      `/-/confirm?to=%2Falice%2Forchard%2Fpulls%2F${pull.number}%2Ftake-back`,
+    );
+
+    const readerPage = await (
+      await get(`/alice/orchard/pulls/${pull.number}`, readerCookie)
+    ).text();
+    expect(readerPage).not.toContain("Take it back");
+
+    const confirm = await (
+      await get(
+        `/-/confirm?to=${encodeURIComponent(`/alice/orchard/pulls/${pull.number}/take-back`)}`,
+        ownerCookie,
+      )
+    ).text();
+    expect(confirm).toContain("Take back");
+    expect(confirm).toContain("Make it loud");
+    expect(confirm).toContain("opens a new change that undoes exactly what it shipped");
+  });
+
+  test("pressing Take it back opens a new change and lands on its studio page", async () => {
+    const shipped = await shipChange("feature/gamma", "Add gamma", "alpha\nGAMMA\n");
+
+    const taken = await post(
+      `/alice/orchard/pulls/${shipped.number}/take-back`,
+      ownerCookie,
+    );
+    expect(taken.status).toBe(303);
+    const location = taken.headers.get("location")!;
+    expect(location).toBe(`/alice/orchard/pulls/${shipped.number + 1}`);
+
+    const revertPage = await (await get(location, ownerCookie)).text();
+    expect(revertPage).toContain(`Revert &quot;Add gamma&quot;`);
+  });
+
+  test("the POST is refused from another origin, and nothing is created", async () => {
+    const shipped = await shipChange("feature/delta", "Add delta", "alpha\nDELTA\n");
+
+    const forged = await post(
+      `/alice/orchard/pulls/${shipped.number}/take-back`,
+      ownerCookie,
+      "https://evil.example",
+    );
+    expect(forged.status).toBe(403);
+    expect(getPull(app.db, repo.id, shipped.number + 1)).toBeUndefined();
+  });
+
+  test("a refusal is said in the studio's own words, and takes nothing back twice", async () => {
+    const shipped = await shipChange("feature/epsilon", "Add epsilon", "alpha\nEPSILON\n");
+    const first = await post(
+      `/alice/orchard/pulls/${shipped.number}/take-back`,
+      ownerCookie,
+    );
+    expect(first.status).toBe(303);
+
+    const again = await post(
+      `/alice/orchard/pulls/${shipped.number}/take-back`,
+      ownerCookie,
+    );
+    expect(again.status).toBe(303);
+    const location = again.headers.get("location")!;
+    expect(location).toBe(`/alice/orchard/pulls/${shipped.number}`);
+    const flash = decodeURIComponent(again.headers.get("set-cookie") ?? "");
+    expect(flash).toContain("already been taken back");
+
+    // Only one revert pull exists — the second attempt created nothing.
+    expect(
+      getPull(app.db, repo.id, shipped.number + 1)?.title,
+    ).toBe('Revert "Add epsilon"');
+    expect(getPull(app.db, repo.id, shipped.number + 2)).toBeUndefined();
+  });
+});
+
 describe("the studio's crew panel on a forge with no agents yet", () => {
   let dataDir: string;
   let app: App;

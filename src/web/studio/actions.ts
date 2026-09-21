@@ -11,6 +11,7 @@
 import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
 import { tellCrew } from "../../actions/crew.ts";
 import { mergePull } from "../../actions/pulls.ts";
+import { revertPull, type RevertPullError } from "../../actions/revert.ts";
 import { getPull } from "../../core/pulls.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -104,6 +105,71 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
           tone: "danger" as const,
           message: `That could not ship: ${mergeWords(merged.error)}.`,
         }),
+  });
+}
+
+/** A take-back refusal in the studio's words. */
+function takeBackWords(error: RevertPullError): string {
+  if (typeof error === "string") {
+    switch (error) {
+      case "not_shipped":
+        return "it has not shipped";
+      case "mirrored":
+        return "the origin owns this history";
+      case "already_reverted":
+        return "it has already been taken back";
+      case "unauthorized":
+        return "sign in first";
+      case "forbidden":
+        return "only a person can take a change back";
+      case "not_found":
+        return "that change was not found";
+    }
+  }
+  switch (error.kind) {
+    case "conflict":
+      return `it conflicts with the current code in ${error.files.join(", ")}`;
+    case "unsafe":
+      return "git refused it";
+    case "base_moved":
+      return "the base moved under it";
+    case "git":
+      return `git said ${error.message}`;
+    case "octopus":
+      return "it has more than two parents";
+    case "branch_failed":
+      return `it could not be made ready (${error.reason})`;
+    case "pull_failed":
+      return `the change could not be opened (${error.reason})`;
+  }
+}
+
+/**
+ * POST /:owner/:name/pulls/:number/take-back — open a new change that
+ * undoes exactly what a shipped one merged. Never touches the default
+ * branch itself (`revertPull` does the computing); this only calls it and
+ * says the result in the studio's words.
+ */
+export async function takeBackSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const base = repoBase(repo);
+  const number = Number(ctx.params.number);
+  const pull = Number.isInteger(number)
+    ? getPull(ctx.app.db, repo.id, number)
+    : undefined;
+  if (!pull) return notFoundPage(ctx);
+  const reverted = await revertPull(ctx.app, ctx.auth.user, repo, pull);
+  if (!reverted.ok)
+    return flashOrJson(ctx, `${base}/pulls/${pull.number}`, {
+      tone: "danger",
+      message: `That could not be taken back: ${takeBackWords(reverted.error)}.`,
+    });
+  return flashOrJson(ctx, `${base}/pulls/${reverted.value.number}`, {
+    message: `Opened "${reverted.value.title}" — ship it to take "${pull.title}" back.`,
   });
 }
 

@@ -10,6 +10,8 @@
  */
 
 import { search } from "../../actions/search.ts";
+import { getPull } from "../../core/pulls.ts";
+import { canWrite, getRepo } from "../../core/repos.ts";
 import {
   searchKind,
   type CodeHit,
@@ -379,7 +381,7 @@ interface Destructive {
  */
 const DESTRUCTIVE: {
   pattern: RegExp;
-  describe: (m: RegExpMatchArray) => Destructive;
+  describe: (m: RegExpMatchArray, ctx: Ctx) => Destructive;
 }[] = [
   {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/delete$/,
@@ -476,12 +478,33 @@ const DESTRUCTIVE: {
       phrase: "",
     }),
   },
+  {
+    pattern: /^\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/take-back$/,
+    describe: (m, ctx) => {
+      // The number in the URL is what the route itself will act on; the
+      // title shown here is looked up fresh rather than trusted from a
+      // link, so a crafted URL cannot put someone else's words on it — and
+      // only shown to someone who could take the change back anyway, so
+      // this page never becomes a way to read a private pull's title.
+      const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
+      const writer = repo && canWrite(ctx.app.db, repo, ctx.auth.user);
+      const pull = writer ? getPull(ctx.app.db, repo.id, Number(m[3])) : undefined;
+      const name = pull ? `"${pull.title}"` : `change #${m[3]}`;
+      return {
+        verb: "Take it back",
+        title: `Take back ${name}?`,
+        detail:
+          "This opens a new change that undoes exactly what it shipped — nothing changes until a person ships that new change, same as any other.",
+        phrase: "",
+      };
+    },
+  },
 ];
 
-function describeTarget(to: string): Destructive | undefined {
+function describeTarget(to: string, ctx: Ctx): Destructive | undefined {
   for (const entry of DESTRUCTIVE) {
     const match = to.match(entry.pattern);
-    if (match) return entry.describe(match);
+    if (match) return entry.describe(match, ctx);
   }
   return undefined;
 }
@@ -506,7 +529,7 @@ export function confirmPage(ctx: Ctx): Response {
   ) {
     return notFoundPage(ctx);
   }
-  const known = describeTarget(to);
+  const known = describeTarget(to, ctx);
   // Only routes this file knows are destructive can be confirmed. A crafted
   // link therefore cannot invent reassuring words for a dangerous button, and
   // cannot aim the form at an endpoint that was never meant for it.

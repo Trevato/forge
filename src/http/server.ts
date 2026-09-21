@@ -82,6 +82,7 @@ import {
   modeSubmit,
   saySubmit,
   shipSubmit,
+  takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
@@ -567,10 +568,16 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
     assigneeSubmit(ctx, "issue"),
   );
-  // The studio's three verbs on an app: tell, ship, say.
+  // The studio's verbs on an app: tell, ship, say, and — on a shipped
+  // change — take it back.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/take-back",
+    takeBackSubmit,
+  );
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",

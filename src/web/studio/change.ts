@@ -9,7 +9,7 @@
 
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
-import { pullStatus, type Pull } from "../../core/pulls.ts";
+import { pullStatus, revertOf, type Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { checkSummary } from "../../core/runs.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -21,6 +21,7 @@ import { liveClientJs, liveMount } from "../live.ts";
 import {
   btn,
   card,
+  confirmAction,
   icon,
   originTag,
   stateBadge,
@@ -207,13 +208,40 @@ export async function studioPull(
     }),
   );
 
+  // A shipped change offers one more verb: open a new change that undoes
+  // exactly what it shipped, for someone to ship. Never on a change still
+  // open (nothing shipped to take back yet), never on a mirror (the origin
+  // owns that history), never twice. The action re-checks all of this and
+  // does the git work; this only decides whether to offer the button.
+  const takeBackSection = when(
+    pull.mergedAt !== null &&
+      writer &&
+      repo.origin === null &&
+      pull.originHeadRepo === null &&
+      revertOf(db, repo.id, pull.id) === undefined,
+    () =>
+      card(
+        html`<p class="muted small">
+            Take it back — opens a new change that undoes exactly what this
+            one shipped, for a person to ship.
+          </p>
+          <div class="bar mt">
+            ${confirmAction({
+              action: `${thread}/take-back`,
+              verb: "Take it back",
+              size: "sm",
+            })}
+          </div>`,
+      ),
+  );
+
   const talk = conversation(ctx, repo, pull, { openVerb: "opened this" });
 
   const body = html`${repoHeader(ctx, repo, "pulls", {
       compact: true,
       ownTitle: true,
     })}
-    ${head} ${checkLine} ${decisionSection}
+    ${head} ${checkLine} ${decisionSection} ${takeBackSection}
     ${lookCard(ctx, repo, record, pull, pull.headOid)}
     <div class="split">
       <div>
