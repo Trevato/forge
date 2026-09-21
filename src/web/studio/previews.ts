@@ -31,6 +31,7 @@ import {
   envPhrase,
   icon,
   listCard,
+  previewDataNote,
   row,
   terminalLine,
   time,
@@ -104,6 +105,10 @@ function previewRow(
   if (env?.since) bits.push(html`up ${time(env.since)}`);
   const say = env?.error ?? env?.failedDeploy?.error ?? env?.note;
   if (say) bits.push(html`${say}`);
+  if (env !== undefined) {
+    const dataNote = previewDataNote(record.previewData, pull.createdAt);
+    if (dataNote !== null) bits.push(dataNote);
+  }
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
     lead: icon("rocket"),

@@ -1738,6 +1738,49 @@ describe("every open pull's preview on the studio page", () => {
     expect(after).not.toContain("<h2>Previews</h2>");
     expect(after).not.toContain(`pull-${pull.number}/open`);
   }, 30_000);
+
+  test("a change's page names its preview's data as its own copy and gives the moment it was taken; production's card does not", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/y",
+      base: repo.defaultBranch,
+      message: "Add Y",
+      files: [{ path: "Y.md", content: "y\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add Y",
+      body: "",
+      baseBranch: repo.defaultBranch,
+      headBranch: "feature/y",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const record = getAppByRepo(app.db, repo.id)!;
+    const env = `pull-${pull.number}` as const;
+
+    const deadline = Date.now() + 30_000;
+    while (
+      Date.now() < deadline &&
+      runtime.envStatus(record, env)?.state !== "running"
+    )
+      await Bun.sleep(100);
+    expect(runtime.envStatus(record, env)?.state).toBe("running");
+
+    const note = "its own copy of production's data, taken";
+
+    const appPage = await (await get("/alice/widget")).text();
+    expect(appPage).toContain(note);
+    // Production's own card, above the previews list, never says it.
+    const production = appPage.slice(0, appPage.indexOf("<h2>Previews</h2>"));
+    expect(production).not.toContain(note);
+
+    const changePage = await (
+      await get(`/alice/widget/changes/${pull.number}`)
+    ).text();
+    expect(changePage).toContain("<h2>Preview</h2>");
+    expect(changePage).toContain(note);
+  }, 30_000);
 });
 
 describe("the studio home does not wait on the decider", () => {

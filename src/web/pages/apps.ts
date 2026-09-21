@@ -67,6 +67,7 @@ import {
   envStateBadge,
   icon,
   listCard,
+  previewDataNote,
   row,
   seg,
   selectField,
@@ -801,8 +802,10 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   // A preview's terminal is a different login from production's — its own
   // command, shown only to a writer, same as the app page's.
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
+  const dataNote = previewDataNote(view.value.app.previewData, pull.createdAt);
   return card(
     html`${envFacts(base, env)}
+      ${dataNote === null ? null : html`<p class="muted small">${dataNote}</p>`}
       ${when(writer, () =>
         terminalLine(
           terminalFor(ctx.app, view.value.app, env.env, env),

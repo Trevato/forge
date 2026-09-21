@@ -11,6 +11,7 @@
  */
 
 import type { EnvState, EnvStatus } from "../apps/runtime.ts";
+import type { PreviewData } from "../apps/data.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
@@ -388,6 +389,26 @@ export function envFacts(
         ${fd.error} (<a href="${base}/runs/${fd.runId}">its deploy</a>)
       </p>`,
     )}`;
+}
+
+/**
+ * The one fact a preview says about whose data it has: its own copy of
+ * production's, taken the moment the change that opened it did — the only
+ * moment `ensureEnvData` (`apps/data.ts`) ever takes one, since a redeploy
+ * of the same preview keeps what is already there. That instant is a
+ * pull's own `createdAt`, already known wherever a preview is drawn, so
+ * this never stats the data directory to answer. An app whose preview
+ * policy is `empty` has no production data to name, so there is nothing to
+ * say — and production's own card never calls this at all: there is
+ * nothing to warn about data it simply *is*. Bare text, not a card or a
+ * paragraph: the caller decides how it sits beside the rest of the facts.
+ */
+export function previewDataNote(
+  policy: PreviewData,
+  openedAt: string,
+): Html | null {
+  if (policy !== "copy") return null;
+  return html`its own copy of production's data, taken ${time(openedAt)}`;
 }
 
 /**
