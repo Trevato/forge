@@ -74,6 +74,12 @@ describe("notes, cell by cell", () => {
     expect(decide(NOTES, "note", "create", root)).toBe("yes");
   });
 
+  test("an empty id is nobody, whatever a row holds", () => {
+    const blank: Actor = { id: "", roles: ["user"] };
+    expect(may(NOTES, "note", "delete", blank, { author_id: "" })).toBe(false);
+    expect(decide(NOTES, "note", "create", blank)).toBe("yes");
+  });
+
   test("a row that names nobody is nobody's", () => {
     expect(may(NOTES, "note", "delete", bob, { id: 2 })).toBe(false);
     expect(may(NOTES, "note", "delete", bob, { author_id: null })).toBe(false);
@@ -192,6 +198,20 @@ describe("reading a contract", () => {
     expect(problems).toContain(
       "role `island` does not stand on the floor `anon`",
     );
+  });
+
+  test("two roles held by one identity are refused", () => {
+    const twins: Contract = {
+      roles: {
+        anon: { above: [], held: { by: "everyone" } },
+        a: { above: ["anon"], held: { by: "identity", role: "x" } },
+        b: { above: ["anon"], held: { by: "identity", role: "x" } },
+      },
+      resources: {},
+    };
+    expect(check(twins)).toEqual([
+      "roles `a` and `b` are both held by the identity `x`",
+    ]);
   });
 
   test("text that is not a contract is refused, not thrown", () => {

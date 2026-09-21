@@ -62,7 +62,10 @@ export interface Contract {
   readonly resources: Readonly<Record<string, Resource>>;
 }
 
-/** Who is asking: an id when signed in, and the roles the forge signed. */
+/**
+ * Who is asking: an id when signed in, and the roles the forge signed. An
+ * empty id is nobody: it never names a row, however a row was filled.
+ */
 export interface Actor {
   readonly id: string | null;
   readonly roles: readonly string[];
@@ -121,7 +124,7 @@ export function decide(
       if (actor.roles.includes(held.role)) return "yes";
       continue;
     }
-    if (actor.id === null) continue;
+    if (actor.id === null || actor.id === "") continue;
     if (row !== undefined) {
       if (own(row, held.column) === actor.id) return "yes";
     } else if (verb === "list" && !where.includes(held.column))
@@ -232,6 +235,19 @@ export function check(contract: Contract): string[] {
   const floors = names.filter((n) => contract.roles[n]!.held.by === "everyone");
   if (floors.length !== 1)
     problems.push("exactly one role is held by everyone: the floor");
+  // Two roles held by one identity are one role with two names: the table
+  // would show two columns that are the same person.
+  const byIdentity = new Map<string, string>();
+  for (const name of names) {
+    const held = contract.roles[name]!.held;
+    if (held.by !== "identity") continue;
+    const other = byIdentity.get(held.role);
+    if (other !== undefined)
+      problems.push(
+        `roles \`${other}\` and \`${name}\` are both held by the identity \`${held.role}\``,
+      );
+    else byIdentity.set(held.role, name);
+  }
   for (const name of names) {
     for (const below of contract.roles[name]!.above) {
       if (own(contract.roles, below) === undefined)

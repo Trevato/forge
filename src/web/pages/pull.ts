@@ -41,6 +41,7 @@ import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
+import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -249,6 +250,36 @@ function checksLine(
  * Six states, six cards. Every one names the situation, gives the reason,
  * and offers exactly the actions that are actually available.
  */
+/**
+ * A pull that changes the policy: what it lets through that the base did
+ * not. It is a wall — the crew never lands it on its own — so the card says
+ * so, in the same sentences the ledger keeps, and leaves the decision to
+ * the person reading.
+ */
+function wallCard(wall: Wall): Html {
+  return card(
+    html`${icon("shield")}
+      <div class="grow">
+        <div class="merge-headline">
+          ${wall.unsound !== undefined
+            ? "This pull's contract does not read."
+            : `This pull changes the policy: ${wall.loosened.length === 1 ? "one door opens" : `${wall.loosened.length} doors open`} wider.`}
+        </div>
+        <p class="merge-sub">
+          ${wall.unsound !== undefined
+            ? "An app built on it does not boot. A person decides this one."
+            : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
+        </p>
+        <ul class="wall-cells">
+          ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
+            (line) => html`<li>${line}</li>`,
+          )}
+        </ul>
+      </div>`,
+    { tone: "attn", extra: "merge-box wall" },
+  );
+}
+
 function mergeBox(
   ctx: Ctx,
   repo: Repo,
@@ -671,6 +702,11 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     requireReview: repo.requireReview,
   });
   const syntax = await diffSyntax(dir, diff, from, status.headOid);
+  // A merged or closed pull is history; the wall is a question about landing.
+  const wall =
+    pull.mergedAt === null && pull.state === "open"
+      ? await wallOf(dir, status.baseOid, status.headOid)
+      : undefined;
   const reviewComments = byAnchor(listReviewComments(ctx.app.db, pull.id));
   const mayMerge = canWrite(ctx.app.db, repo, ctx.auth.user);
   const applied = labelsFor(ctx.app.db, pull.id);
@@ -773,6 +809,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
         ${when(pull.crossRepo, () => badge("fork", { icon: "fork" }))}
       </div>
     </div>
+    ${when(wall, (w) => wallCard(w))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, status.headOid))}
     <div class="split">

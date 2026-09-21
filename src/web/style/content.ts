@@ -287,6 +287,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .audit-wide { flex-basis: 100%; }
 .audit-said { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .audit-alarm { color: var(--danger); }
+.wall-cells { margin: 8px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
+.wall-cells li + li { margin-top: 3px; }
 form.inline { display: inline; margin-left: auto; }
 .audit-problems li + li { margin-top: 4px; }
 .audit-unread { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }

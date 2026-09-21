@@ -190,10 +190,26 @@ An app that accepts `{}` as a note has a validation bug the probe will
 reveal by leaving one note; that is the app's bug and the probe reports the 201. It never probes an app whose contract is unsound or missing. It never
 probes previews.
 
+## The wall
+
+A change to a contract is a change of policy, and one kind needs a person:
+a cell **loosened** — something an identity could not do before that it
+can after (`src/contract/policy.ts`). Against a contract that was there,
+every identity counts: a decided cell that opens is a decision undone.
+Where there was no contract, only the floor counts: what a stranger may do
+is the one thing nobody decided yet. Tightening needs nobody.
+
+A pull whose head loosens its base's contract is at the wall: its page
+says so, with one sentence per cell ("note.create as anon: was no, now
+yes"), and the crew never lands it on its own, however green — it stays
+open on the studio's cards until a person lands it. A head whose contract
+does not read is at the wall too. `test/policy.test.ts` proves the crew
+stops there and lands a tightening pull in the same breath.
+
 ## What is not here yet
 
-- A changed cell as a policy proposal that blocks the work that needs it,
-  and the wall: a cell loosened toward the floor is a person's decision.
+- The wall as a ledger row and a studio card of its own, and the weekly
+  policy review that batches crossings.
 - `sync`, `limits` and events as contract fields. They join the table when
   something enforces them, not before.
 - Identities beyond `user` and `admin`. The forge signs one role today; the

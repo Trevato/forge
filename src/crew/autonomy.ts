@@ -35,6 +35,7 @@ import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import { latestDecision, resolveOpen } from "../core/decisions.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { wallOf, wallSentence } from "../contract/policy.ts";
 import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
 import {
   getPull,
@@ -775,6 +776,9 @@ export function bringUpToDate(
  * merge. Only in `autonomous`; `assisted` leaves every green pull for a
  * look.
  */
+/** Pulls told once, per head, that they wait at the wall. */
+const walled = new Map<string, string>();
+
 export async function landIfGreen(
   app: App,
   repo: Repo,
@@ -805,6 +809,21 @@ export async function landIfGreen(
       }
       return false;
     }
+  }
+  // A pull that loosens the contract is a change of policy, which is a
+  // wall: decided by a person, never crossed by the crew. The pull stays
+  // green and open, on the studio's cards, until someone lands it.
+  const wall = await wallOf(dir, baseTip, pull.headOid);
+  if (wall !== undefined) {
+    if (walled.get(pull.id) !== pull.headOid) {
+      walled.set(pull.id, pull.headOid);
+      log.info("green; crosses the wall, left to a person", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        pull: pull.number,
+        cells: (wall.unsound ?? wall.loosened.map(wallSentence)).join("; "),
+      });
+    }
+    return false;
   }
   // Ship, or look first: the decider reads the pull against the direction.
   // A rule ships everything green; the decider is what makes "autonomous"

@@ -302,7 +302,11 @@ describe("an app's environment", () => {
     const { migrations } = require("../src/core/schema.ts") as {
       migrations: readonly string[];
     };
-    old.exec(migrations[migrations.length - 1]!);
+    // The scope rebuild is the one that mentions the scoped table, wherever
+    // later migrations put it in the list.
+    const rebuild = migrations.find((m) => m.includes("app_env_scoped"));
+    if (rebuild === undefined) throw new Error("no scope migration");
+    old.exec(rebuild);
     expect(
       old.query("SELECT name, scope, value_enc, updated_at FROM app_env").all(),
     ).toEqual([
