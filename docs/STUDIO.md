@@ -127,6 +127,17 @@ coming up — but by "the crew" rather than an agent's own name, and never
 with a run's cost, turns or steer box. A private repository is unaffected:
 it already answers only to people who can read it at all.
 
+**Whose name a row carries** is one rule, in one place — `voiceFor`
+(`src/web/studio/voice.ts`), which the app's page, a run's own page and the
+board all sign their rows with. An agent's name is *not* a secret: a
+change's own page and `/changes` name the agent that opened it to anyone
+who can read the repository. "The crew" is a voice, not a redaction, and it
+is chosen by **what the actor is** first: a person is named to every viewer
+who can see the row at all, so one visitor reads one name for one change on
+all three pages, avatar included; only an agent's own work — a run, a
+change it opened, a tell it holds — reads as the crew's for a viewer who
+cannot see the roster. Nothing here decides whether a row is visible.
+
 **The terminal** is the same operator's door, so it sits beside the same
 facts: a writer sees the exact `ssh …` command production answers to,
 copyable, with the forge's host key fingerprint beside it, or one line

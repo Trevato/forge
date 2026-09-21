@@ -30,6 +30,7 @@ import { boardJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, icon, time } from "../ui.ts";
+import { voiceFor } from "../studio/voice.ts";
 import { lookUrl, thumbLook } from "./looks.ts";
 
 // ---- words ----
@@ -210,13 +211,17 @@ function working(ctx: Ctx, scope: Scope): Html {
   );
   const rows = runs.map((run) => {
     const repo = scope.byId.get(run.repoId)!;
-    // Who is on the crew is an owner's fact — a repo this viewer can only
-    // read reads here as the app's own story, never by the agent's name.
-    const actorName =
-      run.actorId === null
-        ? "crew"
-        : (actors.get(run.actorId)?.username ?? "crew");
-    const who = scope.ownerFacts.has(repo.id) ? actorName : "the crew";
+    // The same rule the app's page signs its rows by, `voiceFor`
+    // (`studio/voice.ts`): the crew's own work reads as the app's own story
+    // for a viewer who cannot see the roster; a person is always named.
+    const actor = run.actorId === null ? undefined : actors.get(run.actorId);
+    const who = voiceFor(
+      {
+        name: actor?.username,
+        isAgent: actor === undefined || actor.kind === "agent",
+      },
+      scope.ownerFacts.has(repo.id),
+    );
     const issue = run.issueId === null ? undefined : about.get(run.issueId);
     const word = stateWord(run);
     return html`<li>
@@ -284,7 +289,10 @@ function landed(ctx: Ctx, scope: Scope): Html {
   const rows = pulls.map((pull: Pull) => {
     const repo = scope.byId.get(pull.repoId)!;
     const picture = pictureOf(repo);
-    const author = scope.ownerFacts.has(repo.id) ? pull.authorName : "the crew";
+    const author = voiceFor(
+      { name: pull.authorName, isAgent: pull.authorIsAgent },
+      scope.ownerFacts.has(repo.id),
+    );
     return html`<li>
       <a
         class="board-card board-landed"

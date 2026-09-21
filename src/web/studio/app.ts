@@ -23,6 +23,7 @@ import {
   listRuns,
   previewLatency,
   type PreviewLatency,
+  type Run,
 } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
@@ -56,6 +57,7 @@ import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
 import { tellWord } from "./tell.ts";
+import { voiceFor, type Actor } from "./voice.ts";
 import { pullWord, runWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
@@ -290,10 +292,17 @@ export async function studioApp(
       (r, idx, all) => all.findIndex((x) => x.issueId === r.issueId) === idx,
     )
     .slice(0, 6);
-  // Who is on the crew is an owner's fact same as its roster card — a
-  // viewer who cannot write here reads "Now" as the app's own story, never
-  // by the agent's name.
-  const nameFor = (name: string): string => (ownerFacts ? name : "the crew");
+  // Who signs a "Now" row is the one rule for it, `voiceFor`
+  // (`studio/voice.ts`): a person is named to anyone who can see the row —
+  // the same name `/changes` and the change's own page give — and only the
+  // crew's own work reads as the app's own story for a viewer who cannot
+  // see the roster. The avatar takes the same string, so its initials can
+  // never disagree with the name beside them.
+  const runActor = (r: Run): Actor => ({
+    name: r.actorId === null ? undefined : actors.get(r.actorId)?.username,
+    // A run with nobody on it is the crew's own, never a person's.
+    isAgent: r.actorId === null || actors.get(r.actorId)?.kind === "agent",
+  });
 
   // The one run actually going, if any: its row gets a tail of its own
   // log — the last handful of lines, streamed live — beside it. Only one,
@@ -304,11 +313,7 @@ export async function studioApp(
   const activeTail = activeRun
     ? logBox({
         id: "app-run-tail",
-        who: nameFor(
-          activeRun.actorId === null
-            ? "crew"
-            : (actors.get(activeRun.actorId)?.username ?? "crew"),
-        ),
+        who: voiceFor(runActor(activeRun), ownerFacts),
         cap: LOG_TAIL_CAP,
         lines: readRunLogTail(ctx.app.config.dataDir, activeRun.id, LOG_TAIL_CAP)
           .lines,
@@ -320,9 +325,7 @@ export async function studioApp(
   const runRows: Html[] = [];
   for (const r of rowsNow) {
     const { word, note } = await runWord(wordCtx, r);
-    const who = nameFor(
-      r.actorId === null ? "crew" : (actors.get(r.actorId)?.username ?? "crew"),
-    );
+    const who = voiceFor(runActor(r), ownerFacts);
     const about = r.issueId === null ? undefined : issues.get(r.issueId);
     const stop = stopForm(ctx, repo, r);
     runRows.push(
@@ -351,7 +354,10 @@ export async function studioApp(
     ...(await Promise.all(
       openPulls.map(async (p) => {
         const { word, note } = await pullWord(wordCtx, p);
-        const who = nameFor(p.authorName);
+        const who = voiceFor(
+          { name: p.authorName, isAgent: p.authorIsAgent },
+          ownerFacts,
+        );
         return row({
           href: changeHref(base, p.number),
           nav: true,
@@ -364,7 +370,10 @@ export async function studioApp(
     )),
     ...runRows,
     ...waiting.map((i) => {
-      const who = nameFor(i.assigneeName ?? "crew");
+      const who = voiceFor(
+        { name: i.assigneeName ?? undefined, isAgent: i.assigneeIsAgent },
+        ownerFacts,
+      );
       return row({
         href: tellHref(base, i.number),
         nav: true,
@@ -378,6 +387,8 @@ export async function studioApp(
     // Held by a person: `tellWord` — the one place a tell's word is
     // decided (`studio/tell.ts`) — says so honestly, the same word and
     // note the tell's own page and "Everything told" already show for it.
+    // `personHeld` has already established the holder is a person, so
+    // `voiceFor` names them to every viewer who can see the row.
     ...(await Promise.all(
       held.map(async (i) => {
         const { word, note } =
@@ -385,7 +396,11 @@ export async function studioApp(
             word: "told" as const,
             note: "held",
           };
-        const who = nameFor(i.assigneeName ?? "someone");
+        const who = voiceFor(
+          { name: i.assigneeName ?? undefined, isAgent: false },
+          ownerFacts,
+          "someone",
+        );
         return row({
           href: tellHref(base, i.number),
           nav: true,

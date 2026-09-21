@@ -176,7 +176,7 @@ function deployTail(
   if (agentBusy) return undefined;
   return logBox({
     id: "app-run-tail",
-    who: runVoice("deploy", true, undefined),
+    who: runVoice("deploy", true, { name: undefined, isAgent: true }),
     cap: LOG_TAIL_CAP,
     lines: readRunLogTail(ctx.app.config.dataDir, production.runId, LOG_TAIL_CAP)
       .lines,

@@ -30,6 +30,7 @@ import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle } from "../pages/runs.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
+import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
 import { runWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
@@ -77,14 +78,17 @@ export async function studioRun(
     run.issueId === null ? undefined : getIssueById(db, run.issueId);
   // A deploy or a check speaks for itself (`runVoice`, shared with the tail
   // `studio/previews.ts` opens for the same lines while production comes
-  // up) — only an agent run is named for who is on it, and who is on the
-  // crew is an owner's fact, same as the app's own page: a viewer who
-  // cannot write here reads the transcript as the crew's own work, never by
-  // the agent's name (title, every line, the live stream's `data-who`, the
-  // running pulse). The steer box below is writer-only already, so it only
-  // ever renders with the real name.
-  const who = runVoice(run.kind, writer, actor?.username);
-  const title = runTitle(run, writer ? actor?.username : "the crew", issue);
+  // up); anything else is named by the one rule for it — `voiceFor`
+  // (`studio/voice.ts`) says who is named and why. The title and the
+  // transcript take the same name, so the page never carries two. The
+  // steer box below is writer-only already, so it only ever renders with
+  // the real name.
+  const by: Actor = {
+    name: actor?.username,
+    isAgent: actor?.kind === "agent",
+  };
+  const who = runVoice(run.kind, writer, by);
+  const title = runTitle(run, voiceFor(by, writer, unnamedRun(writer)), issue);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),

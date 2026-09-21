@@ -7189,3 +7189,221 @@ describe("the front door asks about a person's own change too (#208)", () => {
     expect(setIssueState(app, alice, repo, b, "closed").ok).toBe(true);
   });
 });
+
+/**
+ * Issue #206: one public app, one open change, one anonymous visitor, three
+ * studio pages — and they must name the same author. Who signs a row is
+ * `voiceFor` (`src/web/studio/voice.ts`): a person is named to anyone who
+ * can see the row at all, and only the crew's own work reads as the app's
+ * own story for a viewer who cannot see the roster.
+ */
+describe("the studio names a person on the app's page, and the crew only for the crew's own work", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let alice: User;
+  let ownerCookie: string;
+  let personPull: Pull;
+  let agentPull: Pull;
+  let agentRun: Run;
+  let waitingTell: Issue;
+  let heldTell: Issue;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  /** Signed out, in studio mode: the visitor the issue walked as. */
+  const anon = async (path: string): Promise<string> =>
+    (
+      await fetch(`${base}${path}`, {
+        headers: { cookie: "forge_mode=studio" },
+        redirect: "manual",
+      })
+    ).text();
+
+  const owner = async (path: string): Promise<string> =>
+    (
+      await fetch(`${base}${path}`, {
+        headers: { cookie: `${ownerCookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+
+  /** The one `<li>` a link sits in — one row, not the whole page. */
+  const rowWith = (page: string, needle: string): string => {
+    const at = page.indexOf(needle);
+    expect(at).toBeGreaterThan(-1);
+    const start = page.lastIndexOf("<li", at);
+    const end = page.indexOf("</li>", at);
+    return page.slice(start, end);
+  };
+
+  /** What the avatar beside a name says, so initials can be held to it. */
+  const initialsIn = (row: string): string =>
+    row.match(/class="avatar"[\s\S]*?>([^<]*)<\/span/)?.[1]?.trim() ?? "";
+
+  const branchAndPull = async (
+    who: User,
+    name: string,
+    title: string,
+  ): Promise<Pull> => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: name,
+      base: "main",
+      message: title,
+      files: [{ path: `${name.replace(/\//g, "-")}.md`, content: `${name}\n` }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, who, repo, {
+      title,
+      body: "",
+      baseBranch: "main",
+      headBranch: name,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    return opened.value;
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-voice-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "ivy",
+      email: "ivy@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ownerCookie = await signIn("ivy");
+
+    const made = await createRepo(app, alice, {
+      name: "pub",
+      visibility: "public",
+      description: "a public house",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "pub\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "pub" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const quill = await createAgent(app, alice, { username: "quill" });
+    if (!quill.ok) throw new Error(String(quill.error));
+    expect(addToCrew(app, alice, repo, "quill").ok).toBe(true);
+    const quillUser = getUserByName(app.db, "quill")!;
+    const quillId = quillUser.id;
+
+    // The change ivy opened herself, through the web editor.
+    personPull = await branchAndPull(alice, "ivy/subtitle", "Add a subtitle");
+    // One the crew opened, so the masking that was meant has something to
+    // mask on the very same page.
+    agentPull = await branchAndPull(quillUser, "quill/lamp", "Hang a lamp");
+    // A run of the crew's, on a tell of its own so it keeps its own row.
+    const told = openIssue(app, alice, repo, { title: "Sweep the step" });
+    if (!told.ok) throw new Error(String(told.error));
+    agentRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: told.value.id,
+      actorId: quillId,
+      reason: "assigned",
+    });
+    claimRun(app.db, agentRun.id);
+    agentRun =
+      finishRun(app.db, agentRun.id, {
+        state: "ok",
+        summary: "swept",
+        costUsd: 3.5,
+        turns: 2,
+      }) ?? agentRun;
+
+    // And one nobody has picked up yet: a waiting row, the crew's to take.
+    const waiting = openIssue(app, alice, repo, { title: "Wipe the bar" });
+    if (!waiting.ok) throw new Error(String(waiting.error));
+    expect(assignIssue(app, alice, repo, waiting.value, quillUser).ok).toBe(
+      true,
+    );
+    waitingTell = getIssue(app.db, repo.id, waiting.value.number)!;
+
+    // And one ivy took herself — a person holds it (#226's own row on the
+    // panel), so the panel owes her name to whoever can see the row.
+    const held = openIssue(app, alice, repo, { title: "Polish the sign" });
+    if (!held.ok) throw new Error(String(held.error));
+    expect(assignIssue(app, alice, repo, held.value, alice).ok).toBe(true);
+    heldTell = getIssue(app.db, repo.id, held.value.number)!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("an anonymous visitor reads one author for one change on all three pages, avatar included", async () => {
+    const appPage = await anon("/ivy/pub");
+    const changes = await anon("/ivy/pub/changes");
+    const change = await anon(`/ivy/pub/changes/${personPull.number}`);
+
+    const onApp = rowWith(appPage, `/changes/${personPull.number}`);
+    const onList = rowWith(changes, `/changes/${personPull.number}`);
+    expect(onApp).toContain("ivy");
+    expect(onApp).not.toContain("the crew");
+    // The same name the list gives, and the same initials beside it.
+    expect(initialsIn(onApp)).toBe(initialsIn(onList));
+    expect(initialsIn(onApp)).toBe("i");
+    expect(change).toContain("ivy");
+
+    // A tell she took herself is hers on the same panel, by the same rule.
+    const held = rowWith(appPage, `/tells/${heldTell.number}`);
+    expect(held).toContain("ivy");
+    expect(held).not.toContain("the crew");
+    expect(initialsIn(held)).toBe("i");
+  });
+
+  test("the crew's own change and the crew's own run still read as the crew's to that visitor", async () => {
+    const appPage = await anon("/ivy/pub");
+    const onApp = rowWith(appPage, `/changes/${agentPull.number}`);
+    expect(onApp).toContain("the crew");
+    expect(onApp).not.toContain("quill");
+    expect(initialsIn(onApp)).toBe("tc");
+
+    const runRow = rowWith(appPage, `/runs/${agentRun.id}`);
+    expect(runRow).toContain("the crew");
+    expect(runRow).not.toContain("quill");
+
+    const tellRow = rowWith(appPage, `/tells/${waitingTell.number}`);
+    expect(tellRow).toContain("the crew");
+    expect(tellRow).not.toContain("quill");
+
+    // Nothing the owner keeps to herself came along with the name.
+    expect(appPage).not.toContain("quill");
+    expect(appPage).not.toMatch(/\$\d/);
+    expect(appPage).not.toContain(">Crew<");
+  });
+
+  test("the owner still reads the crew by name, and her own change as her own", async () => {
+    const appPage = await owner("/ivy/pub");
+    expect(rowWith(appPage, `/changes/${agentPull.number}`)).toContain("quill");
+    expect(rowWith(appPage, `/runs/${agentRun.id}`)).toContain("quill");
+    expect(rowWith(appPage, `/changes/${personPull.number}`)).toContain("ivy");
+  });
+});
