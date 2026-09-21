@@ -12,7 +12,18 @@
  * result the way the forge does.
  */
 
+import { readFileSync } from "node:fs";
 import type { FileWrite } from "../git/write.ts";
+
+/**
+ * The evaluator an app decides with is the forge's own, carried as text:
+ * one implementation, so the forge can audit an app's `contract.json` with
+ * exactly the code the app runs.
+ */
+const CAN_TS = readFileSync(
+  new URL("../contract/can.ts", import.meta.url),
+  "utf8",
+);
 
 export interface ScaffoldInput {
   /** The repository name; also the title on the page. */
@@ -30,8 +41,11 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: ".gitignore", content: GITIGNORE },
     { path: "README.md", content: readme(title, description) },
     { path: "AGENTS.md", content: AGENTS_MD },
+    { path: "contract.json", content: CONTRACT_JSON },
     { path: "src/env.ts", content: ENV_TS },
     { path: "src/who.ts", content: WHO_TS },
+    { path: "src/can.ts", content: CAN_TS },
+    { path: "src/contract.ts", content: CONTRACT_TS },
     { path: "src/db.ts", content: DB_TS },
     { path: "src/actions.ts", content: ACTIONS_TS },
     { path: "src/live.ts", content: LIVE_TS },
@@ -46,6 +60,7 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "src/who.test.ts", content: WHO_TEST },
     { path: "src/db.test.ts", content: DB_TEST },
     { path: "src/actions.test.ts", content: ACTIONS_TEST },
+    { path: "src/contract.test.ts", content: CONTRACT_TEST },
     { path: "src/server.test.ts", content: SERVER_TEST },
   ];
 }
@@ -103,7 +118,9 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
 
 | file                               | what it is                                                   |
 | ---------------------------------- | ------------------------------------------------------------ |
-| \`src/actions.ts\`                   | list, add, delete — and who may                              |
+| \`src/actions.ts\`                   | list, add, delete                                            |
+| \`contract.json\`                    | who may do what: roles, and the least role each verb needs   |
+| \`src/contract.ts\`, \`src/can.ts\`    | the table, read at boot; the forge's evaluator, verbatim     |
 | \`src/who.ts\`                       | who is asking, from the forge's signed headers               |
 | \`src/db.ts\`                        | SQLite under \`FORGE_APP_DATA\`, WAL, forward-only migrations  |
 | \`src/live.ts\`                      | the in-process bus and \`GET /events\`                         |
@@ -203,14 +220,27 @@ rule in an action holds at every door at once; a rule anywhere else is a
 bug waiting for the door you forgot.
 
 Identity comes from the forge (\`src/who.ts\`): \`anon\`, \`user\` or \`admin\`,
-verified by signature, never by a cookie the app invents. An action that
-needs a person checks \`who.role\`; ownership is a column (\`author_id\`) and
-the check that reads it, in the action.
+verified by signature, never by a cookie the app invents.
+
+Who may do what is a table, not code: \`contract.json\`. It declares the
+roles — each names the roles below it, and how it is held: by everyone, by
+the identity the forge signed, or by a row's column naming the person — and,
+for every resource, the least role each of create, read, update, delete and
+list needs. An action asks \`permit(who, resource, verb, row)\`
+(\`src/contract.ts\`) and obeys the answer; it never compares \`who.role\`
+itself. \`src/can.ts\` is the forge's evaluator, carried verbatim: do not
+edit it. \`src/contract.test.ts\` acts as every identity at every door and
+fails when a door and the table disagree.
+
+A new kind of person is a new role in the table, under an existing one. A
+change to a cell is a change of policy: say so in the pull's description,
+and never loosen a cell toward \`anon\` without a person having asked for it.
 
 To add a concept:
 
-- **An action** — a function in \`src/actions.ts\`, its rule inside it, and
-  a test in \`src/actions.test.ts\` that fails without the rule.
+- **An action** — a function in \`src/actions.ts\` that asks \`permit\`, its
+  resource's row in \`contract.json\`, its door in \`src/contract.test.ts\`,
+  and a test in \`src/actions.test.ts\` for what the table cannot say.
 - **A migration** — append to \`migrations\` in \`src/db.ts\`. Never edit one
   that has run. \`bun run src/db.ts --check\` shows the version.
 - **A page** — a row in \`src/routes.ts\` and a function in \`src/page.ts\`.
@@ -432,6 +462,70 @@ if (import.meta.main) {
 `;
 
 // The one implementation.
+// Who may do what, as data.
+const CONTRACT_JSON = `{
+  "roles": {
+    "anon": { "above": [], "held": { "by": "everyone" } },
+    "user": { "above": ["anon"], "held": { "by": "identity", "role": "user" } },
+    "author": { "above": ["user"], "held": { "by": "row", "column": "author_id" } },
+    "admin": { "above": ["author"], "held": { "by": "identity", "role": "admin" } }
+  },
+  "resources": {
+    "note": {
+      "can": {
+        "create": "user",
+        "read": "anon",
+        "update": "author",
+        "delete": "author",
+        "list": "anon"
+      }
+    }
+  }
+}
+`;
+
+const CONTRACT_TS = `/**
+ * Who may do what. \`contract.json\` is the table — the roles, and the least
+ * role each verb on each resource needs — and \`src/can.ts\` is the forge's
+ * evaluator, carried here verbatim. Actions ask \`permit\` and nothing else
+ * in the app decides who may do what, so the table *is* the policy: it can
+ * be read, compared and audited without running anything.
+ *
+ * A contract that does not read is not a warning. The app does not start.
+ */
+
+import { readFileSync } from "node:fs";
+import {
+  decide,
+  readContract,
+  type Actor,
+  type Decision,
+  type Verb,
+} from "./can.ts";
+import type { Who } from "./who.ts";
+
+const read = readContract(
+  readFileSync(new URL("../contract.json", import.meta.url), "utf8"),
+);
+if (!read.ok) throw new Error(\`contract.json: \${read.problems.join("; ")}\`);
+
+export const contract = read.contract;
+
+/** The forge's word for who is asking, as the evaluator takes it. */
+export const actorOf = (who: Who): Actor =>
+  who.role === "anon"
+    ? { id: null, roles: [] }
+    : { id: who.id, roles: [who.role] };
+
+/** May \`who\` do \`verb\` to \`resource\` — to \`row\`, when there is one? */
+export const permit = (
+  who: Who,
+  resource: string,
+  verb: Verb,
+  row?: Readonly<Record<string, unknown>>,
+): Decision => decide(contract, resource, verb, actorOf(who), row);
+`;
+
 const ACTIONS_TS = `/**
  * Everything the app can do, as plain functions: \`(db, who, input)\` in,
  * data or a named failure out. The page, the JSON API, the MCP server and
@@ -441,6 +535,7 @@ const ACTIONS_TS = `/**
  */
 
 import type { Database } from "bun:sqlite";
+import { permit } from "./contract.ts";
 import { emit } from "./live.ts";
 import type { Who } from "./who.ts";
 
@@ -466,19 +561,39 @@ const fail = <T>(error: Failure, message: string): Result<T> => ({
 
 export const BODY_MAX = 500;
 
+/** The refusal for a "no": who is not signed in is asked to; who is, is told. */
+const refuse = <T>(who: Who, signIn: string, no: string): Result<T> =>
+  who.role === "anon" ? fail("signin_required", signIn) : fail("forbidden", no);
+
 export function listNotes(
   db: Database,
-  _who: Who,
+  who: Who,
   input: { limit?: number } = {},
 ): Result<Note[]> {
   const limit = Math.min(
     Math.max(Math.trunc(input.limit ?? 100) || 100, 1),
     500,
   );
+  // "yes" is every note. When the table gives \`list\` to a role a row holds
+  // (\`author\`), the answer names the columns instead, and the list is the
+  // notes that name whoever asks. The names are the contract's, checked when
+  // it was read; the value is bound.
+  const may = permit(who, "note", "list");
+  if (may === "no")
+    return refuse(who, "Sign in to see notes.", "You may not see these notes.");
+  if (may === "yes")
+    return ok(
+      db
+        .query<Note, [number]>("SELECT * FROM note ORDER BY id DESC LIMIT ?1")
+        .all(limit),
+    );
+  const mine = may.where.map((column) => \`\${column} = ?2\`).join(" OR ");
   return ok(
     db
-      .query<Note, [number]>("SELECT * FROM note ORDER BY id DESC LIMIT ?1")
-      .all(limit),
+      .query<Note, [number, string]>(
+        \`SELECT * FROM note WHERE \${mine} ORDER BY id DESC LIMIT ?1\`,
+      )
+      .all(limit, who.role === "anon" ? "" : who.id),
   );
 }
 
@@ -487,8 +602,8 @@ export function addNote(
   who: Who,
   input: { body: string },
 ): Result<Note> {
-  if (who.role === "anon")
-    return fail("signin_required", "Sign in to add a note.");
+  if (permit(who, "note", "create") !== "yes")
+    return refuse(who, "Sign in to add a note.", "You may not add a note.");
   const body = input.body.trim();
   if (body.length === 0 || body.length > BODY_MAX)
     return fail("invalid", \`A note is 1 to \${BODY_MAX} characters.\`);
@@ -507,24 +622,26 @@ export function deleteNote(
   who: Who,
   input: { id: number },
 ): Result<{ id: number }> {
-  if (who.role === "anon")
-    return fail("signin_required", "Sign in to remove a note.");
-  if (!Number.isInteger(input.id))
-    return fail("invalid", "A note id is a whole number.");
-  const note = db
-    .query<Note, [number]>("SELECT * FROM note WHERE id = ?1")
-    .get(input.id);
-  if (note === null) return fail("not_found", "No such note.");
-  if (!canDelete(who, note))
+  const note = Number.isInteger(input.id)
+    ? db.query<Note, [number]>("SELECT * FROM note WHERE id = ?1").get(input.id)
+    : null;
+  if (note === null || !canDelete(who, note)) {
+    // Whoever is not signed in hears that first, whatever they asked for.
+    if (who.role === "anon")
+      return fail("signin_required", "Sign in to remove a note.");
+    if (!Number.isInteger(input.id))
+      return fail("invalid", "A note id is a whole number.");
+    if (note === null) return fail("not_found", "No such note.");
     return fail("forbidden", "Only the author or an admin can remove a note.");
+  }
   db.query("DELETE FROM note WHERE id = ?1").run(note.id);
   emit("note.removed", { id: note.id });
   return ok({ id: note.id });
 }
 
-/** Whether \`who\` may remove \`note\`. The page and the terminal draw from this, so the rule lives once. */
+/** Whether \`who\` may remove \`note\`: the table's answer, for the page and the terminal to draw from. */
 export const canDelete = (who: Who, note: Note): boolean =>
-  who.role === "admin" || (who.role === "user" && who.id === note.author_id);
+  permit(who, "note", "delete", { ...note }) === "yes";
 `;
 
 // The bus and the event stream.
@@ -1916,6 +2033,79 @@ test("only the author or an admin removes a note", () => {
   const odd = deleteNote(db, root, { id: 1.5 });
   expect(odd.ok).toBe(false);
   if (!odd.ok) expect(odd.error).toBe("invalid");
+});
+`;
+
+const CONTRACT_TEST = `/**
+ * Every door answers as the table says. The test acts as each identity the
+ * contract declares — on a note that names them and on one that names
+ * someone else — and calls the real actions. A rule written by hand in an
+ * action, or a cell changed without its door, fails here.
+ */
+import { expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { addNote, deleteNote, listNotes } from "./actions.ts";
+import { actingAs, identities, table, type Verb } from "./can.ts";
+import { contract } from "./contract.ts";
+import { openDb } from "./db.ts";
+import type { Who } from "./who.ts";
+
+const db = openDb(mkdtempSync(join(tmpdir(), "app-contract-")));
+
+/** The identity the evaluator acts as, as the forge would have signed it. */
+function whoIs(identity: string): Who {
+  const { actor } = actingAs(contract, identity);
+  const role = actor.roles[0];
+  if (actor.id === null || (role !== "user" && role !== "admin"))
+    return { role: "anon" };
+  return { role, id: actor.id, name: identity };
+}
+
+const noteBy = (authorId: string): number =>
+  db
+    .query<{ id: number }, [string]>(
+      "INSERT INTO note (body, author_id, author_name) VALUES ('n', ?1, ?1) RETURNING id",
+    )
+    .get(authorId)!.id;
+
+/** One door per verb an action serves: did it let \`who\` through, on \`row\`? */
+const doors: Record<string, Partial<Record<Verb, (who: Who, authorId: string) => boolean>>> = {
+  note: {
+    create: (who) => addNote(db, who, { body: "hello" }).ok,
+    list: (who) => listNotes(db, who).ok,
+    delete: (who, authorId) => deleteNote(db, who, { id: noteBy(authorId) }).ok,
+  },
+};
+
+test("the contract names the identities the forge signs", () => {
+  expect(identities(contract).sort()).toEqual(["admin", "anon", "user"]);
+});
+
+test("every resource in the contract has its doors here", () => {
+  expect(Object.keys(doors).sort()).toEqual(
+    Object.keys(contract.resources).sort(),
+  );
+});
+
+test("every door answers as the table says, as every identity", () => {
+  let asked = 0;
+  for (const cell of table(contract)) {
+    const door = doors[cell.resource]?.[cell.verb];
+    if (door === undefined) continue;
+    const who = whoIs(cell.as);
+    const { mine, theirs } = actingAs(contract, cell.as);
+    const onMine = door(who, String(mine["author_id"]));
+    const onTheirs = door(who, String(theirs["author_id"]));
+    const said = \`\${cell.resource}.\${cell.verb} as \${cell.as}\`;
+    asked++;
+    if (cell.answer === "yes") expect([said, onMine, onTheirs]).toEqual([said, true, true]);
+    else if (cell.answer === "no") expect([said, onMine, onTheirs]).toEqual([said, false, false]);
+    else if (cell.verb === "list") expect([said, onMine]).toEqual([said, true]);
+    else expect([said, onMine, onTheirs]).toEqual([said, true, false]);
+  }
+  expect(asked).toBeGreaterThan(0);
 });
 `;
 

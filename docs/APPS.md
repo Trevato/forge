@@ -287,6 +287,10 @@ without a grant; a public app admits everyone, and names those who have one.
 An app of a forge hosted here (a nested hostname) routes both paths through
 to that forge, which speaks for its own apps.
 
+What each of them may do is a table, not code: the app's `contract.json`,
+decided by the forge's own evaluator carried into the app. See
+[CONTRACT.md](CONTRACT.md).
+
 ## A terminal for every app
 
 The forge's own port answers `ssh`, and the login name picks what opens:

@@ -9,6 +9,8 @@
  * is "no".
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { scaffoldFiles } from "../src/apps/scaffold.ts";
 import {
   NOBODY,
   VERBS,
@@ -402,5 +404,42 @@ describe("proof by exhaustion", () => {
       const after = table(grown).filter((c) => c.as !== "fresh");
       expect(after).toEqual(before);
     }
+  });
+});
+
+describe("what a new app is born with", () => {
+  const files = new Map(
+    scaffoldFiles({ name: "notes", description: "" }).map((f) => [
+      f.path,
+      f.content,
+    ]),
+  );
+  const source = readFileSync(
+    new URL("../src/contract/can.ts", import.meta.url),
+    "utf8",
+  );
+
+  test("the forge's evaluator, byte for byte", () => {
+    expect(files.get("src/can.ts")).toBe(source);
+  });
+
+  test("which stands alone: nothing to import, nothing to carry with it", () => {
+    expect(source).not.toMatch(/^\s*import\s/m);
+    expect(source).not.toMatch(/\brequire\(/);
+  });
+
+  test("a contract that reads, with the identities the forge signs", () => {
+    const text = files.get("contract.json");
+    const read = readContract(typeof text === "string" ? text : "");
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(identities(read.contract).sort()).toEqual(["admin", "anon", "user"]);
+    // Nothing is open to the anonymous but reading.
+    expect(
+      table(read.contract)
+        .filter((c) => c.as === "anon" && c.answer !== "no")
+        .map((c) => `${c.resource}.${c.verb}`)
+        .sort(),
+    ).toEqual(["note.list", "note.read"]);
   });
 });
