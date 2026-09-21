@@ -3225,6 +3225,8 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain(`href="/alice/engine/tells/${tell.value.number}"`);
     expect(page).toContain("$0.42 spent");
     expect(page).toContain('data-word="working"');
+    // An agent's own run still speaks in the agent's name (#195).
+    expect(page).toContain('data-who="scout"');
     expect(page).toContain('id="run-steer"');
     expect(page).toContain("Steer scout");
     expect(page).toContain('id="run-stop"');
@@ -3299,6 +3301,48 @@ describe("working: a run's own page in the studio", () => {
     expect(page).not.toContain('id="run-stop"');
     expect(page).not.toContain(">Stop<");
     expect(page).not.toContain(">Cancel run<");
+  });
+
+  test("a deploy's own run page speaks as the deploy, reads as done rather than planned, and prints a tenth for a sub-second run (#195)", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "c740479",
+      reason: "boot",
+    });
+    claimRun(app.db, run.id);
+    appendRunLog(app.config.dataDir, run.id, "$ bun test");
+    appendRunLog(app.config.dataDir, run.id, "bun test v1.3.14 (0d9b296a)");
+    appendRunLog(
+      app.config.dataDir,
+      run.id,
+      "(pass) the page knows who you are and offers the right door [3.61ms]",
+    );
+    finishRun(app.db, run.id, { state: "ok", summary: "deploy" });
+    // A run that took 300ms — today's whole-second rounding reads "took 0s".
+    app.db
+      .query("UPDATE run SET started_at = ?2, finished_at = ?3 WHERE id = ?1")
+      .run(
+        run.id,
+        "2024-01-01T00:00:00.000Z",
+        "2024-01-01T00:00:00.300Z",
+      );
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    // The deploy speaks for itself: the box, and every line in it — never
+    // "an agent", which is nobody that was actually there.
+    expect(page).toContain('data-who="the deploy"');
+    expect(page).toContain('class="who">the deploy<');
+    expect(page).not.toContain("an agent");
+    // A deploy that finished with nothing else to show reads as done, not
+    // as a run that has not started yet.
+    expect(page).toContain('data-word="done"');
+    expect(page).not.toContain('data-word="planned"');
+    // Sub-second, in tenths — not rounded away to "took 0s".
+    expect(page).toContain(">took 0.3s<");
   });
 });
 

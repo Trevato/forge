@@ -6,8 +6,27 @@
  * second copy of it.
  */
 
+import type { RunKind } from "../../core/runs.ts";
 import { logLine } from "../pages/runs.ts";
 import { html, when, type Html } from "../html.ts";
+
+/**
+ * Who speaks a run's own transcript: a deploy or a check speaks for itself
+ * — never "an agent", which is a name for nobody — and only an agent's run
+ * is named for the agent on it, or "the crew" for a reader who cannot see
+ * who that is. The one place this is decided, so a run's own page and the
+ * tail beside a running row (`studio/previews.ts`) never choose two voices
+ * for the same lines.
+ */
+export function runVoice(
+  kind: RunKind,
+  writer: boolean,
+  actorName: string | undefined,
+): string {
+  if (kind === "deploy") return "the deploy";
+  if (kind === "check") return "the check";
+  return writer ? (actorName ?? "an agent") : "the crew";
+}
 
 /** At most this many of a run's own lines held in a full transcript at
  * once — the live script drops the oldest as a new one lands, past this. */

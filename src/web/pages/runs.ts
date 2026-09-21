@@ -103,7 +103,6 @@ export const reasonWords = (reason: string): string =>
 /** Dollars, two places — a run's spend is a small number read at a glance. */
 export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
 
-/** `12s`, `3m 4s`, `1h 2m` — how long a run took, or has taken so far. */
 /**
  * What kind of line a run wrote: a tool the agent reached for (`→ Bash …`),
  * a word from the forge itself (cloning, pushing, what the model cost), or
@@ -147,13 +146,18 @@ export function logLine(line: string, who = "agent"): Html {
   </div>`;
 }
 
+/**
+ * `0.3s`, `12s`, `3m 4s`, `1h 2m` — how long a run took, or has taken so
+ * far. Under ten seconds it names tenths, the way `servedPhrase` (`ui.ts`)
+ * already does for a deploy's own arrival — whole seconds there would round
+ * a deploy the head card calls "live 0.3s after the push" down to "took 0s".
+ */
 export function durationText(run: Run): string | undefined {
   if (run.startedAt === null) return undefined;
   const end = run.finishedAt === null ? Date.now() : Date.parse(run.finishedAt);
-  const seconds = Math.max(
-    0,
-    Math.round((end - Date.parse(run.startedAt)) / 1000),
-  );
+  const ms = Math.max(0, end - Date.parse(run.startedAt));
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;

@@ -28,7 +28,7 @@ import { page } from "../layout.ts";
 import { btn, icon } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle } from "../pages/runs.ts";
-import { logBox, RUN_TRANSCRIPT_CAP } from "./log.ts";
+import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { runWord, wordBadge, type WordCtx } from "./words.ts";
 
@@ -75,12 +75,15 @@ export async function studioRun(
     run.actorId === null ? undefined : getUserById(db, run.actorId);
   const issue =
     run.issueId === null ? undefined : getIssueById(db, run.issueId);
-  // Who is on the crew is an owner's fact, same as the app's own page — a
-  // viewer who cannot write here reads the transcript as the crew's own
-  // work, never by the agent's name (title, every line, the live stream's
-  // `data-who`, the running pulse). The steer box below is writer-only
-  // already, so it only ever renders with the real name.
-  const who = writer ? (actor?.username ?? "an agent") : "the crew";
+  // A deploy or a check speaks for itself (`runVoice`, shared with the tail
+  // `studio/previews.ts` opens for the same lines while production comes
+  // up) — only an agent run is named for who is on it, and who is on the
+  // crew is an owner's fact, same as the app's own page: a viewer who
+  // cannot write here reads the transcript as the crew's own work, never by
+  // the agent's name (title, every line, the live stream's `data-who`, the
+  // running pulse). The steer box below is writer-only already, so it only
+  // ever renders with the real name.
+  const who = runVoice(run.kind, writer, actor?.username);
   const title = runTitle(run, writer ? actor?.username : "the crew", issue);
   const wordCtx: WordCtx = {
     db,

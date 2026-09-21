@@ -264,6 +264,36 @@ export const mirrorJs = /* js */ `
  * \`appTailJs\` so a fourth live log never grows a fourth copy of it —
  * interpolated inline, so \`who\` closes over whichever script uses it.
  */
+/**
+ * The clock beside a run's own log: elapsed time ticks while it goes, and
+ * stops at "took" — under ten seconds in tenths, matching \`durationText\`
+ * (\`pages/runs.ts\`) exactly, since the two paint the very same number
+ * first server-side, then live; a mismatched rounding here would flicker
+ * the instant this script takes over. Shared by \`runLogJs\` and
+ * \`studioRunJs\` so the two can never drift apart.
+ */
+const elapsedTickJs = /* js */ `
+  function tick() {
+    var elapsed = document.getElementById('run-elapsed');
+    if (!elapsed) return;
+    var started = Date.parse(elapsed.getAttribute('data-started') || '');
+    if (!started) return;
+    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
+    var end = finished || Date.now();
+    var ms = Math.max(0, end - started);
+    var text;
+    if (ms < 10000) {
+      text = (ms / 1000).toFixed(1) + 's';
+    } else {
+      var s = Math.round(ms / 1000);
+      text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+    }
+    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
+  }
+  var clock = window.setInterval(tick, 100);
+  tick();
+`;
+
 const logLineJs = /* js */ `
   var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
   function line(kind, speaker, fill) {
@@ -371,20 +401,7 @@ export const runLogJs = /* js */ `
     if (follow) toEnd(); else if (jump) jump.hidden = false;
   }
 
-  // The clock: elapsed time ticks while the run goes, and stops at "took".
-  function tick() {
-    var elapsed = document.getElementById('run-elapsed');
-    if (!elapsed) return;
-    var started = Date.parse(elapsed.getAttribute('data-started') || '');
-    if (!started) return;
-    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
-    var end = finished || Date.now();
-    var s = Math.max(0, Math.round((end - started) / 1000));
-    var text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
-    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
-  }
-  var clock = window.setInterval(tick, 1000);
-  tick();
+  ${elapsedTickJs}
 
   // Steering without a reload: Enter sends, Shift+Enter breaks a line, the
   // words go to the API, and the line the forge writes for them arrives on
@@ -539,19 +556,7 @@ export const studioRunJs = /* js */ `
     if (follow) toEnd(); else if (jump) jump.hidden = false;
   }
 
-  function tick() {
-    var elapsed = document.getElementById('run-elapsed');
-    if (!elapsed) return;
-    var started = Date.parse(elapsed.getAttribute('data-started') || '');
-    if (!started) return;
-    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
-    var end = finished || Date.now();
-    var s = Math.max(0, Math.round((end - started) / 1000));
-    var text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
-    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
-  }
-  var clock = window.setInterval(tick, 1000);
-  tick();
+  ${elapsedTickJs}
 
   if (steer && window.fetch) {
     var text = steer.querySelector('textarea');

@@ -37,7 +37,7 @@ import {
   time,
 } from "../ui.ts";
 import { lookNow } from "../pages/looks.ts";
-import { LOG_TAIL_CAP, logBox } from "./log.ts";
+import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
 
 /**
  * The primary button, offered only once production answers — a preview
@@ -171,7 +171,7 @@ function deployTail(
   if (agentBusy) return undefined;
   return logBox({
     id: "app-run-tail",
-    who: "the deploy",
+    who: runVoice("deploy", true, undefined),
     cap: LOG_TAIL_CAP,
     lines: readRunLogTail(ctx.app.config.dataDir, production.runId, LOG_TAIL_CAP)
       .lines,

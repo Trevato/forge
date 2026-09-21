@@ -48,8 +48,10 @@ import {
 } from "./words.ts";
 
 /** The five words a studio list filters by. `waiting` and `planned` are
- * still moving, so they fold into `working` — the one place the seven-word
- * vocabulary above buckets down to the five a list links to. */
+ * still moving, so they fold into `working`; `done` is a deploy or a check
+ * that finished with nothing else to show, so it folds into `shipped` — the
+ * one place the eight-word vocabulary above buckets down to the five a list
+ * links to. */
 type WordFilter = "told" | "working" | "look" | "shipped" | "stopped";
 
 const WORD_FILTERS: readonly WordFilter[] = [
@@ -61,7 +63,9 @@ const WORD_FILTERS: readonly WordFilter[] = [
 ];
 
 function listBucket(word: Word): WordFilter {
-  return word === "waiting" || word === "planned" ? "working" : word;
+  if (word === "waiting" || word === "planned") return "working";
+  if (word === "done") return "shipped";
+  return word;
 }
 
 /** The word named in `?word=`, when it is one of the five. */

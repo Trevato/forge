@@ -1,10 +1,11 @@
 /**
- * The studio's vocabulary: the five words (and the two that only ever fold
- * into them) a person reads on every studio page, and the badge that draws
- * one. `runWord` and `pullWord` are the one place a word is decided, from
- * facts in git and the tables — never from a run's own summary text — so the
- * home, the app, a change, a tell and every list say the same thing about
- * the same commit. Nothing here knows about a page.
+ * The studio's vocabulary: the five words (and the three that only ever fold
+ * into them — `waiting`, `planned` into `working`, `done` into `shipped`) a
+ * person reads on every studio page, and the badge that draws one. `runWord`
+ * and `pullWord` are the one place a word is decided, from facts in git and
+ * the tables — never from a run's own summary text — so the home, the app, a
+ * change, a tell and every list say the same thing about the same commit.
+ * Nothing here knows about a page.
  */
 
 import type { Database } from "bun:sqlite";
@@ -29,7 +30,8 @@ export type Word =
   | "stopped"
   | "waiting"
   | "planned"
-  | "told";
+  | "told"
+  | "done";
 
 /**
  * Everything the word functions below need to see production: the repo's
@@ -155,10 +157,13 @@ export async function pullWord(
 }
 
 /**
- * An agent run's word: still going by its state, and once it is over, by
- * what it produced — a pull, judged the same way `pullWord` judges any
- * other, or nothing to show, which is *planned* rather than a guess at
- * *shipped*. Never `run.summary`: that stays the note beside the word.
+ * A run's word: still going by its state, and once it is over, by what it
+ * produced. A pull, when there is one, is judged the same way `pullWord`
+ * judges any other. Short of that, an agent run that shipped nothing is
+ * *planned* rather than a guess at *shipped* — but a deploy or a check
+ * never produces a pull of its own, so the same absence there just means
+ * it finished: *done*, not *planned*. Never `run.summary`: that stays the
+ * note beside the word.
  */
 export async function runWord(
   ctx: WordCtx,
@@ -172,9 +177,13 @@ export async function runWord(
   if (run.state === "failed" || run.state === "cancelled")
     return { word: "stopped", note: run.summary || run.state };
   const pull = pullFromRun(ctx.db, run);
-  if (pull === undefined)
-    return { word: "planned", note: run.summary || "nothing to show yet" };
-  return await pullWord(ctx, pull);
+  if (pull !== undefined) return await pullWord(ctx, pull);
+  if (run.kind !== "agent")
+    return {
+      word: "done",
+      note: run.summary || (run.kind === "deploy" ? "deployed" : "checked"),
+    };
+  return { word: "planned", note: run.summary || "nothing to show yet" };
 }
 
 const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
@@ -185,13 +194,14 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
   waiting: "clock",
   planned: "map",
   told: "clock",
+  done: "check",
 };
 
 /** One of the five (or six) studio words, as a badge. An id names the one a
  * live script repaints as a run finishes (`studioRunJs`). */
 export function wordBadge(word: Word, id?: string): Html {
   const variant =
-    word === "look" || word === "shipped"
+    word === "look" || word === "shipped" || word === "done"
       ? "success"
       : word === "stopped"
         ? "danger"
