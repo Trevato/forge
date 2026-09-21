@@ -645,6 +645,60 @@ describe("readiness", () => {
   });
 });
 
+describe("HEAD mirrors the GET it stands in for", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-head-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("HEAD / is 200, empty, with the same content-type and security floor as GET /", async () => {
+    const get = await fetch(`${base}/`);
+    const getBody = await get.text();
+    expect(getBody.length).toBeGreaterThan(0);
+
+    const head = await fetch(`${base}/`, { method: "HEAD" });
+    expect(head.status).toBe(get.status);
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-type")).toBe(get.headers.get("content-type"));
+    expect(head.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(head.headers.get("referrer-policy")).toBeTruthy();
+    expect(head.headers.get("content-security-policy")).toContain("nonce-");
+  });
+
+  test("HEAD /healthz is 200 with an empty body", async () => {
+    const head = await fetch(`${base}/healthz`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+  });
+
+  test("HEAD of a path with no route at all is 404", async () => {
+    const head = await fetch(`${base}/no/such/route`, { method: "HEAD" });
+    expect(head.status).toBe(404);
+    expect(await head.text()).toBe("");
+  });
+
+  test("HEAD of a path that only has a POST route is 404, and never runs the handler", async () => {
+    const head = await fetch(`${base}/theme`, { method: "HEAD" });
+    expect(head.status).toBe(404);
+    expect(await head.text()).toBe("");
+    // The POST handler would have set a cookie; a HEAD must never reach it.
+    expect(head.headers.get("set-cookie")).toBeNull();
+  });
+});
+
 const FLOOR_POLICY =
   "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 

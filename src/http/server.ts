@@ -1159,6 +1159,11 @@ export async function serve(app: App): Promise<Servers> {
  * matched or the two shapes of "no route", the limiter, and the handler.
  * The response it returns has not been given the security floor yet — that
  * is the caller's single door, above.
+ *
+ * HEAD is answered here too, in one place: it routes as the GET it stands
+ * in for — so a path with only a POST route still 404s — and the body is
+ * dropped from whatever GET would have returned, after the one render that
+ * produced it.
  */
 async function answer(
   app: App,
@@ -1166,9 +1171,22 @@ async function answer(
   limiter: RateLimiter,
   request: Request,
 ): Promise<Response> {
+  const response = await answerGet(app, router, limiter, request);
+  return request.method === "HEAD"
+    ? new Response(null, { status: response.status, headers: response.headers })
+    : response;
+}
+
+async function answerGet(
+  app: App,
+  router: Router<Handler>,
+  limiter: RateLimiter,
+  request: Request,
+): Promise<Response> {
   const url = publicUrl(request, app.config.url);
   if (url.pathname === "/healthz") return healthResponse();
-  const matched = router.match(request.method, url.pathname);
+  const routeMethod = request.method === "HEAD" ? "GET" : request.method;
+  const matched = router.match(routeMethod, url.pathname);
   if (!matched) {
     // A path under no route at all is what a mistyped or stale studio
     // URL lands on. A browser gets the forge's own page for it, same as
