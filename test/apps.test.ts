@@ -871,6 +871,52 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(openPreviews.length).toBe(1); // the bot's pull is the one open pull
   }, 90_000);
+
+  test("a push that cannot boot leaves the old deployment serving and names the push that failed (issue #200)", async () => {
+    const before = runtime.envStatus(record, "production");
+    expect(before?.state).toBe("running");
+    const servingOid = before!.commitOid;
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const original =
+      (await sh(["git", "show", `${repo.defaultBranch}:forge.json`], dir))
+        .out + "\n";
+
+    const broken = await commitToBranch(app, alice, repo, {
+      message: "Break forge.json",
+      files: [{ path: "forge.json", content: "{ not json" }],
+    });
+    expect(broken.ok).toBe(true);
+    if (!broken.ok) return;
+    const failed = await settled(
+      (r) => r.env === "production" && r.commitOid === broken.value.commitOid,
+    );
+    expect(failed.state).toBe("failed");
+
+    // The old deployment never moved: it still answers, at its own commit.
+    const status = runtime.envStatus(record, "production");
+    expect(status?.state).toBe("running");
+    expect(status?.commitOid).toBe(servingOid);
+    expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
+    // But the failed push is named, not silently dropped.
+    expect(status?.failedDeploy?.commitOid).toBe(broken.value.commitOid);
+    expect(status?.failedDeploy?.runId).toBe(failed.id);
+    expect(status?.failedDeploy?.error).toContain("forge.json");
+
+    // A later successful deploy clears it: no permanent furniture.
+    const fixed = await commitToBranch(app, alice, repo, {
+      message: "Fix forge.json",
+      files: [{ path: "forge.json", content: original }],
+    });
+    expect(fixed.ok).toBe(true);
+    if (!fixed.ok) return;
+    const ok = await settled(
+      (r) => r.env === "production" && r.commitOid === fixed.value.commitOid,
+    );
+    expect(ok.state).toBe("ok");
+    const cleared = runtime.envStatus(record, "production");
+    expect(cleared?.commitOid).toBe(fixed.value.commitOid);
+    expect(cleared?.failedDeploy).toBeUndefined();
+  }, 90_000);
 });
 
 describe("a preview whose copied data the build cannot read starts fresh (issue #36)", () => {

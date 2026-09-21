@@ -2163,6 +2163,7 @@ describe("the studio head says why the app is not up", () => {
     readonly deploying?: unknown;
     readonly lastError?: string;
     readonly lastRunId?: string;
+    readonly lastErrorCommitOid?: string;
   }
   const put = (
     slot: Omit<Slot, "app" | "env" | "chain" | "restarts">,
@@ -2319,6 +2320,62 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).toContain("serving · tests failed: 1 of 3 tests failed");
     expect(mine).toContain('href="/alice/notes/app/production/open"');
     expect(await shelfBadge(writer)).toBe("serving · tests failed");
+  });
+
+  test("a newer push that failed to come up while an older deploy keeps serving: live, not plain green, both commits named, its run linked", async () => {
+    const failed = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "2".repeat(40),
+      reason: "push",
+    });
+    claimRun(app.db, failed.id);
+    finishRun(app.db, failed.id, {
+      state: "failed",
+      summary: "forge.json: JSON Parse error: Unexpected token '}'",
+    });
+    put({
+      live: {
+        commitOid: "1".repeat(40),
+        handle: { port: 4321 },
+        runId: deploy,
+        since: new Date(Date.now() - 60_000).toISOString(),
+        manifest: { tty: null },
+      },
+      lastError: "forge.json: JSON Parse error: Unexpected token '}'",
+      lastRunId: failed.id,
+      lastErrorCommitOid: "2".repeat(40),
+    });
+    const mine = await head(writer);
+    // It answers — still "live", never "not up" — but not untroubled green.
+    expect(mine).toContain("live");
+    expect(mine).not.toContain("not up");
+    expect(mine).toContain('href="/alice/notes/app/production/open"');
+    // Both commits, named.
+    expect(mine).toContain("1111111");
+    expect(mine).toContain("2222222");
+    expect(mine).toContain("did not come up");
+    expect(mine).toContain(
+      "forge.json: JSON Parse error: Unexpected token &#39;}&#39;",
+    );
+    // The failed run's log, one click away.
+    expect(mine).toContain(`href="/alice/notes/runs/${failed.id}"`);
+  });
+
+  test("a clean deploy with no failure behind it is unchanged: plain live, no failed-run link", async () => {
+    put({
+      live: {
+        commitOid: "1".repeat(40),
+        handle: { port: 4321 },
+        runId: deploy,
+        since: new Date(Date.now() - 60_000).toISOString(),
+        manifest: { tty: null },
+      },
+    });
+    const mine = await head(writer);
+    expect(mine).toContain("live");
+    expect(mine).not.toContain("did not come up");
   });
 });
 

@@ -63,8 +63,8 @@ import {
   empty,
   envActions,
   envFacts,
+  envPhrase,
   envStateBadge,
-  envTone,
   icon,
   listCard,
   row,
@@ -136,7 +136,7 @@ function appRow(entry: AppEntry): Html {
   const name = `${entry.repo.ownerName}/${entry.repo.name}`;
   return row({
     nav: true,
-    lead: dot(envTone(entry.production?.state)),
+    lead: dot(envPhrase(entry.production).tone),
     title: html`<a href="${base}/app">${name}</a>`,
     titleAttr: name,
     meta: html`${entry.url === undefined
@@ -597,7 +597,9 @@ function envCard(base: string, env: EnvStatus, writer: boolean): Html {
       extra: "env-card",
       ...(env.state === "failed" || env.error !== undefined
         ? { tone: "danger" as const }
-        : {}),
+        : env.failedDeploy !== undefined
+          ? { tone: "attn" as const }
+          : {}),
       head: html`${icon(number === undefined ? "rocket" : "pull")}
         <h2>
           ${number === undefined
@@ -820,7 +822,9 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
       extra: "env-card",
       ...(env.state === "failed" || env.error !== undefined
         ? { tone: "danger" as const }
-        : {}),
+        : env.failedDeploy !== undefined
+          ? { tone: "attn" as const }
+          : {}),
     },
   );
 }

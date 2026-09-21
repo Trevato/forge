@@ -12,7 +12,6 @@ import { envPull, previewEnv } from "../../apps/data.ts";
 import {
   appsRuntime,
   type AppsRuntime,
-  type EnvState,
   type EnvStatus,
 } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -67,16 +66,17 @@ function openAppBtn(base: string, env: EnvStatus | undefined): Html {
   });
 }
 
-/** The three words the studio uses for a preview, whatever its check says. */
-function previewBadge(state: EnvState | undefined): Html {
-  if (state === "running")
-    return badge("live", { tone: "success", icon: "play" });
-  if (state === "deploying")
-    return badge("starting", { tone: "attn", icon: "loader" });
-  return badge("not up", {
-    ...(state === "failed" ? { tone: "danger" as const } : {}),
-    icon: "square",
-  });
+/** The studio's own words for a preview, whatever its check says — always
+ * `envPhrase`'s, so this row never invents a second vocabulary. */
+function previewBadge(env: EnvStatus | undefined): Html {
+  const { word, tone } = envPhrase(env);
+  const ic =
+    env?.state === "running"
+      ? "play"
+      : env?.state === "deploying"
+        ? "loader"
+        : "square";
+  return badge(word, { tone, icon: ic });
 }
 
 /**
@@ -102,7 +102,7 @@ function previewRow(
   const bits: Html[] = [html`#${pull.number} ${pull.title}`];
   if (env?.commitOid) bits.push(html`${env.commitOid.slice(0, 7)}`);
   if (env?.since) bits.push(html`up ${time(env.since)}`);
-  const say = env?.error ?? env?.note;
+  const say = env?.error ?? env?.failedDeploy?.error ?? env?.note;
   if (say) bits.push(html`${say}`);
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
@@ -112,7 +112,7 @@ function previewRow(
         ? `#${pull.number} ${pull.title}`
         : html`<span class="mono">${host}</span>`,
     meta: bits.reduce((a, b) => html`${a} · ${b}`),
-    trail: previewBadge(env?.state),
+    trail: previewBadge(env),
   });
 }
 

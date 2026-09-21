@@ -116,6 +116,16 @@ export interface EnvStatus {
    * that has not started has not said either way.
    */
   readonly tty?: string | null | undefined;
+  /**
+   * A deploy newer than the one serving that never came up — set only
+   * while an older deployment keeps answering in its place. A later
+   * successful deploy of this environment clears it (it is the newest
+   * attempt's own outcome, never a history), and it is never set once
+   * nothing serves at all: `state: "failed"` and `error` already say that.
+   */
+  readonly failedDeploy?:
+    | { readonly commitOid: string; readonly runId: string; readonly error: string }
+    | undefined;
 }
 
 interface Live {
@@ -188,6 +198,8 @@ interface Environment {
   chain: Promise<void>;
   lastError?: string | undefined;
   lastRunId?: string | undefined;
+  /** The commit `lastError` belongs to — set together, cleared together. */
+  lastErrorCommitOid?: string | undefined;
   /** Crash restarts in the current window, for backing off. */
   restarts: number[];
 }
@@ -299,6 +311,22 @@ export class AppsRuntime {
       };
     }
     if (state.live !== undefined) {
+      // The most recent deploy attempt failed, and it was not this one — a
+      // newer commit that never came up, while this older deployment kept
+      // serving. `swapped` already covers the alternative (the newest
+      // attempt is this one and it succeeded, however its tests read).
+      const failedDeploy =
+        !swapped &&
+        state.lastError !== undefined &&
+        state.lastErrorCommitOid !== undefined &&
+        state.lastErrorCommitOid !== state.live.commitOid &&
+        state.lastRunId !== undefined
+          ? {
+              commitOid: state.lastErrorCommitOid,
+              runId: state.lastRunId,
+              error: state.lastError,
+            }
+          : undefined;
       return {
         env: state.env,
         state: "running",
@@ -317,6 +345,7 @@ export class AppsRuntime {
         ...(state.live.testsFailed === undefined
           ? {}
           : { error: `serving · tests failed: ${state.live.testsFailed}` }),
+        ...(failedDeploy === undefined ? {} : { failedDeploy }),
       };
     }
     return {
@@ -661,6 +690,7 @@ export class AppsRuntime {
       state.deploying = undefined;
       lease();
       state.lastError = outcome.error;
+      state.lastErrorCommitOid = run.commitOid;
       const done = finishRun(this.app.db, run.id, {
         state: "failed",
         summary: outcome.error,
@@ -697,6 +727,7 @@ export class AppsRuntime {
     };
     state.live = live;
     state.lastError = undefined;
+    state.lastErrorCommitOid = undefined;
     if (previous !== undefined) {
       write(
         `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,

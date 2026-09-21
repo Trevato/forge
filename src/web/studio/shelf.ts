@@ -131,8 +131,20 @@ export async function shelfRows(
         ? undefined
         : actors.get(latest.actorId)?.username;
     const asks = asksByRepo.get(repo.id) ?? 0;
-    const tone = envTone(production?.state);
+    // The badge is production's own word (`envPhrase`) — whether a newer
+    // push failed behind what is serving is a fact of the environment, not
+    // of the run or change history `happening` reads (#191's own word for
+    // that stays put; this is the other half of the row, decided once here
+    // rather than folded into a second vocabulary). The tone rides with it:
+    // `envTone` only knows the runtime's raw state, which still reads
+    // "success" while an older deploy answers for a push that failed behind
+    // it — this row is not untroubled green just because `envTone` cannot
+    // see that fact.
     const live = envPhrase(production);
+    const tone =
+      production?.failedDeploy !== undefined
+        ? "attn"
+        : envTone(production?.state);
     const happening =
       word === undefined
         ? stuck.has(repo.id)

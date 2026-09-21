@@ -322,6 +322,10 @@ export function envPhrase(env: EnvStatus | undefined): {
     return { word: "not running", tone: "default" };
   if (env.state === "failed") return { word: "not up", tone: "danger" };
   if (env.state === "deploying") return { word: "starting", tone: "default" };
+  // It answers, so it is not "not up" — but a newer push never came up
+  // behind it, so it is not plain green either.
+  if (env.failedDeploy !== undefined)
+    return { word: "live · a newer push failed", tone: "attn" };
   return {
     word: env.error === undefined ? "live" : "serving · tests failed",
     tone: "success",
@@ -373,7 +377,17 @@ export function envFacts(
         </p>`,
     )}
     ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
-    ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}`;
+    ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
+    ${when(
+      env.failedDeploy,
+      // Two `sha`s, never nested inside the run link — a link inside a link
+      // tears the paragraph apart, the same reason `userTag` gives a row.
+      (fd) => html`<p class="env-error">
+        serving ${sha(env.commitOid, `${base}/commit/${env.commitOid}`)} —
+        ${sha(fd.commitOid, `${base}/commit/${fd.commitOid}`)} did not come up:
+        ${fd.error} (<a href="${base}/runs/${fd.runId}">its deploy</a>)
+      </p>`,
+    )}`;
 }
 
 /**
