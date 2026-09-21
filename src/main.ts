@@ -15,6 +15,7 @@ import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { startChecks } from "./checks/service.ts";
 import { startLooks } from "./looks/service.ts";
+import { startProbes } from "./contract/probes.ts";
 import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
@@ -124,6 +125,9 @@ const checks =
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
 const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
+// Is it so: the forge knocks on every door of an app with a contract after
+// each production deploy and once a night, and compares with the table.
+const probes = apps === undefined ? undefined : startProbes(app, apps);
 const crew = appsOn
   ? await startCrew(app, {
       forgeUrl,
@@ -230,6 +234,7 @@ function shutdown(): void {
     apps?.stop(),
     checks?.stop(),
     looks?.stop(),
+    probes?.stop(),
   ])
     .catch(() => {})
     .then(() => {

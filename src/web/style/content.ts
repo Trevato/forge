@@ -284,6 +284,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .audit-answer[data-answer="own"] { background: var(--muted); color: var(--fg); }
 .audit-answer[data-answer="no"] { color: var(--faint); }
 .audit-problems { margin: 0; padding-left: 18px; font-size: 13px; }
+.audit-wide { flex-basis: 100%; }
+.audit-said { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.audit-alarm { color: var(--danger); }
+form.inline { display: inline; margin-left: auto; }
 .audit-problems li + li { margin-top: 4px; }
 .audit-unread { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
 

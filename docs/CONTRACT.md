@@ -169,13 +169,18 @@ the same app with a hand-written rule in its delete door and its tests
 dropped, which is the only way such a change deploys: the deploy runs the
 app's tests first.
 
-### Not built yet
+### When, and what comes of it
 
-The nightly run, the page's second lens (red cells, one issue per app —
-never one per cell — closed by the next clean probe), on demand from the
-page and a `probe` MCP tool, and after every production deploy. Results as
-rows `(app, commit, when, verdict, cells)` for the third lens. The forge
-never changes a contract to match an app: the table is the policy.
+`src/contract/probes.ts` is the service: after every production deploy of
+an app with a contract, once a night (09:00 UTC), and on demand — the audit
+page's **Knock now** for whoever can write the app, and the `probe` MCP
+tool. Every result is a row (`probe`: app, commit, verdict, the sentences,
+every knock), so the page shows what the app said last and when, and the
+history is there for the third lens. A mismatch opens **one** issue on the
+app, "The app does not obey its contract", with the sentences, as the app's
+owner — never one per cell, never doubled — and the first clean probe after
+closes it. The forge never changes a contract to match an app: the table is
+the policy, and the issue is the work.
 
 ### What it never does
 

@@ -24,12 +24,20 @@ import { cancelRepoRun } from "../actions/runs.ts";
 import { tell, toldWords } from "../actions/tell.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
-import { canRead, getRepo, getRepoById, type Repo } from "../core/repos.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import {
+  canRead,
+  canWrite,
+  getRepo,
+  getRepoById,
+  type Repo,
+} from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
 import { bringUpToDate } from "../crew/autonomy.ts";
 import { audit } from "../contract/audit.ts";
+import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import { appsOf, decisionsFor, type Decision } from "../web/pages/studio.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -374,6 +382,40 @@ const TOOLS: readonly Tool[] = [
               : {}),
         })),
       );
+    },
+  },
+  {
+    name: "probe",
+    description:
+      "Knock on every door of a running app as nobody, a user and an admin, and compare each answer with its contract.json: ok, or the doors that disobey, each as a sentence. Writes nothing; sends `{}` and an id no row has.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: REPO_ARG },
+      required: ["repo"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      if (!canWrite(ctx.app.db, repo, user))
+        return bad("forbidden", "you need write access to knock");
+      const record = getAppByRepo(ctx.app.db, repo.id);
+      const runtime = appsRuntime(ctx.app);
+      if (record === undefined || runtime === undefined)
+        return bad("not_an_app", "nothing is serving that app here");
+      const row = await probeApp(ctx.app, runtime, record);
+      if (row === undefined)
+        return bad(
+          "no_contract",
+          "that app has no sound contract to compare with",
+        );
+      return good({
+        verdict: row.verdict,
+        commit: row.commitOid,
+        said: row.said,
+        asked: row.knocks.filter((k) => k.verdict !== "unprobed").length,
+        unprobed: row.knocks.filter((k) => k.verdict === "unprobed").length,
+      });
     },
   },
   {

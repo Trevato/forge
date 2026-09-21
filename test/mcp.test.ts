@@ -162,6 +162,7 @@ describe("the forge over MCP", () => {
       "now",
       "stop",
       "audit",
+      "probe",
       "following",
       "take_updates",
       "converge",
@@ -204,6 +205,13 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(bobRw, "audit", { repo: "alice/game" })).error,
     ).toContain("not_found");
+    // Knocking needs write access, and an app with a contract to compare with.
+    expect((await tool(ro, "probe", { repo: "alice/game" })).error).toContain(
+      "forbidden",
+    );
+    expect((await tool(rw, "probe", { repo: "alice/game" })).error).toMatch(
+      /not_an_app|no_contract/,
+    );
   });
 
   test("a read token may read and not act", async () => {
