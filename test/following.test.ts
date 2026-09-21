@@ -21,7 +21,11 @@ import {
 import { taskPrompt } from "../src/crew/brief.ts";
 import type { Agent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
-import { forkRelation, type ForkRelation } from "../src/core/following.ts";
+import {
+  forkRelation,
+  lineageOf,
+  type ForkRelation,
+} from "../src/core/following.ts";
 import { getIssueById, listIssues } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
@@ -443,6 +447,59 @@ describe("a fork that follows its parent", () => {
     expect(page).toContain("carol/game-carol");
     expect(page).toContain("dan/game-dan");
     expect(page).toContain("ahead");
+  });
+
+  test("the family is a tree: a fork of a fork nests under it, from any page in it", async () => {
+    const f = await createUser(app.db, {
+      username: "fay",
+      email: "fay@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!f.ok) throw new Error(f.error);
+    const grand = await forkRepo(app, f.value, fresh(fork), "game-fay");
+    if (!grand.ok) throw new Error(String(grand.error));
+
+    const tree = await lineageOf(app, fresh(fork), () => true);
+    expect(tree.root.repo.id).toBe(parent.id); // up to the oldest ancestor
+    const bobs = tree.root.children.find((c) => c.repo.id === fork.id)!;
+    expect(bobs.relation?.state).toBe("diverged");
+    expect(
+      bobs.children.map((c) => `${c.repo.ownerName}/${c.repo.name}`),
+    ).toEqual(["fay/game-fay"]);
+    expect(bobs.children[0]!.relation?.state).toBe("synced");
+    expect(tree.size).toBe(5); // alice, bob, carol, dan, fay
+    expect(tree.truncated).toBe(false);
+
+    // The same tree from the root's page and from the middle's, with the
+    // page you are on marked, and the grandchild inside its parent's list.
+    for (const [path, here] of [
+      ["/alice/game/forks", "alice/game"],
+      ["/bob/game/forks", "bob/game"],
+    ] as const) {
+      const page = await fetch(`${base}${path}`, {
+        headers: { accept: "text/html" },
+      }).then((p) => p.text());
+      expect(page).toContain("fay/game-fay");
+      expect(page).toMatch(
+        new RegExp(
+          `aria-current="page"[\\s\\S]{0,2000}${here}[\\s\\S]{0,80}you are here`,
+        ),
+      );
+      const bobAt = page.indexOf('href="/bob/game"');
+      const nested = page.indexOf("lineage-children", bobAt);
+      const fayAt = page.indexOf('href="/fay/game-fay"');
+      expect(bobAt).toBeGreaterThan(-1);
+      expect(nested).toBeGreaterThan(bobAt);
+      expect(fayAt).toBeGreaterThan(nested);
+    }
+
+    // A family member the viewer may not read is not in the viewer's tree.
+    const blind = await lineageOf(
+      app,
+      fresh(fork),
+      (r) => r.id !== grand.value.id,
+    );
+    expect(blind.size).toBe(4);
   });
 
   test("relationOf hides nothing from a reader and everything from a stranger", async () => {

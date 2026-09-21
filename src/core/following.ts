@@ -402,3 +402,82 @@ export async function fastForwardFork(
   });
   return ok({ updated: true, from: from ?? "", to: tip });
 }
+
+/**
+ * A repository's family: the oldest ancestor the viewer may see, and every
+ * fork under it, each with its standing against its own parent. The tree
+ * is what makes "who follows whom" one glance instead of a walk through
+ * fork lists. Bounded on purpose — a family of thousands is a list page's
+ * problem — and a fork the viewer may not read is simply not in it.
+ */
+export interface LineageNode {
+  readonly repo: Repo;
+  /** Against this node's parent; absent on the root, and past the budget. */
+  readonly relation: ForkRelation | undefined;
+  readonly children: readonly LineageNode[];
+}
+
+export interface Lineage {
+  readonly root: LineageNode;
+  /** How many repositories the tree holds, the root included. */
+  readonly size: number;
+  /** Whether forks were left out to stay inside the bound. */
+  readonly truncated: boolean;
+}
+
+const LINEAGE_MAX_NODES = 60;
+const LINEAGE_MAX_RELATIONS = 30;
+const LINEAGE_MAX_DEPTH = 6;
+
+export async function lineageOf(
+  forge: Pick<Following, "db" | "reposRoot">,
+  repo: Repo,
+  mayRead: (r: Repo) => boolean,
+): Promise<Lineage> {
+  // Up: as far as the viewer may see, and never in circles.
+  let top = repo;
+  const seen = new Set<string>([repo.id]);
+  while (top.forkParentId !== null && seen.size <= LINEAGE_MAX_DEPTH) {
+    const parent = getRepoById(forge.db, top.forkParentId);
+    if (parent === undefined || !mayRead(parent) || seen.has(parent.id)) break;
+    seen.add(parent.id);
+    top = parent;
+  }
+  // Down: breadth first, so a bound cuts the deepest and newest, not a
+  // whole branch of the family.
+  let size = 1;
+  let relations = 0;
+  let truncated = false;
+  interface Draft {
+    repo: Repo;
+    relation: ForkRelation | undefined;
+    children: Draft[];
+  }
+  const root: Draft = { repo: top, relation: undefined, children: [] };
+  let level: Draft[] = [root];
+  for (let depth = 0; depth < LINEAGE_MAX_DEPTH && level.length > 0; depth++) {
+    const next: Draft[] = [];
+    for (const node of level) {
+      for (const fork of listForks(forge.db, node.repo.id)) {
+        if (!mayRead(fork)) continue;
+        if (size >= LINEAGE_MAX_NODES) {
+          truncated = true;
+          break;
+        }
+        size++;
+        const relation =
+          relations < LINEAGE_MAX_RELATIONS
+            ? await forkRelation(forge, fork, node.repo)
+            : undefined;
+        if (relation !== undefined) relations++;
+        const child: Draft = { repo: fork, relation, children: [] };
+        node.children.push(child);
+        next.push(child);
+      }
+    }
+    level = next;
+  }
+  if (level.some((n) => listForks(forge.db, n.repo.id).length > 0))
+    truncated = true;
+  return { root, size, truncated };
+}

@@ -266,6 +266,19 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .following-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .following-foot { margin: 8px 0 0; }
 
+/* The family tree: nesting is indentation and a rule, never a scrollbar. */
+.lineage-children {
+  list-style: none; margin: 0 0 0 22px; padding: 0;
+  border-left: 1px solid var(--border);
+}
+.lineage-children .row { padding-left: 12px; }
+.lineage-here {
+  margin-left: 6px; font-family: var(--mono); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.04em; color: var(--accent);
+}
+.lineage .row[aria-current="page"] { background: var(--muted); }
+@media (max-width: 719px) { .lineage-children { margin-left: 12px; } }
+
 .hero { max-width: 620px; margin: 12dvh auto 0; text-align: center; }
 .hero h1 { font-size: clamp(30px, 7vw, 44px); letter-spacing: -0.04em; line-height: 1.05; }
 .hero p { margin: 12px 0 24px; font-size: 16px; color: var(--muted-fg); text-wrap: pretty; }

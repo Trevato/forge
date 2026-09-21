@@ -30,6 +30,17 @@ src/weapons.ts" — and offers exactly one thing to do. The forks page shows
 each fork's standing as a badge. The JSON is
 `GET /api/v1/repos/:owner/:name/following`.
 
+## The family
+
+`/:owner/:name/forks` draws the whole family as a tree, from the oldest
+ancestor the viewer may see: who follows whom, each fork with its standing
+against its own parent, and the page you came from marked "you are here".
+It is nested lists, not a drawing, so the nesting a reader sees is the
+nesting a screen reader announces and a phone never scrolls sideways to
+follow it. `lineageOf` (`core/following.ts`) bounds the walk — sixty
+repositories, six levels, thirty standings — and says when it cut something;
+a fork the viewer may not read is simply not in their tree.
+
 ## Taking updates
 
 `takeUpdates` (`actions/forks.ts`) is the one button for everything git can do

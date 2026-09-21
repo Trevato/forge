@@ -11,8 +11,8 @@
 import type { Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
 import { takeUpdates } from "../../actions/forks.ts";
-import { forkRelation } from "../../core/following.ts";
-import { followingCard, followingOf, relationBadge } from "./following.ts";
+import { lineageOf } from "../../core/following.ts";
+import { followingCard, followingOf, lineageCard } from "./following.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
@@ -91,39 +91,22 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   const forks = listForks(ctx.app.db, repo.id).filter((fork) =>
     canRead(ctx.app.db, fork, ctx.auth.user),
   );
-  // Each fork's standing is a few git questions; past a screenful the list
-  // says who forked and leaves the standing to each fork's own page.
-  const standings = new Map<string, Html>();
-  for (const fork of forks.slice(0, 30)) {
-    const relation = await forkRelation(ctx.app, fork, repo);
-    if (relation !== undefined) standings.set(fork.id, relationBadge(relation));
-  }
+  // The whole family, from the oldest ancestor this viewer may see: who
+  // follows whom, and where each stands against the one it follows.
+  const lineage = await lineageOf(ctx.app, repo, (r) =>
+    canRead(ctx.app.db, r, ctx.auth.user),
+  );
   const body = html`${repoHeader(ctx, repo, "code")}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
     </div>
-    ${forks.length === 0
+    ${lineage.size === 1
       ? empty({
           icon: "fork",
           title: "No forks yet",
-          note: "A fork is a copy under another name that can propose changes back here.",
+          note: "A fork is a copy under another name that can propose changes back here, and follows this one until it has work of its own.",
         })
-      : listCard(
-          forks.map((fork) =>
-            row({
-              href: `/${fork.ownerName}/${fork.name}`,
-              nav: true,
-              lead: icon("fork"),
-              title: `${fork.ownerName}/${fork.name}`,
-              meta: html`${fork.description === ""
-                ? null
-                : html`${fork.description} · `}${fork.visibility}`,
-              ...(standings.has(fork.id)
-                ? { trail: standings.get(fork.id)! }
-                : {}),
-            }),
-          ),
-        )}`;
+      : lineageCard(lineage, repo.id)}`;
   return page({ ctx, title: `Forks · ${repo.ownerName}/${repo.name}`, body });
 }
 

@@ -28,11 +28,68 @@ import {
   convergeState,
   type Converge,
 } from "../../crew/converge.ts";
+import type { Lineage, LineageNode } from "../../core/following.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
-import { badge, btn, icon, type Tone } from "../ui.ts";
+import { badge, btn, card, icon, type Tone } from "../ui.ts";
+
+/**
+ * The family as a tree: nested lists, so the nesting a sighted reader sees
+ * as indentation is the nesting a screen reader announces, and a phone
+ * never has to scroll sideways to follow it. The repository being looked at
+ * is marked, and every fork carries its standing against its own parent.
+ */
+export function lineageCard(lineage: Lineage, hereId: string): Html {
+  const node = (n: LineageNode, depth: number): Html => {
+    const here = n.repo.id === hereId;
+    const name = `${n.repo.ownerName}/${n.repo.name}`;
+    return html`<li>
+      <a
+        href="/${n.repo.ownerName}/${n.repo.name}"
+        class="row"
+        data-nav
+        tabindex="-1"
+        ${here ? raw('aria-current="page"') : null}
+      >
+        <span class="row-lead">${icon(depth === 0 ? "repo" : "fork")}</span>
+        <span class="row-main">
+          <span class="row-title"
+            >${name}${here
+              ? html` <span class="lineage-here">you are here</span>`
+              : null}</span
+          >
+          ${n.repo.description === ""
+            ? null
+            : html`<span class="row-meta">${n.repo.description}</span>`}
+        </span>
+        ${n.relation === undefined
+          ? null
+          : html`<span class="row-trail">${relationBadge(n.relation)}</span>`}
+      </a>
+      ${n.children.length === 0
+        ? null
+        : html`<ul class="lineage-children">
+            ${n.children.map((c) => node(c, depth + 1))}
+          </ul>`}
+    </li>`;
+  };
+  return card(
+    html`<ul class="list lineage" aria-label="Forks, by who follows whom">
+        ${node(lineage.root, 0)}
+      </ul>
+      ${when(
+        lineage.truncated,
+        () =>
+          html`<p class="muted small card-body">
+            A large family: the newest and deepest forks are left out here; each
+            fork's own page shows where it stands.
+          </p>`,
+      )}`,
+    { pad: false },
+  );
+}
 
 export interface Following {
   readonly relation: ForkRelation;
