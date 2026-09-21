@@ -26,7 +26,7 @@ import {
   latestRunsForIssues,
 } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
-import { spentTodayForRepos } from "../../crew/autonomy.ts";
+import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -169,14 +169,11 @@ function askCandidatesFor(
     db,
     repos.map((r) => r.id),
   );
-  for (const repo of repos) {
-    // Only a ceiling pause is an ask — "nobody" and "no crew" are settings
-    // problems, not a decision, so neither needs its own grouped read.
-    if (repo.autonomy === "off" || repo.autonomyBy === null) continue;
-    if ((crew.get(repo.id)?.length ?? 0) === 0) continue;
-    if ((spent.get(repo.id) ?? 0) >= repo.autonomyCeilingUsd)
+  // Only a ceiling pause is an ask — "nobody" and "no crew" are settings
+  // problems, not a decision, so neither needs its own card.
+  for (const repo of repos)
+    if (isPausedAtCeiling(repo, crew, spent))
       out.push({ kind: "paused", repo, who: "the crew" });
-  }
   return out;
 }
 

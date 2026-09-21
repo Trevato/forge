@@ -5262,6 +5262,151 @@ describe("finding things in the studio: /search", () => {
   });
 });
 
+/**
+ * The studio home's own answer to "what is this costing me today?" (#94):
+ * one line, the sum of today's agent spend across the apps the viewer can
+ * write, and how many of those sit paused at their ceiling right now.
+ */
+describe("the studio home says what the crew cost you today", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let aliceCookie: string;
+  let carolCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const home = (cookie: string) =>
+    fetch(`${base}/`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-cost-today-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const c = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!c.ok) throw new Error(c.error);
+    aliceCookie = await signIn("alice");
+    carolCookie = await signIn("carol");
+
+    // "beacon": on its own, over its $5 ceiling today — paused.
+    const beaconMade = await createRepo(app, alice, {
+      name: "beacon",
+      visibility: "public",
+      description: "a light that stays on",
+    });
+    if (!beaconMade.ok) throw new Error(String(beaconMade.error));
+    const beacon = beaconMade.value;
+    const beaconSeeded = await commitToBranch(app, alice, beacon, {
+      message: "Start",
+      files: [{ path: "README.md", content: "beacon\n" }],
+    });
+    if (!beaconSeeded.ok) throw new Error(JSON.stringify(beaconSeeded.error));
+    const beaconEnabled = await enableApp(app, alice, beacon, {
+      slug: "beacon",
+    });
+    if (!beaconEnabled.ok) throw new Error(String(beaconEnabled.error));
+    const keeper = await createAgent(app, alice, { username: "keeper" });
+    if (!keeper.ok) throw new Error(String(keeper.error));
+    expect(addToCrew(app, alice, beacon, "keeper").ok).toBe(true);
+    const on = await updateRepoSettings(app, alice, beacon, {
+      autonomy: "assisted",
+      autonomyDirection: "",
+      autonomyCeilingUsd: 5,
+      autonomySlots: 2,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+    const keeperId = getUserByName(app.db, "keeper")!.id;
+    const beaconRun = createRun(app.db, {
+      repoId: beacon.id,
+      kind: "agent",
+      actorId: keeperId,
+      reason: "assigned",
+    });
+    claimRun(app.db, beaconRun.id);
+    noteRunProgress(app.db, beaconRun.id, { costUsd: 6 });
+
+    // "loom": no autonomy at all, a cheaper run today — never paused.
+    const loomMade = await createRepo(app, alice, {
+      name: "loom",
+      visibility: "public",
+      description: "a place for cloth",
+    });
+    if (!loomMade.ok) throw new Error(String(loomMade.error));
+    const loom = loomMade.value;
+    const loomSeeded = await commitToBranch(app, alice, loom, {
+      message: "Start",
+      files: [{ path: "README.md", content: "loom\n" }],
+    });
+    if (!loomSeeded.ok) throw new Error(JSON.stringify(loomSeeded.error));
+    const loomEnabled = await enableApp(app, alice, loom, { slug: "loom" });
+    if (!loomEnabled.ok) throw new Error(String(loomEnabled.error));
+    const weaver = await createAgent(app, alice, { username: "weaver" });
+    if (!weaver.ok) throw new Error(String(weaver.error));
+    expect(addToCrew(app, alice, loom, "weaver").ok).toBe(true);
+    const weaverId = getUserByName(app.db, "weaver")!.id;
+    const loomRun = createRun(app.db, {
+      repoId: loom.id,
+      kind: "agent",
+      actorId: weaverId,
+      reason: "assigned",
+    });
+    claimRun(app.db, loomRun.id);
+    noteRunProgress(app.db, loomRun.id, { costUsd: 2 });
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the owner sees the day's total across both apps, and the one that is paused at its ceiling", async () => {
+    const html = await home(aliceCookie);
+    expect(html).toContain("$8.00 spent today across 2 apps you can write");
+    expect(html).toContain("1 paused at");
+    expect(html).toMatch(/<a href="\/map">their ceiling<\/a>/);
+  });
+
+  test("a viewer who can only read sees no figure at all", async () => {
+    const html = await home(carolCookie);
+    expect(html).not.toContain("spent today");
+    expect(html).not.toContain("$8.00");
+    expect(html).not.toContain("$6");
+    expect(html).not.toContain("$2");
+  });
+});
+
 describe("every studio page's headings form one outline", () => {
   let dataDir: string;
   let app: App;

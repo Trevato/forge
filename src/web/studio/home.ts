@@ -8,10 +8,12 @@
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
+import { crewForRepos } from "../../core/agents.ts";
 import { openPullsForRepos, type Pull } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, writableRepoIds, type Repo } from "../../core/repos.ts";
 import { listActiveRuns } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
+import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -42,6 +44,39 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   // shelf counts them into each row's pill.
   const decisions = withLikely(ctx, decisionsFor(ctx, appRepos));
   const appRows = await shelfRows(ctx, appRepos, { decisions });
+
+  // What the crew cost today, across the apps the viewer can write, and how
+  // many of those are paused at their ceiling right now — the owner's first
+  // question at the front door, answered in one bounded read each
+  // (`writableRepoIds`, `spentTodayForRepos`, `crewForRepos`), never a
+  // query or an `autonomyStatus` call per app. A reader who cannot write
+  // any of these apps sees no money at all, the same floor an app's own
+  // page holds (`canSeeOwnerFacts`).
+  const writable = writableRepoIds(
+    db,
+    user,
+    appRepos.map((r) => r.id),
+  );
+  const costRepos = appRepos.filter((r) => writable.has(r.id));
+  const costLine = when(costRepos.length > 0, () => {
+    const spentToday = spentTodayForRepos(
+      db,
+      costRepos.map((r) => r.id),
+    );
+    const crew = crewForRepos(
+      db,
+      costRepos.map((r) => r.id),
+    );
+    const spentUsd = costRepos.reduce(
+      (sum, r) => sum + (spentToday.get(r.id) ?? 0),
+      0,
+    );
+    const paused = costRepos.filter((r) =>
+      isPausedAtCeiling(r, crew, spentToday),
+    ).length;
+    const noun = `app${costRepos.length === 1 ? "" : "s"}`;
+    return html`<p class="small muted studio-cost">$${spentUsd.toFixed(2)} spent today across ${costRepos.length} ${noun} you can write · ${paused} paused at <a href="/map">their ceiling</a></p>`;
+  });
 
   const apps =
     appRows.length === 0
@@ -164,26 +199,29 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
           );
 
   const body = html`<h1 class="sr-only">Studio</h1>
-  <div class="dash">
-    <div class="dash-main stack">
-      <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">${asks}</div>
-      <div
-        id="live-apps"
-        data-live="app.serving,app.stopped,run.queued,run.started,run.finished,pull.opened,pull.closed,pull.merged"
-      >
-        ${apps}
+    ${costLine}
+    <div class="dash">
+      <div class="dash-main stack">
+        <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">
+          ${asks}
+        </div>
+        <div
+          id="live-apps"
+          data-live="app.serving,app.stopped,run.queued,run.started,run.finished,pull.opened,pull.closed,pull.merged"
+        >
+          ${apps}
+        </div>
       </div>
-    </div>
-    <aside class="dash-rail stack">
-      <div id="live-now" data-live="run.*">${now}</div>
-      <div
-        id="live-on-you"
-        data-live="issue.assigned,pull.assigned,issue.closed,pull.closed,issue.reopened,pull.reopened,pull.merged"
-      >
-        ${onYouCard(ctx, user) ?? null}
-      </div>
-    </aside>
-  </div>`;
+      <aside class="dash-rail stack">
+        <div id="live-now" data-live="run.*">${now}</div>
+        <div
+          id="live-on-you"
+          data-live="issue.assigned,pull.assigned,issue.closed,pull.closed,issue.reopened,pull.reopened,pull.merged"
+        >
+          ${onYouCard(ctx, user) ?? null}
+        </div>
+      </aside>
+    </div>`;
   return page({
     ctx,
     title: "Studio",

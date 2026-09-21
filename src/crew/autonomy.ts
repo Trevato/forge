@@ -157,6 +157,25 @@ export function spentTodayForRepos(
   return out;
 }
 
+/**
+ * Whether a repository is paused at today's ceiling right now — the same
+ * three conditions `autonomyStatus`'s own `"ceiling"` reads for one, but
+ * asked of crew and spend already read for the whole set
+ * (`crewForRepos`, `spentTodayForRepos`), never a query of its own. The
+ * ask card (`studio/asks.ts`) and the studio home's cost line
+ * (`studio/home.ts`) both decide from this, so neither can disagree with
+ * the other about which app is paused.
+ */
+export function isPausedAtCeiling(
+  repo: Repo,
+  crew: ReadonlyMap<string, readonly string[]>,
+  spent: ReadonlyMap<string, number>,
+): boolean {
+  if (repo.autonomy === "off" || repo.autonomyBy === null) return false;
+  if ((crew.get(repo.id)?.length ?? 0) === 0) return false;
+  return (spent.get(repo.id) ?? 0) >= repo.autonomyCeilingUsd;
+}
+
 function activeRuns(app: App, repoId: string) {
   return listActive(app.db, "agent").filter((r) => r.repoId === repoId);
 }
