@@ -154,5 +154,7 @@ sleep 60
       app.close();
       await rm(dataDir, { recursive: true, force: true });
     }
-  });
+    // The crew starts a queued run on its next tick, five seconds apart:
+    // the default timeout is a race against that clock.
+  }, 60_000);
 });
