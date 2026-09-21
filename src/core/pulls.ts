@@ -51,6 +51,8 @@ export interface Pull extends Issue {
    * not hold): `owner/name` there. Null for a native pull.
    */
   readonly originHeadRepo: string | null;
+  /** The pull this one reverts, when it was opened by "Take it back". */
+  readonly revertsPullId: string | null;
 }
 
 interface PullRow {
@@ -62,6 +64,7 @@ interface PullRow {
   merged_oid: string | null;
   head_repo_id: string | null;
   origin_head_repo: string | null;
+  reverts_issue_id: string | null;
 }
 
 function fromRow(issue: Issue, row: PullRow): Pull {
@@ -77,6 +80,7 @@ function fromRow(issue: Issue, row: PullRow): Pull {
     headRepoId,
     crossRepo: headRepoId !== issue.repoId,
     originHeadRepo: row.origin_head_repo,
+    revertsPullId: row.reverts_issue_id,
   };
 }
 
@@ -110,6 +114,8 @@ export interface CreatePullInput {
   headRepoId?: string;
   /** The fork's on-disk dir, required when headRepoId differs from the base. */
   headDir?: string;
+  /** The issue id of the pull this one reverts ("Take it back"). */
+  revertsIssueId?: string;
 }
 
 export async function createPull(
@@ -148,8 +154,8 @@ export async function createPull(
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(
-    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, reverts_issue_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
   ).run(
     issue.value.id,
     input.baseBranch,
@@ -157,6 +163,7 @@ export async function createPull(
     baseOid,
     headOid,
     headRepoId,
+    input.revertsIssueId ?? null,
   );
 
   // A durable, fetchable ref for the PR head — the way tooling addresses it,
@@ -196,6 +203,29 @@ export function pullForBranch(
        WHERE issue.repo_id = ?1 AND pull.head_branch = ?2
        ORDER BY issue.created_at DESC LIMIT 1`)
     .get(repoId, branch);
+  return row ? getPull(db, repoId, row.number) : undefined;
+}
+
+/**
+ * The pull that already reverts this one, if taking it back has already
+ * been done — open, or merged, either one counts as "already taken back".
+ * A revert pull that was closed *without* merging is an abandoned attempt,
+ * not a standing answer, so it does not block a second try.
+ */
+export function revertOf(
+  db: Database,
+  repoId: string,
+  pullId: string,
+): Pull | undefined {
+  const row = db
+    .query<
+      { number: number },
+      [string, string]
+    >(`SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.reverts_issue_id = ?2
+         AND (issue.state = 'open' OR pull.merged_at IS NOT NULL)
+       ORDER BY issue.created_at DESC LIMIT 1`)
+    .get(repoId, pullId);
   return row ? getPull(db, repoId, row.number) : undefined;
 }
 

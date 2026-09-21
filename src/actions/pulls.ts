@@ -74,6 +74,9 @@ export interface OpenPullInput {
   headBranch: string;
   /** For a fork proposing upstream: the fork the head branch lives in. */
   headRepo?: Repo;
+  /** The issue id of the pull this one reverts ("Take it back"). Native
+   * repos only — a mirror's pull is the origin's, which has no such field. */
+  revertsIssueId?: string;
 }
 
 export async function openPull(
@@ -171,6 +174,7 @@ export async function openPull(
             headDir: repoDir(app.reposRoot, head.ownerName, head.name),
           }
         : {}),
+      ...(input.revertsIssueId ? { revertsIssueId: input.revertsIssueId } : {}),
     },
   );
   if (!created.ok) return created;
