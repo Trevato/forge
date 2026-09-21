@@ -207,11 +207,18 @@ again — the page, the API and the event outbox carry the name and when it
 was set, nothing more. At rest each value is sealed with the data
 directory's key (`kernel/secret.ts`), bound to the app and the name.
 
-The variables are handed to every environment: production, and every
-preview, which inherits the current set the way it inherits a copy of the
-data. A process reads its environment once, at start, so setting or
-removing a variable redeploys production and every open preview at their
-current commits. The install and test steps do not see them.
+A variable has a **scope**: everywhere (`all`, the default), `production`
+only, or `preview` only — the select beside the value, or `"scope"` in the
+`PUT` body and `?scope=` on the `DELETE`. The same name may be set once in
+each scope, and where two apply the narrower one wins: a test key for
+previews, the live one for production, and neither process ever holds the
+other's. Every preview is one scope, whichever pull it serves.
+
+A process reads its environment once, at start, so setting or removing a
+variable redeploys what reads it, at its current commit, and nothing else:
+a variable for everywhere redeploys production and every open preview, one
+scoped to previews leaves production running as it was. The install and
+test steps do not see them.
 
 ### The forge as an app of itself
 

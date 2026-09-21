@@ -425,7 +425,35 @@ describe("apps, runs and the crew over the API", () => {
         []
       >("SELECT payload FROM event WHERE kind = 'app.env_set' ORDER BY id DESC")
       .get();
-    expect(event?.payload).toBe('{"name":"GREETING"}');
+    // The name and where it applies; never the value.
+    expect(event?.payload).toBe('{"name":"GREETING","scope":"all"}');
+    expect(answer).toContain('"scope":"all"');
+
+    // A scope is one of three words, and a preview-only value never
+    // reaches production: the process that serves keeps the one for all.
+    const staging = await api(`${env}/GREETING`, {
+      method: "PUT",
+      body: JSON.stringify({ value: "x", scope: "staging" }),
+    });
+    expect(staging.status).toBe(422);
+    expect(((await staging.json()) as { error: string }).error).toBe(
+      "invalid_scope",
+    );
+    const forPreviews = await api(`${env}/GREETING`, {
+      method: "PUT",
+      body: JSON.stringify({ value: "only-in-previews", scope: "preview" }),
+    });
+    expect(forPreviews.status).toBe(200);
+    expect(
+      (
+        (await (await api(env)).json()) as {
+          items: { name: string; scope: string }[];
+        }
+      ).items.map((i) => `${i.name}@${i.scope}`),
+    ).toEqual(["GREETING@all", "GREETING@preview"]);
+    expect(
+      (await api(`${env}/GREETING?scope=preview`, { method: "DELETE" })).status,
+    ).toBe(200);
 
     // The redeploy that follows is what hands it to the app — and its log
     // does not repeat it.

@@ -292,10 +292,12 @@ export class AppsRuntime {
     record: AppRecord,
     repo: Repo,
     reason: string,
+    /** Deploy only these: a variable scoped to previews leaves production be. */
+    only?: "production" | "preview",
   ): Promise<void> {
     const dir = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
     const tip = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
-    if (tip !== undefined)
+    if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
     for (const pull of listPulls(this.app.db, repo.id, {
@@ -305,7 +307,7 @@ export class AppsRuntime {
       const env = previewEnv(pull.number);
       open.add(env);
       const head = await this.pullHead(dir, pull);
-      if (head !== undefined)
+      if (head !== undefined && only !== "production")
         this.requestDeploy(record, repo, env, head, reason);
     }
     // Environments on disk for pulls that are no longer open.
@@ -655,7 +657,12 @@ export class AppsRuntime {
       ssh: this.sshFor(state.app, state.env),
       // Read at start, never cached: a change is a redeploy, and the
       // process that comes up is the one that sees it.
-      vars: resolveAppEnv(this.app.db, this.app.config.dataDir, state.app.id),
+      vars: resolveAppEnv(
+        this.app.db,
+        this.app.config.dataDir,
+        state.app.id,
+        state.env,
+      ),
       log: write,
       signal,
     });

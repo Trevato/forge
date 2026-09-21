@@ -19,6 +19,7 @@ import {
   listAppEnvNames,
   NAME_MAX,
   type AppEnvName,
+  type AppEnvScope,
 } from "../../core/app_env.ts";
 import {
   addToCrew,
@@ -458,18 +459,29 @@ function appSettingsView(
  * Values are write-only — the page shows a name and when it was set, and
  * the value input forgets what was typed the moment the form is sent.
  */
+const SCOPE_WORDS: Record<AppEnvScope, string> = {
+  all: "everywhere",
+  production: "production",
+  preview: "previews",
+};
+
 function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>
     row({
       lead: icon("key"),
       title: html`<span class="mono">${v.name}</span>`,
-      meta: html`set ${time(v.updatedAt)}`,
+      meta: html`${SCOPE_WORDS[v.scope]} · set ${time(v.updatedAt)}`,
       trail: html`<form
         class="row-actions"
         method="post"
         action="${base}/settings/app/env/${encodeURIComponent(v.name)}/delete"
       >
-        ${btn("Remove", { size: "sm", icon: "x" })}
+        <input type="hidden" name="scope" value="${v.scope}" />
+        ${btn("Remove", {
+          size: "sm",
+          icon: "x",
+          label: `Remove ${v.name} (${SCOPE_WORDS[v.scope]})`,
+        })}
       </form>`,
     }),
   );
@@ -478,8 +490,10 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
         <p class="muted small">
           What the app reads from its environment at start-up — an admin
           password, an API key. Values are write-only: set one, and it is never
-          shown again. Production and every preview get them; changing one
-          redeploys.
+          shown again. A variable goes everywhere, to production only, or to
+          previews only; the same name may be set in each, and the narrower one
+          wins — a test key for previews, the live one for production. Changing
+          one redeploys what reads it, and nothing else.
         </p>
       </div>
       ${when(
@@ -511,6 +525,11 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
           autocomplete="off"
           required
         />
+        <select class="input" name="scope" aria-label="Where it applies">
+          <option value="all">Everywhere</option>
+          <option value="production">Production only</option>
+          <option value="preview">Previews only</option>
+        </select>
         ${btn("Set", { variant: "primary", size: "sm", icon: "plus" })}
       </form>`,
     {
@@ -613,6 +632,7 @@ const APP_ENV_ERRORS: Record<string, string> = {
   reserved_name:
     "That name is the forge's own (PORT, HOST, PATH, FORGE_…); the app is already told it.",
   invalid_value: "A value is one line or many, never empty and under 64 KiB.",
+  invalid_scope: "A variable goes everywhere, to production, or to previews.",
 };
 
 // POST /:owner/:name/settings/app/env — set one variable.
@@ -627,6 +647,7 @@ export async function appEnvSet(ctx: Ctx): Promise<Response> {
     repo,
     name,
     field(form, "value"),
+    field(form, "scope") || "all",
   );
   if (!set.ok && set.error === "not_found") return repoNotFound(ctx);
   return flashTo(
@@ -634,7 +655,7 @@ export async function appEnvSet(ctx: Ctx): Promise<Response> {
     `${repoBase(repo)}/settings/app`,
     set.ok
       ? {
-          message: `${set.value.name} is set.${redeploying(ctx, "with it")}`,
+          message: `${set.value.name} is set ${set.value.scope === "all" ? "everywhere" : `for ${SCOPE_WORDS[set.value.scope]}`}.${redeploying(ctx, "with it")}`,
         }
       : {
           tone: "danger",
@@ -649,9 +670,15 @@ export async function appEnvSet(ctx: Ctx): Promise<Response> {
 export async function appEnvDelete(ctx: Ctx): Promise<Response> {
   const gate = await adminForm(ctx);
   if (gate instanceof Response) return gate;
-  const { repo } = gate;
+  const { repo, form } = gate;
   const name = ctx.params.var ?? "";
-  const removed = await deleteAppEnvVar(ctx.app, ctx.auth.user, repo, name);
+  const removed = await deleteAppEnvVar(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    name,
+    field(form, "scope") || "all",
+  );
   if (!removed.ok && removed.error === "not_found") return repoNotFound(ctx);
   return flashTo(
     ctx,

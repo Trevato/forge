@@ -2712,12 +2712,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const input = await body(ctx.request);
+    // `scope`: all (the default), production, or preview. The same name may
+    // be set once in each; the narrower one wins where both apply.
     const set = await setAppEnvVar(
       ctx.app,
       ctx.auth.user,
       repo,
       ctx.params.var ?? "",
       str(input.value),
+      str(input.scope) || "all",
     );
     if (!set.ok) return respondAccess(set.error, 422);
     return json(set.value);
@@ -2736,6 +2739,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ctx.auth.user,
         repo,
         ctx.params.var ?? "",
+        ctx.url.searchParams.get("scope") ?? "all",
       );
       if (!removed.ok) return respondAccess(removed.error, 422);
       return json({}, 200);

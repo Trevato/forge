@@ -151,7 +151,12 @@ export async function runAppTty(
     ssh: runtime.sshFor(target.app, target.env),
     // The terminal is the app too: it opens the same database with the
     // same secrets, so it is handed the same environment.
-    vars: resolveAppEnv(forge.db, forge.config.dataDir, target.app.id),
+    vars: resolveAppEnv(
+      forge.db,
+      forge.config.dataDir,
+      target.app.id,
+      target.env,
+    ),
   });
   env["TERM"] = host.term;
   env["COLORTERM"] = "truecolor";

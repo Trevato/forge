@@ -128,11 +128,11 @@ describe("an app's environment", () => {
     expect(names.map((v) => v.name)).toEqual(["ADMIN_PASSWORD"]);
     expect(JSON.stringify(names)).not.toContain("horse");
 
-    expect(resolveAppEnv(app.db, dataDir, hello.id)).toEqual({
+    expect(resolveAppEnv(app.db, dataDir, hello.id, "production")).toEqual({
       ADMIN_PASSWORD: secret,
     });
     // Another app's environment is another app's.
-    expect(resolveAppEnv(app.db, dataDir, twin.id)).toEqual({});
+    expect(resolveAppEnv(app.db, dataDir, twin.id, "production")).toEqual({});
   });
 
   test("setting a name again replaces the value and moves updated_at", async () => {
@@ -147,7 +147,7 @@ describe("an app's environment", () => {
       "a new one",
     );
     expect(set.ok).toBe(true);
-    expect(resolveAppEnv(app.db, dataDir, hello.id)).toEqual({
+    expect(resolveAppEnv(app.db, dataDir, hello.id, "production")).toEqual({
       ADMIN_PASSWORD: "a new one",
     });
     const names = listAppEnvNames(app.db, hello.id);
@@ -169,14 +169,14 @@ describe("an app's environment", () => {
         "INSERT INTO app_env (app_id, name, value_enc) VALUES (?1, 'ADMIN_PASSWORD', ?2)",
       )
       .run(twin.id, lifted);
-    expect(resolveAppEnv(app.db, dataDir, twin.id)).toEqual({});
+    expect(resolveAppEnv(app.db, dataDir, twin.id, "production")).toEqual({});
     // …and under another name on hello itself.
     app.db
       .query(
         "INSERT INTO app_env (app_id, name, value_enc) VALUES (?1, 'RENAMED', ?2)",
       )
       .run(hello.id, lifted);
-    expect(resolveAppEnv(app.db, dataDir, hello.id)).toEqual({
+    expect(resolveAppEnv(app.db, dataDir, hello.id, "production")).toEqual({
       ADMIN_PASSWORD: "a new one",
       STRIPE_SECRET_KEY: "sk_live_123",
     });
@@ -221,6 +221,99 @@ describe("an app's environment", () => {
     expect(env["PATH"]).not.toBe("/evil");
     expect(env["HOME"]).not.toBe("/evil");
     expect(env["GREETING"]).toBe("hi");
+  });
+
+  test("a scope decides who sees a value, and the narrower one wins", () => {
+    expect(
+      setAppEnv(app.db, dataDir, twin.id, "API_KEY", "everywhere").ok,
+    ).toBe(true);
+    expect(
+      setAppEnv(app.db, dataDir, twin.id, "API_KEY", "sk_live", "production")
+        .ok,
+    ).toBe(true);
+    expect(
+      setAppEnv(app.db, dataDir, twin.id, "API_KEY", "sk_test", "preview").ok,
+    ).toBe(true);
+    expect(
+      setAppEnv(app.db, dataDir, twin.id, "DEBUG", "1", "preview").ok,
+    ).toBe(true);
+    expect(setAppEnv(app.db, dataDir, twin.id, "REGION", "eu", "all").ok).toBe(
+      true,
+    );
+
+    expect(resolveAppEnv(app.db, dataDir, twin.id, "production")).toEqual({
+      API_KEY: "sk_live",
+      REGION: "eu",
+    });
+    // Every preview is one scope, whichever pull it serves.
+    for (const env of ["pull-3", "pull-41"])
+      expect(resolveAppEnv(app.db, dataDir, twin.id, env)).toEqual({
+        API_KEY: "sk_test",
+        DEBUG: "1",
+        REGION: "eu",
+      });
+
+    // The list names each row with its scope, widest first, and no value.
+    expect(
+      listAppEnvNames(app.db, twin.id).map((v) => `${v.name}@${v.scope}`),
+    ).toEqual([
+      "API_KEY@all",
+      "API_KEY@production",
+      "API_KEY@preview",
+      "DEBUG@preview",
+      "REGION@all",
+    ]);
+  });
+
+  test("a delete takes one scope and leaves the others", () => {
+    expect(deleteAppEnv(app.db, twin.id, "API_KEY", "production")).toBe(true);
+    // Production falls back to what is set everywhere; previews keep theirs.
+    expect(
+      resolveAppEnv(app.db, dataDir, twin.id, "production")["API_KEY"],
+    ).toBe("everywhere");
+    expect(resolveAppEnv(app.db, dataDir, twin.id, "pull-3")["API_KEY"]).toBe(
+      "sk_test",
+    );
+    // No scope named means `all`, as it did before there were scopes.
+    expect(deleteAppEnv(app.db, twin.id, "DEBUG")).toBe(false);
+    expect(deleteAppEnv(app.db, twin.id, "DEBUG", "preview")).toBe(true);
+  });
+
+  test("a scope is one of three words", () => {
+    const bad = setAppEnv(app.db, dataDir, twin.id, "X_KEY", "v", "staging");
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error).toBe("invalid_scope");
+  });
+
+  test("rows from before there were scopes mean everywhere", () => {
+    // What migration 24 does to an old table, on a scratch database.
+    const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const old = new Database(":memory:");
+    old.exec(`
+      CREATE TABLE app (id TEXT PRIMARY KEY);
+      CREATE TABLE app_env (
+        app_id TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+        name TEXT NOT NULL, value_enc TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT 'then', updated_at TEXT NOT NULL DEFAULT 'then',
+        PRIMARY KEY (app_id, name));
+      INSERT INTO app VALUES ('a1');
+      INSERT INTO app_env (app_id, name, value_enc) VALUES ('a1', 'ADMIN_PASSWORD', 'sealed');
+    `);
+    const { migrations } = require("../src/core/schema.ts") as {
+      migrations: readonly string[];
+    };
+    old.exec(migrations[migrations.length - 1]!);
+    expect(
+      old.query("SELECT name, scope, value_enc, updated_at FROM app_env").all(),
+    ).toEqual([
+      {
+        name: "ADMIN_PASSWORD",
+        scope: "all",
+        value_enc: "sealed",
+        updated_at: "then",
+      },
+    ]);
+    old.close();
   });
 
   test("deleting the app takes its environment with it", () => {
