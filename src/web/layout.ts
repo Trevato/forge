@@ -48,6 +48,8 @@ export interface PageOptions {
    * an issue's first line. Absent, the forge's own line stands in.
    */
   description?: string;
+  /** This page's feed, advertised in the head so a reader can find it. */
+  feed?: { href: string; title: string };
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
@@ -477,6 +479,16 @@ export function page(options: PageOptions, status = 200): Response {
           content="${ctx.url.origin}/icons/forge-512.png"
         />
         <meta name="twitter:card" content="summary" />
+        ${when(
+          options.feed,
+          (f) =>
+            html`<link
+              rel="alternate"
+              type="application/atom+xml"
+              title="${f.title}"
+              href="${f.href}"
+            />`,
+        )}
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="apple-touch-icon" href="/icons/forge-180.png" />
         <meta name="mobile-web-app-capable" content="yes" />

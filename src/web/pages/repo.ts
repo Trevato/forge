@@ -864,6 +864,11 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   return page({
     ctx,
     title: repo.name,
+    description: repo.description,
+    feed: {
+      href: `${repoBase(repo)}/activity.atom`,
+      title: `${repo.ownerName}/${repo.name} activity`,
+    },
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,

@@ -42,6 +42,7 @@ import {
 } from "../web/pages/site.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
+import { activityAtom } from "../web/feeds.ts";
 import {
   changePassword,
   iconPng,
@@ -662,6 +663,8 @@ export function buildRouter(): Router<Handler> {
   // Branches: the list, and the two verbs a branch list exists for. Both
   // mutations go through actions/branches.ts, so a mirror asks its origin.
   router.add("GET", "/:owner/:name/forks", forksPage);
+  // The repository's activity, for a feed reader.
+  router.add("GET", "/:owner/:name/activity.atom", activityAtom);
   router.add("GET", "/:owner/:name/branches", branchesPage);
   router.add("POST", "/:owner/:name/branches", branchCreate);
   router.add("POST", "/:owner/:name/branches/:branch/delete", branchDelete);
