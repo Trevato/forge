@@ -266,6 +266,27 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .following-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .following-foot { margin: 8px 0 0; }
 
+/* The audit: one app's policy as a table, an answer per cell. */
+.audit-sum { margin: 0 0 14px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
+.audit-app { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--fg); margin: 0; font-size: 14px; }
+.audit-app .ico { color: var(--faint); }
+.audit-trail { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.audit-trail code { font-size: 11px; }
+.audit th[scope="rowgroup"] { vertical-align: top; font-family: var(--mono); font-weight: 600; }
+.audit th[scope="row"] { font-weight: 400; color: var(--muted-fg); }
+.audit th[scope="rowgroup"], .audit th[scope="row"] { width: 1%; white-space: nowrap; padding-right: 24px; }
+.audit thead th:nth-child(n + 3), .audit td { text-align: center; }
+.audit-answer {
+  display: inline-block; min-width: 3.5ch; padding: 1px 6px; border-radius: 999px;
+  font-family: var(--mono); font-size: 11px; line-height: 18px;
+}
+.audit-answer[data-answer="yes"] { background: color-mix(in srgb, var(--attn) 18%, transparent); color: var(--attn); }
+.audit-answer[data-answer="own"] { background: var(--muted); color: var(--fg); }
+.audit-answer[data-answer="no"] { color: var(--faint); }
+.audit-problems { margin: 0; padding-left: 18px; font-size: 13px; }
+.audit-problems li + li { margin-top: 4px; }
+.audit-unread { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; }
+
 /* The family tree: nesting is indentation and a rule, never a scrollbar. */
 .lineage-children {
   list-style: none; margin: 0 0 0 22px; padding: 0;

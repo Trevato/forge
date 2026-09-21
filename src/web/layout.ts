@@ -174,6 +174,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
     { label: "Map", href: "/map", icon: "map" },
+    { label: "Audit", href: "/audit", icon: "shield" },
     { separator: true, label: "" },
     // The "+" menu is hidden on a phone to keep the topbar inside the
     // screen; creating things stays one tap away here.
@@ -245,6 +246,7 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
+  { t: "Audit", h: "/audit", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },

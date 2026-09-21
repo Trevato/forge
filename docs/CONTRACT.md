@@ -91,10 +91,20 @@ identity at every real door and fails when a door and the table disagree. A
 rule written by hand in an action fails it; a changed cell does not, because
 the doors obey the table.
 
+## The audit's first lens
+
+`GET /audit` is who can do what, across every app the viewer can read, read
+from git (`src/contract/audit.ts`, `src/web/pages/audit.ts`): each app's
+`contract.json` at the tip of its default branch, through this evaluator.
+Nothing is run and nothing is asked of the app, so the page says what the
+policy _is_. An app's standing is one of three: **sound**, shown as its
+table with the doors open to the floor counted; **unsound**, shown with
+every problem, because an app built on it does not boot; **unread**, an app
+with no contract, whose doors are hand-written. Unread apps are listed, not
+skipped: an audit that leaves out what it cannot read reads as a clean bill.
+
 ## What is not here yet
 
-- The forge reading `contract.json` from an app's default branch, and the
-  audit screen's first lens (who can do what, across every app).
 - The nightly probe of running apps as each identity (is it so).
 - A changed cell as a policy proposal that blocks the work that needs it,
   and the wall: a cell loosened toward the floor is a person's decision.

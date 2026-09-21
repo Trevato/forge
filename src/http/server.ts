@@ -43,6 +43,7 @@ import {
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { activityAtom } from "../web/feeds.ts";
+import { auditPage } from "../web/pages/audit.ts";
 import {
   changePassword,
   iconPng,
@@ -378,6 +379,7 @@ export function buildRouter(): Router<Handler> {
   // is registered before /:owner/:name can claim the shape.
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
+  router.add("GET", "/audit", auditPage);
   router.add("POST", "/new", newRepoSubmit);
   router.add("GET", "/organizations/new", newOrgPage);
   router.add("POST", "/organizations/new", newOrgSubmit);
