@@ -1350,6 +1350,52 @@ describe("the studio", () => {
     expect(dev).not.toContain('href="/apps?live=1"');
   });
 
+  test("clicking your own name in the studio lands on /:owner, which leads with your apps on the shelf and New app as the primary action; dev mode is unchanged, and a stranger never sees a private one", async () => {
+    const studio = await (await get("/alice")).text();
+    expect(studio).toContain("<h2>Apps</h2>");
+    expect(studio).toContain('href="/alice/notes"');
+    expect(studio).toContain("not running");
+    expect(studio).toContain('href="/apps/new?owner=alice"');
+    // The repository list stays reachable, filter and all — nothing disappears.
+    expect(studio).toContain('data-search-input');
+    expect(studio).toContain("notes");
+
+    const dev = await (
+      await get("/alice", { cookie: `${cookie}; forge_mode=dev` })
+    ).text();
+    expect(dev).not.toContain("<h2>Apps</h2>");
+    expect(dev).not.toContain('href="/apps/new?owner=alice"');
+    expect(dev).not.toContain("not running");
+
+    const carol = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    const carolCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "carol",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const stranger = await (
+      await fetch(`${base}/alice`, {
+        headers: { cookie: `${carolCookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(stranger).not.toContain('href="/alice/notes"');
+    expect(stranger).toContain("No apps yet");
+    expect(stranger).not.toContain('href="/apps/new?owner=alice"');
+  });
+
   test("signed out in studio, / leads with the public apps that are serving — their look, not a private one's", async () => {
     // A second app, public, with a picture of its production. "notes" stays
     // private, so its presence (or absence) is the negative case below.

@@ -27,6 +27,7 @@ import {
   type Permission,
   type Team,
 } from "../../core/orgs.ts";
+import { appsForRepos } from "../../core/apps.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -35,6 +36,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
+import { shelfRows } from "../studio/shelf.ts";
 import {
   avatar,
   badge,
@@ -130,6 +132,52 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
     )}`;
 }
 
+/**
+ * The owner's apps in the studio, one shelf row each — the same row the
+ * studio home's *Your apps* card draws (`shelfRows`, `studio/shelf.ts`),
+ * never a second copy of it. Visibility is `listReposByOwner`'s own, the
+ * same rule the repository list below uses, so a stranger never sees a
+ * private app here either.
+ */
+async function appsSection(ctx: Ctx, owner: User, isSelf: boolean): Promise<Html> {
+  const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
+    limit: 200,
+  });
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  const appRepos = repos.filter((r) => records.has(r.id));
+  const newAppHref = `/apps/new?owner=${owner.username}`;
+
+  if (appRepos.length === 0)
+    return empty({
+      icon: "rocket",
+      title: "No apps yet",
+      note: isSelf
+        ? "Make one, tell the crew what it is, and watch it come up."
+        : `${owner.username} has no apps you can see.`,
+      ...(isSelf
+        ? { action: btn("New app", { href: newAppHref, variant: "primary" }) }
+        : {}),
+    });
+
+  const rows = await shelfRows(ctx, appRepos);
+  return listCard(rows, {
+    head: html`${icon("rocket")}
+      <h2>Apps</h2>
+      ${when(
+        isSelf,
+        () =>
+          html`<span class="spacer"></span>${btn("New app", {
+              href: newAppHref,
+              size: "sm",
+              icon: "plus",
+            })}`,
+      )}`,
+  });
+}
+
 /** Everyone on any of the org's teams, once each. */
 function orgMembers(ctx: Ctx, teams: Team[]): User[] {
   const seen = new Map<string, User>();
@@ -207,8 +255,11 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
     )}`;
 }
 
-// GET /:owner — a person or an org, with their repos.
-export function ownerProfile(ctx: Ctx): Response {
+// GET /:owner — a person or an org, with their repos. In the studio this
+// leads with the owner's apps, drawn by the same shelf the studio's own
+// home draws its *Your apps* card from; dev mode is byte-identical to what
+// this page has always rendered.
+export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
   if (!owner) return notFoundPage(ctx);
 
@@ -219,6 +270,9 @@ export function ownerProfile(ctx: Ctx): Response {
   const canManage = isOrg && accessAllows(access, "admin");
   const isSelf =
     ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
+  const studio = ctx.mode === "studio";
+
+  const apps = studio ? await appsSection(ctx, owner, isSelf) : null;
 
   const body = html`<div class="page-head">
       ${avatar(owner.username, "lg")}
@@ -232,12 +286,13 @@ export function ownerProfile(ctx: Ctx): Response {
       ${when(isSelf, () =>
         btn("New repository", {
           href: `/new?owner=${owner.username}`,
-          variant: "primary",
+          variant: studio ? "ghost" : "primary",
           size: "sm",
           icon: "plus",
         }),
       )}
     </div>
+    ${apps}
     ${repoSection(ctx, owner, isSelf)}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
