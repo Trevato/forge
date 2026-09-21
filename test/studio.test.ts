@@ -13,6 +13,7 @@ import { previewEnv, type EnvName } from "../src/apps/data.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { linkIssue } from "../src/actions/dependencies.ts";
 import {
   assignIssue,
@@ -4354,6 +4355,145 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(dev).toContain(">General<");
     expect(dev).toContain("Description");
     expect(dev).not.toContain("Add to crew");
+  });
+});
+
+describe("the studio's crew panel on a forge with no agents yet", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let ownerCookie: string;
+  let teamAdminCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-no-agents-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const alice = a.value;
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    ownerCookie = await signIn("alice");
+    teamAdminCookie = await signIn("bob");
+
+    // alice's own app: she is both the repo's admin and the forge's.
+    const pad = await createRepo(app, alice, {
+      name: "pad",
+      visibility: "public",
+    });
+    if (!pad.ok) throw new Error(String(pad.error));
+    const padSeeded = await commitToBranch(app, alice, pad.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "pad\n" }],
+    });
+    if (!padSeeded.ok) throw new Error(JSON.stringify(padSeeded.error));
+    const padEnabled = await enableApp(app, alice, pad.value, { slug: "pad" });
+    if (!padEnabled.ok) throw new Error(String(padEnabled.error));
+
+    // an org app whose team admin, bob, is not a forge admin.
+    const org = await createOrg(app, alice, "acme");
+    if (!org.ok) throw new Error(org.error);
+    const team = await createTeam(app, alice, org.value, "leads", "admin");
+    if (!team.ok) throw new Error(String(team.error));
+    const added = await addTeamMember(app, alice, org.value, team.value, "bob");
+    if (!added.ok) throw new Error(String(added.error));
+    const vault = await createRepo(app, alice, {
+      name: "vault",
+      owner: "acme",
+      visibility: "public",
+    });
+    if (!vault.ok) throw new Error(String(vault.error));
+    const vaultSeeded = await commitToBranch(app, alice, vault.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "vault\n" }],
+    });
+    if (!vaultSeeded.ok) throw new Error(JSON.stringify(vaultSeeded.error));
+    const vaultEnabled = await enableApp(app, alice, vault.value, {
+      slug: "vault",
+    });
+    if (!vaultEnabled.ok) throw new Error(String(vaultEnabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a forge admin sees the crew panel name the door an agent is made through, and reaches it in one click without leaving studio mode", async () => {
+    const settings = await (
+      await get("/alice/pad/settings", ownerCookie)
+    ).text();
+    expect(settings).toContain("No agents exist on this forge yet.");
+    expect(settings).not.toContain("Add an agent below");
+    expect(settings).toContain('href="/settings/crew"');
+
+    const doorResponse = await get("/settings/crew", ownerCookie);
+    expect(doorResponse.status).toBe(200);
+    const crewPage = await doorResponse.text();
+    expect(crewPage).toContain("New agent");
+    expect(crewPage).toContain('action="/settings/crew"');
+  });
+
+  test("a repository admin who is not a forge admin is told who can add an agent, not sent to a page that refuses them", async () => {
+    const settings = await (
+      await get("/acme/vault/settings", teamAdminCookie)
+    ).text();
+    expect(settings).toContain(
+      "No agents exist on this forge yet. An admin can add one.",
+    );
+    expect(settings).not.toContain('href="/settings/crew"');
+
+    const refused = await get("/settings/crew", teamAdminCookie);
+    expect(refused.status).toBe(404);
+  });
+
+  test("the app page's 'Add someone' leads unbroken to the door an agent is made through, with nothing dev-only in the way", async () => {
+    const appPage = await (await get("/alice/pad", ownerCookie)).text();
+    expect(appPage).toContain("Nobody yet");
+    expect(appPage).toContain('href="/alice/pad/settings">Add someone.');
+
+    const settings = await (
+      await get("/alice/pad/settings", ownerCookie)
+    ).text();
+    expect(settings).toContain('href="/settings/crew"');
+
+    const door = await get("/settings/crew", ownerCookie);
+    expect(door.status).toBe(200);
+    const doorBody = await door.text();
+    expect(doorBody).toContain("New agent");
   });
 });
 

@@ -52,13 +52,33 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
     (agent) => !onCrew.has(agent.user.id),
   );
 
+  const forgeAdmin = ctx.auth.user?.isAdmin === true;
   const rows =
     crew.length === 0
-      ? empty({
-          icon: "bot",
-          title: "Nobody yet",
-          note: "Add an agent below and tell it what you want.",
-        })
+      ? empty(
+          available.length > 0
+            ? {
+                icon: "bot",
+                title: "Nobody yet",
+                note: "Add an agent below and tell it what you want.",
+              }
+            : forgeAdmin
+              ? {
+                  icon: "bot",
+                  title: "Nobody yet",
+                  note: "No agents exist on this forge yet.",
+                  action: btn("Add an agent", {
+                    href: "/settings/crew",
+                    variant: "primary",
+                    icon: "plus",
+                  }),
+                }
+              : {
+                  icon: "bot",
+                  title: "Nobody yet",
+                  note: "No agents exist on this forge yet. An admin can add one.",
+                },
+        )
       : listCard(
           crew.map((c) =>
             row({
