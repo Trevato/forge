@@ -90,6 +90,15 @@ const DEV_WORDS: readonly { pattern: RegExp; because: string }[] = [
     pattern: /Close issue\b/,
     because: "the studio's own word for a tell is tell",
   },
+  {
+    // Scoped to a badge's own content — "failed" also rides inside the
+    // legitimate `serving · tests failed` phrase (`envPhrase`), which does
+    // not start a badge with the bare word. `stopped` is not here: it is
+    // also a studio word in its own right, for a run the crew stopped on.
+    pattern: /<span class="badge"[^>]*>\s*(?:failed|deploying)\s*<\/span>/,
+    because:
+      "envPhrase's word is the studio's word for production — 'not up' or 'starting', never the runtime's own EnvState (#201)",
+  },
 ];
 
 /**

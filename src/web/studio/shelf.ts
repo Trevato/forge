@@ -33,7 +33,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
-import { dot, pill, row, time, type Tone } from "../ui.ts";
+import { dot, envPhrase, envTone, pill, row, time } from "../ui.ts";
 import { decisionsFor, type Decision } from "./asks.ts";
 import { withLikely } from "./leans.ts";
 import { pullWord, runWord, type WordCtx } from "./words.ts";
@@ -104,7 +104,6 @@ export async function shelfRows(
         ? []
         : runtime.status(record);
     const production = envs.find((e) => e.env === "production");
-    const state = production?.state ?? "stopped";
     const latest = latestRuns.get(repo.id);
     // A run still in flight is the thing that is moving, and outranks a
     // change sitting open; once nothing is moving, an open change — an
@@ -132,12 +131,8 @@ export async function shelfRows(
         ? undefined
         : actors.get(latest.actorId)?.username;
     const asks = asksByRepo.get(repo.id) ?? 0;
-    const tone: Tone =
-      state === "running"
-        ? "success"
-        : state === "failed"
-          ? "danger"
-          : "default";
+    const tone = envTone(production?.state);
+    const live = envPhrase(production);
     const happening =
       word === undefined
         ? stuck.has(repo.id)
@@ -164,13 +159,7 @@ export async function shelfRows(
         ? html`${repo.description} · `
         : null}${happening}`,
       trail: html`${asks > 0 ? pill(`${asks} asks you`, "accent") : null}
-        <span class="badge" data-tone="${tone}"
-          >${state === "running"
-            ? "live"
-            : state === "stopped"
-              ? "not running"
-              : state}</span
-        >`,
+        <span class="badge" data-tone="${tone}">${live.word}</span>`,
     });
   }));
 }

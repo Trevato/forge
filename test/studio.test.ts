@@ -206,7 +206,7 @@ describe("the studio", () => {
     // The bytes the home rendered before the row moved into its own
     // module, escaped so no formatter can reflow them.
     expect(shelfRow).toBe(
-      "<li>\n    <a href=\"/alice/notes\" class=\"row\"\n  \n  data-nav tabindex=\"-1\"><span class=\"row-lead\"><span\n    class=\"dot\"\n    \n  ></span></span>\n    <span class=\"row-main\">\n      <span\n        class=\"row-title\"\n        title=\"a place for notes\"\n        >notes</span\n      >\n      <span class=\"row-meta\">a place for notes · <span class=\"muted\">quiet — tell the crew something</span></span>\n    </span>\n    <span class=\"row-trail\">\n        <span class=\"badge\" data-tone=\"default\"\n          >not running</span\n        ></span></a>\n  </li>",
+      "<li>\n    <a href=\"/alice/notes\" class=\"row\"\n  \n  data-nav tabindex=\"-1\"><span class=\"row-lead\"><span\n    class=\"dot\"\n    \n  ></span></span>\n    <span class=\"row-main\">\n      <span\n        class=\"row-title\"\n        title=\"a place for notes\"\n        >notes</span\n      >\n      <span class=\"row-meta\">a place for notes · <span class=\"muted\">quiet — tell the crew something</span></span>\n    </span>\n    <span class=\"row-trail\">\n        <span class=\"badge\" data-tone=\"default\">not running</span></span></a>\n  </li>",
     );
   });
 
@@ -2119,6 +2119,21 @@ describe("the studio head says why the app is not up", () => {
       redirect: "manual",
     }).then((r) => r.text());
 
+  /** The home's own shelf row for this app — the badge issue #201 is about. */
+  const shelfBadge = async (cookie: string): Promise<string> => {
+    const home = await (
+      await fetch(`${base}/`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    const at = home.indexOf('href="/alice/notes"');
+    expect(at).toBeGreaterThan(-1);
+    const start = home.lastIndexOf("<li>", at);
+    const row = home.slice(start, home.indexOf("</li>", at) + 5);
+    return row.match(/<span class="badge"[^>]*>([\s\S]*?)<\/span>/)?.[1] ?? "";
+  };
+
   const signIn = async (username: string): Promise<string> =>
     (
       (
@@ -2251,6 +2266,17 @@ describe("the studio head says why the app is not up", () => {
     expect(theirs).not.toContain('href="/alice/notes/app/production/open"');
   });
 
+  // Issue #201: the shelf used to print the runtime's raw `EnvState` for a
+  // failed or deploying production, disagreeing with the app's own head
+  // above — which has always spoken the studio's five-ish words.
+  test("a failed production reads 'not up' on the home shelf too, never the runtime's own word 'failed'", async () => {
+    put({
+      lastError: "the deploy failed: <install> exited 1",
+      lastRunId: deploy,
+    });
+    expect(await shelfBadge(writer)).toBe("not up");
+  });
+
   test("a stopped production says it is not running and offers Redeploy, not Stop — and no live link to the host", async () => {
     put({ lastRunId: deploy });
     const mine = await head(writer);
@@ -2259,6 +2285,7 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).not.toContain('action="/alice/notes/app/production/stop"');
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
     expect(mine).toContain('title="Not running"');
+    expect(await shelfBadge(writer)).toBe("not running");
   });
 
   test("a deploying production says so where the button was, not a link to a host nothing is serving yet", async () => {
@@ -2269,6 +2296,9 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).toContain("starting");
     expect(mine).not.toContain('href="/alice/notes/app/production/open"');
     expect(mine).toContain('title="Still deploying"');
+    // The runtime's own word for this state is "deploying" — the shelf
+    // says "starting" instead, same as the head above.
+    expect(await shelfBadge(writer)).toBe("starting");
   });
 
   test("a serving app with red tests still reads as serving, with the failure in its own words, and is still open-able", async () => {
@@ -2287,6 +2317,7 @@ describe("the studio head says why the app is not up", () => {
     expect(mine).not.toContain("not up");
     expect(mine).toContain("serving · tests failed: 1 of 3 tests failed");
     expect(mine).toContain('href="/alice/notes/app/production/open"');
+    expect(await shelfBadge(writer)).toBe("serving · tests failed");
   });
 });
 
