@@ -74,6 +74,8 @@ async function sh(args: string[], cwd: string) {
 }
 
 import { identityKey } from "../src/apps/proxy.ts";
+import { scaffoldFiles } from "../src/apps/scaffold.ts";
+import { parseCheck } from "../src/apps/manifest.ts";
 describe("apps: production, previews, data, gates, crew", () => {
   let dataDir: string;
   let work: string;
@@ -1428,5 +1430,39 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
       redirect: "manual",
     });
     expect(anonymous.status).toBe(404);
+  });
+});
+
+describe("a new app's own words promise only the check the forge runs (issue #192)", () => {
+  const files = scaffoldFiles({ name: "hello", description: "A place for notes" });
+  const content = (path: string): string => {
+    const file = files.find((f) => f.path === path);
+    if (file === undefined || typeof file.content !== "string")
+      throw new Error(`scaffold has no text file at ${path}`);
+    return file.content;
+  };
+
+  // A sentence that talks about both "check" and "pull" is a sentence
+  // claiming the forge checks the pull — true only when forge.json declares
+  // one (`check`), since an app's own `test` runs beside its deploy instead.
+  const promisesACheck = (prose: string): boolean =>
+    prose
+      .split(/(?<=[.!?])\s+/)
+      .some((sentence) => /\bcheck/i.test(sentence) && /\bpull/i.test(sentence));
+
+  test("forge.json declares no separate check, and the prose does not claim one", () => {
+    const checked = parseCheck(content("forge.json"), content("package.json"));
+    expect(checked.ok).toBe(true);
+    const declaresCheck = checked.ok && checked.value !== undefined;
+    expect(declaresCheck).toBe(false);
+    expect(promisesACheck(content("README.md"))).toBe(declaresCheck);
+    expect(promisesACheck(content("AGENTS.md"))).toBe(declaresCheck);
+  });
+
+  test("the README and AGENTS.md agree on what app.test actually does", () => {
+    for (const path of ["README.md", "AGENTS.md"]) {
+      expect(content(path)).toContain("app.test");
+      expect(content(path)).toMatch(/beside/);
+    }
   });
 });
