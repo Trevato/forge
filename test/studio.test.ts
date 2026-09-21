@@ -363,6 +363,43 @@ describe("the studio", () => {
     expect(getUserByName(app.db, "scout")).toBeDefined();
   });
 
+  test("a tell shipped long ago still reads shipped once it is buried under 250 later events", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "Buried tell",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/buried",
+      base: "main",
+      message: "Buried",
+      files: [{ path: "BURIED.md", content: "buried\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Buried",
+      body: `Closes #${told.value.number}`,
+      baseBranch: "main",
+      headBranch: "feature/buried",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const merged = await mergePull(app, alice, repo, opened.value, "squash");
+    if (!merged.ok) throw new Error(String(merged.error));
+    expect(getIssue(app.db, repo.id, told.value.number)?.state).toBe("closed");
+
+    // 250 events of other kinds, appended after the merge, so a scan of the
+    // most recent 200 events of any kind would never reach the one that
+    // actually closed this issue.
+    for (let i = 0; i < 250; i++)
+      app.bus.append({ kind: "push", repoId: repo.id, payload: { n: i } });
+
+    const page = await (
+      await get(`/alice/notes/issues/${told.value.number}`)
+    ).text();
+    expect(page).toContain('data-word="shipped"');
+    expect(page).not.toContain('data-state="closed"');
+  });
+
   test("a pull on an app renders as a studio page — the preview, the look and the decision, no diff; ?mode=dev still renders the diff", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const branch = await commitToBranch(app, alice, repo, {

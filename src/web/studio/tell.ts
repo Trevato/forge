@@ -52,11 +52,12 @@ import {
  * shows. Undefined for an issue closed by hand, or still open. */
 function shippedBy(db: Database, repo: Repo, issue: Issue): Pull | undefined {
   if (issue.state !== "closed") return undefined;
-  const closed = listEvents(db, { repoId: repo.id, limit: 200 }).find(
-    (e) =>
-      e.kind === "issue.closed" &&
-      Number(e.payload.number) === issue.number &&
-      e.payload.by === "merge",
+  const closed = listEvents(db, {
+    repoId: repo.id,
+    kind: "issue.closed",
+    limit: 200,
+  }).find(
+    (e) => Number(e.payload.number) === issue.number && e.payload.by === "merge",
   );
   if (closed === undefined) return undefined;
   const number = Number(closed.payload.pull);
