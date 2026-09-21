@@ -830,6 +830,9 @@ describe("the studio", () => {
     ).text();
     expect(dev).toContain(pull.headBranch);
     expect(dev).not.toContain("data-word=");
+    // A green pull left open now asks the front door too (#208) — close it
+    // so it does not linger into a later test's own count of asks.
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
   });
 
   test("every run is the run list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
@@ -951,6 +954,9 @@ describe("the studio", () => {
       await get("/alice/notes/changes?word=shipped")
     ).text();
     expect(changeOther).not.toContain("Door test: a change");
+    // A green pull left open now asks the front door too (#208) — close it
+    // so it does not linger into a later test's own count of asks.
+    expect(setIssueState(app, alice, repo, doorPull, "closed").ok).toBe(true);
   });
 
   test("/tells and /changes send a dev-mode viewer, or ?mode=dev, on to /issues and /pulls — the one canonical dev address", async () => {
@@ -6144,5 +6150,177 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       `/alice/notes/runs/${run?.id}`,
     );
     expect(flashOf(queued)).toContain("Redeploying production.");
+  });
+});
+
+describe("the front door asks about a person's own change too (#208)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let scoutUser: User;
+  let aliceCookie: string;
+  let bobCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const home = (cookie: string) =>
+    fetch(`${base}/`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  const appPage = (cookie: string) =>
+    fetch(`${base}/alice/front`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  const greenPull = async (
+    who: User,
+    name: string,
+  ): Promise<Pull> => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: `door/${name}`,
+      base: "main",
+      message: `Door ${name}`,
+      files: [{ path: `${name}.md`, content: `${name}\n` }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, who, repo, {
+      title: `Door ${name}`,
+      body: "",
+      baseBranch: "main",
+      headBranch: `door/${name}`,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+    return pull;
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-own-change-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    aliceCookie = await signIn("alice");
+    bobCookie = await signIn("bob");
+
+    const made = await createRepo(app, alice, {
+      name: "front",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "f\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "front" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, alice, { username: "scout-door" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    expect(addToCrew(app, alice, repo, "scout-door").ok).toBe(true);
+    scoutUser = getUserByName(app.db, "scout-door")!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a person's own green change is a look card on the front door, worded as her own rather than as the crew's", async () => {
+    const mine = await greenPull(alice, "mine");
+    const page = await home(aliceCookie);
+    expect(page).toContain(`value="look:${mine.id}"`);
+    expect(page).toContain(`form="ask-look:${mine.id}"`);
+    // Ship is offered, the same button a crew pull gets.
+    expect(page).toMatch(
+      new RegExp(`form="ask-look:${mine.id}"[^>]*>\\s*Ship`),
+    );
+    // Worded as her own — nobody "finished" it for her.
+    expect(page).toContain("is green — ready for a look");
+    expect(page).not.toContain("alice finished");
+    expect(page).toContain("1 asks you");
+    expect(setIssueState(app, alice, repo, mine, "closed").ok).toBe(true);
+  });
+
+  test("the same card renders on the app's own studio page", async () => {
+    const mine = await greenPull(alice, "app-page");
+    const page = await appPage(aliceCookie);
+    expect(page).toContain(`value="look:${mine.id}"`);
+    expect(page).toContain("is green — ready for a look");
+    expect(setIssueState(app, alice, repo, mine, "closed").ok).toBe(true);
+  });
+
+  test("the crew's own green change keeps its own wording, unchanged", async () => {
+    const crewPull = await greenPull(scoutUser, "crew");
+    const page = await home(aliceCookie);
+    expect(page).toContain(`value="look:${crewPull.id}"`);
+    expect(page).toContain("scout-door finished it; the check is green");
+    expect(setIssueState(app, alice, repo, crewPull, "closed").ok).toBe(true);
+  });
+
+  test("a reader who cannot write the app is asked nothing and sees no money", async () => {
+    const mine = await greenPull(alice, "reader");
+    const page = await home(bobCookie);
+    expect(page).not.toContain(`value="look:${mine.id}"`);
+    expect(page).not.toContain("front");
+    expect(page).toMatch(
+      /<span id="topbar-asks" data-live="[^"]*"\s*>\s*<\/span/,
+    );
+    expect(setIssueState(app, alice, repo, mine, "closed").ok).toBe(true);
+  });
+
+  test("the shelf pill and the panel agree, counting a person's own change once", async () => {
+    const a = await greenPull(alice, "pill-a");
+    const b = await greenPull(scoutUser, "pill-b");
+    const page = await home(aliceCookie);
+    const picks = page.match(/class="studio-ask-pick"/g)?.length ?? 0;
+    expect(picks).toBe(2);
+    expect(page).toContain("2 asks you");
+    expect(setIssueState(app, alice, repo, a, "closed").ok).toBe(true);
+    expect(setIssueState(app, alice, repo, b, "closed").ok).toBe(true);
   });
 });

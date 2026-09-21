@@ -45,6 +45,8 @@ export interface Issue {
   readonly assigneeName: string | null;
   /** Whether the assignee is a crew member. */
   readonly assigneeIsAgent: boolean;
+  /** Whether the author is a crew member, not a person. */
+  readonly authorIsAgent: boolean;
 }
 
 interface IssueRow {
@@ -65,10 +67,11 @@ interface IssueRow {
   assignee_id: string | null;
   assignee_name: string | null;
   assignee_is_agent: number | null;
+  author_is_agent: number;
 }
 
 const SELECT = `
-  SELECT issue.*, user.username AS author_name,
+  SELECT issue.*, user.username AS author_name, user.is_agent AS author_is_agent,
          assignee.username AS assignee_name, assignee.is_agent AS assignee_is_agent
   FROM issue JOIN user ON user.id = issue.author_id
   LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
@@ -92,6 +95,7 @@ function toIssue(row: IssueRow): Issue {
     assigneeId: row.assignee_id,
     assigneeName: row.assignee_name,
     assigneeIsAgent: row.assignee_is_agent === 1,
+    authorIsAgent: row.author_is_agent === 1,
   };
 }
 
@@ -152,6 +156,31 @@ export function listOpenAgentPullsVisibleTo(
     .query<IssueRow, [string, number]>(
       `${SELECT} JOIN repo ON repo.id = issue.repo_id
        WHERE issue.kind = 'pull' AND issue.state = 'open' AND user.is_agent = 1
+         AND ${repoVisible(true)}
+       ORDER BY issue.updated_at DESC LIMIT ?2`,
+    )
+    .all(viewer.id, Math.min(Math.max(limit, 1), 200))
+    .map(toIssue);
+}
+
+/**
+ * Open pulls in repositories the viewer can see, newest activity first —
+ * whoever opened them. The same query as `listOpenAgentPullsVisibleTo`
+ * without the crew-only filter, for a surface that judges a change by what
+ * it does rather than by who typed it (the studio's asks panel, the board,
+ * a change's own Decide card). Autonomy code keeps reading the agent-only
+ * list above: what a person is *shown* here must never widen what the crew
+ * is left to decide on its own.
+ */
+export function listOpenPullsVisibleTo(
+  db: Database,
+  viewer: { id: string },
+  limit = 25,
+): Issue[] {
+  return db
+    .query<IssueRow, [string, number]>(
+      `${SELECT} JOIN repo ON repo.id = issue.repo_id
+       WHERE issue.kind = 'pull' AND issue.state = 'open'
          AND ${repoVisible(true)}
        ORDER BY issue.updated_at DESC LIMIT ?2`,
     )

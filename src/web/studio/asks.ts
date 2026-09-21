@@ -13,7 +13,7 @@ import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
 import { latestDecision } from "../../core/decisions.ts";
 import {
   listComments,
-  listOpenAgentPullsVisibleTo,
+  listOpenPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
@@ -93,16 +93,21 @@ interface AskCandidate {
   readonly repo: Repo;
   readonly pull?: Pull;
   readonly who: string;
+  /** Whether the author is a crew member — a "look" card words itself
+   * differently for a person's own change than for the crew's (below).
+   * Absent for "paused", which names no author at all. */
+  readonly authorIsAgent?: boolean;
   /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
   readonly tries?: number;
   readonly stoppedByDecider?: boolean;
 }
 
 /**
- * The crew's open pulls the viewer may land, sorted into what asks them:
- * stopped (red past the crew's own limit since a person last spoke), or
- * green and waiting for a look. Plus a repository paused at its ceiling.
- * Every read here is bounded by the pulls a person can see or the
+ * Open pulls the viewer may land, sorted into what asks them: stopped (red
+ * past the crew's own limit since a person last spoke — the crew's own
+ * pulls only, since only the crew retries automatically), or green and
+ * waiting for a look, whoever opened it. Plus a repository paused at its
+ * ceiling. Every read here is bounded by the pulls a person can see or the
  * repositories handed in — never by a loop that queries once per app: the
  * ceiling check reads spend and crew for every repository in one query
  * each (`spentTodayForRepos`, `crewForRepos`), not `autonomyStatus` per
@@ -121,7 +126,7 @@ function askCandidatesFor(
   // sees the dollar figure a "paused" card would otherwise carry.
   const repos = allRepos.filter((r) => canSeeOwnerFacts(db, r, user));
   const byId = new Map(repos.map((r) => [r.id, r]));
-  const pulls = listOpenAgentPullsVisibleTo(db, user, 50).filter((p) =>
+  const pulls = listOpenPullsVisibleTo(db, user, 50).filter((p) =>
     byId.has(p.repoId),
   );
   const checks = latestRunsForIssues(
@@ -138,6 +143,10 @@ function askCandidatesFor(
     // The crew is on it: that is working, not a question for a person.
     if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
     if (check?.state === "failed") {
+      // Automatic retries, and the limit that stops them, are the crew's
+      // own machinery — a person's own failing pull never accrues tries,
+      // so it never earns a "stopped" card; it just stays waiting.
+      if (!issue.authorIsAgent) continue;
       const since = lastHumanWord(ctx, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
       const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
@@ -152,13 +161,16 @@ function askCandidatesFor(
           repo,
           pull,
           who,
+          authorIsAgent: true,
           tries,
           stoppedByDecider: stopped,
         });
     } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
       // Autonomous repositories look at their own green pulls: the decider,
-      // then the crew's reviewer. Everything else waits for a person.
-      out.push({ kind: "look", repo, pull, who });
+      // then the crew's reviewer. Everything else waits for a person —
+      // whoever opened it, since a green change asks to be looked at
+      // whether the crew wrote it or a person did.
+      out.push({ kind: "look", repo, pull, who, authorIsAgent: issue.authorIsAgent });
     }
   }
   const crew = crewForRepos(
@@ -226,14 +238,21 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
     }
     if (c.kind === "look" && c.pull) {
       const picture = pictureOf(c.repo, c.pull);
+      // The crew's own words say who finished it; a person's own change
+      // gets the wording that is true of it — nobody "finished" it for
+      // them, it is simply green and waiting.
       return {
         kind: "look",
         id: `look:${c.pull.id}`,
         repo: c.repo,
         pull: c.pull,
         who: c.who,
-        says: `${c.who} finished "${c.pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
-        short: `${c.who} finished it; the check is green`,
+        says: c.authorIsAgent
+          ? `${c.who} finished "${c.pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`
+          : `"${c.pull.title}" is green — ready for a look. Ship it, or say what is off.`,
+        short: c.authorIsAgent
+          ? `${c.who} finished it; the check is green`
+          : `green — ready for a look`,
         ...(picture === undefined ? {} : { picture }),
       };
     }
