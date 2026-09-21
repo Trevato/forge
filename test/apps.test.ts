@@ -76,6 +76,11 @@ async function sh(args: string[], cwd: string) {
 import { identityKey } from "../src/apps/proxy.ts";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
+import {
+  appNameJs,
+  deriveAppName,
+  STOP_WORDS,
+} from "../src/web/pages/apps-name.ts";
 describe("apps: production, previews, data, gates, crew", () => {
   let dataDir: string;
   let work: string;
@@ -1447,14 +1452,12 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
     });
   }
 
-  test("a sentence alone creates an app named its slug", async () => {
+  test("a sentence alone creates an app named its slug, articles dropped", async () => {
     const res = await submitNewApp({
       description: "Keep a shared grocery list",
     });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe(
-      "/nadia/keep-a-shared-grocery-list",
-    );
+    expect(res.headers.get("location")).toBe("/nadia/keep-shared");
   });
 
   test("a second app from the same sentence gets a distinct name", async () => {
@@ -1462,9 +1465,7 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
       description: "Keep a shared grocery list",
     });
     expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe(
-      "/nadia/keep-a-shared-grocery-list-2",
-    );
+    expect(res.headers.get("location")).toBe("/nadia/keep-shared-2");
   });
 
   test("a sentence a slug cannot carry asks for a name, sentence intact", async () => {
@@ -1482,6 +1483,32 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
     });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/nadia/groceries");
+  });
+});
+
+describe("deriveAppName: a sentence yields a short, ordinary name (issue #186)", () => {
+  const cases: Array<[string, string | undefined]> = [
+    // Leading articles and small connecting words are dropped.
+    ["a notepad that counts words", "notepad-counts"],
+    ["an app for tracking my plants", "app-tracking"],
+    // Already short: nothing to drop.
+    ["logs", "logs"],
+    // Only stop words: falls back to the window itself, never empty.
+    ["the a of it", "the-a"],
+    // A script this ASCII slug cannot carry: no usable name.
+    ["猫を飼っています", undefined],
+    // Punctuation only: unchanged from before.
+    ["!!! ??? ...", undefined],
+  ];
+
+  for (const [sentence, expected] of cases) {
+    test(`${JSON.stringify(sentence)} -> ${JSON.stringify(expected)}`, () => {
+      expect(deriveAppName(sentence)).toBe(expected);
+    });
+  }
+
+  test("appNameJs embeds the same stop words, window and cap as deriveAppName", () => {
+    expect(appNameJs).toContain(JSON.stringify(Array.from(STOP_WORDS)));
   });
 });
 
