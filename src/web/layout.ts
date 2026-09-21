@@ -461,10 +461,17 @@ export function page(options: PageOptions, status = 200): Response {
         <meta property="og:type" content="website" />
         <meta property="og:title" content="${options.title}" />
         <meta property="og:description" content="${pageDescription(options)}" />
-        <meta
-          property="og:url"
-          content="${ctx.url.origin}${ctx.url.pathname}"
-        />
+        ${
+          // Only a page that exists has a canonical address. An error page
+          // never echoes the path that was asked for: two dead links must be
+          // the same bytes, or the difference tells a guesser something.
+          status === 200
+            ? html`<meta
+                property="og:url"
+                content="${ctx.url.origin}${ctx.url.pathname}"
+              />`
+            : null
+        }
         <meta
           property="og:image"
           content="${ctx.url.origin}/icons/forge-512.png"
