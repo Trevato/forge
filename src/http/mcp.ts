@@ -101,7 +101,7 @@ function askOut(ctx: Ctx, d: Decision) {
     pull: d.pull?.number ?? null,
     likely: d.likely ?? null,
     takes:
-      d.kind === "look"
+      d.kind === "look" || d.kind === "wall"
         ? ["ship", "close"]
         : d.kind === "stopped"
           ? ["close"]
@@ -182,7 +182,7 @@ const TOOLS: readonly Tool[] = [
       // An ask that was answered since it was listed is simply gone.
       if (d === undefined || d.pull === undefined)
         return bad("no_such_ask", "that ask is not waiting any more");
-      if (action === "ship" && d.kind !== "look")
+      if (action === "ship" && d.kind !== "look" && d.kind !== "wall")
         return bad("not_green", "only a green change can ship");
       const name = `${d.repo.ownerName}/${d.repo.name}#${d.pull.number}`;
       if (action === "close") {

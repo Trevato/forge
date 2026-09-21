@@ -32,7 +32,11 @@ import {
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
-import { latestDecision, resolveOpen } from "../core/decisions.ts";
+import {
+  latestDecision,
+  recordDecision,
+  resolveOpen,
+} from "../core/decisions.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
@@ -776,9 +780,6 @@ export function bringUpToDate(
  * merge. Only in `autonomous`; `assisted` leaves every green pull for a
  * look.
  */
-/** Pulls told once, per head, that they wait at the wall. */
-const walled = new Map<string, string>();
-
 export async function landIfGreen(
   app: App,
   repo: Repo,
@@ -815,12 +816,34 @@ export async function landIfGreen(
   // green and open, on the studio's cards, until someone lands it.
   const wall = await wallOf(dir, baseTip, pull.headOid);
   if (wall !== undefined) {
-    if (walled.get(pull.id) !== pull.headOid) {
-      walled.set(pull.id, pull.headOid);
+    // Once per head, as a ledger row: it is what puts the card on the
+    // studio, and what the audit's third lens will read as a crossing.
+    const earlier = latestDecision(app.db, pull.id, "land");
+    const told =
+      earlier?.answer === "wall" &&
+      typeof earlier.state === "object" &&
+      earlier.state !== null &&
+      (earlier.state as { head?: unknown }).head === pull.headOid;
+    if (!told) {
+      const cells = wall.unsound ?? wall.loosened.map(wallSentence);
+      recordDecision(app.db, {
+        kind: "land",
+        repoId: repo.id,
+        issueId: pull.id,
+        state: {
+          head: pull.headOid,
+          cells,
+          unsound: wall.unsound !== undefined,
+        },
+        answer: "wall",
+        p: 1,
+        by: "wall",
+        ms: 0,
+      });
       log.info("green; crosses the wall, left to a person", {
         repo: `${repo.ownerName}/${repo.name}`,
         pull: pull.number,
-        cells: (wall.unsound ?? wall.loosened.map(wallSentence)).join("; "),
+        cells: cells.join("; "),
       });
     }
     return false;

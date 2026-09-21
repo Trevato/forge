@@ -11,10 +11,7 @@
  * pull the crew stopped on, or a green one waiting for a look.
  */
 
-import {
-  addComment,
-  setIssueStateThrough,
-} from "../../actions/issues.ts";
+import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { tell } from "../../actions/tell.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
@@ -92,7 +89,7 @@ import { onYouCard } from "./site.ts";
 
 // ---- decisions: what asks a person ----
 
-export type DecisionKind = "stopped" | "look" | "paused";
+export type DecisionKind = "stopped" | "look" | "wall" | "paused";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -128,6 +125,8 @@ const CARD_OPTIONS: Record<DecisionKind, Readonly<Record<string, string>>> = {
     preview: "Open the preview first; it must be seen before shipping.",
   },
   paused: { settings: "Raise the ceiling.", wait: "Wait for midnight." },
+  // A wall is a person's alone; the decider is never asked which way.
+  wall: {},
 };
 
 /**
@@ -143,6 +142,7 @@ export async function withLikely(
   return Promise.all(
     decisions.map(async (d) => {
       const options = Object.keys(CARD_OPTIONS[d.kind]);
+      if (options.length === 0) return d;
       const decided = await decideOr(
         decider,
         {
@@ -233,6 +233,27 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
     const who = issue.authorName;
     // The crew is on it: that is working, not a question for a person.
     if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
+    // At the wall: green, and a change of policy the crew left to a person.
+    const land = latestDecision(db, issue.id, "land");
+    const atWall =
+      land?.answer === "wall" &&
+      typeof land.state === "object" &&
+      land.state !== null &&
+      (land.state as { head?: unknown }).head === pull.headOid;
+    if (atWall && check?.state === "ok") {
+      const cells = (land.state as { cells?: unknown }).cells;
+      const n = Array.isArray(cells) ? cells.length : 0;
+      out.push({
+        kind: "wall",
+        id: `wall:${pull.id}`,
+        repo,
+        pull,
+        who,
+        says: `${who} finished "${pull.title}" and the check is green, but it changes the policy: ${n === 1 ? "one door opens" : `${n} doors open`} wider than before. The crew leaves that to you. Read the cells, then land it or say what is off.`,
+        short: `${who} finished it; it opens ${n === 1 ? "a door" : `${n} doors`} wider`,
+      });
+      continue;
+    }
     if (check?.state === "failed") {
       const since = lastHumanWord(ctx, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
@@ -360,7 +381,7 @@ function decisionForm(d: Decision): Html | null {
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
       <input type="hidden" name="state" value="closed" />
     </form>`;
-  if (d.kind === "look")
+  if (d.kind === "look" || d.kind === "wall")
     return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
       <input type="hidden" name="pull" value="${pull.number}" />
     </form>`;
@@ -398,6 +419,17 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
       size: "sm",
       ...leanVariant(d, "look", undefined),
     })}${leanNote(d, "look")}`;
+  if (d.kind === "wall" && pull)
+    return html`${btn("Read the cells", {
+      href: `${base}/pulls/${pull.number}`,
+      size: "sm",
+      variant: "primary",
+    })}
+    ${btn("Land it", { size: "sm", form: askFormId(d) })}
+    ${btn("Not like this", {
+      href: `${base}/pulls/${pull.number}#comment-body`,
+      size: "sm",
+    })}`;
   if (d.kind === "look" && pull)
     return html`${btn("Ship", {
       size: "sm",
@@ -1086,7 +1118,13 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
 function decisionRow(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const glyph =
-    d.kind === "stopped" ? "alert" : d.kind === "look" ? "eye" : "clock";
+    d.kind === "stopped"
+      ? "alert"
+      : d.kind === "look"
+        ? "eye"
+        : d.kind === "wall"
+          ? "shield"
+          : "clock";
   // The title links; the row itself does not, because it holds controls
   // and a control inside an anchor is not HTML a browser will keep together.
   const href = d.pull ? `${base}/pulls/${d.pull.number}` : base;

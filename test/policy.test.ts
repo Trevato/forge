@@ -8,6 +8,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { enableApp } from "../src/actions/apps.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
@@ -16,6 +18,7 @@ import {
 } from "../src/actions/repos.ts";
 import { landIfGreen } from "../src/crew/autonomy.ts";
 import { getPull } from "../src/core/pulls.ts";
+import { latestDecision } from "../src/core/decisions.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { readContract, type Contract } from "../src/contract/can.ts";
 import { loosened, wallOf, wallSentence } from "../src/contract/policy.ts";
@@ -237,7 +240,15 @@ describe("a pull at the wall", () => {
       finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
       return pull;
     };
-    const opening = await openPull(app, alice, repo, {
+    // The studio asks about apps, and about the crew's own pulls.
+    expect(enableApp(app, alice, repo).ok).toBe(true);
+    const made = await createAgent(app, alice, {
+      username: "bot",
+      brief: "Be brief.",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const opening = await openPull(app, made.value.user, repo, {
       title: "Anyone may add notes",
       baseBranch: "main",
       headBranch: "open-it",
@@ -255,6 +266,31 @@ describe("a pull at the wall", () => {
     expect(await landIfGreen(app, fresh(), wall)).toBe(false);
     expect(await landIfGreen(app, fresh(), wall)).toBe(false);
     expect(getPull(app.db, repo.id, wall.number)!.mergedAt).toBeNull();
+    // Once, as a ledger row, which is what puts it on the studio as a card
+    // the decider never leans on.
+    const row = latestDecision(app.db, wall.id, "land");
+    expect(row?.answer).toBe("wall");
+    expect(row?.by).toBe("wall");
+    expect((row?.state as { cells: string[] }).cells).toEqual([
+      "note.create as anon: was no, now yes",
+    ]);
+    const signedIn = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const studio = await (
+      await fetch(`${servers.url}/`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(studio).toContain("it changes the policy: one door opens wider");
+    expect(studio).toContain("Read the cells");
+    expect(studio).toContain("Land it");
     // The same crew lands the tightening one without a word.
     const tight = green(closing.value.number);
     expect(await landIfGreen(app, fresh(), tight)).toBe(true);

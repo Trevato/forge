@@ -206,10 +206,16 @@ open on the studio's cards until a person lands it. A head whose contract
 does not read is at the wall too. `test/policy.test.ts` proves the crew
 stops there and lands a tightening pull in the same breath.
 
+The crossing is a ledger row (`land`, answered `wall`, by `wall`) written
+once per head, which is what puts the pull on the studio as a card of its
+own: "it changes the policy: one door opens wider", with **Read the cells**,
+**Land it** and **Not like this**. The decider is never asked which way; a
+wall is a person's alone.
+
 ## What is not here yet
 
-- The wall as a ledger row and a studio card of its own, and the weekly
-  policy review that batches crossings.
+- The weekly policy review that batches crossings, and the third lens:
+  what changed, from contract diffs, crossings and probe history.
 - `sync`, `limits` and events as contract fields. They join the table when
   something enforces them, not before.
 - Identities beyond `user` and `admin`. The forge signs one role today; the
