@@ -9,18 +9,25 @@
  *
  * Every read is made once for the whole shelf and never once per row: the
  * app records in one query, the newest run of every app in one, who ran them
- * in one, the asks in one pass. The words are gathered together because
- * `runWord` reads git. A caller that has already read what asks the viewer —
- * the home draws its asks panel from the same list — hands that list in
- * rather than paying for it twice.
+ * in one, the newest open change of every app in one, the asks in one pass.
+ * The words are gathered together because `runWord` reads git. A caller that
+ * has already read what asks the viewer — the home draws its asks panel from
+ * the same list — hands that list in rather than paying for it twice.
+ *
+ * What a row says it is doing, in order: a run still in flight (that is the
+ * thing moving); else an open change, whoever opened it — the row is about
+ * the app, not about who typed it; else the last run's own word, its
+ * history; else quiet, or told-but-stuck when nobody on the crew can take
+ * it.
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
 import { reposWithUnclaimedTell } from "../../core/issues.ts";
+import { openPullsForRepos } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
-import { latestAgentRunsForRepos } from "../../core/runs.ts";
+import { isTerminal, latestAgentRunsForRepos } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -29,7 +36,7 @@ import { html, type Html } from "../html.ts";
 import { dot, pill, row, time, type Tone } from "../ui.ts";
 import { decisionsFor, type Decision } from "./asks.ts";
 import { withLikely } from "./leans.ts";
-import { runWord } from "./words.ts";
+import { pullWord, runWord, type WordCtx } from "./words.ts";
 
 /** Reads the caller has already made, so the shelf does not make them again. */
 export interface ShelfReads {
@@ -70,6 +77,12 @@ export async function shelfRows(
       .map((r) => r.actorId)
       .filter((id): id is string => id !== null),
   );
+  // The newest open change of every app, one read — a person's own change
+  // counts here too, not only one an agent run produced.
+  const openPulls = openPullsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
   const decisions = reads.decisions ?? withLikely(ctx, decisionsFor(ctx, repos));
   const asksByRepo = new Map<string, number>();
   for (const d of decisions)
@@ -93,20 +106,29 @@ export async function shelfRows(
     const production = envs.find((e) => e.env === "production");
     const state = production?.state ?? "stopped";
     const latest = latestRuns.get(repo.id);
-    const word =
-      latest === undefined
+    // A run still in flight is the thing that is moving, and outranks a
+    // change sitting open; once nothing is moving, an open change — an
+    // agent's or a person's own — outranks the quiet of the last run's
+    // history.
+    const runIsMoving = latest !== undefined && !isTerminal(latest.state);
+    const openPull = openPulls.get(repo.id);
+    const useOpenPull = openPull !== undefined && !runIsMoving;
+    const wordCtx: WordCtx = {
+      db,
+      dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+      runtime,
+      record,
+    };
+    const word = useOpenPull
+      ? await pullWord(wordCtx, openPull)
+      : latest === undefined
         ? undefined
-        : await runWord(
-            {
-              db,
-              dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-              runtime,
-              record,
-            },
-            latest,
-          );
-    const who =
-      latest?.actorId == null || !ownerFacts.has(repo.id)
+        : await runWord(wordCtx, latest);
+    const who = useOpenPull
+      ? ownerFacts.has(repo.id)
+        ? openPull.authorName
+        : undefined
+      : latest?.actorId == null || !ownerFacts.has(repo.id)
         ? undefined
         : actors.get(latest.actorId)?.username;
     const asks = asksByRepo.get(repo.id) ?? 0;
@@ -117,7 +139,7 @@ export async function shelfRows(
           ? "danger"
           : "default";
     const happening =
-      latest === undefined || word === undefined
+      word === undefined
         ? stuck.has(repo.id)
           ? html`<span class="muted"
               >told — nobody on the crew to take it</span
@@ -129,7 +151,9 @@ export async function shelfRows(
             ${who ? html`· ${who}` : null}
             ${word.word === "working"
               ? html`· now`
-              : html`· ${time(latest.finishedAt ?? latest.createdAt)}`}`;
+              : useOpenPull
+                ? html`· ${time(openPull.updatedAt)}`
+                : html`· ${time(latest!.finishedAt ?? latest!.createdAt)}`}`;
     return row({
       href: repoBase(repo),
       nav: true,

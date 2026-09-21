@@ -219,6 +219,37 @@ export function listOpenPullsFromHead(
   return joinMany(db, [...getIssuesByIds(db, ids).values()]);
 }
 
+/**
+ * The newest open pull of each repository, in one query — what a shelf row
+ * shows when nothing about the app is moving otherwise: a change waits for
+ * a look whether an agent opened it or a person did, and the row is about
+ * the app, not about who typed it.
+ */
+export function openPullsForRepos(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, Pull> {
+  const out = new Map<string, Pull>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ issue_id: string }, string[]>(
+        `SELECT issue_id FROM (
+           SELECT pull.issue_id AS issue_id,
+                  ROW_NUMBER() OVER (PARTITION BY issue.repo_id ORDER BY issue.created_at DESC) AS rn
+           FROM pull JOIN issue ON issue.id = pull.issue_id
+           WHERE issue.state = 'open' AND issue.repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ) WHERE rn = 1`,
+      )
+      .all(...batch);
+    const issues = getIssuesByIds(db, rows.map((r) => r.issue_id));
+    for (const pull of joinMany(db, [...issues.values()])) out.set(pull.repoId, pull);
+  }
+  return out;
+}
+
 export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;
 
 export function listPulls(

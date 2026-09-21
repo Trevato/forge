@@ -7,9 +7,12 @@
  * apps grow.
  */
 
+import { appsRuntime } from "../../apps/runtime.ts";
+import { openPullsForRepos, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { listActiveRuns } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
+import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { asksJs, liveRegionsJs } from "../client.ts";
@@ -20,8 +23,10 @@ import { btn, card, empty, icon, listCard, row, time } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
 import { appsOf, asksPanel, decisionsFor } from "./asks.ts";
 import { withLikely } from "./leans.ts";
+import { changeHref } from "./nouns.ts";
 import { stopForm } from "./run.ts";
 import { shelfRows } from "./shelf.ts";
+import { pullWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
  * The home in the studio: what asks you first, then your apps as a shelf of
@@ -31,7 +36,8 @@ import { shelfRows } from "./shelf.ts";
  */
 export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const db = ctx.app.db;
-  const { repos: appRepos } = appsOf(ctx, user);
+  const { repos: appRepos, records } = appsOf(ctx, user);
+  const runtime = appsRuntime(ctx.app);
   // Read once, shown twice: the panel below is these same asks, and the
   // shelf counts them into each row's pill.
   const decisions = withLikely(ctx, decisionsFor(ctx, appRepos));
@@ -84,12 +90,16 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       size: "sm",
       title: "The board: a live wall of the crews at work",
     })}`;
-  const now =
+  // Nothing running is not the same as nothing happening: an open change
+  // still waits for a look, an agent's or a person's own, and the rail
+  // links straight to it rather than reporting silence.
+  const openPulls: readonly Pull[] =
     running.length === 0
-      ? card(html`<p class="muted small">Nobody is working right now.</p>`, {
-          head: nowHead,
-        })
-      : listCard(
+      ? [...openPullsForRepos(db, appRepos.map((r) => r.id)).values()]
+      : [];
+  const now =
+    running.length > 0
+      ? listCard(
           running.map((r) => {
             const repo = byId.get(r.repoId)!;
             const actorName =
@@ -121,7 +131,37 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
             });
           }),
           { head: nowHead },
-        );
+        )
+      : openPulls.length === 0
+        ? card(html`<p class="muted small">Nobody is working right now.</p>`, {
+            head: nowHead,
+          })
+        : listCard(
+            await Promise.all(
+              openPulls.slice(0, 10).map(async (pull) => {
+                const repo = byId.get(pull.repoId)!;
+                const info = await pullWord(
+                  {
+                    db,
+                    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+                    runtime,
+                    record: records.get(repo.id),
+                  },
+                  pull,
+                );
+                const href = changeHref(repoBase(repo), pull.number);
+                return row({
+                  href,
+                  nav: true,
+                  lead: icon("eye"),
+                  title: html`<a href="${href}">${pull.title} · ${repo.name}</a>`,
+                  meta: html`${info.note} · ${time(pull.updatedAt)}`,
+                  trail: wordBadge(info.word),
+                });
+              }),
+            ),
+            { head: nowHead },
+          );
 
   const body = html`<h1 class="sr-only">Studio</h1>
   <div class="dash">
