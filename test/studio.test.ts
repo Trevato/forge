@@ -4220,6 +4220,104 @@ describe("a tell nobody on the crew can take is not \"quiet\"", () => {
 });
 
 /**
+ * Issue #226: taking a tell yourself — assigning it to a person, not an
+ * agent — used to drop it clean off "Now": the panel's filter only ever
+ * let an agent-held or unassigned tell through, so a person holding it
+ * counted as nobody. `tellWord`'s own fallback said "not picked up yet"
+ * regardless, so the tell's own page agreed with nothing true either.
+ * Both failed before this change.
+ */
+describe("a tell held by a person still shows on the front door (#226)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let alice: User;
+  let cookie: string;
+  let tell: Issue;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-person-held-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "pad",
+      visibility: "private",
+      description: "a pad for notes",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "pad\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "pad" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const scout = await createAgent(app, alice, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
+
+    const told = openIssue(app, alice, repo, {
+      title: "Give the header a subtitle",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    tell = told.value;
+    // Taken by a person — the owner herself — not routed to the crew.
+    expect(assignIssue(app, alice, repo, tell, alice).ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test('"Now" names the person who holds it, not "Nothing yet"', async () => {
+    const page = await (await get("/alice/pad")).text();
+    expect(page).not.toContain("Nothing yet. Tell the crew something.");
+    expect(page).toContain("Give the header a subtitle");
+    expect(page).toContain("alice");
+    expect(page).not.toContain("not picked up yet");
+  });
+
+  test("the tell's own page agrees with the panel: held, not unpicked", async () => {
+    const page = await (await get(`/alice/pad/issues/${tell.number}`)).text();
+    expect(page).not.toContain("not picked up yet");
+    expect(page).toContain(">alice</a>");
+    expect(page).toContain("has it");
+  });
+});
+
+/**
  * Issue #191: `appShelf`/`shelfRows` used to derive a row from agent runs
  * alone, so a change a person opened by hand — no run anywhere near it —
  * fell to "quiet — tell the crew something" even while it sat green and

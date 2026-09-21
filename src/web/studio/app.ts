@@ -55,6 +55,7 @@ import {
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
+import { tellWord } from "./tell.ts";
 import { pullWord, runWord, wordBadge, type WordCtx } from "./words.ts";
 
 /**
@@ -239,6 +240,18 @@ export async function studioApp(
   const told = openTells.filter(
     (i) => i.assigneeIsAgent && !openByIssue.has(i.number),
   );
+  // A person can hold a tell exactly as an agent can — #224's own rule for
+  // a change applies here too: the front door counts work by what it is,
+  // not by who is doing it. Scoped to `assigneeId`, never widened to every
+  // open tell, so an ordinary unassigned backlog still stays off this
+  // panel.
+  const personHeld = openTells.filter(
+    (i) =>
+      i.assigneeId !== null &&
+      !i.assigneeIsAgent &&
+      i.id !== repo.directionIssueId &&
+      !openByIssue.has(i.number),
+  );
   // With nobody on the crew to build, `tellCrew` cannot route a tell to
   // anyone — it stays unassigned forever, not merely unpicked-up like
   // `waiting` below. Scoped to that one honest cause (never to a tell a
@@ -257,13 +270,14 @@ export async function studioApp(
       : [];
   const everRan = latestRunsForIssues(
     db,
-    [...told, ...untaken].map((i) => i.id),
+    [...told, ...personHeld, ...untaken].map((i) => i.id),
     ["agent"],
   );
   const waiting = told.filter((i) => !everRan.has(i.id)).slice(0, 5);
+  const held = personHeld.filter((i) => !everRan.has(i.id)).slice(0, 5);
   const stuck = untaken.filter((i) => !everRan.has(i.id));
   const issueNumberById = new Map(
-    [...told, ...untaken].map((i) => [i.id, i.number]),
+    [...told, ...personHeld, ...untaken].map((i) => [i.id, i.number]),
   );
   const rowsNow = runs
     .filter((r) => {
@@ -361,6 +375,27 @@ export async function studioApp(
         trail: wordBadge("waiting"),
       });
     }),
+    // Held by a person: `tellWord` — the one place a tell's word is
+    // decided (`studio/tell.ts`) — says so honestly, the same word and
+    // note the tell's own page and "Everything told" already show for it.
+    ...(await Promise.all(
+      held.map(async (i) => {
+        const { word, note } =
+          (await tellWord(wordCtx, repo, i, undefined)) ?? {
+            word: "told" as const,
+            note: "held",
+          };
+        const who = nameFor(i.assigneeName ?? "someone");
+        return row({
+          href: tellHref(base, i.number),
+          nav: true,
+          lead: avatar(who),
+          title: i.title,
+          meta: html`${who} · ${note} · ${time(i.createdAt)}`,
+          trail: wordBadge(word),
+        });
+      }),
+    )),
     ...stuck.map((i) => {
       return row({
         lead: avatar("crew"),

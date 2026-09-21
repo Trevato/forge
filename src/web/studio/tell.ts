@@ -69,9 +69,11 @@ function shippedBy(db: Database, repo: Repo, issue: Issue): Pull | undefined {
  * or closes it — judged by `pullWord`, the one place that fact is decided,
  * so a merged tell reads *shipped* only once production is serving it,
  * same as everywhere else — else a run in flight, else its last run's own
- * word, else *told*: said, and nobody has picked it up yet. Undefined for
- * a closed issue nothing merged shut, so the caller falls back to the
- * plain state badge dev uses.
+ * word, else *told*: said, and nobody has picked it up yet — or, when a
+ * person holds it rather than an agent, simply *held*: nothing is queued
+ * for the crew, so it is never worded as if it were. Undefined for a
+ * closed issue nothing merged shut, so the caller falls back to the plain
+ * state badge dev uses.
  */
 export async function tellWord(
   wordCtx: WordCtx,
@@ -93,6 +95,12 @@ export async function tellWord(
     limit: 1,
   })[0];
   if (last !== undefined) return await runWord(wordCtx, last);
+  // A person can hold a tell the same as an agent can — the crew has never
+  // touched it, but nobody is waiting on the crew to either, so it is
+  // honest to say who has it rather than that it is unpicked, as if it
+  // were still sitting in a queue.
+  if (issue.assigneeId !== null && !issue.assigneeIsAgent)
+    return { word: "told", note: "held" };
   return { word: "told", note: "not picked up yet" };
 }
 
