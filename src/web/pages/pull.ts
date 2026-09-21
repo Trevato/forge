@@ -800,7 +800,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
           stateAction: `${thread}/state`,
           state: pull.state,
           locked: pull.mergedAt !== null,
-          kind: "pull",
+          closeLabel: "Close pull request",
         })}
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>

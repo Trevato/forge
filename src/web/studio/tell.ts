@@ -279,7 +279,7 @@ export async function studioTell(
           action: `${thread}/comments`,
           stateAction: `${thread}/state`,
           state: issue.state,
-          kind: "issue",
+          closeLabel: "Close tell",
         })}
       </div>
       <aside>

@@ -78,6 +78,18 @@ const DEV_WORDS: readonly { pattern: RegExp; because: string }[] = [
     pattern: /\bmerge\b/i,
     because: "the studio's own word for a merge is shipped",
   },
+  {
+    pattern: /pull request/i,
+    because: "the studio's own word for a pull is change",
+  },
+  {
+    // Bare "issue" also rides the topbar's own live-event wiring
+    // (`data-live="run.*,pull.*,issue.*,check.*"`) on every page, which is
+    // not a word a person reads — so only the composer's own button text is
+    // checked here, the shape #171 actually leaked.
+    pattern: /Close issue\b/,
+    because: "the studio's own word for a tell is tell",
+  },
 ];
 
 /**
@@ -447,7 +459,10 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "tell",
         path: `${repoPath}/issues/${tellNumber}`,
-        dev: ["<h2>Labels</h2>"],
+        // #171: the composer's close button used to say "Close issue" here,
+        // dev's own noun on the studio's own page.
+        shows: ["Close tell"],
+        dev: ["<h2>Labels</h2>", "Close issue"],
       },
       // The studio's own nouns for the same two pages (#158): one handler
       // each, so what is walked here is the very page above under the
@@ -457,18 +472,21 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "tell (the studio's noun)",
         path: `${repoPath}/tells/${tellNumber}`,
-        shows: [tellTitle],
+        shows: [tellTitle, "Close tell"],
       },
       { word: "working", path: `${repoPath}/runs/${runId}` },
       {
         word: "look",
         path: `${repoPath}/pulls/${openPullNumber}`,
-        dev: ["diff-table", openBranch],
+        // #171: the composer's close button used to say "Close pull
+        // request" here, dev's own noun on the studio's own page.
+        shows: ["Close change"],
+        dev: ["diff-table", openBranch, "Close pull request"],
       },
       {
         word: "look (the studio's noun)",
         path: `${repoPath}/changes/${openPullNumber}`,
-        shows: [openPullTitle],
+        shows: [openPullTitle, "Close change"],
       },
       {
         word: "shipped",
@@ -680,5 +698,28 @@ describe("dev's vocabulary never reaches a studio page", () => {
     // above is for a page still being built, never a way for a row to stop
     // proving itself once it exists.
     expect(proved).toBe(pages.filter((p) => p.dev !== undefined).length);
+  });
+
+  test("reopening a merged change refuses in the reader's own noun — dev's word never rides the flash on a studio page (#171)", async () => {
+    const reopen = (mode: "studio" | "dev") =>
+      fetch(`${base}/alice/vocab/pulls/${mergedPullNumber}/state`, {
+        method: "POST",
+        headers: {
+          cookie: `${cookie}; forge_mode=${mode}`,
+          origin: base,
+          accept: "application/json",
+        },
+        body: new URLSearchParams({ state: "open" }),
+      });
+    const studio = await reopen("studio");
+    expect(studio.status).toBe(422);
+    expect(((await studio.json()) as { error: string }).error).toBe(
+      "A merged change cannot be reopened.",
+    );
+    const dev = await reopen("dev");
+    expect(dev.status).toBe(422);
+    expect(((await dev.json()) as { error: string }).error).toBe(
+      "A merged pull request cannot be reopened.",
+    );
   });
 });

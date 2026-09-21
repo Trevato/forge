@@ -179,7 +179,7 @@ export async function studioPull(
           stateAction: `${thread}/state`,
           state: pull.state,
           locked: pull.mergedAt !== null,
-          kind: "pull",
+          closeLabel: "Close change",
         })}
       </div>
       <aside>${previewCard(ctx, repo, pull)}</aside>

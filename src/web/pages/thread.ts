@@ -47,6 +47,7 @@ import {
   type Tone,
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { studioRecord } from "../studio/nouns.ts";
 
 /**
  * The four ways a write can fail *because of the origin*, in words.
@@ -294,7 +295,10 @@ export interface ComposerOptions {
   state: "open" | "closed";
   /** A merged pull can never reopen. */
   locked?: boolean;
-  kind: "issue" | "pull";
+  /** What the close button calls the thing here — dev's own noun
+   * ("pull request", "issue") or the studio's ("change", "tell"). The
+   * caller knows which page it is drawing; the composer does not have to. */
+  closeLabel: string;
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -321,16 +325,11 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
       : null;
   const closeButton =
     o.stateAction !== undefined && !o.locked
-      ? btn(
-          o.state === "open"
-            ? `Close ${o.kind === "pull" ? "pull request" : "issue"}`
-            : "Reopen",
-          {
-            size: "sm",
-            icon: o.state === "open" ? "issueClosed" : "issue",
-            form: "thread-state",
-          },
-        )
+      ? btn(o.state === "open" ? o.closeLabel : "Reopen", {
+          size: "sm",
+          icon: o.state === "open" ? "issueClosed" : "issue",
+          form: "thread-state",
+        })
       : null;
   return html`${stateForm}
     <form class="card comment-form" method="post" action="${o.action}">
@@ -580,10 +579,16 @@ export async function stateSubmit(
     wanted,
   );
   if (!changed.ok) {
+    // The same noun the redirect target is about to render with
+    // (`studioRecord`), so a flash never says dev's word on a studio page.
+    const merged =
+      studioRecord(ctx, found.repo) !== undefined
+        ? "A merged change cannot be reopened."
+        : "A merged pull request cannot be reopened.";
     const message =
       originError(changed.error) ??
       (changed.error === "already_merged"
-        ? "A merged pull request cannot be reopened."
+        ? merged
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
           : "That could not be changed.");

@@ -520,7 +520,7 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
           action: `${thread}/comments`,
           stateAction: `${thread}/state`,
           state: issue.state,
-          kind: "issue",
+          closeLabel: "Close issue",
         })}
       </div>
       <aside>
