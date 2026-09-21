@@ -314,3 +314,29 @@ export function listCrewRoles(
     role: roles.get(agent.user.id) ?? "builder",
   }));
 }
+
+/**
+ * Which of these repositories have a builder on their crew, as a set — a
+ * repo absent from it has none, and nothing can pick up a tell there
+ * (`routeIssue`, crew/route.ts). The shelf's one batched read for that
+ * question, so it never asks it once per row.
+ */
+export function reposWithBuilder(
+  db: Database,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ repo_id: string }, string[]>(
+        `SELECT DISTINCT repo_id FROM repo_crew
+         WHERE role = 'builder' AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...batch);
+    for (const row of rows) out.add(row.repo_id);
+  }
+  return out;
+}

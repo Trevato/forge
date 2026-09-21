@@ -737,6 +737,37 @@ export function issueCounts(
   return { open, closed };
 }
 
+/**
+ * Which of these repositories have an open tell nobody holds — no assignee,
+ * and not the repository's own standing direction issue, which is never
+ * picked up like an ordinary tell. The shelf's one batched read for that
+ * question, paired with `reposWithBuilder` (core/agents.ts) to say whether
+ * it is stuck for want of a builder, not merely unclaimed for a moment.
+ */
+export function reposWithUnclaimedTell(
+  db: Database,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ repo_id: string }, string[]>(
+        `SELECT DISTINCT issue.repo_id FROM issue
+         JOIN repo ON repo.id = issue.repo_id
+         WHERE issue.kind = 'issue' AND issue.state = 'open'
+           AND issue.assignee_id IS NULL
+           AND (repo.direction_issue_id IS NULL OR repo.direction_issue_id != issue.id)
+           AND issue.repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...batch);
+    for (const row of rows) out.add(row.repo_id);
+  }
+  return out;
+}
+
 /** Issues addressed the way an activity feed has them: by repo and number. */
 export function getIssuesByRef(
   db: Database,

@@ -3771,6 +3771,107 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
 });
 
 /**
+ * Issue #183: `tellCrew` cannot route a tell to anyone with nobody on the
+ * crew — the issue it opens stays unassigned forever, not merely
+ * unpicked-up like an agent-held tell. Both surfaces that used to call this
+ * "quiet" or "nothing yet" must say the honest reason instead, and both
+ * failed before this change.
+ */
+describe("a tell nobody on the crew can take is not \"quiet\"", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let alice: User;
+  let cookie: string;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+  const post = (path: string, body: Record<string, string>) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams(body),
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-untaken-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "pad",
+      visibility: "private",
+      description: "a pad for notes",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "pad\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "pad" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    // No crew at all — the exact state `tellCrew` cannot route out of.
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test('a crewless tell renders a "Now" row, not the empty state, and links to where a crew member is added', async () => {
+    const told = await post("/alice/pad/tell", {
+      text: "Add a dark mode toggle.",
+    });
+    expect(told.status).toBe(303);
+
+    const page = await (await get("/alice/pad")).text();
+    expect(page).not.toContain("Nothing yet. Tell the crew something.");
+    expect(page).toContain("Add a dark mode toggle.");
+    expect(page).toContain("nobody on the crew to take it");
+    expect(page).toContain(`href="/alice/pad/settings"`);
+  });
+
+  test("the shelf row for that app is not \"quiet\"", async () => {
+    const home = await (await get("/")).text();
+    const at = home.indexOf('href="/alice/pad"');
+    expect(at).toBeGreaterThan(-1);
+    const start = home.lastIndexOf("<li>", at);
+    const shelfRow = home.slice(start, home.indexOf("</li>", at) + 5);
+    expect(shelfRow).not.toContain("quiet — tell the crew something");
+    expect(shelfRow).toContain("nobody on the crew to take it");
+  });
+});
+
+/**
  * Issue #65: a public app's studio page is the app, not the owner's books.
  * `canSeeOwnerFacts` (`src/core/repos.ts`) is the one predicate — the same
  * as `canWrite` today — that every surface carrying money, the crew or the

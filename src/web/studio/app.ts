@@ -231,18 +231,40 @@ export async function studioApp(
   // ---- now: one row per thing, in the five words ----
   const proposed = new Set(openPulls.map((p) => p.id));
   const openByIssue = openPullsClosing(db, repo.id);
-  const told = listIssues(db, repo.id, {
+  const openTells = listIssues(db, repo.id, {
     kind: "issue",
     state: "open",
     limit: 30,
-  }).filter((i) => i.assigneeIsAgent && !openByIssue.has(i.number));
+  });
+  const told = openTells.filter(
+    (i) => i.assigneeIsAgent && !openByIssue.has(i.number),
+  );
+  // With nobody on the crew to build, `tellCrew` cannot route a tell to
+  // anyone — it stays unassigned forever, not merely unpicked-up like
+  // `waiting` below. Scoped to that one honest cause (never to a tell a
+  // person simply hasn't assigned while builders exist), so widening this
+  // never turns "Now" into a plain issue list.
+  const untaken =
+    builders.length === 0
+      ? openTells
+          .filter(
+            (i) =>
+              i.assigneeId === null &&
+              i.id !== repo.directionIssueId &&
+              !openByIssue.has(i.number),
+          )
+          .slice(0, 5)
+      : [];
   const everRan = latestRunsForIssues(
     db,
-    told.map((i) => i.id),
+    [...told, ...untaken].map((i) => i.id),
     ["agent"],
   );
   const waiting = told.filter((i) => !everRan.has(i.id)).slice(0, 5);
-  const issueNumberById = new Map(told.map((i) => [i.id, i.number]));
+  const stuck = untaken.filter((i) => !everRan.has(i.id));
+  const issueNumberById = new Map(
+    [...told, ...untaken].map((i) => [i.id, i.number]),
+  );
   const rowsNow = runs
     .filter((r) => {
       if (r.issueId === null) return true;
@@ -337,6 +359,16 @@ export async function studioApp(
         meta: html`${who} · told ${time(i.createdAt)}, not picked up
         yet`,
         trail: wordBadge("waiting"),
+      });
+    }),
+    ...stuck.map((i) => {
+      return row({
+        lead: avatar("crew"),
+        title: html`<a href="${tellHref(base, i.number)}">${i.title}</a>`,
+        meta: html`told ${time(i.createdAt)} ·
+          <span class="muted">nobody on the crew to take it —</span>
+          <a href="${base}/settings">add someone</a>`,
+        trail: wordBadge("told"),
       });
     }),
   ];

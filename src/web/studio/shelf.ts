@@ -17,6 +17,8 @@
 
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { reposWithBuilder } from "../../core/agents.ts";
+import { reposWithUnclaimedTell } from "../../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { latestAgentRunsForRepos } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
@@ -72,6 +74,15 @@ export async function shelfRows(
   const asksByRepo = new Map<string, number>();
   for (const d of decisions)
     asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
+  // A tell nobody can pick up (no builder on the crew) is stuck, not quiet —
+  // both reads batched across the whole shelf, never once per row.
+  const repoIds = repos.map((r) => r.id);
+  const withBuilder = reposWithBuilder(db, repoIds);
+  const stuck = new Set(
+    [...reposWithUnclaimedTell(db, repoIds)].filter(
+      (id) => !withBuilder.has(id),
+    ),
+  );
 
   return await Promise.all(repos.map(async (repo) => {
     const record = records.get(repo.id);
@@ -107,7 +118,11 @@ export async function shelfRows(
           : "default";
     const happening =
       latest === undefined || word === undefined
-        ? html`<span class="muted">quiet — tell the crew something</span>`
+        ? stuck.has(repo.id)
+          ? html`<span class="muted"
+              >told — nobody on the crew to take it</span
+            >`
+          : html`<span class="muted">quiet — tell the crew something</span>`
         : html`<span class="studio-word" data-word="${word.word}"
               >${word.word}</span
             >
