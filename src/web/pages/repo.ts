@@ -21,7 +21,7 @@ import {
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
-import type { Ctx } from "../../http/context.ts";
+import { safeBack, type Ctx } from "../../http/context.ts";
 import { json, notFound } from "../../http/respond.ts";
 import type { Blob, RepoSource } from "../../view/source.ts";
 import {
@@ -272,15 +272,6 @@ export async function pinSubmit(ctx: Ctx): Promise<Response> {
       ? "Pinned. The local client keeps it cloned on your machine."
       : "Unpinned.",
   });
-}
-
-/** The page the form was submitted from, when it is one of ours. */
-function safeBack(ctx: Ctx): string | undefined {
-  const referer = ctx.request.headers.get("referer");
-  if (referer === null) return undefined;
-  const parsed = URL.parse(referer);
-  if (!parsed || parsed.origin !== ctx.url.origin) return undefined;
-  return parsed.pathname + parsed.search;
 }
 
 // ---- shared pieces ----

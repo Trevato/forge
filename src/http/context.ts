@@ -70,6 +70,22 @@ export function crossOrigin(request: Request, url: URL, log?: Log): boolean {
   return mismatch;
 }
 
+/**
+ * The page a form was submitted from, when it is one of ours: the referer's
+ * path and query, and only when its origin is this forge's. A referer is a
+ * hint, not a claim to trust — it decides where a person lands, never what
+ * is done — and it is absent under some privacy settings, so every caller
+ * carries its own fallback. Never take this from a form field: that is a
+ * redirect a caller writes.
+ */
+export function safeBack(ctx: Ctx): string | undefined {
+  const referer = ctx.request.headers.get("referer");
+  if (referer === null) return undefined;
+  const parsed = URL.parse(referer);
+  if (!parsed || parsed.origin !== ctx.url.origin) return undefined;
+  return parsed.pathname + parsed.search;
+}
+
 /** One cookie's value from the request, or undefined when absent. */
 export function cookieValue(
   request: Request,

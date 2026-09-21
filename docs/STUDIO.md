@@ -85,7 +85,13 @@ it adds how many of how many, linking to them, and says nothing extra in a
 clean week. The page keeps itself
 current about deployments: a deploy run for the app being viewed refetches
 the head card and previews list in place, so a change serving in its
-preview shows up without a reload.
+preview shows up without a reload. **Redeploy** and **Stop** therefore stay
+where they were pressed — the app's page, or a change's — rather than
+leaving for dev's App page or the deploy's run: the card refreshing in
+place is what shows the result, and the flash says what was done. The page
+to return to is the referer, and only when it is this forge's own origin
+(`safeBack`, `src/http/context.ts`), never a form field; with no referer it
+is the app's own studio page. Dev mode keeps its destinations.
 
 **How this app runs itself** (`/:owner/:name/settings`, in studio, on an
 app) is that one place: the crew, each with their role in the studio's

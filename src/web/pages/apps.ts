@@ -38,7 +38,7 @@ import {
 } from "../../core/repos.ts";
 import { isTerminal } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
-import type { Ctx } from "../../http/context.ts";
+import { safeBack, type Ctx } from "../../http/context.ts";
 import { resolveAppHostname } from "../../apps/proxy.ts";
 import {
   crumbsFor,
@@ -888,6 +888,22 @@ async function envForm(
   return { repo, env: ctx.params.env ?? "", user: ctx.auth.user };
 }
 
+/**
+ * Where an environment form sends the person who pressed it. In the studio
+ * that is the page the form was on — the app's own page, or a change's —
+ * because the head card refreshes itself on the deploy event
+ * (`appStateFragment`, `GET /:owner/:name/app/state`), so staying put shows
+ * the result better than any page a redirect could pick. The page comes
+ * from the referer, and only when the referer is this forge's own origin
+ * (`safeBack`), never from a form field; with no referer the fallback is
+ * the app's studio page. Dev mode keeps its own App page.
+ */
+function envBack(ctx: Ctx, repo: Repo): string {
+  const base = repoBase(repo);
+  if (ctx.mode !== "studio") return `${base}/app`;
+  return safeBack(ctx) ?? base;
+}
+
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
   if (error === "not_found" || error === "no_such_env")
     return notFoundPage(ctx);
@@ -897,7 +913,7 @@ function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
     nothing_to_deploy:
       "There is nothing to deploy: the branch has no commits, or the pull request is closed.",
   };
-  return flashTo(ctx, `${repoBase(repo)}/app`, {
+  return flashTo(ctx, envBack(ctx, repo), {
     tone: "danger",
     message: words[error] ?? "That could not be done.",
   });
@@ -912,18 +928,24 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   if (!queued.ok) return envFailure(ctx, repo, queued.error);
   const base = repoBase(repo);
   const run = queued.value;
-  return redirect(
-    run === undefined ? `${base}/app` : `${base}/runs/${run.id}`,
-    {
-      url: ctx.url,
-      flash: {
-        message:
-          run === undefined
-            ? `${envLabel(env as EnvName)} already serves that commit.`
-            : `Redeploying ${envLabel(env as EnvName)}.`,
-      },
+  // Dev's App page hands the deploy over to its run; the studio stays on the
+  // page that asked for it and watches the head card change there. When
+  // there is no run at all, both fall back to a page that exists.
+  const to =
+    ctx.mode === "studio"
+      ? envBack(ctx, repo)
+      : run === undefined
+        ? `${base}/app`
+        : `${base}/runs/${run.id}`;
+  return redirect(to, {
+    url: ctx.url,
+    flash: {
+      message:
+        run === undefined
+          ? `${envLabel(env as EnvName)} already serves that commit.`
+          : `Redeploying ${envLabel(env as EnvName)}.`,
     },
-  );
+  });
 }
 
 // POST /:owner/:name/app/:env/stop
@@ -933,7 +955,7 @@ export async function appStop(ctx: Ctx): Promise<Response> {
   const { repo, env, user } = gate;
   const stopped = await stopEnv(ctx.app, user, repo, env);
   if (!stopped.ok) return envFailure(ctx, repo, stopped.error);
-  return flashTo(ctx, `${repoBase(repo)}/app`, {
+  return flashTo(ctx, envBack(ctx, repo), {
     message: `Stopped ${envLabel(env as EnvName)}. Its data is kept; Redeploy brings it back.`,
   });
 }

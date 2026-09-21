@@ -38,6 +38,7 @@ import {
   createRun,
   finishRun,
   getRun,
+  listRuns,
   markServing,
   noteRunProgress,
   previewLatency,
@@ -5821,5 +5822,233 @@ describe("every studio page's headings form one outline", () => {
       )
         throw new Error(`${name} (${path}): ${JSON.stringify(outline)}`);
     }
+  });
+});
+
+/**
+ * Issue #205: the studio's head card has three buttons, and two of them used
+ * to leave the studio — Stop for dev's App page, Redeploy for the deploy's
+ * run page. Both now come back to the page the form was pressed on, because
+ * the card refreshes itself on the deploy event and staying put shows the
+ * result. Dev mode keeps its own destinations, and the page is taken from
+ * the referer only when it is this forge's own (`safeBack`), never from the
+ * form.
+ */
+describe("the studio's Stop and Redeploy come back to the page they were pressed on", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let runtime: AppsRuntime;
+  let cookie: string;
+
+  /** A form the head card draws, submitted from `from` in one of the modes. */
+  const press = (
+    what: "stop" | "redeploy",
+    mode: "studio" | "dev",
+    from: string | undefined,
+  ): Promise<Response> => {
+    const headers: Record<string, string> = {
+      cookie: `${cookie}; forge_mode=${mode}`,
+      origin: base,
+    };
+    if (from !== undefined) headers["referer"] = from;
+    return fetch(`${base}/alice/notes/app/production/${what}`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams({}),
+      redirect: "manual",
+    });
+  };
+
+  /** The flash a redirect carries, decoded from its cookie. */
+  const flashOf = (response: Response): string =>
+    decodeURIComponent(response.headers.get("set-cookie") ?? "");
+
+  const studioPage = (): Promise<string> =>
+    fetch(`${base}/alice/notes`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  /**
+   * Production serving, as the runtime holds it, without running a real
+   * deploy — the pages read `runtime.status(record)`, and `stopEnv` only
+   * asks the handle to stop. Same shape the "not up" head's `put` uses.
+   */
+  const putLive = (): void => {
+    (
+      runtime as unknown as { envs: Map<string, Record<string, unknown>> }
+    ).envs.set(`${getAppByRepo(app.db, repo.id)!.id}/production`, {
+      app: getAppByRepo(app.db, repo.id)!,
+      env: "production",
+      chain: Promise.resolve(),
+      restarts: [],
+      live: {
+        commitOid: "a".repeat(40),
+        handle: { port: 4321, stop: async () => {} },
+        runId: "fake",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-envback-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "apps.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, a.value, {
+      name: "notes",
+      visibility: "public",
+      description: "a place for notes",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "notes\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branched = await commitToBranch(app, a.value, repo, {
+      branch: "spelling",
+      message: "Fix a word",
+      files: [{ path: "README.md", content: "notes.\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const pull = await openPull(app, a.value, repo, {
+      title: "Fix a word",
+      body: "",
+      headBranch: "spelling",
+      baseBranch: repo.defaultBranch,
+    });
+    if (!pull.ok) throw new Error(String(pull.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "notes" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("Stop returns to the app's studio page with its flash, not to dev's App page", async () => {
+    const stopped = await press("stop", "studio", `${base}/alice/notes`);
+    expect(stopped.status).toBe(303);
+    expect(stopped.headers.get("location")).toBe("/alice/notes");
+    expect(flashOf(stopped)).toContain(
+      "Stopped production. Its data is kept; Redeploy brings it back.",
+    );
+    // And the flash really lands on that page, in front of the person.
+    const flash = (stopped.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const landed = await fetch(`${base}/alice/notes`, {
+      headers: { cookie: `${cookie}; forge_mode=studio; ${flash}` },
+      redirect: "manual",
+    });
+    expect(landed.status).toBe(200);
+    expect((await landed.text()).replace(/\s+/g, " ")).toContain(
+      "Stopped production. Its data is kept; Redeploy brings it back.",
+    );
+  });
+
+  test("the head card shows the new state where it stands: the live fragment, no second navigation", async () => {
+    putLive();
+    const serving = await studioPage();
+    expect(serving).toContain("serving");
+    expect(serving).toContain('action="/alice/notes/app/production/stop"');
+    // The page a person stays on is the one that refreshes itself: its live
+    // mount asks for the app's state on a deploy event.
+    expect(serving).toContain('data-app="1"');
+
+    const stopped = await press("stop", "studio", `${base}/alice/notes`);
+    expect(stopped.headers.get("location")).toBe("/alice/notes");
+
+    // What the live client fetches, with no navigation in between: the same
+    // head card, now saying the app is down and offering Redeploy instead.
+    const fragment = await fetch(`${base}/alice/notes/app/state`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+    expect(fragment.status).toBe(200);
+    const html = (await fragment.text()).replace(/\s+/g, " ");
+    expect(html).toContain('id="app-head"');
+    expect(html).toContain("not running");
+    expect(html).toContain('action="/alice/notes/app/production/redeploy"');
+    expect(html).not.toContain('action="/alice/notes/app/production/stop"');
+  });
+
+  test("pressed on a change's page, Stop comes back to that change", async () => {
+    const stopped = await press(
+      "stop",
+      "studio",
+      `${base}/alice/notes/changes/1`,
+    );
+    expect(stopped.status).toBe(303);
+    expect(stopped.headers.get("location")).toBe("/alice/notes/changes/1");
+  });
+
+  test("no referer, or one from somewhere else, falls back to the app's studio page — never the raw /app", async () => {
+    for (const from of [undefined, "https://evil.example/alice/notes"]) {
+      const stopped = await press("stop", "studio", from);
+      expect(stopped.status).toBe(303);
+      expect(stopped.headers.get("location")).toBe("/alice/notes");
+    }
+  });
+
+  test("Redeploy stays on the page too, instead of leaving for the deploy's run page", async () => {
+    const queued = await press("redeploy", "studio", `${base}/alice/notes`);
+    expect(queued.status).toBe(303);
+    expect(queued.headers.get("location")).toBe("/alice/notes");
+    expect(queued.headers.get("location")).not.toContain("/runs/");
+    expect(flashOf(queued)).toContain("Redeploying production.");
+    // A run was really queued: the studio only chose not to navigate to it.
+    expect(
+      listRuns(app.db, repo.id, { kind: "deploy", limit: 5 }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("dev mode keeps its destinations: Stop to the App page, Redeploy to the run", async () => {
+    const stopped = await press("stop", "dev", `${base}/alice/notes`);
+    expect(stopped.status).toBe(303);
+    expect(stopped.headers.get("location")).toBe("/alice/notes/app");
+    expect(flashOf(stopped)).toContain("Stopped production.");
+
+    const queued = await press("redeploy", "dev", `${base}/alice/notes`);
+    expect(queued.status).toBe(303);
+    const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 1 })[0];
+    expect(queued.headers.get("location")).toBe(
+      `/alice/notes/runs/${run?.id}`,
+    );
+    expect(flashOf(queued)).toContain("Redeploying production.");
   });
 });
