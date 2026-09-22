@@ -28,10 +28,12 @@ export interface Loosened {
 const RANK: Record<Cell["answer"], number> = { yes: 2, own: 1, no: 0 };
 
 /**
- * The cells of `after` that let more through than `before` did. Against a
- * contract that was there, every identity counts: a decided cell that
- * opens is a decision undone. Where there was no contract, only the floor
- * counts: what a stranger may do is the one thing nobody decided yet.
+ * The cells of `after` that let more through than `before` did. A cell that
+ * was decided — the resource existed — counts for every identity: a decided
+ * cell that opens is a decision undone. A cell that is new — the resource
+ * was not there, or there was no contract — counts only for the floor: what
+ * a stranger may do is the one thing nobody decided yet, while what an
+ * admin may do to a new resource is the work the issue asked for.
  */
 export function loosened(
   before: Contract | undefined,
@@ -41,23 +43,22 @@ export function loosened(
   const floor = identities(after).find(
     (n) => after.roles[n]!.held.by === "everyone",
   );
-  if (before === undefined) {
-    for (const c of table(after))
-      if (c.as === floor && c.answer !== "no")
-        out.push({ ...c, from: "absent", to: c.answer });
-    return out;
-  }
   const was = new Map(
-    table(before).map((c) => [`${c.resource}.${c.verb}.${c.as}`, c.answer]),
+    before === undefined
+      ? []
+      : table(before).map((c) => [`${c.resource}.${c.verb}.${c.as}`, c.answer]),
+  );
+  const decided = new Set(
+    before === undefined ? [] : Object.keys(before.resources),
   );
   for (const c of table(after)) {
-    const from = was.get(`${c.resource}.${c.verb}.${c.as}`) ?? "no";
-    if (RANK[c.answer] > RANK[from])
-      out.push({
-        ...c,
-        from: was.has(`${c.resource}.${c.verb}.${c.as}`) ? from : "absent",
-        to: c.answer,
-      });
+    const key = `${c.resource}.${c.verb}.${c.as}`;
+    if (decided.has(c.resource)) {
+      const from = was.get(key) ?? "no";
+      if (RANK[c.answer] > RANK[from])
+        out.push({ ...c, from: was.has(key) ? from : "absent", to: c.answer });
+    } else if (c.as === floor && c.answer !== "no")
+      out.push({ ...c, from: "absent", to: c.answer });
   }
   return out;
 }

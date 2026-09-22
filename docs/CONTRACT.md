@@ -202,10 +202,14 @@ probes previews.
 
 A change to a contract is a change of policy, and one kind needs a person:
 a cell **loosened** — something an identity could not do before that it
-can after (`src/contract/policy.ts`). Against a contract that was there,
-every identity counts: a decided cell that opens is a decision undone.
-Where there was no contract, only the floor counts: what a stranger may do
-is the one thing nobody decided yet. Tightening needs nobody.
+can after (`src/contract/policy.ts`). On a resource that was there, every
+identity counts: a decided cell that opens is a decision undone. On a
+resource that is new — or where there was no contract — only the floor
+counts: what a stranger may do is the one thing nobody decided yet, while
+what an admin may do to a new resource is the work the issue asked for.
+Tightening needs nobody. (The first live crossing, on `scrims`, taught
+this: a builder adding three resources crossed 29 cells under the older
+rule and four under this one, the four doors it opened to anyone.)
 
 A pull whose head loosens its base's contract is at the wall: its page
 says so, with one sentence per cell ("note.create as anon: was no, now

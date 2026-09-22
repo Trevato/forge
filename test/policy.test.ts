@@ -72,7 +72,7 @@ describe("what counts as loosening", () => {
     expect(loosened(NOTES, NOTES)).toEqual([]);
   });
 
-  test("a new resource against a decided table: every open cell is new", () => {
+  test("a new resource beside a decided table: only what it opens to the floor", () => {
     const more: Contract = {
       ...NOTES,
       resources: {
@@ -88,11 +88,26 @@ describe("what counts as loosening", () => {
         },
       },
     };
-    const cells = loosened(NOTES, more).map(wallSentence);
-    expect(cells).toContain("tag.read as anon: new, and yes");
-    expect(cells).toContain("tag.list as user: new, and yes");
-    expect(cells).not.toContain("tag.create as anon: new, and yes");
-    expect(cells.every((c) => c.startsWith("tag."))).toBe(true);
+    expect(loosened(NOTES, more).map(wallSentence)).toEqual([
+      "tag.read as anon: new, and yes",
+    ]);
+    // The decided resource is untouched, so nothing else is said.
+    const sealed: Contract = {
+      ...NOTES,
+      resources: {
+        ...NOTES.resources,
+        tag: {
+          can: {
+            create: "admin",
+            read: "user",
+            update: "admin",
+            delete: "admin",
+            list: "user",
+          },
+        },
+      },
+    };
+    expect(loosened(NOTES, sealed)).toEqual([]);
   });
 
   test("a first contract: only what the floor may do is a decision", () => {
