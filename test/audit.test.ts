@@ -350,4 +350,33 @@ describe("the audit reads every app's policy from git", () => {
     expect(anon).not.toContain("secret");
     expect(anon).toContain("alice/notes");
   });
+
+  test("the way in: the studio home links the audit, and an app's page says its policy in one line", async () => {
+    const home = await (
+      await fetch(`${servers.url}/`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(home).toContain('href="/audit"');
+    const notes = await (
+      await fetch(`${servers.url}/alice/notes`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(notes).toContain('class="policy-line"');
+    expect(notes).toContain("One resource");
+    expect(notes).toContain('href="/audit#alice-notes"');
+    // The audit page carries that anchor.
+    const page = await (
+      await fetch(`${servers.url}/audit`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain('id="alice-notes"');
+    // An app with no contract says nothing about a policy it does not have.
+    const bare = await (
+      await fetch(`${servers.url}/alice/bare`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(bare).not.toContain('class="policy-line"');
+  });
 });

@@ -212,6 +212,7 @@ function policyCard(
     </div>`,
     {
       pad: false,
+      id: `${a.repo.ownerName}-${a.repo.name}`,
       ...(last?.verdict === "mismatch" ? { tone: "danger" as const } : {}),
       foot: probeFoot(a, last, writer),
       head: html`<a href="/${a.repo.ownerName}/${a.repo.name}" class="audit-app"
@@ -407,6 +408,7 @@ function unsoundCard(a: Audited): Html {
     </ul>`,
     {
       tone: "danger",
+      id: `${a.repo.ownerName}-${a.repo.name}`,
       head: html`<a href="/${a.repo.ownerName}/${a.repo.name}" class="audit-app"
           >${icon("alert")} ${name(a.repo)}</a
         >

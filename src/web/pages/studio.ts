@@ -64,6 +64,8 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { followingCard, followingOf } from "./following.ts";
+import { audit } from "../../contract/audit.ts";
+import { latestProbes } from "../../contract/probes.ts";
 import { asksJs, liveRegionsJs } from "../client.ts";
 import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -543,6 +545,60 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
 
 // ---- the app in the studio ----
 
+/**
+ * One line about the app's policy, when it has one: what it opens to
+ * anyone and what the running app said when the forge last knocked, with
+ * the way to the audit, where the whole table is. An app without a
+ * contract says nothing here; its doors are not the forge's to describe.
+ */
+async function policyLine(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+): Promise<Html> {
+  const { standing } = await audit(ctx.app.reposRoot, repo);
+  if (standing.kind === "unread") return html``;
+  const href = `/audit#${repo.ownerName}-${repo.name}`;
+  if (standing.kind === "unsound")
+    return html`<p class="policy-line">
+      ${icon("alert")}
+      <span
+        ><b>Its contract does not read</b>, so an app built on it does not
+        boot.</span
+      >
+      <a href="${href}">See why</a>
+    </p>`;
+  const last = latestProbes(ctx.app.db, [record.id]).get(record.id);
+  const open = standing.open.length;
+  const said =
+    last === undefined
+      ? "not yet knocked on"
+      : last.verdict === "ok"
+        ? "obeys its table"
+        : last.verdict === "mismatch"
+          ? `${last.said.length === 1 ? "one door disobeys" : `${last.said.length} doors disobey`} its table`
+          : last.verdict === "down"
+            ? "was not running when knocked on"
+            : "has no door to knock on";
+  return html`<p class="policy-line" data-tone="${last?.verdict ?? "none"}">
+    ${icon("shield")}
+    <span
+      ><b
+        >${Object.keys(standing.contract.resources).length === 1
+          ? "One resource"
+          : `${Object.keys(standing.contract.resources).length} resources`}</b
+      >,
+      ${open === 0
+        ? "nothing open to anyone"
+        : open === 1
+          ? "one door open to anyone"
+          : `${open} doors open to anyone`};
+      ${said}.</span
+    >
+    <a href="${href}">The table</a>
+  </p>`;
+}
+
 export async function studioApp(
   ctx: Ctx,
   repo: Repo,
@@ -902,6 +958,7 @@ export async function studioApp(
     })}
     ${head}
     ${following === undefined ? null : followingCard(ctx, repo, following)}
+    ${await policyLine(ctx, repo, record)}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}
@@ -1031,6 +1088,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
             <h2>Your apps</h2>
             <span class="spacer"></span>
             ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
+            ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
             ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`,
         });
 
