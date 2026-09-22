@@ -24,6 +24,10 @@ describe("the studio", () => {
     const { asksJs } = await import("../src/web/client.ts");
     expect(asksJs).not.toContain("form.action,");
     expect(asksJs).toContain("getAttribute('action')");
+    // The select-all box is the script's to reveal and to keep mixed.
+    expect(asksJs).toContain("querySelector('.studio-ask-all')");
+    expect(asksJs).toContain("all.hidden = boxes.length < 2");
+    expect(asksJs).toContain("all.indeterminate = n > 0 && n < boxes.length");
   });
 
   let dataDir: string;
@@ -280,6 +284,14 @@ describe("the studio", () => {
     expect(page).toContain(`id="ask-stopped:${c.id}"`);
     const panel = page.slice(page.indexOf('action="/studio/asks"'));
     expect(panel.slice(0, panel.indexOf("</form>"))).not.toContain("<form");
+    // One select-all over the column, in the head before any row: labelled,
+    // nameless (it never posts), hidden until the script reveals it.
+    const selectAll =
+      /<input\s+class="studio-ask-pick studio-ask-all"\s+type="checkbox"\s+aria-label="Select all asks"\s+hidden\s*\/>/g;
+    expect(page.match(selectAll)?.length).toBe(1);
+    expect(page.indexOf('class="studio-ask-pick studio-ask-all"')).toBeLessThan(
+      page.indexOf('class="studio-ask-pick"'),
+    );
 
     // (b) One decision for two; the third does not take it and is skipped.
     const bulk = (body: [string, string][], accept?: string) =>
@@ -344,6 +356,11 @@ describe("the studio", () => {
       failed: [],
     });
 
+    // One ask left: its own box is the whole choice — no select-all.
+    const one = await (await get("/alice/notes")).text();
+    expect(one.match(/class="studio-ask-pick"/g)?.length).toBe(1);
+    expect(one).not.toContain('class="studio-ask-pick studio-ask-all"');
+
     // (d) A row's own button answers the same two ways: JSON when asked,
     // the redirect and flash otherwise.
     const ship = (accept?: string) =>
@@ -372,6 +389,7 @@ describe("the studio", () => {
     // Nothing asks any more: no box, no panel.
     const after = await (await get("/alice/notes")).text();
     expect(after).not.toContain('class="studio-ask-pick"');
+    expect(after).not.toContain('class="studio-ask-pick studio-ask-all"');
     expect(after).not.toContain('action="/studio/asks"');
   });
 });

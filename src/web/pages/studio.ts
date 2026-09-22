@@ -1154,12 +1154,27 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
  * with what fits them all, posting to /studio/asks. A row's own button
  * submits that row's form, placed after this one — nothing is nested, and
  * one decision is exactly the post it was before.
+ *
+ * Over the column of boxes, one more that picks them all — in the head,
+ * where it is reachable before anything is checked (the bar is not). It
+ * has no name, so it never posts, and it stays hidden until the script
+ * that makes it act has run: a box that does nothing is a lie. For one
+ * ask, its own box is the whole choice.
  */
 function asksPanel(
   ctx: Ctx,
   decisions: readonly Decision[],
   back: string,
 ): Html {
+  const all =
+    decisions.length > 1
+      ? html`<input
+          class="studio-ask-pick studio-ask-all"
+          type="checkbox"
+          aria-label="Select all asks"
+          hidden
+        />`
+      : null;
   const bar = html`<div class="studio-bulk">
     <output class="studio-bulk-count">Selected</output>
     ${BULK_ACTIONS.map((a) =>
@@ -1176,7 +1191,7 @@ function asksPanel(
             ${decisions.map((d) => decisionRow(ctx, d))}
           </ul>`,
         {
-          head: html`${icon("alert")}
+          head: html`${all}${icon("alert")}
             <h2>Asks you</h2>
             <span class="muted small">decide, and the crew carries on</span>`,
           pad: false,
@@ -1419,7 +1434,7 @@ export const studioCss = /* css */ `
 .studio-lean { margin-left: 2px; }
 .studio-asks .row-lead { gap: 8px; }
 .studio-ask-pick { accent-color: var(--accent); margin: 0; width: 13px; height: 13px; opacity: .6; }
-.studio-ask-pick:checked, .studio-ask-pick:focus-visible, .row:hover .studio-ask-pick { opacity: 1; }
+.studio-ask-pick:checked, .studio-ask-pick:indeterminate, .studio-ask-pick:focus-visible, .row:hover .studio-ask-pick { opacity: 1; }
 .studio-bulk { display: none; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px; background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
 .studio-asks:has([name="ask"]:checked) .studio-bulk { display: flex; }
 .studio-bulk-count { font-weight: 550; font-variant-numeric: tabular-nums; }

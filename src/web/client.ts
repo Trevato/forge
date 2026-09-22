@@ -92,7 +92,8 @@ export const pollJs = /* js */ `
  * because it was asked to, and a redirect with a flash otherwise. While it
  * runs, the rows it is about look busy; when it lands they go, since an
  * ask decided is no longer an ask; a refusal restores the row with the
- * reason on it. The bar's count is the same script's small extra.
+ * reason on it. The bar's count and the select-all box over the column are
+ * the same script's small extras.
  *
  * Scripts off: the same post, a redirect, the same page without the row.
  */
@@ -101,10 +102,22 @@ export const asksJs = /* js */ `
   var panel = document.querySelector('.studio-asks');
   if (!panel) return;
   var count = panel.querySelector('.studio-bulk-count');
+  var all = panel.querySelector('.studio-ask-all');
+  function picks() { return panel.querySelectorAll('[name="ask"]'); }
+  // The count, and the select-all box: shown only now that it acts, gone
+  // again when one ask is all that is left, mixed while some are picked.
   function tally() {
-    if (count) count.textContent = panel.querySelectorAll('[name="ask"]:checked').length + ' selected';
+    var boxes = picks(), n = panel.querySelectorAll('[name="ask"]:checked').length;
+    if (count) count.textContent = n + ' selected';
+    if (!all) return;
+    all.hidden = boxes.length < 2;
+    all.checked = n > 0 && n === boxes.length;
+    all.indeterminate = n > 0 && n < boxes.length;
   }
-  panel.addEventListener('change', tally);
+  panel.addEventListener('change', function (event) {
+    if (event.target === all) picks().forEach(function (pick) { pick.checked = all.checked; });
+    tally();
+  });
   tally();
 
   function rowOf(el) { return el ? el.closest('li') : null; }
