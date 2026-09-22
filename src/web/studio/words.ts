@@ -1,16 +1,20 @@
 /**
- * The studio's vocabulary: the five words (and the three that only ever fold
- * into them — `waiting`, `planned` into `working`, `done` into `shipped`) a
- * person reads on every studio page, and the badge that draws one. `runWord`
- * and `pullWord` are the one place a word is decided, from facts in git and
- * the tables — never from a run's own summary text — so the home, the app, a
- * change, a tell and every list say the same thing about the same commit.
- * Nothing here knows about a page.
+ * The studio's vocabulary: the five words (and the four that only ever fold
+ * into them — `waiting`, `planned` into `working`, `done` into `shipped`,
+ * `cancelled` into `stopped`) a person reads on every studio page, and the
+ * badge that draws one. `runWord` and `pullWord` are the one place a word is
+ * decided, from facts in git and the tables — never from a run's own summary
+ * text — so the home, the app, a change, a tell and every list say the same
+ * thing about the same commit. Nothing here knows about a page.
  */
 
 import type { Database } from "bun:sqlite";
 import { mergeBase } from "../../git/merge.ts";
-import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
+import {
+  STOPPED_SUMMARY,
+  type AppsRuntime,
+  type EnvStatus,
+} from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
@@ -31,7 +35,8 @@ export type Word =
   | "waiting"
   | "planned"
   | "told"
-  | "done";
+  | "done"
+  | "cancelled";
 
 /**
  * Everything the word functions below need to see production: the repo's
@@ -174,8 +179,22 @@ export async function runWord(
       ? { word: "waiting", note: "queued" }
       : { word: "waiting", note: "paused, resumes soon" };
   if (run.state === "running") return { word: "working", note: "now" };
-  if (run.state === "failed" || run.state === "cancelled")
+  if (run.state === "failed")
     return { word: "stopped", note: run.summary || run.state };
+  // A cancelled run is not a broken one — superseded by a newer push, its
+  // environment torn down, a person's own Cancel, or the runtime itself
+  // stopping (`STOPPED_SUMMARY`, the one summary that earns a friendlier
+  // note than the raw fact, the same way it already reads on the run's own
+  // log). The word is always the quiet one; only the note still comes from
+  // the summary, exactly as every other word's note already does.
+  if (run.state === "cancelled")
+    return {
+      word: "cancelled",
+      note:
+        run.summary === STOPPED_SUMMARY
+          ? "interrupted by a restart"
+          : run.summary || run.state,
+    };
   const pull = pullFromRun(ctx.db, run);
   if (pull !== undefined) return await pullWord(ctx, pull);
   if (run.kind !== "agent")
@@ -280,10 +299,13 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
   planned: "map",
   told: "clock",
   done: "check",
+  cancelled: "ban",
 };
 
 /** One of the five (or six) studio words, as a badge. An id names the one a
- * live script repaints as a run finishes (`studioRunJs`). */
+ * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
+ * the same quiet, secondary look as `waiting` and `planned` — a restart is
+ * never the danger red a real failure earns. */
 export function wordBadge(word: Word, id?: string): Html {
   const variant =
     word === "look" || word === "shipped" || word === "done"

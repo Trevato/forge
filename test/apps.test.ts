@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, STOPPED_SUMMARY } from "../src/apps/runtime.ts";
 import { envDataDir, envDir, previewEnv } from "../src/apps/data.ts";
 import {
   enableApp,
@@ -40,7 +40,8 @@ import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { listRuns, type Run } from "../src/core/runs.ts";
+import { getRun, listRuns, type Run } from "../src/core/runs.ts";
+import { runWord } from "../src/web/studio/words.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -1746,4 +1747,144 @@ describe("the App page's terminal line survives an email-scanning edge (issue #2
     expect(withoutMarkers).toContain(`<code class="mono">${command}</code>`);
     expect(html).toContain("host key SHA256:abcdefghijklmnopqrstuvwxyz");
   });
+});
+
+describe("the forge's own restart never reads as this deploy's failure (issue #255)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let alice: User;
+  const DOMAIN = "stop-mid-deploy.test";
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-stop-mid-deploy-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: DOMAIN,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 2,
+    });
+    await runtime.start();
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+  }, 30_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("an install still in flight when the runtime stops finishes cancelled, not failed", async () => {
+    const made = await createRepo(app, alice, {
+      name: "slow-install",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value;
+    // A single simple command as `sh -c`'s whole argument execs straight
+    // into it (no forked shell left to orphan): a `SIGKILL` reaches this
+    // `sleep` directly, so aborting it does not itself depend on the fix
+    // under test.
+    const committed = await commitToBranch(app, alice, repo, {
+      message: "An install that blocks until stopped",
+      files: [
+        {
+          path: "forge.json",
+          content: JSON.stringify({
+            app: {
+              run: "bun -e \"Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch:()=>new Response('ok')})\"",
+              install: "sleep 30",
+              health: "/",
+              ready: 5,
+            },
+          }),
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const enabled = enableApp(app, alice, repo, {});
+    expect(enabled.ok).toBe(true);
+    if (!enabled.ok) return;
+    const record = enabled.value;
+
+    // Wait for the install step to actually be running before pulling the
+    // rug: a stop before it ever started would prove nothing about the
+    // abort path this test means to cover.
+    const deadline = Date.now() + 10_000;
+    let runId: string | undefined;
+    while (Date.now() < deadline) {
+      const inFlight = listRuns(app.db, repo.id, { kind: "deploy" }).find(
+        (r) => r.env === "production",
+      );
+      if (
+        inFlight?.state === "running" &&
+        readRunLog(dataDir, inFlight.id).lines.some((l) => l.includes("$ sleep 30"))
+      ) {
+        runId = inFlight.id;
+        break;
+      }
+      await Bun.sleep(20);
+    }
+    expect(runId).toBeDefined();
+
+    await runtime.stop();
+
+    const finished = getRun(app.db, runId!);
+    expect(finished?.state).toBe("cancelled");
+    expect(finished?.summary).toBe(STOPPED_SUMMARY);
+
+    const word = await runWord(
+      {
+        db: app.db,
+        dir: repoDir(app.reposRoot, repo.ownerName, repo.name),
+        runtime: undefined,
+        record: undefined,
+      },
+      finished!,
+    );
+    expect(word).toEqual({ word: "cancelled", note: "interrupted by a restart" });
+
+    // The studio's own word for it is the quiet one, never the word for a
+    // broken deploy — and that is what the run's own page renders.
+    const cookie = (
+      (
+        await fetch(`${servers.url}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const page = await fetch(
+      `${servers.url}/${repo.ownerName}/${repo.name}/runs/${runId}`,
+      { headers: { cookie: `${cookie}; forge_mode=studio` } },
+    );
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    expect(html).toContain('data-word="cancelled"');
+    expect(html).not.toContain('data-word="stopped"');
+
+    // The environment itself does not advertise the restart as why it is
+    // down: nothing ever served, and no error carries over from a run that
+    // was never this commit's fault.
+    const status = runtime.envStatus(record, "production");
+    expect(status?.error).toBeUndefined();
+  }, 30_000);
 });

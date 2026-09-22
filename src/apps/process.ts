@@ -171,20 +171,26 @@ export async function runStep(
     options.log(stripForgeDirs([options.cwd], line));
   const timeoutMs = options.timeoutMs ?? STEP_TIMEOUT_MS;
   let why: string | undefined;
+  // A killed process's pipes are not guaranteed to close on their own
+  // (see `pump`); this stops the reads directly the same moment the kill
+  // is sent, so a step in flight never outlives its own cancellation.
+  const stopReading = new AbortController();
   const timer = setTimeout(() => {
     why = `${name} took longer than ${Math.round(timeoutMs / 1000)}s`;
     proc.kill("SIGKILL");
+    stopReading.abort();
   }, timeoutMs);
   const onAbort = (): void => {
     why = `${name} cancelled`;
     proc.kill("SIGKILL");
+    stopReading.abort();
   };
   if (options.signal.aborted) onAbort();
   else options.signal.addEventListener("abort", onAbort, { once: true });
   try {
     const [, , code] = await Promise.all([
-      pump(proc.stdout, scrub),
-      pump(proc.stderr, scrub),
+      pump(proc.stdout, scrub, stopReading.signal),
+      pump(proc.stderr, scrub, stopReading.signal),
       proc.exited,
     ]);
     if (why !== undefined) return err(why);
@@ -381,17 +387,29 @@ export function freePort(): number {
   return port;
 }
 
-/** Read a stream as lines, calling `onLine` for each; never throws. */
+/**
+ * Read a stream as lines, calling `onLine` for each; never throws. A killed
+ * process's pipe does not always signal end-of-stream on its own — `signal`
+ * cancels the read directly, or a caller racing a dead process would wait on
+ * a stream that never closes.
+ */
 export async function pump(
   stream: ReadableStream<Uint8Array> | null | undefined,
   onLine: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!stream) return;
   const decoder = new TextDecoder();
   let carry = "";
+  const reader = stream.getReader();
+  const onAbort = (): void => void reader.cancel().catch(() => {});
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    for await (const chunk of stream) {
-      carry += decoder.decode(chunk, { stream: true });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      carry += decoder.decode(value, { stream: true });
       let at = carry.indexOf("\n");
       while (at !== -1) {
         onLine(carry.slice(0, at).replace(/\r$/, ""));
@@ -403,5 +421,7 @@ export async function pump(
     if (carry !== "") onLine(carry);
   } catch {
     // The process went away mid-read; whatever arrived was delivered.
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }

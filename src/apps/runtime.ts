@@ -157,6 +157,14 @@ interface Live {
  */
 const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
 
+/**
+ * The one summary every cancellation the runtime itself causes by stopping
+ * carries — a run still queued when `stop()` runs, and one aborted mid-step
+ * alike, so `runWord` (`web/studio/words.ts`) has one fact to recognise
+ * rather than two spellings of the same reason.
+ */
+export const STOPPED_SUMMARY = "the forge stopped";
+
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {
   const ms = Math.max(0, Date.parse(toIso) - Date.parse(fromIso));
@@ -348,6 +356,19 @@ export class AppsRuntime {
         ...(failedDeploy === undefined ? {} : { failedDeploy }),
       };
     }
+    // Nothing is live and nothing is in flight yet, but a deploy already
+    // waits its turn on the chain — a restart's own reconcile queues one
+    // the instant it boots. That is "starting", not the stale error (if
+    // any) a cancelled attempt before it left behind.
+    if (state.queued !== undefined) {
+      return {
+        env: state.env,
+        state: "deploying",
+        commitOid: state.queued.commitOid,
+        url,
+        runId: state.queued.id,
+      };
+    }
     return {
       env: state.env,
       state: state.lastError === undefined ? "stopped" : "failed",
@@ -397,7 +418,7 @@ export class AppsRuntime {
     for (const state of this.envs.values()) {
       state.deploying?.abort.abort();
       if (state.queued)
-        cancelRun(this.app.db, state.queued.id, "the forge stopped");
+        cancelRun(this.app.db, state.queued.id, STOPPED_SUMMARY);
       if (state.live) stops.push(state.live.handle.stop());
       // Abort only cancels the step in flight; the `execute()` continuation
       // chained onto `state.chain` still runs afterwards to record the
@@ -689,6 +710,18 @@ export class AppsRuntime {
     if (!outcome.ok) {
       state.deploying = undefined;
       lease();
+      // The runtime itself stopping is what aborted the step in flight —
+      // the forge's own business, never this commit's fault, and the same
+      // honest reason the still-queued case already carries. A real
+      // failure (a non-zero exit, a genuine timeout) still fails the run
+      // below even if the runtime happens to be stopping at the same time:
+      // only an abort this runtime raised earns the quieter outcome.
+      if (this.stopped && abort.signal.aborted) {
+        const done = cancelRun(this.app.db, run.id, STOPPED_SUMMARY);
+        write(`cancelled: ${STOPPED_SUMMARY}`);
+        if (done) announceRun(this.app, done);
+        return;
+      }
       state.lastError = outcome.error;
       state.lastErrorCommitOid = run.commitOid;
       const done = finishRun(this.app.db, run.id, {

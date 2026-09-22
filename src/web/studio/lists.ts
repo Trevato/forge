@@ -49,9 +49,10 @@ import {
 
 /** The five words a studio list filters by. `waiting` and `planned` are
  * still moving, so they fold into `working`; `done` is a deploy or a check
- * that finished with nothing else to show, so it folds into `shipped` — the
- * one place the eight-word vocabulary above buckets down to the five a list
- * links to. */
+ * that finished with nothing else to show, so it folds into `shipped`;
+ * `cancelled` is still a run that did not land, so it folds into `stopped`
+ * — the one place the nine-word vocabulary above buckets down to the five a
+ * list links to. */
 type WordFilter = "told" | "working" | "look" | "shipped" | "stopped";
 
 const WORD_FILTERS: readonly WordFilter[] = [
@@ -65,6 +66,7 @@ const WORD_FILTERS: readonly WordFilter[] = [
 function listBucket(word: Word): WordFilter {
   if (word === "waiting" || word === "planned") return "working";
   if (word === "done") return "shipped";
+  if (word === "cancelled") return "stopped";
   return word;
 }
 

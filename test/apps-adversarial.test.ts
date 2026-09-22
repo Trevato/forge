@@ -1180,6 +1180,11 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     const repo = made.value.repo;
     await settled(repo.id, (r) => r.env === "production");
 
+    // A merge lands this same forge.json on the default branch and
+    // production redeploys it too, running this same test step to
+    // completion (nothing aborts a deploy that was never in flight when the
+    // pull closed) — a marker keyed by $FORGE_APP_ENV keeps that legitimate
+    // production run from being mistaken for the preview's orphan.
     const marker = join(work, `slowtest-marker-${Date.now()}`);
     const committed = await commitToBranch(app, alice, repo, {
       branch: "slow-test",
@@ -1192,7 +1197,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
             {
               app: {
                 run: "bun run src/server.ts",
-                test: `sleep 5 && touch ${marker}`,
+                test: `sleep 5 && touch ${marker}-$FORGE_APP_ENV`,
               },
             },
             null,
@@ -1237,9 +1242,10 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     expect(closed.ok).toBe(true);
 
     // Wait well past the sleep the test step was doing, and confirm it
-    // never finished: the marker it would have written is not there.
+    // never finished: the preview's own marker is not there (production's,
+    // from its own unrelated redeploy of the same merged commit, may be).
     await Bun.sleep(6_500);
-    expect(existsSync(marker)).toBe(false);
+    expect(existsSync(`${marker}-preview`)).toBe(false);
   }, 60_000);
 
   test("private grant: forged, tampered, expired, wrong-env, and open-redirect are all refused; cookie is HttpOnly/SameSite", async () => {

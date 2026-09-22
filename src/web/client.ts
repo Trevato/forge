@@ -516,7 +516,8 @@ export const studioRunJs = /* js */ `
   function studioWord(run) {
     if (run.state === 'queued') return 'waiting';
     if (run.state === 'running') return 'working';
-    if (run.state === 'failed' || run.state === 'cancelled') return 'stopped';
+    if (run.state === 'cancelled') return 'cancelled';
+    if (run.state === 'failed') return 'stopped';
     var s = run.summary || '';
     if (/opened pull|updated pull/.test(s)) return 'look';
     if (/planned|no changes pushed/.test(s)) return 'planned';
