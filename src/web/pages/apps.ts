@@ -36,7 +36,6 @@ import {
   listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
-import { isTerminal } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import { resolveAppHostname } from "../../apps/proxy.ts";
@@ -659,12 +658,6 @@ export function appPage(ctx: Ctx): Response {
           runs.map((run) => runRow(base, run, actors, issues)),
           { head: runsHead },
         );
-  // Something still moving is news the live pill announces; the page is
-  // never pulled out from under a reader.
-  const moving =
-    envs.some((env) => env.state === "deploying") ||
-    runs.some((run) => !isTerminal(run.state));
-
   const environmentsBlock = !serving
     ? card(
         html`<p class="muted small">
@@ -760,7 +753,7 @@ export function appPage(ctx: Ctx): Response {
       </div>
       <aside>${about} ${crewCard}</aside>
     </div>
-    ${when(moving, () => liveMount({ repo: base }))}`;
+    ${liveMount({ repo: base })}`;
 
   return page({
     ctx,

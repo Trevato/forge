@@ -26,7 +26,7 @@ import { listAppEnvNames } from "../src/core/app_env.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
-import { listRuns, type Run } from "../src/core/runs.ts";
+import { isTerminal, listRuns, type Run } from "../src/core/runs.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
@@ -78,6 +78,35 @@ describe("apps, runs and the crew on the web", () => {
     const response = await web(cookie, path);
     expect(`${path} → ${response.status}`).toBe(`${path} → 200`);
     return words(await response.text());
+  };
+
+  /** Read from an SSE body until `predicate(buffer)` holds or we time out. */
+  const readUntil = async (
+    body: ReadableStream<Uint8Array>,
+    predicate: (buf: string) => boolean,
+    timeoutMs = 10_000,
+  ): Promise<string> => {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const deadline = Date.now() + timeoutMs;
+    try {
+      while (Date.now() < deadline) {
+        const timeout = new Promise<{ done: true; value: undefined }>((r) =>
+          setTimeout(
+            () => r({ done: true, value: undefined }),
+            Math.max(0, deadline - Date.now()),
+          ),
+        );
+        const { done, value } = await Promise.race([reader.read(), timeout]);
+        if (done) break;
+        if (value) buf += decoder.decode(value, { stream: true });
+        if (predicate(buf)) break;
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+    return buf;
   };
 
   const signUp = async (username: string): Promise<string> => {
@@ -229,6 +258,40 @@ describe("apps, runs and the crew on the web", () => {
     expect(readers).not.toContain("/redeploy");
     expect(readers).not.toContain('href="/alice/hello/settings/app"');
   });
+
+  test("the App page mounts the live stream on a quiet app, so a push after it was drawn still shows up", async () => {
+    // Quiet: every run on hello has already finished, nothing is deploying.
+    await runsOf(hello, () => true);
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const runs = listRuns(app.db, hello.id, { limit: 50 });
+      if (runs.every((run) => isTerminal(run.state))) break;
+      await Bun.sleep(50);
+    }
+    const html = await bodyOf(alice, "/alice/hello/app");
+    expect(html).toContain('id="live"');
+    expect(html).toContain('data-repo="/alice/hello"');
+
+    // A quiet page still opens the stream: the redeploy fired after the
+    // page was drawn reaches it, exactly what a still-page never saw.
+    const res = await fetch(`${base}/alice/hello/stream`, {
+      headers: { cookie: alice },
+    });
+    expect(res.status).toBe(200);
+    const redeployed = await web(
+      alice,
+      "/alice/hello/app/production/redeploy",
+      { form: {} },
+    );
+    expect(redeployed.status).toBe(303);
+    const buf = await readUntil(
+      res.body!,
+      (b) => b.includes("event: run.started") || b.includes("event: app.serving"),
+    );
+    expect(
+      buf.includes("event: run.started") || buf.includes("event: app.serving"),
+    ).toBe(true);
+  }, 20_000);
 
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
