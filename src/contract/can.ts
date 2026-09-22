@@ -246,7 +246,11 @@ export function readContract(text: string): Read {
   }
   const contract: Contract = { roles, resources };
   problems.push(...check(contract));
-  return problems.length > 0 ? { ok: false, problems } : { ok: true, contract };
+  // A cell read here and checked there is one problem, said once.
+  const unique = [...new Set(problems)];
+  return unique.length > 0
+    ? { ok: false, problems: unique }
+    : { ok: true, contract };
 }
 
 /** What is wrong with a contract that parsed. Empty means sound. */
@@ -286,7 +290,13 @@ export function check(contract: Contract): string[] {
   }
   for (const [resource, { can }] of Object.entries(contract.resources))
     for (const verb of VERBS) {
-      const need = can[verb];
+      const need = own(can, verb);
+      if (need === undefined) {
+        problems.push(
+          `${resource}.${verb}: every verb names a role or \`nobody\``,
+        );
+        continue;
+      }
       if (need === NOBODY) continue;
       const role = own(contract.roles, need);
       if (role === undefined)

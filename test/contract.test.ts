@@ -180,6 +180,9 @@ describe("reading a contract", () => {
     expect(all).toContain("role `odd`: needs `held`");
     expect(all).toContain("note.update: every verb names a role");
     expect(all).toContain("note.delete: every verb names a role");
+    // Said once, and never as a phantom role called `undefined`.
+    expect(all).not.toContain("`undefined`");
+    expect(read.problems.length).toBe(new Set(read.problems).size);
     expect(all).toContain("note.purge: not one of");
     expect(all).toContain("note.create needs `author`, which a row holds");
   });

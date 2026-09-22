@@ -49,6 +49,11 @@ anything below it may. A role is **held** one of three ways:
 - `row` — the row's column holds the actor's id. `author` is not someone you
   are; it is what you are _to a row_.
 
+One identity holds one role: two roles held by the same identity string are
+refused, not because the order could not answer them (it can) but because
+the table would show two columns that are the same person, and the audit
+reads the table.
+
 Nothing here is a function, so a contract can be read, compared, exported
 and ported. The evaluator is the same size for three roles or three hundred:
 adding a kind of person adds a line to the contract. It is the same speed
