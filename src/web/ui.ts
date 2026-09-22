@@ -417,6 +417,14 @@ export function previewDataNote(
  * — or one line saying the terminal is off, when there is no command to
  * show. Every page that names a way in draws this one, never its own words
  * for "off".
+ *
+ * The command has a `login@host` in it, which an email-scanning edge on the
+ * forge's own domain will otherwise rewrite into a `mailto:` link — turning
+ * the one line a reader must copy character for character into a link that
+ * hides the login. `<!--email_off-->…<!--/email_off-->` is the marker such
+ * scanners honour; it costs nothing where none runs, and the text between
+ * the markers is exactly the command, unchanged and still one selectable,
+ * copyable line.
  */
 export function terminalLine(
   command: string | undefined,
@@ -425,7 +433,7 @@ export function terminalLine(
   if (command === undefined)
     return html`<p class="muted small">The terminal is off.</p>`;
   return html`<p class="terminal-line">
-    <code class="mono">${command}</code>
+    <code class="mono"><!--email_off-->${command}<!--/email_off--></code>
     ${when(
       fingerprint,
       (fp) => html`<span class="muted small">host key ${fp}</span>`,

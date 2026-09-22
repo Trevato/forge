@@ -2678,6 +2678,12 @@ describe("the studio app page's terminal", () => {
     expect(mine).toContain(
       "host key SHA256:abcdefghijklmnopqrstuvwxyz",
     );
+    // Wrapped in the marker an email-scanning edge honours, so the
+    // login@host in the command is never rewritten into a mailto: link —
+    // and the command itself sits between the markers unchanged.
+    expect(mine).toContain(
+      "<!--email_off-->ssh -p 2222 beacon@forge.example<!--/email_off-->",
+    );
     const theirs = await appPage(reader);
     expect(theirs).not.toContain("ssh -p 2222 beacon@forge.example");
     expect(theirs).not.toContain("The terminal is off");

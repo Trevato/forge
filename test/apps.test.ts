@@ -1661,3 +1661,89 @@ describe("a new app's own words promise only the check the forge runs (issue #19
     }
   });
 });
+
+/**
+ * Issue #254: the terminal command has a `login@host` in it, which an
+ * email-scanning edge on the forge's own domain rewrites into a `mailto:`
+ * link — the one line a reader must copy character for character, turned
+ * into something that neither shows the login nor copies as text.
+ * `terminalLine` (`src/web/ui.ts`) now wraps it in the `<!--email_off-->`
+ * marker such scanners honour, which leaves the command itself — the thing
+ * a paste must carry — untouched.
+ */
+describe("the App page's terminal line survives an email-scanning edge (issue #254)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let base: string;
+  let cookie: string;
+  const DOMAIN = "apps.test";
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-app-terminal-edge-"));
+    app = createApp({ dataDir, port: 0 });
+    app.config.sshPort = 2222;
+    app.config.sshHostKey = "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: DOMAIN,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    await runtime.start();
+    const created = await createUser(app.db, {
+      username: "priya",
+      email: "priya@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    const made = await newApp(app, created.value, {
+      name: "beacon",
+      description: "a light that stays on",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "priya",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+  });
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the command sits between email_off markers, and the visible text is still the exact line", async () => {
+    const res = await fetch(`${base}/priya/beacon/app`, {
+      headers: { cookie },
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const command = `ssh -p 2222 beacon@localhost`;
+    // The whole command is wrapped, as a single unbroken run of text — an
+    // email-scanning edge honours the markers and leaves what is between
+    // them alone, so a reader still copies exactly this string.
+    expect(html).toContain(`<!--email_off-->${command}<!--/email_off-->`);
+    // Strip only the markers: what is left is exactly the command inside
+    // its tag, unchanged — nothing dropped or split, no stray space added.
+    const withoutMarkers = html.replace(/<!--\/?email_off-->/g, "");
+    expect(withoutMarkers).toContain(`<code class="mono">${command}</code>`);
+    expect(html).toContain("host key SHA256:abcdefghijklmnopqrstuvwxyz");
+  });
+});
