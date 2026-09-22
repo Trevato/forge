@@ -818,14 +818,18 @@ export async function landIfGreen(
   if (wall !== undefined) {
     // Once per head, as a ledger row: it is what puts the card on the
     // studio, and what the audit's third lens will read as a crossing.
+    const cells = wall.unsound ?? wall.loosened.map(wallSentence);
     const earlier = latestDecision(app.db, pull.id, "land");
+    // Told once per head — and again if what the wall says about this head
+    // has changed, so the card never quotes cells the rule no longer counts.
     const told =
       earlier?.answer === "wall" &&
       typeof earlier.state === "object" &&
       earlier.state !== null &&
-      (earlier.state as { head?: unknown }).head === pull.headOid;
+      (earlier.state as { head?: unknown }).head === pull.headOid &&
+      JSON.stringify((earlier.state as { cells?: unknown }).cells) ===
+        JSON.stringify(cells);
     if (!told) {
-      const cells = wall.unsound ?? wall.loosened.map(wallSentence);
       recordDecision(app.db, {
         kind: "land",
         repoId: repo.id,

@@ -18,7 +18,11 @@ import {
 } from "../src/actions/repos.ts";
 import { landIfGreen } from "../src/crew/autonomy.ts";
 import { getPull } from "../src/core/pulls.ts";
-import { latestDecision } from "../src/core/decisions.ts";
+import {
+  latestDecision,
+  listDecisions,
+  recordDecision,
+} from "../src/core/decisions.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { readContract, type Contract } from "../src/contract/can.ts";
 import { loosened, wallOf, wallSentence } from "../src/contract/policy.ts";
@@ -287,6 +291,28 @@ describe("a pull at the wall", () => {
     expect(row?.answer).toBe("wall");
     expect(row?.by).toBe("wall");
     expect((row?.state as { cells: string[] }).cells).toEqual([
+      "note.create as anon: was no, now yes",
+    ]);
+    // The same head asked again writes nothing new; a row whose cells no
+    // longer match what the wall says is superseded, not repeated.
+    const rows = () =>
+      listDecisions(app.db, repo.id, { kind: "land" }).filter(
+        (d) => d.issueId === wall.id && d.answer === "wall",
+      );
+    expect(rows()).toHaveLength(1);
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: repo.id,
+      issueId: wall.id,
+      state: { head: wall.headOid, cells: ["stale: from an older rule"] },
+      answer: "wall",
+      p: 1,
+      by: "wall",
+      ms: 0,
+    });
+    expect(await landIfGreen(app, fresh(), wall)).toBe(false);
+    expect(rows()).toHaveLength(3);
+    expect((rows()[0]!.state as { cells: string[] }).cells).toEqual([
       "note.create as anon: was no, now yes",
     ]);
     const signedIn = await fetch(`${servers.url}/signin`, {
