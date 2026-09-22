@@ -470,19 +470,6 @@ export function whereRow(ctx: Ctx, scope: RepoScope): Html {
           class="where-pin"
         >
           <input type="hidden" name="pinned" value="${pinned ? "0" : "1"}" />
-          <button
-            class="btn"
-            data-size="sm"
-            data-variant="${pinned ? "secondary" : "outline"}"
-            type="submit"
-            title="${pinned
-              ? "Stop keeping this repository on my machine"
-              : "The local client will clone and keep this fresh"}"
-          >
-            ${icon(pinned ? "pin" : "pin", 16)}${pinned
-              ? html`On my machine <span aria-hidden="true">◆</span>`
-              : html`Keep on my machine`}
-          </button>
         </form>`,
     )}
   </div>`;

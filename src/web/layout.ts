@@ -135,11 +135,14 @@ function modeToggle(ctx: Ctx): Html {
       <button
         type="submit"
         aria-pressed="${ctx.mode === mode ? "true" : "false"}"
+        aria-label="${label}"
         title="${mode === "studio"
           ? "Apps, the crew, what asks you"
           : "Code, commits, branches, runs"}"
       >
-        ${label}
+        ${icon(mode === "studio" ? "rocket" : "code")}<span class="hide-sm"
+          >${label}</span
+        >
       </button>
     </form>`;
   return html`<span class="mode-toggle" role="group" aria-label="Studio or dev">
@@ -197,6 +200,11 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "Apps", href: "/apps", icon: "rocket" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
+    // The "+" menu is hidden on a phone to keep the topbar inside the
+    // screen; creating things stays one tap away here.
+    { label: "New app", href: "/apps/new", icon: "rocket" },
+    { label: "New repository", href: "/new", icon: "repo" },
+    { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
@@ -243,8 +251,10 @@ function searchBar(): Html {
  * the shell script rather than shown and then found to be dead.
  */
 function helpButton(): Html {
+  // Keyboard shortcuts have no meaning on a phone; the button would only
+  // cost the width that pushes the page sideways.
   return html`<button
-    class="btn btn-icon js-only"
+    class="btn btn-icon js-only hide-sm"
     type="button"
     data-help
     aria-label="Keyboard shortcuts"
@@ -430,18 +440,20 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}${helpButton()}${modeToggle(ctx)}${themeMenu(theme)}
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${modeToggle(
+          ctx,
+        )}${themeMenu(theme)}
         ${user
-          ? html`${newMenu()}${userMenu(
-              user,
-              ctx.auth.via === "edge"
-                ? {
-                    label: "Sign out",
-                    href: edgeLogoutUrl("/"),
-                    icon: "signOut",
-                  }
-                : { label: "Sign out", post: "/logout", icon: "signOut" },
-            )}`
+          ? html`<span class="hide-sm">${newMenu()}</span>${userMenu(
+                user,
+                ctx.auth.via === "edge"
+                  ? {
+                      label: "Sign out",
+                      href: edgeLogoutUrl("/"),
+                      icon: "signOut",
+                    }
+                  : { label: "Sign out", post: "/logout", icon: "signOut" },
+              )}`
           : btn("Sign in", {
               href:
                 ctx.app.config.edgeToken === undefined

@@ -498,9 +498,8 @@ describe("browsing an origin repository on the web", () => {
     expect(strip).toContain("◆");
     expect(strip).toContain("this machine");
     expect(strip).not.toContain('data-state="absent"');
-    // The header's own toggle now offers the way back out.
-    const html = await bodyOf(alice, "/alice/widgets");
-    expect(html).toContain("On my machine");
+    // The third place is the toggle, and now offers the way back out.
+    expect(strip).toContain("Stop keeping this repository on my machine");
   });
 
   test("starting a mirror that is already running joins it", async () => {
