@@ -105,7 +105,8 @@ export function systemPrompt(input: BriefInput): string {
             `- The preview of your pull is at ${input.previewUrl} once it is up.`,
           ]),
     );
-    if (input.policy !== undefined) lines.push("", ...policyLines(input.policy));
+    if (input.policy !== undefined)
+      lines.push("", ...policyLines(input.policy));
   }
   lines.push(
     "",
@@ -220,6 +221,11 @@ function taskBody(input: TaskInput): string {
       "- Both doors: what a person can do on the page they can do in `src/tty.ts` too, and the README says how to use it.",
       "- Clean: small modules named after one concept, no dead code, no commented-out code, no TODOs left as work, no new dependency without a reason in the pull.",
       "- True to the direction: it does what the issue asked and nothing the direction did not, and the preview shows it working.",
+      ...(input.policy === undefined
+        ? []
+        : [
+            "- The contract: every action asks `permit` and none compares roles by hand; a new door has its row in `src/contract.test.ts`; and no cell in `contract.json` is loosened unless the issue asked for exactly that — a loosened cell is a wall a person crosses, so a pull that loosens one without being asked is a change request, whatever else it does well.",
+          ]),
       "",
       "Then submit exactly one review through the forge's API and stop:",
       `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/pulls/${issue.number}/reviews" -d '{"state":"approved","body":"..."}'`,

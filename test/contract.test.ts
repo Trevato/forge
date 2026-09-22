@@ -11,7 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
-import { policyLines } from "../src/crew/brief.ts";
+import { policyLines, taskPrompt } from "../src/crew/brief.ts";
 import {
   NOBODY,
   VERBS,
@@ -520,5 +520,30 @@ describe("what a new app is born with", () => {
     }).join("\n");
     expect(broken).toContain("does not read");
     expect(broken).toContain("- note.create needs `ghost`");
+  });
+
+  test("the reviewer's checklist has the contract on it when the app has one", () => {
+    const base = {
+      agent: { user: { username: "rev", displayName: "" } },
+      repo: { ownerName: "alice", name: "notes", autonomyDirection: "" },
+      issue: { number: 7, title: "Widen", body: "" },
+      branch: "rev/7",
+      forgeUrl: "http://forge.test",
+      isApp: true,
+      resuming: false,
+      reason: "review" as const,
+      comments: [],
+      reviews: [],
+      reviewDiff: "",
+    };
+    const withPolicy = taskPrompt({
+      ...base,
+      policy: { identities: ["anon"], lines: ["note: create user"] },
+    } as unknown as Parameters<typeof taskPrompt>[0]);
+    expect(withPolicy).toContain("- The contract: every action asks `permit`");
+    const without = taskPrompt(
+      base as unknown as Parameters<typeof taskPrompt>[0],
+    );
+    expect(without).not.toContain("The contract:");
   });
 });
