@@ -574,6 +574,81 @@ describe("the look", () => {
     );
   }, 120_000);
 
+  test("app.looks naming two pages pictures both, distinctly, and the pull page groups them", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "two-pages",
+      base: repo.defaultBranch,
+      message: "Look at two pages",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                run: "bun run src/server.ts",
+                test: "bun test",
+                tty: "bun run src/tty.ts",
+                looks: ["/", "/board"],
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Look at two pages",
+      baseBranch: repo.defaultBranch,
+      headBranch: "two-pages",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const commitOid = branch.value.commitOid;
+    expect((await settled((r) => r.env === env)).state).toBe("ok");
+
+    const rows = await until(() => {
+      const found = looksForEnv(app.db, record.id, env).filter(
+        (l) => l.commitOid === commitOid,
+      );
+      return found.length === 6 ? found : undefined;
+    }, 30_000);
+    const home = rows.filter((l) => l.page === "/");
+    const board = rows.filter((l) => l.page === "/board");
+    expect(home).toHaveLength(3);
+    expect(board).toHaveLength(3);
+    // Two pages of one commit never collide on disk.
+    expect(new Set(rows.map((l) => l.path)).size).toBe(6);
+    const boardPhone = board.find((l) => l.kind === "phone")!;
+    expect(boardPhone.path).toBe(
+      `looks/${record.id}/${env}/${commitOid}-board-phone.png`,
+    );
+    const homePhone = home.find((l) => l.kind === "phone")!;
+    expect(homePhone.path).toBe(
+      `looks/${record.id}/${env}/${commitOid}-phone.png`,
+    );
+    // The browser was pointed at each page in turn.
+    const boardCall = calls.find(
+      (c) => new URL(c.url).searchParams.get("to") === "/board",
+    );
+    expect(boardCall).toBeDefined();
+
+    const page = await (
+      await web(`/alice/hello/pulls/${opened.value.number}`, aliceCookie)
+    ).text();
+    expect(page).toContain(`<p class="muted small look-page">/</p>`);
+    expect(page).toContain(`<p class="muted small look-page">/board</p>`);
+    expect(page).toContain(
+      `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png"`,
+    );
+    expect(page).toContain(
+      `src="/alice/hello/looks/${env}/${commitOid}/phone.png"`,
+    );
+    expect(page).toContain(`alt="hello /board #${opened.value.number} on a phone"`);
+    expect(page).toContain(`alt="hello #${opened.value.number} on a phone"`);
+  }, 120_000);
+
   test("memory pressure is what the container truly holds, never its page cache", async () => {
     const { cgroupMemoryPressure, memoryPressure } =
       await import("../src/looks/service.ts");

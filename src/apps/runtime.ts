@@ -117,6 +117,12 @@ export interface EnvStatus {
    */
   readonly tty?: string | null | undefined;
   /**
+   * The pages `app.looks` names worth a picture, once known live — `["/"]`
+   * when its `forge.json` says nothing. Unset while never live, the same
+   * as `tty`.
+   */
+  readonly looks?: readonly string[] | undefined;
+  /**
    * A deploy newer than the one serving that never came up — set only
    * while an older deployment keeps answering in its place. A later
    * successful deploy of this environment clears it (it is the newest
@@ -311,6 +317,7 @@ export class AppsRuntime {
               servingAt: state.live.servingAt,
               createdAt: state.live.createdAt,
               tty: state.live.manifest.tty,
+              looks: state.live.manifest.looks,
               ...(state.live.deployStartedAt === null
                 ? {}
                 : { deployStartedAt: state.live.deployStartedAt }),
@@ -346,6 +353,7 @@ export class AppsRuntime {
         servingAt: state.live.servingAt,
         createdAt: state.live.createdAt,
         tty: state.live.manifest.tty,
+        looks: state.live.manifest.looks,
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),

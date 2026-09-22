@@ -153,7 +153,8 @@ The repository says how to run itself, in `forge.json` at its root:
     "test": "bun test",
     "health": "/",
     "ready": 30,
-    "tty": "bun run src/tty.ts"
+    "tty": "bun run src/tty.ts",
+    "looks": ["/", "/board"]
   }
 }
 ```
@@ -162,9 +163,10 @@ Only `run` is required, and even it defaults: a `package.json` with a `start`
 script is enough. `install` defaults to `bun install` when a `package.json`
 exists and to nothing otherwise; `test` defaults to nothing; `health` is the
 path polled until it answers; `ready` is the number of seconds to wait for
-that before the deploy fails; `tty` is the app's terminal interface (below). The file is read from the commit being
-deployed, never from the database — a pull that changes how the app runs is
-previewed the way it will run.
+that before the deploy fails; `tty` is the app's terminal interface (below);
+`looks` names the pages worth a picture (below), and defaults to `["/"]`. The
+file is read from the commit being deployed, never from the database — a
+pull that changes how the app runs is previewed the way it will run.
 
 The forge starts the app with:
 
@@ -453,17 +455,23 @@ older ones are history, not status.
 
 ### The look
 
-When a deploy comes up green the forge takes a picture of it — the page at
-`/`, at a phone's width (390×844), a laptop's (1280×800), and a thumb's
-(200×125, desktop's own aspect, small) — and keeps the pictures beside the
-commit they are of, so a person judges a change from what it is rather than
-from what it says. The pull page shows the phone and desktop pair under the
-checks, with the commit and a word when the head has moved since; the
-studio's ask row and the board's landed row lead with the thumb; an app's
-studio head shows how production looks now, with the thumb too. A thumb
-missing on a commit pictured before it existed falls back to the phone shot
-that slot used to load, so nothing goes blank. Pictures are served at
-`/:owner/:name/looks/<env>/<commit>/{phone,desktop,thumb}.png` with the
+When a deploy comes up green the forge takes a picture of it — every page
+`app.looks` names, `/` alone when it names none — at a phone's width
+(390×844), a laptop's (1280×800), and a thumb's (200×125, desktop's own
+aspect, small), and keeps the pictures beside the commit they are of, so a
+person judges a change from what it is rather than from what it says.
+`app.looks` may name at most three pages: a browser start per picture per
+width is the heaviest thing the forge does, and more is a manifest error
+rather than a silent, slower deploy. The pull page shows the phone and
+desktop pair under the checks, with the commit and a word when the head has
+moved since; more than one page gets one group per page, each labelled by
+its path, since a page that failed keeps its last good picture while another
+moves on. The studio's ask row, the board's landed row, and an app's studio
+head always show the home page's own picture, whatever else `app.looks`
+names — the thumb, or (before it existed on that commit) the phone shot that
+slot used to load, so nothing goes blank. Pictures are served at
+`/:owner/:name/looks/<env>/<commit>/<kind>.png` for the home page, or
+`/:owner/:name/looks/<env>/<commit>/<page>-<kind>.png` for another, with the
 repository's own read access, cached by commit.
 
 The picture is what the repository's owner would see: headless Chromium is

@@ -303,6 +303,57 @@ describe("manifest: parseManifest edge cases", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("not_an_app");
   });
+
+  test("app.looks absent behaves exactly as today: the home page alone", () => {
+    const result = parseManifest(JSON.stringify({ app: { run: "x" } }), undefined);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.looks).toEqual(["/"]);
+  });
+
+  test("app.looks names up to three pages", () => {
+    const result = parseManifest(
+      JSON.stringify({ app: { run: "x", looks: ["/", "/board"] } }),
+      undefined,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.looks).toEqual(["/", "/board"]);
+  });
+
+  test("app.looks with more than three paths is refused", () => {
+    const result = parseManifest(
+      JSON.stringify({
+        app: { run: "x", looks: ["/", "/a", "/b", "/c"] },
+      }),
+      undefined,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("invalid");
+  });
+
+  test("app.looks entries must be a path: no scheme, no host, no .., no control bytes", () => {
+    for (const bad of [
+      "board",
+      "//evil.example/board",
+      "https://evil.example/board",
+      "/../secret",
+      "/board\u0000",
+      "/board\n",
+    ]) {
+      const result = parseManifest(
+        JSON.stringify({ app: { run: "x", looks: [bad] } }),
+        undefined,
+      );
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  test("an over-long app.looks entry is refused", () => {
+    const result = parseManifest(
+      JSON.stringify({ app: { run: "x", looks: [`/${"a".repeat(300)}`] } }),
+      undefined,
+    );
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("run log: redaction, truncation, and the listener seam", () => {

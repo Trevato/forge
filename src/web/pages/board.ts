@@ -283,7 +283,7 @@ function landed(ctx: Ctx, scope: Scope): Html {
     );
     return (
       look &&
-      lookUrl(repoBase(repo), "production", look.commitOid, look.kind)
+      lookUrl(repoBase(repo), "production", look.commitOid, look.page, look.kind)
     );
   };
   const rows = pulls.map((pull: Pull) => {

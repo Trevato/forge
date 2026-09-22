@@ -19,7 +19,7 @@ import {
   listOpenAgentPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
-import { LOOK_SIZES, looksForApps } from "../../core/looks.ts";
+import { DEFAULT_PAGE, LOOK_SIZES, looksForApps } from "../../core/looks.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins, pinnedRepoIds } from "../../core/pins.ts";
 import {
@@ -557,6 +557,7 @@ function studioLanding(ctx: Ctx): Html {
       (l) =>
         l.appId === record.id &&
         l.env === "production" &&
+        l.page === DEFAULT_PAGE &&
         l.kind === "desktop" &&
         l.error === null,
     );
@@ -565,7 +566,7 @@ function studioLanding(ctx: Ctx): Html {
       ${look
         ? html`<img
             class="app-tile-look"
-            src="${lookUrl(base, "production", look.commitOid, "desktop")}"
+            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, "desktop")}"
             width="${LOOK_SIZES.desktop.width}"
             height="${LOOK_SIZES.desktop.height}"
             alt=""

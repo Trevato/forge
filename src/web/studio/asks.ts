@@ -239,7 +239,9 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
     const look = thumbLook(
       looks.filter((l) => l.appId === record.id && l.env === env),
     );
-    return look && lookUrl(repoBase(repo), env, look.commitOid, look.kind);
+    return (
+      look && lookUrl(repoBase(repo), env, look.commitOid, look.page, look.kind)
+    );
   };
   return candidates.map((c): Decision => {
     if (c.kind === "stopped" && c.pull) {

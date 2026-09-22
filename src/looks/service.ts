@@ -32,8 +32,10 @@ import { getAppById, getAppByRepo, listApps } from "../core/apps.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
+  DEFAULT_PAGE,
   LOOK_KINDS,
   LOOK_SIZES,
+  lookSlot,
   looksForEnv,
   recordLook,
   type LookKind,
@@ -125,8 +127,10 @@ export const lookPath = (
   appId: string,
   env: EnvName,
   commitOid: string,
+  page: string,
   kind: LookKind,
-): string => join("looks", appId, env, `${commitOid}-${kind}.png`);
+): string =>
+  join("looks", appId, env, `${commitOid}-${lookSlot(page, kind)}.png`);
 
 interface Pending {
   readonly appId: string;
@@ -270,12 +274,17 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
+    const pages = status.looks ?? [DEFAULT_PAGE];
     const have = new Set(
       looksForEnv(app.db, item.appId, item.env)
         .filter((l) => l.commitOid === item.commitOid && l.error === null)
-        .map((l) => l.kind),
+        .map((l) => lookSlot(l.page, l.kind)),
     );
-    const wanted = LOOK_KINDS.filter((kind) => !have.has(kind));
+    const wanted = pages.flatMap((page) =>
+      LOOK_KINDS.filter((kind) => !have.has(lookSlot(page, kind))).map(
+        (kind) => ({ page, kind }),
+      ),
+    );
     if (wanted.length === 0) return;
     // The picture is what the owner sees: the app renders for a signed-in
     // admin, exactly as when they open it from the forge.
@@ -286,7 +295,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
     let allOk = true;
-    for (const kind of wanted) {
+    for (const { page, kind } of wanted) {
       if (stopped) return;
       const token = signGrant(
         dataDir,
@@ -295,8 +304,8 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         Date.now(),
         who,
       );
-      const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent("/")}`;
-      const path = lookPath(item.appId, item.env, item.commitOid, kind);
+      const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
+      const path = lookPath(item.appId, item.env, item.commitOid, page, kind);
       const out = join(dataDir, path);
       // Taken to one side and moved in whole. A pull that closes while its
       // picture is being taken sweeps its environment's folder away, and a
@@ -304,7 +313,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       // give; this way the sweep and the picture never meet.
       const staged = join(
         stagingRoot(dataDir),
-        `${item.appId}-${item.env}-${item.commitOid}-${kind}.png`,
+        `${item.appId}-${item.env}-${item.commitOid}-${lookSlot(page, kind)}.png`,
       );
       mkdirSync(dirname(staged), { recursive: true });
       const taken = await capture({
@@ -317,6 +326,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         appId: item.appId,
         env: item.env,
         commitOid: item.commitOid,
+        page,
       };
       if (taken.ok) {
         // The environment moved on while the picture was taken: it shows
@@ -339,6 +349,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         log.warn("no picture", {
           app: record.slug,
           env: item.env,
+          page,
           kind,
           error: taken.error,
         });
