@@ -40,6 +40,25 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
+import { stripForgeDirs } from "../src/runs/paths.ts";
+
+describe("stripForgeDirs", () => {
+  test("strips a known directory, leaves the rest of the path", () => {
+    expect(stripForgeDirs(["/data/crew/bot/1/2"], "/data/crew/bot/1/2/src/a.ts")).toBe(
+      "src/a.ts",
+    );
+  });
+
+  test("a line with no match passes through whole", () => {
+    expect(stripForgeDirs(["/data/crew/bot/1/2"], "/usr/bin/ssh")).toBe(
+      "/usr/bin/ssh",
+    );
+  });
+
+  test("an empty directory is dropped, not used as a prefix", () => {
+    expect(stripForgeDirs([""], "/usr/bin/ssh")).toBe("/usr/bin/ssh");
+  });
+});
 
 describe("the crew, with a stand-in Claude Code", () => {
   let dataDir: string;
@@ -104,7 +123,7 @@ fi
 if grep -q "The check on your pull" "${promptFile}"; then echo "daffodils" >> CREW.md; fi
 echo "work by the crew $(date +%s%N)" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
-echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Added CREW.md."},{"type":"tool_use","name":"Bash","input":{"command":"git push"}}]}}'
+echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Added CREW.md."},{"type":"tool_use","name":"Read","input":{"file_path":"'"$(pwd)"'/CREW.md"}},{"type":"tool_use","name":"Bash","input":{"command":"cat /etc/hosts"}},{"type":"tool_use","name":"Bash","input":{"command":"git push"}}]}}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW.md as asked.","total_cost_usd":0.01,"num_turns":3,"session_id":"fake-1","terminal_reason":"completed"}'
 `,
     );
@@ -245,6 +264,11 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     ).toBe(pull.headOid);
     expect(pull.body).toContain("Added CREW.md as asked.");
     expect(pull.body).toContain(`Closes #${issueNumber}`);
+    // A tool line names the file the way the repository does — the run's
+    // workdir stripped off — while a path outside the workdir is untouched.
+    const log = readRunLog(dataDir, run.id).lines.join("\n");
+    expect(log).toContain("→ Read CREW.md");
+    expect(log).toContain("→ Bash cat /etc/hosts");
     // The run's credential is gone; the clone stays for the follow-up.
     const tokens = app.db
       .query<

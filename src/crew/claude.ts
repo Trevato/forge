@@ -13,6 +13,7 @@
  */
 
 import { childEnv, pump } from "../apps/process.ts";
+import { stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
 
 export interface ClaudeInput {
@@ -209,7 +210,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       return;
     }
     if (type === "assistant") {
-      for (const text of assistantLines(e)) input.log(text);
+      for (const text of assistantLines(e, input.cwd)) input.log(text);
       return;
     }
     if (type === "result") {
@@ -309,7 +310,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
 }
 
 /** The lines a person wants from an assistant turn: its words and its tool calls. */
-function assistantLines(e: Record<string, unknown>): string[] {
+function assistantLines(e: Record<string, unknown>, cwd: string): string[] {
   const message = e["message"];
   if (typeof message !== "object" || message === null) return [];
   const content = (message as Record<string, unknown>)["content"];
@@ -321,14 +322,14 @@ function assistantLines(e: Record<string, unknown>): string[] {
         if (line.trim() !== "") out.push(line);
     } else if (block["type"] === "tool_use") {
       out.push(
-        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"])}`,
+        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"], cwd)}`,
       );
     }
   }
   return out;
 }
 
-function describeTool(name: string, input: unknown): string {
+function describeTool(name: string, input: unknown, cwd: string): string {
   const args =
     typeof input === "object" && input !== null
       ? (input as Record<string, unknown>)
@@ -340,15 +341,18 @@ function describeTool(name: string, input: unknown): string {
     }
     return "";
   };
-  const detail = first([
-    "command",
-    "file_path",
-    "path",
-    "pattern",
-    "url",
-    "description",
-    "prompt",
-  ]);
+  const detail = stripForgeDirs(
+    [cwd],
+    first([
+      "command",
+      "file_path",
+      "path",
+      "pattern",
+      "url",
+      "description",
+      "prompt",
+    ]),
+  );
   const short = detail.length > 160 ? `${detail.slice(0, 157)}…` : detail;
   return short === "" ? name : `${name} ${short}`;
 }

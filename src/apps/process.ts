@@ -15,6 +15,7 @@ import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { stripForgeDirs } from "../runs/paths.ts";
 
 export interface ProcessHandle {
   readonly pid: number;
@@ -141,22 +142,6 @@ function operatorVars(
     if (!isReservedAppEnvName(name)) out[name] = value;
   }
   return out;
-}
-
-/**
- * The forge's own directories stripped from a line of output — the data
- * directory, the app's id, the environment and the per-commit checkout are
- * the forge's private layout, not the app's; a stack trace naming
- * `dir/src/server.ts:1:11` reads as `src/server.ts:1:11` instead, the path
- * the app's own source control knows. Applied where output is captured, not
- * filtered — a line with no match passes through whole, so a message never
- * loses its stack for the sake of hiding a directory.
- */
-function stripForgeDirs(dirs: readonly string[], line: string): string {
-  return dirs.reduce(
-    (out, dir) => out.split(`${dir}/`).join("").split(dir).join("."),
-    line,
-  );
 }
 
 /**
