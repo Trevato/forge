@@ -183,6 +183,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
   let mergedPullNumber: number;
   let openBranch: string;
   let mergedBranch: string;
+  let repoPath: string;
   /** Every branch this fixture made. No studio page names one of them. */
   const branches: string[] = [];
   /** The table every test below walks. Filled at the end of `beforeAll`. */
@@ -477,7 +478,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
     });
     if (!blankEnabled.ok) throw new Error(String(blankEnabled.error));
 
-    const repoPath = "/alice/vocab";
+    repoPath = "/alice/vocab";
     // Every studio page, one row each. A new studio page goes here — the
     // path it answers at, the word it speaks, and dev's own words at the
     // same path — and nothing else in this file changes.
@@ -721,6 +722,42 @@ describe("dev's vocabulary never reaches a studio page", () => {
     const h1 = transcript.match(/<h1>([\s\S]*?)<\/h1>/)?.[1] ?? "";
     expect(title).not.toContain(runId);
     expect(h1).not.toContain(runId);
+  });
+
+  test("the command palette speaks the studio's own nouns for an app (#246) — it rides a script tag the vocabulary walk above never opens", async () => {
+    const res = await fetch(`${base}${repoPath}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    const block = html.match(
+      /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
+    )?.[1];
+    if (block === undefined) throw new Error("no palette-index on the app page");
+    const index = JSON.parse(block) as { items: { t: string; h: string }[] };
+    const rows = new Map(index.items.map((i) => [i.t, i.h]));
+
+    // Dev's nouns and dev's pages: gone from a studio app's rows.
+    for (const t of [
+      "alice/vocab — Code",
+      "alice/vocab — Commits",
+      "alice/vocab — New issue",
+      "alice/vocab — Issues",
+      "alice/vocab — Pull requests",
+    ]) {
+      expect(rows.has(t), `palette still offers "${t}" on a studio app page`).toBe(
+        false,
+      );
+    }
+
+    // The studio's own nouns, at the studio's own addresses.
+    expect(rows.get("alice/vocab — Studio")).toBe(repoPath);
+    expect(rows.get("alice/vocab — Told")).toBe(`${repoPath}/tells`);
+    expect(rows.get("alice/vocab — Changes")).toBe(`${repoPath}/changes`);
+    // The studio's first verb — telling the crew — reachable from the
+    // palette, landing on the app page where the tell box lives.
+    expect(rows.get("alice/vocab — Tell the crew")).toBe(`${repoPath}#tell`);
   });
 
   test("?mode=dev on the same routes still carries dev's own words — the assertions above are real, not vacuous", async () => {

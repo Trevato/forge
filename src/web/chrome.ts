@@ -289,24 +289,30 @@ export { hostOf };
 
 /** This repo's own rows for the command palette — the studio's nouns for a
  * studio-mode viewer of an app, so the palette never sends someone to a
- * list under a name the address bar would not use. */
+ * list under a name the address bar would not use. Commits is dev's own
+ * page (no studio tab reaches it, `scopeHeader` above), so it drops out of
+ * a studio app's rows rather than sit there under a dev word; New issue
+ * gives way to the studio's own first verb, telling the crew, which posts
+ * from the app page itself (`${base}#tell`, `studio/app.ts`). */
 export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
   const base = repoBase(repo);
   const name = `${repo.ownerName}/${repo.name}`;
   const studio =
     ctx.mode === "studio" && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  if (studio) {
+    return [
+      { t: `${name} — Studio`, h: base, c: "This repo" },
+      { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
+      { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
+      { t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" },
+      { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
+      { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
+    ];
+  }
   return [
     { t: `${name} — Code`, h: base, c: "This repo" },
-    {
-      t: `${name} — ${studio ? "Told" : "Issues"}`,
-      h: studio ? tellsHref(base) : `${base}/issues`,
-      c: "This repo",
-    },
-    {
-      t: `${name} — ${studio ? "Changes" : "Pull requests"}`,
-      h: studio ? changesHref(base) : `${base}/pulls`,
-      c: "This repo",
-    },
+    { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },
+    { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
     { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
     { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
