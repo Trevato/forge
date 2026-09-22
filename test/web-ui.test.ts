@@ -322,8 +322,11 @@ describe("web ui", () => {
       body: form({ name: "sc-ript", visibility: "public" }),
       redirect: "manual",
     });
+    // `mode=dev` because the by-name rows in the studio's own palette are
+    // apps, not every repository (`paletteIndex`, `src/web/layout.ts`) — a
+    // plain repository like this one is dev's box to find.
     const html = await (
-      await fetch(base, { headers: { cookie: owner } })
+      await fetch(`${base}/?mode=dev`, { headers: { cookie: owner } })
     ).text();
     const start = html.indexOf(
       '<script type="application/json" id="palette-index">',
@@ -537,8 +540,13 @@ describe("web ui", () => {
     ).text();
     expect(wildcard).not.toContain("needs a label");
 
+    // `mode=dev`: the studio's own `/search` is over apps, changes and
+    // tells (see `studioSearchPage`), never a plain repository — `proj` is
+    // dev's box to find, the same escape hatch `searchPage` documents.
     const whole = await (
-      await fetch(`${base}/search?q=proj`, { headers: { cookie: owner } })
+      await fetch(`${base}/search?q=proj&mode=dev`, {
+        headers: { cookie: owner },
+      })
     ).text();
     // Just the results, not the shell: the palette index legitimately carries
     // every repo the viewer may see, and mel is the site admin here.
