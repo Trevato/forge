@@ -96,7 +96,7 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
   const lineage = await lineageOf(ctx.app, repo, (r) =>
     canRead(ctx.app.db, r, ctx.auth.user),
   );
-  const body = html`${repoHeader(ctx, repo, "code")}
+  const body = html`${repoHeader(ctx, repo, "forks")}
     <div class="page-head mt">
       <h2>${forks.length} fork${forks.length === 1 ? "" : "s"}</h2>
     </div>

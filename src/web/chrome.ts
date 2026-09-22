@@ -10,7 +10,13 @@
 
 import { getAppByRepo } from "../core/apps.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
-import { canAdmin, canRead, getRepo, getRepoById } from "../core/repos.ts";
+import {
+  canAdmin,
+  canRead,
+  getRepo,
+  getRepoById,
+  listForks,
+} from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { html, raw, when, type Html } from "./html.ts";
@@ -87,6 +93,7 @@ export type RepoTab =
   | "code"
   | "issues"
   | "pulls"
+  | "forks"
   | "map"
   | "commits"
   | "branches"
@@ -204,6 +211,21 @@ export function scopeHeader(
           },
         ]),
   ];
+  // The family: a repository with forks, or one that is a fork, gets a tab
+  // to the tree — where each fork stands against what it follows. One with
+  // neither has no family to show, and the tab stays away.
+  if (repo !== undefined) {
+    const forks = listForks(ctx.app.db, repo.id).length;
+    if (forks > 0 || repo.forkParentId !== null)
+      items.splice(3, 0, {
+        label: "Forks",
+        href: `${base}/forks`,
+        icon: "fork",
+        ...(forks > 0 ? { count: forks } : {}),
+        current: active === "forks",
+        shortcut: "g f",
+      });
+  }
   // A repository that runs gets an App tab; one that does not has no such
   // page, and a tab that 404s is a lie about what is there.
   if (repo !== undefined && isApp && !studio)

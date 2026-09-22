@@ -440,6 +440,25 @@ describe("a fork that follows its parent", () => {
     }
   }, 20_000);
 
+  test("the family has a tab: on the parent with the count, on a fork without, on neither for a loner", async () => {
+    const parentPage = await (await fetch(`${base}/alice/game`)).text();
+    expect(parentPage).toMatch(
+      /href="\/alice\/game\/forks"[\s\S]{0,700}Forks<span class="pill"\s*>\d+<\/span/,
+    );
+    const forkPage = await (await fetch(`${base}/bob/game`)).text();
+    expect(forkPage).toContain('href="/bob/game/forks"');
+    const loner = await createRepo(app, alice, {
+      name: "alone",
+      visibility: "public",
+    });
+    if (!loner.ok) throw new Error(String(loner.error));
+    const lonerPage = await (await fetch(`${base}/alice/alone`)).text();
+    expect(lonerPage).not.toContain('href="/alice/alone/forks"');
+    // The forks page lights its own tab.
+    const tree = await (await fetch(`${base}/alice/game/forks`)).text();
+    expect(tree).toMatch(/href="\/alice\/game\/forks"\s+aria-current="page"/);
+  });
+
   test("the forks page shows each fork's standing", async () => {
     const page = await fetch(`${base}/alice/game/forks`, {
       headers: { accept: "text/html" },

@@ -13,6 +13,13 @@ forks along. A fork that followed silently holds the parent's commit byte for
 byte, so its check is not run again on the copy; a merge into the fork's own
 work is a new commit and is checked.
 
+## The way in
+
+A repository with forks, or one that is a fork, has a **Forks** tab in its
+strip beside Issues and Pulls, with the count of forks under it. It opens the
+family tree. A repository with neither has no tab: there is no family to
+show. A fork's own page carries its following card first, above everything.
+
 ## The relationship, at rest
 
 Every view of a fork reads its standing from git; nothing about it is stored.
