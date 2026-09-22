@@ -288,6 +288,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .audit-said { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .audit-alarm { color: var(--danger); }
 .wall-cells { margin: 8px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
+.backups-now { margin-top: 12px; }
+.backups-error { display: flex; align-items: center; gap: 8px; color: var(--danger); }
+.backups-restore { margin: 8px 0 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 .policy-line {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 12px 0 0; font-size: 13px; color: var(--muted-fg);

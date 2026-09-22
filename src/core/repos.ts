@@ -671,6 +671,14 @@ export function updateRepoSettings(
 }
 
 /** Repositories the crew drives on its own, assisted or autonomous. */
+/** Every repository the forge holds, for the snapshot: nothing is left out. */
+export function listEveryRepo(db: Database): Repo[] {
+  return db
+    .query<RepoRow, []>(`${SELECT} ORDER BY owner_name, repo.name`)
+    .all()
+    .map(toRepo);
+}
+
 export function listAutonomousRepos(db: Database): Repo[] {
   return db
     .query<

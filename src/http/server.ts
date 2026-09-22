@@ -44,6 +44,7 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
+import { backupsNow, backupsPage } from "../web/pages/backups.ts";
 import {
   changePassword,
   iconPng,
@@ -402,6 +403,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
   // The crew: a forge admin's section, hidden from everyone else.
+  router.add("GET", "/settings/backups", backupsPage);
+  router.add("POST", "/settings/backups/now", backupsNow);
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);

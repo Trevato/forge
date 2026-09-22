@@ -269,6 +269,9 @@ stands, taking updates, and the crew's part when both sides moved.
 `docs/MCP.md` is the forge as a connector, and `docs/STANDARDS.md` is what
 it answers by default: `.well-known`, feeds, cards, the manifest.
 
+`docs/SNAPSHOT.md` is a forge back from a copy: what a nightly snapshot
+holds, where it goes, and the one command that restores it.
+
 ## Develop
 
 ```sh
