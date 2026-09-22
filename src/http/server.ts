@@ -6,6 +6,7 @@
  */
 
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
+import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
@@ -1037,6 +1038,21 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       return new Response(forwarded.error.message, { status: 403 });
     }
     return new Response("");
+  }
+
+  // post-receive: a same-repo pull whose head is one of these branches
+  // follows the push before anything hears about it — the same call the web
+  // editor and the API make, so a real `git push` lands on the identical
+  // updater rather than a second one that could drift from it.
+  for (const update of input.updates) {
+    if (!update.ref.startsWith("refs/heads/") || ZERO_OID.test(update.newOid))
+      continue;
+    trackPullHead(
+      app.db,
+      repo.id,
+      update.ref.slice("refs/heads/".length),
+      update.newOid,
+    );
   }
 
   // post-receive: the push is durable — record it and wake listeners.

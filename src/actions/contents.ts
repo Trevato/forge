@@ -15,7 +15,7 @@
 
 import type { App } from "../app.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
-import type { Pull } from "../core/pulls.ts";
+import { trackPullHead, type Pull } from "../core/pulls.ts";
 import type { User } from "../core/users.ts";
 import { isSafeTreePath } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
@@ -214,6 +214,11 @@ export async function editFiles(
     if (fresh !== "") await deleteBranch(app, writer.value, repo, fresh);
     return committed;
   }
+
+  // A same-repo pull whose head is this branch follows the commit before
+  // anything hears about it, so a check or a deploy triggered below never
+  // reads a row the branch has already moved past.
+  trackPullHead(app.db, repo.id, branch, committed.value.commitOid);
 
   // `update-ref` runs no hooks, so the push is announced here — webhooks,
   // SSE and CI see it exactly as they would a `git push`.

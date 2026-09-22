@@ -207,6 +207,37 @@ export function pullForBranch(
 }
 
 /**
+ * Bring a same-repo pull's stored head up to its branch's new tip. Every seam
+ * that lands a commit on a branch — a git push, the web editor, the API —
+ * calls this one function, so `pull.headOid` never names a commit the branch
+ * has moved past. The cross-repo counterpart is `refreshPullHead`
+ * (`core/following.ts`), which fetches from another repo; here the commit is
+ * already local, so this is a plain write. Called before the landing is
+ * announced on the bus, so no listener — a check, a deploy — can read the
+ * row before it catches up.
+ */
+export function trackPullHead(
+  db: Database,
+  repoId: string,
+  branch: string,
+  newOid: string,
+): void {
+  const pull = pullForBranch(db, repoId, branch);
+  if (
+    pull === undefined ||
+    pull.crossRepo ||
+    pull.mergedAt !== null ||
+    pull.state === "closed" ||
+    pull.headOid === newOid
+  )
+    return;
+  db.query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1").run(
+    pull.id,
+    newOid,
+  );
+}
+
+/**
  * The pull that already reverts this one, if taking it back has already
  * been done — open, or merged, either one counts as "already taken back".
  * A revert pull that was closed *without* merging is an abandoned attempt,
