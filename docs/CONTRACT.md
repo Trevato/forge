@@ -51,7 +51,10 @@ anything below it may. A role is **held** one of three ways:
 
 Nothing here is a function, so a contract can be read, compared, exported
 and ported. The evaluator is the same size for three roles or three hundred:
-adding a kind of person adds a line to the contract. Roles grow downward — a
+adding a kind of person adds a line to the contract. It is the same speed
+too: the order is closed once per contract object, when first used, and a
+door then answers in the time a lookup takes (a dense order of three
+hundred roles: one walk of tens of milliseconds, then microseconds a call). Roles grow downward — a
 new role goes under an existing one — and the tests prove that doing so
 changes no cell that was already there.
 

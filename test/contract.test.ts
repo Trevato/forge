@@ -322,6 +322,43 @@ function closure(contract: Contract): (low: string, high: string) => boolean {
 describe("proof by exhaustion", () => {
   const SEEDS = Array.from({ length: 300 }, (_, i) => i + 1);
 
+  test("a door answers in the time a lookup takes, on an order of hundreds", () => {
+    // Every role above the six before it: a dense order, computed once.
+    const roles: Record<string, Role> = {
+      r0: { above: [], held: { by: "everyone" } },
+    };
+    for (let i = 1; i < 300; i++)
+      roles[`r${i}`] = {
+        above: Array.from(
+          { length: Math.min(6, i) },
+          (_, k) => `r${i - 1 - k}`,
+        ),
+        held: { by: "identity", role: `r${i}` },
+      };
+    const contract: Contract = {
+      roles,
+      resources: {
+        thing: {
+          can: {
+            create: "r150",
+            read: "r0",
+            update: "r299",
+            delete: "r299",
+            list: "r1",
+          },
+        },
+      },
+    };
+    expect(check(contract)).toEqual([]);
+    const actor: Actor = { id: "x", roles: ["r200"] };
+    decide(contract, "thing", "create", actor);
+    const start = performance.now();
+    for (let i = 0; i < 1000; i++) decide(contract, "thing", "create", actor);
+    expect(performance.now() - start).toBeLessThan(200);
+    expect(decide(contract, "thing", "create", actor)).toBe("yes");
+    expect(decide(contract, "thing", "update", actor)).toBe("no");
+  });
+
   test("generated contracts are sound", () => {
     for (const seed of SEEDS) expect(check(generate(seed))).toEqual([]);
   });
@@ -467,7 +504,9 @@ describe("what a new app is born with", () => {
   test("the builder is briefed on the policy in force, and on the wall", () => {
     const lines = policyLines({
       identities: ["anon", "user", "admin"],
-      lines: ["note: create user · read anon · update author · delete author · list anon"],
+      lines: [
+        "note: create user · read anon · update author · delete author · list anon",
+      ],
     }).join("\n");
     expect(lines).toContain("who may do what — is decided");
     expect(lines).toContain("- note: create user · read anon");

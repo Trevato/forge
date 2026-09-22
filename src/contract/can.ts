@@ -85,23 +85,44 @@ function own<T>(of: Readonly<Record<string, T>>, name: string): T | undefined {
   return Object.prototype.hasOwnProperty.call(of, name) ? of[name] : undefined;
 }
 
-/** Whether role `low` is `high` or below it. */
+/**
+ * Every role with everything at or below it, computed once per contract
+ * and kept beside it. A door is asked on every request, and an order of a
+ * few hundred roles must answer in the time a hash lookup takes, not the
+ * time a walk takes; the walk happens once, when a contract is first used.
+ * The cache is keyed by the contract object itself, so it needs no
+ * invalidation: a new contract is a new object.
+ */
+const closures = new WeakMap<Contract, Map<string, Set<string>>>();
+
+function closureOf(contract: Contract): Map<string, Set<string>> {
+  const kept = closures.get(contract);
+  if (kept !== undefined) return kept;
+  const out = new Map<string, Set<string>>();
+  for (const name of Object.keys(contract.roles)) {
+    const seen = new Set<string>([name]);
+    const walk = [name];
+    while (walk.length > 0) {
+      const at = walk.pop()!;
+      for (const below of own(contract.roles, at)?.above ?? [])
+        if (!seen.has(below)) {
+          seen.add(below);
+          walk.push(below);
+        }
+    }
+    out.set(name, seen);
+  }
+  closures.set(contract, out);
+  return out;
+}
+
+/** Whether role `low` is `high` or below it; an undeclared role is neither. */
 export function atOrBelow(
   contract: Contract,
   low: string,
   high: string,
 ): boolean {
-  const seen = new Set<string>();
-  const walk = [high];
-  while (walk.length > 0) {
-    const name = walk.pop()!;
-    if (name === low) return true;
-    if (seen.has(name)) continue;
-    seen.add(name);
-    for (const below of own(contract.roles, name)?.above ?? [])
-      walk.push(below);
-  }
-  return false;
+  return closureOf(contract).get(high)?.has(low) ?? false;
 }
 
 export function decide(
