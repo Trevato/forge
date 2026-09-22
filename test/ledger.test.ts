@@ -201,7 +201,7 @@ describe("the decision ledger", () => {
     ).toBe(1);
     // Never a question for a person in an autonomous repository.
     const { decisionsFor } = await import("../src/web/pages/studio.ts");
-    const asks = decisionsFor(
+    const asks = await decisionsFor(
       { app, auth: { user: alice, via: "session" } } as never,
       [fresh()],
     );
@@ -353,7 +353,7 @@ describe("the decision ledger", () => {
     expect(reviews()[0]!.summary).toBe(`review at ${pull.headOid.slice(0, 7)}`);
     // Nothing for a person: the studio lists no look ask for it.
     const { decisionsFor } = await import("../src/web/pages/studio.ts");
-    const asks = decisionsFor(
+    const asks = await decisionsFor(
       { app, auth: { user: alice, via: "session" } } as never,
       [fresh()],
     );
@@ -501,7 +501,7 @@ describe("the decision ledger", () => {
     expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
     // Not a question for a person, in either case.
     const { decisionsFor } = await import("../src/web/pages/studio.ts");
-    const asks = decisionsFor(
+    const asks = await decisionsFor(
       { app, auth: { user: alice, via: "session" } } as never,
       [fresh()],
     );

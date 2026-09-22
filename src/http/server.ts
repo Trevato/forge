@@ -93,6 +93,7 @@ import {
   saySubmit,
   shipSubmit,
   tellSubmit,
+  updateSubmit,
 } from "../web/pages/studio.ts";
 import { DEFAULT_MODE, isMode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
@@ -574,6 +575,7 @@ export function buildRouter(): Router<Handler> {
   // The studio's three verbs on an app: tell, ship, say.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/update", updateSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(

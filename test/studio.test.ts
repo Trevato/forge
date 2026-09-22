@@ -14,7 +14,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getIssue, listIssues } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -391,5 +391,117 @@ describe("the studio", () => {
     expect(after).not.toContain('class="studio-ask-pick"');
     expect(after).not.toContain('class="studio-ask-pick studio-ask-all"');
     expect(after).not.toContain('action="/studio/asks"');
+  });
+
+  test("green but main moved under it: the card says so, and select-all + Bring up to date queues the crew", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    // Two green pulls, each touching a file main then rewrites.
+    const stale = async (name: string): Promise<Pull> => {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: `stale/${name}`,
+        base: "main",
+        message: `Stale ${name}`,
+        files: [{ path: `${name}.txt`, content: `theirs ${name}\n` }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, scout, repo, {
+        title: `Stale ${name}`,
+        body: "",
+        baseBranch: "main",
+        headBranch: `stale/${name}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: opened.value.id,
+        env: `pull-${opened.value.number}`,
+        commitOid: opened.value.headOid,
+        reason: "pull",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "ok", summary: "check ok" });
+      return opened.value;
+    };
+    const x = await stale("x");
+    const y = await stale("y");
+    const moved = await commitToBranch(app, alice, repo, {
+      message: "main moves under both",
+      files: [
+        { path: "x.txt", content: "ours x\n" },
+        { path: "y.txt", content: "ours y\n" },
+      ],
+    });
+    expect(moved.ok).toBe(true);
+
+    const page = await (
+      await fetch(`${base}/`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+    // Not "ship it": the truth, with the files, and the crew's move.
+    expect(page).toContain("but main moved under it (x.txt)");
+    expect(page).toContain(`value="stale:${x.id}"`);
+    expect(page).toContain(`value="stale:${y.id}"`);
+    expect(page).not.toContain(`value="look:${x.id}"`);
+    expect(page).toMatch(/name="action"\s+value="update"/);
+    expect(page).toContain("Bring up to date");
+
+    const before = listRuns(app.db, repo.id, {
+      kind: "agent",
+      limit: 50,
+    }).length;
+    const updated = await fetch(`${base}/studio/asks`, {
+      method: "POST",
+      headers: {
+        cookie: `${cookie}; forge_mode=studio`,
+        origin: base,
+        accept: "application/json",
+      },
+      body: new URLSearchParams([
+        ["ask", `stale:${x.id}`],
+        ["ask", `stale:${y.id}`],
+        ["action", "update"],
+      ]),
+      redirect: "manual",
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toMatchObject({
+      done: [`stale:${x.id}`, `stale:${y.id}`],
+      skipped: [],
+      failed: [],
+      flash: "Being brought up to date 2",
+    });
+    // One conflict run per pull, for the pull's own author.
+    const conflicts = listRuns(app.db, repo.id, {
+      kind: "agent",
+      limit: 50,
+    }).filter((r) => r.reason === "conflict");
+    expect(conflicts.map((r) => r.issueId).sort()).toEqual([x.id, y.id].sort());
+    expect(listRuns(app.db, repo.id, { kind: "agent", limit: 50 }).length).toBe(
+      before + 2,
+    );
+    // Asked again while the crew is on it: nothing doubles.
+    const again = await fetch(`${base}/studio/asks`, {
+      method: "POST",
+      headers: {
+        cookie: `${cookie}; forge_mode=studio`,
+        origin: base,
+        accept: "application/json",
+      },
+      body: new URLSearchParams([
+        ["ask", `stale:${x.id}`],
+        ["action", "update"],
+      ]),
+      redirect: "manual",
+    });
+    // The crew is on it now, so it is no longer an ask: skipped, not doubled.
+    expect(await again.json()).toMatchObject({
+      done: [],
+      skipped: [`stale:${x.id}`],
+    });
+    expect(listRuns(app.db, repo.id, { kind: "agent", limit: 50 }).length).toBe(
+      before + 2,
+    );
   });
 });

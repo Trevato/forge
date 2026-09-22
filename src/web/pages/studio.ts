@@ -44,6 +44,8 @@ import {
 } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import { autonomyStatus, bringUpToDate } from "../../crew/autonomy.ts";
+import { mergeable, resolveOid } from "../../git/merge.ts";
+import { repoDir } from "../../git/repos.ts";
 import {
   decisionStats,
   latestDecision,
@@ -91,7 +93,7 @@ import { onYouCard } from "./site.ts";
 
 // ---- decisions: what asks a person ----
 
-export type DecisionKind = "stopped" | "look" | "wall" | "paused";
+export type DecisionKind = "stopped" | "look" | "stale" | "wall" | "paused";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -112,6 +114,8 @@ export interface Decision {
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
   /** The preview pictured on a phone, when the forge has taken one. */
   readonly picture?: string | undefined;
+  /** `stale`: the files main changed under the pull. */
+  readonly files?: readonly string[] | undefined;
 }
 
 /** The options a card offers, by name, as the decider sees them. */
@@ -127,6 +131,11 @@ const CARD_OPTIONS: Record<DecisionKind, Readonly<Record<string, string>>> = {
     preview: "Open the preview first; it must be seen before shipping.",
   },
   paused: { settings: "Raise the ceiling.", wait: "Wait for midnight." },
+  stale: {
+    update:
+      "Have the crew bring it up to date; the work is good and main moved.",
+    close: "Close it; what main did makes this change moot.",
+  },
   // A wall is a person's alone; the decider is never asked which way.
   wall: {},
 };
@@ -194,7 +203,25 @@ function lastHumanWord(ctx: Ctx, issue: Issue, agentName: string): string {
  * stopped (red past the crew's own limit since a person last spoke), or
  * green and waiting for a look. Plus a repository paused at its ceiling.
  */
-export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
+/** The files main changed under a pull; empty when it still merges clean. */
+async function conflictsWithMain(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+): Promise<readonly string[]> {
+  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  const base = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
+  if (base === undefined) return [];
+  const merged = await mergeable(dir, base, pull.headOid);
+  return !merged.ok && merged.error.kind === "conflict"
+    ? merged.error.files
+    : [];
+}
+
+export async function decisionsFor(
+  ctx: Ctx,
+  repos: readonly Repo[],
+): Promise<Decision[]> {
   const db = ctx.app.db;
   const out: Decision[] = [];
   const byId = new Map(repos.map((r) => [r.id, r]));
@@ -280,6 +307,24 @@ export function decisionsFor(ctx: Ctx, repos: readonly Repo[]): Decision[] {
             : `${who} tried ${tries + 1} times; the check still fails`,
         });
     } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
+      // Green, but does it still merge? Main may have moved under it since
+      // the check ran. A pull that no longer merges is not a person's to
+      // ship — ship would only fail — it is the crew's to bring up to date,
+      // and the card says so instead of offering a button that errors.
+      const files = await conflictsWithMain(ctx, repo, pull);
+      if (files.length > 0) {
+        out.push({
+          kind: "stale",
+          id: `stale:${pull.id}`,
+          repo,
+          pull,
+          who,
+          says: `${who} finished "${pull.title}" and the check is green, but main moved under it (${files.join(", ")}). Have ${who} bring it up to date, or close it.`,
+          short: `${who} finished it, but main moved under it`,
+          files,
+        });
+        continue;
+      }
       // Autonomous repositories look at their own green pulls: the decider,
       // then the crew's reviewer. Everything else waits for a person.
       const picture = pictureOf(repo, pull);
@@ -346,7 +391,7 @@ function leanNote(d: Decision, option: string): Html | null {
  * something happens on the change's page. The page shows an action only
  * while every checked ask takes it; the route skips one that does not.
  */
-export type BulkAction = "ship" | "close";
+export type BulkAction = "ship" | "update" | "close";
 
 const BULK: Readonly<
   Record<
@@ -359,7 +404,12 @@ const BULK: Readonly<
   >
 > = {
   ship: { kinds: ["look"], label: "Ship", done: "Shipped" },
-  close: { kinds: ["stopped"], label: "Close", done: "Closed" },
+  update: {
+    kinds: ["stale"],
+    label: "Bring up to date",
+    done: "Being brought up to date",
+  },
+  close: { kinds: ["stopped", "stale"], label: "Close", done: "Closed" },
 };
 const BULK_ACTIONS = Object.keys(BULK) as readonly BulkAction[];
 const isBulkAction = (v: string): v is BulkAction => Object.hasOwn(BULK, v);
@@ -385,6 +435,10 @@ function decisionForm(d: Decision): Html | null {
     </form>`;
   if (d.kind === "look" || d.kind === "wall")
     return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
+      <input type="hidden" name="pull" value="${pull.number}" />
+    </form>`;
+  if (d.kind === "stale")
+    return html`<form ${own} action="${base}/pulls/${pull.number}/update">
       <input type="hidden" name="pull" value="${pull.number}" />
     </form>`;
   return null;
@@ -421,6 +475,18 @@ function decisionActions(ctx: Ctx, d: Decision): Html {
       size: "sm",
       ...leanVariant(d, "look", undefined),
     })}${leanNote(d, "look")}`;
+  if (d.kind === "stale" && pull)
+    return html`${btn("Bring up to date", {
+      size: "sm",
+      form: askFormId(d),
+      ...leanVariant(d, "update", "primary"),
+    })}${leanNote(d, "update")}
+    ${btn("Close", {
+      href: `${base}/pulls/${pull.number}#comment-body`,
+      size: "sm",
+      ...leanVariant(d, "close", undefined),
+    })}${leanNote(d, "close")}
+    ${btn("See", { href: `${base}/pulls/${pull.number}`, size: "sm" })}`;
   if (d.kind === "wall" && pull)
     return html`${btn("Read the cells", {
       href: `${base}/pulls/${pull.number}`,
@@ -619,7 +685,7 @@ export async function studioApp(
       const i = getIssueById(db, r.issueId);
       if (i) issues.set(r.issueId, i);
     }
-  const decisions = await withLikely(ctx, decisionsFor(ctx, [repo]));
+  const decisions = await withLikely(ctx, await decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
   const pullChecks = latestRunsForIssues(
     db,
@@ -1022,7 +1088,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       .map((r) => r.actorId)
       .filter((id): id is string => id !== null),
   );
-  const decisions = await withLikely(ctx, decisionsFor(ctx, appRepos));
+  const decisions = await withLikely(ctx, await decisionsFor(ctx, appRepos));
   const asksByRepo = new Map<string, number>();
   for (const d of decisions)
     asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
@@ -1180,9 +1246,11 @@ function decisionRow(ctx: Ctx, d: Decision): Html {
       ? "alert"
       : d.kind === "look"
         ? "eye"
-        : d.kind === "wall"
-          ? "shield"
-          : "clock";
+        : d.kind === "stale"
+          ? "sync"
+          : d.kind === "wall"
+            ? "shield"
+            : "clock";
   // The title links; the row itself does not, because it holds controls
   // and a control inside an anchor is not HTML a browser will keep together.
   const href = d.pull ? `${base}/pulls/${d.pull.number}` : base;
@@ -1304,6 +1372,39 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
 }
 
 /** POST /:owner/:name/pulls/:number/ship — land a green change. */
+/** POST /:owner/:name/pulls/:number/update — have the crew bring a stale pull up to date. */
+export async function updateSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const base = repoBase(repo);
+  const number = Number(ctx.params.number);
+  const pull = Number.isInteger(number)
+    ? getPull(ctx.app.db, repo.id, number)
+    : undefined;
+  if (!pull) return notFoundPage(ctx);
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+    return flashOrJson(ctx, base, {
+      tone: "danger",
+      message: "You need write access to do that.",
+    });
+  const files = await conflictsWithMain(ctx, repo, pull);
+  if (files.length === 0)
+    return flashOrJson(ctx, base, {
+      message: `"${pull.title}" merges clean now; ship it when you are ready.`,
+    });
+  const who = bringUpToDate(ctx.app, repo, pull, files);
+  return flashOrJson(ctx, base, {
+    ...(who === undefined ? { tone: "danger" as const } : {}),
+    message:
+      who === undefined
+        ? `It conflicts with main (${files.join(", ")}) and the crew has already tried its limit; say what to do on the pull.`
+        : `${who} is bringing "${pull.title}" up to date (${files.join(", ")}); it comes back to you green.`,
+  });
+}
+
 export async function shipSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
@@ -1394,7 +1495,7 @@ export async function asksSubmit(ctx: Ctx): Promise<Response> {
     });
   // The asks as they stand now, not as the page had them.
   const asks = new Map(
-    decisionsFor(ctx, appsOf(ctx, user).repos).map((d) => [d.id, d]),
+    (await decisionsFor(ctx, appsOf(ctx, user).repos)).map((d) => [d.id, d]),
   );
   const done: string[] = [];
   const skipped: string[] = [];
@@ -1405,10 +1506,27 @@ export async function asksSubmit(ctx: Ctx): Promise<Response> {
       skipped.push(id);
       continue;
     }
+    if (action === "update") {
+      // The crew's conflict run, for the pull's own author.
+      const who = bringUpToDate(ctx.app, d.repo, d.pull, d.files ?? []);
+      (who === undefined ? failed : done).push(id);
+      continue;
+    }
     const r =
       action === "ship"
         ? await mergePull(ctx.app, user, d.repo, d.pull, "squash")
         : await setIssueStateThrough(ctx.app, user, d.repo, d.pull, "closed");
+    // A ship that hits a conflict is not a failure to record and forget:
+    // main moved since the page was drawn, and the crew brings it up to
+    // date, as the single button does.
+    if (
+      !r.ok &&
+      action === "ship" &&
+      typeof r.error !== "string" &&
+      r.error.kind === "conflict"
+    ) {
+      bringUpToDate(ctx.app, d.repo, d.pull, r.error.files);
+    }
     (r.ok ? done : failed).push(id);
   }
   const tally = [`${BULK[action].done} ${done.length}`];

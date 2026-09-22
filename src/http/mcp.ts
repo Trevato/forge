@@ -103,9 +103,11 @@ function askOut(ctx: Ctx, d: Decision) {
     takes:
       d.kind === "look" || d.kind === "wall"
         ? ["ship", "close"]
-        : d.kind === "stopped"
-          ? ["close"]
-          : [],
+        : d.kind === "stale"
+          ? ["update", "close"]
+          : d.kind === "stopped"
+            ? ["close"]
+            : [],
     page:
       d.pull === undefined
         ? `${ctx.url.origin}/${repo}`
@@ -122,10 +124,10 @@ const TOOLS: readonly Tool[] = [
       "The apps on this forge you can see: whether each is live, where it is served, how it runs itself, and how many things ask you.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
-    run(ctx, user) {
+    async run(ctx, user) {
       const { repos, records } = appsOf(ctx, user);
       const runtime = appsRuntime(ctx.app);
-      const asks = decisionsFor(ctx, repos);
+      const asks = await decisionsFor(ctx, repos);
       const active = listActiveRuns(
         ctx.app.db,
         repos.map((r) => r.id),
@@ -155,36 +157,54 @@ const TOOLS: readonly Tool[] = [
       "What asks you, across every app you can land: changes the crew finished that wait for a look, changes it stopped on, apps paused at their ceiling. Each has an id for `decide`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
-    run(ctx, user) {
+    async run(ctx, user) {
       const { repos } = appsOf(ctx, user);
-      return good(decisionsFor(ctx, repos).map((d) => askOut(ctx, d)));
+      return good((await decisionsFor(ctx, repos)).map((d) => askOut(ctx, d)));
     },
   },
   {
     name: "decide",
     description:
-      "Answer an ask: `ship` lands a green change, `close` declines a change. To say what is off instead, use `say` on its pull.",
+      "Answer an ask: `ship` lands a green change, `update` has the crew bring a stale one up to date, `close` declines a change. To say what is off instead, use `say` on its pull.",
     inputSchema: {
       type: "object",
       properties: {
         ask: { type: "string", description: "The ask's id, from `asks`." },
-        action: { type: "string", enum: ["ship", "close"] },
+        action: { type: "string", enum: ["ship", "update", "close"] },
       },
       required: ["ask", "action"],
     },
     writes: true,
     async run(ctx, user, args) {
       const action = str(args["action"]);
-      if (action !== "ship" && action !== "close")
-        return bad("invalid_action", "action is ship or close");
+      if (action !== "ship" && action !== "update" && action !== "close")
+        return bad("invalid_action", "action is ship, update or close");
       const { repos } = appsOf(ctx, user);
-      const d = decisionsFor(ctx, repos).find((x) => x.id === str(args["ask"]));
+      const d = (await decisionsFor(ctx, repos)).find(
+        (x) => x.id === str(args["ask"]),
+      );
       // An ask that was answered since it was listed is simply gone.
       if (d === undefined || d.pull === undefined)
         return bad("no_such_ask", "that ask is not waiting any more");
       if (action === "ship" && d.kind !== "look" && d.kind !== "wall")
         return bad("not_green", "only a green change can ship");
+      if (action === "update" && d.kind !== "stale")
+        return bad(
+          "not_stale",
+          "only a change main moved under can be brought up to date",
+        );
       const name = `${d.repo.ownerName}/${d.repo.name}#${d.pull.number}`;
+      if (action === "update") {
+        const who = bringUpToDate(ctx.app, d.repo, d.pull, d.files ?? []);
+        return who === undefined
+          ? bad(
+              "crew_stopped",
+              `the crew has already tried its limit on ${name}; say what to do on the pull`,
+            )
+          : good({
+              says: `${who} is bringing ${name} up to date; it comes back green.`,
+            });
+      }
       if (action === "close") {
         const closed = await setIssueStateThrough(
           ctx.app,
