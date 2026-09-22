@@ -57,8 +57,16 @@ const PER_PAGE = 20;
 
 // ---- profile ----
 
-/** The repo list, filtered by the box above it and paged by repo id. */
-function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
+/**
+ * The repo list, filtered by the box above it and paged by repo id. In the
+ * studio, apps are drawn once, by `appsSection` above — so this list omits
+ * whatever page of results already showed there, and says so when that
+ * leaves it with nothing: "no other repositories" reads as the true state
+ * of the world, not as a bug. Pagination still walks the raw, unfiltered
+ * rows (the cursor is a repo id), so leaving apps out of what is *shown*
+ * never skips or repeats a plain repository across pages.
+ */
+function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): Html {
   const query = (ctx.url.searchParams.get("q") ?? "").slice(0, 100);
   const cursor = ctx.url.searchParams.get("cursor") ?? "";
   const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
@@ -66,11 +74,19 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
     ...(query !== "" ? { query } : {}),
     ...(cursor !== "" ? { cursor } : {}),
   });
-  const shown = repos.slice(0, PER_PAGE);
-  const last = shown[shown.length - 1];
+  const page = repos.slice(0, PER_PAGE);
+  const last = page[page.length - 1];
   const nextParams = new URLSearchParams();
   if (query !== "") nextParams.set("q", query);
   if (last) nextParams.set("cursor", last.id);
+
+  const apps = studio
+    ? appsForRepos(
+        ctx.app.db,
+        page.map((r) => r.id),
+      )
+    : undefined;
+  const shown = apps ? page.filter((repo) => !apps.has(repo.id)) : page;
 
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
@@ -92,11 +108,18 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
     ${shown.length === 0
       ? empty({
           icon: "repo",
-          title: query === "" ? "No repositories yet" : "No matches",
+          title:
+            query !== ""
+              ? "No matches"
+              : studio
+                ? "No other repositories"
+                : "No repositories yet",
           note:
-            query === ""
-              ? `${owner.username} has not published anything you can see.`
-              : "Try a different search.",
+            query !== ""
+              ? "Try a different search."
+              : studio
+                ? `Every repository ${owner.username} has is already listed as an app above.`
+                : `${owner.username} has not published anything you can see.`,
           ...(isSelf && query === ""
             ? {
                 action: btn("New repository", {
@@ -124,6 +147,9 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
                 : badge("Public", { variant: "secondary" })}`,
             }),
           ),
+          studio
+            ? { head: html`${icon("repo")}<h2>Other repositories</h2>` }
+            : {},
         )}
     ${pager(
       repos.length > PER_PAGE && last
@@ -293,7 +319,7 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
       )}
     </div>
     ${apps}
-    ${repoSection(ctx, owner, isSelf)}
+    ${repoSection(ctx, owner, isSelf, studio)}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}`;

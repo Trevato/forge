@@ -1635,6 +1635,196 @@ describe("the studio", () => {
   });
 });
 
+describe("an owner's page lists an app once, not once in each vocabulary (#221)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-owner-once-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const signIn = async (username: string, password: string) =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({ username, password }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const occurrences = (haystack: string, needle: string): number =>
+    haystack.split(needle).length - 1;
+
+  test("a person with one app and one plain repository renders each once in the studio, and both together in one list in dev mode", async () => {
+    const dan = await createUser(app.db, {
+      username: "dan",
+      email: "dan@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!dan.ok) throw new Error(dan.error);
+    const cookie = await signIn("dan", "a-good-passphrase");
+
+    const madeApp = await createRepo(app, dan.value, {
+      name: "beacon",
+      visibility: "public",
+      description: "a lighthouse",
+    });
+    if (!madeApp.ok) throw new Error(String(madeApp.error));
+    const appSeeded = await commitToBranch(app, dan.value, madeApp.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!appSeeded.ok) throw new Error(JSON.stringify(appSeeded.error));
+    const enabled = await enableApp(app, dan.value, madeApp.value, {
+      slug: "beacon",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    const madePlain = await createRepo(app, dan.value, {
+      name: "scratch",
+      visibility: "public",
+      description: "not an app",
+    });
+    if (!madePlain.ok) throw new Error(String(madePlain.error));
+    const plainSeeded = await commitToBranch(app, dan.value, madePlain.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!plainSeeded.ok) throw new Error(JSON.stringify(plainSeeded.error));
+
+    const studio = await (
+      await fetch(`${base}/dan`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(occurrences(studio, 'href="/dan/beacon"')).toBe(1);
+    expect(occurrences(studio, 'href="/dan/scratch"')).toBe(1);
+    expect(studio).toContain("<h2>Other repositories</h2>");
+
+    const dev = await (
+      await fetch(`${base}/dan`, {
+        headers: { cookie: `${cookie}; forge_mode=dev` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(occurrences(dev, 'href="/dan/beacon"')).toBe(1);
+    expect(occurrences(dev, 'href="/dan/scratch"')).toBe(1);
+    expect(dev).not.toContain("<h2>Apps</h2>");
+    expect(dev).not.toContain("<h2>Other repositories</h2>");
+  });
+
+  test("an owner whose only repository is an app reads the empty list below as no other repositories, not as a bug", async () => {
+    const eve = await createUser(app.db, {
+      username: "eve",
+      email: "eve@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!eve.ok) throw new Error(eve.error);
+    const cookie = await signIn("eve", "a-good-passphrase");
+
+    const madeApp = await createRepo(app, eve.value, {
+      name: "lighthouse",
+      visibility: "public",
+    });
+    if (!madeApp.ok) throw new Error(String(madeApp.error));
+    const seeded = await commitToBranch(app, eve.value, madeApp.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, eve.value, madeApp.value, {
+      slug: "lighthouse",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    const studio = await (
+      await fetch(`${base}/eve`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(occurrences(studio, 'href="/eve/lighthouse"')).toBe(1);
+    expect(studio).toContain("No other repositories");
+    expect(studio).not.toContain("<h2>Other repositories</h2>");
+  });
+
+  test("an org's page draws the same way: its app once, its plain repository once, and Members/Teams unmoved", async () => {
+    const fay = await createUser(app.db, {
+      username: "fay",
+      email: "fay@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!fay.ok) throw new Error(fay.error);
+    const cookie = await signIn("fay", "a-good-passphrase");
+
+    const org = await createOrg(app, fay.value, "vega");
+    if (!org.ok) throw new Error(org.error);
+
+    const madeApp = await createRepo(app, fay.value, {
+      name: "anvil",
+      owner: "vega",
+      visibility: "public",
+    });
+    if (!madeApp.ok) throw new Error(String(madeApp.error));
+    const appSeeded = await commitToBranch(app, fay.value, madeApp.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!appSeeded.ok) throw new Error(JSON.stringify(appSeeded.error));
+    const enabled = await enableApp(app, fay.value, madeApp.value, {
+      slug: "anvil",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    const madePlain = await createRepo(app, fay.value, {
+      name: "ledger",
+      owner: "vega",
+      visibility: "public",
+    });
+    if (!madePlain.ok) throw new Error(String(madePlain.error));
+    const plainSeeded = await commitToBranch(app, fay.value, madePlain.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!plainSeeded.ok) throw new Error(JSON.stringify(plainSeeded.error));
+
+    const studio = await (
+      await fetch(`${base}/vega`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(occurrences(studio, 'href="/vega/anvil"')).toBe(1);
+    expect(occurrences(studio, 'href="/vega/ledger"')).toBe(1);
+    expect(studio).toContain('<h2 class="mt">Members</h2>');
+    expect(studio).toContain('<h2 class="mt">Teams</h2>');
+
+    const dev = await (
+      await fetch(`${base}/vega`, {
+        headers: { cookie: `${cookie}; forge_mode=dev` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(occurrences(dev, 'href="/vega/anvil"')).toBe(1);
+    expect(occurrences(dev, 'href="/vega/ledger"')).toBe(1);
+  });
+});
+
 describe("every open pull's preview on the studio page", () => {
   let dataDir: string;
   let app: App;
