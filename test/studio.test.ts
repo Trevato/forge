@@ -398,6 +398,10 @@ describe("the studio", () => {
     ).text();
     expect(page).toContain('data-word="shipped"');
     expect(page).not.toContain('data-state="closed"');
+    // The badge already says shipped; nobody was ever assigned, so the
+    // assignee line has nothing true left to add and says nothing (#214).
+    expect(page).not.toContain("nobody has it yet");
+    expect(page).not.toContain("has it");
   });
 
   test("a pull on an app renders as a studio page — the preview, the look and the decision, no diff; ?mode=dev still renders the diff", async () => {
@@ -722,6 +726,9 @@ describe("the studio", () => {
     ).text();
     expect(studio).toContain("standing direction");
     expect(studio).not.toContain('data-word="told"');
+    // The direction keeps its own sentence; nobody was assigned, so the
+    // assignee line does not add a second, contradicting one (#214).
+    expect(studio).not.toContain("nobody has it yet");
 
     // Leave the repository as the other tests in this suite found it.
     setDirectionIssue(app.db, repo.id, null);
@@ -1029,6 +1036,8 @@ describe("the studio", () => {
     // form, and never a second copy of the markup.
     expect(tellHtml).toContain("Door test: one tell");
     expect(tellHtml).toContain('data-word="told"');
+    // Still waiting, nobody assigned: the one case the line is true (#214).
+    expect(tellHtml).toContain("nobody has it yet");
     expect(tellHtml).not.toContain("<h2>Labels</h2>");
     expect(viaIssue).toContain('data-word="told"');
     // The write surface does not move with the noun: the reply, the close

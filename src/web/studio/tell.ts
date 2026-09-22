@@ -265,12 +265,14 @@ export async function studioTell(
             >${icon("external")}view on origin</a
           >`,
       )}
-      <span
-        >${issue.assigneeName === null
+      ${issue.assigneeName !== null
+        ? html`<span
+            >${when(issue.assigneeIsAgent, () => icon("bot"))}
+            ${userLink(issue.assigneeName)} has it</span
+          >`
+        : !direction && wordInfo?.word === "told"
           ? html`<span class="muted">nobody has it yet</span>`
-          : html`${when(issue.assigneeIsAgent, () => icon("bot"))}
-              ${userLink(issue.assigneeName)} has it`}</span
-      >
+          : null}
     </div>
   </div>`;
 
