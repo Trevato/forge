@@ -28,6 +28,7 @@ import {
   type Repo,
 } from "../../core/repos.ts";
 import { latestRunsForIssues } from "../../core/runs.ts";
+import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import {
   getUsersByIds,
@@ -820,10 +821,58 @@ export function signupPage(ctx: Ctx): Response {
   return page({ ctx, title: "Sign up", body: authForm(ctx, "signup") });
 }
 
+/**
+ * Sign-in attempts, throttled. The token limiter does not see a password
+ * form — a stranger has no credential yet — so guessing a password runs at
+ * line speed and each guess costs a slow hash. Two sliding windows, checked
+ * before the hash: an account may be tried twenty times a minute, and the
+ * forge as a whole two hundred, so neither one account nor every account at
+ * once is worth the trying. A person signing in does not notice; a refused
+ * attempt is not counted, so the door reopens exactly a window later. One
+ * limiter per forge, so a test's forge never throttles another's.
+ */
+const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
+const SIGNIN_PER_ACCOUNT = 20;
+const SIGNIN_PER_FORGE = 200;
+
+function signinAllowed(ctx: Ctx, username: string): number | undefined {
+  let limiter = signinLimits.get(ctx.app);
+  if (limiter === undefined) {
+    limiter = new RateLimiter({
+      perMinute: SIGNIN_PER_ACCOUNT,
+      adminPerMinute: SIGNIN_PER_FORGE,
+      enabled: true,
+    });
+    signinLimits.set(ctx.app, limiter);
+  }
+  const whole = limiter.take("forge", "admin");
+  if (!whole.allowed) return whole.retryAfter;
+  const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
+  return one.allowed ? undefined : one.retryAfter;
+}
+
 export async function signinSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const username = field(form, "username");
+  const wait = signinAllowed(ctx, username);
+  if (wait !== undefined) {
+    const response = page(
+      {
+        ctx,
+        title: "Sign in",
+        body: authForm(ctx, "signin", {
+          values: { username },
+          errors: {
+            password: `Too many attempts. Try again in ${wait === 1 ? "a second" : `${wait} seconds`}.`,
+          },
+        }),
+      },
+      429,
+    );
+    response.headers.set("retry-after", String(wait));
+    return response;
+  }
   const verified = await verifyPassword(
     ctx.app.db,
     username,
