@@ -16,6 +16,8 @@ export interface Store {
   get(key: string): Promise<Uint8Array | undefined>;
   /** Every key under `prefix`, in no particular order. */
   list(prefix: string): Promise<string[]>;
+  /** The next path segment under `prefix`: the "directories", not the keys. */
+  names(prefix: string): Promise<string[]>;
   delete(key: string): Promise<void>;
 }
 
@@ -79,6 +81,22 @@ export function s3Store(target: S3Target): Store {
       } while (token !== undefined);
       return keys;
     },
+    async names(prefix) {
+      const out: string[] = [];
+      let token: string | undefined;
+      do {
+        const page = await client.list({
+          prefix,
+          delimiter: "/",
+          maxKeys: 1000,
+          ...(token === undefined ? {} : { continuationToken: token }),
+        });
+        for (const p of page.commonPrefixes ?? [])
+          out.push(p.prefix.slice(prefix.length).replace(/\/$/, ""));
+        token = page.isTruncated ? page.nextContinuationToken : undefined;
+      } while (token !== undefined);
+      return out;
+    },
     async delete(key) {
       await client.delete(key);
     },
@@ -121,6 +139,15 @@ export function dirStore(root: string): Store {
       const all: string[] = [];
       walk(root, all);
       return all.filter((k) => k.startsWith(prefix));
+    },
+    async names(prefix) {
+      try {
+        return readdirSync(at(prefix)).filter((n) =>
+          statSync(join(at(prefix), n)).isDirectory(),
+        );
+      } catch {
+        return [];
+      }
     },
     async delete(key) {
       rmSync(at(key), { force: true });

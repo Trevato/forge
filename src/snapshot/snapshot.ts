@@ -223,13 +223,17 @@ export async function takeSnapshot(
   }
 }
 
-/** The snapshots a store holds, newest first, by their manifests. */
+/**
+ * The snapshots a store holds, newest first, by their manifests. Names
+ * first, then one manifest each: a snapshot is ten thousand objects, and a
+ * page that walked them all to find fourteen manifests would be slow in a
+ * month and slower every month after.
+ */
 export async function listSnapshots(store: Store): Promise<Manifest[]> {
-  const keys = await store.list(SNAPSHOT_PREFIX);
-  const manifests = keys.filter((k) => k.endsWith("/manifest.json"));
+  const names = await store.names(SNAPSHOT_PREFIX);
   const out: Manifest[] = [];
-  for (const key of manifests) {
-    const body = await store.get(key);
+  for (const name of names) {
+    const body = await store.get(`${SNAPSHOT_PREFIX}${name}/manifest.json`);
     if (body === undefined) continue;
     try {
       const m = JSON.parse(new TextDecoder().decode(body)) as Partial<Manifest>;
@@ -249,18 +253,10 @@ export async function pruneSnapshots(
   store: Store,
   keep = KEEP,
 ): Promise<string[]> {
-  const all = await store.list(SNAPSHOT_PREFIX);
-  const names = [
-    ...new Set(all.map((k) => k.slice(SNAPSHOT_PREFIX.length).split("/")[0]!)),
-  ]
-    .filter((n) => n !== "")
-    .sort()
-    .reverse();
+  const names = (await store.names(SNAPSHOT_PREFIX)).sort().reverse();
   const gone = names.slice(keep);
   for (const name of gone)
-    for (const key of all.filter((k) =>
-      k.startsWith(`${SNAPSHOT_PREFIX}${name}/`),
-    ))
+    for (const key of await store.list(`${SNAPSHOT_PREFIX}${name}/`))
       await store.delete(key);
   if (gone.length > 0)
     log.info("snapshots pruned", { gone: gone.length, kept: keep });

@@ -49,7 +49,16 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
         note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Restart with one set and a snapshot is taken every night at 08:00 UTC.",
       }),
     );
-  const [snapshots, last] = [await svc.list(), svc.last()];
+  // The store is somewhere else; a listing that fails is a sentence on the
+  // page, never a page that fails.
+  const last = svc.last();
+  let snapshots: Awaited<ReturnType<typeof svc.list>> = [];
+  let listing: string | undefined;
+  try {
+    snapshots = await svc.list();
+  } catch (error) {
+    listing = String(error);
+  }
   const restore = snapshots[0]
     ? html`<pre class="backups-restore">
 bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre
@@ -70,6 +79,13 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre
             html`<p class="backups-error">
               ${icon("alert")} The last snapshot failed ${time(last.at ?? "")}:
               ${error}
+            </p>`,
+        )}
+        ${when(
+          listing,
+          (error) =>
+            html`<p class="backups-error">
+              ${icon("alert")} The store could not be listed just now: ${error}
             </p>`,
         )}
         <form method="post" action="/settings/backups/now" class="backups-now">
