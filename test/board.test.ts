@@ -119,7 +119,7 @@ describe("the board", () => {
     expect(html).toContain('<html lang="en" data-theme="dark">');
     expect(html).not.toContain('class="topbar"');
     expect(html).not.toContain('class="foot"');
-    expect(html).toContain('<main class="bare" id="main">');
+    expect(html).toMatch(/<main\s+class="bare"\s+id="main"\s*>/);
     expect(html).toMatch(/id="working"\s+data-live="run\.\*"/);
     expect(html).toMatch(
       /id="landed"\s+data-live="pull\.merged,run\.finished"/,
