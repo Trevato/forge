@@ -17,6 +17,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { shellJs } from "../src/web/client.ts";
 
 const form = (fields: Record<string, string>) => new URLSearchParams(fields);
 
@@ -619,6 +620,78 @@ describe("web ui", () => {
     expect(meta).toContain("mel");
     // The state is the leading glyph's colour, not a badge repeating the filter.
     expect(html).not.toContain('class="badge" data-state="open"');
+  });
+
+  // ---- keyboard ----
+
+  test("the composer, the verdicts and the settings sections carry their keys", async () => {
+    const as = async (path: string, cookie = "") =>
+      (
+        await fetch(`${base}${path}`, cookie ? { headers: { cookie } } : {})
+      ).text();
+
+    // An issue's comment box is the page's box: `c` lands in it, and
+    // Cmd/Ctrl+Enter sends it. Signed out there is no box, so no key is promised.
+    const issue = await as("/mel/proj/issues/1", owner);
+    expect(issue).toMatch(
+      /<form[^>]*class="card comment-form"[^>]*data-box="Write a comment"[^>]*data-submit-key/,
+    );
+    expect(await as("/mel/proj/issues/1")).not.toContain("data-box=");
+
+    // The verdicts are `v` chords on the radios, and only the verdicts this
+    // person may pass: the author never sees `v a`, a reader only `v c`.
+    const pull = `/mel/proj/pulls/${pullNumber}`;
+    const asAuthor = await as(pull, owner);
+    expect(asAuthor).not.toContain('data-shortcut="v a"');
+    expect(asAuthor).toMatch(
+      /<input[^>]*value="changes_requested"[^>]*data-shortcut="v r"[^>]*title="Request changes"/,
+    );
+    expect(asAuthor).toMatch(
+      /<input[^>]*value="commented"[^>]*data-shortcut="v c"[^>]*title="Comment"/,
+    );
+    const asReader = await as(pull, stranger);
+    expect(asReader).not.toContain('data-shortcut="v a"');
+    expect(asReader).not.toContain('data-shortcut="v r"');
+    expect(asReader).toContain('data-shortcut="v c"');
+    // Close, reopen and merge carry no key at all.
+    for (const html of [asAuthor, issue]) {
+      const state = html.slice(
+        html.indexOf('id="thread-state"'),
+        html.indexOf("</form>", html.indexOf('form="thread-state"')),
+      );
+      expect(state).not.toContain("data-shortcut");
+    }
+    const mergeAt = asAuthor.indexOf(`action="${pull}/merge"`);
+    expect(mergeAt).toBeGreaterThan(-1);
+    expect(
+      asAuthor.slice(mergeAt, asAuthor.indexOf("</form>", mergeAt)),
+    ).not.toContain("data-shortcut");
+
+    // A settings sidebar is rows: j/k walk the sections, and the main pane
+    // is the page's box.
+    for (const path of ["/settings", "/mel/proj/settings"]) {
+      const html = await as(path, owner);
+      const nav = html.slice(
+        html.indexOf('<nav class="settings-nav"'),
+        html.indexOf("</nav>", html.indexOf('<nav class="settings-nav"')),
+      );
+      const links = nav.match(/<a\b[^>]*>/g) ?? [];
+      expect(links.length).toBeGreaterThan(1);
+      for (const a of links) expect(a).toContain("data-nav");
+      expect(nav).toContain('aria-current="page"');
+      expect(html).toContain('class="settings-main" data-box="Edit the form"');
+    }
+
+    // The shell sends a form on Enter only with a modifier held, only for a
+    // form that opted in, and nowhere else.
+    expect(shellJs).toContain(
+      "(e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')",
+    );
+    const sends = shellJs
+      .split("\n")
+      .filter((l) => /requestSubmit|\.submit\(/.test(l));
+    expect(sends).toHaveLength(1);
+    expect(shellJs).not.toMatch(/'Enter' && !e\.(shift|meta|ctrl)Key/);
   });
 
   // ---- CSRF ----

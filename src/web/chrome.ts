@@ -339,7 +339,11 @@ export interface SettingsSection {
 }
 
 /** The settings two-pane: a sticky section list beside the content on a
- * desktop, the same scroll strip as the repo tabs on a phone. */
+ * desktop, the same scroll strip as the repo tabs on a phone.
+ *
+ * The sections are `data-nav` rows, so `j`/`k` walk them from the one you
+ * are on and Enter opens one; the main pane is the page's box, so `c`
+ * lands in its first field. */
 export function settingsLayout(
   sections: SettingsSection[],
   body: Html,
@@ -351,12 +355,13 @@ export function settingsLayout(
         (s) =>
           html`<a
             href="${s.href}"
+            data-nav
             ${s.current ? raw('aria-current="page"') : null}
             >${s.icon ? icon(s.icon) : null}${s.label}</a
           >`,
       )}
     </nav>
-    <div class="settings-main">${body}</div>
+    <div class="settings-main" data-box="Edit the form">${body}</div>
   </div>`;
 }
 

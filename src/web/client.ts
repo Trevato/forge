@@ -1222,6 +1222,9 @@ export const shellJs = /* js */ `
     var all = rows();
     if (all.length === 0) return;
     var at = all.indexOf(doc.activeElement.closest ? doc.activeElement.closest('[data-nav]') : null);
+    // Nothing focused yet: step away from the row the page is already on
+    // (a settings section), not from the top of the list.
+    if (at < 0) at = all.indexOf(doc.querySelector('[data-nav][aria-current]'));
     var next = all[Math.min(Math.max(at + step, 0), all.length - 1)] || all[0];
     next.focus();
     next.scrollIntoView({ block: 'nearest' });
@@ -1230,6 +1233,24 @@ export const shellJs = /* js */ `
     var el = doc.activeElement.closest ? doc.activeElement.closest('[data-nav]') : null;
     var link = el && (el.matches('a') ? el : el.querySelector('a'));
     if (link) link.click();
+  }
+  // The page's box: the one field a page exists to be typed in — a thread's
+  // comment box, a settings form's first field. The page marks it with
+  // \`data-box\` (the help's label is its value); \`c\` puts the caret there
+  // the way \`/\` reaches the search box, and Escape leaves it again. A page
+  // that declares its own \`c\` (a list's create button) keeps it:
+  // shortcuts are matched first.
+  var FIELD = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=file]), textarea, select';
+  function pageBox() {
+    var box = doc.querySelector('[data-box]');
+    return box ? (box.matches(FIELD) ? box : box.querySelector(FIELD)) : null;
+  }
+  function focusBox() {
+    var f = pageBox();
+    if (!f) return false;
+    f.focus();
+    if (f.tagName === 'TEXTAREA') { var n = f.value.length; f.setSelectionRange(n, n); }
+    return true;
   }
   doc.addEventListener('keydown', function (e) {
     var t = e.target;
@@ -1243,6 +1264,13 @@ export const shellJs = /* js */ `
     }
     if (t && t.matches && t.matches('input, textarea, select, [contenteditable]')) {
       if (e.key === 'Escape') { e.preventDefault(); t.blur(); }
+      // Cmd/Ctrl+Enter sends the form a box belongs to, and only a form that
+      // asked for it (\`data-submit-key\`): the button's own submit, with its
+      // validation. Plain Enter stays a newline.
+      else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && t.form && t.form.hasAttribute('data-submit-key')) {
+        e.preventDefault();
+        if (t.form.requestSubmit) t.form.requestSubmit(); else t.form.submit();
+      }
       return;
     }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1252,10 +1280,18 @@ export const shellJs = /* js */ `
     if (seq.length > 2) seq.splice(0, seq.length - 2);
     var joined = seq.join(' ');
     var target = doc.querySelector('[data-shortcut="' + (window.CSS && CSS.escape ? CSS.escape(joined) : joined) + '"]');
-    if (target) { seq.length = 0; e.preventDefault(); target.click(); return; }
+    if (target) {
+      seq.length = 0; e.preventDefault(); target.click();
+      // A chord that picks a radio leaves the caret in that form's box: the
+      // verdict is chosen, the words come next.
+      var after = target.type === 'radio' && target.form ? target.form.querySelector('textarea') : null;
+      if (after) after.focus();
+      return;
+    }
     if (e.key === 'j') { seq.length = 0; e.preventDefault(); move(1); }
     else if (e.key === 'k') { seq.length = 0; e.preventDefault(); move(-1); }
     else if (e.key === 'o' || e.key === 'Enter') { seq.length = 0; openFocused(); }
+    else if (e.key === 'c') { if (focusBox()) { seq.length = 0; e.preventDefault(); } }
     else if (e.key === '/') {
       var box = doc.querySelector('[data-search-input]');
       if (box) { seq.length = 0; e.preventDefault(); box.focus(); box.select(); }
@@ -1266,8 +1302,16 @@ export const shellJs = /* js */ `
   var STATIC_KEYS = [
     ['j / k', 'Move between rows'], ['o or Enter', 'Open the focused row'],
     ['/', 'Focus search'], ['Cmd/Ctrl K', 'Command palette'], ['?', 'This help'],
-    ['Esc', 'Close menu or dialog'],
+    ['Esc', 'Leave a box, close a menu or dialog'],
   ];
+  // The rows a page earns by what it carries: a box to type in, a form
+  // that sends on Cmd/Ctrl+Enter.
+  function pageKeys() {
+    var out = [];
+    if (pageBox() && !doc.querySelector('[data-shortcut="c"]')) out.push(['c', doc.querySelector('[data-box]').getAttribute('data-box') || 'Write here']);
+    if (doc.querySelector('form[data-submit-key]')) out.push(['Cmd/Ctrl Enter', 'Submit the box you are typing in']);
+    return out;
+  }
   // Built with DOM nodes, never innerHTML: every string below is page text,
   // and page text is exactly what must never be parsed as markup.
   function keyRow(keys, label) {
@@ -1297,9 +1341,11 @@ export const shellJs = /* js */ `
       var k = el.getAttribute('data-shortcut');
       if (seen[k]) return;
       seen[k] = 1;
-      tbody.appendChild(keyRow(k, (el.getAttribute('aria-label') || el.textContent || '').trim()));
+      // A control with no text of its own (a radio) is named by its title.
+      var label = el.getAttribute('aria-label') || (el.textContent || '').trim() || el.getAttribute('title') || '';
+      tbody.appendChild(keyRow(k, label));
     });
-    STATIC_KEYS.forEach(function (p) { tbody.appendChild(keyRow(p[0], p[1])); });
+    pageKeys().concat(STATIC_KEYS).forEach(function (p) { tbody.appendChild(keyRow(p[0], p[1])); });
     table.appendChild(tbody);
     if (body) { body.textContent = ''; body.appendChild(table); }
     openModal(dlg);
