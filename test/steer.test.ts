@@ -164,7 +164,20 @@ fi
         throw new Error("the run never started");
       };
       const run = await running();
-      await Bun.sleep(300); // past the session's first line
+      // Past the session's first line: `running` is set before the agent
+      // is spawned, so on a busy machine a fixed sleep can speak too early
+      // and queue a second run. The session line proves it can hear us.
+      const logPath = join(dataDir, "runs", `${run.id}.log`);
+      const opened = Date.now() + 20_000;
+      while (
+        Date.now() < opened &&
+        !(
+          await Bun.file(logPath)
+            .text()
+            .catch(() => "")
+        ).includes("session s2")
+      )
+        await Bun.sleep(50);
       expect(
         addComment(app, alice, repo, issue.value, "also the tests").ok,
       ).toBe(true);
@@ -180,7 +193,7 @@ fi
       expect(runs.length).toBe(1);
       expect(runs[0]!.state).toBe("ok");
       expect(runs[0]!.turns).toBe(2);
-      const log = readFileSync(join(dataDir, "runs", `${run.id}.log`), "utf8");
+      const log = readFileSync(logPath, "utf8");
       expect(log).toContain("you: alice on #1: also the tests");
       expect(log).toContain("heard: alice on #1: also the tests");
     } finally {

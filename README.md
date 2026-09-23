@@ -302,7 +302,15 @@ bun run check         # exactly what the forge runs against every push
 ```
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
-it says here is what the deploy will say. Two things it will not do:
+it says here is what the deploy will say. It type-checks once, then runs the
+test files named in `check.run` as parallel `bun test` shards
+(`scripts/test-shards.ts`): one per CPU the process may use, at most eight,
+and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
+shard's output is written whole as it finishes; the log ends with every
+failing test from every shard, or on green with one line — how many tests,
+across how many files, in how long. Every file is independent (its own forge,
+its own database, port 0), so a test that fails only beside another is a bug
+in that test. Two things it will not do:
 
 - **It never borrows your git configuration.** A test drives a real `git`
   against a forge it booted a second ago, and builds that child's
