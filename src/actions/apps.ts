@@ -331,12 +331,17 @@ export async function newApp(
       actorId: user.value.id,
       payload: { agent: chosen.user.username },
     });
-    if (body !== "") {
-      const opened = openIssue(app, user.value, repo.value, {
-        title: `Build ${input.name}`,
-        body,
-      });
-      if (opened.ok) {
+  }
+  // The sentence is the one thing the person wrote: it opens the first
+  // issue whether or not anyone was picked for it, unassigned when not.
+  if (body !== "") {
+    const opened = openIssue(app, user.value, repo.value, {
+      title: `Build ${input.name}`,
+      body,
+    });
+    if (opened.ok) {
+      issue = opened.value;
+      if (chosen) {
         const assigned = assignIssue(
           app,
           user.value,

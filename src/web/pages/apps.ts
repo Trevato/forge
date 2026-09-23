@@ -525,11 +525,13 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
       ? `${repo.name} is an app, but nothing is serving apps on this forge.`
       : `${repo.name} is starting at ${url}.`;
   const second =
-    issue === undefined || issue.assigneeName === null
+    issue === undefined
       ? ""
-      : plan
-        ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
-        : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
+      : issue.assigneeName === null
+        ? ` #${issue.number} is waiting for someone.`
+        : plan
+          ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
+          : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
   // The studio's app page (repoHome, once the record exists) is where this
   // moment belongs; dev mode keeps the controls' page.
   const target = ctx.mode === "studio" ? repoBase(repo) : `${repoBase(repo)}/app`;

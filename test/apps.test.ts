@@ -1351,7 +1351,7 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.value.issue?.body).toContain("- [ ] Add a form");
   });
 
-  test("a plan naming an agent not on the forge is refused; nothing changes", async () => {
+  test("a plan naming an agent not on the forge is refused; the sentence still opens unassigned", async () => {
     const made = await newApp(app, alice, {
       name: "notes-b",
       description: "BAD-AGENT: pick someone who does not exist",
@@ -1360,12 +1360,15 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.ok).toBe(true);
     if (!made.ok) return;
     expect(made.value.plan).toBeUndefined();
-    expect(made.value.issue).toBeUndefined();
+    expect(made.value.issue?.assigneeName).toBeNull();
+    expect(made.value.issue?.body).toBe(
+      "BAD-AGENT: pick someone who does not exist",
+    );
     const crew = listCrew(app, alice, made.value.repo);
     expect(crew.ok && crew.value.length).toBe(0);
   });
 
-  test("a plan that times out changes nothing", async () => {
+  test("a plan that times out still opens the sentence, unassigned", async () => {
     const made = await newApp(app, alice, {
       name: "notes-c",
       description: "HANG-ME: never answer",
@@ -1374,7 +1377,7 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.ok).toBe(true);
     if (!made.ok) return;
     expect(made.value.plan).toBeUndefined();
-    expect(made.value.issue).toBeUndefined();
+    expect(made.value.issue?.assigneeName).toBeNull();
     const crew = listCrew(app, alice, made.value.repo);
     expect(crew.ok && crew.value.length).toBe(0);
   }, 10_000);
@@ -1390,7 +1393,7 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.ok).toBe(true);
     if (!made.ok) return;
     expect(made.value.plan).toBeUndefined();
-    expect(made.value.issue).toBeUndefined();
+    expect(made.value.issue?.assigneeName).toBeNull();
   });
 
   test("no claude on PATH behaves exactly as without pickAgent", async () => {
@@ -1405,7 +1408,67 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.ok).toBe(true);
     if (!made.ok) return;
     expect(made.value.plan).toBeUndefined();
+    expect(made.value.issue?.assigneeName).toBeNull();
+  });
+
+  test("agent: \"\" — nobody picked — still opens the sentence, unassigned", async () => {
+    const made = await newApp(app, alice, {
+      name: "notes-f",
+      description: "Keep a list of notes",
+      agent: "",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.issue?.title).toBe("Build notes-f");
+    expect(made.value.issue?.body).toBe("Keep a list of notes");
+    expect(made.value.issue?.assigneeName).toBeNull();
+    expect(made.value.issue?.state).toBe("open");
+    const crew = listCrew(app, alice, made.value.repo);
+    expect(crew.ok && crew.value.length).toBe(0);
+  });
+
+  test("an empty sentence still opens nothing", async () => {
+    const made = await newApp(app, alice, { name: "notes-g" });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
     expect(made.value.issue).toBeUndefined();
+  });
+});
+
+describe("New app on a forge with no agents at all: the sentence still opens", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-noagents-"));
+    app = createApp({ dataDir, port: 0 });
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+  });
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the sentence opens the first issue, unassigned", async () => {
+    const made = await newApp(app, alice, {
+      name: "solo",
+      description: "Keep a list of notes",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    expect(made.value.issue?.title).toBe("Build solo");
+    expect(made.value.issue?.body).toBe("Keep a list of notes");
+    expect(made.value.issue?.assigneeName).toBeNull();
+    expect(made.value.issue?.state).toBe("open");
   });
 });
 

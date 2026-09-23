@@ -287,7 +287,9 @@ export function newAppFlow(f: Session, ctx: Ctx, parent: Screen): void {
       const who = made.value.plan
         ? ` · ${made.value.plan.agent} was picked — ${made.value.plan.summary}`
         : input.agent === undefined
-          ? ""
+          ? made.value.issue === undefined
+            ? ""
+            : ` · #${made.value.issue.number} is waiting for someone`
           : made.value.issue === undefined
             ? ` · ${input.agent} is on the crew`
             : ` · ${input.agent} is on #${made.value.issue.number}`;
