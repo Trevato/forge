@@ -94,6 +94,16 @@ const DEV_WORDS: readonly { pattern: RegExp; because: string }[] = [
     because: "the studio's own word for a tell is tell",
   },
   {
+    pattern: /\bworkbench\b/i,
+    because:
+      "#281: a native app is the studio's alone, so its header draws no where strip at all",
+  },
+  {
+    pattern: /this machine/i,
+    because:
+      "#281: dev's git chip (workbench · this machine) never reaches a studio header",
+  },
+  {
     // Scoped to a badge's own content — "failed" also rides inside the
     // legitimate `serving · tests failed` phrase (`envPhrase`), which does
     // not start a badge with the bare word. `stopped` is not here: it is
@@ -505,7 +515,10 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: repoPath,
         title: "vocab",
         shows: [`href="#i-pull"/></svg>Changes`],
-        hides: [`href="#i-eye"/></svg>Look`, `>Look<`],
+        hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
+        // #281: `?mode=dev` on the same address is unaffected — the where
+        // strip renders exactly as today, dev's own dots and words.
+        dev: ["workbench", "this machine"],
       },
       {
         word: "tell",
@@ -539,7 +552,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // #171: the composer's close button used to say "Close pull
         // request" here, dev's own noun on the studio's own page.
         shows: ["Close change"],
-        dev: ["diff-table", openBranch, "Close pull request"],
+        hides: ['class="where"'],
+        dev: ["diff-table", openBranch, "Close pull request", "workbench"],
         devTitle: `${openPullTitle} · vocab`,
       },
       {

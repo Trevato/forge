@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { enableApp } from "../src/actions/apps.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createToken } from "../src/actions/users.ts";
 import { listOrigins } from "../src/core/origins.ts";
@@ -733,6 +734,34 @@ describe("origins on the web", () => {
       redirect: "manual",
     });
     expect(write.status).toBe(403);
+  });
+
+  // ---- studio mode on a mirrored app (#281) ----
+
+  test("in studio mode, a mirrored app says where it reads from in one line, never dev's where strip", async () => {
+    const aliceUser = getUserByName(app.db, "alice")!;
+    const repo = getRepo(app.db, "alice", "widgets")!;
+    const enabled = enableApp(app, aliceUser, repo, { slug: "widgets" });
+    expect(enabled.ok).toBe(true);
+
+    const studioHtml = await (
+      await asUser(`${alice}; forge_mode=studio`, "/alice/widgets")
+    ).text();
+    expect(studioHtml).not.toContain('class="where"');
+    expect(studioHtml).not.toContain("workbench");
+    expect(studioHtml).not.toContain("this machine");
+    // Still says where it is read from, and when it last synced — in one
+    // line, the studio's own words rather than dev's three-place strip.
+    expect(studioHtml).toContain(`${originServers.url}/octo/widgets`);
+    expect(studioHtml).toContain("synced");
+
+    // `?mode=dev` on the same address is unaffected: same dots, same words.
+    const devHtml = await (
+      await asUser(`${alice}; forge_mode=dev`, "/alice/widgets")
+    ).text();
+    expect(devHtml).toContain('class="where"');
+    expect(devHtml).toContain("workbench");
+    expect(devHtml).toContain("this machine");
   });
 
   test("disconnecting is confirmed on a page that says what it costs", async () => {

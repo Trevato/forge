@@ -20,6 +20,7 @@ import {
   browseActions,
   hostOf,
   localScope,
+  studioOriginNote,
   upstreamHref,
   whereRow,
   type RepoScope,
@@ -281,7 +282,8 @@ export function scopeHeader(
           <span class="mono">${scope.upstream}</span>
         </p>`,
     )}
-    ${whereRow(ctx, scope)} ${tabs(items, "Repository")}
+    ${studio ? studioOriginNote(repo) : whereRow(ctx, scope)}
+    ${tabs(items, "Repository")}
   </header>`;
 }
 

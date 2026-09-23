@@ -476,6 +476,31 @@ export function whereRow(ctx: Ctx, scope: RepoScope): Html {
 }
 
 /**
+ * The studio's own answer to "where does this app's bytes live", for a
+ * repository the studio owns end to end. A native app is the studio's alone
+ * — there is nothing to say, so a caller in studio mode draws no strip at
+ * all rather than dev's three-place diagram of a git remote nobody here
+ * reads dev's words for. A mirrored app still owes a reader the one fact
+ * the strip carried — where it reads from, and how fresh — said as a
+ * sentence instead of dots.
+ */
+export function studioOriginNote(repo: Repo | undefined): Html | null {
+  const at = repo?.origin;
+  if (at == null) return null;
+  const host = at.htmlUrl === "" ? at.fullName : hostOf(at.htmlUrl);
+  return html`<p class="repo-lineage">
+    Reads from
+    ${at.htmlUrl === ""
+      ? host
+      : html`<a href="${at.htmlUrl}" rel="noreferrer noopener" target="_blank"
+          >${host}</a
+        >`}${at.lastFetchAt === null
+      ? ""
+      : html`, synced ${timeAgo(at.lastFetchAt)}`}
+  </p>`;
+}
+
+/**
  * The banner a live browse carries above its content. Deliberately quiet and
  * deliberately unmissable: it says what you are looking at, that you cannot
  * change it, and what to do about that.
