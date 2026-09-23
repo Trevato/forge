@@ -343,13 +343,16 @@ export async function decisionsFor(
   for (const repo of repos) {
     if (repo.autonomy === "off") continue;
     const s = autonomyStatus(ctx.app, repo);
-    if (s.paused === "ceiling")
+    if (s.paused === "ceiling" || s.paused === "forge ceiling")
       out.push({
         kind: "paused",
         id: `paused:${repo.id}`,
         repo,
         who: "the crew",
-        says: `${repo.name} reached its $${dollars(s.ceilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
+        says:
+          s.paused === "forge ceiling"
+            ? `The forge reached its $${dollars(ctx.app.config.crewCeilingUsd ?? 0)} for today across every app. The crew picks nothing more until 00:00 UTC. FORGE_CREW_CEILING_USD is the knob.`
+            : `${repo.name} reached its $${dollars(s.ceilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
         short: `at its $${dollars(s.ceilingUsd)} ceiling until 00:00 UTC`,
       });
   }
@@ -997,7 +1000,9 @@ export async function studioApp(
                 <dd>
                   ${autonomy.paused === "ceiling"
                     ? "at the ceiling, until 00:00 UTC"
-                    : autonomy.paused}
+                    : autonomy.paused === "forge ceiling"
+                      ? "at the forge's ceiling, until 00:00 UTC"
+                      : autonomy.paused}
                 </dd>`
             : null}
         </dl>`,

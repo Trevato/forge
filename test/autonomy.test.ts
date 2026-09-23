@@ -446,4 +446,30 @@ describe("a repository on its own", () => {
     expect(map).toContain("Assisted");
     expect(map).toContain("of $25 today");
   });
+
+  test("the forge's own ceiling holds every repository, whatever each one's says", async () => {
+    // A generous repository ceiling, a forge that has already spent its day.
+    const on = await updateRepoSettings(app, alice, repo, {
+      autonomy: "autonomous",
+      autonomyDirection: "Keep going.",
+      autonomyCeilingUsd: 1000,
+      autonomySlots: 1,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+    const capped = { ...app, config: { ...app.config, crewCeilingUsd: 1 } };
+    const spent = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      env: "",
+      commitOid: "",
+      reason: "assigned",
+    });
+    claimRun(app.db, spent.id);
+    finishRun(app.db, spent.id, { state: "ok", summary: "done", costUsd: 2 });
+    expect(autonomyStatus(capped, fresh()).paused).toBe("forge ceiling");
+    expect(autonomyStatus(capped, fresh()).resumesAt).not.toBeNull();
+    // Without the forge's ceiling the same repository runs on.
+    expect(autonomyStatus(app, fresh()).paused).toBeNull();
+  });
 });

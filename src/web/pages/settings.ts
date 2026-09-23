@@ -1289,11 +1289,14 @@ export function autonomySettingsPage(ctx: Ctx): Response {
           ${status.paused === "ceiling"
             ? html`· <strong>paused at the ceiling</strong>, resumes at 00:00
                 UTC`
-            : status.paused === "no crew"
-              ? html`· <strong>paused: no crew</strong>`
-              : status.paused === "nobody"
-                ? html`· <strong>paused: nobody to act as</strong>`
-                : null}
+            : status.paused === "forge ceiling"
+              ? html`· <strong>paused at the forge's ceiling</strong>, resumes
+                  at 00:00 UTC`
+              : status.paused === "no crew"
+                ? html`· <strong>paused: no crew</strong>`
+                : status.paused === "nobody"
+                  ? html`· <strong>paused: nobody to act as</strong>`
+                  : null}
         </p>`;
   const form = html`<form method="post" action="${base}/settings/autonomy">
     ${selectField({

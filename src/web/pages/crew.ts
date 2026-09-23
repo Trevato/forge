@@ -211,6 +211,7 @@ function totalsCells(t: AgentTotals | undefined): Html {
 /** Today's spend against each ceiling: the drain, and the knob for it. */
 function spendingCard(
   spending: readonly { repo: Repo; status: AutonomyStatus }[],
+  forgeCap: number | undefined,
 ): Html {
   const total = spending.reduce((n, s) => n + s.status.spentTodayUsd, 0);
   const cap = spending.reduce((n, s) => n + s.status.ceilingUsd, 0);
@@ -233,7 +234,9 @@ function spendingCard(
                   ${status.slots === 1 ? "slot" : "slots"} · ${status.active}
                   active${status.paused === "ceiling"
                     ? " · paused at the ceiling until 00:00 UTC"
-                    : ""}</span
+                    : status.paused === "forge ceiling"
+                      ? " · paused at the forge's ceiling until 00:00 UTC"
+                      : ""}</span
                 >
               </span>
               <span class="row-trail">
@@ -253,8 +256,11 @@ function spendingCard(
         <h2>Spending today</h2>
         <span class="muted small"
           >$${total.toFixed(0)} of $${cap.toFixed(0)} across ${spending.length}
-          ${spending.length === 1 ? "app" : "apps"} running on their own; the
-          ceilings reset at 00:00 UTC</span
+          ${spending.length === 1 ? "app" : "apps"} running on their
+          own${forgeCap === undefined
+            ? "; no forge-wide ceiling is set (FORGE_CREW_CEILING_USD)"
+            : `, under the forge's $${forgeCap.toFixed(0)} a day`};
+          the ceilings reset at 00:00 UTC</span
         >`,
     },
   );
@@ -274,7 +280,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   return html`${crewReadiness(ctx)}
-  ${when(spending.length > 0, () => spendingCard(spending))}
+  ${when(spending.length > 0, () =>
+    spendingCard(spending, ctx.app.config.crewCeilingUsd),
+  )}
   ${agents.length === 0
     ? empty({
         icon: "bot",

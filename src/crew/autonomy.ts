@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import {
   addComment,
@@ -84,7 +85,7 @@ export const AUTONOMY_TICK_MS = 60_000;
  */
 const REPLAN_AFTER_MS = 20 * 60_000;
 
-export type Paused = "ceiling" | "nobody" | "no crew";
+export type Paused = "ceiling" | "forge ceiling" | "nobody" | "no crew";
 
 export interface AutonomyStatus {
   readonly autonomy: Repo["autonomy"];
@@ -121,6 +122,19 @@ export function spentToday(
   );
 }
 
+/** What the crew spent today across every repository, in dollars. */
+export function spentTodayEverywhere(db: Database, now = new Date()): number {
+  const since = startOfTodayUtc(now).toISOString();
+  return (
+    db
+      .query<{ spent: number | null }, [string]>(
+        `SELECT SUM(cost_usd) AS spent FROM run
+         WHERE kind = 'agent' AND created_at >= ?1`,
+      )
+      .get(since)?.spent ?? 0
+  );
+}
+
 function activeRuns(app: App, repoId: string) {
   return listActive(app.db, "agent").filter((r) => r.repoId === repoId);
 }
@@ -132,6 +146,7 @@ export function autonomyStatus(
 ): AutonomyStatus {
   const spent = spentToday(app.db, repo.id, now);
   const crew = listCrewRoles(app.db, repo.id);
+  const forgeCap = app.config.crewCeilingUsd;
   const paused: Paused | null =
     repo.autonomy === "off"
       ? null
@@ -141,7 +156,10 @@ export function autonomyStatus(
           ? "no crew"
           : spent >= repo.autonomyCeilingUsd
             ? "ceiling"
-            : null;
+            : forgeCap !== undefined &&
+                spentTodayEverywhere(app.db, now) >= forgeCap
+              ? "forge ceiling"
+              : null;
   const tomorrow = startOfTodayUtc(now);
   tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
   return {
@@ -151,7 +169,10 @@ export function autonomyStatus(
     slots: repo.autonomySlots,
     active: activeRuns(app, repo.id).length,
     paused,
-    resumesAt: paused === "ceiling" ? tomorrow.toISOString() : null,
+    resumesAt:
+      paused === "ceiling" || paused === "forge ceiling"
+        ? tomorrow.toISOString()
+        : null,
   };
 }
 

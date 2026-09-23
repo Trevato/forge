@@ -67,6 +67,11 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
+  // across every repository. Unset is no forge-wide ceiling.
+  ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
+    ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
+    : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
     : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),

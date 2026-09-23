@@ -58,6 +58,13 @@ export interface ForgeConfig {
    */
   sshHostKey?: string;
   /**
+   * The most the crew may spend across every repository in one UTC day.
+   * Each repository has its own ceiling; this one is the forge's, so a
+   * person raising three ceilings cannot raise the bill past the one they
+   * meant. Undefined is no forge-wide ceiling.
+   */
+  crewCeilingUsd?: number;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.
