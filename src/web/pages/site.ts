@@ -52,7 +52,7 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
-import { lookUrl } from "./looks.ts";
+import { lookUrl, pictured } from "./looks.ts";
 import {
   eventActor,
   eventVerb,
@@ -553,22 +553,21 @@ function studioLanding(ctx: Ctx): Html {
     const production = (
       runtime === undefined ? [] : runtime.status(record)
     ).find((env) => env.env === "production");
-    const look = looks.find(
+    const ofApp = looks.filter(
       (l) =>
         l.appId === record.id &&
         l.env === "production" &&
-        l.page === DEFAULT_PAGE &&
-        l.kind === "desktop" &&
-        l.error === null,
+        l.page === DEFAULT_PAGE,
     );
+    const look = pictured(ofApp, "thumb") ?? pictured(ofApp, "desktop");
     const base = repoBase(repo);
     return html`<a class="app-tile" href="${base}">
       ${look
         ? html`<img
             class="app-tile-look"
-            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, "desktop")}"
-            width="${LOOK_SIZES.desktop.width}"
-            height="${LOOK_SIZES.desktop.height}"
+            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+            width="${LOOK_SIZES[look.kind].width}"
+            height="${LOOK_SIZES[look.kind].height}"
             alt=""
             loading="lazy"
           />`

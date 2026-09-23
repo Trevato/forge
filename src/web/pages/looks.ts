@@ -40,8 +40,10 @@ export const lookUrl = (
 ): string => `${base}/looks/${env}/${commitOid}/${lookSlot(page, kind)}.png`;
 
 /** The newest picture at one width, when there is one. */
-const pictured = (looks: readonly Look[], kind: LookKind): Look | undefined =>
-  looks.find((l) => l.kind === kind && l.error === null);
+export const pictured = (
+  looks: readonly Look[],
+  kind: LookKind,
+): Look | undefined => looks.find((l) => l.kind === kind && l.error === null);
 
 /**
  * The picture for a small slot: the dedicated thumb, or — for a commit

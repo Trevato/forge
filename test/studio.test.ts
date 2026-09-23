@@ -1535,6 +1535,108 @@ describe("the studio", () => {
     expect(dev).toContain("Your code, your machine");
   });
 
+  test("the front door's tile is the thumb, not the full desktop picture, when both exist (#287)", async () => {
+    const created = await createRepo(app, alice, {
+      name: "tinytile",
+      visibility: "public",
+      description: "picked its own thumb",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    const seeded = await commitToBranch(app, alice, created.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"tinytile","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, created.value, {
+      slug: "tinytile",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const record = getAppByRepo(app.db, created.value.id)!;
+    const commit = seeded.value.commitOid;
+    const drop = (kind: "desktop" | "thumb") => {
+      const rel = join("looks", record.id, `production-${kind}.png`);
+      const abs = join(app.config.dataDir, rel);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, PNG);
+      recordLook(app.db, { appId: record.id, env: "production", commitOid: commit, kind, path: rel });
+    };
+    drop("desktop");
+    drop("thumb");
+
+    const anon = await (
+      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
+    ).text();
+    const tile = anon
+      .split("<img")
+      .find((chunk) => chunk.includes(`/${created.value.ownerName}/${created.value.name}/looks/`));
+    expect(tile).toBeDefined();
+    expect(tile).toContain(`/looks/production/${commit}/thumb.png`);
+    expect(tile).toContain('width="200"');
+    expect(tile).toContain('height="125"');
+  });
+
+  test("the front door's tile still renders at desktop's size for a commit from before thumbs existed (#287)", async () => {
+    const created = await createRepo(app, alice, {
+      name: "oldtile",
+      visibility: "public",
+      description: "no thumb yet",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    const seeded = await commitToBranch(app, alice, created.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"oldtile","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, created.value, {
+      slug: "oldtile",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const record = getAppByRepo(app.db, created.value.id)!;
+    const commit = seeded.value.commitOid;
+    const rel = join("looks", record.id, "production-desktop.png");
+    const abs = join(app.config.dataDir, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, PNG);
+    recordLook(app.db, {
+      appId: record.id,
+      env: "production",
+      commitOid: commit,
+      kind: "desktop",
+      path: rel,
+    });
+
+    const anon = await (
+      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
+    ).text();
+    const tile = anon
+      .split("<img")
+      .find((chunk) => chunk.includes(`/${created.value.ownerName}/${created.value.name}/looks/`));
+    expect(tile).toBeDefined();
+    expect(tile).toContain(`/looks/production/${commit}/desktop.png`);
+    expect(tile).toContain('width="1280"');
+    expect(tile).toContain('height="800"');
+  });
+
   test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
     // A public app of alice's own, distinct from "notes" (private) and
     // "beacon" (made public by an earlier test) — self-contained so this
