@@ -713,4 +713,12 @@ a.row:hover .row-title { color: var(--accent); }
 @media (pointer: coarse) { .mode-toggle { height: 36px; } .mode-toggle button { line-height: 34px; } }
 .mode-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .mode-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* iOS zooms the whole page when a focused field is set below 16px, and the
+   zoom drags the scroll with it. On a touch screen every field is 16px, so
+   the page stays exactly where the reader left it. */
+@media (pointer: coarse) {
+  input, textarea, select, .input, .input[data-size="sm"], .topbar-search input,
+  .palette .palette-input { font-size: 16px; }
+}
 `;
