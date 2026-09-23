@@ -933,6 +933,7 @@ export function codePage(
     ${o.before ?? null} ${codeLayout(o.explorer, o.content)}
     ${codeMount(scope, o.ref)} ${finderDialog()}`,
     scriptJs: codeJs,
+    wide: true,
   });
 }
 

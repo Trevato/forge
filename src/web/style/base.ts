@@ -80,6 +80,12 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .shell { width: 100%; max-width: var(--page); margin: 0 auto; padding: 0 16px 96px; flex: 1; }
 /* A bare page owns the whole window: no width, no padding, no chrome. */
 .bare { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* A wide page keeps the chrome but lets the column go: a tree beside a
+   file is the one layout that gets better with every pixel of a monitor,
+   and holding it to the reading width leaves most of that monitor blank. */
+@media (min-width: 1200px) {
+  .shell-wide { max-width: none; padding-left: 24px; padding-right: 24px; }
+}
 
 .topbar {
   position: sticky; top: 0; z-index: 20;

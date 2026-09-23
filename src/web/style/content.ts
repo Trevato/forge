@@ -720,10 +720,17 @@ form.inline { display: inline; margin-left: auto; }
 /* One grid, two behaviours. Below 900px the explorer is the "Files" drawer
    above the content and its <summary> is the handle; above it, the summary
    goes away and the column simply is. The element is always [open], so no
-   layout depends on a script having toggled anything. */
+   layout depends on a script having toggled anything.
+
+   Above 900px there are three columns: the tree, the divider, the file. The
+   tree's width is one custom property, \`--ex-w\`, so the divider's script
+   has exactly one thing to set and the stylesheet keeps the fallback. */
 .code-layout { display: grid; gap: 12px; margin-top: 12px; align-items: start; }
 .code-main { min-width: 0; }
 .code-main[aria-busy="true"] { opacity: .55; transition: opacity 120ms var(--ease); }
+/* The divider is nothing until a script can drag it, and nothing on one
+   column either. */
+.code-split { display: none; }
 
 .explorer-panel { min-width: 0; }
 .explorer-panel:not([open]) > .explorer-toggle { border-radius: var(--radius-sm); }
@@ -758,6 +765,7 @@ form.inline { display: inline; margin-left: auto; }
   overflow: hidden; cursor: pointer; list-style: none;
 }
 .ex-dir > summary::-webkit-details-marker { display: none; }
+@media (pointer: coarse) { .ex-file, .ex-dir > summary, .ex-more { min-height: 44px; } }
 .ex-file .ico, .ex-more .ico { color: var(--faint); flex: none; width: 14px; height: 14px; }
 .ex-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ex-twist { display: inline-flex; flex: none; color: var(--faint); transition: transform 120ms var(--ease); }
@@ -769,32 +777,73 @@ form.inline { display: inline; margin-left: auto; }
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--fg); font-weight: 550;
 }
-.ex-file[data-previewing] { background: var(--muted); color: var(--fg); }
 .ex-file:focus-visible { outline-offset: -2px; }
 .ex-dir > summary[data-current] { color: var(--accent); }
 .ex-more { color: var(--accent); font-size: 12.5px; }
 .ex-empty { display: block; padding: 3px 10px 3px 16px; font-size: 12.5px; color: var(--faint); }
 
 @media (min-width: 900px) {
-  .code-layout { grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 16px; }
+  .code-layout {
+    grid-template-columns: minmax(0, var(--ex-w, 260px)) auto minmax(0, 1fr);
+    gap: 0 6px;
+  }
+  /* The tree stays put while the file scrolls past. Sticky needs a parent
+     as tall as the row to move within, so the panel stretches to the row
+     and the details' content box stretches to the panel — all three rules
+     only work together. */
+  .explorer-panel { align-self: stretch; }
   /* On a wide screen the column is not a disclosure at all — it just is.
      Where this pseudo-element is understood the handle goes away too; where
      it is not, the handle stays and one click opens the column, which is why
      the element ships closed rather than open. */
-  .explorer-panel::details-content { content-visibility: visible; block-size: auto; }
+  .explorer-panel::details-content {
+    content-visibility: visible; block-size: auto; min-block-size: 100%;
+  }
   .explorer {
     border-top: 1px solid var(--border); border-radius: var(--radius);
     position: sticky; top: calc(var(--topbar-h) + 12px);
     max-height: calc(100dvh - var(--topbar-h) - 32px);
   }
+  /* The divider: a 12px lane with a hairline down its middle, sticky to the
+     same band as the tree so there is always something to grab. The line
+     thickens and takes the accent under the pointer, on focus and while
+     dragging; the lane itself stays transparent. */
+  :root.js .code-split {
+    display: block; position: sticky; align-self: stretch;
+    top: calc(var(--topbar-h) + 12px);
+    max-height: calc(100dvh - var(--topbar-h) - 32px);
+    width: 12px; cursor: col-resize; touch-action: none;
+    border-radius: var(--radius-sm);
+  }
+  .code-split::before {
+    content: ""; position: absolute; inset: 0 -4px;
+  }
+  .code-split::after {
+    content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+    width: 1px; margin-left: -0.5px; background: var(--border);
+    transition: background-color 120ms var(--ease), width 120ms var(--ease), margin-left 120ms var(--ease);
+  }
+  .code-split:hover::after, .code-split:focus-visible::after, .code-layout[data-dragging] .code-split::after {
+    width: 3px; margin-left: -1.5px; background: var(--accent);
+  }
+  .code-split:focus-visible { outline-offset: 0; }
+  /* While a drag is on, nothing beneath the pointer may select or steal
+     the cursor. */
+  .code-layout[data-dragging] { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+  .code-layout[data-dragging] .code-main, .code-layout[data-dragging] .explorer-panel { pointer-events: none; }
 }
 @supports selector(::details-content) {
   @media (min-width: 900px) {
     .explorer-panel > .explorer-toggle { display: none; }
   }
 }
-@media (min-width: 1180px) {
-  .code-layout { grid-template-columns: minmax(0, 300px) minmax(0, 1fr); }
+@media (min-width: 900px) and (pointer: coarse) {
+  /* A finger needs 44px: the lane keeps its width and the hit area grows
+     under it, into the padding on either side. */
+  .code-split::before { inset: 0 -16px; }
+}
+@media (min-width: 1200px) {
+  .code-layout { grid-template-columns: minmax(0, var(--ex-w, 300px)) auto minmax(0, 1fr); }
 }
 
 /* ---- the finder ---- */

@@ -280,14 +280,33 @@ export function finderDialog(): Html {
   </dialog>`;
 }
 
+/** Where the explorer column starts, and how narrow either side may go. */
+export const SPLIT = { min: 200, start: 300, minMain: 480 } as const;
+
 /**
  * The two-column frame. The explorer is first in the DOM because that is
  * also the reading order and the tab order; the grid puts it on the left
  * above 900px and above the content below it.
+ *
+ * Between the two sits one divider. It is a real ARIA separator — focusable,
+ * with a value in pixels — so the width can be dragged with a pointer or
+ * nudged with the arrow keys, and it is invisible until a script arrives:
+ * without one the columns keep the stylesheet's width and nothing is lost.
  */
 export function codeLayout(explorer: Html, content: Html): Html {
   return html`<div class="code-layout">
     ${explorer}
+    <div
+      class="code-split"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the file tree"
+      aria-valuemin="${SPLIT.min}"
+      aria-valuenow="${SPLIT.start}"
+      tabindex="0"
+      title="Drag to resize · double-click to reset"
+      data-split
+    ></div>
     <div class="code-main" id="code-main">${content}</div>
   </div>`;
 }

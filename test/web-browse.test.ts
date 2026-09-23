@@ -31,6 +31,7 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import { clearViewCache } from "../src/view/cache.ts";
 import { setLogLevel } from "../src/kernel/log.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import { codeJs } from "../src/web/client.ts";
 
 setLogLevel("error");
 
@@ -335,6 +336,51 @@ describe("browsing an origin repository on the web", () => {
     expect(blob).toContain('id="code-pane"');
     // And the finder is pointed at the origins twin of the paths route.
     expect(blob).toContain(`data-paths="${browse}/paths/main"`);
+  });
+
+  test("a file page is two panes with one divider, on the wide shell", async () => {
+    const blob = await bodyOf(alice, `${browse}/blob/main/src/index.ts`);
+    // The divider is a real separator with a value, between the tree and the
+    // file in the DOM — so it is in the tab order between them too.
+    expect(blob).toContain('role="separator"');
+    expect(blob).toContain('aria-orientation="vertical"');
+    expect(blob).toContain('aria-valuemin="200"');
+    expect(blob).toContain('aria-valuenow="300"');
+    const tree = blob.indexOf('class="explorer"');
+    const split = blob.indexOf("data-split");
+    const main = blob.indexOf('id="code-main"');
+    expect(tree).toBeGreaterThan(0);
+    expect(split).toBeGreaterThan(tree);
+    expect(main).toBeGreaterThan(split);
+    // The code browser lets go of the reading width; other pages keep it.
+    expect(blob).toContain('class="shell shell-wide"');
+    const home = await bodyOf(alice, browse);
+    expect(home).not.toContain("shell-wide");
+  });
+
+  test("hovering a file warms the cache and changes nothing on screen", () => {
+    // No mouse handler at all, and the pointer handler only calls warm.
+    expect(codeJs).not.toMatch(/mouse(over|enter)/);
+    const hover = /addEventListener\('pointerover',([\s\S]*?)\n {2}\}\);/.exec(
+      codeJs,
+    );
+    expect(hover).not.toBeNull();
+    expect(hover![1]).toContain("warm(a)");
+    expect(hover![1]).not.toMatch(/show\(|innerHTML|pushState|location/);
+    // warm fetches into the cache and touches neither the pane nor history.
+    const warm = /function warm\(link\) \{([\s\S]*?)\n {2}\}/.exec(codeJs);
+    expect(warm).not.toBeNull();
+    expect(warm![1]).toContain("fetch(");
+    expect(warm![1]).toContain("remember(");
+    expect(warm![1]).not.toMatch(/innerHTML|pushState|location|aria-current/);
+    // Focus (j/k) warms too; only a click opens, and the address follows.
+    const focus = /addEventListener\('focusin',([\s\S]*?)\n {2}\}\);/.exec(
+      codeJs,
+    );
+    expect(focus![1]).toContain("warm(a)");
+    expect(focus![1]).not.toContain("show(");
+    expect(codeJs).toContain("history.pushState({ code: url }, '', url)");
+    expect(codeJs).toContain("addEventListener('popstate'");
   });
 
   test("a live blob offers Mirror to edit, never Edit", async () => {

@@ -461,21 +461,29 @@ export const runLogJs = /* js */ `
 `;
 
 /**
- * The code browser: the explorer column, the preview it paints beside itself,
- * and the fuzzy file finder.
+ * The code browser: the explorer column, the file it opens beside itself,
+ * the divider between the two, and the fuzzy file finder.
  *
  * Everything here is an accelerant on something the page already does. The
- * explorer's links are real links; the preview is a fetch of the very blob
- * route those links point at, rendered by the same server template, so a
- * preview and a navigation produce identical markup. A folder the server did
- * not expand already carries a link to its own page; the script replaces that
- * link with the folder's contents. The finder is a dialog over the JSON the
- * \`paths\` route serves — with no script, the column beside it is the finder.
+ * explorer's links are real links; opening one is a fetch of the very blob
+ * route it points at, rendered by the same server template, so an in-place
+ * open and a full navigation produce identical markup — and the address bar
+ * follows, so back, forward and a copied link all mean what they say. A
+ * folder the server did not expand already carries a link to its own page;
+ * the script replaces that link with the folder's contents. The finder is a
+ * dialog over the JSON the \`paths\` route serves — with no script, the
+ * column beside it is the finder.
+ *
+ * Hovering a file only warms the cache. It never changes what is on screen:
+ * a file you are reading stays until you ask for another one — with a click,
+ * with \`enter\`, with the finder. (An earlier cut previewed on hover, and a
+ * pointer drifting across the tree kept swapping the file out from under the
+ * reader.)
  *
  * Keyboard: \`j\`/\`k\`, \`enter\` and \`o\` are the shell's own row traversal (the
  * explorer's files are \`data-nav\` rows), and \`t\`/\`e\` are \`data-shortcut\`
- * attributes on real controls. This file adds no key handler of its own — it
- * listens for focus, so arrowing a file and hovering one do the same thing.
+ * attributes on real controls. The divider answers the arrow keys itself,
+ * because it is a separator widget and that is what one does.
  */
 export const codeJs = /* js */ `
 (function () {
@@ -486,29 +494,58 @@ export const codeJs = /* js */ `
   var nav = doc.querySelector('.explorer');
   var main = doc.getElementById('code-main');
 
-  // ---- preview ----
-  if (nav && main) {
-  var cache = new Map(); var order = [];
-  var inflight = null; var hoverTimer = 0; var showing = '';
+  // ---- open in place; hover only warms ----
+  if (nav && main && window.history && history.pushState) {
+  var cache = new Map(); var order = []; var pending = new Set();
+  var inflight = null; var hoverTimer = 0;
+  // The file last asked for — shown, or on its way.
+  var wanted = location.pathname + location.search;
 
+  function fragmentOf(url) { return url + (url.indexOf('?') === -1 ? '?' : '&') + 'fragment=1'; }
   function remember(url, text) {
     cache.set(url, text); order.push(url);
     while (order.length > 40) { var old = order.shift(); if (old !== url) cache.delete(old); }
   }
-  function mark(link) {
-    nav.querySelectorAll('.ex-file[data-previewing]').forEach(function (a) {
-      a.removeAttribute('data-previewing');
-    });
-    if (link) link.setAttribute('data-previewing', '');
-  }
-  function preview(link) {
-    if (!main) return;
+  // The prefetch: the bytes land in the cache and nowhere else.
+  function warm(link) {
     var url = link.getAttribute('href');
-    if (!url || url === showing) { mark(link); return; }
-    mark(link);
-    var at = url + (url.indexOf('?') === -1 ? '?' : '&') + 'fragment=1';
-    if (cache.has(at)) { main.innerHTML = cache.get(at); showing = url; return; }
-    if (inflight) inflight.abort();
+    if (!url) return;
+    var at = fragmentOf(url);
+    if (cache.has(at) || pending.has(at)) return;
+    pending.add(at);
+    fetch(at, { headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) { pending.delete(at); if (text) remember(at, text); },
+            function () { pending.delete(at); });
+  }
+  function markCurrent(url) {
+    nav.querySelectorAll('.ex-file[aria-current]').forEach(function (a) { a.removeAttribute('aria-current'); });
+    nav.querySelectorAll('.ex-file').forEach(function (a) {
+      if (a.getAttribute('href') === url) a.setAttribute('aria-current', 'page');
+    });
+  }
+  function retitle() {
+    var pane = main.querySelector('#code-pane');
+    var path = pane ? pane.getAttribute('data-path') || '' : '';
+    var at = doc.title.indexOf(' · ');
+    if (path && at > 0) doc.title = path.split('/').pop() + doc.title.slice(at);
+  }
+  function paint(url, text) {
+    // Our own server-rendered markup, escaped where it was built.
+    main.innerHTML = text;
+    markCurrent(url);
+    retitle();
+    // The shell's line-range handler keeps an anchor per file; tell it the file changed.
+    doc.dispatchEvent(new Event('code:swap'));
+  }
+  // Show a file in the pane. \`push\` records it in history; a back/forward
+  // arrival passes false because the entry is already there.
+  function show(url, push) {
+    wanted = url;
+    if (push) history.pushState({ code: url }, '', url);
+    var at = fragmentOf(url);
+    if (inflight) { inflight.abort(); inflight = null; }
+    if (cache.has(at)) { paint(url, cache.get(at)); return; }
     var ctl = new AbortController();
     inflight = ctl;
     main.setAttribute('aria-busy', 'true');
@@ -517,24 +554,138 @@ export const codeJs = /* js */ `
       .then(function (text) {
         if (ctl.signal.aborted) return;
         main.removeAttribute('aria-busy');
-        if (!text) return;
+        // Anything short of the pane is the server's page to explain.
+        if (!text) { location.href = url; return; }
         remember(at, text);
-        // Our own server-rendered markup, escaped where it was built.
-        main.innerHTML = text;
-        showing = url;
-      }, function () { if (!ctl.signal.aborted) main.removeAttribute('aria-busy'); });
+        paint(url, text);
+      }, function () { if (!ctl.signal.aborted) { main.removeAttribute('aria-busy'); location.href = url; } });
   }
+  // Bring the top of the file into view when the reader is deep in the last
+  // one; a reader already at the top is not moved.
+  function surface() {
+    var top = main.getBoundingClientRect().top;
+    var bar = parseInt(getComputedStyle(doc.documentElement).getPropertyValue('--topbar-h'), 10) || 56;
+    if (top < bar) main.scrollIntoView({ block: 'start' });
+  }
+  nav.addEventListener('click', function (e) {
+    var a = e.target && e.target.closest ? e.target.closest('.ex-file') : null;
+    // A modified click is the browser's: new tab, new window, download.
+    if (!a || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    var url = a.getAttribute('href');
+    if (!url || url.charAt(0) !== '/') return;
+    e.preventDefault();
+    if (url === wanted) { surface(); return; }
+    show(url, true);
+    surface();
+  });
+  window.addEventListener('popstate', function (e) {
+    var url = e.state && e.state.code;
+    if (typeof url !== 'string' || url === wanted) return;
+    show(url, false);
+  });
+  // The first entry is claimed too, so backing out of the first in-place
+  // open lands on the file this page loaded with rather than on nothing.
+  history.replaceState({ code: wanted }, '');
   nav.addEventListener('focusin', function (e) {
     var a = e.target && e.target.closest ? e.target.closest('.ex-file') : null;
-    if (a) preview(a);
+    if (a) warm(a);
   });
   nav.addEventListener('pointerover', function (e) {
     var a = e.target && e.target.closest ? e.target.closest('.ex-file') : null;
     window.clearTimeout(hoverTimer);
     if (!a) return;
-    hoverTimer = window.setTimeout(function () { preview(a); }, 140);
+    hoverTimer = window.setTimeout(function () { warm(a); }, 120);
   });
   nav.addEventListener('pointerleave', function () { window.clearTimeout(hoverTimer); });
+  }
+
+  // ---- the divider ----
+  // One custom property on the grid is the whole model: the stylesheet reads
+  // \`--ex-w\`, this sets it. The width is clamped so neither side can vanish
+  // and remembered per browser; a remembered width that no longer fits is
+  // clamped again on arrival and on every resize.
+  var layout = doc.querySelector('.code-layout');
+  var handle = layout ? layout.querySelector('[data-split]') : null;
+  if (layout && handle && layout.style && layout.style.setProperty) {
+  var KEY = 'forge.explorer.width';
+  var MIN = Number(handle.getAttribute('aria-valuemin')) || 200;
+  var MIN_MAIN = 480;
+  var tree = layout.firstElementChild;
+  function maxWidth() {
+    return Math.max(MIN, Math.floor(layout.getBoundingClientRect().width - MIN_MAIN - handle.offsetWidth - 12));
+  }
+  function clamp(w) { return Math.min(Math.max(Math.round(w), MIN), maxWidth()); }
+  function stored() {
+    try { var v = parseInt(window.localStorage.getItem(KEY) || '', 10); return isFinite(v) ? v : null; }
+    catch (_) { return null; }
+  }
+  function keep(w) {
+    try { if (w === null) window.localStorage.removeItem(KEY); else window.localStorage.setItem(KEY, String(w)); }
+    catch (_) {}
+  }
+  function announce() {
+    handle.setAttribute('aria-valuemax', String(maxWidth()));
+    handle.setAttribute('aria-valuenow', String(Math.round(tree.getBoundingClientRect().width)));
+  }
+  function set(w) {
+    layout.style.setProperty('--ex-w', clamp(w) + 'px');
+    announce();
+  }
+  function reset() {
+    layout.style.removeProperty('--ex-w');
+    keep(null);
+    announce();
+  }
+  function shown() { return getComputedStyle(handle).display !== 'none'; }
+
+  var remembered = stored();
+  if (remembered !== null && shown()) set(remembered); else announce();
+
+  var drag = null;
+  handle.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = { x: e.clientX, w: tree.getBoundingClientRect().width };
+    layout.setAttribute('data-dragging', '');
+    try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  handle.addEventListener('pointermove', function (e) {
+    if (!drag) return;
+    set(drag.w + (e.clientX - drag.x));
+  });
+  function release() {
+    if (!drag) return;
+    drag = null;
+    layout.removeAttribute('data-dragging');
+    keep(clamp(tree.getBoundingClientRect().width));
+  }
+  handle.addEventListener('pointerup', release);
+  handle.addEventListener('pointercancel', release);
+  handle.addEventListener('lostpointercapture', release);
+  handle.addEventListener('dblclick', reset);
+  handle.addEventListener('keydown', function (e) {
+    var w = tree.getBoundingClientRect().width;
+    var step = e.shiftKey ? 64 : 16;
+    var next = null;
+    if (e.key === 'ArrowLeft') next = w - step;
+    else if (e.key === 'ArrowRight') next = w + step;
+    else if (e.key === 'Home') next = MIN;
+    else if (e.key === 'End') next = maxWidth();
+    else if (e.key === 'Enter') { e.preventDefault(); reset(); return; }
+    if (next === null) return;
+    e.preventDefault();
+    set(next);
+    keep(clamp(next));
+  });
+  var settle = 0;
+  window.addEventListener('resize', function () {
+    window.clearTimeout(settle);
+    settle = window.setTimeout(function () {
+      if (!shown()) return;
+      var w = stored();
+      if (w !== null) set(w); else announce();
+    }, 80);
+  });
   }
 
   // ---- a folder the server did not expand fills itself in ----
@@ -1187,12 +1338,13 @@ export const shellJs = /* js */ `
   });
 
   // ---- code line ranges: shift-click extends #L3 to #L3-L9 ----
-  var code = doc.querySelector('.code');
-  if (code) {
+  // Delegated, not bound to the table: the code browser swaps the file in
+  // place, and the new table must behave like the first one did.
+  if (doc.querySelector('.code')) {
     var anchor = 0;
     function paint() {
       var m = /^#L(\\d+)(?:-L(\\d+))?$/.exec(location.hash);
-      code.querySelectorAll('tr[data-hl]').forEach(function (r) { r.removeAttribute('data-hl'); });
+      doc.querySelectorAll('.code tr[data-hl]').forEach(function (r) { r.removeAttribute('data-hl'); });
       if (!m) return;
       var lo = Number(m[1]); var hi = Number(m[2] || m[1]);
       if (hi < lo) { var t = lo; lo = hi; hi = t; }
@@ -1202,16 +1354,18 @@ export const shellJs = /* js */ `
         if (row) row.setAttribute('data-hl', '');
       }
     }
-    code.addEventListener('click', function (e) {
-      var a = e.target && e.target.closest ? e.target.closest('.ln a') : null;
+    doc.addEventListener('click', function (e) {
+      var a = e.target && e.target.closest ? e.target.closest('.code .ln a') : null;
       if (!a || !e.shiftKey || !anchor) return;
       e.preventDefault();
       var to = Number((a.getAttribute('href') || '').slice(2));
       if (!to) return;
-      history.replaceState(null, '', '#L' + Math.min(anchor, to) + '-L' + Math.max(anchor, to));
+      history.replaceState(history.state, '', '#L' + Math.min(anchor, to) + '-L' + Math.max(anchor, to));
       paint();
     });
     window.addEventListener('hashchange', paint);
+    // A different file: its lines are its own, the old anchor means nothing.
+    doc.addEventListener('code:swap', function () { anchor = 0; paint(); });
     paint();
   }
 

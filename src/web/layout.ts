@@ -87,6 +87,12 @@ export interface PageOptions {
    * (the board). The overlays stay, so the palette is still one chord away.
    */
   bare?: boolean;
+  /**
+   * The shell without its column width: a page whose content earns a wide
+   * monitor (the code browser, a tree beside a file). The topbar and footer
+   * are unchanged; only the main column lets go of `--page`.
+   */
+  wide?: boolean;
   /** The theme when the viewer has chosen none: for a page that is dark by nature. */
   theme?: ThemeName;
 }
@@ -532,7 +538,14 @@ export function page(options: PageOptions, status = 200): Response {
       </head>
       <body>
         ${options.bare ? null : topbar(ctx, theme, options.crumbs)}
-        <main class="${options.bare ? "bare" : "shell"}" id="main">
+        <main
+          class="${options.bare
+            ? "bare"
+            : options.wide
+              ? "shell shell-wide"
+              : "shell"}"
+          id="main"
+        >
           ${flash ? flashToast(flash) : null}${options.body}
         </main>
         ${options.bare ? null : footer()} ${overlays()}
