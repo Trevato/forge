@@ -37,7 +37,12 @@ import {
   time,
 } from "../ui.ts";
 import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
-import { changeHref, studioRecord, tellHref } from "./nouns.ts";
+import {
+  changeHref,
+  pageTitle,
+  studioRecord,
+  tellHref,
+} from "./nouns.ts";
 import { tellWord } from "./tell.ts";
 import {
   pullWord,
@@ -201,7 +206,7 @@ export async function studioTells(
 
   return page({
     ctx,
-    title: `Everything told · ${repo.name}`,
+    title: pageTitle("tells", repo, true),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
@@ -289,7 +294,7 @@ export async function studioChanges(
 
   return page({
     ctx,
-    title: `Every change · ${repo.name}`,
+    title: pageTitle("changes", repo, true),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
@@ -403,7 +408,7 @@ export async function studioRuns(
 
   return page({
     ctx,
-    title: `Every run · ${repo.name}`,
+    title: pageTitle("runs", repo, true),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

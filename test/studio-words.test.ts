@@ -11,7 +11,10 @@
  * Nothing else in this file changes — the same forbidden-vocabulary,
  * chrome, header and size assertions walk it, and so does the `?mode=dev`
  * test below, which is why a row carries the dev words the same path still
- * says in dev's own face: the table is the one place a page is added, and
+ * says in dev's own face. A row also names the `<title>` it answers with in
+ * each face — the browser tab, the bookmark, the first thing a screen reader
+ * announces (#262) — since `<head>` is outside `<main>` and nothing else
+ * here would read it. The table is the one place a page is added, and
  * the proof it is not vacuous comes with it. Whatever a row needs to be
  * worth fetching — a second tell, a second change, a run that stopped, a
  * run still going — the one `beforeAll` seeds; there is no second seeding
@@ -132,6 +135,11 @@ const pageContent = (html: string): string =>
     // and it rides on things dev and studio share alike (a timeline dot).
     .replace(/<svg[\s\S]*?<\/svg>/g, "");
 
+/** The page's own title — `page()`'s `<title>`, without the sitewide
+ * ` · forge` every page ends with. */
+const titleOf = (html: string): string =>
+  (html.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? "").replace(/ · forge$/, "");
+
 /** Generous next to a real page (tens of KB); nowhere near the 2.5 MB one
  * file diff cost the studio pull page before it had its own render. */
 const MAX_BODY_BYTES = 300_000;
@@ -155,6 +163,10 @@ interface StudioPage {
   /** Dev's own words the same path still says at `?mode=dev`, when dev has
    * a page of its own there. */
   readonly dev?: readonly string[];
+  /** The whole `<title>` the studio's page answers with, ` · forge` aside. */
+  readonly title?: string;
+  /** The whole `<title>` dev's own page answers with at `?mode=dev`. */
+  readonly devTitle?: string;
 }
 
 /** `?mode=dev` added to a path that may already carry a query. */
@@ -491,6 +503,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // both stay the picture card's and the word badge's alone (#172).
         word: "app",
         path: repoPath,
+        title: "vocab",
         shows: [`href="#i-pull"/></svg>Changes`],
         hides: [`href="#i-eye"/></svg>Look`, `>Look<`],
       },
@@ -501,6 +514,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // dev's own noun on the studio's own page.
         shows: ["Close tell"],
         dev: ["<h2>Labels</h2>", "Close issue"],
+        devTitle: `${tellTitle} · vocab`,
       },
       // The studio's own nouns for the same two pages (#158): one handler
       // each, so what is walked here is the very page above under the
@@ -511,8 +525,14 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "tell (the studio's noun)",
         path: `${repoPath}/tells/${tellNumber}`,
         shows: [tellTitle, "Close tell"],
+        title: `${tellTitle} · vocab`,
       },
-      { word: "working", path: `${repoPath}/runs/${runId}` },
+      {
+        word: "working",
+        path: `${repoPath}/runs/${runId}`,
+        title: `scout on #${tellNumber} ${tellTitle} · vocab`,
+        devTitle: `scout on #${tellNumber} ${tellTitle} · vocab`,
+      },
       {
         word: "look",
         path: `${repoPath}/pulls/${openPullNumber}`,
@@ -520,11 +540,13 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // request" here, dev's own noun on the studio's own page.
         shows: ["Close change"],
         dev: ["diff-table", openBranch, "Close pull request"],
+        devTitle: `${openPullTitle} · vocab`,
       },
       {
         word: "look (the studio's noun)",
         path: `${repoPath}/changes/${openPullNumber}`,
         shows: [openPullTitle, "Close change"],
+        title: `${openPullTitle} · vocab`,
       },
       {
         word: "shipped",
@@ -565,6 +587,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/issues`,
         shows: [untouchedTitle, tellTitle],
         dev: [`>#${tellNumber} opened`],
+        devTitle: "Issues · vocab",
       },
       {
         word: "tells (told)",
@@ -584,17 +607,37 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "tells (the studio's noun)",
         path: `${repoPath}/tells`,
         shows: [untouchedTitle, tellTitle],
+        title: "Everything told · vocab",
+      },
+      {
+        // #262: the one compose page, under the studio's own noun and dev's
+        // own address alike — the tab, the heading and the button all say
+        // the studio's word, and the form still posts where it always has.
+        word: "tell the crew (the studio's noun)",
+        path: `${repoPath}/tells/new`,
+        shows: [`action="${repoPath}/issues/new"`, "<h1 class=\"mt\">Tell the crew</h1>"],
+        title: "Tell the crew · vocab",
+      },
+      {
+        word: "tell the crew",
+        path: `${repoPath}/issues/new`,
+        shows: [`action="${repoPath}/issues/new"`, "<h1 class=\"mt\">Tell the crew</h1>"],
+        title: "Tell the crew · vocab",
+        dev: ["New issue", "Create issue"],
+        devTitle: "New issue · vocab",
       },
       {
         word: "changes (the studio's noun)",
         path: `${repoPath}/changes`,
         shows: [openPullTitle, secondChangeTitle],
+        title: "Every change · vocab",
       },
       {
         word: "changes",
         path: `${repoPath}/pulls`,
         shows: [openPullTitle, secondChangeTitle],
         dev: [openBranch],
+        devTitle: "Pull requests · vocab",
       },
       {
         word: "changes (look)",
@@ -621,6 +664,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // out — the filter below is where it shows up.
         hides: [`href="${repoPath}/runs/${stoppedRunId}"`],
         dev: ["Done"],
+        title: "Every run · vocab",
+        devTitle: "Runs · vocab",
       },
       {
         word: "runs (stopped)",
@@ -641,6 +686,13 @@ describe("dev's vocabulary never reaches a studio page", () => {
         hides: [`href="${repoPath}/runs/${workingRunId}"`],
         dev: ["Done"],
       },
+      {
+        // The studio's own settings: the crew, and how far it may go.
+        word: "crew",
+        path: `${repoPath}/settings`,
+        shows: ["scout"],
+        title: "Settings · vocab",
+      },
     ];
   });
 
@@ -658,8 +710,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
       });
       // A route not yet wired into the router answers 404 — skip it rather
       // than fail, so a row for a page still being built (docs/STUDIO.md's
-      // lists, as they land) does not block this file.
-      if (res.status === 404) continue;
+      // lists, as they land) does not block this file. A row that names its
+      // title is a finished page, and never skipped.
+      if (res.status === 404 && p.title === undefined) continue;
       expect(res.status).toBe(200);
       expect(res.headers.get("x-content-type-options")).toBe("nosniff");
       expect(res.headers.get("referrer-policy")).toBe("same-origin");
@@ -678,7 +731,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
       // pages, so its presence here is the chrome, proven.
       expect(html).toContain("Studio");
 
-      const visible = pageContent(html);
+      const title = titleOf(html);
+      if (p.title !== undefined)
+        expect(title, `${p.word} (${p.path}) titles its tab`).toBe(p.title);
+      // The tab is read like `<main>`: the same words, the same reasons.
+      const visible = `<title>${title}</title>${pageContent(html)}`;
       for (const { pattern, because } of DEV_WORDS) {
         expect(
           visible,
@@ -763,7 +820,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
   test("?mode=dev on the same routes still carries dev's own words — the assertions above are real, not vacuous", async () => {
     let proved = 0;
     for (const p of pages) {
-      if (p.dev === undefined) continue;
+      if (p.dev === undefined && p.devTitle === undefined) continue;
       const res = await fetch(`${base}${asDev(p.path)}`, {
         headers: { cookie },
         redirect: "manual",
@@ -775,8 +832,14 @@ describe("dev's vocabulary never reaches a studio page", () => {
       // Dev's own words, read where the studio's are read: inside `<main>`,
       // so the shared client script's own literals can never stand in for a
       // page that said nothing.
-      const visible = pageContent(await res.text());
-      for (const word of p.dev) {
+      const html = await res.text();
+      if (p.devTitle !== undefined)
+        expect(
+          titleOf(html),
+          `${p.word} (${asDev(p.path)}) lost dev's own title`,
+        ).toBe(p.devTitle);
+      const visible = pageContent(html);
+      for (const word of p.dev ?? []) {
         expect(
           visible,
           `${p.word} (${asDev(p.path)}) lost dev's word "${word}" — the studio row for this path proves nothing`,
@@ -793,7 +856,42 @@ describe("dev's vocabulary never reaches a studio page", () => {
     // Every row that named dev words was actually reached: the 404 skip
     // above is for a page still being built, never a way for a row to stop
     // proving itself once it exists.
-    expect(proved).toBe(pages.filter((p) => p.dev !== undefined).length);
+    expect(proved).toBe(
+      pages.filter((p) => p.dev !== undefined || p.devTitle !== undefined)
+        .length,
+    );
+  });
+
+  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262)", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const plain = await createRepo(app, alice, {
+      name: "plain",
+      visibility: "private",
+      description: "not an app",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const titles = new Map([
+      ["/alice/plain/issues", "Issues · plain"],
+      ["/alice/plain/issues/new", "New issue · plain"],
+      ["/alice/plain/pulls", "Pull requests · plain"],
+      ["/alice/plain/runs", "Runs · plain"],
+    ]);
+    for (const [path, title] of titles) {
+      const res = await fetch(`${base}${path}`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      });
+      expect(res.status, path).toBe(200);
+      expect(titleOf(await res.text()), path).toBe(title);
+    }
+    // No studio, no studio door: the compose address under the studio's
+    // noun hands a non-app to dev's own.
+    const door = await fetch(`${base}/alice/plain/tells/new`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+    expect(door.status).toBe(303);
+    expect(door.headers.get("location")).toBe("/alice/plain/issues/new");
   });
 
   test("reopening a merged change refuses in the reader's own noun — dev's word never rides the flash on a studio page (#171)", async () => {

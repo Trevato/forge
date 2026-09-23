@@ -26,6 +26,7 @@ import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { page } from "../layout.ts";
+import { pageTitle } from "./nouns.ts";
 import {
   btn,
   card,
@@ -224,7 +225,7 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
           name: "ceiling",
           value: String(repo.autonomyCeilingUsd),
           type: "number",
-          hint: "Dollars of agent spend on this repository per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.",
+          hint: "Dollars of agent spend on this app per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.",
         })}
         ${field({
           label: "Slots",
@@ -271,7 +272,7 @@ export function studioCrewSettings(
       </div>`;
   return page({
     ctx,
-    title: `Settings · ${repo.name}`,
+    title: pageTitle("settings", repo, true),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

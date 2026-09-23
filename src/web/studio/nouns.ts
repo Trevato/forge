@@ -47,3 +47,32 @@ export function studioRecord(ctx: Ctx, repo: Repo): AppRecord | undefined {
     ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
   return studio ? getAppByRepo(ctx.app.db, repo.id) : undefined;
 }
+
+/**
+ * What each page a studio viewer can reach calls itself in the browser tab
+ * — the bookmark, the history entry, the first thing a screen reader says
+ * on arrival — in both faces, decided here beside the addresses so a page
+ * never carries a second literal of its own. `studio` is the word when
+ * `studioRecord` gives the page a studio; `dev` is today's word for dev and
+ * for any repository that is not an app. A single tell, change or run
+ * titles itself by its own title, and the app page by the app's name, so
+ * none of those is here.
+ */
+export const PAGE_TITLES = {
+  tells: { studio: "Everything told", dev: "Issues" },
+  changes: { studio: "Every change", dev: "Pull requests" },
+  runs: { studio: "Every run", dev: "Runs" },
+  compose: { studio: "Tell the crew", dev: "New issue" },
+  settings: { studio: "Settings", dev: "Settings" },
+} as const;
+
+export type TitledPage = keyof typeof PAGE_TITLES;
+
+/** A page's `<title>` noun and the repository it is about, in the face
+ * the viewer has: `Everything told · notes`, or `Issues · notes`. */
+export const pageTitle = (
+  which: TitledPage,
+  repo: Repo,
+  studio: boolean,
+): string =>
+  `${PAGE_TITLES[which][studio ? "studio" : "dev"]} · ${repo.name}`;

@@ -75,6 +75,7 @@ import {
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
+  newTellPage,
   tellPage,
 } from "../web/pages/issues.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
@@ -549,6 +550,7 @@ export function buildRouter(): Router<Handler> {
   // apply). The literal /tells is registered before /tells/:number for the
   // same reason /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
+  router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);

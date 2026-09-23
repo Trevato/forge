@@ -37,7 +37,7 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { studioRuns } from "../studio/lists.ts";
-import { studioRecord } from "../studio/nouns.ts";
+import { pageTitle, studioRecord } from "../studio/nouns.ts";
 import { studioRun } from "../studio/run.ts";
 import {
   btn,
@@ -332,7 +332,7 @@ export async function runsList(ctx: Ctx): Promise<Response> {
 
   return page({
     ctx,
-    title: `Runs · ${repo.name}`,
+    title: pageTitle("runs", repo, false),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

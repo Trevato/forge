@@ -63,7 +63,12 @@ import {
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
 import { studioTells } from "../studio/lists.ts";
-import { studioRecord } from "../studio/nouns.ts";
+import {
+  PAGE_TITLES,
+  pageTitle,
+  studioRecord,
+  tellsHref,
+} from "../studio/nouns.ts";
 import { studioTell } from "../studio/tell.ts";
 
 const PER_PAGE = 25;
@@ -361,7 +366,7 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
 
   return page({
     ctx,
-    title: `Issues · ${repo.name}`,
+    title: pageTitle("tells", repo, false),
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
@@ -372,9 +377,49 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
 
 // ---- compose ----
 
+/**
+ * The compose page, in the face the viewer has: the studio's own noun for
+ * it (`PAGE_TITLES.compose`) on the tab, the heading and the button, and
+ * Cancel back to the list that face calls home. The form posts to
+ * `/issues/new` in both faces — the one door that changes something.
+ */
+function composePage(
+  ctx: Ctx,
+  repo: Repo,
+  values: { title: string; body: string },
+  error?: string,
+): Response {
+  const studio = studioRecord(ctx, repo) !== undefined;
+  const heading = PAGE_TITLES.compose[studio ? "studio" : "dev"];
+  const base = repoBase(repo);
+  return page(
+    {
+      ctx,
+      title: pageTitle("compose", repo, studio),
+      crumbs: crumbsFor(repo),
+      palette: repoPalette(ctx, repo),
+      body: html`${repoHeader(ctx, repo, "issues", {
+          compact: true,
+          ownTitle: true,
+        })}
+        <h1 class="mt">${heading}</h1>
+        ${newIssueForm(
+          repo,
+          values,
+          studio ? "Tell" : "Create issue",
+          studio ? tellsHref(base) : `${base}/issues`,
+          error,
+        )}`,
+    },
+    error === undefined ? 200 : 422,
+  );
+}
+
 function newIssueForm(
   repo: Repo,
   values: { title: string; body: string },
+  submit: string,
+  cancelHref: string,
   error?: string,
 ): Html {
   return html`<div class="narrow-wide mt">
@@ -397,11 +442,8 @@ function newIssueForm(
         hint: "Markdown is supported.",
       })}
       <div class="form-actions">
-        ${btn("Create issue", { variant: "primary", icon: "issue" })}
-        ${btn("Cancel", {
-          href: `${repoBase(repo)}/issues`,
-          variant: "ghost",
-        })}
+        ${btn(submit, { variant: "primary", icon: "issue" })}
+        ${btn("Cancel", { href: cancelHref, variant: "ghost" })}
       </div>
     </form>
   </div>`;
@@ -412,18 +454,18 @@ export function newIssuePage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
-  return page({
-    ctx,
-    title: `New issue · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body: html`${repoHeader(ctx, repo, "issues", {
-        compact: true,
-        ownTitle: true,
-      })}
-      <h1 class="mt">New issue</h1>
-      ${newIssueForm(repo, { title: "", body: "" })}`,
-  });
+  return composePage(ctx, repo, { title: "", body: "" });
+}
+
+// GET /:owner/:name/tells/new — the studio's own door onto the compose page
+// `/issues/new` reaches, redirecting there when the studio does not apply,
+// the same rule `tellPage` follows for one tell.
+export function newTellPage(ctx: Ctx): Response {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (studioRecord(ctx, repo) === undefined)
+    return redirect(`${repoBase(repo)}/issues/new${ctx.url.search}`);
+  return newIssuePage(ctx);
 }
 
 // POST /:owner/:name/issues/new
@@ -449,20 +491,7 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
           : created.error === "body_too_long"
             ? "That description is too long (64 KB at most)."
             : "You cannot open an issue here.");
-    return page(
-      {
-        ctx,
-        title: `New issue · ${repo.name}`,
-        crumbs: crumbsFor(repo),
-        body: html`${repoHeader(ctx, repo, "issues", {
-            compact: true,
-            ownTitle: true,
-          })}
-          <h1 class="mt">New issue</h1>
-          ${newIssueForm(repo, values, message)}`,
-      },
-      422,
-    );
+    return composePage(ctx, repo, values, message);
   }
   return flashTo(ctx, `${repoBase(repo)}/issues/${created.value.number}`, {
     message: `Issue #${created.value.number} opened.`,

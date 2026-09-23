@@ -53,7 +53,7 @@ import {
 import { refSet } from "./refs.ts";
 import { threadRow } from "./issues.ts";
 import { studioChanges } from "../studio/lists.ts";
-import { studioRecord } from "../studio/nouns.ts";
+import { pageTitle, studioRecord } from "../studio/nouns.ts";
 import { originGlyph } from "./thread.ts";
 
 const PER_PAGE = 25;
@@ -276,7 +276,7 @@ export async function pullsList(ctx: Ctx): Promise<Response> {
 
   return page({
     ctx,
-    title: `Pull requests · ${repo.name}`,
+    title: pageTitle("changes", repo, false),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
