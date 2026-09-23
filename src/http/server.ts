@@ -536,8 +536,9 @@ export function buildRouter(): Router<Handler> {
     ),
   );
 
-  // The JSON API lives in api.ts; its routes all sit under /api/v1.
-  apiRoutes(router);
+  // The JSON API lives in api.ts, on its own router (`buildApiRouter`
+  // below) — never here, so a `/:owner`-shaped studio route can never
+  // reclaim a path under `/api/`.
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
@@ -743,6 +744,18 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/danger", dangerPage);
   router.add("POST", "/:owner/:name/settings/delete", repoDelete);
 
+  return router;
+}
+
+/**
+ * The JSON API's own router, matched before the studio's when a path starts
+ * with `/api` — so a miss under `/api/` can never fall through to a
+ * `/:owner`-shaped page route and answer with a repo's or a profile's 404
+ * page instead of the API's own.
+ */
+export function buildApiRouter(): Router<Handler> {
+  const router = new Router<Handler>();
+  apiRoutes(router);
   return router;
 }
 
@@ -1120,6 +1133,7 @@ async function clearStaleSockets(app: App): Promise<void> {
 
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
+  const apiRouter = buildApiRouter();
   await clearStaleSockets(app);
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
@@ -1147,7 +1161,9 @@ export async function serve(app: App): Promise<Servers> {
       }
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
-      return securityFloor(await answer(app, router, limiter, request));
+      return securityFloor(
+        await answer(app, router, apiRouter, limiter, request),
+      );
     },
     error(error) {
       app.log.error("unhandled request error", { error: String(error) });
@@ -1193,10 +1209,11 @@ export async function serve(app: App): Promise<Servers> {
 async function answer(
   app: App,
   router: Router<Handler>,
+  apiRouter: Router<Handler>,
   limiter: RateLimiter,
   request: Request,
 ): Promise<Response> {
-  const response = await answerGet(app, router, limiter, request);
+  const response = await answerGet(app, router, apiRouter, limiter, request);
   return request.method === "HEAD"
     ? new Response(null, { status: response.status, headers: response.headers })
     : response;
@@ -1205,24 +1222,32 @@ async function answer(
 async function answerGet(
   app: App,
   router: Router<Handler>,
+  apiRouter: Router<Handler>,
   limiter: RateLimiter,
   request: Request,
 ): Promise<Response> {
   const url = publicUrl(request, app.config.url);
   if (url.pathname === "/healthz") return healthResponse();
   const routeMethod = request.method === "HEAD" ? "GET" : request.method;
-  const matched = router.match(routeMethod, url.pathname);
+  // The one place a path decides its own shape of miss: anything under
+  // `/api` matches only against the API's own routes, so a studio route as
+  // generic as `/:owner/:name` can never claim it — a route added there
+  // next year still can't bring the HTML 404 back for an API caller.
+  const isApiPath = url.pathname === "/api" || url.pathname.startsWith("/api/");
+  const matched = isApiPath
+    ? apiRouter.match(routeMethod, url.pathname)
+    : router.match(routeMethod, url.pathname);
   if (!matched) {
     // A path under no route at all is what a mistyped or stale studio
     // URL lands on. A browser gets the forge's own page for it, same as
-    // any other 404; an API client — anything outside `/api/` that never
-    // said it wanted HTML — keeps the `no_route` body, distinct from
-    // `not_found` so it can tell a typo from a resource that is really
-    // gone. The page is rendered from a viewer-less `Ctx`: resolving a
-    // session or token here would spend a database read on a path that,
-    // by construction, cannot belong to a signed-in-only route, at the
-    // cost of the topbar reading "Sign in" even for someone who is.
-    if (prefersHtml(request, url.pathname)) {
+    // any other 404; an API client — anything under `/api/` — keeps the
+    // `no_route` body, distinct from `not_found` so it can tell a typo
+    // from a resource that is really gone. The page is rendered from a
+    // viewer-less `Ctx`: resolving a session or token here would spend a
+    // database read on a path that, by construction, cannot belong to a
+    // signed-in-only route, at the cost of the topbar reading "Sign in"
+    // even for someone who is.
+    if (!isApiPath && prefersHtml(request, url.pathname)) {
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
       const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
       const anonCtx: Ctx = {

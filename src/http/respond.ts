@@ -87,7 +87,7 @@ function acceptQuality(accept: string, type: string): number {
  * not a script or `curl` that never said otherwise.
  */
 export function prefersHtml(request: Request, pathname: string): boolean {
-  if (pathname.startsWith("/api/")) return false;
+  if (pathname === "/api" || pathname.startsWith("/api/")) return false;
   const accept = request.headers.get("accept");
   if (!accept) return false;
   return (

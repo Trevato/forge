@@ -74,4 +74,51 @@ describe("API errors are distinguishable and self-describing", () => {
     expect(noAuth.error).toBe("unauthorized");
     expect(noAuth.message).toBeTruthy();
   });
+
+  // The API's own base, and any other path under `/api/` that no route
+  // claims, used to fall through to the studio's `/:owner`-shaped catch-all
+  // page routes ("api" and "v1" read as an owner and a repo name) and answer
+  // with thirty-three kilobytes of the not-found *page* — wrong shape, wrong
+  // content-type, to a caller whose `accept` said `application/json`.
+  test("/api and /api/v1 are JSON 404s, not the studio's HTML page", async () => {
+    for (const path of ["/api", "/api/v1", "/api/v2/anything"]) {
+      const res = await fetch(`${base}${path}`, {
+        headers: { accept: "application/json" },
+      });
+      expect(res.status).toBe(404);
+      expect(res.headers.get("content-type")).toStartWith("application/json");
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("no_route");
+    }
+  });
+
+  // Content negotiation never rescues it either: a bare curl with no
+  // `accept` header at all must still get JSON under `/api/`.
+  test("/api/v1 is JSON even with no accept header", async () => {
+    const res = await fetch(`${base}/api/v1`);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toStartWith("application/json");
+  });
+
+  // A page path outside `/api/` keeps the forge's own not-found page,
+  // unchanged, for a browser that asks for HTML.
+  test("a page path with accept: text/html still gets the HTML page", async () => {
+    const res = await fetch(`${base}/this-owner-does-not-exist`, {
+      headers: { accept: "text/html" },
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-type")).toStartWith("text/html");
+  });
+
+  // The security floor is not the API's own responder's business — it is
+  // applied once, above every response the forge writes — but a miss under
+  // `/api/` must not be the one path that skips it.
+  test("the security floor still covers a miss under /api/", async () => {
+    const res = await fetch(`${base}/api/v1`, {
+      headers: { accept: "application/json" },
+    });
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("same-origin");
+    expect(res.headers.get("content-security-policy")).toBeTruthy();
+  });
 });
