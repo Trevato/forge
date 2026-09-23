@@ -597,6 +597,11 @@ function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
  * and the author never sees Approve, because you cannot approve your own
  * change. Both are refused in `submitReview` too, which is where they are
  * actually enforced.
+ *
+ * Each verdict carries a `v` chord (`v a`, `v r`, `v c`) that picks the
+ * radio and leaves the caret in the box — a prefix nobody hits by accident,
+ * and only what a click would do. Submitting stays the button's, or
+ * Cmd/Ctrl+Enter from the box (`data-submit-key`), never a bare key.
  */
 function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   const user = ctx.auth.user;
@@ -609,27 +614,31 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   if (pull.mergedAt !== null || pull.state === "closed") return html``;
   const writer = canWrite(ctx.app.db, repo, user);
   const isAuthor = pull.authorId === user.id;
-  const options: { value: string; label: string; hint: string }[] = [];
+  const options: { value: string; label: string; hint: string; key: string }[] =
+    [];
   if (writer && !isAuthor)
     options.push({
       value: "approved",
       label: "Approve",
       hint: "This is good to merge.",
+      key: "v a",
     });
   if (writer)
     options.push({
       value: "changes_requested",
       label: "Request changes",
       hint: "Blocks the merge until it is withdrawn.",
+      key: "v r",
     });
   options.push({
     value: "commented",
     label: "Comment",
     hint: "A note on the change as a whole, with no verdict.",
+    key: "v c",
   });
 
   return card(
-    html`<form method="post" action="${action}">
+    html`<form method="post" action="${action}" data-submit-key>
       <fieldset class="review-verdicts">
         <legend class="sr-only">Your verdict</legend>
         ${options.map(
@@ -639,6 +648,8 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
                 type="radio"
                 name="state"
                 value="${option.value}"
+                data-shortcut="${option.key}"
+                title="${option.label}"
                 ${i === options.length - 1 ? raw("checked") : null}
               />
               <span

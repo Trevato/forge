@@ -296,7 +296,11 @@ export interface ComposerOptions {
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
- * rider on this one — one endpoint, one verb. */
+ * rider on this one — one endpoint, one verb.
+ *
+ * It is the page's box (`data-box`): `c` puts the caret in it, and
+ * Cmd/Ctrl+Enter sends it (`data-submit-key`) — the shell's keyboard layer
+ * reads both from the markup. Close and reopen get no key. */
 export function composer(ctx: Ctx, o: ComposerOptions): Html {
   if (!ctx.auth.user) {
     return card(
@@ -331,7 +335,13 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         )
       : null;
   return html`${stateForm}
-    <form class="card comment-form" method="post" action="${o.action}">
+    <form
+      class="card comment-form"
+      method="post"
+      action="${o.action}"
+      data-box="Write a comment"
+      data-submit-key
+    >
       <label class="sr-only" for="comment-body">Comment</label>
       <textarea
         class="input"
