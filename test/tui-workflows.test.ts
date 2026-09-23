@@ -386,9 +386,9 @@ describe("workflows at an origin", () => {
       expect(h.text()).toContain("and mirror it here?");
 
       await h.press("enter");
-      // The ordinary mirror card, over the job the fork started.
-      await h.until("Mirroring");
-      // …and then the fork's own workspace, which says whose work it is.
+      // The mirror runs over the job the fork started; wait for the
+      // outcome — the fork's own workspace — rather than the mirror card,
+      // which can finish and be gone before the next poll ever sees it.
       await h.until(`fork of ${UPSTREAM}/gears`, 60_000);
 
       const fork = getRepo(forge.db, "alice", "gears");
@@ -417,8 +417,10 @@ describe("workflows at an origin", () => {
       // somewhere here to be imported into — the "local import" half.
       await select(h, `${UPSTREAM}/widgets`);
       await h.press("m");
-      await h.until("Mirroring");
+      // Wait for the outcome, not the mirror card: on a fast machine the
+      // job can finish before the next poll ever sees "Mirroring".
       await h.until("mirrored as alice/widgets", 60_000);
+      expect(getRepo(forge.db, "alice", "widgets")).toBeDefined();
 
       // Now browse it live: read-only, and not ours to push to.
       await h.press("enter");
@@ -480,8 +482,8 @@ describe("workflows at an origin", () => {
       await openPicker(h);
       await select(h, `${ORIGIN_LOGIN}/own`);
       // Mirror it, then work on the copy: this is the push-capable path.
+      // Wait for the outcome, not the mirror card — see the fork test above.
       await h.press("m");
-      await h.until("Mirroring");
       await h.until("mirrored as alice/own", 60_000);
       await h.press("enter");
       await h.until("read live");
