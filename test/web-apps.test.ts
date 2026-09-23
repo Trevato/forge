@@ -531,7 +531,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(bot.user.kind).toBe("agent");
     expect(bot.budgetUsd).toBe(2);
     expect(await bodyOf(alice, "/settings/crew")).toContain("Be brief.");
-    expect(await bodyOf(alice, "/settings/crew")).toContain("<th>Merged</th>");
+    expect(await bodyOf(alice, "/settings/crew")).toContain("<th>Landed</th>");
     expect(await bodyOf(alice, "/settings/crew")).toContain("<th>Per run</th>");
 
     const edit = await bodyOf(alice, "/settings/crew/bot");
