@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { AppsRuntime, STOPPED_SUMMARY } from "../src/apps/runtime.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
 import { envDataDir, envDir, previewEnv } from "../src/apps/data.ts";
 import { childEnv, runStep, startProcess } from "../src/apps/process.ts";
 import type { AppManifest } from "../src/apps/manifest.ts";
@@ -42,7 +42,12 @@ import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { getRun, listRuns, type Run } from "../src/core/runs.ts";
+import {
+  getRun,
+  listRuns,
+  STOPPED_SUMMARY,
+  type Run,
+} from "../src/core/runs.ts";
 import { runWord } from "../src/web/studio/words.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";

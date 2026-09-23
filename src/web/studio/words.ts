@@ -10,16 +10,13 @@
 
 import type { Database } from "bun:sqlite";
 import { mergeBase } from "../../git/merge.ts";
-import {
-  STOPPED_SUMMARY,
-  type AppsRuntime,
-  type EnvStatus,
-} from "../../apps/runtime.ts";
+import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
 import {
   checkSummary,
+  STOPPED_SUMMARY,
   type CheckDetail,
   type CheckSummary,
   type Run,

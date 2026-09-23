@@ -42,6 +42,7 @@ import {
   markServing,
   noteRunProgress,
   previewLatency,
+  STOPPED_SUMMARY,
   type Run,
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -6086,6 +6087,51 @@ describe("previewLatency: the median seconds from push to serving", () => {
     expect(latency.failedN).toBe(1);
     expect(latency.medianSeconds).toBeUndefined();
   });
+
+  test("a deploy the forge's own restart cancelled is never counted as failed, nor in the total it is 'of' (#255, #274)", () => {
+    const now = Date.now() + 40_000_000;
+    const since = new Date(now - 60_000).toISOString();
+
+    // A real failure: counted.
+    const failed = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(failed.id, new Date(now).toISOString());
+    claimRun(app.db, failed.id);
+    finishRun(app.db, failed.id, { state: "failed", summary: "build failed" });
+
+    // A deploy the forge's own restart cancelled: not this commit's fault,
+    // and not counted at all — neither as a failure nor in the total.
+    const stopped = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(stopped.id, new Date(now + 1_000).toISOString());
+    claimRun(app.db, stopped.id);
+    app.db
+      .query(
+        "UPDATE run SET state = 'cancelled', summary = ?2, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+      )
+      .run(stopped.id, STOPPED_SUMMARY);
+
+    const latency = previewLatency(app.db, repo.id, since)!;
+    expect(latency.n).toBe(0);
+    expect(latency.failedN).toBe(1);
+
+    // A person's own Cancel, carrying a different summary, still counts —
+    // only the forge's own reason is left out.
+    const byPerson = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(byPerson.id, new Date(now + 2_000).toISOString());
+    claimRun(app.db, byPerson.id);
+    app.db
+      .query(
+        "UPDATE run SET state = 'cancelled', summary = 'cancelled by alice', finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+      )
+      .run(byPerson.id);
+    const withPerson = previewLatency(app.db, repo.id, since)!;
+    expect(withPerson.failedN).toBe(2);
+  });
 });
 
 describe("the studio's own words for how fast a change reaches its preview", () => {
@@ -6136,6 +6182,15 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     const enabled = await enableApp(app, alice, repo, { slug: "trickle" });
     if (!enabled.ok) throw new Error(String(enabled.error));
+    // Enough history behind it that these tests exercise the preview
+    // wording, not the day-one line (#274) — a finished agent run from
+    // well outside this week's own window.
+    const seedRun = createRun(app.db, { repoId: repo.id, kind: "agent" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(seedRun.id, new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString());
+    claimRun(app.db, seedRun.id);
+    finishRun(app.db, seedRun.id, { state: "ok", summary: "seed" });
   });
 
   afterAll(async () => {
@@ -6253,6 +6308,95 @@ describe("the studio's own words for how fast a change reaches its preview", () 
   });
 });
 
+describe("a low deploy count never reads as a failure ratio (#274)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let ownerCookie: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-low-count-ratio-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ownerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "tworuns",
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "tworuns" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    // History behind it, so the full panel renders — but only two deploys
+    // this week, both never served, neither the forge's own doing.
+    const seedRun = createRun(app.db, { repoId: repo.id, kind: "agent" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(seedRun.id, new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString());
+    claimRun(app.db, seedRun.id);
+    finishRun(app.db, seedRun.id, { state: "ok", summary: "seed" });
+
+    for (let i = 0; i < 2; i++) {
+      const failed = createRun(app.db, {
+        repoId: repo.id,
+        kind: "deploy",
+        env: "production",
+        reason: "push",
+      });
+      claimRun(app.db, failed.id);
+      finishRun(app.db, failed.id, { state: "failed", summary: "build failed" });
+    }
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${ownerCookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  test("2 of 2 never reads as a ratio — a handful of deploys needs to be behind it first", async () => {
+    const page = await (await get("/alice/tworuns")).text();
+    expect(page).toContain("not enough deploys this week to say");
+    expect(page).not.toContain("never reached a preview");
+  });
+});
+
 describe("this week's runs and spend are counted by the database, not read off a page of runs", () => {
   let dataDir: string;
   let app: App;
@@ -6260,6 +6404,7 @@ describe("this week's runs and spend are counted by the database, not read off a
   let base: string;
   let alice: User;
   let busy: Repo;
+  let quiet: Repo;
   let ownerCookie: string;
 
   /** How many agent runs this week — more than `listRuns` would ever hand back. */
@@ -6308,7 +6453,18 @@ describe("this week's runs and spend are counted by the database, not read off a
       const enabled = await enableApp(app, alice, made.value, { slug: name });
       if (!enabled.ok) throw new Error(String(enabled.error));
       if (name === "busy") busy = made.value;
+      if (name === "quiet") quiet = made.value;
     }
+
+    // A real week behind "quiet", just not this one — an old finished run,
+    // so a week with nothing in it still reads as a quiet week (#274), not
+    // as an app with no history at all.
+    const oldQuiet = createRun(app.db, { repoId: quiet.id, kind: "agent" });
+    claimRun(app.db, oldQuiet.id);
+    finishRun(app.db, oldQuiet.id, { state: "ok", summary: "long ago" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(oldQuiet.id, new Date(Date.now() - 30 * 24 * 60 * 60_000).toISOString());
 
     const keeper = await createAgent(app, alice, { username: "keeper" });
     if (!keeper.ok) throw new Error(String(keeper.error));
@@ -6377,7 +6533,7 @@ describe("this week's runs and spend are counted by the database, not read off a
     expect(page).not.toContain("$99.00");
   });
 
-  test("an app with no runs this week reads 0 and $0.00, never blank", async () => {
+  test("an app with real history but no runs this week reads 0 and $0.00, never blank", async () => {
     const page = await (await get("/alice/quiet")).text();
     expect(page).toMatch(/Runs<\/dt>\s*<dd>0<\/dd>/);
     expect(page).toContain("$0.00");
@@ -6391,6 +6547,7 @@ describe("this week's shipping is counted by the database, not read off a page o
   let base: string;
   let alice: User;
   let busy: Repo;
+  let quiet: Repo;
   let ownerCookie: string;
 
   /** How many changes landed this week — past the page of closed pulls the
@@ -6455,6 +6612,7 @@ describe("this week's shipping is counted by the database, not read off a page o
       const enabled = await enableApp(app, alice, made.value, { slug: name });
       if (!enabled.ok) throw new Error(String(enabled.error));
       if (name === "busy") busy = made.value;
+      if (name === "quiet") quiet = made.value;
     }
 
     // 150 changes landed inside the week — past the hundred closed pulls the
@@ -6468,6 +6626,15 @@ describe("this week's shipping is counted by the database, not read off a page o
       busy,
       "landed last week",
       new Date(now - 10 * 24 * 60 * 60_000).toISOString(),
+    );
+
+    // A real week behind "quiet", just not this one — a change shipped a
+    // month back, so a week with nothing new still reads as a quiet week
+    // (#274), not as an app with no history at all.
+    seedPull(
+      quiet,
+      "shipped a month ago",
+      new Date(now - 30 * 24 * 60 * 60_000).toISOString(),
     );
 
     const keeper = await createAgent(app, alice, { username: "keeper" });
@@ -6521,10 +6688,115 @@ describe("this week's shipping is counted by the database, not read off a page o
     expect(page).toContain(`$${(SPENT / SHIPPED).toFixed(2)} per shipped change`);
   });
 
-  test("an app that shipped nothing this week reads 0 changes and no cost per change", async () => {
+  test("an app with real history but nothing shipped this week reads 0 changes and no cost per change", async () => {
     const page = await (await get("/alice/quiet")).text();
     expect(page).toMatch(/Shipped<\/dt>\s*<dd>0 changes<\/dd>/);
     expect(page).not.toContain("per shipped change");
+  });
+});
+
+describe("a one-minute-old app's front door does not lead with a week of zeros (#274)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let alice: User;
+  let repo: Repo;
+  let ownerCookie: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-day-one-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ownerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const made = await createRepo(app, alice, {
+      name: "newborn",
+      visibility: "public",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, repo, { slug: "newborn" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+
+    // Exactly the shape of a one-minute-old app: its own first two
+    // production deploys, one of which the forge's own restart cancelled —
+    // never a shipped change, never an agent run.
+    const cancelledByForge = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      reason: "boot",
+    });
+    claimRun(app.db, cancelledByForge.id);
+    app.db
+      .query(
+        "UPDATE run SET state = 'cancelled', summary = ?2, finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+      )
+      .run(cancelledByForge.id, STOPPED_SUMMARY);
+    const secondBoot = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      reason: "push",
+    });
+    claimRun(app.db, secondBoot.id);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${ownerCookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  test("the day-one page a person lands on from New app says one true line, not a week of zeros", async () => {
+    const page = await (await get("/alice/newborn")).text();
+    expect(page).toContain("This week");
+    expect(page).toContain("Nothing to show yet");
+    // Not a single zero from the old panel, and not the scary ratio: the
+    // forge's own cancelled boot is never counted, and two deploys is well
+    // under the threshold a ratio needs anyway.
+    expect(page).not.toMatch(/Runs<\/dt>/);
+    expect(page).not.toMatch(/Spent<\/dt>/);
+    expect(page).not.toContain("never reached a preview");
+    expect(page).not.toContain("$0.00");
+  });
+
+  test("a stranger sees the same quiet line, not the owner's zeros", async () => {
+    const page = await (await fetch(`${base}/alice/newborn`)).text();
+    expect(page).toContain("Nothing to show yet");
+    expect(page).not.toMatch(/Shipped<\/dt>\s*<dd>0 changes<\/dd>/);
   });
 });
 

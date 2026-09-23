@@ -32,6 +32,7 @@ import {
   failAbandonedRuns,
   finishRun,
   markServing,
+  STOPPED_SUMMARY,
   type Run,
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
@@ -162,14 +163,6 @@ interface Live {
  * pressed, a crash restart, and a boot or enable reconcile are not pushes.
  */
 const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
-
-/**
- * The one summary every cancellation the runtime itself causes by stopping
- * carries — a run still queued when `stop()` runs, and one aborted mid-step
- * alike, so `runWord` (`web/studio/words.ts`) has one fact to recognise
- * rather than two spellings of the same reason.
- */
-export const STOPPED_SUMMARY = "the forge stopped";
 
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {

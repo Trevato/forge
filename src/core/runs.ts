@@ -12,6 +12,15 @@ import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 
 export type RunKind = "deploy" | "agent" | "check";
+
+/**
+ * The one summary a run cancelled by the forge's own restart carries — never
+ * the commit's fault, so callers that count failures (`previewLatency`) or
+ * word one (`runWord` in `web/studio/words.ts`) can tell it apart from a
+ * person's own Cancel or a real failure by this one string.
+ */
+export const STOPPED_SUMMARY = "the forge stopped";
+
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
 export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
@@ -695,9 +704,11 @@ const median = (xs: readonly number[]): number => {
  * the total but not the split. Beside the median, the same walk counts
  * deploys that finished — `ok`, `failed` or `cancelled` — without ever
  * serving; one still `queued` or `running` is neither, and counts as
- * neither. One query, bounded by `limit` and served by the `run_repo`
- * index (it walks newest-first and stops at the cap), never a scan of
- * the table.
+ * neither. A deploy the forge's own restart cancelled (`STOPPED_SUMMARY`)
+ * is left out entirely, from both the failure count and the total it is
+ * "of" — the forge's own interruption, never the commit's. One query,
+ * bounded by `limit` and served by the `run_repo` index (it walks
+ * newest-first and stops at the cap), never a scan of the table.
  */
 export function previewLatency(
   db: Database,
@@ -713,7 +724,7 @@ export function previewLatency(
         bootSecs: number | null;
         finished: 0 | 1;
       },
-      [string, string, number]
+      [string, string, string, number]
     >(
       `SELECT CASE WHEN serving_at IS NOT NULL
                    THEN (julianday(serving_at) - julianday(created_at)) * 86400 END AS secs,
@@ -725,9 +736,10 @@ export function previewLatency(
          FROM run
         WHERE repo_id = ?1 AND kind = 'deploy'
           AND created_at >= ?2
-        ORDER BY id DESC LIMIT ?3`,
+          AND NOT (state = 'cancelled' AND summary = ?3)
+        ORDER BY id DESC LIMIT ?4`,
     )
-    .all(repoId, since, limit);
+    .all(repoId, since, STOPPED_SUMMARY, limit);
   const served = rows.filter((r) => r.secs !== null);
   const failedN = rows.filter((r) => r.secs === null && r.finished === 1).length;
   if (served.length === 0 && failedN === 0) return undefined;

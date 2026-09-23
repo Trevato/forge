@@ -89,6 +89,17 @@ function decisionWords(stats: readonly DecisionStat[]): Html {
 const PREVIEW_LATENCY_MIN = 3;
 
 /**
+ * Below this many deploys total (served and never-served together) a
+ * failure ratio is one unlucky boot, not a rate worth a red link — the
+ * app's own first couple of production deploys should never read as a
+ * statistic.
+ */
+const FAILED_RATIO_MIN = 5;
+
+/** The start of history, for an "ever" count rather than one week of it. */
+const EPOCH = new Date(0).toISOString();
+
+/**
  * How fast a change has reached its preview this week, worded like the
  * reference instant in `servedPhrase` (`web/ui.ts`): "reaches its preview
  * in 6.1s". Too few served deploys to trust a median, and the line says so
@@ -97,17 +108,22 @@ const PREVIEW_LATENCY_MIN = 3;
  * each its own median, not a piece of the total that ought to add up.
  * When some of the week's deploys finished without ever serving, the line
  * says how many of how many and links to them — a clean week reads exactly
- * as it always has, no `0 failed`, no empty clause.
+ * as it always has, no `0 failed`, no empty clause. Below `FAILED_RATIO_MIN`
+ * total deploys the ratio says nothing a person should act on, so it stays
+ * quiet rather than reading a young app's own first boot or two as a rate.
  */
 function previewLatencyWords(
   latency: PreviewLatency | undefined,
   failedHref: string,
 ): Html {
+  const failedTotal = latency === undefined ? 0 : latency.n + latency.failedN;
   const failedClause =
-    latency !== undefined && latency.failedN > 0
-      ? html`<a href="${failedHref}">${latency.failedN} of ${
-          latency.n + latency.failedN
-        } never reached a preview</a>`
+    latency !== undefined &&
+    latency.failedN > 0 &&
+    failedTotal >= FAILED_RATIO_MIN
+      ? html`<a href="${failedHref}"
+          >${latency.failedN} of ${failedTotal} never reached a preview</a
+        >`
       : null;
   const failedSuffix =
     failedClause === null ? "" : html` · ${failedClause}`;
@@ -179,6 +195,18 @@ export async function studioApp(
   const weekLatency = ownerFacts
     ? previewLatency(db, repo.id, week)
     : undefined;
+  // Whether there is any history at all — ever, not this week's — so a
+  // fresh app reads as "nothing yet" rather than a stretch of zeros and a
+  // scary ratio (#274). A quiet week on an old app still has shipped a
+  // change or taken a run at some point; only an app with neither, ever,
+  // gets the quieter line. Deploys are not part of this: they happen on
+  // their own the moment an app exists, so they say nothing about whether
+  // anyone has done anything yet.
+  const everShipped = shipped > 0 || mergedPullCount(db, repo.id, EPOCH) > 0;
+  const everRuns = ownerFacts
+    ? weekTotals.runs > 0 || agentRunTotals(db, repo.id, EPOCH).runs > 0
+    : false;
+  const hasHistory = everShipped || everRuns;
   const autonomy =
     !ownerFacts || repo.autonomy === "off"
       ? undefined
@@ -482,33 +510,41 @@ export async function studioApp(
           },
         );
   const weekCard = card(
-    !ownerFacts
-      ? html`<dl>
-          <dt>Shipped</dt>
-          <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
-        </dl>`
-      : html`<dl>
-          <dt>Shipped</dt>
-          <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
-          <dt>Runs</dt>
-          <dd>${weekTotals.runs}</dd>
-          <dt>Preview</dt>
-          <dd>${previewLatencyWords(weekLatency, `${base}/runs?kind=deploy`)}</dd>
-          <dt>Spent</dt>
-          <dd>
-            $${spent.toFixed(2)}${shipped > 0
-              ? html` <span class="muted"
-                  >· $${(spent / shipped).toFixed(2)} per shipped change</span
-                >`
-              : null}
-          </dd>
-          ${when(
-            ledgerWeek.length > 0,
-            () =>
-              html`<dt>Decided</dt>
-                <dd>${decisionWords(ledgerWeek)}</dd>`,
-          )}
-        </dl>`,
+    !hasHistory
+      ? html`<p class="muted small">
+          Nothing to show yet — it fills in once a change ships${ownerFacts
+            ? " or the crew takes a run"
+            : ""}.
+        </p>`
+      : !ownerFacts
+        ? html`<dl>
+            <dt>Shipped</dt>
+            <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+          </dl>`
+        : html`<dl>
+            <dt>Shipped</dt>
+            <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+            <dt>Runs</dt>
+            <dd>${weekTotals.runs}</dd>
+            <dt>Preview</dt>
+            <dd>
+              ${previewLatencyWords(weekLatency, `${base}/runs?kind=deploy`)}
+            </dd>
+            <dt>Spent</dt>
+            <dd>
+              $${spent.toFixed(2)}${shipped > 0
+                ? html` <span class="muted"
+                    >· $${(spent / shipped).toFixed(2)} per shipped change</span
+                  >`
+                : null}
+            </dd>
+            ${when(
+              ledgerWeek.length > 0,
+              () =>
+                html`<dt>Decided</dt>
+                  <dd>${decisionWords(ledgerWeek)}</dd>`,
+            )}
+          </dl>`,
     {
       head: html`${icon("activity")}
         <h2>This week</h2>`,
