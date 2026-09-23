@@ -36,7 +36,7 @@ import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { childEnv, runStep } from "../apps/process.ts";
-import { parseBunTestFailure } from "./bun-test.ts";
+import { summariseCheckFailure } from "./summary.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
 const log = createLog("checks");
@@ -347,24 +347,29 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       }
       // The check step's own lines are kept beside what `write` already
       // logs, so a failure can be summarised once here — never by reading
-      // the log back, on this run or any later render of it.
+      // the log back, on this run or any later render of it. `runStep`
+      // echoes the command as its first line before any output of the
+      // command's own; that echo is not output to summarise from.
       const checkLines: string[] = [];
+      let sawEcho = false;
       const ran = await runStep("check", manifest.run, {
         cwd: dir,
         env,
         log: (line) => {
-          checkLines.push(line);
+          if (sawEcho) checkLines.push(line);
+          sawEcho = true;
           write(line);
         },
         signal,
         timeoutMs: manifest.timeout * 1000,
       });
-      if (!ran.ok)
-        return {
-          ok: false,
-          error: ran.error,
-          detail: parseBunTestFailure(checkLines),
-        };
+      if (!ran.ok) {
+        const { summary, detail } = summariseCheckFailure(
+          checkLines,
+          ran.error,
+        );
+        return { ok: false, error: summary, detail };
+      }
       return { ok: true };
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });

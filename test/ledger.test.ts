@@ -389,7 +389,12 @@ describe("the decision ledger", () => {
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, {
       state: "failed",
-      summary: "expect(received).toBe(expected): 1 of 274",
+      summary: 'check failed: 1 of 274 tests — "renders the broken widget"',
+      checkDetail: {
+        passed: 273,
+        failed: 1,
+        names: ["renders the broken widget"],
+      },
     });
     script["retry"] = "stop";
     script["cause"] = "change";
@@ -404,10 +409,13 @@ describe("the decision ledger", () => {
         }),
       ).toBe("parked");
       expect(getPull(app.db, repo.id, pull.number)?.state).toBe("closed");
+      const comments = listComments(app.db, pull.id).map((c) => c.body);
       expect(
-        listComments(app.db, pull.id).some((c) =>
-          c.body.includes("saw no point in another try"),
-        ),
+        comments.some((b) => b.includes("saw no point in another try")),
+      ).toBe(true);
+      // The red test's own name, not just "the check failed".
+      expect(
+        comments.some((b) => b.includes('"renders the broken widget"')),
       ).toBe(true);
     } finally {
       delete script["cause"];

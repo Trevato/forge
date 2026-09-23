@@ -546,8 +546,13 @@ function parkedReason(
   head: string,
 ): string {
   const what = kind === "deploy" ? "the preview's deploy" : "the check";
-  if (judged.cause !== "environment")
-    return `${what} failed and the decider saw no point in another try`;
+  if (judged.cause !== "environment") {
+    const named =
+      judged.failingTest === undefined
+        ? ""
+        : ` ("${judged.failingTest}")`;
+    return `${what} failed${named} and the decider saw no point in another try`;
+  }
   return retriedChecks.has(head)
     ? `${what} failed in the place it ran, not in the change, and failed the same way when it was run again`
     : `${what} failed in the place it ran, not in the change, and it could not be run again`;
@@ -567,6 +572,8 @@ export interface CheckJudgement {
   readonly retry: "again" | "stop";
   /** Whose fault the failure is, from the tail of the check's log. */
   readonly cause: "change" | "environment" | "base";
+  /** The failing test's own name, when the run's output named one. */
+  readonly failingTest: string | undefined;
 }
 
 const RETRY_OPTIONS = ["again", "stop"];
@@ -589,9 +596,10 @@ export async function judgeFailedCheck(
   runId: string,
   since: string,
 ): Promise<CheckJudgement> {
-  if (app.config.decider === undefined)
-    return { retry: "again", cause: "change" };
   const run = getRun(app.db, runId);
+  const failingTest = run?.checkDetail?.names[0];
+  if (app.config.decider === undefined)
+    return { retry: "again", cause: "change", failingTest };
   const tail = readRunLog(app.config.dataDir, runId, 8 * 1024).lines.slice(-25);
   const decided = await decideAndRecord(
     app,
@@ -655,7 +663,7 @@ export async function judgeFailedCheck(
       p: decided.answers.retry.p.toFixed(2),
       cause,
     });
-  return { retry, cause };
+  return { retry, cause, failingTest };
 }
 
 /** When a person last said anything on the conversation, or its start. */

@@ -12,6 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
 import {
   pickNext,
   startChecks,
@@ -72,6 +73,59 @@ describe("parseBunTestFailure: a convenience over one known runner, not a genera
     expect(parseBunTestFailure([" 5 pass", "Ran 5 tests across 1 file."])).toBeUndefined();
     // All green: nothing failed, so there is nothing to summarise.
     expect(parseBunTestFailure([" 5 pass", " 0 fail", "Ran 5 tests across 1 file."])).toBeUndefined();
+  });
+});
+
+describe("summariseCheckFailure: what a failed check's summary says first", () => {
+  test("real bun test output with one failure yields the name and the counts", () => {
+    const lines = [
+      "bun test v1.3.14 (0d9b296a)",
+      "",
+      "check.test.ts:",
+      "1 tests failed:",
+      '(fail) the forge\'s own restart never reads as this deploy\'s failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed [30000.49ms]',
+      "  ^ this test timed out after 30000ms.",
+      "",
+      " 409 pass",
+      " 1 fail",
+      "Ran 410 tests across 1 file. [30.05s]",
+    ];
+    expect(summariseCheckFailure(lines, "check exited with code 1")).toEqual({
+      summary:
+        '1 of 410 tests — "the forge\'s own restart never reads as this deploy\'s failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed"',
+      detail: {
+        passed: 409,
+        failed: 1,
+        names: [
+          "the forge's own restart never reads as this deploy's failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed",
+        ],
+      },
+    });
+  });
+
+  test("output with no bun test shape yields the last non-empty line, not the bare exit code", () => {
+    const lines = ["src/foo.ts(10,5): error TS2345: not assignable", ""];
+    expect(
+      summariseCheckFailure(lines, "check exited with code 2"),
+    ).toEqual({
+      summary: "src/foo.ts(10,5): error TS2345: not assignable",
+      detail: undefined,
+    });
+  });
+
+  test("no output at all falls back to the bare exit code — nothing was there to name", () => {
+    expect(summariseCheckFailure([], "check exited with code 1")).toEqual({
+      summary: "check exited with code 1",
+      detail: undefined,
+    });
+  });
+
+  test("a very long name is bounded to one line", () => {
+    const long = "x".repeat(500);
+    const lines = [`(fail) ${long} [1.00ms]`, " 0 pass", " 1 fail"];
+    const { summary } = summariseCheckFailure(lines, "check exited with code 1");
+    expect(summary.length).toBeLessThanOrEqual(200);
+    expect(summary.endsWith("…")).toBe(true);
   });
 });
 
@@ -245,6 +299,9 @@ describe("checks", () => {
       failed: 2,
       names: ["first failing test", "second failing test"],
     });
+    expect(failed.summary).toBe(
+      'check failed: 2 of 3 tests — "first failing test"',
+    );
   }, 30_000);
 
   test("a fork's pull is checked at the base's snapshot, and follows the fork's pushes", async () => {
