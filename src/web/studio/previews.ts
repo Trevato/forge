@@ -152,37 +152,76 @@ function previewsPanel(
 }
 
 /**
- * Production coming up, tailed: while its deploy is running and no agent
- * run has the crew's own tail already (`studio/app.ts`'s "Now" panel), the
- * head card gets the same peek at the log a running agent run gets beside
- * its row — the app's own first thirty seconds are not a blank page. The
- * agent's run wins the one stream this page opens when both are going: it
- * is the crew's own answer to something asked, where a deploy is often
- * background (a redeploy after an unrelated push). When "Now" would
- * otherwise sit empty, its own empty state points back up at this tail
- * rather than opening a second stream of the same lines.
+ * Production, tailed: while its deploy is running, and for as long as it
+ * keeps running after (#284) — its process's stdout and stderr keep landing
+ * in the same run's log past the swap-in (`apps/process.ts` pumps them for
+ * the process's own life, not just its start) — the head card gets a peek
+ * at it, the same shape a running agent run gets beside its row. No agent
+ * run may already have the crew's own tail (`studio/app.ts`'s "Now" panel):
+ * the agent's run wins the one stream this page opens when both are going,
+ * since it is the crew's own answer to something asked, where production's
+ * own voice is passive by comparison. When "Now" would otherwise sit empty
+ * while a deploy is the thing going, its own empty state points back up at
+ * this tail rather than opening a second stream of the same lines.
+ *
+ * Once the deploy has swapped in, the lines are the app's own — never the
+ * deploy's, whose word (`envPhrase`) has already moved on to "live" — and
+ * an app's stdout can carry anything the owner never meant for a stranger,
+ * so only a viewer who can see the owner's facts is shown it at all.
  */
-function deployTail(
+function productionTail(
   ctx: Ctx,
   repo: Repo,
   production: EnvStatus | undefined,
-): Html | undefined {
-  if (production?.state !== "deploying" || production.runId === undefined)
-    return undefined;
+  writer: boolean,
+): { box: Html | undefined; deploying: boolean } {
+  const none = { box: undefined, deploying: false };
+  if (production === undefined || production.runId === undefined) return none;
+  const deploying = production.state === "deploying";
+  if (!deploying && production.state !== "running") return none;
+  if (!deploying && !writer) return none;
   const agentBusy = listRuns(ctx.app.db, repo.id, {
     kind: "agent",
     limit: 8,
   }).some((r) => r.state === "running");
-  if (agentBusy) return undefined;
-  return logBox({
-    id: "app-run-tail",
-    who: runVoice("deploy", true, { name: undefined, isAgent: true }),
-    cap: LOG_TAIL_CAP,
-    lines: readRunLogTail(ctx.app.config.dataDir, production.runId, LOG_TAIL_CAP)
-      .lines,
-    stream: `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${production.runId}/log?follow=1`,
-    className: "log-tail",
-  });
+  if (agentBusy) return none;
+  const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${production.runId}/log?follow=1`;
+  if (deploying)
+    return {
+      box: logBox({
+        id: "app-run-tail",
+        who: runVoice("deploy", true, { name: undefined, isAgent: true }),
+        cap: LOG_TAIL_CAP,
+        lines: readRunLogTail(ctx.app.config.dataDir, production.runId, LOG_TAIL_CAP)
+          .lines,
+        stream,
+        className: "log-tail",
+      }),
+      deploying: true,
+    };
+  const { lines } = readRunLogTail(
+    ctx.app.config.dataDir,
+    production.runId,
+    LOG_TAIL_CAP,
+  );
+  if (lines.length === 0)
+    return {
+      box: html`<p class="muted small" id="app-run-tail">
+        Production is quiet — it hasn't said anything yet.
+      </p>`,
+      deploying: false,
+    };
+  return {
+    box: logBox({
+      id: "app-run-tail",
+      who: "the app",
+      cap: LOG_TAIL_CAP,
+      lines,
+      stream,
+      className: "log-tail",
+    }),
+    deploying: false,
+  };
 }
 
 /**
@@ -196,7 +235,12 @@ export function appPanels(
   repo: Repo,
   record: AppRecord,
   openPulls: readonly Pull[],
-): { head: Html; previews: Html | null; deployTailing: boolean } {
+): {
+  head: Html;
+  previews: Html | null;
+  deployTailing: boolean;
+  tailing: boolean;
+} {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
@@ -205,7 +249,7 @@ export function appPanels(
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
   const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
-  const tail = deployTail(ctx, repo, production);
+  const tail = productionTail(ctx, repo, production, writer);
   // The state in one word, and under it the same facts the App page shows —
   // why it is not up, and the deploy whose log says the rest.
   const live = envPhrase(production);
@@ -238,14 +282,19 @@ export function appPanels(
           ctx.app.config.sshHostKey,
         ),
       )}
-      ${tail ?? null}
+      ${tail.box ?? null}
     </div>
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
     ${openAppBtn(base, production)}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
-  return { head, previews, deployTailing: tail !== undefined };
+  return {
+    head,
+    previews,
+    deployTailing: tail.deploying,
+    tailing: tail.box !== undefined,
+  };
 }
 
 /**

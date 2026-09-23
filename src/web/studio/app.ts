@@ -213,11 +213,14 @@ export async function studioApp(
       : autonomyStatus(ctx.app, repo);
 
   // ---- the app itself ----
-  // `deployTailing` says the head card already carries a live tail of
-  // production's own deploy (`studio/previews.ts`'s `deployTail`) — the
-  // no-script refresh below must keep the page moving for that case too,
-  // not only for an agent run's tail beside a "Now" row.
-  const { head, previews, deployTailing } = appPanels(
+  // `deployTailing` says the head card is tailing production's own deploy,
+  // narrowly — just the "Now" panel's empty-state words below care about
+  // that distinction. `tailing` says the head card carries any live tail at
+  // all, deploy or a running app's own output (`studio/previews.ts`'s
+  // `productionTail`, #284) — the no-script refresh below must keep the
+  // page moving for either, not only for an agent run's tail beside a "Now"
+  // row.
+  const { head, previews, deployTailing, tailing } = appPanels(
     ctx,
     repo,
     record,
@@ -633,6 +636,6 @@ export async function studioApp(
     // The no-script half of the tail: while the crew's run goes, the page
     // refreshes itself, the way the run's own page does; the script above
     // removes this the moment it can stream lines instead.
-    ...(activeRun || deployTailing ? { refresh: { seconds: 5 } } : {}),
+    ...(activeRun || tailing ? { refresh: { seconds: 5 } } : {}),
   });
 }

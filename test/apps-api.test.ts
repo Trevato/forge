@@ -17,6 +17,36 @@ import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 
+/** Read from an SSE body until `predicate(buffer)` holds or we time out —
+ * never to a "done" that #284's still-live stream no longer sends. */
+async function readUntil(
+  body: ReadableStream<Uint8Array>,
+  predicate: (buf: string) => boolean,
+  timeoutMs = 3000,
+): Promise<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  const deadline = Date.now() + timeoutMs;
+  try {
+    while (Date.now() < deadline) {
+      const timeout = new Promise<{ done: true; value: undefined }>((r) =>
+        setTimeout(
+          () => r({ done: true, value: undefined }),
+          Math.max(0, deadline - Date.now()),
+        ),
+      );
+      const { done, value } = await Promise.race([reader.read(), timeout]);
+      if (done) break;
+      if (value) buf += decoder.decode(value, { stream: true });
+      if (predicate(buf)) break;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  return buf;
+}
+
 describe("apps, runs and the crew over the API", () => {
   let dataDir: string;
   let app: App;
@@ -194,7 +224,7 @@ describe("apps, runs and the crew over the API", () => {
     expect(tokens?.n ?? 0).toBe(0);
   }, 60_000);
 
-  test("the production run, its log as text and as a live tail", async () => {
+  test("the production run, its log as text and as a live tail that outlives the run itself (#284)", async () => {
     const run = await untilRun((r) => r.env === "production");
     expect(run.state).toBe("ok");
     const view = (await (
@@ -209,26 +239,43 @@ describe("apps, runs and the crew over the API", () => {
       await api(`/api/v1/repos/alice/hello/runs/${run.id}/log`)
     ).text();
     expect(text).toContain("ready:");
-    const tail = await api(
-      `/api/v1/repos/alice/hello/runs/${run.id}/log?follow=1`,
-    );
+
+    // The run itself is already "ok", but its environment still points at
+    // it as the one serving — its process keeps writing to this very log
+    // (`apps/process.ts` pumps its stdout for the process's life), so the
+    // stream must not hang up on it the moment it connects (#284).
+    const controller = new AbortController();
+    const tail = await api(`/api/v1/repos/alice/hello/runs/${run.id}/log?follow=1`, {
+      signal: controller.signal,
+    });
     expect(tail.headers.get("content-type")).toContain("text/event-stream");
-    const events = await tail.text(); // the run is finished, so the stream closes after `done`
+    const events = await readUntil(tail.body!, (b) => b.includes("ready:"));
     expect(events).toContain("event: line");
-    expect(events).toContain("event: done");
+    expect(events).not.toContain("event: done");
     // Every line is numbered, and a browser that reconnects with the last
     // number it saw hears only what followed.
     expect(events).toMatch(/id: 1\nevent: line\n/);
     const total = (events.match(/event: line\n/g) ?? []).length;
     expect(total).toBeGreaterThan(2);
-    const resumed = await (
-      await api(`/api/v1/repos/alice/hello/runs/${run.id}/log?follow=1`, {
+    controller.abort();
+
+    const resumeController = new AbortController();
+    const resumedStream = await api(
+      `/api/v1/repos/alice/hello/runs/${run.id}/log?follow=1`,
+      {
         headers: { "last-event-id": String(total - 1) },
-      })
-    ).text();
+        signal: resumeController.signal,
+      },
+    );
+    const resumed = await readUntil(
+      resumedStream.body!,
+      (b) => (b.match(/event: line\n/g) ?? []).length >= 1,
+    );
     expect((resumed.match(/event: line\n/g) ?? []).length).toBe(1);
     expect(resumed).toContain(`id: ${total}\n`);
-    expect(resumed).toContain("event: done");
+    expect(resumed).not.toContain("event: done");
+    resumeController.abort();
+
     const one = (await (
       await api(`/api/v1/repos/alice/hello/runs/${run.id}`)
     ).json()) as { id: string };
@@ -274,12 +321,54 @@ describe("apps, runs and the crew over the API", () => {
     ).json()) as { url: string };
     expect(granted.url).toContain("/__forge/grant?t=");
 
+    // The run still serving keeps a follow stream open past its own finish
+    // (#284) — but only while it still serves: stopping the environment is
+    // what actually retires it, and the stream must close then.
+    const runs = (await (
+      await api("/api/v1/repos/alice/hello/runs?env=production&limit=1")
+    ).json()) as { items: { id: string }[] };
+    const liveRunId = runs.items[0]!.id;
+    const controller = new AbortController();
+    const tail = await api(
+      `/api/v1/repos/alice/hello/runs/${liveRunId}/log?follow=1`,
+      { signal: controller.signal },
+    );
+    const reader = tail.body!.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    const readFor = async (
+      predicate: (b: string) => boolean,
+      timeoutMs = 3000,
+    ): Promise<void> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const timeout = new Promise<{ done: true; value: undefined }>((r) =>
+          setTimeout(
+            () => r({ done: true, value: undefined }),
+            Math.max(0, deadline - Date.now()),
+          ),
+        );
+        const { done, value } = await Promise.race([reader.read(), timeout]);
+        if (done) break;
+        if (value) buf += decoder.decode(value, { stream: true });
+        if (predicate(buf)) break;
+      }
+    };
+    await readFor((b) => b.includes("event: line"));
+    expect(buf).toContain("event: line");
+    expect(buf).not.toContain("event: done");
+
     const stopped = await post(
       "/api/v1/repos/alice/hello/app/production/stop",
       {},
       rw,
     );
     expect(stopped.status).toBe(200);
+
+    await readFor((b) => b.includes("event: done"));
+    expect(buf).toContain("event: done");
+    reader.cancel().catch(() => {});
+    controller.abort();
     const redeployed = await post(
       "/api/v1/repos/alice/hello/app/production/redeploy",
       {},

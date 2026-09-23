@@ -4288,7 +4288,10 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
     finishRun(app.db, agentRun.id, { state: "ok", summary: "planned" });
   });
 
-  test("with neither a deploy nor an agent run going, the page carries no tail at all", async () => {
+  // Issue #284: production stays "live" long after its deploy finishes, and
+  // a fresh live process that has written nothing to its log yet is not an
+  // empty black box — the card says so in a line instead.
+  test("with no agent run going and production live but silent, the head card says so in a line, not an empty box", async () => {
     putEnv("production", {
       live: {
         commitOid: "d0d0d0d0",
@@ -4299,8 +4302,194 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
       },
     });
     const page = await (await get("/alice/kindling", owner)).text();
+    expect(page).toContain('id="app-run-tail"');
+    expect(page).not.toContain('class="run-log');
+    expect(page).toContain("Production is quiet");
+    // Still nothing to fetch — the page keeps polling in case that changes.
+    expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+  });
+});
+
+/**
+ * Issue #284: production keeps writing to the same run's log for as long as
+ * its process runs, long after the deploy that produced it is finished —
+ * the head card's tail follows that, not just a deploy in flight.
+ */
+describe("the app's page tails production's own output while it runs (#284)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let runtime: AppsRuntime;
+  let repo: Repo;
+  let record: AppRecord;
+  let owner: string;
+  let strangerCookie: string;
+  let scoutId: string;
+
+  interface PreviewSlot {
+    readonly app: AppRecord;
+    readonly env: EnvName;
+    readonly chain: Promise<void>;
+    readonly restarts: number[];
+    deploying?: unknown;
+    live?: unknown;
+    lastError?: string;
+    lastRunId?: string;
+  }
+  const putEnv = (
+    env: EnvName,
+    slot: Omit<PreviewSlot, "app" | "env" | "chain" | "restarts">,
+  ): void => {
+    (runtime as unknown as { envs: Map<string, PreviewSlot> }).envs.set(
+      `${record.id}/${env}`,
+      { app: record, env, chain: Promise.resolve(), restarts: [], ...slot },
+    );
+  };
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-live-tail-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    runtime = new AppsRuntime(app, {
+      domain: "livetail.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const c = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!c.ok) throw new Error(c.error);
+    owner = await signIn("alice");
+    strangerCookie = await signIn("carol");
+    const made = await createRepo(app, a.value, {
+      name: "furnace",
+      visibility: "public",
+      description: "an app that keeps a fire going",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, a.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "furnace\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, a.value, repo, { slug: "furnace" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    record = getAppByRepo(app.db, repo.id)!;
+    const scout = await createAgent(app, a.value, { username: "scout" });
+    if (!scout.ok) throw new Error(String(scout.error));
+    scoutId = scout.value.user.id;
+    expect(addToCrew(app, a.value, repo, "scout").ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("production running with lines in its log carries the tail, named as the app's own", async () => {
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env: "production",
+      commitOid: "b16b00b5",
+      reason: "push",
+    });
+    claimRun(app.db, deployRun.id);
+    for (let i = 0; i < 9; i++)
+      appendRunLog(app.config.dataDir, deployRun.id, `serving request ${i}`);
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    putEnv("production", {
+      live: {
+        commitOid: "b16b00b5",
+        handle: { port: 4503 },
+        runId: deployRun.id,
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+
+    const page = await (await get("/alice/furnace", owner)).text();
+    expect(page).toContain('id="app-run-tail"');
+    expect(page).toContain('data-who="the app"');
+    expect(page).toContain(
+      `data-stream="/api/v1/repos/alice/furnace/runs/${deployRun.id}/log?follow=1"`,
+    );
+    expect(page).not.toContain(">serving request 0<");
+    expect(page).toContain(">serving request 8<");
+    expect(page).toContain("Holding the last 6 lines here");
+    expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+
+    // Issue #284's own point: the run this reads from is long finished —
+    // the tail follows the env that points at it, not the run's own state.
+    expect(getRun(app.db, deployRun.id)?.state).toBe("ok");
+  });
+
+  test("a viewer who cannot see the owner's facts gets no output at all", async () => {
+    const response = await get("/alice/furnace", strangerCookie);
+    expect(response.status).toBe(200);
+    const page = await response.text();
     expect(page).not.toContain('id="app-run-tail"');
-    expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
+    expect(page).not.toContain("serving request");
+  });
+
+  test("an agent run at work still outranks production's own tail", async () => {
+    const tell = openIssue(app, getUserByName(app.db, "alice")!, repo, {
+      title: "Add a chimney",
+    });
+    if (!tell.ok) throw new Error(String(tell.error));
+    const agentRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: tell.value.id,
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, agentRun.id);
+    appendRunLog(app.config.dataDir, agentRun.id, "scout is on it");
+
+    const page = await (await get("/alice/furnace", owner)).text();
+    expect(page.match(/id="app-run-tail"/g)?.length).toBe(1);
+    expect(page).not.toContain('data-who="the app"');
+    expect(page).toContain(
+      `data-stream="/api/v1/repos/alice/furnace/runs/${agentRun.id}/log?follow=1"`,
+    );
+
+    finishRun(app.db, agentRun.id, { state: "ok", summary: "planned" });
   });
 });
 
@@ -4431,7 +4620,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
   });
 
-  test("with nothing going at all, \"Now\" reads exactly as it does today", async () => {
+  test("with nothing going at all, \"Now\" reads exactly as it does today — production live and silent says its own quiet line above, not through \"Now\"", async () => {
     putEnv("production", {
       live: {
         commitOid: "eae580a",
@@ -4444,7 +4633,10 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
 
     const page = await (await get("/alice/ember", owner)).text();
     expect(page).toContain("Nothing yet. Tell the crew something.");
-    expect(page).not.toContain('id="app-run-tail"');
+    // The head card's own quiet line (#284) is not the deploy-in-progress
+    // wording "Now" uses — production here is live, not coming up.
+    expect(page).not.toContain("Production is coming up");
+    expect(page).toContain("Production is quiet");
   });
 });
 

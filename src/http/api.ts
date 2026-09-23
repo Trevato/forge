@@ -173,6 +173,7 @@ import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
+import { getAppByRepo } from "../core/apps.ts";
 import type { Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import { listAssignedTo } from "../core/issues.ts";
@@ -2732,6 +2733,27 @@ export function apiRoutes(router: Router<Handler>): void {
     // proxy in front of the forge cuts long responses — sends the last it
     // saw and hears only what followed, never the log again from the top.
     const seen = Number(ctx.request.headers.get("last-event-id") ?? "0") || 0;
+    // A deploy run's own file keeps growing for as long as its app process
+    // runs (`apps/process.ts` pumps its stdout/stderr for the process's
+    // life, into the same log) — long past the run itself finishing
+    // (`apps/runtime.ts` calls `finishRun` at the swap-in, not at exit). So
+    // a finished run whose environment still points at it as the one
+    // serving has not actually stopped saying things, and the stream must
+    // not hang up on it (#284).
+    const stillLive = (): boolean => {
+      if (!isEnvName(run.env)) return false;
+      const record = getAppByRepo(ctx.app.db, repo.id);
+      const runtime = appsRuntime(ctx.app);
+      if (!record || !runtime) return false;
+      const status = runtime.envStatus(record, run.env);
+      // "stopped" and "failed" keep the last run's id too — as history, not
+      // as a claim that it is still the one serving — so only "running" and
+      // "deploying" (a swap-in still checking its own tests) count.
+      return (
+        status?.runId === run.id &&
+        (status.state === "running" || status.state === "deploying")
+      );
+    };
     return eventStream(ctx.request, (emit, close) => {
       const controller = new AbortController();
       let index = 0;
@@ -2749,11 +2771,23 @@ export function apiRoutes(router: Router<Handler>): void {
         close();
       };
       const unsubscribe = ctx.app.bus.subscribe((event) => {
-        if (event.kind !== "run.finished" || event.payload["runId"] !== run.id)
+        if (event.kind === "run.finished" && event.payload["runId"] === run.id) {
+          if (!stillLive()) finish(getRun(ctx.app.db, run.id) ?? run);
           return;
-        finish(getRun(ctx.app.db, run.id) ?? run);
+        }
+        // A redeploy that swaps this run out, or the environment being
+        // stopped, is what actually retires its log — only then, for a run
+        // already finished, does the stream close.
+        if (
+          (event.kind === "app.serving" || event.kind === "app.stopped") &&
+          event.repoId === repo.id &&
+          event.payload["env"] === run.env &&
+          isTerminal(run.state) &&
+          !stillLive()
+        )
+          finish(getRun(ctx.app.db, run.id) ?? run);
       });
-      if (isTerminal(run.state)) finish(run);
+      if (isTerminal(run.state) && !stillLive()) finish(run);
       return () => {
         controller.abort();
         unsubscribe();
