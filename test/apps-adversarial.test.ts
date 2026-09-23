@@ -7,7 +7,11 @@
  * edges: stale state, races, forged input, and the boundary of a bound.
  */
 
-import { appHostSuffix } from "../src/apps/host.ts";
+import {
+  appHostSuffix,
+  domainHoldsAppHosts,
+  resolveAppDomain,
+} from "../src/apps/host.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -137,6 +141,88 @@ describe("host routing: a single-label attachment", () => {
     expect(appHostSuffix("forge.example")).toBe(".forge.example");
     expect(appHostSuffix("--forge.example")).toBe("--forge.example");
     expect(appHostSuffix(".forge.example")).toBe(".forge.example");
+  });
+});
+
+describe("host routing: domainHoldsAppHosts (issue #269)", () => {
+  test("the hostnames a person really uses hold an app's slug", () => {
+    expect(domainHoldsAppHosts("localhost")).toBe(true);
+    expect(domainHoldsAppHosts("forge.example")).toBe(true);
+    expect(domainHoldsAppHosts("--forge.example")).toBe(true);
+  });
+
+  test("an IPv4 address does not: WHATWG rejects a numeric last label", () => {
+    expect(domainHoldsAppHosts("127.0.0.1")).toBe(false);
+    expect(domainHoldsAppHosts("--127.0.0.1")).toBe(false);
+    expect(domainHoldsAppHosts("203.0.113.5")).toBe(false);
+  });
+});
+
+describe("resolveAppDomain: what app hostnames attach to (issue #269)", () => {
+  test("an explicit FORGE_APP_DOMAIN wins outright, IP forge or not", () => {
+    expect(
+      resolveAppDomain({
+        explicit: "apps.example",
+        hosted: false,
+        hostname: "203.0.113.5",
+      }),
+    ).toEqual({ ok: true, domain: "apps.example" });
+    expect(
+      resolveAppDomain({
+        explicit: "apps.example",
+        hosted: false,
+        hostname: "forge.example",
+      }),
+    ).toEqual({ ok: true, domain: "apps.example" });
+  });
+
+  test("an ordinary hostname is used as-is, nothing changes", () => {
+    expect(
+      resolveAppDomain({
+        explicit: undefined,
+        hosted: false,
+        hostname: "forge.example",
+      }),
+    ).toEqual({ ok: true, domain: "forge.example" });
+  });
+
+  test("a loopback forge addressed by IP falls back to localhost, not off", () => {
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: false,
+      hostname: "127.0.0.1",
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.domain).toBe("localhost");
+    expect(resolved.note).toContain("FORGE_APP_DOMAIN");
+    // And it actually holds a slug, unlike what it replaced.
+    expect(domainHoldsAppHosts(resolved.domain)).toBe(true);
+  });
+
+  test("a forge hosted inside another falls back the same way, nested form", () => {
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: true,
+      hostname: "127.0.0.1",
+    });
+    expect(resolved).toEqual({
+      ok: true,
+      domain: "--localhost",
+      note: expect.stringContaining("FORGE_APP_DOMAIN"),
+    });
+  });
+
+  test("a forge reached by a real, non-loopback IP leaves apps off, message names the fix", () => {
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: false,
+      hostname: "203.0.113.5",
+    });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.reason).toContain("FORGE_APP_DOMAIN");
+    expect(resolved.reason).toContain("203.0.113.5");
   });
 });
 
@@ -1913,4 +1999,108 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       ).ok,
     ).toBe(true);
   }, 30_000);
+});
+
+describe("boot: a forge addressed by IP hands every app a host that works (issue #269)", () => {
+  let dataDir: string;
+  let work: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let alice: User;
+  let domain: string;
+
+  const viaHost = (host: string, path = "/", init: RequestInit = {}) =>
+    fetch(`${servers.url}${path}`, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), host },
+      redirect: "manual",
+    });
+
+  async function settled(
+    repoId: string,
+    where: (run: Run) => boolean,
+    timeoutMs = 60_000,
+  ): Promise<Run> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
+        where,
+      );
+      if (
+        run &&
+        (run.state === "ok" ||
+          run.state === "failed" ||
+          run.state === "cancelled")
+      )
+        return run;
+      await Bun.sleep(50);
+    }
+    throw new Error("run did not settle in time");
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-ip-"));
+    work = await mkdtemp(join(tmpdir(), "forge-ip-work-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    // The exact computation main.ts does at boot, for a forge reached at
+    // `http://127.0.0.1:<port>` with no FORGE_APP_DOMAIN set — the report in
+    // the issue. Before this fix, the domain below was `127.0.0.1` and every
+    // app's FORGE_APP_URL failed `new URL()` before it ever answered.
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: false,
+      hostname: "127.0.0.1",
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error(resolved.reason);
+    domain = resolved.domain;
+    runtime = new AppsRuntime(app, {
+      domain,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 2,
+    });
+    await runtime.start();
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+  }, 30_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+    await rm(work, { recursive: true, force: true });
+  });
+
+  test("the scaffolded app deploys and answers — never the FORGE_APP_URL crash loop", async () => {
+    const made = await newApp(app, alice, {
+      name: "ip-forge",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value.repo;
+    const record = made.value.app;
+    const run = await settled(repo.id, (r) => r.env === "production");
+    // Before this fix: "start: exited with code 1 before answering" — the
+    // scaffold's own src/env.ts throwing on `new URL(FORGE_APP_URL)`.
+    expect(run.state).toBe("ok");
+    const url = runtime.urlFor(record, "production");
+    // The exact check the scaffold makes at import time on FORGE_APP_URL.
+    expect(() => new URL(url)).not.toThrow();
+    const host = new URL(url).host;
+    const page = await viaHost(host);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("<h1>ip-forge</h1>");
+  }, 90_000);
 });

@@ -13,6 +13,7 @@ import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
 import { serveForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
+import { resolveAppDomain } from "./apps/host.ts";
 import { startChecks } from "./checks/service.ts";
 import { startLooks } from "./looks/service.ts";
 import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
@@ -96,11 +97,23 @@ const forgeUrl =
   `http://${host}:${servers.port}`;
 const publicUrl = new URL(forgeUrl);
 const appsOn = process.env.FORGE_APPS !== "0";
-const apps = appsOn
+// The host apps answer at is checked once, here: an IP-addressed forge
+// hands out a hostname no URL can hold once a slug attaches to it, and an
+// app that parses its own FORGE_APP_URL (the scaffold does) dies before it
+// answers — every deploy, forever. docs/APPS.md, "Hostnames and the proxy".
+const appDomain = appsOn
+  ? resolveAppDomain({
+      explicit: (process.env.FORGE_APP_DOMAIN ?? "").trim() || undefined,
+      hosted,
+      hostname: publicUrl.hostname,
+    })
+  : undefined;
+if (appDomain?.ok === false) app.log.error(appDomain.reason);
+if (appDomain?.ok === true && appDomain.note !== undefined)
+  app.log.warn(appDomain.note);
+const apps = appDomain?.ok
   ? new AppsRuntime(app, {
-      domain:
-        process.env.FORGE_APP_DOMAIN ??
-        (hosted ? `--${publicUrl.hostname}` : publicUrl.hostname),
+      domain: appDomain.domain,
       scheme: publicUrl.protocol === "https:" ? "https" : "http",
       publicPort:
         publicUrl.port === ""

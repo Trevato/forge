@@ -349,6 +349,18 @@ whole, a bare domain gets the dot. Browsers resolve every `*.localhost` name to
 loopback, which is what makes a laptop forge work with no configuration at
 all: `http://hello.localhost:3000`.
 
+A forge needs a hostname to hand out for this — not every address it can be
+reached at is one. Attach a slug to a bare IP address (`127.0.0.1`, the
+default when nothing sets `FORGE_URL` or `FORGE_HOST`) and the result,
+`notes.127.0.0.1`, is not a URL: WHATWG rejects a hostname whose last label
+is all digits unless the whole thing parses as an IPv4 address. The forge
+checks this once at boot, for the host it is about to hand out. A loopback
+address falls back to `localhost` on its own — same as the paragraph above,
+and it says so in the log. Reached any other way by IP, there is no host to
+fall back to that would resolve anywhere but here, so apps are left off
+rather than started to crash: set `FORGE_APP_DOMAIN` to a real hostname
+(anything DNS resolves to this machine) to serve apps on a forge like that.
+
 The proxy is a `fetch` to the deployment's loopback port, streamed back.
 Headers are forwarded with the usual `X-Forwarded-*` additions. An
 environment that is not running gets a page from the forge that says so and
