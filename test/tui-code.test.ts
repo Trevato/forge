@@ -25,7 +25,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { listBranches } from "../src/git/branches.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
@@ -33,7 +33,7 @@ import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { indexPaths, rankPaths } from "../src/tui/ui/fuzzy.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 interface Harness {
   app: App;

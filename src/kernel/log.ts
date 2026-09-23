@@ -42,6 +42,11 @@ export function setLogLevel(level: LogLevel): void {
   threshold = level;
 }
 
+/** The floor as it stands, so whoever lowers it can put it back. */
+export function logLevel(): LogLevel {
+  return threshold;
+}
+
 export function createLog(scope: string): Log {
   const emit = (level: LogLevel, message: string, fields?: LogFields) => {
     if (order[level] < order[threshold]) return;

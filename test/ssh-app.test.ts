@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { addSshKey, signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { Channels, type SshSession } from "../src/ssh/channels.ts";
 import { MSG, Writer } from "../src/ssh/wire.ts";
 import { createLog } from "../src/kernel/log.ts";
@@ -22,7 +22,7 @@ import { serveForgeSsh } from "../src/tui/ssh.ts";
 import type { SshServer } from "../src/ssh/server.ts";
 import { missing } from "./helpers/tools.ts";
 
-setLogLevel("error");
+quietLogs();
 const log = createLog("ssh-app-test");
 
 const SSH = "/usr/bin/ssh";

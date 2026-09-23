@@ -31,7 +31,7 @@ import { listRefs } from "../src/git/read.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { localSource } from "../src/view/local.ts";
 import {
   MAX_MIRROR_LINES,
@@ -41,7 +41,7 @@ import {
 import { highlightAsset } from "../src/web/asset.ts";
 import { highlightToHtml } from "../src/web/highlight-html.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const PASSWORD = "a-long-web-editor-passphrase";
 const LAMP = "export const lamp = 'lit'\n";

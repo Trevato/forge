@@ -21,7 +21,7 @@ import { listOrigins } from "../src/core/origins.ts";
 import { listPins } from "../src/core/pins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import type { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -39,7 +39,7 @@ import {
   type FakeOAuth,
 } from "./fake-origin.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-9f2a";

@@ -24,7 +24,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs, withoutEnv } from "./helpers/globals.ts";
 import {
   newFakeOAuth,
   newFakeState,
@@ -33,7 +33,7 @@ import {
   type FakeOAuth,
 } from "./fake-origin.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-9f2a";
@@ -44,6 +44,9 @@ const basic = (user: string, secret: string): string =>
   `Basic ${Buffer.from(`${user}:${secret}`).toString("base64")}`;
 
 describe("origins on the web", () => {
+  // Whatever the environment thinks: this suite decides when GitHub is
+  // configured, and its first assertion is about it *not* being.
+  withoutEnv("FORGE_GITHUB_CLIENT_ID", "FORGE_URL");
   let dataDir: string;
   let originDataDir: string;
   let app: App;
@@ -164,10 +167,6 @@ describe("origins on the web", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    // Whatever the environment thinks: this suite decides when GitHub is
-    // configured, and its first assertion is about it *not* being.
-    delete process.env.FORGE_GITHUB_CLIENT_ID;
-    delete process.env.FORGE_URL;
     alice = await signUp("alice");
     bob = await signUp("bob");
     resetConnectLimit();
@@ -175,7 +174,6 @@ describe("origins on the web", () => {
   });
 
   afterAll(async () => {
-    delete process.env.FORGE_GITHUB_CLIENT_ID;
     forgejo.stop();
     github.stop();
     servers.stop();

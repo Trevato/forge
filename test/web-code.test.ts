@@ -32,7 +32,7 @@ import { signUp } from "../src/actions/users.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { getRepo, updateRepoSettings } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import {
   codeJs,
   editorJs,
@@ -44,7 +44,7 @@ import { liveClientJs } from "../src/web/live.ts";
 import { spineOf } from "../src/web/pages/explorer.ts";
 import { markMatch } from "../src/web/pages/search.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const PASSWORD = "a-long-web-code-passphrase";
 

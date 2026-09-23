@@ -14,10 +14,10 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { findChromium } from "../src/looks/capture.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { measurePageWidth } from "./helpers/chrome.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const chromium = findChromium();
 if (chromium === undefined) {

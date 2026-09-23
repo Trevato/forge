@@ -25,9 +25,9 @@ import {
   type AppRecord,
 } from "../src/core/apps.ts";
 import { createUser } from "../src/core/users.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 
-setLogLevel("error");
+quietLogs();
 
 describe("an app's environment", () => {
   let dataDir = "";

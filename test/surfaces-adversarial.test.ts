@@ -28,7 +28,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { appendRunLog, runLogListenerCount } from "../src/runs/log.ts";
 import { content as contentStyle } from "../src/web/style/content.ts";
 import { runScreen } from "../src/tui/screens/run.ts";
@@ -41,7 +41,7 @@ import type { App as TuiApp, Screen } from "../src/tui/app/app.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 /** Count the SQL statements a block of work runs — mirrors test/counts.test.ts. */
 async function statements(db: Database, work: () => Promise<void> | void) {

@@ -1,15 +1,19 @@
 /**
- * The two helpers the suite's own health rests on: the environment a git
- * client under test runs in, and whether a tool this machine would need is
- * here. Both exist because of a run that failed for the machine's reasons
- * and was read as the change's fault (#233).
+ * The helpers the suite's own health rests on: the environment a git client
+ * under test runs in, whether a tool this machine would need is here, and
+ * the process globals a file borrows. Each exists because of a run that
+ * failed for the machine's reasons, or another file's, and was read as the
+ * change's fault (#233, #302).
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { logLevel, setLogLevel, type LogLevel } from "../src/kernel/log.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
+import { fastFirstFetch, quietLogs, withoutEnv } from "./helpers/globals.ts";
 import { missing } from "./helpers/tools.ts";
 
 describe("a git client's environment under test", () => {
@@ -73,5 +77,53 @@ describe("whether a tool is on this machine", () => {
     expect(missing("/usr/bin/no-such-tool")).toBe(true);
     // Any one absent is enough to skip.
     expect(missing("sh", "no-such-tool-on-any-machine")).toBe(true);
+  });
+});
+
+describe("a global a file borrows is given back", () => {
+  // Values nobody else would pick, so reading them back proves the restore
+  // rather than a coincidence with the defaults.
+  const ASIDE = "https://machine.example.test";
+  const WAITS: readonly number[] = [1, 2, 3];
+  let found: {
+    level: LogLevel;
+    waits: readonly number[];
+    url: string | undefined;
+  };
+  beforeAll(() => {
+    found = {
+      level: logLevel(),
+      waits: firstFetchRetry.ms,
+      url: process.env.FORGE_URL,
+    };
+    setLogLevel("warn");
+    firstFetchRetry.ms = WAITS;
+    process.env.FORGE_URL = ASIDE;
+  });
+  afterAll(() => {
+    setLogLevel(found.level);
+    firstFetchRetry.ms = found.waits;
+    if (found.url === undefined) delete process.env.FORGE_URL;
+    else process.env.FORGE_URL = found.url;
+  });
+
+  describe("while a file borrows them", () => {
+    quietLogs();
+    fastFirstFetch([50]);
+    withoutEnv("FORGE_URL");
+
+    test("they hold what it asked for", () => {
+      expect(logLevel()).toBe("error");
+      expect(firstFetchRetry.ms).toEqual([50]);
+      expect(process.env.FORGE_URL).toBeUndefined();
+      // What the file sets under a cleared name goes when it does.
+      process.env.FORGE_URL = "https://set.inside.test";
+    });
+  });
+
+  test("afterwards they read back what they were", () => {
+    expect(logLevel()).toBe("warn");
+    expect(firstFetchRetry.ms).toBe(WAITS);
+    expect(process.env.FORGE_URL).toBe(ASIDE);
   });
 });

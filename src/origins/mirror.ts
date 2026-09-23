@@ -59,12 +59,16 @@ export interface MirrorResult {
  * `internal` Forgejo repo has no local analogue and becomes private: never
  * silently widen a visibility on import.
  */
+/** The forge's waits between tries of a new mirror's first fetch. */
+export const FIRST_FETCH_RETRY_MS: readonly number[] = [2_000, 5_000, 10_000];
+
 /**
  * How long to wait between tries of a new mirror's first fetch. Mutable so a
- * test that wants a failure now can have it now; the forge keeps the default.
+ * test that wants a failure now can have it now; the forge keeps the default,
+ * and a test that lowers it puts back what it found.
  */
 export const firstFetchRetry = {
-  ms: [2_000, 5_000, 10_000] as readonly number[],
+  ms: FIRST_FETCH_RETRY_MS,
 };
 
 export async function mirrorRepo(

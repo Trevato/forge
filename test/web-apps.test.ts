@@ -29,9 +29,9 @@ import { getRepo, type Repo } from "../src/core/repos.ts";
 import { isTerminal, listRuns, type Run } from "../src/core/runs.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const PASSWORD = "a-long-apps-passphrase";
 const DOMAIN = "apps.test";

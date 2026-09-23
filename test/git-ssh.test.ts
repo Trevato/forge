@@ -27,7 +27,7 @@ import { getRepo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { runGitService, type GitChannel } from "../src/git/smart-ssh.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import type { SshServer } from "../src/ssh/server.ts";
@@ -35,7 +35,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { missing } from "./helpers/tools.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const SSH_KEYGEN = "/usr/bin/ssh-keygen";
 /** The client half is the real OpenSSH; without it these skip, loudly. */

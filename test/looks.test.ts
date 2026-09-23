@@ -31,7 +31,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { err, ok } from "../src/kernel/result.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import {
   findChromium,
   takeLook,
@@ -40,7 +40,7 @@ import {
 } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const DOMAIN = "apps.test";
 const PASSWORD = "a-good-passphrase";

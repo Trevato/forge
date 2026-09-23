@@ -25,7 +25,7 @@ import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { blobForRender } from "../src/git/read.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { forgetEditor } from "../src/tui/screens/external.ts";
@@ -34,7 +34,7 @@ import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { Editor, colFromDisplay, displayCol } from "../src/tui/ui/editor.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const bytes = (s: string): Uint8Array => new TextEncoder().encode(s);
 const text = (b: Uint8Array): string => new TextDecoder().decode(b);

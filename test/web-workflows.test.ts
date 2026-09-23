@@ -39,10 +39,10 @@ import { getUserByName } from "../src/core/users.ts";
 import { settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { clearViewCache } from "../src/view/cache.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const PASSWORD = "a-long-workflow-passphrase";
 

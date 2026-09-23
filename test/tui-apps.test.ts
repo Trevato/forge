@@ -38,7 +38,7 @@ import {
 } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { appendRunLog } from "../src/runs/log.ts";
 import type { App, Screen } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -54,7 +54,7 @@ import {
 } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const DOMAIN = "apps.test";
 const NOT_AN_APP = "this commit is not an app";

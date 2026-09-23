@@ -14,7 +14,8 @@ import {
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLog, setLogLevel } from "../src/kernel/log.ts";
+import { createLog } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { Channels } from "../src/ssh/channels.ts";
 import { MSG, WireError, Writer } from "../src/ssh/wire.ts";
 import {
@@ -36,7 +37,7 @@ let root = "";
 const servers: SshServer[] = [];
 const keys: Record<string, string> = {};
 
-setLogLevel("error");
+quietLogs();
 
 function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");

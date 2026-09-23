@@ -29,7 +29,7 @@ import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { getUserSetting } from "../src/core/settings.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { parseGitCommand, splitCommand } from "../src/git/smart-ssh.ts";
 import { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -39,7 +39,7 @@ import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { SshSession } from "../src/ssh/channels.ts";
 import { settleApp } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 // A real ed25519 authorized_keys line, so key parsing is exercised for real.
 const KEY_LINE =

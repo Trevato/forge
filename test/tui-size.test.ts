@@ -23,7 +23,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { appendRunLog } from "../src/runs/log.ts";
 import type { App, Screen } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -49,7 +49,7 @@ import { theme } from "../src/tui/ui/theme.ts";
 import { row, table } from "../src/tui/ui/widgets.ts";
 import { settleApp } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const SIZES: readonly [number, number][] = [
   [60, 20],

@@ -1,5 +1,4 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +22,7 @@ import {
   type FakeForge,
   type FakeOAuth,
 } from "./fake-origin.ts";
+import { fastFirstFetch, withoutEnv } from "./helpers/globals.ts";
 
 /**
  * Adversarial review of the origins surface: OAuth (state, PKCE, redirect
@@ -100,6 +100,12 @@ async function mintToken(
 const originCount = (app: App): number =>
   app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM origin").get()!.n;
 
+// A fetch that fails should say so now, not after the forge's patience.
+fastFirstFetch();
+// The code flow's redirect_uri is this test server's own, unless a test says
+// otherwise — never the forge a crew machine's `FORGE_URL` names.
+withoutEnv("FORGE_URL");
+
 // ------------------------------------------------------------- code flow
 
 describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => {
@@ -134,8 +140,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
       .length;
 
   beforeAll(async () => {
-    // A fetch that fails should say so now, not after the forge's patience.
-    firstFetchRetry.ms = [50];
     dataDir = await mkdtemp(join(tmpdir(), "forge-sec-code-"));
     const state = newFakeState("forgejo", LOGIN, ORIGIN_TOKEN);
     oauth = newFakeOAuth(CLIENT_ID);
@@ -154,7 +158,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     });
   });
   afterAll(async () => {
-    delete process.env.FORGE_URL;
     fake.stop();
     servers.stop();
     app.close();
