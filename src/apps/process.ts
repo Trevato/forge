@@ -144,6 +144,44 @@ function operatorVars(
   return out;
 }
 
+/** A stack frame in any of the languages a step's runtime might throw from. */
+const STACK_FRAME_RE = /^at\s/;
+/** A runtime's version banner, printed after an uncaught error — `Bun v1.3.14 (Linux x64 baseline)`. */
+const VERSION_BANNER_RE = /^\S+ v[\d.]+ *\(/;
+/**
+ * A line that reads as an error rather than context around one — anchored
+ * at the start, so a source line merely mentioning `Error` (`throw new
+ * Error(...)`, echoed above the frames) is not mistaken for the message.
+ */
+const ERROR_LINE_RE = /^[A-Za-z]*Error\b/i;
+const TAIL_LINES = 20;
+const REASON_MAX = 300;
+
+/**
+ * The reason a person would read out of a step's failed output: the first
+ * line that isn't a blank, a stack frame, or a version banner, and reads as
+ * an error — the message, printed before the frames that bury it. Falls
+ * back to the tail when nothing qualifies, since some failures (a plain
+ * `exit 1`) never print one.
+ */
+export function failureReason(recent: readonly string[]): string {
+  for (const raw of recent) {
+    const line = raw.trim();
+    if (
+      line === "" ||
+      STACK_FRAME_RE.test(line) ||
+      VERSION_BANNER_RE.test(line)
+    )
+      continue;
+    if (ERROR_LINE_RE.test(line)) return truncate(line);
+  }
+  return truncate(recent.slice(-3).join(" | "));
+}
+
+function truncate(line: string): string {
+  return line.length > REASON_MAX ? `${line.slice(0, REASON_MAX)}…` : line;
+}
+
 /**
  * Run a step to completion, streaming its output. A non-zero exit, a
  * timeout, or an abort is an Err with the reason a person would want.
@@ -167,8 +205,13 @@ export async function runStep(
     stdout: "pipe",
     stderr: "pipe",
   });
-  const scrub = (line: string): void =>
-    options.log(stripForgeDirs([options.cwd], line));
+  const recent: string[] = [];
+  const scrub = (raw: string): void => {
+    const line = stripForgeDirs([options.cwd], raw);
+    recent.push(line);
+    if (recent.length > TAIL_LINES) recent.shift();
+    options.log(line);
+  };
   const timeoutMs = options.timeoutMs ?? STEP_TIMEOUT_MS;
   let why: string | undefined;
   // A killed process's pipes are not guaranteed to close on their own
@@ -194,7 +237,10 @@ export async function runStep(
       proc.exited,
     ]);
     if (why !== undefined) return err(why);
-    if (code !== 0) return err(`${name} exited with code ${code}`);
+    if (code !== 0) {
+      const reason = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
+      return err(`${name} exited with code ${code}${reason}`);
+    }
     return ok();
   } finally {
     clearTimeout(timer);
@@ -311,10 +357,7 @@ export async function startProcess(
     // left to verify, and must not outlive this failed run.
     testAbort.abort();
     await tested.catch(() => {});
-    const tail =
-      recent.length > 0
-        ? ` — last output: ${recent.slice(-3).join(" | ")}`
-        : "";
+    const tail = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
     return err({
       stage: ready.error.stage,
       message: ready.error.message + tail,

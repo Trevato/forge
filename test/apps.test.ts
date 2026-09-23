@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime, STOPPED_SUMMARY } from "../src/apps/runtime.ts";
 import { envDataDir, envDir, previewEnv } from "../src/apps/data.ts";
+import { childEnv, runStep, startProcess } from "../src/apps/process.ts";
+import type { AppManifest } from "../src/apps/manifest.ts";
 import {
   enableApp,
   newApp,
@@ -1245,19 +1247,25 @@ describe("a start failure is said in the app's own terms, not the forge's paths 
     expect(run.state).toBe("failed");
 
     const notForgePaths = (text: string): void => {
-      expect(text).toContain("src/server.ts");
       expect(text).not.toContain(dataDir);
       expect(text).not.toContain(record.id);
     };
 
     // The error the runtime stores — the same one a run's summary and the
-    // studio's head card both draw from — names the app's own file.
+    // studio's head card both draw from — is the thrown message (issue
+    // #270), not a stack frame; it never leaks the forge's own paths either.
     const status = runtime.envStatus(record, "production");
+    expect(status?.error ?? "").toContain("boom");
     notForgePaths(status?.error ?? "");
+    expect(run.summary ?? "").toContain("boom");
     notForgePaths(run.summary ?? "");
 
+    // The full log still has the frame, path-stripped down to the app's
+    // own file rather than the forge's data directory or the app's id.
     const { lines } = readRunLog(dataDir, run.id);
-    notForgePaths(lines.join("\n"));
+    const log = lines.join("\n");
+    expect(log).toContain("src/server.ts");
+    notForgePaths(log);
 
     // The studio's app page renders the same error in its head, for a
     // reader who never asked to see the forge's own filesystem.
@@ -1887,4 +1895,120 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
     const status = runtime.envStatus(record, "production");
     expect(status?.error).toBeUndefined();
   }, 30_000);
+});
+
+describe("a start that fails reports the message, not its last line (issue #270)", () => {
+  const manifest: AppManifest = {
+    run: "",
+    install: null,
+    test: null,
+    health: "/",
+    ready: 2,
+    tty: null,
+    looks: ["/"],
+  };
+
+  // A realistic crash: the message, a blank line, three frames, then the
+  // runtime's version banner — the exact shape that used to leave only
+  // the frame and the banner behind.
+  const CRASH = `TypeError [ERR_INVALID_URL]: "http://notes.127.0.0.1:3999" cannot be parsed as a URL
+      at src/env.ts:22:37
+      at src/server.ts:3:1
+      at node:internal/main:1:1
+
+Bun v1.3.14 (Linux x64 baseline)`;
+
+  test("start: the crash's message wins, the frames and banner do not", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-crash-"));
+    try {
+      const started = await startProcess({
+        dir,
+        dataDir: dir,
+        manifest: { ...manifest, run: `printf '%s' '${CRASH}' 1>&2; exit 1` },
+        env: "production",
+        url: "http://app.test",
+        commitOid: "0".repeat(40),
+        forgeUrl: "http://forge.test",
+        identityKey: "key",
+        log: () => {},
+        signal: new AbortController().signal,
+      });
+      expect(started.ok).toBe(false);
+      if (started.ok) return;
+      expect(started.error.message).toContain(
+        'TypeError [ERR_INVALID_URL]: "http://notes.127.0.0.1:3999" cannot be parsed as a URL',
+      );
+      expect(started.error.message).not.toContain("at src/env.ts");
+      expect(started.error.message).not.toContain("Bun v1.3.14");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("install: the same crash, the same message", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-crash-install-"));
+    try {
+      const result = await runStep(
+        "install",
+        `printf '%s' '${CRASH}' 1>&2; exit 1`,
+        {
+          cwd: dir,
+          env: childEnv({}),
+          log: () => {},
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain(
+        'TypeError [ERR_INVALID_URL]: "http://notes.127.0.0.1:3999" cannot be parsed as a URL',
+      );
+      expect(result.error).not.toContain("at src/env.ts");
+      expect(result.error).not.toContain("Bun v1.3.14");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("test: the same crash, the same message", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-crash-test-"));
+    try {
+      const result = await runStep(
+        "test",
+        `printf '%s' '${CRASH}' 1>&2; exit 1`,
+        {
+          cwd: dir,
+          env: childEnv({}),
+          log: () => {},
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain(
+        'TypeError [ERR_INVALID_URL]: "http://notes.127.0.0.1:3999" cannot be parsed as a URL',
+      );
+      expect(result.error).not.toContain("at src/env.ts");
+      expect(result.error).not.toContain("Bun v1.3.14");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("a plain exit 1 with no output keeps the bare 'exited with code' message", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-crash-plain-"));
+    try {
+      const result = await runStep("check", "exit 1", {
+        cwd: dir,
+        env: childEnv({}),
+        log: () => {},
+        signal: new AbortController().signal,
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBe("check exited with code 1");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
