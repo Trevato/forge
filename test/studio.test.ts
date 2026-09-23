@@ -2888,6 +2888,28 @@ describe("the studio app page's terminal", () => {
     const theirs = await appPage(reader);
     expect(theirs).not.toContain("The terminal is off");
   });
+
+  // Issue #283: a hosted forge (an app of another forge) defaults
+  // FORGE_SSH_PORT to 0, so serve() never opens a listener — every app on
+  // it declares a tty but has nothing to connect it to. The generic "The
+  // terminal is off." leaves a reader with no idea why or what to do; this
+  // asserts the line names FORGE_SSH_PORT instead, composed from the same
+  // sshPort field the other tests here already pin (#77's ground) rather
+  // than by shutting a real listener down.
+  test("a hosted forge with no SSH listener says why, and names FORGE_SSH_PORT", async () => {
+    putLive("bun run src/tty.ts");
+    app.config.sshPort = 0;
+    try {
+      const mine = await appPage(writer);
+      expect(mine).toContain("FORGE_SSH_PORT");
+      expect(mine).not.toContain("ssh -p 2222 beacon@forge.example");
+      expect(mine).not.toContain(
+        "The terminal is off.</p>",
+      );
+    } finally {
+      app.config.sshPort = 2222;
+    }
+  });
 });
 
 /**

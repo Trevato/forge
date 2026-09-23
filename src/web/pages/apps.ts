@@ -639,7 +639,7 @@ export function appPage(ctx: Ctx): Response {
   const production = envs.find((env) => env.env === "production");
   const ssh = writer
     ? terminalFor(ctx.app, record, "production", production)
-    : undefined;
+    : {};
   // The same rows the runs page draws, from the same two grouped reads: a
   // table's first column folds into a sliver at phone width, a row does not.
   const runsHead = html`${icon("activity")}

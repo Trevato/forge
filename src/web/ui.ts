@@ -418,6 +418,14 @@ export function previewDataNote(
  * show. Every page that names a way in draws this one, never its own words
  * for "off".
  *
+ * "Off" has two causes and a reader deserves to know which: the app
+ * declares no `tty` (nothing would answer that connection even if one were
+ * open — the sentence stays exactly what it always said), or this forge has
+ * no SSH listener (`FORGE_SSH_PORT`, `0` on a forge hosted as an app of
+ * another — issue #283) and the app is otherwise willing. The second names
+ * the variable that turns it on; neither ever invents a connection string —
+ * a command is shown only once there is a listener to reach.
+ *
  * The command has a `login@host` in it, which an email-scanning edge on the
  * forge's own domain will otherwise rewrite into a `mailto:` link — turning
  * the one line a reader must copy character for character into a link that
@@ -427,13 +435,21 @@ export function previewDataNote(
  * copyable line.
  */
 export function terminalLine(
-  command: string | undefined,
+  terminal: {
+    readonly command?: string;
+    readonly reason?: "no_tty" | "no_listener";
+  },
   fingerprint?: string | undefined,
 ): Html {
-  if (command === undefined)
-    return html`<p class="muted small">The terminal is off.</p>`;
+  if (terminal.command === undefined)
+    return terminal.reason === "no_listener"
+      ? html`<p class="muted small">
+          The terminal is off — this forge has no SSH listener. Set
+          <span class="mono">FORGE_SSH_PORT</span> to turn it on.
+        </p>`
+      : html`<p class="muted small">The terminal is off.</p>`;
   return html`<p class="terminal-line">
-    <code class="mono"><!--email_off-->${command}<!--/email_off--></code>
+    <code class="mono"><!--email_off-->${terminal.command}<!--/email_off--></code>
     ${when(
       fingerprint,
       (fp) => html`<span class="muted small">host key ${fp}</span>`,

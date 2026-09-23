@@ -44,6 +44,7 @@ import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { sshCommand } from "../ssh/command.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   requireReader,
@@ -383,20 +384,24 @@ export function sshCommandFor(
 }
 
 /**
- * The one fact behind every "Terminal" line a page draws: the exact command,
- * or undefined when there is nothing to show — SSH is off on this forge, or
- * this environment's app declares no `tty`. A status that has never been
- * live does not know its `tty` yet, so the command still shows; the
- * environment's own state already says it is not running.
+ * The one fact behind every "Terminal" line a page draws: the exact
+ * command, or — when there is nothing to show — why: this environment's
+ * app declares no `tty`, or this forge itself has no SSH listener
+ * (`app.config.sshPort`, `0` on a forge hosted as an app of another —
+ * issue #283). A status that has never been live does not know its `tty`
+ * yet, so the command still shows when SSH is on; the environment's own
+ * state already says it is not running.
  */
 export function terminalFor(
   app: App,
   record: AppRecord,
   env: EnvName,
   status: EnvStatus | undefined,
-): string | undefined {
-  if (status?.tty === null) return undefined;
-  return sshCommandFor(app, record, env);
+): { readonly command?: string; readonly reason?: "no_tty" | "no_listener" } {
+  if (status?.tty === null) return { reason: "no_tty" };
+  const command = sshCommandFor(app, record, env);
+  if (command !== undefined) return { command };
+  return sshCommand(app) === undefined ? { reason: "no_listener" } : {};
 }
 
 /** What is running, for anyone who can see the repository. */
