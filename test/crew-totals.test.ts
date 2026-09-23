@@ -63,6 +63,9 @@ describe("what an agent has done, in totals", () => {
       headers: { cookie },
     }).then((r) => r.text());
     expect(page).toContain("<th>Spent</th>");
+    // What says who does good work: the cost of a landed change, and how
+    // much of the effort was going again.
+    expect(page).toContain("<th>Per landed</th>");
     expect(page).toContain(`<td class="num muted">—</td>`);
   });
 

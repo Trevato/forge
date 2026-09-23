@@ -491,6 +491,8 @@ export interface AgentTotals {
   /** Mean cost of a finished run, and mean turns, over runs that reported them. */
   readonly meanCostUsd: number | null;
   readonly meanTurns: number | null;
+  /** Runs spent going again: a failed check, or main moved under the pull. */
+  readonly retries: number;
   /** Pulls this agent opened that a person merged. */
   readonly merged: number;
 }
@@ -509,6 +511,7 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
         mean_cost: number | null;
         mean_turns: number | null;
         merged: number;
+        retries: number;
       },
       []
     >(
@@ -525,7 +528,8 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
               AVG(CASE WHEN turns > 0 THEN turns END) AS mean_turns,
               (SELECT COUNT(*) FROM pull JOIN issue ON issue.id = pull.issue_id
                 WHERE issue.author_id = run.actor_id AND pull.merged_at IS NOT NULL)
-                AS merged
+                AS merged,
+              SUM(reason IN ('check_failed','conflict')) AS retries
          FROM run
         WHERE kind = 'agent' AND actor_id IS NOT NULL
         GROUP BY actor_id`,
@@ -543,6 +547,7 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
         meanCostUsd: r.mean_cost,
         meanTurns: r.mean_turns,
         merged: r.merged,
+        retries: r.retries,
       },
     ]),
   );

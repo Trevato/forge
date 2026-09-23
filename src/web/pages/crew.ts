@@ -23,6 +23,8 @@ import { agentTotals, type AgentTotals } from "../../core/runs.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
+import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
+import { listAutonomousRepos, type Repo } from "../../core/repos.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -169,6 +171,7 @@ function totalsCells(t: AgentTotals | undefined): Html {
     return html`<td class="num muted">—</td>
       <td class="num muted">—</td>
       <td class="num muted">—</td>
+      <td class="num muted">—</td>
       <td class="num muted">—</td>`;
   const mean =
     t.meanSeconds === null
@@ -185,21 +188,93 @@ function totalsCells(t: AgentTotals | undefined): Html {
         >${t.ok} ok${t.failed > 0 ? html`, ${t.failed} failed` : null}</span
       >
     </td>
-    <td class="num">${t.merged}</td>
+    <td class="num">
+      ${t.merged}
+      ${when(
+        t.retries > 0,
+        () =>
+          html`<span class="muted small"
+            >${Math.round((100 * t.retries) / t.runs)}% retries</span
+          >`,
+      )}
+    </td>
     <td class="num">$${t.spentUsd.toFixed(2)}</td>
+    <td class="num">
+      ${t.merged === 0 ? "—" : `$${(t.spentUsd / t.merged).toFixed(0)}`}
+    </td>
     <td class="num">
       ${perRun}
       <span class="muted small">${mean}${turns}</span>
     </td>`;
 }
 
+/** Today's spend against each ceiling: the drain, and the knob for it. */
+function spendingCard(
+  spending: readonly { repo: Repo; status: AutonomyStatus }[],
+): Html {
+  const total = spending.reduce((n, s) => n + s.status.spentTodayUsd, 0);
+  const cap = spending.reduce((n, s) => n + s.status.ceilingUsd, 0);
+  return card(
+    html`<ul class="list">
+      ${spending.map(
+        ({ repo, status }) =>
+          html`<li>
+            <a
+              href="/${repo.ownerName}/${repo.name}/settings/autonomy"
+              class="row"
+              data-nav
+              tabindex="-1"
+            >
+              <span class="row-lead">${icon("rocket")}</span>
+              <span class="row-main">
+                <span class="row-title">${repo.ownerName}/${repo.name}</span>
+                <span class="row-meta"
+                  >${repo.autonomy} · ${status.slots}
+                  ${status.slots === 1 ? "slot" : "slots"} · ${status.active}
+                  active${status.paused === "ceiling"
+                    ? " · paused at the ceiling until 00:00 UTC"
+                    : ""}</span
+                >
+              </span>
+              <span class="row-trail">
+                <b>$${status.spentTodayUsd.toFixed(0)}</b>
+                <span class="muted"
+                  >/ $${status.ceilingUsd.toFixed(0)} today</span
+                >
+              </span>
+            </a>
+          </li>`,
+      )}
+    </ul>`,
+    {
+      pad: false,
+      extra: "mb",
+      head: html`${icon("activity")}
+        <h2>Spending today</h2>
+        <span class="muted small"
+          >$${total.toFixed(0)} of $${cap.toFixed(0)} across ${spending.length}
+          ${spending.length === 1 ? "app" : "apps"} running on their own; the
+          ceilings reset at 00:00 UTC</span
+        >`,
+    },
+  );
+}
+
 function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const listed = listAllAgents(ctx.app, ctx.auth.user);
   const agents = listed.ok ? listed.value : [];
   const totals = agentTotals(ctx.app.db);
+  // Where the money goes today: every app running on its own, its spend
+  // against its ceiling. The ceilings are the one control on the drain, and
+  // this is the page where the crew is wielded, so they are read here.
+  const spending = listAutonomousRepos(ctx.app.db).map((repo) => ({
+    repo,
+    status: autonomyStatus(ctx.app, repo),
+  }));
   const usernameError =
     error !== undefined && /username/i.test(error) ? error : undefined;
   return html`${crewReadiness(ctx)}
+  ${when(spending.length > 0, () => spendingCard(spending))}
   ${agents.length === 0
     ? empty({
         icon: "bot",
@@ -215,8 +290,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
                 <th>Model</th>
                 <th>Budget</th>
                 <th>Runs</th>
-                <th>Merged</th>
+                <th>Landed</th>
                 <th>Spent</th>
+                <th>Per landed</th>
                 <th>Per run</th>
                 <th>Created</th>
                 <th></th>
