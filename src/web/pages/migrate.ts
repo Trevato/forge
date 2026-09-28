@@ -371,6 +371,36 @@ function stageRows(job: MirrorJob): Html {
  * with what happened as the flash. A failure stays, with the reason and the
  * way back to the form.
  */
+/**
+ * The job's page keeps itself current without reloading: every two seconds
+ * it asks for itself and swaps the stages in place; when the job is done
+ * the answer is the repository's page, and the browser goes there. Without
+ * a script the meta refresh does the same, a whole page at a time.
+ */
+const migrateJobJs = /* js */ `
+(function () {
+  var box = document.getElementById('migrate-job');
+  if (!box || !window.fetch) return;
+  function tick() {
+    fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin', redirect: 'follow' })
+      .then(function (r) {
+        if (r.redirected) { location.href = r.url; return null; }
+        return r.ok ? r.text() : null;
+      })
+      .then(function (text) {
+        if (text === null) return;
+        var fresh = new DOMParser().parseFromString(text.replace(/<(style)[^>]*>[\\s\\S]*?<\\/\\1>/gi, ''), 'text/html');
+        var theirs = fresh.getElementById('migrate-job');
+        if (theirs && theirs.innerHTML !== box.innerHTML) box.innerHTML = theirs.innerHTML;
+        if (!fresh.querySelector('meta[http-equiv="refresh"]')) return; // failed, or over: the page stopped asking
+        setTimeout(tick, 2000);
+      })
+      .catch(function () { setTimeout(tick, 4000); });
+  }
+  setTimeout(tick, 2000);
+})();
+`;
+
 export function migrationJobPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   const found = migrationJobFor(ctx.auth.user, ctx.params.job ?? "");
@@ -385,8 +415,9 @@ export function migrationJobPage(ctx: Ctx): Response {
     ctx,
     title: `Migrating ${job.fullName}`,
     ...(failed ? {} : { refresh: { seconds: 2 } }),
+    scriptJs: migrateJobJs,
     body: html`${pageHead(`Migrating ${job.fullName}`)}
-      <div class="narrow-wide">
+      <div class="narrow-wide" id="migrate-job">
         ${card(stageRows(job), {
           head: html`${icon("download")}
             <h2>${job.fullName}</h2>`,

@@ -1360,6 +1360,17 @@ export const shellJs = /* js */ `
   // until one is: no dead buttons on a page with JavaScript switched off.
   doc.documentElement.classList.add('js');
 
+  // A page that refreshes itself is the no-script fallback for something a
+  // script keeps current — a run's log, a job's stages, a live region. With
+  // a script and an event stream here, the reload goes: what changes on the
+  // page arrives as it happens, and the page stays exactly where the reader
+  // left it. A refresh that leads somewhere else (\`url=\`) is a redirect,
+  // and stays.
+  if (typeof EventSource !== 'undefined') {
+    var reload = doc.querySelector('meta[http-equiv="refresh"]');
+    if (reload && !/url=/i.test(reload.getAttribute('content') || '')) reload.remove();
+  }
+
   // ---- menus (details) ----
   function closeMenus(except) {
     doc.querySelectorAll('details.menu[open]').forEach(function (m) {
@@ -2018,11 +2029,17 @@ export const liveRegionsJs = /* js */ `
   }
   var due = {};
   var timer = null;
+  var last = 0;
+  var MIN_GAP = 1500;
   function refresh() {
     timer = null;
+    // Hidden, the page waits: a tab in the background paints nothing, and
+    // the first look back brings everything at once.
+    if (document.hidden) return;
     var ids = Object.keys(due);
     due = {};
     if (ids.length === 0) return;
+    last = Date.now();
     fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
       .then(function (text) {
@@ -2047,6 +2064,9 @@ export const liveRegionsJs = /* js */ `
           if (mine.querySelector('[data-busy]')) return;
           var active = document.activeElement;
           if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+          // Nothing to paint when nothing changed: an event about this
+          // region that left its markup as it was is not a flicker.
+          if (mine.innerHTML === theirs.innerHTML) return;
           mine.innerHTML = theirs.innerHTML;
           Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
           mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
@@ -2068,7 +2088,14 @@ export const liveRegionsJs = /* js */ `
       var patterns = (region.getAttribute('data-live') || '').split(',').map(function (p) { return p.trim(); }).filter(Boolean);
       if (region.id && matches(patterns, data.kind, data.repo, region)) { due[region.id] = true; hit = true; }
     });
-    if (hit && timer === null) timer = setTimeout(refresh, 500);
+    // Events come in bursts — a run starts, its check queues, a deploy
+    // begins — and one fetch answers the burst: never sooner than a beat
+    // after the first, never more often than every MIN_GAP.
+    if (hit && timer === null)
+      timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && Object.keys(due).length > 0 && timer === null) timer = setTimeout(refresh, 100);
   });
 })();
 `;
