@@ -29,7 +29,7 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { listOrigins } from "../src/core/origins.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
-import { getUserByName, type User } from "../src/core/users.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { settled } from "../src/origins/jobs.ts";
@@ -150,7 +150,9 @@ describe("migrate", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-migrate-"));
     upstreamDir = await mkdtemp(join(tmpdir(), "forge-migrate-up-"));
     work = await mkdtemp(join(tmpdir(), "forge-migrate-work-"));
-    app = createApp({ dataDir, port: 0 });
+    // The fixture's source is the forge itself, on loopback: a private host,
+    // which a personal forge may say is fine.
+    app = createApp({ dataDir, port: 0, migrateFromPrivateHosts: true });
     servers = await serve(app);
     base = servers.url;
     aliceCookie = await signUp("alice");
@@ -554,4 +556,57 @@ describe("migrate", () => {
     expect(repoPage).toContain("Migrated as alice/copy");
     expect(getRepo(app.db, "alice", "copy")?.autonomy).toBe("autonomous");
   }, 60_000);
+
+  test("a pasted address inside the network is an admin's alone, unless the forge says otherwise", async () => {
+    const { isPrivateHost } = await import("../src/actions/migrate.ts");
+    for (const h of [
+      "127.0.0.1",
+      "localhost",
+      "app.localhost",
+      "10.1.2.3",
+      "172.20.0.1",
+      "192.168.1.9",
+      "169.254.1.1",
+      "::1",
+      "fd00::1",
+      "0.0.0.0",
+    ])
+      expect(isPrivateHost(h)).toBe(true);
+    for (const h of [
+      "github.com",
+      "8.8.8.8",
+      "172.32.0.1",
+      "git.open-platform.sh",
+      "2606:4700::1",
+    ])
+      expect(isPrivateHost(h)).toBe(false);
+    const strictDir = await mkdtemp(join(tmpdir(), "forge-migrate-strict-"));
+    const strict = createApp({ dataDir: strictDir, port: 0 });
+    try {
+      const a = await createUser(strict.db, {
+        username: "ann",
+        email: "ann@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      const b = await createUser(strict.db, {
+        username: "ben",
+        email: "ben@forge.local",
+        password: "a-good-passphrase",
+      });
+      if (!a.ok || !b.ok) throw new Error("users");
+      const refused = await migrateRepo(strict, b.value, {
+        source: { url: `${base}/alice/hidden.git` },
+      });
+      expect(refused).toEqual({ ok: false, error: "private_host" });
+      const allowed = await migrateRepo(strict, a.value, {
+        source: { url: `${base}/alice/hidden.git` },
+        name: "peek",
+      });
+      expect(allowed.ok).toBe(true);
+    } finally {
+      strict.close();
+      await rm(strictDir, { recursive: true, force: true });
+    }
+  });
 });

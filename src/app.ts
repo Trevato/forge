@@ -41,6 +41,11 @@ export interface ForgeConfig {
    */
   edgeToken?: string;
   /**
+   * Let anyone, not only an admin, migrate from a host inside the network
+   * (loopback, private ranges): a forge run for one person on one machine.
+   */
+  migrateFromPrivateHosts?: boolean;
+  /**
    * What the platform edge is called where a person signs in — the name on
    * the button that sends them to it. Unset, it is "the platform".
    */

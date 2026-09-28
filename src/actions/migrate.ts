@@ -78,6 +78,7 @@ export interface MigrateStarted {
 export type MigrateError =
   | CreateRepoActionError
   | "invalid_url"
+  | "private_host"
   | "no_such_origin"
   | "unreachable"
   | "no_such_agent";
@@ -169,6 +170,8 @@ export function migrateMessage(error: MigrateError): string {
   switch (error) {
     case "invalid_url":
       return "That is not a URL this forge will clone from. Paste an https:// (or http://, git://) address of a public repository, with no password in it.";
+    case "private_host":
+      return "That address is inside the network, not a public repository. An admin may bring it here; connect the host as an origin instead.";
     case "no_such_origin":
       return "That origin is not one you have connected, or it has no such repository.";
     case "unreachable":
@@ -213,6 +216,34 @@ export function migrateUrl(raw: string): string | undefined {
   return safeRemoteUrl(parsed.toString());
 }
 
+/**
+ * Whether a hostname names something inside the network rather than on the
+ * open internet: loopback, link-local, the private ranges, `.localhost`,
+ * and the unspecified address. Names are not resolved here — a public name
+ * pointing at a private address is the network's own filter to catch.
+ */
+export function isPrivateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h.endsWith(".localhost") || h === "0.0.0.0")
+    return true;
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4 !== null) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return (
+      a === 127 ||
+      a === 10 ||
+      a === 0 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) ||
+      (a === 100 && b >= 64 && b <= 127)
+    );
+  }
+  if (h === "::1" || h === "::") return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h)) return true;
+  return false;
+}
+
 /** The last path segment without `.git`: what the repository was called. */
 function nameFromUrl(url: string): string {
   const path = new URL(url).pathname.replace(/\/+$/, "");
@@ -228,6 +259,16 @@ async function resolveSource(
   if ("url" in source) {
     const url = migrateUrl(source.url);
     if (url === undefined) return err("invalid_url");
+    // A host inside the network — this machine, the cluster, a private
+    // range — is not a public repository, and a pasted address must not
+    // become a way to knock on it. An admin may; a forge run for one person
+    // may say so once (`FORGE_MIGRATE_PRIVATE_HOSTS=1`).
+    if (
+      isPrivateHost(new URL(url).hostname) &&
+      !user.isAdmin &&
+      app.config.migrateFromPrivateHosts !== true
+    )
+      return err("private_host");
     return ok({
       url,
       label: url,
