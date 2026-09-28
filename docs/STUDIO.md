@@ -90,6 +90,58 @@ corner says whether the stream is connected. `?apps=a,b` narrows it to some
 apps. Keys: `f` fullscreen, `1`–`4` one region full-bleed, `0` all.
 Everything links somewhere; nothing needs a click.
 
+## The big view
+
+`/big` is the whole forge as one full-screen, keyboard-first frame, with
+the feel of k9s, lazygit and btop — a second front door, not a re-skin.
+One header line (the forge, where you are, the clock, the live dot), a
+body of panes that fill the window and scroll on their own, and one footer
+line of key chips for the view you are in. Dark unless you chose a theme.
+Every pane is a live region: it swaps itself in place when a matching
+event lands, and the focus stays on the row it was on.
+
+**Home** (`/big`) is every app you can see as a row — name, how it runs
+itself, how many are working, how many asks wait, today's spend against
+the ceiling — and beside it the focused app at a glance: the direction's
+first line, who is working on what, the last three landed, the last three
+decisions. **App** (`/big?app=owner/name`) is four panes: working now
+(each run with its clock and cost), asks you (with the keys that decide
+them), the map panned to where the crew is, and landed. `r`, `i`, `p` and
+`m` open the runs, issues, pulls and the map alone as simple lists.
+**Run** (`/big?run=id`) is the transcript, followed, with the steer line
+under it. **Board** (`/big?view=board`) is the wall's four regions,
+focusable. **Map** (`/big?view=map`) is every app's lane; `j`/`k` move
+between lanes and `enter` opens the app.
+
+The keys are the same everywhere, and `?` shows the sheet for the view:
+
+| key                         | does                                                   |
+| --------------------------- | ------------------------------------------------------ |
+| `h` `j` `k` `l`, the arrows | move: `j`/`k` down and up a pane, `h`/`l` across panes |
+| `g` / `G`                   | top / bottom of the pane                               |
+| `ctrl-d` / `ctrl-u`         | half a page                                            |
+| `tab`, `shift-tab`, `1`–`9` | the next pane, the previous, a pane by number          |
+| `enter`                     | open the focused thing                                 |
+| `esc` / `backspace`         | back one level                                         |
+| `o`                         | open it in the web UI, in a new tab                    |
+| `:`                         | the command line                                       |
+| `/`                         | filter the pane as you type                            |
+| `?`                         | the key sheet                                          |
+| `f`                         | fullscreen                                             |
+| `s`                         | ship the focused green pull                            |
+| `x`                         | stop the focused run, close the focused ask            |
+| `t`                         | tell: the crew, the focused ask, or steer a run        |
+| `r` `i` `p` `m` (in an app) | runs, issues, pulls, the map                           |
+
+The command line takes `:app <name>` (or just `:<name>`), `:home`,
+`:board`, `:map`, `:runs`, `:issues`, `:pulls`, `:help` and `:q`, which
+leaves for the web UI. A gamepad works too: the d-pad and left stick move,
+A opens, B goes back, Y is the sheet, the bumpers switch panes, start is
+`:` and select is `/`. Every key presses a real control on the page — a
+row's link, a row's button, a chip in the footer — so the sheet can never
+promise what the page does not have. Nothing on it animates on its own:
+the clock ticks once a second, and the rest waits for a key.
+
 ## What the studio never does
 
 It never says _shipped_ before production redeployed, never hides that a

@@ -1780,7 +1780,11 @@ export const liveRegionsJs = /* js */ `
     fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
       .then(function (text) {
-        var fresh = new DOMParser().parseFromString(text, 'text/html');
+        // Parse a copy without the page's own <style>: the swap only ever
+        // reads a live region's innerHTML, never the head, and the fresh
+        // page carries a fresh nonce the live document's CSP cannot match —
+        // parsing it would log an inline-style violation for nothing.
+        var fresh = new DOMParser().parseFromString(text.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, ''), 'text/html');
         ids.forEach(function (id) {
           var mine = document.getElementById(id);
           var theirs = fresh.getElementById(id);

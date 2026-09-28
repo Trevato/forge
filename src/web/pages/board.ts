@@ -70,11 +70,39 @@ const pct = (n: number): number =>
   Math.max(0, Math.min(100, Math.round(n * 100)));
 
 /** The apps on the board: every one the viewer can see, or the named few. */
-interface Scope {
+export interface BoardScope {
   readonly repos: readonly Repo[];
   readonly ids: readonly string[];
   readonly byId: ReadonlyMap<string, Repo>;
   readonly records: ReadonlyMap<string, AppRecord>;
+}
+
+/** The scope for some app repositories: the board's, or the big view's. */
+export function boardScope(ctx: Ctx, repos: readonly Repo[]): BoardScope {
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  const kept = repos.filter((r) => records.has(r.id));
+  return {
+    repos: kept,
+    ids: kept.map((r) => r.id),
+    byId: new Map(kept.map((r) => [r.id, r])),
+    records,
+  };
+}
+
+/** The four regions, for a page that frames them its own way. */
+export function boardRegions(
+  ctx: Ctx,
+  scope: BoardScope,
+): { working: Html; landed: Html; decided: Html; today: Html } {
+  return {
+    working: working(ctx, scope),
+    landed: landed(ctx, scope),
+    decided: decided(ctx, scope),
+    today: today(ctx, scope),
+  };
 }
 
 // ---- the page ----
@@ -95,19 +123,17 @@ export function boardPage(ctx: Ctx): Response {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
   );
-  const repos = visible.filter(
-    (r) =>
-      records.has(r.id) &&
-      (wanted.size === 0 ||
-        wanted.has(r.name.toLowerCase()) ||
-        wanted.has(`${r.ownerName}/${r.name}`.toLowerCase())),
+  const scope = boardScope(
+    ctx,
+    visible.filter(
+      (r) =>
+        records.has(r.id) &&
+        (wanted.size === 0 ||
+          wanted.has(r.name.toLowerCase()) ||
+          wanted.has(`${r.ownerName}/${r.name}`.toLowerCase())),
+    ),
   );
-  const scope: Scope = {
-    repos,
-    ids: repos.map((r) => r.id),
-    byId: new Map(repos.map((r) => [r.id, r])),
-    records,
-  };
+  const repos = scope.repos;
 
   const body = html`<div class="board">
     <header class="board-top">
@@ -179,7 +205,7 @@ function region(
 
 // ---- working now ----
 
-function working(ctx: Ctx, scope: Scope): Html {
+function working(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   const runs = listActiveRuns(db, scope.ids);
   // Working first, by when it started; then what waits, by when it was queued.
@@ -209,6 +235,7 @@ function working(ctx: Ctx, scope: Scope): Html {
       <a
         class="board-card board-run"
         data-state="${word}"
+        data-key="run:${run.id}"
         href="${repoBase(repo)}/runs/${run.id}"
       >
         ${avatar(who)}
@@ -246,7 +273,7 @@ function working(ctx: Ctx, scope: Scope): Html {
 
 // ---- landed ----
 
-function landed(ctx: Ctx, scope: Scope): Html {
+function landed(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   const pulls = mergedPullsForRepos(db, scope.ids, 12);
   // The newest production picture of each app, on a phone, in one read.
@@ -276,6 +303,7 @@ function landed(ctx: Ctx, scope: Scope): Html {
     return html`<li>
       <a
         class="board-card board-landed"
+        data-key="pull:${pull.id}"
         href="${repoBase(repo)}/pulls/${pull.number}"
       >
         <span class="board-thumb"
@@ -307,7 +335,7 @@ function landed(ctx: Ctx, scope: Scope): Html {
 
 // ---- decided ----
 
-function decided(ctx: Ctx, scope: Scope): Html {
+function decided(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   const decisions = listDecisionsForRepos(db, scope.ids, 12);
   const about = getIssuesByIds(
@@ -330,7 +358,12 @@ function decided(ctx: Ctx, scope: Scope): Html {
     const answer =
       d.kind === "next" && issue !== undefined ? `#${issue.number}` : d.answer;
     return html`<li>
-      <a class="board-card board-decision" href="${href}" data-kind="${d.kind}">
+      <a
+        class="board-card board-decision"
+        data-key="decision:${d.id}"
+        href="${href}"
+        data-kind="${d.kind}"
+      >
         <span class="board-kind">${KIND_WORDS[d.kind]}</span>
         <span class="board-decision-main">
           <span class="board-answer">${answer}</span>
@@ -364,7 +397,7 @@ function decided(ctx: Ctx, scope: Scope): Html {
 
 // ---- today ----
 
-function today(ctx: Ctx, scope: Scope): Html {
+function today(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   const since = startOfTodayUtc(new Date()).toISOString();
   const rows = scope.repos
@@ -390,6 +423,7 @@ function today(ctx: Ctx, scope: Scope): Html {
       return html`<li>
         <a
           class="board-card board-app"
+          data-key="app:${repo.ownerName}/${repo.name}"
           href="${repoBase(repo)}"
           ${s.paused === null ? null : html`data-paused="${s.paused}"`}
         >
