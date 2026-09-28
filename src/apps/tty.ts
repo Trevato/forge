@@ -122,6 +122,9 @@ export async function runAppTty(
     return err({ refusal: "private", detail: "" });
   if (host.term === undefined) return err({ refusal: "no_pty", detail: "" });
   const runtime = appsRuntime(forge);
+  // A terminal opened on a sleeping environment wakes it first.
+  if (runtime?.envStatus(target.app, target.env)?.state === "asleep")
+    await runtime.wake(target.app, target.env);
   const live = runtime?.liveFor(target.app, target.env);
   if (runtime === undefined || live === undefined) {
     const status = runtime?.envStatus(target.app, target.env);

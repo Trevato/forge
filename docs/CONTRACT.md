@@ -214,14 +214,13 @@ rule and four under this one, the four doors it opened to anyone.)
 A pull whose head loosens its base's contract is at the wall: its page
 says so, with one sentence per cell ("note.create as anon: was no, now
 yes"), and the crew never lands it on its own, however green — it stays
-open on the studio's cards until a person lands it. A head whose contract
-does not read is at the wall too. `test/policy.test.ts` proves the crew
+open until a person lands it by hand. A head whose contract does not read
+is at the wall too. `test/policy.test.ts` proves the crew
 stops there and lands a tightening pull in the same breath.
 
 The crossing is a ledger row (`land`, answered `wall`, by `wall`) written
-once per head, which is what puts the pull on the studio as a card of its
-own: "it changes the policy: one door opens wider", with **Read the cells**,
-**Land it** and **Not like this**. The decider is never asked which way; a
+once per head; the pull's policy line and the audit's third lens read it
+and say which door opened wider. The decider is never asked which way; a
 wall is a person's alone.
 
 ## The third lens: what changed

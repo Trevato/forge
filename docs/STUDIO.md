@@ -82,7 +82,7 @@ run in flight — who, which app, what it is on, why, how long, what it has
 cost — ordered by when it started. **Landed** is the last dozen shipped
 changes across your apps, each with the app's production look on a phone.
 **Decided** is the last dozen entries in the decision ledger: which issue
-next, ship or show, try again — the answer, how sure the decider was, and
+next, a landing, try again — the answer, how sure the decider was, and
 what came of it. **Today** is one row per app that runs on its own: spend
 against the ceiling, runs, shipped, and whether it is paused. Every region
 is live — it swaps itself when a matching event lands, and the dot in the
