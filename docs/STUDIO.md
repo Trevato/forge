@@ -42,7 +42,10 @@ state, and once it is over, from what it produced: a pull, judged by
 (`checkRunWord`), closed without a merge is *stopped*, and merged is
 *shipped* only once production's live commit is at or past the one the
 merge carried (an ancestry check in git, not equality — a later merge
-already deploying it still counts). Between a merge and production
+already deploying it still counts). That check is one `git rev-list` of
+production's commit per repository per page, memoised on the page's
+`WordCtx` (`servingHistory`) and read by every row — never one git process
+per row, and never kept past the render. Between a merge and production
 catching up, the word is its own honest one — *working* while production
 deploys it, *stopped* if that deploy failed, *waiting* if production has
 not started on it yet — and it becomes *shipped* on the next render or

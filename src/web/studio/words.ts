@@ -9,7 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { mergeBase } from "../../git/merge.ts";
+import { ancestorsOf } from "../../git/merge.ts";
 import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getIssueById } from "../../core/issues.ts";
@@ -36,16 +36,35 @@ export type Word =
   | "cancelled";
 
 /**
+ * Production's history as one page has asked it: the ancestry of each
+ * distinct (git directory, production commit) it met, read from git once
+ * and shared by every row after — a page of N merged changes is one spawn
+ * per repository, not N. Made fresh for each render (`servingHistory`) and
+ * dropped with it, so a deploy that lands is seen on the very next page.
+ */
+export type ServingHistory = Map<
+  string,
+  Promise<ReadonlySet<string> | undefined>
+>;
+
+/** An empty memo for one page's render. */
+export function servingHistory(): ServingHistory {
+  return new Map();
+}
+
+/**
  * Everything the word functions below need to see production: the repo's
- * git directory (an ancestry check reads it), and the runtime plus the
- * app record, when the repository runs one. Built once per page and
- * threaded through — never a second way to ask what is serving.
+ * git directory (an ancestry check reads it), the runtime plus the app
+ * record, when the repository runs one, and the page's memo of what
+ * production's history holds. Built once per page and threaded through —
+ * never a second way to ask what is serving.
  */
 export interface WordCtx {
   readonly db: Database;
   readonly dir: string;
   readonly runtime: AppsRuntime | undefined;
   readonly record: AppRecord | undefined;
+  readonly history: ServingHistory;
 }
 
 /**
@@ -64,15 +83,22 @@ function pullFromRun(db: Database, run: Run): Pull | undefined {
   return pullForBranch(db, run.repoId, run.branch);
 }
 
-/** Whether production is serving this commit, or something later than it. */
+/** Whether production is serving this commit, or something later than it:
+ * ancestry, never equality, asked of git once per page and repository. */
 async function caughtUp(
-  dir: string,
+  ctx: WordCtx,
   production: EnvStatus | undefined,
   commitOid: string,
 ): Promise<boolean> {
   if (production === undefined || production.commitOid === "") return false;
   if (production.commitOid === commitOid) return true;
-  return (await mergeBase(dir, commitOid, production.commitOid)) === commitOid;
+  const key = `${ctx.dir}\0${production.commitOid}`;
+  let ancestry = ctx.history.get(key);
+  if (ancestry === undefined) {
+    ancestry = ancestorsOf(ctx.dir, production.commitOid);
+    ctx.history.set(key, ancestry);
+  }
+  return (await ancestry)?.has(commitOid) ?? false;
 }
 
 /** A merged pull production has not caught up to yet: its own honest word. */
@@ -149,7 +175,7 @@ export async function pullWord(
     const production = ctx.runtime
       .status(ctx.record)
       .find((e) => e.env === "production");
-    if (await caughtUp(ctx.dir, production, commitOid))
+    if (await caughtUp(ctx, production, commitOid))
       return { word: "shipped", note: "production is serving it" };
     return mergedPullWord(production, commitOid);
   }

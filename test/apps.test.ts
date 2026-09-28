@@ -48,7 +48,7 @@ import {
   STOPPED_SUMMARY,
   type Run,
 } from "../src/core/runs.ts";
-import { runWord } from "../src/web/studio/words.ts";
+import { runWord, servingHistory } from "../src/web/studio/words.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -1929,6 +1929,7 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
         dir: repoDir(app.reposRoot, repo.ownerName, repo.name),
         runtime: undefined,
         record: undefined,
+        history: servingHistory(),
       },
       finished!,
     );

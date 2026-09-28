@@ -49,6 +49,7 @@ import {
   runWord,
   wordBadge,
   type Word,
+  servingHistory,
   type WordCtx,
 } from "./words.ts";
 
@@ -148,6 +149,7 @@ export async function studioTells(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
+    history: servingHistory(),
   };
   const closingPulls = openPullsClosing(db, repo.id);
   const words = await Promise.all(
@@ -243,6 +245,7 @@ export async function studioChanges(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
+    history: servingHistory(),
   };
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),
@@ -357,6 +360,7 @@ export async function studioRuns(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
+    history: servingHistory(),
   };
   const actors = actorsFor(ctx, fetched);
   const issues = issuesFor(ctx, fetched);

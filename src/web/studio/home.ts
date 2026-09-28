@@ -27,7 +27,7 @@ import { withLikely } from "./leans.ts";
 import { changeHref } from "./nouns.ts";
 import { stopForm } from "./run.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
-import { pullWord, wordBadge, type WordCtx } from "./words.ts";
+import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /**
  * The home in the studio: what asks you first, then your apps as a shelf of
@@ -48,7 +48,14 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   // Read once, shown twice again: a shipped or failed deploy is a row's own
   // word, and — when nothing is running and no change waits — the rail's.
   const productionFacts = productionFactsForRepos(ctx, appRepos);
-  const appRows = await shelfRows(ctx, appRepos, { decisions, productionFacts });
+  // One memo of production's history for every word on this page: the
+  // shelf's rows and the Now list below ask it once per repository.
+  const history = servingHistory();
+  const appRows = await shelfRows(ctx, appRepos, {
+    decisions,
+    productionFacts,
+    history,
+  });
 
   // What the crew cost today across every app on the shelf, and how many
   // are paused at their ceiling right now — the owner's first question at
@@ -179,6 +186,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
                     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
                     runtime,
                     record: records.get(repo.id),
+                    history,
                   },
                   pull,
                 );

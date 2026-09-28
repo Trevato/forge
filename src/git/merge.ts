@@ -173,6 +173,20 @@ export async function mergeBase(
   return result.ok ? result.value.trim() : undefined;
 }
 
+/**
+ * Every commit reachable from `oid`, itself included — the whole ancestry in
+ * one spawn, so a page asking "is this at or behind that" of many commits
+ * reads a set instead of running `mergeBase` once per commit.
+ */
+export async function ancestorsOf(
+  dir: string,
+  oid: string,
+): Promise<ReadonlySet<string> | undefined> {
+  if (!isSafeOid(oid)) return undefined;
+  const result = await runGit(["rev-list", oid], { cwd: dir });
+  return result.ok ? new Set(result.value.split("\n")) : undefined;
+}
+
 /** Count commits reachable from head but not base (the PR's commit count). */
 export async function aheadCount(
   dir: string,

@@ -38,7 +38,7 @@ import {
   decisionsFor,
   type Decision,
 } from "./asks.ts";
-import { pullWord, wordBadge, type WordCtx } from "./words.ts";
+import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /** What a conflicted change's own page says: the base it no longer merges
  * into, the first few files (bounded, so a huge conflict never floods the
@@ -76,6 +76,7 @@ export async function studioPull(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
+    history: servingHistory(),
   };
   const { word, note: checkNote } = await pullWord(wordCtx, pull);
   // Whether this change still merges into its base is asked here, on its own

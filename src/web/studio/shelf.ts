@@ -47,7 +47,9 @@ import {
   productionFact,
   pullWord,
   runWord,
+  servingHistory,
   type ProductionFact,
+  type ServingHistory,
   type WordCtx,
 } from "./words.ts";
 
@@ -58,6 +60,9 @@ export interface ShelfReads {
   /** Production's own fact for each app — a deploy that just landed or just
    * failed. The home rail reads the same map for its own rows. */
   readonly productionFacts?: ReadonlyMap<string, ProductionFact> | undefined;
+  /** The page's memo of production's history, when the page words more
+   * than the shelf — the home's own rows ask the same question. */
+  readonly history?: ServingHistory | undefined;
 }
 
 /**
@@ -109,6 +114,7 @@ export async function shelfRows(
   const db = ctx.app.db;
   const user = ctx.auth.user;
   const runtime = appsRuntime(ctx.app);
+  const history = reads.history ?? servingHistory();
   const records = appsForRepos(
     db,
     repos.map((r) => r.id),
@@ -177,6 +183,7 @@ export async function shelfRows(
       dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
       runtime,
       record,
+      history,
     };
     const agentWord =
       useOpenPull || latest === undefined

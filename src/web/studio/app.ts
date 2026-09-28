@@ -58,7 +58,7 @@ import { appPanels } from "./previews.ts";
 import { stopForm } from "./run.ts";
 import { tellWord } from "./tell.ts";
 import { voiceFor, type Actor } from "./voice.ts";
-import { pullWord, runWord, wordBadge, type WordCtx } from "./words.ts";
+import { pullWord, runWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -164,6 +164,7 @@ export async function studioApp(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
+    history: servingHistory(),
   };
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);

@@ -2,7 +2,7 @@
  * The studio: apps as the unit, three verbs, and a switch to dev. The same
  * URLs answer in both modes; the cookie decides which face they show.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,7 +49,13 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { pendingLeans, pullWord, runWord, type WordCtx } from "../src/web/pages/studio.ts";
+import {
+  pendingLeans,
+  pullWord,
+  runWord,
+  servingHistory,
+  type WordCtx,
+} from "../src/web/pages/studio.ts";
 import { servedPhrase } from "../src/web/ui.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { appendRunLog } from "../src/runs/log.ts";
@@ -3604,6 +3610,7 @@ describe("words come from facts, not from run.summary", () => {
       dir: repoDir(app.reposRoot, repo.ownerName, repo.name),
       runtime,
       record,
+      history: servingHistory(),
     };
   });
 
@@ -3642,6 +3649,66 @@ describe("words come from facts, not from run.summary", () => {
     put({ commitOid: pull.mergedOid! });
     const now = await pullWord(wordCtx, pull);
     expect(now.word).toBe("shipped");
+  });
+
+  test("a page of merged pulls asks git about production once, however many rows (#285)", async () => {
+    const pulls: Pull[] = [];
+    for (let i = 0; i < 5; i++) {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: `feature/many-${i}`,
+        base: "main",
+        message: `Many ${i}`,
+        files: [{ path: `MANY-${i}.md`, content: `${i}\n` }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, alice, repo, {
+        title: `Many ${i}`,
+        body: "",
+        baseBranch: "main",
+        headBranch: `feature/many-${i}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const merged = await mergePull(app, alice, repo, opened.value, "squash");
+      if (!merged.ok) throw new Error(String(merged.error));
+      pulls.push(getPull(app.db, repo.id, opened.value.number)!);
+    }
+
+    // Every git process spawned while one page's words are decided.
+    const spawned: string[] = [];
+    const original = Bun.spawn.bind(Bun);
+    const spy = spyOn(Bun, "spawn").mockImplementation(((
+      cmd: string[],
+      options: never,
+    ) => {
+      if (cmd[0] === "git") spawned.push(cmd.slice(1).join(" "));
+      return original(cmd, options);
+    }) as unknown as typeof Bun.spawn);
+    const wordsOfOnePage = async (): Promise<string[]> => {
+      const page: WordCtx = { ...wordCtx, history: servingHistory() };
+      const words = await Promise.all(pulls.map((p) => pullWord(page, p)));
+      return words.map((w) => w.word);
+    };
+    try {
+      // Production at the second merge: that one and the one before it are
+      // shipped (ancestry, not equality), the three after it are not.
+      put({ commitOid: pulls[1]!.mergedOid! });
+      expect(await wordsOfOnePage()).toEqual([
+        "shipped",
+        "shipped",
+        "waiting",
+        "waiting",
+        "waiting",
+      ]);
+      expect(spawned).toHaveLength(1);
+
+      // A new page is a new question: the deploy that just landed is seen.
+      spawned.length = 0;
+      put({ commitOid: pulls[4]!.mergedOid! });
+      expect(new Set(await wordsOfOnePage())).toEqual(new Set(["shipped"]));
+      expect(spawned).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('an agent run that opened no pull and pushed nothing is not shipped', async () => {

@@ -31,7 +31,7 @@ import { costText, durationText, runTitle } from "../pages/runs.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
-import { runWord, wordBadge, type WordCtx } from "./words.ts";
+import { runWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /**
  * The one control a live run has: a person who can write here stops a
@@ -94,6 +94,7 @@ export async function studioRun(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record: getAppByRepo(db, repo.id),
+    history: servingHistory(),
   };
   const { word } = await runWord(wordCtx, run);
   const unfinished = !isTerminal(run.state);

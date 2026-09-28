@@ -10,4 +10,9 @@
 
 export { decisionsFor } from "../studio/asks.ts";
 export { pendingLeans, withLikely } from "../studio/leans.ts";
-export { pullWord, runWord, type WordCtx } from "../studio/words.ts";
+export {
+  pullWord,
+  runWord,
+  servingHistory,
+  type WordCtx,
+} from "../studio/words.ts";

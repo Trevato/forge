@@ -43,6 +43,7 @@ import {
   runWord,
   wordBadge,
   type Word,
+  servingHistory,
   type WordCtx,
 } from "./words.ts";
 
@@ -232,6 +233,7 @@ export async function studioTell(
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record: getAppByRepo(db, repo.id),
+    history: servingHistory(),
   };
   const [wordInfo, runsCard, closingCard] = await Promise.all([
     direction ? undefined : tellWord(wordCtx, repo, issue, closingPull),
