@@ -731,13 +731,7 @@ export const migrations: readonly string[] = [
   CREATE INDEX decision_repo ON decision(repo_id, created_at);
   `,
 
-  // 23 — the moment a deploy started serving: set once, at the swap-in,
-  // distinct from `finished_at` which waits on the tests beside it.
-  `
-  ALTER TABLE run ADD COLUMN serving_at TEXT;
-  `,
-
-  // 24 — the look: a picture of an environment at a commit, at each of two
+  // 23 — the look: a picture of an environment at a commit, at each of two
   // widths, or the reason there is none. Rows go with the app.
   `
   CREATE TABLE look (
@@ -815,7 +809,13 @@ export const migrations: readonly string[] = [
   ALTER TABLE run ADD COLUMN subscription_id TEXT;
   `,
 
-  // 27 — a failed check's own detail: the pass/fail counts and the first
+  // 27 — the moment a deploy started serving: set once, at the swap-in,
+  // distinct from `finished_at` which waits on the tests beside it.
+  `
+  ALTER TABLE run ADD COLUMN serving_at TEXT;
+  `,
+
+  // 28 — a failed check's own detail: the pass/fail counts and the first
   // few failing names, recognised once from a `bun test` tail as the run
   // finishes (`checks/bun-test.ts`) and stored as JSON beside the run, so a
   // page that shows it never re-parses a log. Empty when the run passed or
@@ -825,7 +825,7 @@ export const migrations: readonly string[] = [
   ALTER TABLE run ADD COLUMN check_detail TEXT NOT NULL DEFAULT '';
   `,
 
-  // 28 — a third width: thumb, a picture taken small for a slot that only
+  // 29 — a third width: thumb, a picture taken small for a slot that only
   // ever showed one small, instead of a full phone or desktop picture
   // squeezed into it. SQLite's CHECK cannot be altered in place, so the
   // table is rebuilt; every row already there keeps its id and content.
@@ -846,7 +846,7 @@ export const migrations: readonly string[] = [
   ALTER TABLE look_new RENAME TO look;
   `,
 
-  // 29 — take it back: a pull that reverts another, named explicitly rather
+  // 30 — take it back: a pull that reverts another, named explicitly rather
   // than sniffed from its title. `reverts_issue_id` points at the issue the
   // shipped pull was (a pull is its own issue), so "was this already taken
   // back" is one lookup rather than a guess from wording.
@@ -855,7 +855,7 @@ export const migrations: readonly string[] = [
   CREATE INDEX pull_reverts ON pull(reverts_issue_id) WHERE reverts_issue_id IS NOT NULL;
   `,
 
-  // 30 — a look knows which page it is of: `app.looks` in `forge.json` can
+  // 31 — a look knows which page it is of: `app.looks` in `forge.json` can
   // name more than the home page. `page` defaults to `/`, so every row
   // taken before this migration reads as exactly what it always was — a
   // picture of the home page. The unique constraint gains `page` so two
