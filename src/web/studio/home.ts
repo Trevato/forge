@@ -75,9 +75,9 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       isPausedAtCeiling(r, crew, spentToday),
     ).length;
     const noun = `app${appRepos.length === 1 ? "" : "s"}`;
+    const sentence = `$${spentUsd.toFixed(2)} spent today across ${appRepos.length} ${noun} you can write`;
     return html`<p class="small muted studio-cost">
-      $${spentUsd.toFixed(2)} spent today across ${appRepos.length} ${noun} you
-      can write · ${paused} paused at <a href="/map">their ceiling</a>
+      ${sentence} · ${paused} paused at <a href="/map">their ceiling</a>
     </p>`;
   });
 
@@ -94,6 +94,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
             <h2>Your apps</h2>
             <span class="spacer"></span>
             ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
+            ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
             ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`,
         });
 

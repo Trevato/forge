@@ -119,7 +119,7 @@ describe("apps, runs and the crew on the web", () => {
       }),
       redirect: "manual",
     });
-    return (response.headers.get("set-cookie") ?? "").split(";")[0]!;
+    return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
   };
 
   const user = (name: string): User => getUserByName(app.db, name)!;
@@ -193,7 +193,7 @@ describe("apps, runs and the crew on the web", () => {
       },
     });
     expect(created.status).toBe(303);
-    expect(created.headers.get("location")).toBe("/alice/hello");
+    expect(created.headers.get("location")).toBe("/alice/hello/app");
     expect(flashOf(created)).toContain(
       `hello is starting at http://hello.${DOMAIN}:${servers.port}`,
     );
@@ -286,7 +286,8 @@ describe("apps, runs and the crew on the web", () => {
     expect(redeployed.status).toBe(303);
     const buf = await readUntil(
       res.body!,
-      (b) => b.includes("event: run.started") || b.includes("event: app.serving"),
+      (b) =>
+        b.includes("event: run.started") || b.includes("event: app.serving"),
     );
     expect(
       buf.includes("event: run.started") || buf.includes("event: app.serving"),

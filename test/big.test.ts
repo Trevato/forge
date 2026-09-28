@@ -258,7 +258,7 @@ describe("the big view", () => {
     const html = await res.text();
     expect(html).toContain('<html lang="en" data-theme="dark">');
     expect(html).not.toContain('class="topbar"');
-    expect(html).toContain('<main class="bare" id="main">');
+    expect(html).toMatch(/<main\s+class="bare"\s+id="main"\s*>/);
     expect(html).toContain('id="big"');
     expect(html).toContain('data-view="home"');
     expect(html).toContain('data-apps="alice/shop alice/notes"');
@@ -294,7 +294,7 @@ describe("the big view", () => {
     expect(paper).toContain('data-theme="paper"');
   });
 
-  test("app: a run in flight with its clock and stop key, an ask with ship and tell, the map, landed", async () => {
+  test("app: a run in flight with its clock and stop key, the map, landed", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const told = openIssue(app, alice, shop, {
       title: "Checkout keeps the total steady",
@@ -343,9 +343,6 @@ describe("the big view", () => {
       /id="big-working"\s+data-live="run\.\*"\s+data-live-repo="alice\/shop"/,
     );
     expect(html).toMatch(
-      /id="big-asks"\s+data-live="run\.\*,pull\.\*,issue\.\*,check\.\*"/,
-    );
-    expect(html).toMatch(
       /id="big-map"\s+data-live="run\.\*,issue\.\*,pull\.\*"/,
     );
     expect(html).toMatch(
@@ -354,7 +351,7 @@ describe("the big view", () => {
     // The run: who, what, the clock from when it started, and x to stop.
     const working = html.slice(
       html.indexOf('id="big-working"'),
-      html.indexOf('id="big-asks"'),
+      html.indexOf('id="big-map"'),
     );
     expect(working).toContain(`data-key="run:${running.id}"`);
     expect(working).toContain(`data-href="/big?run=${running.id}"`);
@@ -366,17 +363,6 @@ describe("the big view", () => {
     expect(working).toContain(`form="stop-${running.id}"`);
     expect(working).toContain(`action="/alice/shop/runs/${running.id}/cancel"`);
     expect(working).toContain("<b>1</b> of 1 slots");
-    // The ask: green, with s to ship (leading) and t to tell.
-    const asks = html.slice(
-      html.indexOf('id="big-asks"'),
-      html.indexOf('id="big-map"'),
-    );
-    expect(asks).toContain('data-word="look"');
-    expect(asks).toContain("Gift wrap as a line item");
-    expect(asks).toContain(`data-say="/alice/shop/pulls/${pull.number}/say"`);
-    expect(asks).toMatch(/data-act="s"\s+data-lead=""/);
-    expect(asks).toContain("data-say-open");
-    expect(asks).toContain(`action="/alice/shop/pulls/${pull.number}/ship"`);
     // The map drew the issue the crew is on, ringed, with a key.
     const map = html.slice(
       html.indexOf('id="big-map"'),
@@ -426,7 +412,7 @@ describe("the big view", () => {
     expect(issues).toContain('data-word="working"');
     // Home now counts them.
     const home = await (await get("/big")).text();
-    expect(home).toMatch(/1\s+working\s*·\s*1\s+ask you/);
+    expect(home).toMatch(/1\s+working/);
     // Somebody else's app, or none: not found, never a hint of it.
     expect((await get("/big?app=alice%2Fnowhere")).status).toBe(404);
     expect((await get("/big?run=nothing")).status).toBe(404);

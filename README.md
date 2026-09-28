@@ -11,9 +11,9 @@ branch, so the only way code reaches production is a merge a person made: the
 crew proposes, you decide what ships.
 
 That view is the **studio**, and it is the front door — a browser with no
-`forge_mode` cookie lands there. It speaks five words for the whole loop:
-_tell_, _working_, _look_, _shipped_, and _asks you_, the last being everything
-waiting on a person to answer. [`docs/STUDIO.md`](docs/STUDIO.md) is the tour;
+`forge_mode` cookie lands there. It speaks four words for the whole loop:
+_tell_, _working_, _look_ and _shipped_; an autonomous app lands its own
+green changes, and nothing waits on a person. [`docs/STUDIO.md`](docs/STUDIO.md) is the tour;
 [`docs/APPS.md`](docs/APPS.md) is the contract for apps, previews and runs. The
 git underneath is one click away — the switch in the top bar, or `?mode=dev` on
 any URL — and it is the rest of this page.

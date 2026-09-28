@@ -289,7 +289,7 @@ describe("the studio", () => {
     expect(sheet.headers.get("content-type")).toContain("text/css");
     const css = await sheet.text();
     expect(css).toContain(".studio-tell textarea");
-    expect(css).toContain(".studio-bulk-count");
+    expect(css).toContain(".studio-ask-actions");
     expect(css).toContain("@keyframes studio-flash");
     expect(css).toContain('.board-fill[data-w="100"]');
     // In the `components` layer, last: an inline block used to win over every
@@ -1340,7 +1340,7 @@ describe("the studio", () => {
     expect(anon).toContain('href="/signin"');
     expect(anon).toContain('href="/signup"');
     expect(anon).not.toContain(">notes<");
-    expect(anon).not.toContain("Your code, your machine");
+    expect(anon).not.toContain("<h1>Your code, your machine.</h1>");
 
     // The private app's picture 404s for a stranger — asserted, not assumed.
     const privateLook = await fetch(
@@ -2036,13 +2036,12 @@ describe("the studio home keeps itself current", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("Asks you, Your apps, Happening now and On you are each a live region, with the security floor's headers", async () => {
+  test("Your apps, Happening now and On you are each a live region, with the security floor's headers", async () => {
     const res = await get();
     expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("referrer-policy")).toBe("same-origin");
     const home = await res.text();
-    expect(home).toMatch(/id="live-asks"\s+data-live="/);
     expect(home).toMatch(/id="live-apps"\s*\n?\s*data-live="/);
     expect(home).toMatch(/id="live-now"\s+data-live="/);
     expect(home).toMatch(/id="live-on-you"\s*\n?\s*data-live="/);

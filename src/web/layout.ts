@@ -509,11 +509,46 @@ export function page(options: PageOptions, status = 200): Response {
     <html lang="en" ${theme ? html`data-theme="${theme}"` : null}>
       <head>
         <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
         <title>${options.title} · forge</title>
         <meta name="description" content="${pageDescription(options)}" />
+        <meta property="og:site_name" content="forge" />
+        <meta property="og:type" content="website" />
         <meta property="og:title" content="${options.title}" />
         <meta property="og:description" content="${pageDescription(options)}" />
+        ${
+          // Only a page that exists has a canonical address. An error page
+          // never echoes the path that was asked for: two dead links must be
+          // the same bytes, or the difference tells a guesser something.
+          status === 200
+            ? html`<meta
+                property="og:url"
+                content="${ctx.url.origin}${ctx.url.pathname}"
+              />`
+            : null
+        }
+        <meta
+          property="og:image"
+          content="${ctx.url.origin}/icons/forge-512.png"
+        />
+        <meta name="twitter:card" content="summary" />
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/icons/forge-180.png" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="forge" />
+        ${when(
+          options.feed,
+          (f) =>
+            html`<link
+              rel="alternate"
+              type="application/atom+xml"
+              title="${f.title}"
+              href="${f.href}"
+            />`,
+        )}
         ${when(
           options.refresh,
           (r) =>
@@ -560,7 +595,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
   });

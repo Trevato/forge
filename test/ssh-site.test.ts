@@ -60,7 +60,7 @@ describe("the terminal on the website", () => {
       }),
       redirect: "manual",
     });
-    cookie = (response.headers.get("set-cookie") ?? "").split(";")[0]!;
+    cookie = `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
   });
 
   afterAll(async () => {

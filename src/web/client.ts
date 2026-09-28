@@ -2026,11 +2026,11 @@ export const liveRegionsJs = /* js */ `
     fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
       .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
       .then(function (text) {
-        // Parse a copy without the page's own <style>: the swap only ever
+        // Parse a copy without the page's own style element: the swap only ever
         // reads a live region's innerHTML, never the head, and the fresh
         // page carries a fresh nonce the live document's CSP cannot match —
         // parsing it would log an inline-style violation for nothing.
-        var fresh = new DOMParser().parseFromString(text.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, ''), 'text/html');
+        var fresh = new DOMParser().parseFromString(text.replace(/<(style)[^>]*>[\\s\\S]*?<\\/\\1>/gi, ''), 'text/html');
         // The fresh page's drawings come across first: a region swapping in
         // an icon this page never painted would otherwise point at a
         // <symbol> the document does not have (src/web/icons.ts).

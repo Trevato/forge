@@ -303,12 +303,12 @@ describe("forks", () => {
 
     const behind = await pageAs("/dan/app", danCookie);
     expect(behind).toContain("1 commit behind");
-    expect(behind).toContain("Update from parent");
+    expect(behind).toContain("Take updates");
 
     // Bob committed on his fork and alice moved on twice since: an update
     // would be refused, so the page says why instead of offering one.
     const diverged = await pageAs("/bob/app", await signIn("bob"));
-    expect(diverged).toContain("1 commit of its own");
+    expect(diverged).toContain("1 of your own");
     expect(diverged).toContain("2 behind");
     expect(diverged).not.toContain("Update from parent");
   });

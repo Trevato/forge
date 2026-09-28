@@ -407,7 +407,7 @@ describe("origins on the web", () => {
     expect(pinned.status).toBe(303);
     expect(listPins(app.db, aliceId)).toHaveLength(1);
 
-    const dash = await (await asUser(alice, "/")).text();
+    const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
     expect(dash).toContain("Pinned");

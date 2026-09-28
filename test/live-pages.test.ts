@@ -134,7 +134,6 @@ describe("live browsing pages", () => {
     const signedOut = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
-    expect(signedOut).not.toContain('id="live-asks"');
     expect(signedOut).not.toContain('id="live-on-you"');
 
     const user = await createUser(app.db, {
@@ -161,7 +160,6 @@ describe("live browsing pages", () => {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();
-    expect(html).toContain('id="live-asks"');
     expect(html).toContain('id="live-apps"');
     expect(html).toContain('id="live-now"');
     expect(html).toContain('id="live-on-you"');

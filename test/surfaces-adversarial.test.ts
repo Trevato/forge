@@ -114,7 +114,7 @@ describe("surfaces adversarial: web", () => {
       }),
       redirect: "manual",
     });
-    return (response.headers.get("set-cookie") ?? "").split(";")[0]!;
+    return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
   };
 
   beforeAll(async () => {
@@ -656,7 +656,7 @@ async function loginAs(
     body: new URLSearchParams({ username, password }),
     redirect: "manual",
   });
-  return (response.headers.get("set-cookie") ?? "").split(";")[0]!;
+  return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
 }
 
 // ============================================================================

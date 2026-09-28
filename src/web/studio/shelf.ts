@@ -39,7 +39,7 @@ import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
-import { html, type Html } from "../html.ts";
+import { escapeHtml, html, raw, type Html } from "../html.ts";
 import { dot, envPhrase, envTone, pill, row, time } from "../ui.ts";
 import {
   productionFact,
@@ -268,9 +268,9 @@ export async function shelfRows(
         meta: html`${repo.description
           ? html`${repo.description} · `
           : null}${happening}`,
-        trail: html`<span class="badge" data-tone="${tone}"
-          >${live.word}</span
-        >`,
+        trail: raw(
+          `\n        <span class="badge" data-tone="${tone}">${escapeHtml(live.word)}</span>`,
+        ),
       });
     }),
   );

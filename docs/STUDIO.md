@@ -25,35 +25,34 @@ behind it.
 
 Every word on a studio page is one thing in git, and dev mode shows it.
 
-| studio says  | git underneath                                          |
-| ------------ | ------------------------------------------------------- |
-| **tell**     | an issue, assigned to a builder by the routing decision |
-| **working**  | a run, streaming its log                                |
-| **look**     | an open pull with a green check and a preview           |
-| **shipped**  | a merge to the default branch, production redeployed    |
-| **asks you** | a pull the crew stopped on, or a green one for a look   |
+| studio says | git underneath                                          |
+| ----------- | ------------------------------------------------------- |
+| **tell**    | an issue, assigned to a builder by the routing decision |
+| **working** | a run, streaming its log                                |
+| **look**    | an open pull with a green check and a preview           |
+| **shipped** | a merge to the default branch, production redeployed    |
 
 Every word above is decided in one place (`runWord` and `pullWord`,
 `src/web/studio/words.ts`), from facts — never from a run's own summary
 text, which stays the note beside the word. A run's word comes from its
 state, and once it is over, from what it produced: a pull, judged by
-`pullWord`, or nothing to show, which is *planned* rather than a guess at
-*shipped*. A pull's word comes from its own state: open goes by its check
-(`checkRunWord`), closed without a merge is *stopped*, and merged is
-*shipped* only once production's live commit is at or past the one the
+`pullWord`, or nothing to show, which is _planned_ rather than a guess at
+_shipped_. A pull's word comes from its own state: open goes by its check
+(`checkRunWord`), closed without a merge is _stopped_, and merged is
+_shipped_ only once production's live commit is at or past the one the
 merge carried (an ancestry check in git, not equality — a later merge
 already deploying it still counts). That check is one `git rev-list` of
 production's commit per repository per page, memoised on the page's
 `WordCtx` (`servingHistory`) and read by every row — never one git process
 per row, and never kept past the render. Between a merge and production
-catching up, the word is its own honest one — *working* while production
-deploys it, *stopped* if that deploy failed, *waiting* if production has
-not started on it yet — and it becomes *shipped* on the next render or
+catching up, the word is its own honest one — _working_ while production
+deploys it, _stopped_ if that deploy failed, _waiting_ if production has
+not started on it yet — and it becomes _shipped_ on the next render or
 live event, no reload needed. The app page, the change page and the home
 all call the same two functions; nothing here is re-derived per surface.
 
 These are also a kanban board: tell is the backlog, working is in progress,
-look is review, shipped is done, asks you is blocked. The crew's slot count
+look is review, shipped is done. The crew's slot count
 (**Settings → Autonomy**) is the WIP limit. The map is the plan. A week's
 level-and-flow chart on the map is the cycle. Green check, preview, merged
 is the definition of done. None of that needs its own vocabulary on the
@@ -104,16 +103,16 @@ ceiling, how many may work at once, and whether it is paused and why. It is
 a studio page over the very same actions dev's Crew and Autonomy settings
 already use (`src/actions/crew.ts`, `updateRepoSettings`) — same
 same-origin check, same authorization, same errors; nothing here decides a
-mutation a second way. *The rest of the settings* — visibility, the
+mutation a second way. _The rest of the settings_ — visibility, the
 default branch, branch protection, labels, webhooks, environment
 variables, deploy keys, danger — stays dev's, one link away
 (`?mode=dev`), where the tab strip still has Crew and Autonomy of its own.
 
-**The owner's facts and the public's.** What an app *is* — its description,
-whether it is live, its address, the look, *Open the app*, and how many
+**The owner's facts and the public's.** What an app _is_ — its description,
+whether it is live, its address, the look, _Open the app_, and how many
 changes it has shipped — is the point of a public app and stays on the
 page for anyone who can read the repository, signed in or not. What
-running it *costs* — every dollar figure, the day's ceiling and slot
+running it _costs_ — every dollar figure, the day's ceiling and slot
 count, the decision ledger, and who is on the crew — is the owner's own
 book-keeping, not the app's, and is computed at all only for a viewer who
 can write to the repository: `canSeeOwnerFacts` (`src/core/repos.ts`,
@@ -132,7 +131,7 @@ it already answers only to people who can read it at all.
 
 **Whose name a row carries** is one rule, in one place — `voiceFor`
 (`src/web/studio/voice.ts`), which the app's page, a run's own page and the
-board all sign their rows with. An agent's name is *not* a secret: a
+board all sign their rows with. An agent's name is _not_ a secret: a
 change's own page and `/changes` name the agent that opened it to anyone
 who can read the repository. "The crew" is a voice, not a redaction, and it
 is chosen by **what the actor is** first: a person is named to every viewer
@@ -159,52 +158,22 @@ fixed-choice function (`crew/autonomy.ts`, `pickBuilder`), the place a
 faster or wiser decider plugs in. The run starts on the crew's next tick,
 and the page shows it waiting, then working.
 
-**Asks you** is every parked question a person has to answer, three
-sentences each with the real options in place. A pull the crew stopped on
-— red past the crew's own limit since a person last spoke — offers _tell
-them what to try_ (a comment, which starts a feedback run), _close it_,
-and _see the change_. A green pull waiting for a look offers _open the
-preview_, _ship it_ (a squash merge, as you, with your review and check
-requirements enforced inside it), and _not like this_ (a comment); its row
-leads with the preview as pictured on a phone (`docs/APPS.md`, _The look_),
-and the picture opens the pull, where both pictures are. A repository
-paused at its ceiling says so, with the way to settings. A pull
-the crew is on right now — a run queued or running for it — is working,
-not a question, and is not listed until the crew is done with it. An
-autonomous app's green pulls are never a question: the decider and the
-crew's reviewer look at them, and conflicts with `main` are the builder's
-to fix, so what reaches you from an autonomous app is only the day's ceiling;
-what the crew cannot finish it parks and re-plans rather than hands to
-you. Shipping a pull that conflicts, from any app, sends its agent
-to bring the branch up to date rather than handing you the conflict. Nothing
-here re-queues anything: a re-queue button is what an operator presses
-instead of deciding.
-
-Check several asks and one bar above them offers what fits them all — ship
-the green ones, close the stopped ones — as one decision (`POST
-/studio/asks`), each done exactly as its own button would have. Deciding
-never leaves the page: the row looks busy until it lands, then goes; one
-that could not be done stays, with the reason on it.
-
-When a decider is configured, an ask card's own option can carry a **lean**
-— a small word (_likely_, _probably_, _maybe_) beside the option a careful
-owner would pick, from asking the decider the same question a person is
-looking at. The lean is never why the page waits: a card renders with
-whatever lean is already known, and a card with none yet is asked for after
-the page is on its way to the browser, so the answer is there on a later
-render, not this one. A forge with no decider configured shows no lean and
-asks nothing, exactly as before deciders existed.
-
-**Now** lists what was told and not yet picked up, every open pull with its
-state, and the last runs, each in one of the five words with who and when.
-A run in flight carries _Stop_ (running) or _Cancel_ (waiting) for anyone
-who can write here; its title opens the transcript, where the agent can be
-steered mid-run (see `docs/APPS.md`, _Runs_).
+**Nothing waits on you.** An autonomous app lands its own green changes
+once `main` merges cleanly and the wall is clear (`docs/CONTRACT.md`). A
+conflict sends its builder to bring the branch up to date; a red check past
+the crew's tries parks the issue back on the map for a fresh plan rather
+than handing it to you. The one thing that stops a change is the wall — a
+contract loosened — and that shows on the change and in the audit, never
+as a queue here. A repository paused at its ceiling says so on its own
+card, with the way to settings. An assisted app's green change carries its
+own **Ship** and **Not like this** on the change's page, and nowhere else.
+Nothing here re-queues anything: a re-queue button is what an operator
+presses instead of deciding.
 
 ## The three lists
 
 `/:owner/:name/issues`, `/pulls` and `/runs` on an app, in the studio, are
-*everything told*, *every change* and *every run* — dev's tabs with dev's
+_everything told_, _every change_ and _every run_ — dev's tabs with dev's
 issue numbers, labels, milestones and branch names replaced by the same
 five words the rest of the studio speaks. Each is a page of rows, newest
 first: who has it (the assignee, the author, or who ran it), when it last
@@ -223,23 +192,23 @@ for in studio mode answers the studio's page where it stands, never a
 redirect, so every link ever written to `/issues/7` keeps working and
 `?mode=dev` on it is still the one click to dev's own. In studio mode the
 studio's own links use the studio's nouns wherever a tell or a change is
-linked — the three lists' rows, the app page's *what asks you* and *now*,
+linked — the three lists' rows, the app page's _now_,
 a tell's dependencies and the change that closes it, a run's own tell, the
 search box and the command palette — so a person is never handed two
 addresses for one thing. The app page's own footer (`the map · everything
-told · every change`, and *Every run* above **Now**) and the repository
+told · every change`, and _Every run_ above **Now**) and the repository
 header's tabs (`Told`, `Changes`, in place of dev's `Issues`, `Pulls`) link
 to `/tells` and `/changes`; dev's `Commits`/`Branches` stay dev's alone.
 `/runs` has no second noun — the studio and dev share the one address
-there. What a page *posts* to never moves with the noun: ship, close,
+there. What a page _posts_ to never moves with the noun: ship, close,
 comment and decide keep posting under `/issues/:number` and
 `/pulls/:number`, which is what `form-action 'self'` and the same-origin
 checks are written against.
 
-*Look* is spoken for by the five-word table above (a pull green and ready
+_Look_ is spoken for by the five-word table above (a pull green and ready
 for a person's own look) and by the picture card on one (`lookCard`,
-docs/APPS.md, *The look*); the tab to this list, and the list itself, use
-*change* instead, so the word never means a third thing on the same page.
+docs/APPS.md, _The look_); the tab to this list, and the list itself, use
+_change_ instead, so the word never means a third thing on the same page.
 
 A row's word comes from `tellWord`, `pullWord` or `runWord` — the one place
 each is decided, never re-derived here. `?word=told|working|look|shipped|
@@ -248,7 +217,7 @@ view has its own address to share; with no `word` the list shows what is
 open and moving — told, working and look, never shipped or stopped, the
 same split "Open" draws elsewhere. `waiting` and `planned` — a merged pull
 production has not caught up to yet, or a run with nothing to show —
-still read as *working*: still moving, not one of the five a list links to
+still read as _working_: still moving, not one of the five a list links to
 on its own. Paging is the underlying list's own cursor, unchanged; a word
 filter narrows the page it lands on rather than inventing a second scheme.
 `?mode=dev` on any of the three is dev's list, exactly as it always has
@@ -272,7 +241,7 @@ conversation dev's page shows too (`conversation`/`composer`,
 `src/web/pages/thread.ts`): the same action, the same same-origin check,
 told once. The repository's own standing direction is not an ordinary
 tell — it never gets picked up on its own — and the page says so rather
-than showing it as waiting forever. *Read the details* is one link away,
+than showing it as waiting forever. _Read the details_ is one link away,
 `?mode=dev` on the same URL, where labels, the dependency form and the
 assignee control stay the only place those exist; an issue on a
 repository that is not an app, or any issue in dev mode, renders exactly
@@ -305,18 +274,18 @@ state with the link that opens it (`previewCard`, the same card the aside
 carries in dev), and the look at phone and desktop width when one has been
 taken (`lookCard`, docs/APPS.md). Below that the same decision an ask card
 offers — ship it, or say what is off — through the very same `mergePull`
-and comment actions, and the conversation: read it, add to it. *Read the
-code* is one link away, `?mode=dev` on the same URL, landing on the diff
+and comment actions, and the conversation: read it, add to it. _Read the
+code_ is one link away, `?mode=dev` on the same URL, landing on the diff
 page exactly as it always has, deep links and all. Nothing here reads a
 diff or a blob: the page costs a handful of small queries whatever the
 change's size, unlike the page it links to.
 
 ## The home
 
-`/` in the studio: what asks you across every app you can land, what is on
-you (issues and pulls a person assigned to you), and your apps — each with
+`/` in the studio: what is on you (issues and pulls a person assigned to
+you), and your apps — each with
 whether it is live, what the crew last did there, and a way in. That row is
-a *shelf row* (`src/web/studio/shelf.ts`): one function turns repositories
+a _shelf row_ (`src/web/studio/shelf.ts`): one function turns repositories
 into rows, from grouped reads, so every page that lists apps lists them the
 same way and the home only decides the card around them. **New app** is the
 same form either way (`/apps/new`); once the sentence becomes a repository
@@ -328,24 +297,15 @@ its recent runs. `/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 
-**Apps** in the top bar and *All N apps* on the home both land on `/apps`
+**Apps** in the top bar and _All N apps_ on the home both land on `/apps`
 (`src/web/pages/apps.ts`), which in the studio is the whole shelf — every
 row the same `shelfRows` the home draws, never a second copy of them — with
 how many there are and a filter for whether they are live, each a link
 carrying `?live=1` rather than a form, and **New app** beside them.
 `?mode=dev` on the same URL is dev's table of repositories, unchanged.
 
-The top bar carries the same count, on every studio page: a pill beside the
-wordmark, linking here, naming how many things ask the signed-in person —
-`askCountFor` (`src/web/studio/asks.ts`), the candidates `decisionsFor`
-itself builds its cards from, before either the words or a preview picture
-are read, so the two can never disagree. With nothing asking, the bar shows
-nothing rather than a zero. It is studio's own; dev's top bar never carries
-it. On a page that already streams (the home, an app, the map, the board)
-the bar's own live region rides that same stream — no second connection.
-
-The home keeps itself current. *Asks you*, *your apps*, *happening now* and
-*on you* are each a live region (`data-live`, `src/web/client.ts`): a deploy
+The home keeps itself current. _Your apps_, _happening now_ and _on you_
+are each a live region (`data-live`, `src/web/client.ts`): a deploy
 serving, a pull opening, closing or merging, a run starting or ending, or an
 assignment changing refetches the home — the very same `studioHome` render
 that drew the first paint, never a second copy of that markup — and swaps

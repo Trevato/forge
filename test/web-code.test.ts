@@ -59,7 +59,9 @@ describe("the code browser on the web", () => {
   const get = (path: string, cookie = ""): Promise<Response> =>
     fetch(`${base}${path}`, {
       redirect: "manual",
-      ...(cookie === "" ? {} : { headers: { cookie } }),
+      headers: {
+        cookie: cookie === "" ? "forge_mode=dev" : `${cookie}; forge_mode=dev`,
+      },
     });
 
   const text = async (path: string, cookie = ""): Promise<string> =>

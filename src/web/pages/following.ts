@@ -21,6 +21,7 @@ import {
   getRepoById,
   listForks,
   type Repo,
+  canRead,
 } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -104,6 +105,8 @@ export async function followingOf(
   if (repo.forkParentId === null) return undefined;
   const relation = await relationOf(ctx.app, ctx.auth.user, repo);
   if (relation === undefined) return undefined;
+  // A parent the viewer may not read is not named here at all.
+  if (!canRead(ctx.app.db, relation.parent, ctx.auth.user)) return undefined;
   const converge =
     relation.state === "diverged" && !relation.clean
       ? convergeState(ctx.app, repo, relation.parent)
@@ -135,11 +138,11 @@ export function relationSentence(relation: ForkRelation): string {
   const parent = `${relation.parent.ownerName}/${relation.parent.name}`;
   switch (relation.state) {
     case "synced":
-      return `In step with ${parent}.`;
+      return `Everything here is up to date with ${parent}.`;
     case "behind":
-      return `${plural(relation.behind, "change")} behind ${parent}, nothing of your own.`;
+      return `${plural(relation.behind, "commit")} behind ${parent}, nothing of your own.`;
     case "ahead":
-      return `${plural(relation.ahead, "change")} of your own; ${parent} hasn't moved.`;
+      return `${plural(relation.ahead, "commit")} of your own; ${parent} hasn't moved.`;
     case "diverged": {
       const both = `${relation.behind} behind and ${relation.ahead} of your own`;
       if (relation.clean) return `${both}; they merge cleanly.`;

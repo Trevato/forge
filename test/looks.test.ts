@@ -460,8 +460,7 @@ describe("the look", () => {
     ).toHaveLength(3);
 
     expect(
-      (await setIssueStateThrough(app, alice, repo, opened.value, "closed"))
-        .ok,
+      (await setIssueStateThrough(app, alice, repo, opened.value, "closed")).ok,
     ).toBe(true);
   }, 30_000);
 
@@ -504,7 +503,7 @@ describe("the look", () => {
     ).toBe(false);
   });
 
-  test("the studio's look ask leads with the thumb picture, and the app's head shows production", async () => {
+  test("the app's head shows production as a thumb", async () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
@@ -529,13 +528,6 @@ describe("the look", () => {
 
     const studio = `${aliceCookie}; forge_mode=studio`;
     const page = await (await web("/alice/hello", studio)).text();
-    expect(page).toContain(`value="look:${ask.id}"`);
-    expect(page).toContain(
-      `<a class="look-thumb" href="/alice/hello/pulls/${ask.number}"`,
-    );
-    expect(page).toContain(
-      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/thumb.png"`,
-    );
     const production = looksForEnv(app.db, record.id, "production").find(
       (l) => l.kind === "thumb",
     )!;
@@ -543,8 +535,6 @@ describe("the look", () => {
     expect(page).toContain(
       `src="/alice/hello/looks/production/${production.commitOid}/thumb.png"`,
     );
-    const home = await (await web("/", studio)).text();
-    expect(home).toContain(`class="look-thumb"`);
 
     // A commit pictured before the thumb kind existed has only its phone
     // and desktop rows — this is exactly that, with the thumb dropped —
@@ -561,14 +551,9 @@ describe("the look", () => {
       )
       .run(record.id);
     const fallback = await (await web("/alice/hello", studio)).text();
-    expect(fallback).toContain(
-      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/phone.png"`,
-    );
-    const productionDesktop = looksForEnv(
-      app.db,
-      record.id,
-      "production",
-    ).find((l) => l.kind === "desktop")!;
+    const productionDesktop = looksForEnv(app.db, record.id, "production").find(
+      (l) => l.kind === "desktop",
+    )!;
     expect(fallback).toContain(
       `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png"`,
     );
@@ -645,7 +630,9 @@ describe("the look", () => {
     expect(page).toContain(
       `src="/alice/hello/looks/${env}/${commitOid}/phone.png"`,
     );
-    expect(page).toContain(`alt="hello /board #${opened.value.number} on a phone"`);
+    expect(page).toContain(
+      `alt="hello /board #${opened.value.number} on a phone"`,
+    );
     expect(page).toContain(`alt="hello #${opened.value.number} on a phone"`);
   }, 120_000);
 

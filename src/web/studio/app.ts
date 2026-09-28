@@ -6,6 +6,8 @@
  * only for a viewer who can write here; a stranger sees the app.
  */
 
+import { audit } from "../../contract/audit.ts";
+import { latestProbes } from "../../contract/probes.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
@@ -137,14 +139,64 @@ function previewLatencyWords(
     latency.queueMedianSeconds === undefined ||
     latency.bootMedianSeconds === undefined
       ? null
-      : html`${latency.queueMedianSeconds.toFixed(1)}s waiting,
-        ${latency.bootMedianSeconds.toFixed(1)}s coming
-        up${latency.splitN < latency.n
-          ? ` (${latency.splitN} of ${latency.n})`
-          : ""}
+      : html`${`${latency.queueMedianSeconds.toFixed(1)}s waiting, ${latency.bootMedianSeconds.toFixed(1)}s coming up${latency.splitN < latency.n ? ` (${latency.splitN} of ${latency.n})` : ""}`}
         · `;
   return html`reaches its preview in ${latency.medianSeconds.toFixed(1)}s
     <span class="muted">· ${split}${latency.n} deploys${failedSuffix}</span>`;
+}
+
+/**
+ * One line about the app's policy, when it has one: what it opens to
+ * anyone and what the running app said when the forge last knocked, with
+ * the way to the audit, where the whole table is. An app without a
+ * contract says nothing here; its doors are not the forge's to describe.
+ */
+async function policyLine(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+): Promise<Html> {
+  const { standing } = await audit(ctx.app.reposRoot, repo);
+  if (standing.kind === "unread") return html``;
+  const href = `/audit#${repo.ownerName}-${repo.name}`;
+  if (standing.kind === "unsound")
+    return html`<p class="policy-line">
+      ${icon("alert")}
+      <span
+        ><b>Its contract does not read</b>, so an app built on it does not
+        boot.</span
+      >
+      <a href="${href}">See why</a>
+    </p>`;
+  const last = latestProbes(ctx.app.db, [record.id]).get(record.id);
+  const open = standing.open.length;
+  const said =
+    last === undefined
+      ? "not yet knocked on"
+      : last.verdict === "ok"
+        ? "obeys its table"
+        : last.verdict === "mismatch"
+          ? `${last.said.length === 1 ? "one door disobeys" : `${last.said.length} doors disobey`} its table`
+          : last.verdict === "down"
+            ? "was not running when knocked on"
+            : "has no door to knock on";
+  return html`<p class="policy-line" data-tone="${last?.verdict ?? "none"}">
+    ${icon("shield")}
+    <span
+      ><b
+        >${Object.keys(standing.contract.resources).length === 1
+          ? "One resource"
+          : `${Object.keys(standing.contract.resources).length} resources`}</b
+      >,
+      ${open === 0
+        ? "nothing open to anyone"
+        : open === 1
+          ? "one door open to anyone"
+          : `${open} doors open to anyone`};
+      ${said}.</span
+    >
+    <a href="${href}">The table</a>
+  </p>`;
 }
 
 export async function studioApp(
@@ -602,6 +654,7 @@ export async function studioApp(
       ownTitle: true,
     })}
     <div id="app-head">${head}</div>
+    ${await policyLine(ctx, repo, record)}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}

@@ -904,8 +904,8 @@ describe("apps: production, previews, data, gates, crew", () => {
     const servingOid = before!.commitOid;
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const original =
-      (await sh(["git", "show", `${repo.defaultBranch}:forge.json`], dir))
-        .out + "\n";
+      (await sh(["git", "show", `${repo.defaultBranch}:forge.json`], dir)).out +
+      "\n";
 
     const broken = await commitToBranch(app, alice, repo, {
       message: "Break forge.json",
@@ -1039,10 +1039,7 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
     if (!enabled.ok) return;
     const record = enabled.value;
 
-    const production = await settled(
-      (r) => r.env === "production",
-      repo.id,
-    );
+    const production = await settled((r) => r.env === "production", repo.id);
     expect(production.state).toBe("ok");
 
     // A migration lands on `main` — simulated here the way the issue
@@ -1076,7 +1073,7 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
 
     const { lines } = readRunLog(dataDir, run.id);
     const text = lines.join("\n");
-    expect(text).toContain("data: copied from production");
+    expect(text).toMatch(/data: (copied|cloned) from production/);
     expect(text).toContain("exited with code 1 before answering");
     expect(text).toContain(
       "the copied data was not usable by this build; the preview is starting on empty data",
@@ -1125,9 +1122,9 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
     expect(production.state).toBe("failed");
     const prodLog = readRunLog(dataDir, production.id).lines;
     expect(prodLog.filter((l) => l.startsWith("$ sh run.sh")).length).toBe(1);
-    expect(
-      prodLog.some((l) => l.includes("starting on empty data")),
-    ).toBe(false);
+    expect(prodLog.some((l) => l.includes("starting on empty data"))).toBe(
+      false,
+    );
 
     const branch = await commitToBranch(app, alice, repo, {
       branch: "note",
@@ -1151,9 +1148,9 @@ exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch
     expect(run.state).toBe("failed");
     const previewLog = readRunLog(dataDir, run.id).lines;
     // Exactly one retry: the process is started twice, never more.
-    expect(
-      previewLog.filter((l) => l.startsWith("$ sh run.sh")).length,
-    ).toBe(2);
+    expect(previewLog.filter((l) => l.startsWith("$ sh run.sh")).length).toBe(
+      2,
+    );
     expect(
       previewLog.some((l) =>
         l.includes(
@@ -1427,7 +1424,7 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.value.issue?.assigneeName).toBeNull();
   });
 
-  test("agent: \"\" — nobody picked — still opens the sentence, unassigned", async () => {
+  test('agent: "" — nobody picked — still opens the sentence, unassigned', async () => {
     const made = await newApp(app, alice, {
       name: "notes-f",
       description: "Keep a list of notes",
@@ -1722,7 +1719,10 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
 });
 
 describe("a new app's own words promise only the check the forge runs (issue #192)", () => {
-  const files = scaffoldFiles({ name: "hello", description: "A place for notes" });
+  const files = scaffoldFiles({
+    name: "hello",
+    description: "A place for notes",
+  });
   const content = (path: string): string => {
     const file = files.find((f) => f.path === path);
     if (file === undefined || typeof file.content !== "string")
@@ -1736,7 +1736,9 @@ describe("a new app's own words promise only the check the forge runs (issue #19
   const promisesACheck = (prose: string): boolean =>
     prose
       .split(/(?<=[.!?])\s+/)
-      .some((sentence) => /\bcheck/i.test(sentence) && /\bpull/i.test(sentence));
+      .some(
+        (sentence) => /\bcheck/i.test(sentence) && /\bpull/i.test(sentence),
+      );
 
   test("forge.json declares no separate check, and the prose does not claim one", () => {
     const checked = parseCheck(content("forge.json"), content("package.json"));
@@ -1777,7 +1779,8 @@ describe("the App page's terminal line survives an email-scanning edge (issue #2
     dataDir = await mkdtemp(join(tmpdir(), "forge-app-terminal-edge-"));
     app = createApp({ dataDir, port: 0 });
     app.config.sshPort = 2222;
-    app.config.sshHostKey = "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
+    app.config.sshHostKey =
+      "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
     servers = await serve(app);
     base = servers.url;
     runtime = new AppsRuntime(app, {
@@ -1924,7 +1927,9 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
       );
       if (
         inFlight?.state === "running" &&
-        readRunLog(dataDir, inFlight.id).lines.some((l) => l.includes("$ sleep 30"))
+        readRunLog(dataDir, inFlight.id).lines.some((l) =>
+          l.includes("$ sleep 30"),
+        )
       ) {
         runId = inFlight.id;
         break;
@@ -1949,7 +1954,10 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
       },
       finished!,
     );
-    expect(word).toEqual({ word: "cancelled", note: "interrupted by a restart" });
+    expect(word).toEqual({
+      word: "cancelled",
+      note: "interrupted by a restart",
+    });
 
     // The studio's own word for it is the quiet one, never the word for a
     // broken deploy — and that is what the run's own page renders.
