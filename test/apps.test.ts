@@ -673,7 +673,7 @@ describe("apps: production, previews, data, gates, crew", () => {
     ).toBe(again);
   }, 120_000);
 
-  test("a restart rebuilds production and the open previews from git", async () => {
+  test("a restart starts production warm and leaves the open preview asleep until asked for", async () => {
     await runtime.stop();
     // With no runtime there are no app hosts: the forge answers as itself.
     expect(await (await viaHost(`hello.${DOMAIN}`)).text()).not.toContain(
@@ -692,9 +692,25 @@ describe("apps: production, previews, data, gates, crew", () => {
     );
     expect(production.state).toBe("ok");
     expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
+    // The bot's pull is the one open pull: its preview came back asleep,
+    // with no run spent, and the first request for it wakes it.
     const openPreviews = listRuns(app.db, repo.id, { kind: "deploy" }).filter(
       (r) => r.reason === "boot" && r.env !== "production",
     );
-    expect(openPreviews.length).toBe(1); // the bot's pull is the one open pull
+    expect(openPreviews.length).toBe(0);
+    const previews = runtime
+      .status(record)
+      .filter((e) => e.env !== "production");
+    expect(previews.map((e) => e.state)).toEqual(["asleep"]);
+    const openEnv = previews[0]!.env;
+    const woke = await viaHost(`hello--${openEnv.slice(5)}.${DOMAIN}`, "/", {
+      headers: {
+        cookie: await grantedCookie(app, servers.url, alice, record, openEnv),
+      },
+    });
+    expect(woke.status).toBe(200);
+    expect(
+      runtime.status(record).find((e) => e.env !== "production")?.state,
+    ).toBe("running");
   }, 90_000);
 });

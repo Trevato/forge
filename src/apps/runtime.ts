@@ -15,7 +15,7 @@
 
 import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
@@ -69,9 +69,27 @@ export interface RuntimeOptions {
   readonly forgeUrl: string;
   /** How many deploys may run their heavy steps at once. @default 2 */
   readonly concurrency?: number | undefined;
+  /**
+   * How long an environment serves nobody before its process is stopped
+   * and it sleeps, to be woken by the next request. A preview is looked at
+   * and forgotten; production is left alone for a day before it rests.
+   */
+  readonly sleepAfterMs?:
+    | { readonly production: number; readonly preview: number }
+    | undefined;
+  /** How often the runtime looks for environments to put to sleep. */
+  readonly sweepEveryMs?: number | undefined;
 }
 
-export type EnvState = "stopped" | "deploying" | "running" | "failed";
+export type EnvState =
+  | "stopped"
+  | "deploying"
+  | "running"
+  | "asleep"
+  | "failed";
+
+const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
+const SWEEP_EVERY_MS = 60_000;
 
 export interface EnvStatus {
   readonly env: EnvName;
@@ -97,6 +115,18 @@ interface Live {
 }
 
 /** A running environment, as a terminal session needs it. */
+/**
+ * A checkout that served and was stopped for want of visitors, kept whole:
+ * the next request starts it again, warm, in about the time a page takes.
+ */
+interface Asleep {
+  readonly commitOid: string;
+  readonly dir: string;
+  readonly manifest: AppManifest;
+  readonly runId: string;
+  readonly since: string;
+}
+
 export interface LiveEnv {
   readonly env: EnvName;
   readonly dir: string;
@@ -111,6 +141,11 @@ interface Environment {
   readonly app: AppRecord;
   readonly env: EnvName;
   live?: Live | undefined;
+  asleep?: Asleep | undefined;
+  /** One wake at a time; every request that arrives meanwhile waits on it. */
+  waking?: Promise<void> | undefined;
+  /** When something last came through the proxy for this environment. */
+  lastRequestAt?: number | undefined;
   /** The deploy in flight, if one is. */
   deploying?: { run: Run; abort: AbortController } | undefined;
   /** The next deploy, waiting its turn; replaced by a newer request. */
@@ -136,6 +171,7 @@ export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
   private readonly gate: Gate;
   private unsubscribe: (() => void) | undefined;
+  private sweeper: ReturnType<typeof setInterval> | undefined;
   private stopped = false;
 
   constructor(
@@ -222,6 +258,16 @@ export class AppsRuntime {
         since: state.live.since,
       };
     }
+    if (state.asleep !== undefined) {
+      return {
+        env: state.env,
+        state: "asleep",
+        commitOid: state.asleep.commitOid,
+        url,
+        runId: state.asleep.runId,
+        since: state.asleep.since,
+      };
+    }
     return {
       env: state.env,
       state: state.lastError === undefined ? "stopped" : "failed",
@@ -261,11 +307,16 @@ export class AppsRuntime {
       await this.reconcileApp(record, repo, "boot");
     }
     this.pruneDirs(known);
+    this.sweeper = setInterval(
+      () => void this.sweep(),
+      this.options.sweepEveryMs ?? SWEEP_EVERY_MS,
+    );
   }
 
   /** Stop every process. The rows stay; a restart brings them back. */
   async stop(): Promise<void> {
     this.stopped = true;
+    if (this.sweeper !== undefined) clearInterval(this.sweeper);
     this.unsubscribe?.();
     const stops: Promise<void>[] = [];
     for (const state of this.envs.values()) {
@@ -307,8 +358,13 @@ export class AppsRuntime {
       const env = previewEnv(pull.number);
       open.add(env);
       const head = await this.pullHead(dir, pull);
-      if (head !== undefined && only !== "production")
-        this.requestDeploy(record, repo, env, head, reason);
+      if (head === undefined || only === "production") continue;
+      // A preview the forge built in an earlier life comes back asleep, not
+      // deployed: nobody is looking at it this second, and the first who
+      // does wakes it warm. Thirty previews starting at once is what a
+      // restart used to cost.
+      if (reason === "boot" && this.settleAsleep(record, env, head)) continue;
+      this.requestDeploy(record, repo, env, head, reason);
     }
     // Environments on disk for pulls that are no longer open.
     const root = join(appsRoot(this.app.config.dataDir), record.id);
@@ -481,7 +537,8 @@ export class AppsRuntime {
     if (this.stopped) return undefined;
     const state = this.envFor(record, env);
     if (
-      state.live?.commitOid === commitOid &&
+      (state.live?.commitOid === commitOid ||
+        state.asleep?.commitOid === commitOid) &&
       state.deploying === undefined &&
       state.queued === undefined &&
       reason !== "restart" &&
@@ -566,8 +623,13 @@ export class AppsRuntime {
     lease();
     if (outcome.ok) {
       const previous = state.live;
+      const rested = state.asleep;
       state.live = outcome.value;
+      state.asleep = undefined;
+      state.lastRequestAt = Date.now();
       state.lastError = undefined;
+      if (rested !== undefined && rested.dir !== outcome.value.dir)
+        rmSync(rested.dir, { recursive: true, force: true });
       if (previous !== undefined) {
         write(
           `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
@@ -625,9 +687,16 @@ export class AppsRuntime {
       envDir(this.app.config.dataDir, state.app.id, state.env),
       run.commitOid.slice(0, 7),
     );
-    write(`checking out ${run.commitOid.slice(0, 7)}`);
-    const exported = await exportTree(bare, run.commitOid, dir);
-    if (!exported.ok) return { ok: false, error: exported.error };
+    // A checkout that is already here was installed and tested when it was
+    // made; the forge coming back starts it, and only starts it.
+    const warm = existsSync(join(dir, "package.json"));
+    if (warm) {
+      write(`warm start: ${run.commitOid.slice(0, 7)} was built here before`);
+    } else {
+      write(`checking out ${run.commitOid.slice(0, 7)}`);
+      const exported = await exportTree(bare, run.commitOid, dir);
+      if (!exported.ok) return { ok: false, error: exported.error };
+    }
 
     const seeded = ensureEnvData(
       this.app.config.dataDir,
@@ -665,6 +734,7 @@ export class AppsRuntime {
       ),
       log: write,
       signal,
+      warm,
     });
     if (!started.ok) {
       rmSync(dir, { recursive: true, force: true });
@@ -744,6 +814,157 @@ export class AppsRuntime {
   // ---- tearing down ----
 
   /** Stop an environment and remove everything it owned, data included. */
+  /** Something came through the proxy: the environment is wanted. */
+  touch(record: AppRecord, env: EnvName): void {
+    const state = this.envs.get(key(record.id, env));
+    if (state !== undefined) state.lastRequestAt = Date.now();
+  }
+
+  /**
+   * An environment asleep is started again, warm, from the checkout it
+   * kept; one start serves every request that arrives while it happens.
+   * Returns once it is live, or once it is clear it will not be.
+   */
+  async wake(record: AppRecord, env: EnvName): Promise<LiveEnv | undefined> {
+    const state = this.envs.get(key(record.id, env));
+    if (state === undefined) return undefined;
+    if (state.waking !== undefined) await state.waking;
+    if (state.live !== undefined) return this.liveFor(record, env);
+    const asleep = state.asleep;
+    if (asleep === undefined || this.stopped) return undefined;
+    const repo = getRepoById(this.app.db, record.repoId);
+    if (!repo) return undefined;
+    state.waking = (async () => {
+      const write = (line: string): void =>
+        appendRunLog(this.app.config.dataDir, asleep.runId, line);
+      write("waking: a request came");
+      const started = await startProcess({
+        dir: asleep.dir,
+        dataDir: envDataDir(this.app.config.dataDir, record.id, env),
+        manifest: asleep.manifest,
+        env,
+        url: this.urlFor(record, env),
+        commitOid: asleep.commitOid,
+        forgeUrl: this.options.forgeUrl,
+        identityKey: identityKey(this.app.config.dataDir, record.id),
+        ssh: this.sshFor(record, env),
+        vars: resolveAppEnv(
+          this.app.db,
+          this.app.config.dataDir,
+          record.id,
+          env,
+        ),
+        log: write,
+        signal: new AbortController().signal,
+        warm: true,
+      });
+      if (state.asleep !== asleep) {
+        // Replaced while waking — a deploy landed. What we started is spare.
+        if (started.ok) await started.value.stop();
+        return;
+      }
+      if (!started.ok) {
+        state.asleep = undefined;
+        state.lastError = `did not wake — ${started.error.stage}: ${started.error.message}`;
+        write(`failed: ${state.lastError}`);
+        return;
+      }
+      const live: Live = {
+        commitOid: asleep.commitOid,
+        handle: started.value,
+        dir: asleep.dir,
+        runId: asleep.runId,
+        since: new Date().toISOString(),
+        manifest: asleep.manifest,
+      };
+      state.asleep = undefined;
+      state.live = live;
+      state.lastRequestAt = Date.now();
+      this.watch(state, repo, live);
+      write("awake");
+    })().finally(() => {
+      state.waking = undefined;
+    });
+    await state.waking;
+    return this.liveFor(record, env);
+  }
+
+  /**
+   * At boot, an environment whose checkout for this commit is still here
+   * is registered asleep rather than deployed. True when it was.
+   */
+  private settleAsleep(
+    record: AppRecord,
+    env: EnvName,
+    commitOid: string,
+  ): boolean {
+    const dir = join(
+      envDir(this.app.config.dataDir, record.id, env),
+      commitOid.slice(0, 7),
+    );
+    if (!existsSync(join(dir, "package.json"))) return false;
+    const read = (name: string): string | undefined => {
+      try {
+        return readFileSync(join(dir, name), "utf8");
+      } catch {
+        return undefined;
+      }
+    };
+    const manifest = parseManifest(read("forge.json"), read("package.json"));
+    if (!manifest.ok) return false;
+    const state = this.envFor(record, env);
+    if (state.live !== undefined || state.deploying !== undefined) return true;
+    state.asleep = {
+      commitOid,
+      dir,
+      manifest: manifest.value,
+      runId: state.lastRunId ?? "",
+      since: new Date().toISOString(),
+    };
+    log.info("asleep from boot", {
+      app: record.slug,
+      env,
+      commit: commitOid.slice(0, 7),
+    });
+    return true;
+  }
+
+  /** Stop what nobody has asked for lately, and keep it ready to wake. */
+  private async sweep(): Promise<void> {
+    if (this.stopped) return;
+    const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
+    const now = Date.now();
+    for (const state of this.envs.values()) {
+      const live = state.live;
+      if (
+        live === undefined ||
+        state.deploying !== undefined ||
+        state.queued !== undefined ||
+        state.waking !== undefined
+      )
+        continue;
+      const limit =
+        state.env === "production" ? after.production : after.preview;
+      const last = state.lastRequestAt ?? Date.parse(live.since);
+      if (now - last < limit) continue;
+      state.live = undefined;
+      state.asleep = {
+        commitOid: live.commitOid,
+        dir: live.dir,
+        manifest: live.manifest,
+        runId: live.runId,
+        since: new Date(now).toISOString(),
+      };
+      appendRunLog(
+        this.app.config.dataDir,
+        live.runId,
+        `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`,
+      );
+      log.info("asleep", { app: state.app.slug, env: state.env });
+      await live.handle.stop();
+    }
+  }
+
   async teardown(record: AppRecord, env: EnvName): Promise<void> {
     const k = key(record.id, env);
     const state = this.envs.get(k);
@@ -784,6 +1005,7 @@ export class AppsRuntime {
     await state.chain.catch(() => {});
     const live = state.live;
     state.live = undefined;
+    state.asleep = undefined;
     if (live) await live.handle.stop();
   }
 }

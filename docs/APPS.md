@@ -531,6 +531,18 @@ is handed to the run, or the machine's own Claude Code login is used when
 there is neither. When neither
 works the crew page says so, in words, before anyone assigns anything.
 
+### Asleep
+
+An environment nobody asks for does not keep a process. A preview that has
+served no request for thirty minutes, or production for a day, is stopped
+and marked _asleep_, its checkout kept whole; the next request through the
+proxy starts it again — warm, without install or test, in about the time a
+page takes — and waits for it rather than showing a closed door. The forge
+coming back does the same: production starts warm from the checkout it kept,
+and every preview comes back asleep until someone looks. A restart used to
+mean thirty installs and test suites at once; now it means starting what
+people are using.
+
 ### Subscriptions
 
 One token in the environment is one account for the whole forge. An admin

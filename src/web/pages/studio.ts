@@ -244,7 +244,9 @@ export async function studioApp(
         ? "not up"
         : state === "stopped"
           ? "not running"
-          : "starting";
+          : state === "asleep"
+            ? "asleep"
+            : "starting";
   const liveTone: Tone =
     state === "running" ? "success" : state === "failed" ? "danger" : "default";
   const head = html`<div class="page-head studio-head">
@@ -643,9 +645,11 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       trail: html`<span class="badge" data-tone="${tone}"
         >${state === "running"
           ? "live"
-          : state === "stopped"
-            ? "not running"
-            : state}</span
+          : state === "asleep"
+            ? "asleep"
+            : state === "stopped"
+              ? "not running"
+              : state}</span
       >`,
     });
   });

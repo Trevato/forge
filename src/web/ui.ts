@@ -234,6 +234,8 @@ export function envStateBadge(state: EnvState): Html {
       return badge("Deploying", { icon: "loader", tone: "attn" });
     case "running":
       return badge("Running", { icon: "play", tone: "success" });
+    case "asleep":
+      return badge("Asleep", { icon: "clock", variant: "outline" });
     case "failed":
       return badge("Failed", { icon: "alert", tone: "danger" });
   }

@@ -360,9 +360,14 @@ export async function proxyApp(
       },
     });
   }
+  // An environment asleep wakes for the request that wants it, and the
+  // request waits the second that takes rather than seeing a closed door.
+  if (runtime.envStatus(target.app, target.env)?.state === "asleep")
+    await runtime.wake(target.app, target.env);
   const admitted = admit(runtime, request, target);
   if (!admitted.ok) return admitted.error;
   const { status, port, grant: vouched } = admitted.value;
+  runtime.touch(target.app, target.env);
 
   const upstream = new URL(url);
   upstream.protocol = "http:";

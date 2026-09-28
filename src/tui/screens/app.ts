@@ -106,6 +106,10 @@ export function appScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         return `deploying ${env.commitOid.slice(0, 7)}`;
       case "failed":
         return `failed: ${env.error ?? "the deploy did not finish"}`;
+      case "asleep":
+        return env.since === undefined
+          ? "asleep; wakes on a request"
+          : `asleep since ${ago(env.since)}; wakes on a request`;
       case "stopped":
         return "stopped";
     }

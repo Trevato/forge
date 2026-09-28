@@ -41,6 +41,11 @@ export interface StartInput {
   readonly log: (line: string) => void;
   /** Aborting cancels whatever step is in flight and fails the start. */
   readonly signal: AbortSignal;
+  /**
+   * The checkout was installed and tested when it was first built; a warm
+   * start — the forge coming back, or an environment waking — only runs it.
+   */
+  readonly warm?: boolean | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -195,7 +200,7 @@ export async function startProcess(
     FORGE_APP_ENV: input.env === "production" ? "production" : "preview",
   });
 
-  if (manifest.install !== null) {
+  if (manifest.install !== null && input.warm !== true) {
     const installed = await runStep("install", manifest.install, {
       cwd: input.dir,
       env: stepEnv,
@@ -205,7 +210,7 @@ export async function startProcess(
     if (!installed.ok)
       return err({ stage: "install", message: installed.error });
   }
-  if (manifest.test !== null) {
+  if (manifest.test !== null && input.warm !== true) {
     const tested = await runStep("test", manifest.test, {
       cwd: input.dir,
       env: stepEnv,
