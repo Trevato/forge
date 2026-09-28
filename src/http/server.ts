@@ -124,6 +124,11 @@ import {
   newAppSubmit,
 } from "../web/pages/apps.ts";
 import {
+  migratePage,
+  migrateSubmit,
+  migrationJobPage,
+} from "../web/pages/migrate.ts";
+import {
   runCancel,
   runPage,
   runRedirect,
@@ -413,6 +418,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/apps", appsList);
   router.add("GET", "/apps/new", newAppPage);
   router.add("POST", "/apps/new", newAppSubmit);
+  // Migrate: a repository brought here for good, and the page that watches
+  // the clone. Literal routes, above /:owner for the same reason.
+  router.add("GET", "/migrate", migratePage);
+  router.add("POST", "/migrate", migrateSubmit);
+  router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
   router.add("GET", "/runs/:id", runRedirect);

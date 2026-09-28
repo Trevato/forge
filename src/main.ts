@@ -70,6 +70,9 @@ const app = createApp({
   ...(edgeToken === "" ? {} : { edgeToken }),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
+  ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
+    ? { migrateFromPrivateHosts: true }
+    : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
     : {}),

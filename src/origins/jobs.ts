@@ -14,6 +14,10 @@
  * would only be a lie about a process that no longer exists. What is durable
  * is what always was: the repo row, the `repo.mirrored` and `push` events,
  * and `fetch_error` when it fails.
+ *
+ * A migration (`actions/migrate.ts`) rides the same registry: a one-time
+ * clone is a job with fewer stages, and it has an owner instead of an
+ * origin to answer to — `kind` keeps the two from ever joining each other.
  */
 
 import type { Repo } from "../core/repos.ts";
@@ -30,6 +34,8 @@ export type MirrorStage =
   | "issues"
   | "pulls"
   | "comments"
+  /** A migration's last step: the crew put on it, when one was asked for. */
+  | "crew"
   | "done"
   | "failed";
 
@@ -40,12 +46,19 @@ const ORDER: readonly MirrorStage[] = [
   "issues",
   "pulls",
   "comments",
+  "crew",
   "done",
 ];
 
+export type JobKind = "mirror" | "migrate";
+
 export interface MirrorJob {
   readonly id: string;
+  readonly kind: JobKind;
+  /** The origin it reads from; "" for a migration from a pasted URL. */
   readonly originId: string;
+  /** Who started it, for a job nobody's origin can vouch for (a migration). */
+  readonly actorId?: string;
   readonly fullName: string;
   readonly stage: MirrorStage;
   /** Human detail for the stage: "42 issues", "receiving objects: 61%". */
@@ -73,10 +86,16 @@ const terminal = (stage: MirrorStage): boolean =>
   stage === "done" || stage === "failed";
 
 /** Start tracking a mirror. The caller runs the work and reports stages. */
-export function createJob(originId: string, fullName: string): MirrorJob {
+export function createJob(
+  originId: string,
+  fullName: string,
+  options: { kind?: JobKind; actorId?: string } = {},
+): MirrorJob {
   const job: MirrorJob = {
     id: id(),
+    kind: options.kind ?? "mirror",
     originId,
+    ...(options.actorId === undefined ? {} : { actorId: options.actorId }),
     fullName,
     stage: "creating",
     detail: "",
@@ -98,9 +117,13 @@ export const getJob = (jobId: string): MirrorJob | undefined => jobs.get(jobId);
 export function runningJob(
   originId: string,
   fullName: string,
+  kind: JobKind = "mirror",
+  actorId?: string,
 ): MirrorJob | undefined {
   for (const job of jobs.values()) {
     if (
+      job.kind === kind &&
+      job.actorId === actorId &&
       job.originId === originId &&
       job.fullName.toLowerCase() === fullName.toLowerCase() &&
       !terminal(job.stage)
@@ -120,7 +143,9 @@ export const listJobs = (): MirrorJob[] =>
  */
 export function advance(
   jobId: string,
-  patch: Partial<Omit<MirrorJob, "id" | "originId" | "fullName" | "startedAt">>,
+  patch: Partial<
+    Omit<MirrorJob, "id" | "kind" | "originId" | "actorId" | "fullName" | "startedAt">
+  >,
 ): MirrorJob | undefined {
   const current = jobs.get(jobId);
   if (current === undefined || terminal(current.stage)) return current;

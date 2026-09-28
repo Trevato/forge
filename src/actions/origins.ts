@@ -744,7 +744,8 @@ export function mirrorJobFor(
   const origin = getOriginFor(app.db, user.value.id, originId);
   if (!origin) return err("not_found");
   const job = getJob(jobId);
-  if (job === undefined || job.originId !== origin.id) return err("not_found");
+  if (job === undefined || job.kind !== "mirror" || job.originId !== origin.id)
+    return err("not_found");
   return ok(job);
 }
 
