@@ -159,8 +159,12 @@ describe("apps that sleep", () => {
     expect(log(boot.id)).not.toContain("checking out");
     expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
 
-    // The preview is asleep and cost nothing: no run, no process.
+    // The preview is asleep and cost nothing: no run, no process — and it
+    // still points at the deploy that built it.
     expect(stateOf(preview)).toBe("asleep");
+    expect(runtime.status(record).find((e) => e.env === preview)?.runId).toBe(
+      first.id,
+    );
     const after = listRuns(app.db, repo.id, { kind: "deploy", limit: 50 });
     expect(after.filter((r) => r.env === preview).length).toBe(
       before.filter((r) => r.env === preview).length,

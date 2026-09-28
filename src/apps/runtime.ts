@@ -26,6 +26,7 @@ import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  listRuns,
   claimRun,
   createRun,
   CHECK_KINDS,
@@ -835,8 +836,10 @@ export class AppsRuntime {
     const repo = getRepoById(this.app.db, record.repoId);
     if (!repo) return undefined;
     state.waking = (async () => {
-      const write = (line: string): void =>
-        appendRunLog(this.app.config.dataDir, asleep.runId, line);
+      const write = (line: string): void => {
+        if (asleep.runId !== "")
+          appendRunLog(this.app.config.dataDir, asleep.runId, line);
+      };
       write("waking: a request came");
       const started = await startProcess({
         dir: asleep.dir,
@@ -914,13 +917,22 @@ export class AppsRuntime {
     if (!manifest.ok) return false;
     const state = this.envFor(record, env);
     if (state.live !== undefined || state.deploying !== undefined) return true;
+    // The deploy that built this checkout, in an earlier life: its log is
+    // where the environment's sleeping and waking keep being written.
+    const built = listRuns(this.app.db, record.repoId, {
+      kind: "deploy",
+      limit: 100,
+    }).find(
+      (r) => r.env === env && r.state === "ok" && r.commitOid === commitOid,
+    );
     state.asleep = {
       commitOid,
       dir,
       manifest: manifest.value,
-      runId: state.lastRunId ?? "",
+      runId: built?.id ?? "",
       since: new Date().toISOString(),
     };
+    state.lastRunId ??= built?.id;
     log.info("asleep from boot", {
       app: record.slug,
       env,
@@ -955,11 +967,12 @@ export class AppsRuntime {
         runId: live.runId,
         since: new Date(now).toISOString(),
       };
-      appendRunLog(
-        this.app.config.dataDir,
-        live.runId,
-        `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`,
-      );
+      if (live.runId !== "")
+        appendRunLog(
+          this.app.config.dataDir,
+          live.runId,
+          `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`,
+        );
       log.info("asleep", { app: state.app.slug, env: state.env });
       await live.handle.stop();
     }
