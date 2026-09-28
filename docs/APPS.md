@@ -87,9 +87,9 @@ around it. None is advisory.
    words that number from `createdAt`, the instant the push created the
    run, because the deploy may have waited on the concurrency gate for a
    permit first: `servedPhrase` (`web/ui.ts`) says `6.1s after the push ·
-   2.4s queued` and is the only place it is worded. The deploy's own log
+2.4s queued` and is the only place it is worded. The deploy's own log
    line stays measured from `startedAt` and says `after the deploy
-   started`; a deploy no push asked for — a redeploy someone pressed, a
+started`; a deploy no push asked for — a redeploy someone pressed, a
    boot reconcile — is worded the same way and never claims a push.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
@@ -291,6 +291,34 @@ other secret of the host does — an app's environment is only what the
 section above lists, and its first sign-up is its admin, as on any fresh
 forge. `install` is empty because the forge has no dependencies to fetch;
 `ready` is generous because the first boot migrates.
+
+## What a new app starts as
+
+**New app** writes a small, complete app into the repository
+(`src/apps/scaffold.ts`): notes behind a page, a JSON API, an MCP server
+and a terminal, all over one set of actions, with no dependencies. What
+the forge already does for every app (identity, the grant, preview data,
+health polling, the terminal, the swap, sleep, the contract's wall) is not
+repeated in it. What it adds is what an app owes its people on its own,
+each proved by a suite of the app's own that runs on every deploy:
+
+| guarantee          | where                                     | what holds it                                                                                                                                                                                                                                                                         |
+| ------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the door           | `src/security.ts`                         | rationing, same-origin on writes, and the contract asked before the body is read: whoever the table lets through a resource's `api` door for no row at all is refused there (401 a stranger, 403 anyone else); `/openapi.json` is shut to strangers when the table opens them nothing |
+| the audit trail    | `src/audit.ts`, table `audit`             | every create, update and delete, and every refused one, as a row (who, resource, verb, row, when, let or not); `GET /api/audit` for admins, as the `audit` resource's cells say; a row that cannot be written is a log line, never a failed request                                   |
+| the API, described | `src/openapi.ts`, `contract/openapi.json` | each API route declares its shape beside itself; `bun run contract:emit` writes the file, each operation names its contract cell (`x-contract`), the suite fails while the committed file is stale, and `GET /openapi.json` serves it                                                 |
+| up or not          | `GET /healthz`                            | `{ ok, version, commit, env, uptime }`, and `forge.json`'s `health` points at it                                                                                                                                                                                                      |
+| the look           | `design/tokens.json`, `src/tokens.ts`     | W3C design tokens, light and dark, compiled at boot to `/tokens.css`; `bun run lint:design` refuses a raw `#hex`/`rgb(`/`hsl(` outside the tokens and a `var(--…)` no token defines; every pair a person reads is held to 4.5:1 in both themes                                        |
+| the open web       | `src/page.ts`, `src/routes.ts`            | description, Open Graph and a card on every page; `/robots.txt` (the API closed to crawlers, a preview closed entirely, and `X-Robots-Tag: noindex` off production); `/.well-known/security.txt` redirects to the forge's own                                                         |
+
+The scaffold's `AGENTS.md` tells the crew to keep all of it: every change
+returns through `audited`, every API route carries its description, no
+colour is spelled out, and the door is never routed around.
+`test/scaffold.test.ts` writes the scaffold out and runs its suite and its
+two scripts, so a change to the scaffold that breaks one of these does
+not land. The table the door reads knows two signed identities, `user`
+and `admin`; a role such as a team's (`manage`) waits on the forge
+signing one (see [CONTRACT.md](CONTRACT.md)).
 
 ## Who is there: identity from the forge
 

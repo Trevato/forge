@@ -86,6 +86,13 @@ import {
   deriveAppName,
   STOP_WORDS,
 } from "../src/web/pages/apps-name.ts";
+/** The scaffold's suites that boot its real `serve`: a test that swaps in a toy server drops them. */
+const SERVER_SUITES = [
+  "src/audit.test.ts",
+  "src/openapi.test.ts",
+  "src/security.test.ts",
+];
+
 describe("apps: production, previews, data, gates, crew", () => {
   let dataDir: string;
   let work: string;
@@ -617,6 +624,8 @@ describe("apps: production, previews, data, gates, crew", () => {
     const committed = await commitToBranch(app, alice, repo, {
       message: "Echo who is here",
       files: [
+        // The app's own suites that boot its real server go with it.
+        ...SERVER_SUITES.map((path) => ({ path, content: null })),
         {
           path: "src/server.ts",
           content: `Bun.serve({

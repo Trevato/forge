@@ -237,6 +237,11 @@ file), and if you named an agent, the sentence became issue #1, assigned.
 - **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
   `tty` command from `forge.json` on a real pty over the environment's own
   data; `<name>--<pull>@<forge>` opens a preview's. The scaffold ships one.
+- **A new app starts trustworthy.** The scaffold's door asks the app's
+  contract before a body is read, every change and refused change is an
+  audit row, the API describes itself at `/openapi.json`, `/healthz` says
+  up, and the look is design tokens, light and dark, with no colour spelled
+  out anywhere else ([docs/APPS.md](docs/APPS.md#what-a-new-app-starts-as)).
 
 The repository says how it runs in `forge.json` (`run`, and optionally
 `install`, `test`, `health`, `ready`); a `package.json` with a `start` script
