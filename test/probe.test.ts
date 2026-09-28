@@ -154,15 +154,25 @@ describe("the probe asks the running app whether it obeys its table", () => {
       'if (verb !== "delete" && permit(who, "note", verb, row) !== "yes")',
     );
     expect(broken).not.toBe(actions);
+    // The door asks the same table before the action does, so the rule is
+    // written there too: a hand-written rule has to open both to be heard.
+    const door = files.get("src/security.ts") as string;
+    const opened = door.replace(
+      ": !mayKnock(who, found.resource, found.verb);",
+      ': found.verb !== "delete" && !mayKnock(who, found.resource, found.verb);',
+    );
+    expect(opened).not.toBe(door);
     const since = new Date().toISOString();
     await Bun.sleep(5);
     const wrote = await commitToBranch(app, alice, repo, {
       message: "a hand-written rule, and the tests that knew better",
       files: [
         { path: "src/actions.ts", content: broken },
+        { path: "src/security.ts", content: opened },
         { path: "src/contract.test.ts", content: null },
         { path: "src/actions.test.ts", content: null },
         { path: "src/server.test.ts", content: null },
+        { path: "src/audit.test.ts", content: null },
       ],
     });
     expect(wrote.ok).toBe(true);

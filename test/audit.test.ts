@@ -364,7 +364,7 @@ describe("the audit reads every app's policy from git", () => {
       })
     ).text();
     expect(notes).toContain('class="policy-line"');
-    expect(notes).toContain("One resource");
+    expect(notes).toContain("2 resources");
     expect(notes).toContain('href="/audit#alice-notes"');
     // The audit page carries that anchor.
     const page = await (

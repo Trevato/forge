@@ -42,19 +42,30 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "README.md", content: readme(title, description) },
     { path: "AGENTS.md", content: AGENTS_MD },
     { path: "contract.json", content: CONTRACT_JSON },
+    {
+      path: "contract/openapi.json",
+      content: openapiJson(title, description),
+    },
+    { path: "design/tokens.json", content: TOKENS_JSON },
     { path: "src/env.ts", content: ENV_TS },
     { path: "src/who.ts", content: WHO_TS },
     { path: "src/can.ts", content: CAN_TS },
     { path: "src/contract.ts", content: CONTRACT_TS },
+    { path: "src/security.ts", content: SECURITY_TS },
+    { path: "src/audit.ts", content: AUDIT_TS },
     { path: "src/db.ts", content: DB_TS },
     { path: "src/actions.ts", content: ACTIONS_TS },
     { path: "src/live.ts", content: LIVE_TS },
     { path: "src/http.ts", content: HTTP_TS },
     { path: "src/mcp.ts", content: MCP_TS },
     { path: "src/page.ts", content: PAGE_TS },
+    { path: "src/tokens.ts", content: TOKENS_TS },
+    { path: "src/openapi.ts", content: OPENAPI_TS },
     { path: "src/routes.ts", content: ROUTES_TS },
     { path: "src/server.ts", content: SERVER_TS },
     { path: "src/tty.ts", content: TTY_TS },
+    { path: "scripts/lint-design.ts", content: LINT_DESIGN_TS },
+    { path: "scripts/contract-emit.ts", content: CONTRACT_EMIT_TS },
     { path: "static/app.css", content: APP_CSS },
     { path: "static/live.js", content: LIVE_JS },
     { path: "src/who.test.ts", content: WHO_TEST },
@@ -62,6 +73,10 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "src/actions.test.ts", content: ACTIONS_TEST },
     { path: "src/contract.test.ts", content: CONTRACT_TEST },
     { path: "src/server.test.ts", content: SERVER_TEST },
+    { path: "src/security.test.ts", content: SECURITY_TEST },
+    { path: "src/audit.test.ts", content: AUDIT_TEST },
+    { path: "src/openapi.test.ts", content: OPENAPI_TEST },
+    { path: "src/design.test.ts", content: DESIGN_TEST },
   ];
 }
 
@@ -69,6 +84,7 @@ const FORGE_JSON = `{
   "app": {
     "run": "bun run src/server.ts",
     "test": "bun test",
+    "health": "/healthz",
     "tty": "bun run src/tty.ts"
   }
 }
@@ -78,10 +94,16 @@ const packageJson = (name: string, description: string): string =>
   `${JSON.stringify(
     {
       name,
+      version: "0.1.0",
       description,
       private: true,
       type: "module",
-      scripts: { start: "bun run src/server.ts", test: "bun test" },
+      scripts: {
+        start: "bun run src/server.ts",
+        test: "bun test",
+        "lint:design": "bun run scripts/lint-design.ts",
+        "contract:emit": "bun run scripts/contract-emit.ts",
+      },
     },
     null,
     2,
@@ -107,6 +129,8 @@ PORT=8080 FORGE_APP_DATA=./data bun run src/server.ts   # run it here
 bun test                                                # what \`forge.json\`'s app.test runs on every push
 FORGE_APP_DATA=./data bun run src/tty.ts                # the terminal
 FORGE_APP_DATA=./data bun run src/db.ts --check         # schema version, integrity
+bun run lint:design                                     # no colour but the tokens'
+bun run contract:emit                                   # rewrite contract/openapi.json from the routes
 \`\`\`
 
 \`app.test\` in \`forge.json\` runs beside \`app.run\` in every deploy, not before
@@ -120,22 +144,50 @@ plain function — \`(db, who, input)\` in, data or a named failure out — and
 the page, the JSON API, the MCP server and the terminal all call it and
 decide nothing themselves. \`AGENTS.md\` says how to add to it.
 
-| file                               | what it is                                                   |
-| ---------------------------------- | ------------------------------------------------------------ |
-| \`src/actions.ts\`                   | list, add, delete                                            |
-| \`contract.json\`                    | who may do what: roles, and the least role each verb needs   |
-| \`src/contract.ts\`, \`src/can.ts\`    | the table, read at boot; the forge's evaluator, verbatim     |
-| \`src/who.ts\`                       | who is asking, from the forge's signed headers               |
-| \`src/db.ts\`                        | SQLite under \`FORGE_APP_DATA\`, WAL, forward-only migrations  |
-| \`src/live.ts\`                      | the in-process bus and \`GET /events\`                         |
-| \`src/mcp.ts\`                       | the actions as MCP tools at \`POST /mcp\`                      |
-| \`src/routes.ts\`                    | every path, in one table                                     |
-| \`src/page.ts\`                      | the HTML, rendered on the server                             |
-| \`src/http.ts\`                      | the floor: headers, body cap, same-origin, rate limit, files |
-| \`src/server.ts\`                    | boot: open the database, serve                               |
-| \`src/tty.ts\`                       | the terminal, over the same actions                          |
-| \`src/env.ts\`                       | what the forge told this process                             |
-| \`static/app.css\`, \`static/live.js\` | the look, and the list that stays current                    |
+| file                               | what it is                                                     |
+| ---------------------------------- | -------------------------------------------------------------- |
+| \`src/actions.ts\`                   | list, add, delete; the audit trail, read                       |
+| \`contract.json\`                    | who may do what: roles, and the least role each verb needs     |
+| \`src/contract.ts\`, \`src/can.ts\`    | the table, read at boot; the forge's evaluator, verbatim       |
+| \`src/security.ts\`                  | the door: rationing, same origin, the table before the body    |
+| \`src/audit.ts\`                     | every change and every refused one, as a row                   |
+| \`src/who.ts\`                       | who is asking, from the forge's signed headers                 |
+| \`src/db.ts\`                        | SQLite under \`FORGE_APP_DATA\`, WAL, forward-only migrations    |
+| \`src/live.ts\`                      | the in-process bus and \`GET /events\`                           |
+| \`src/mcp.ts\`                       | the actions as MCP tools at \`POST /mcp\`                        |
+| \`src/routes.ts\`                    | every path, in one table, each API route described beside it   |
+| \`src/openapi.ts\`                   | the routes as OpenAPI; committed at \`contract/openapi.json\`    |
+| \`src/page.ts\`                      | the HTML, rendered on the server, with its share metadata      |
+| \`design/tokens.json\`, \`src/tokens.ts\` | the look as data, light and dark; compiled to \`/tokens.css\` |
+| \`src/http.ts\`                      | the floor: headers, body cap, files                            |
+| \`src/server.ts\`                    | boot: open the database, serve                                 |
+| \`src/tty.ts\`                       | the terminal, over the same actions                            |
+| \`src/env.ts\`                       | what the forge told this process                               |
+| \`static/app.css\`, \`static/live.js\` | the look in the tokens' words, and the list that stays current |
+
+## What every app stands on
+
+- **The door.** Before a route sees a request, \`src/security.ts\` rations
+  writes (and a stranger's API calls), refuses a write from another site,
+  and turns away — before the body is read — anyone the table lets through
+  a resource's door for no row at all: 401 for a stranger, 403 for anyone
+  else. The action still decides about the real row.
+- **The audit trail.** Every change, and every change refused, is a row:
+  who, which resource and verb, which row, when, and whether they were
+  let. Admins read it at \`GET /api/audit\`. A row that cannot be written
+  is a log line, never a failed request.
+- **The API, described.** \`GET /openapi.json\` is \`contract/openapi.json\`,
+  written from the routes by \`bun run contract:emit\`; each operation names
+  its cell of the table (\`x-contract\`). \`bun test\` fails while it is stale.
+- **Up, or not.** \`GET /healthz\` answers \`{ ok, version, uptime }\`; the
+  forge waits on it before it sends anyone to a deploy.
+- **The look.** \`design/tokens.json\` holds every colour, space and size,
+  light and dark; nothing else spells out a colour (\`bun run lint:design\`),
+  and every pair a person reads meets 4.5:1 in both themes.
+- **The open web.** A shared link unfurls (description, Open Graph, a
+  card); \`/robots.txt\` keeps crawlers to the page, and out of previews
+  entirely; \`/.well-known/security.txt\` sends a reporter to the forge
+  that runs the app.
 
 ## Who you are
 
@@ -229,6 +281,21 @@ bug waiting for the door you forgot.
 Identity comes from the forge (\`src/who.ts\`): \`anon\`, \`user\` or \`admin\`,
 verified by signature, never by a cookie the app invents.
 
+Every request passes the door (\`src/security.ts\`) before a route sees it:
+writes are rationed, a write from another site is refused, and a request
+under a resource's \`api\` path is refused — before its body is read — when
+the table lets that person through that door for no row at all. The door
+asks the same table the actions do; it never compares roles by hand, and
+the action still decides about the real row. Do not route around it.
+
+Every change is written down. An action that creates, updates or deletes
+returns through \`audited\` (\`src/actions.ts\`), which appends a row to the
+\`audit\` table — who, the resource and verb, the row, when, and whether
+they were let — refused attempts included; the door records the writes it
+turns away. Admins read it at \`GET /api/audit\` (the \`audit\` resource in
+\`contract.json\`). Recording never fails a request: a row that cannot be
+written is a log line.
+
 Who may do what is a table, not code: \`contract.json\`. It declares the
 roles — each names the roles below it, and how it is held: by everyone, by
 the identity the forge signed, or by a row's column naming the person — and,
@@ -257,13 +324,24 @@ To add a concept:
 - **A page** — a row in \`src/routes.ts\` and a function in \`src/page.ts\`.
   With a second page, move them under \`src/pages/\` and keep one \`layout\`.
 - **An API route** — a row in \`src/routes.ts\` that calls the action and
-  answers with \`answer(...)\`; the status follows the failure.
+  answers with \`answer(...)\`; the status follows the failure. Give it an
+  \`api\` entry beside it (a sentence, the body and answer as JSON Schema)
+  and run \`bun run contract:emit\`: \`contract/openapi.json\` is committed,
+  served at \`/openapi.json\`, and \`bun test\` fails while it is stale. A
+  resource's routes live under the \`api\` path its \`contract.json\` entry
+  names, so the door and the forge's probe find them.
 - **A tool** — an entry in \`tools\` in \`src/mcp.ts\`: a name, one sentence,
   a JSON schema, the action.
 - **A terminal command** — a key in \`src/tty.ts\` that calls the action and
   reports on the status line.
 - **Something live** — \`emit(type, data)\` in the action, and
   \`data-live="<types>"\` on the region of the page that shows it.
+- **A colour, a space, a size** — a token in \`design/tokens.json\` (a
+  colour needs its dark value in \`$extensions.mode.dark\`), used as
+  \`var(--…)\`. \`bun run lint:design\` refuses a raw \`#hex\`, \`rgb(\` or
+  \`hsl(\` anywhere in \`src/\` or \`static/\`, and a \`var(--…)\` that names no
+  token; \`src/design.test.ts\` runs it, and holds every pair of colours a
+  person reads to 4.5:1 in both themes.
 
 ## The bar
 
@@ -281,11 +359,18 @@ To add a concept:
   layout shift; what changes arrives over \`/events\`, never by polling;
   work that can wait is done after the response.
 - A phone is a first-class client: the page works at 360px wide with no
-  horizontal scroll, every control is at least 44px on a side, and the
-  keyboard reaches everything a mouse does.
-- Finish: the app boots, \`/\` answers, \`bun test\` is green, the README says
-  how to use it and what is real versus simulated, \`forge.json\` says how
-  to run it.
+  horizontal scroll, every control is at least 44px on a side
+  (\`--size-tap\`), an input's text is never below 16px (a phone zooms into
+  a smaller one), focus is always visible, whoever asked for less motion
+  gets none, and the keyboard reaches everything a mouse does.
+- Beauty is the tokens': light and dark both, from one file. A new page
+  uses \`layout\`, which carries the tokens, the description and the Open
+  Graph and card metadata a shared link unfurls with — pass the page's
+  path so \`og:url\` is its own.
+- Finish: the app boots, \`/healthz\` answers \`{ ok, version, uptime }\`
+  (the forge polls it; keep it cheap and apart from the page), \`/\`
+  answers, \`bun test\` is green, the README says how to use it and what is
+  real versus simulated, \`forge.json\` says how to run it.
 `;
 
 // What the forge told the process, named once.
@@ -298,6 +383,10 @@ const ENV_TS = `/**
 import pkg from "../package.json";
 
 export const title: string = pkg.name;
+/** The app's own version (package.json): what \`/healthz\` and \`/openapi.json\` say. */
+export const version: string = pkg.version ?? "0.0.0";
+/** When this process started, for \`/healthz\`'s uptime. */
+export const startedAt: number = Date.now();
 export const description: string = pkg.description || "A new app on the forge.";
 export const dataDir: string = process.env.FORGE_APP_DATA ?? "./data";
 export const env: string = process.env.FORGE_APP_ENV ?? "local";
@@ -313,6 +402,8 @@ export const ssh: string | undefined = process.env.FORGE_APP_SSH;
 export const publicOrigin: string = new URL(
   process.env.FORGE_APP_URL ?? "http://localhost",
 ).origin;
+/** The forge that runs us. Its own well-known files (security.txt) speak for its apps. */
+export const forgeUrl: string | undefined = process.env.FORGE_URL;
 /** The key the forge signs identities with (\`who.ts\`). Unset, everyone is anonymous. */
 export const identityKey: string = process.env.FORGE_APP_IDENTITY_KEY ?? "";
 `;
@@ -414,6 +505,20 @@ export const migrations: string[] = [
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )\`,
   \`CREATE INDEX note_author ON note (author_id)\`,
+  // Who tried to change what, and whether they were let. Appended by
+  // src/audit.ts, never edited; read by admins at GET /api/audit.
+  \`CREATE TABLE audit (
+    id INTEGER PRIMARY KEY,
+    at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    who_id TEXT,
+    who_name TEXT,
+    role TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    verb TEXT NOT NULL,
+    target TEXT,
+    allowed INTEGER NOT NULL CHECK (allowed IN (0, 1)),
+    outcome TEXT NOT NULL
+  )\`,
 ];
 
 export function openDb(dir = dataDir): Database {
@@ -491,6 +596,16 @@ const CONTRACT_JSON = `{
         "delete": "author",
         "list": "anon"
       }
+    },
+    "audit": {
+      "api": "/api/audit",
+      "can": {
+        "create": "nobody",
+        "read": "admin",
+        "update": "nobody",
+        "delete": "nobody",
+        "list": "admin"
+      }
     }
   }
 }
@@ -547,6 +662,7 @@ const ACTIONS_TS = `/**
  */
 
 import type { Database } from "bun:sqlite";
+import { record, type AuditRow } from "./audit.ts";
 import { permit } from "./contract.ts";
 import { emit } from "./live.ts";
 import type { Who } from "./who.ts";
@@ -577,6 +693,29 @@ export const BODY_MAX = 500;
 const refuse = <T>(who: Who, signIn: string, no: string): Result<T> =>
   who.role === "anon" ? fail("signin_required", signIn) : fail("forbidden", no);
 
+/**
+ * A change, written into the audit trail whichever way it went: the row it
+ * made or touched, or the one it was refused. Every action that changes
+ * something returns through here, so the trail holds at every door.
+ */
+const audited = <T extends { readonly id: number }>(
+  db: Database,
+  who: Who,
+  resource: string,
+  verb: "create" | "update" | "delete",
+  target: number | undefined,
+  result: Result<T>,
+): Result<T> => {
+  record(db, {
+    who,
+    resource,
+    verb,
+    target: result.ok ? result.value.id : target,
+    outcome: result.ok ? "ok" : result.error,
+  });
+  return result;
+};
+
 export function listNotes(
   db: Database,
   who: Who,
@@ -602,18 +741,22 @@ export function listNotes(
   const mine = may.where.map((column) => \`\${column} = ?2\`).join(" OR ");
   return ok(
     db
-      .query<Note, [number, string]>(
-        \`SELECT * FROM note WHERE \${mine} ORDER BY id DESC LIMIT ?1\`,
-      )
+      .query<
+        Note,
+        [number, string]
+      >(\`SELECT * FROM note WHERE \${mine} ORDER BY id DESC LIMIT ?1\`)
       .all(limit, who.role === "anon" ? "" : who.id),
   );
 }
 
-export function addNote(
+export const addNote = (
   db: Database,
   who: Who,
   input: { body: string },
-): Result<Note> {
+): Result<Note> =>
+  audited(db, who, "note", "create", undefined, add(db, who, input));
+
+function add(db: Database, who: Who, input: { body: string }): Result<Note> {
   if (permit(who, "note", "create") !== "yes")
     return refuse(who, "Sign in to add a note.", "You may not add a note.");
   const body = input.body.trim();
@@ -667,7 +810,14 @@ export function getNote(
   });
 }
 
-export function updateNote(
+export const updateNote = (
+  db: Database,
+  who: Who,
+  input: { id: number; body: string },
+): Result<Note> =>
+  audited(db, who, "note", "update", input.id, update(db, who, input));
+
+function update(
   db: Database,
   who: Who,
   input: { id: number; body: string },
@@ -690,7 +840,14 @@ export function updateNote(
   return ok(note);
 }
 
-export function deleteNote(
+export const deleteNote = (
+  db: Database,
+  who: Who,
+  input: { id: number },
+): Result<{ id: number }> =>
+  audited(db, who, "note", "delete", input.id, remove(db, who, input));
+
+function remove(
   db: Database,
   who: Who,
   input: { id: number },
@@ -708,6 +865,62 @@ export function deleteNote(
 /** Whether \`who\` may remove \`note\`: the table's answer, for the page and the terminal to draw from. */
 export const canDelete = (who: Who, note: Note): boolean =>
   permit(who, "note", "delete", { ...note }) === "yes";
+
+/**
+ * The audit trail, newest first, for whoever the table lets read it (an
+ * admin, as the scaffold has it). \`before\` pages back by id. Audit rows name
+ * no author, so a cell that gave \`list\` to a row's role would find nothing
+ * of its own: anything but "yes" is a refusal here.
+ */
+export function listAudit(
+  db: Database,
+  who: Who,
+  input: { limit?: number; before?: number } = {},
+): Result<AuditRow[]> {
+  if (permit(who, "audit", "list") !== "yes")
+    return refuse(
+      who,
+      "Sign in to read the audit trail.",
+      "Only an admin can read the audit trail.",
+    );
+  const limit = Math.min(
+    Math.max(Math.trunc(input.limit ?? 100) || 100, 1),
+    500,
+  );
+  const before = Number.isInteger(input.before)
+    ? input.before!
+    : Number.MAX_SAFE_INTEGER;
+  return ok(
+    db
+      .query<
+        AuditRow,
+        [number, number]
+      >("SELECT * FROM audit WHERE id < ?1 ORDER BY id DESC LIMIT ?2")
+      .all(before, limit),
+  );
+}
+
+export function getAudit(
+  db: Database,
+  who: Who,
+  input: { id: number },
+): Result<AuditRow> {
+  const row = Number.isInteger(input.id)
+    ? db
+        .query<AuditRow, [number]>("SELECT * FROM audit WHERE id = ?1")
+        .get(input.id)
+    : null;
+  if (permit(who, "audit", "read", { ...row }) !== "yes")
+    return refuse(
+      who,
+      "Sign in to read the audit trail.",
+      "Only an admin can read the audit trail.",
+    );
+  if (row !== null) return ok(row);
+  if (!Number.isInteger(input.id))
+    return fail("invalid", "An audit id is a whole number.");
+  return fail("not_found", "No such audit row.");
+}
 `;
 
 // The bus and the event stream.
@@ -797,18 +1010,20 @@ export function events(request: Request): Response {
 // The floor.
 const HTTP_TS = `/**
  * The floor every response stands on, and the few things a route needs to
- * read a request safely. Nothing in here knows what a note is.
+ * read a request safely. Nothing in here knows what a note is; who may
+ * come in at all is \`security.ts\`.
  */
 
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { publicOrigin } from "./env.ts";
+import { env, publicOrigin } from "./env.ts";
 
 // Scripts and styles come from this origin (inline styles allowed, inline
 // scripts not), nothing frames us, browsers never guess a content type, and
 // referrers stay on this site. Once served over https, always: browsers
-// remember for a year.
+// remember for a year. Anything but production asks not to be indexed: a
+// preview is a draft, and its address goes away with its pull.
 export const SECURITY: Record<string, string> = {
   "content-security-policy":
     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
@@ -818,6 +1033,7 @@ export const SECURITY: Record<string, string> = {
   ...(publicOrigin.startsWith("https:")
     ? { "strict-transport-security": "max-age=31536000" }
     : {}),
+  ...(env === "production" ? {} : { "x-robots-tag": "noindex" }),
 };
 
 export const escape = (s: string): string =>
@@ -888,17 +1104,6 @@ export function readNotice(request: Request): {
 const cookie = (name: string, value: string, maxAge: number): string =>
   \`\${name}=\${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=\${maxAge}\${publicOrigin.startsWith("https:") ? "; Secure" : ""}\`;
 
-// A browser on another site can make a person's browser POST here; it cannot
-// make that request look same-origin. Browsers say where a request came from
-// (Sec-Fetch-Site, or Origin); a request that names another site is refused.
-// A script sends neither and is judged by its identity instead.
-export const sameOrigin = (request: Request): boolean => {
-  const site = request.headers.get("sec-fetch-site");
-  if (site !== null) return site === "same-origin" || site === "none";
-  const origin = request.headers.get("origin");
-  return origin === null || origin === publicOrigin;
-};
-
 // A request body is read up to a cap and no further, counting the bytes as
 // they arrive. A declared Content-Length is a claim: a chunked request has
 // none, and a lie is free. Undefined means "too large" — refuse it. Past the
@@ -966,26 +1171,6 @@ export const fields = (value: unknown): Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-
-// Writes are rationed per person (or per address, for a stranger): a bucket
-// of \`burst\` tokens that refills at \`perSecond\`. In memory, so a restart
-// forgets — which is the right size for one process on one machine.
-const RATE = { burst: 20, perSecond: 2 };
-const buckets = new Map<string, { tokens: number; at: number }>();
-export function allow(key: string, now = Date.now()): boolean {
-  const bucket = buckets.get(key) ?? { tokens: RATE.burst, at: now };
-  bucket.tokens = Math.min(
-    RATE.burst,
-    bucket.tokens + ((now - bucket.at) / 1000) * RATE.perSecond,
-  );
-  bucket.at = now;
-  buckets.set(key, bucket);
-  if (buckets.size > 10_000)
-    for (const [k, b] of buckets) if (now - b.at > 60_000) buckets.delete(k);
-  if (bucket.tokens < 1) return false;
-  bucket.tokens -= 1;
-  return true;
-}
 
 // Files under ./static are served as they are. A page links each one by
 // its content (\`/static/app.css?v=3f2a9c1e\`), and that address is cached
@@ -1152,11 +1337,25 @@ const PAGE_TS = `/**
  */
 
 import { canDelete, type Note } from "./actions.ts";
-import { commit, description, env, ssh, title, where } from "./env.ts";
+import {
+  commit,
+  description,
+  env,
+  publicOrigin,
+  ssh,
+  title,
+  where,
+} from "./env.ts";
 import { asset, escape } from "./http.ts";
+import { token, tokensHref } from "./tokens.ts";
 import type { Who } from "./who.ts";
 
-export function layout(body: string, who: Who): string {
+/**
+ * The frame every page shares: the tokens and the look, who you are, and
+ * what a link to the page says when it is shared — a title, a sentence
+ * and the address, for Open Graph and the card a chat app unfurls.
+ */
+export function layout(body: string, who: Who, path = "/"): string {
   const door =
     who.role === "anon"
       ? \`<a class="button button-quiet" href="/__forge/signin?to=/">Sign in</a>\`
@@ -1167,8 +1366,20 @@ export function layout(body: string, who: Who): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="\${token("color-bg")}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="\${token("color-bg", "dark")}" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:,">
 <title>\${escape(title)}</title>
+<meta name="description" content="\${escape(description)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="\${escape(title)}">
+<meta property="og:title" content="\${escape(title)}">
+<meta property="og:description" content="\${escape(description)}">
+<meta property="og:url" content="\${escape(publicOrigin + path)}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="\${escape(title)}">
+<meta name="twitter:description" content="\${escape(description)}">
+<link rel="stylesheet" href="\${tokensHref}">
 <link rel="stylesheet" href="\${asset("app.css")}">
 <script type="module" src="\${asset("live.js")}"></script>
 <body>
@@ -1186,7 +1397,7 @@ export function layout(body: string, who: Who): string {
   <main>\${body}</main>
   <footer class="muted">
     \${ssh === undefined ? "" : \`<p>Terminal: <code>\${escape(ssh)}</code></p>\`}
-    <p>Also at <a href="/api/notes">/api/notes</a> and <code>POST /mcp</code>, with the same rules.</p>
+    <p>Also at <a href="/api/notes">/api/notes</a> (<a href="/openapi.json">described</a>) and <code>POST /mcp</code>, with the same rules.</p>
   </footer>
 </div>
 </body>
@@ -1248,18 +1459,30 @@ const ROUTES_TS = `/**
  * Every path the app answers, in one table. A route reads its request,
  * calls an action, and shapes the answer for its door — HTML for a
  * browser, JSON for a script — and that is all a route does.
+ *
+ * A route that is part of the API says so beside itself (\`api\`): one
+ * sentence, and the shape of what it takes and gives, as JSON Schema.
+ * \`bun run contract:emit\` writes those into \`contract/openapi.json\`, the
+ * tests fail when the committed file and this table disagree, and
+ * \`GET /openapi.json\` serves it. The shapes describe; the checks that hold
+ * are still the actions' own.
  */
 
 import type { Database } from "bun:sqlite";
+import { existsSync, readFileSync } from "node:fs";
 import {
   addNote,
+  BODY_MAX,
   deleteNote,
+  getAudit,
   getNote,
+  listAudit,
   listNotes,
   updateNote,
   type Failure,
   type Result,
 } from "./actions.ts";
+import { commit, env, forgeUrl, startedAt, version } from "./env.ts";
 import {
   back,
   fields,
@@ -1268,12 +1491,14 @@ import {
   readForm,
   readJson,
   readNotice,
+  SECURITY,
   staticFile,
   text,
 } from "./http.ts";
 import { events } from "./live.ts";
 import { rpc } from "./mcp.ts";
 import { home } from "./page.ts";
+import { tokensCss } from "./tokens.ts";
 import type { Who } from "./who.ts";
 
 export interface Context {
@@ -1284,11 +1509,81 @@ export interface Context {
   readonly params: Record<string, string>;
 }
 
+/** A JSON Schema, as plain data. */
+export type Schema = Readonly<Record<string, unknown>>;
+
+/** What an API route is, for the description: never consulted to decide anything. */
+export interface Api {
+  readonly summary: string;
+  /** The body it reads. */
+  readonly body?: Schema;
+  /** What it answers when it succeeds, and with which status (200). */
+  readonly answer: Schema;
+  readonly status?: number;
+  /** The query parameters it reads. */
+  readonly query?: Readonly<Record<string, Schema>>;
+}
+
 export interface Route {
-  readonly method: "GET" | "POST" | "DELETE";
+  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
   readonly path: string;
   readonly handle: (ctx: Context) => Response | Promise<Response>;
+  readonly api?: Api;
 }
+
+// The shapes the API speaks in, named once.
+export const NOTE: Schema = {
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+    body: { type: "string", minLength: 1, maxLength: BODY_MAX },
+    author_id: { type: "string" },
+    author_name: { type: "string" },
+    created_at: { type: "string", format: "date-time" },
+    updated_at: { type: "string", format: "date-time" },
+  },
+  required: [
+    "id",
+    "body",
+    "author_id",
+    "author_name",
+    "created_at",
+    "updated_at",
+  ],
+};
+const NOTE_BODY: Schema = {
+  type: "object",
+  properties: { body: { type: "string", minLength: 1, maxLength: BODY_MAX } },
+  required: ["body"],
+};
+export const AUDIT_ROW: Schema = {
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+    at: { type: "string", format: "date-time" },
+    who_id: { type: ["string", "null"] },
+    who_name: { type: ["string", "null"] },
+    role: { enum: ["anon", "user", "admin"] },
+    resource: { type: "string" },
+    verb: { type: "string" },
+    target: { type: ["string", "null"] },
+    allowed: { enum: [0, 1] },
+    outcome: { type: "string" },
+  },
+  required: ["id", "at", "role", "resource", "verb", "allowed", "outcome"],
+};
+export const ERROR: Schema = {
+  type: "object",
+  properties: { error: { type: "string" }, message: { type: "string" } },
+  required: ["error"],
+};
+const LIMIT: Schema = {
+  type: "integer",
+  minimum: 1,
+  maximum: 500,
+  default: 100,
+};
+const list = (items: Schema): Schema => ({ type: "array", items });
 
 const STATUS: Record<Failure, number> = {
   signin_required: 401,
@@ -1309,6 +1604,14 @@ const answer = <T>(result: Result<T>, status = 200): Response =>
 /** A result for a form: back to the page, with what went wrong if it did. */
 const done = <T>(result: Result<T>): Response =>
   result.ok ? back() : back(result.message);
+
+/** A whole number from the query, or undefined. */
+const whole = (value: string | null): number | undefined =>
+  value !== null && /^\\d+$/.test(value) ? Number(value) : undefined;
+
+// The API's description, read from git once: what the tests hold equal to this table.
+const OPENAPI = new URL("../contract/openapi.json", import.meta.url);
+const openapi = existsSync(OPENAPI) ? readFileSync(OPENAPI, "utf8") : undefined;
 
 export const routes: readonly Route[] = [
   // The page. Forms post and come back; the list stays live over /events.
@@ -1352,6 +1655,11 @@ export const routes: readonly Route[] = [
           limit: Number(c.url.searchParams.get("limit") ?? 100),
         }),
       ),
+    api: {
+      summary: "The notes, newest first.",
+      query: { limit: LIMIT },
+      answer: list(NOTE),
+    },
   },
   {
     method: "POST",
@@ -1364,11 +1672,18 @@ export const routes: readonly Route[] = [
         201,
       );
     },
+    api: {
+      summary: "Add a note as the person asking.",
+      body: NOTE_BODY,
+      answer: NOTE,
+      status: 201,
+    },
   },
   {
     method: "GET",
     path: "/api/notes/:id",
     handle: (c) => answer(getNote(c.db, c.who, { id: Number(c.params.id) })),
+    api: { summary: "One note.", answer: NOTE },
   },
   {
     method: "PATCH",
@@ -1383,11 +1698,46 @@ export const routes: readonly Route[] = [
         }),
       );
     },
+    api: { summary: "Change a note's words.", body: NOTE_BODY, answer: NOTE },
   },
   {
     method: "DELETE",
     path: "/api/notes/:id",
     handle: (c) => answer(deleteNote(c.db, c.who, { id: Number(c.params.id) })),
+    api: {
+      summary: "Remove a note.",
+      answer: {
+        type: "object",
+        properties: { id: { type: "integer" } },
+        required: ["id"],
+      },
+    },
+  },
+
+  // Who tried to change what: the audit trail, for whoever the table lets read it.
+  {
+    method: "GET",
+    path: "/api/audit",
+    handle: (c) =>
+      answer(
+        listAudit(c.db, c.who, {
+          limit: whole(c.url.searchParams.get("limit")) ?? 100,
+          ...(whole(c.url.searchParams.get("before")) === undefined
+            ? {}
+            : { before: whole(c.url.searchParams.get("before"))! }),
+        }),
+      ),
+    api: {
+      summary: "The audit trail, newest first; \`before\` pages back by id.",
+      query: { limit: LIMIT, before: { type: "integer" } },
+      answer: list(AUDIT_ROW),
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/audit/:id",
+    handle: (c) => answer(getAudit(c.db, c.who, { id: Number(c.params.id) })),
+    api: { summary: "One row of the audit trail.", answer: AUDIT_ROW },
   },
 
   // Live events, and the MCP server (the tools are the actions too).
@@ -1409,11 +1759,129 @@ export const routes: readonly Route[] = [
         ? new Response(null, { status })
         : json(body, status);
     },
+    api: {
+      summary:
+        "One JSON-RPC 2.0 message to the MCP server; its tools are the actions.",
+      body: {
+        type: "object",
+        properties: {
+          jsonrpc: { const: "2.0" },
+          id: {},
+          method: { type: "string" },
+          params: { type: "object" },
+        },
+        required: ["jsonrpc", "method"],
+      },
+      answer: { type: "object" },
+    },
   },
   {
     method: "GET",
     path: "/mcp",
     handle: () => text("this endpoint speaks JSON-RPC over POST", 405),
+  },
+
+  // Up or not, for the forge and for anyone watching: a separate path from
+  // the page, so a health check never renders it.
+  {
+    method: "GET",
+    path: "/healthz",
+    handle: (c) => {
+      let ok = true;
+      try {
+        c.db.query("SELECT 1").get();
+      } catch {
+        ok = false;
+      }
+      const uptime = Math.floor((Date.now() - startedAt) / 1000);
+      return new Response(
+        JSON.stringify({ ok, version, commit, env, uptime }),
+        {
+          status: ok ? 200 : 503,
+          headers: {
+            "content-type": "application/json; charset=utf-8",
+            "cache-control": "no-store",
+            ...SECURITY,
+          },
+        },
+      );
+    },
+    api: {
+      summary:
+        "Whether the app is up: its version, commit, environment and seconds since it started.",
+      answer: {
+        type: "object",
+        properties: {
+          ok: { type: "boolean" },
+          version: { type: "string" },
+          commit: { type: "string" },
+          env: { type: "string" },
+          uptime: { type: "integer" },
+        },
+        required: ["ok", "version", "uptime"],
+      },
+    },
+  },
+  {
+    method: "GET",
+    path: "/openapi.json",
+    handle: () =>
+      openapi === undefined
+        ? text("not found", 404)
+        : new Response(openapi, {
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+              "cache-control": "no-cache",
+              ...SECURITY,
+            },
+          }),
+  },
+
+  // The look: design/tokens.json, compiled at boot, cached for a year when linked by content.
+  {
+    method: "GET",
+    path: "/tokens.css",
+    handle: (c) =>
+      new Response(tokensCss, {
+        headers: {
+          "content-type": "text/css; charset=utf-8",
+          "cache-control": c.url.searchParams.has("v")
+            ? "public, max-age=31536000, immutable"
+            : "no-cache",
+          ...SECURITY,
+        },
+      }),
+  },
+
+  // What the web expects of a site. Crawlers read the page, not the API;
+  // a preview is a draft and is read by nobody. Where to report a
+  // vulnerability is the forge's to say: it runs this app.
+  {
+    method: "GET",
+    path: "/robots.txt",
+    handle: () =>
+      text(
+        env === "production"
+          ? "User-agent: *\\nDisallow: /api/\\nDisallow: /mcp\\nDisallow: /events\\nDisallow: /__forge/\\n"
+          : "User-agent: *\\nDisallow: /\\n",
+      ),
+  },
+  {
+    method: "GET",
+    path: "/.well-known/security.txt",
+    handle: () =>
+      forgeUrl === undefined
+        ? text("not found", 404)
+        : new Response(null, {
+            status: 302,
+            headers: {
+              location: new URL(
+                "/.well-known/security.txt",
+                forgeUrl,
+              ).toString(),
+              ...SECURITY,
+            },
+          }),
   },
 
   // Files under ./static, cached for a year when linked by content (\`asset\`).
@@ -1437,8 +1905,13 @@ export function match(
     const params: Record<string, string> = {};
     const hit = pattern.every((p, i) => {
       if (p.startsWith(":")) {
-        params[p.slice(1)] = decodeURIComponent(parts[i] ?? "");
-        return true;
+        // A malformed escape is no match, never a thrown error.
+        try {
+          params[p.slice(1)] = decodeURIComponent(parts[i] ?? "");
+          return true;
+        } catch {
+          return false;
+        }
       }
       return p === parts[i];
     });
@@ -1451,16 +1924,18 @@ export function match(
 // Boot.
 const SERVER_TS = `/**
  * The process the forge runs. \`serve\` opens the database and listens:
- * every request gets the floor (\`http.ts\`), an identity (\`who.ts\`) and
- * one route (\`routes.ts\`), and a write is refused before it is read if it
- * came from another site or from someone writing too fast. Run directly,
- * it serves what the forge said; a test calls \`serve\` with its own.
+ * every request gets the floor (\`http.ts\`), an identity (\`who.ts\`), the
+ * door (\`security.ts\`) and one route (\`routes.ts\`) — so a request from
+ * another site, from someone going too fast, or from someone the contract
+ * turns away is refused before a byte of it is read. Run directly, it
+ * serves what the forge said; a test calls \`serve\` with its own.
  */
 
 import { openDb } from "./db.ts";
 import { dataDir, identityKey, title, where } from "./env.ts";
-import { allow, html, sameOrigin, text } from "./http.ts";
+import { html, text } from "./http.ts";
 import { match } from "./routes.ts";
+import { door } from "./security.ts";
 import { who } from "./who.ts";
 
 export interface ServeOptions {
@@ -1481,17 +1956,14 @@ export function serve(options: ServeOptions) {
     async fetch(request, server) {
       const url = new URL(request.url);
       const me = who(request, options.identityKey);
-      const reading = request.method === "GET" || request.method === "HEAD";
-      if (!reading) {
-        if (!sameOrigin(request)) return text("forbidden", 403);
-        // Behind the forge every stranger shares its address; a person is
-        // their own bucket.
-        const from =
-          me.role === "anon"
-            ? \`ip:\${server.requestIP(request)?.address ?? "?"}\`
-            : \`user:\${me.id}\`;
-        if (!allow(from)) return text("too many requests", 429);
-      }
+      const refused = door(
+        db,
+        request,
+        url,
+        me,
+        server.requestIP(request)?.address ?? "?",
+      );
+      if (refused !== undefined) return head(request, refused);
       const found = match(
         request.method === "HEAD" ? "GET" : request.method,
         url.pathname,
@@ -1504,13 +1976,7 @@ export function serve(options: ServeOptions) {
         who: me,
         params: found.params,
       });
-      // HEAD is GET without the body: a health check sees the app up.
-      return request.method === "HEAD"
-        ? new Response(null, {
-            status: response.status,
-            headers: response.headers,
-          })
-        : response;
+      return head(request, response);
     },
     // A bug answers with the floor and nothing else: never the runtime's
     // own error page, which carries source and paths, and never without
@@ -1521,6 +1987,12 @@ export function serve(options: ServeOptions) {
     },
   });
 }
+
+// HEAD is GET without the body: a health check sees the app up.
+const head = (request: Request, response: Response): Response =>
+  request.method === "HEAD"
+    ? new Response(null, { status: response.status, headers: response.headers })
+    : response;
 
 if (import.meta.main) {
   const server = serve({
@@ -1654,129 +2126,79 @@ process.stdout.on("resize", draw);
 `;
 
 // The look.
-const APP_CSS = `/* Tokens first. Dark follows the system unless <html data-theme="light|dark"> decides. */
-:root {
-  color-scheme: light dark;
-  --bg: #f6f6f3;
-  --surface: #ffffff;
-  --fg: #1c1c1a;
-  --muted: #6f6f69;
-  --line: #e3e3dd;
-  --accent: #2f5bea;
-  --accent-fg: #ffffff;
-  --danger: #c2410c;
-  --toast-bg: #1c1c1a;
-  --toast-fg: #f6f6f3;
-  --radius: 10px;
-  --s1: 0.25rem;
-  --s2: 0.5rem;
-  --s3: 0.75rem;
-  --s4: 1rem;
-  --s5: 1.5rem;
-  --s6: 2.5rem;
-  --text-sm: 0.875rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.5rem;
-  --tap: 44px;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #131312;
-    --surface: #1d1d1b;
-    --fg: #ecece7;
-    --muted: #9a9a93;
-    --line: #2c2c29;
-    --accent: #7c96ff;
-    --accent-fg: #0f1a4d;
-    --danger: #fb923c;
-    --toast-bg: #ecece7;
-    --toast-fg: #131312;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #131312;
-  --surface: #1d1d1b;
-  --fg: #ecece7;
-  --muted: #9a9a93;
-  --line: #2c2c29;
-  --accent: #7c96ff;
-  --accent-fg: #0f1a4d;
-  --danger: #fb923c;
-  --toast-bg: #ecece7;
-  --toast-fg: #131312;
-}
+const APP_CSS = `/* The look, in the tokens' words. Every value that is a choice — a colour, a
+   space, a radius, a size — is a var(--…) from /tokens.css, which
+   design/tokens.json compiles to at boot; \`bun run lint:design\` refuses a raw
+   colour here. Light and dark are the tokens' business, not this file's. */
 
 /* The page. */
 html {
   -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font:
-    16px/1.55 system-ui,
-    -apple-system,
-    "Segoe UI",
-    sans-serif;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font: var(--text-base) / var(--leading-body) var(--font-sans);
 }
 .page {
   max-width: 40rem;
   margin: 0 auto;
-  padding: var(--s5) var(--s4) var(--s6);
+  padding: var(--space-5) var(--space-4) var(--space-6);
 }
 .head {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
-  gap: var(--s3) var(--s4);
-  margin-bottom: var(--s5);
+  gap: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
 }
 h1 {
   margin: 0;
   font-size: var(--text-xl);
   font-weight: 650;
   letter-spacing: -0.01em;
-  line-height: 1.2;
+  line-height: var(--leading-tight);
 }
 p {
   margin: 0;
 }
 a {
-  color: var(--accent);
+  color: var(--color-accent);
   text-decoration-thickness: 1px;
   text-underline-offset: 0.15em;
 }
 code,
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: var(--text-sm);
 }
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
 .muted {
-  color: var(--muted);
+  color: var(--color-muted);
 }
 .you {
-  color: var(--muted);
+  color: var(--color-muted);
   white-space: nowrap;
 }
 
 /* Blocks. */
 .card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: var(--s4);
-  margin-bottom: var(--s5);
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 .row {
   display: flex;
   align-items: center;
-  gap: var(--s2);
+  gap: var(--space-2);
 }
 .list {
   list-style: none;
@@ -1787,9 +2209,9 @@ code,
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: var(--s3);
-  padding: var(--s3) 0;
-  border-top: 1px solid var(--line);
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--color-line);
 }
 .note:first-child {
   border-top: 0;
@@ -1801,17 +2223,17 @@ code,
   font-size: var(--text-sm);
 }
 .empty {
-  padding: var(--s6) var(--s4);
+  padding: var(--space-6) var(--space-4);
   text-align: center;
-  color: var(--muted);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius);
+  color: var(--color-muted);
+  border: 1px dashed var(--color-line);
+  border-radius: var(--radius-md);
 }
 footer {
-  margin-top: var(--s6);
+  margin-top: var(--space-6);
   font-size: var(--text-sm);
   display: grid;
-  gap: var(--s1);
+  gap: var(--space-1);
 }
 footer code {
   overflow-wrap: anywhere;
@@ -1821,26 +2243,27 @@ footer code {
 .input {
   flex: 1;
   min-width: 0;
-  min-height: var(--tap);
-  padding: 0 var(--s3);
+  min-height: var(--size-tap);
+  padding: 0 var(--space-3);
   font: inherit;
+  font-size: max(16px, var(--text-base));
   color: inherit;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
 }
 .input::placeholder {
-  color: var(--muted);
+  color: var(--color-muted);
 }
 .button {
-  min-height: var(--tap);
-  padding: 0 var(--s4);
+  min-height: var(--size-tap);
+  padding: 0 var(--space-4);
   font: inherit;
   font-weight: 600;
-  color: var(--accent-fg);
-  background: var(--accent);
+  color: var(--color-accent-fg);
+  background: var(--color-accent);
   border: 1px solid transparent;
-  border-radius: var(--radius);
+  border-radius: var(--radius-md);
   cursor: pointer;
   white-space: nowrap;
   text-decoration: none;
@@ -1851,13 +2274,13 @@ footer code {
   filter: brightness(1.08);
 }
 .button-quiet {
-  color: var(--muted);
+  color: var(--color-muted);
   background: transparent;
-  padding: 0 var(--s3);
+  padding: 0 var(--space-3);
 }
 .button-quiet:hover {
-  color: var(--fg);
-  border-color: var(--line);
+  color: var(--color-fg);
+  border-color: var(--color-line);
   filter: none;
 }
 .pill {
@@ -1865,12 +2288,12 @@ footer code {
   padding: 0.1rem 0.6rem;
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  color: var(--color-muted);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-pill);
 }
 .pill[data-env="production"] {
-  color: var(--accent);
+  color: var(--color-accent);
   border-color: currentColor;
 }
 
@@ -1878,14 +2301,14 @@ footer code {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: var(--s5);
+  bottom: var(--space-5);
   transform: translateX(-50%);
-  max-width: calc(100% - 2 * var(--s4));
-  padding: var(--s3) var(--s4);
-  color: var(--toast-fg);
-  background: var(--toast-bg);
-  border-radius: 999px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+  max-width: calc(100% - 2 * var(--space-4));
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-toast-fg);
+  background: var(--color-toast-bg);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 8px 24px var(--color-shadow);
   animation: toast 6s forwards;
 }
 @keyframes toast {
@@ -1898,7 +2321,16 @@ footer code {
     visibility: hidden;
   }
 }
+/* Motion is a courtesy: whoever asked for less gets none. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
   .toast {
     animation: none;
   }
@@ -2136,10 +2568,13 @@ import { join } from "node:path";
 import {
   addNote,
   deleteNote,
+  getAudit,
   getNote,
+  listAudit,
   listNotes,
   updateNote,
 } from "./actions.ts";
+import { record } from "./audit.ts";
 import { actingAs, identities, table, type Verb } from "./can.ts";
 import { contract } from "./contract.ts";
 import { openDb } from "./db.ts";
@@ -2158,13 +2593,28 @@ function whoIs(identity: string): Who {
 
 const noteBy = (authorId: string): number =>
   db
-    .query<{ id: number }, [string]>(
-      "INSERT INTO note (body, author_id, author_name) VALUES ('n', ?1, ?1) RETURNING id",
-    )
+    .query<
+      { id: number },
+      [string]
+    >("INSERT INTO note (body, author_id, author_name) VALUES ('n', ?1, ?1) RETURNING id")
     .get(authorId)!.id;
 
+const auditRow = (): number => {
+  record(db, {
+    who: { role: "anon" },
+    resource: "note",
+    verb: "create",
+    outcome: "signin_required",
+  });
+  return db.query<{ id: number }, []>("SELECT max(id) AS id FROM audit").get()!
+    .id;
+};
+
 /** One door per verb an action serves: did it let \`who\` through, on \`row\`? */
-const doors: Record<string, Partial<Record<Verb, (who: Who, authorId: string) => boolean>>> = {
+const doors: Record<
+  string,
+  Partial<Record<Verb, (who: Who, authorId: string) => boolean>>
+> = {
   note: {
     create: (who) => addNote(db, who, { body: "hello" }).ok,
     list: (who) => listNotes(db, who).ok,
@@ -2172,6 +2622,15 @@ const doors: Record<string, Partial<Record<Verb, (who: Who, authorId: string) =>
     update: (who, authorId) =>
       updateNote(db, who, { id: noteBy(authorId), body: "changed" }).ok,
     delete: (who, authorId) => deleteNote(db, who, { id: noteBy(authorId) }).ok,
+  },
+  // The trail is written by the app itself, never through a door: there
+  // is no action that creates, changes or removes a row of it.
+  audit: {
+    list: (who) => listAudit(db, who).ok,
+    read: (who) => getAudit(db, who, { id: auditRow() }).ok,
+    create: () => false,
+    update: () => false,
+    delete: () => false,
   },
 };
 
@@ -2184,9 +2643,13 @@ test("every resource in the contract has every door here", () => {
     Object.keys(contract.resources).sort(),
   );
   for (const resource of Object.keys(contract.resources))
-    expect(Object.keys(doors[resource] ?? {}).sort()).toEqual(
-      ["create", "delete", "list", "read", "update"],
-    );
+    expect(Object.keys(doors[resource] ?? {}).sort()).toEqual([
+      "create",
+      "delete",
+      "list",
+      "read",
+      "update",
+    ]);
 });
 
 test("every door answers as the table says, as every identity", () => {
@@ -2200,8 +2663,10 @@ test("every door answers as the table says, as every identity", () => {
     const onTheirs = door(who, String(theirs["author_id"]));
     const said = \`\${cell.resource}.\${cell.verb} as \${cell.as}\`;
     asked++;
-    if (cell.answer === "yes") expect([said, onMine, onTheirs]).toEqual([said, true, true]);
-    else if (cell.answer === "no") expect([said, onMine, onTheirs]).toEqual([said, false, false]);
+    if (cell.answer === "yes")
+      expect([said, onMine, onTheirs]).toEqual([said, true, true]);
+    else if (cell.answer === "no")
+      expect([said, onMine, onTheirs]).toEqual([said, false, false]);
     else if (cell.verb === "list") expect([said, onMine]).toEqual([said, true]);
     else expect([said, onMine, onTheirs]).toEqual([said, true, false]);
   }
@@ -2213,6 +2678,7 @@ const SERVER_TEST = `import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "./env.ts";
 import { serve } from "./server.ts";
 import { sign } from "./who.ts";
 
@@ -2486,4 +2952,1909 @@ test("static files are cached for a year when linked by content", async () => {
   ).toBe("no-cache");
   expect((await fetch(base + "/static/..%2Fpackage.json")).status).toBe(404);
 });
+
+test("/healthz says up, apart from the page", async () => {
+  const response = await fetch(base + "/healthz");
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  const health = (await response.json()) as Record<string, unknown>;
+  expect(health.ok).toBe(true);
+  expect(health.version).toMatch(/^\\d+\\.\\d+\\.\\d+/);
+  expect(Number.isInteger(health.uptime)).toBe(true);
+  expect((await fetch(base + "/healthz", { method: "HEAD" })).status).toBe(200);
+});
+
+test("a link to the page unfurls: description, Open Graph, a card", async () => {
+  const page = await (await fetch(base + "/")).text();
+  for (const meta of [
+    'name="description"',
+    'property="og:title"',
+    'property="og:description"',
+    'property="og:url"',
+    'property="og:type" content="website"',
+    'name="twitter:card" content="summary"',
+    'name="theme-color"',
+  ])
+    expect([meta, page.includes(meta)]).toEqual([meta, true]);
+});
+
+test("the look is the tokens: /tokens.css is linked by content and cached for a year", async () => {
+  const page = await (await fetch(base + "/")).text();
+  const href = /href="(\\/tokens\\.css\\?v=[0-9a-f]{8})"/.exec(page)?.[1];
+  expect(href).toBeDefined();
+  const css = await fetch(base + href!);
+  expect(css.headers.get("content-type")).toContain("text/css");
+  expect(css.headers.get("cache-control")).toContain("immutable");
+  expect(await css.text()).toContain("--color-bg:");
+  // The tokens come first, so every rule after them can use them.
+  expect(page.indexOf("/tokens.css")).toBeLessThan(
+    page.indexOf("/static/app.css"),
+  );
+});
+
+test("what the web expects: robots.txt, and security.txt from the forge that runs us", async () => {
+  // Production is read by crawlers, the API is not; anything else is a
+  // draft and asks not to be indexed at all.
+  const robots = await (await fetch(base + "/robots.txt")).text();
+  const noindex = (await fetch(base + "/")).headers.get("x-robots-tag");
+  if (env === "production") {
+    expect(robots).toContain("Disallow: /api/\\n");
+    expect(noindex).toBeNull();
+  } else {
+    expect(robots).toBe("User-agent: *\\nDisallow: /\\n");
+    expect(noindex).toBe("noindex");
+  }
+  const security = await fetch(base + "/.well-known/security.txt", {
+    redirect: "manual",
+  });
+  if (process.env.FORGE_URL === undefined) expect(security.status).toBe(404);
+  else {
+    expect(security.status).toBe(302);
+    expect(security.headers.get("location")).toBe(
+      new URL("/.well-known/security.txt", process.env.FORGE_URL).toString(),
+    );
+  }
+});
+`;
+
+// The look, as data.
+const TOKENS_JSON = `{
+  "$description": "The look, as data (W3C design tokens). Every colour the app shows is here and nowhere else: src/tokens.ts compiles this to /tokens.css at boot, and bun run lint:design refuses a raw colour anywhere else. A colour's $value is the light theme; $extensions.mode.dark is the dark one.",
+  "color": {
+    "$type": "color",
+    "bg": {
+      "$value": "#f6f6f3",
+      "$extensions": { "mode": { "dark": "#131312" } }
+    },
+    "surface": {
+      "$value": "#ffffff",
+      "$extensions": { "mode": { "dark": "#1d1d1b" } }
+    },
+    "fg": {
+      "$value": "#1c1c1a",
+      "$extensions": { "mode": { "dark": "#ecece7" } }
+    },
+    "muted": {
+      "$value": "#6b6b65",
+      "$extensions": { "mode": { "dark": "#9a9a93" } }
+    },
+    "line": {
+      "$value": "#e3e3dd",
+      "$extensions": { "mode": { "dark": "#2c2c29" } }
+    },
+    "accent": {
+      "$value": "#2f5bea",
+      "$extensions": { "mode": { "dark": "#7c96ff" } }
+    },
+    "accent-fg": {
+      "$value": "#ffffff",
+      "$extensions": { "mode": { "dark": "#0f1a4d" } }
+    },
+    "danger": {
+      "$value": "#c2410c",
+      "$extensions": { "mode": { "dark": "#fb923c" } }
+    },
+    "toast-bg": {
+      "$value": "#1c1c1a",
+      "$extensions": { "mode": { "dark": "#ecece7" } }
+    },
+    "toast-fg": {
+      "$value": "#f6f6f3",
+      "$extensions": { "mode": { "dark": "#131312" } }
+    },
+    "shadow": {
+      "$value": "#0000002e",
+      "$extensions": { "mode": { "dark": "#00000080" } }
+    }
+  },
+  "space": {
+    "$type": "dimension",
+    "1": { "$value": "0.25rem" },
+    "2": { "$value": "0.5rem" },
+    "3": { "$value": "0.75rem" },
+    "4": { "$value": "1rem" },
+    "5": { "$value": "1.5rem" },
+    "6": { "$value": "2.5rem" }
+  },
+  "radius": {
+    "$type": "dimension",
+    "md": { "$value": "10px" },
+    "pill": { "$value": "999px" }
+  },
+  "size": {
+    "$type": "dimension",
+    "tap": {
+      "$value": "44px",
+      "$description": "The least a control measures on a side."
+    }
+  },
+  "font": {
+    "$type": "fontFamily",
+    "sans": {
+      "$value": ["system-ui", "-apple-system", "Segoe UI", "sans-serif"]
+    },
+    "mono": {
+      "$value": ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"]
+    }
+  },
+  "text": {
+    "$type": "dimension",
+    "sm": { "$value": "0.875rem" },
+    "base": {
+      "$value": "1rem",
+      "$description": "Never below 16px: a phone zooms into a smaller input."
+    },
+    "lg": { "$value": "1.125rem" },
+    "xl": { "$value": "1.5rem" }
+  },
+  "leading": {
+    "$type": "number",
+    "body": { "$value": 1.55 },
+    "tight": { "$value": 1.2 }
+  }
+}
+`;
+
+// The tokens, compiled at boot.
+const TOKENS_TS = `/**
+ * The look, compiled. \`design/tokens.json\` is the app's design tokens in the
+ * W3C format — groups, \`$value\`, a \`$type\` a group hands down — and this
+ * turns them into custom properties once, at boot: \`color.bg\` becomes
+ * \`--color-bg\`. A colour's \`$value\` is the light theme and
+ * \`$extensions.mode.dark\` the dark one; dark follows the system unless
+ * \`<html data-theme="light|dark">\` decides. The page links the result as
+ * \`/tokens.css\`, and every other stylesheet speaks only in \`var(--…)\`.
+ *
+ * Tokens that do not read are not a warning. The app does not start.
+ */
+
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+export interface Token {
+  /** The custom property: \`--color-bg\`. */
+  readonly name: string;
+  readonly type: string;
+  readonly light: string;
+  readonly dark?: string;
+}
+
+const isGroup = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Every token in the tree, in order, with its type and both themes' values. */
+export function flatten(
+  tree: unknown,
+  path: string[] = [],
+  type = "",
+): Token[] {
+  if (!isGroup(tree))
+    throw new Error(\`\${path.join(".") || "tokens"}: not a group\`);
+  const here = typeof tree.$type === "string" ? tree.$type : type;
+  if ("$value" in tree) {
+    const name = \`--\${path.join("-")}\`;
+    if (!/^--[a-z0-9-]+$/.test(name))
+      throw new Error(\`\${path.join(".")}: not a name CSS can carry\`);
+    if (here === "") throw new Error(\`\${path.join(".")}: no $type\`);
+    const dark =
+      isGroup(tree.$extensions) && isGroup(tree.$extensions.mode)
+        ? tree.$extensions.mode.dark
+        : undefined;
+    return [
+      {
+        name,
+        type: here,
+        light: css(tree.$value, path),
+        ...(dark === undefined ? {} : { dark: css(dark, path) }),
+      },
+    ];
+  }
+  return Object.entries(tree)
+    .filter(([key]) => !key.startsWith("$"))
+    .flatMap(([key, child]) => flatten(child, [...path, key], here));
+}
+
+// A value is a string, a number, or a font stack; nothing in it may close
+// the declaration it sits in.
+function css(value: unknown, path: string[]): string {
+  const text = Array.isArray(value)
+    ? value
+        .map((f) =>
+          /^[\\w-]+$/.test(String(f)) ? String(f) : JSON.stringify(String(f)),
+        )
+        .join(", ")
+    : typeof value === "string" || typeof value === "number"
+      ? String(value)
+      : "";
+  if (text === "" || /[;{}<]/.test(text))
+    throw new Error(\`\${path.join(".")}: $value is not a CSS value\`);
+  return text;
+}
+
+/** The stylesheet: every token on \`:root\`, the dark ones twice — for the system's choice and for the page's. */
+export function compile(tokens: readonly Token[]): string {
+  const block = (selector: string, lines: string[]): string =>
+    \`\${selector} {\\n\${lines.map((l) => \`  \${l}\\n\`).join("")}}\\n\`;
+  const light = tokens.map((t) => \`\${t.name}: \${t.light};\`);
+  const dark = tokens.flatMap((t) =>
+    t.dark === undefined ? [] : [\`\${t.name}: \${t.dark};\`],
+  );
+  return [
+    block(":root", ["color-scheme: light dark;", ...light]),
+    block(':root[data-theme="light"]', ["color-scheme: light;"]),
+    \`@media (prefers-color-scheme: dark) {\\n\${block(':root:not([data-theme="light"])', dark)}}\\n\`,
+    block(':root[data-theme="dark"]', ["color-scheme: dark;", ...dark]),
+  ].join("\\n");
+}
+
+export const tokens: readonly Token[] = flatten(
+  JSON.parse(
+    readFileSync(new URL("../design/tokens.json", import.meta.url), "utf8"),
+  ),
+);
+export const tokensCss: string = compile(tokens);
+/** \`/tokens.css\`, addressed by its content, so it can be cached for a year. */
+export const tokensHref = \`/tokens.css?v=\${createHash("sha256").update(tokensCss).digest("hex").slice(0, 8)}\`;
+
+/** One token's value, for the few places a colour must be spelled out (the browser's own chrome). */
+export const token = (
+  name: string,
+  mode: "light" | "dark" = "light",
+): string => {
+  const found = tokens.find((t) => t.name === \`--\${name}\`);
+  if (found === undefined) throw new Error(\`no token \${name}\`);
+  return mode === "dark" ? (found.dark ?? found.light) : found.light;
+};
+`;
+
+// No colour but the tokens'.
+const LINT_DESIGN_TS = `/**
+ * Every colour comes from \`design/tokens.json\`. This refuses a raw one —
+ * \`#hex\`, \`rgb(\`, \`hsl(\` — anywhere else the app draws from: \`static/\`
+ * and \`src/\`, tests aside. A colour spelled out in a stylesheet is a colour
+ * the dark theme never hears about. It refuses a \`var(--…)\` in a stylesheet
+ * that names no token, too: a typo there is a page quietly unstyled.
+ *
+ *   bun run lint:design    exit 1 and one line per raw colour, or silence
+ */
+
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { tokens } from "../src/tokens.ts";
+
+const RAW =
+  /(?<![\\w&])#(?:[0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{3,4})(?![\\w-])|\\b(?:rgba?|hsla?)\\(/gi;
+
+/** The raw colours in one file's text: \`path:line: …\`, one per find. */
+export function rawColours(path: string, text: string): string[] {
+  return text
+    .split("\\n")
+    .flatMap((line, i) =>
+      [...line.matchAll(RAW)].map(
+        (m) =>
+          \`\${path}:\${i + 1}: raw colour \${m[0]} — name it in design/tokens.json and use var(--…)\`,
+      ),
+    );
+}
+
+/** The custom properties a stylesheet uses that no token defines. */
+export function unknownTokens(
+  path: string,
+  text: string,
+  known = new Set(tokens.map((t) => t.name)),
+): string[] {
+  return text
+    .split("\\n")
+    .flatMap((line, i) =>
+      [...line.matchAll(/var\\((--[\\w-]+)/g)]
+        .filter((m) => !known.has(m[1]!))
+        .map(
+          (m) =>
+            \`\${path}:\${i + 1}: \${m[1]} is not a token in design/tokens.json\`,
+        ),
+    );
+}
+
+/** The files the lint reads: what the page is drawn from, never the tokens themselves or the tests. */
+export function drawnFrom(root: string): string[] {
+  const walk = (dir: string): string[] =>
+    readdirSync(join(root, dir), { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return walk(path);
+      return /\\.(css|js|ts|html)$/.test(entry.name) &&
+        !/\\.test\\.ts$/.test(entry.name)
+        ? [path]
+        : [];
+    });
+  return ["static", "src"].flatMap(walk);
+}
+
+export function lint(root: string): string[] {
+  return drawnFrom(root).flatMap((path) => {
+    const text = readFileSync(join(root, path), "utf8");
+    return [
+      ...rawColours(path, text),
+      ...(path.endsWith(".css") ? unknownTokens(path, text) : []),
+    ];
+  });
+}
+
+if (import.meta.main) {
+  const problems = lint(join(import.meta.dir, ".."));
+  for (const problem of problems) console.error(problem);
+  process.exit(problems.length === 0 ? 0 : 1);
+}
+`;
+
+// Who tried to change what.
+const AUDIT_TS = `/**
+ * The audit trail: every attempt to change something, as one row — who,
+ * what (a resource and a verb from the contract), on which row, when, and
+ * whether they were let. Refusals are rows too: a stranger knocking on a
+ * door that stays shut is exactly what an owner wants to read later.
+ *
+ * Recording never fails a request. A row that cannot be written becomes a
+ * line in the log, with everything the row would have said, and the
+ * request goes on; the log is where the forge keeps a run's output.
+ *
+ * Reads are not recorded (a page view is not an event), and neither is a
+ * request refused for coming too fast: a flood must not become the history,
+ * or push the real history out.
+ */
+
+import type { Database } from "bun:sqlite";
+import type { Who } from "./who.ts";
+
+export interface AuditRow {
+  readonly id: number;
+  readonly at: string;
+  readonly who_id: string | null;
+  readonly who_name: string | null;
+  readonly role: string;
+  readonly resource: string;
+  readonly verb: string;
+  readonly target: string | null;
+  readonly allowed: 0 | 1;
+  /** \`ok\`, or the failure: \`signin_required\`, \`forbidden\`, \`invalid\`, \`not_found\`, \`cross_site\`. */
+  readonly outcome: string;
+}
+
+export interface Attempt {
+  readonly who: Who;
+  readonly resource: string;
+  readonly verb: string;
+  readonly target?: string | number | undefined;
+  readonly outcome: string;
+}
+
+/** The newest rows kept; older ones go as new ones come. */
+export const KEEP = 50_000;
+
+/** Was it let? Only the door says no; a bad body or a missing row got past it. */
+export const allowed = (outcome: string): boolean =>
+  outcome !== "signin_required" &&
+  outcome !== "forbidden" &&
+  outcome !== "cross_site";
+
+export function record(db: Database, attempt: Attempt): void {
+  const { who, resource, verb, target, outcome } = attempt;
+  const row = {
+    who_id: who.role === "anon" ? null : who.id,
+    who_name: who.role === "anon" ? null : who.name,
+    role: who.role,
+    resource,
+    verb,
+    target: target === undefined ? null : String(target),
+    allowed: allowed(outcome) ? 1 : 0,
+    outcome,
+  };
+  try {
+    const { lastInsertRowid } = db
+      .query(
+        "INSERT INTO audit (who_id, who_name, role, resource, verb, target, allowed, outcome) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+      )
+      .run(
+        row.who_id,
+        row.who_name,
+        row.role,
+        row.resource,
+        row.verb,
+        row.target,
+        row.allowed,
+        row.outcome,
+      );
+    db.query("DELETE FROM audit WHERE id <= ?1").run(
+      Number(lastInsertRowid) - KEEP,
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        audit: row,
+        at: new Date().toISOString(),
+        unrecorded: String(error),
+      }),
+    );
+  }
+}
+`;
+
+// The door.
+const SECURITY_TS = `/**
+ * The door: what every request passes before a route sees it, and before
+ * a byte of its body is read. Three checks, in order:
+ *
+ * 1. **Rationing.** Writes are rationed per person (per address, for a
+ *    stranger), and a stranger's calls to the API are rationed too.
+ * 2. **Same origin.** A write that a browser says came from another site
+ *    is refused: that is another page making this person's browser act.
+ * 3. **The contract.** A request under a resource's \`api\` is that
+ *    resource's verb (see docs/CONTRACT.md in the forge: \`GET api\` lists,
+ *    \`POST api\` creates, \`GET|PATCH|DELETE api/<id>\` read, update,
+ *    delete). If the table lets this person through that door for no row
+ *    at all, they are refused here — 401 for a stranger, 403 for anyone
+ *    else. The action asks again, about the real row; the door only turns
+ *    away who could never pass. \`/openapi.json\` is shut to strangers when
+ *    the table opens no door to them.
+ *
+ * Nothing here compares roles by hand: the answer is \`decide\`'s, from the
+ * same table the actions read. Refused writes go into the audit trail.
+ */
+
+import type { Database } from "bun:sqlite";
+import { record } from "./audit.ts";
+import { decide, VERBS, type Contract, type Verb } from "./can.ts";
+import { actorOf, contract } from "./contract.ts";
+import { publicOrigin } from "./env.ts";
+import { json, text } from "./http.ts";
+import type { Who } from "./who.ts";
+
+// A browser on another site can make a person's browser POST here; it cannot
+// make that request look same-origin. Browsers say where a request came from
+// (Sec-Fetch-Site, or Origin); a request that names another site is refused.
+// A script sends neither and is judged by its identity instead.
+export const sameOrigin = (request: Request): boolean => {
+  const site = request.headers.get("sec-fetch-site");
+  if (site !== null) return site === "same-origin" || site === "none";
+  const origin = request.headers.get("origin");
+  return origin === null || origin === publicOrigin;
+};
+
+// A bucket of \`burst\` tokens that refills at \`perSecond\`. In memory, so a
+// restart forgets — which is the right size for one process on one machine.
+export interface Rate {
+  readonly burst: number;
+  readonly perSecond: number;
+}
+export const WRITES: Rate = { burst: 20, perSecond: 2 };
+/** A stranger's API calls, reads too. Behind the forge every stranger shares one address, so this is all of them together. */
+export const STRANGERS: Rate = { burst: 60, perSecond: 10 };
+const buckets = new Map<string, { tokens: number; at: number }>();
+export function allow(
+  key: string,
+  rate: Rate = WRITES,
+  now = Date.now(),
+): boolean {
+  const bucket = buckets.get(key) ?? { tokens: rate.burst, at: now };
+  bucket.tokens = Math.min(
+    rate.burst,
+    bucket.tokens + ((now - bucket.at) / 1000) * rate.perSecond,
+  );
+  bucket.at = now;
+  buckets.set(key, bucket);
+  if (buckets.size > 10_000)
+    for (const [k, b] of buckets) if (now - b.at > 60_000) buckets.delete(k);
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
+const ROW_VERB: Readonly<Record<string, Verb>> = {
+  GET: "read",
+  PATCH: "update",
+  DELETE: "delete",
+};
+const SET_VERB: Readonly<Record<string, Verb>> = {
+  GET: "list",
+  POST: "create",
+};
+
+/** The resource and verb a request is, by the contract's \`api\` paths; undefined for any other path. */
+export function doorOf(
+  method: string,
+  pathname: string,
+  table: Contract = contract,
+): { resource: string; verb: Verb } | undefined {
+  for (const [resource, { api }] of Object.entries(table.resources)) {
+    if (api === undefined) continue;
+    if (pathname === api) {
+      const verb = SET_VERB[method];
+      return verb === undefined ? undefined : { resource, verb };
+    }
+    const rest = pathname.startsWith(\`\${api}/\`)
+      ? pathname.slice(api.length + 1)
+      : undefined;
+    if (rest !== undefined && rest !== "" && !rest.includes("/")) {
+      const verb = ROW_VERB[method];
+      return verb === undefined ? undefined : { resource, verb };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Could \`who\` pass this door for any row at all? The door asks about a row
+ * that names them in every column a role is held by — the best row they
+ * could hope for — so it refuses only what no row would open.
+ */
+export function mayKnock(
+  who: Who,
+  resource: string,
+  verb: Verb,
+  table: Contract = contract,
+): boolean {
+  const actor = actorOf(who);
+  const columns = Object.values(table.roles).flatMap((role) =>
+    role.held.by === "row" ? [role.held.column] : [],
+  );
+  const best =
+    verb === "list" || verb === "create" || actor.id === null
+      ? undefined
+      : Object.fromEntries(columns.map((column) => [column, actor.id]));
+  return decide(table, resource, verb, actor, best) !== "no";
+}
+
+/** Does the table open any door with an \`api\` to a stranger? Then the API's description is theirs to read. */
+export const openToStrangers = (table: Contract = contract): boolean =>
+  Object.entries(table.resources).some(
+    ([resource, { api }]) =>
+      api !== undefined &&
+      VERBS.some((verb) => mayKnock({ role: "anon" }, resource, verb, table)),
+  );
+const describedToStrangers = openToStrangers();
+
+/**
+ * The door. \`undefined\` lets the request through to its route; a response
+ * is the refusal. \`from\` is the caller's address, for rationing a stranger.
+ */
+export function door(
+  db: Database,
+  request: Request,
+  url: URL,
+  who: Who,
+  from: string,
+): Response | undefined {
+  const method = request.method === "HEAD" ? "GET" : request.method;
+  const writing = method !== "GET";
+  const stranger = who.role === "anon";
+  const api =
+    url.pathname.startsWith("/api/") ||
+    url.pathname === "/mcp" ||
+    url.pathname === "/openapi.json";
+  const key = stranger ? \`ip:\${from}\` : \`user:\${who.id}\`;
+
+  if (writing && !allow(key)) return text("too many requests", 429);
+  if (stranger && api && !allow(\`api:\${from}\`, STRANGERS))
+    return text("too many requests", 429);
+
+  const found = doorOf(method, url.pathname);
+  if (writing && !sameOrigin(request)) {
+    record(db, {
+      who,
+      resource: found?.resource ?? url.pathname,
+      verb: found?.verb ?? method,
+      outcome: "cross_site",
+    });
+    return text("forbidden", 403);
+  }
+
+  const shut =
+    found === undefined
+      ? url.pathname === "/openapi.json" && stranger && !describedToStrangers
+      : !mayKnock(who, found.resource, found.verb);
+  if (!shut) return undefined;
+  const outcome = stranger ? "signin_required" : "forbidden";
+  if (writing && found !== undefined)
+    record(db, {
+      who,
+      resource: found.resource,
+      verb: found.verb,
+      target:
+        url.pathname === contract.resources[found.resource]?.api
+          ? undefined
+          : url.pathname.split("/").at(-1),
+      outcome,
+    });
+  return stranger
+    ? json({ error: outcome, message: "Sign in first." }, 401)
+    : json({ error: outcome, message: "You may not." }, 403);
+}
+`;
+
+// The API, described.
+const OPENAPI_TS = `/**
+ * The API, described: every route in \`routes.ts\` that declares \`api\`, as an
+ * OpenAPI 3.1 document. Each operation also names the contract cell it is
+ * (\`x-contract\`: the resource, the verb, and the least role the table asks
+ * for), so a change of policy is a change here too, and shows in the pull.
+ *
+ *   bun run contract:emit    write contract/openapi.json from the table
+ *
+ * \`src/openapi.test.ts\` fails when the committed file and the routes
+ * disagree: the description can go stale only in a commit that fails.
+ */
+
+import { contract } from "./contract.ts";
+import { description, title, version } from "./env.ts";
+import { AUDIT_ROW, ERROR, NOTE, routes, type Schema } from "./routes.ts";
+import { doorOf } from "./security.ts";
+
+// The shapes said once, under components, and referred to wherever they appear.
+const NAMED = new Map<Schema, string>([
+  [NOTE, "Note"],
+  [AUDIT_ROW, "AuditRow"],
+  [ERROR, "Error"],
+]);
+const named = (schema: Schema): Schema => {
+  const name = NAMED.get(schema);
+  if (name !== undefined) return { $ref: \`#/components/schemas/\${name}\` };
+  return Object.fromEntries(
+    Object.entries(schema).map(([key, value]) => [
+      key,
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? named(value as Schema)
+        : value,
+    ]),
+  );
+};
+const content = (schema: Schema) => ({
+  "application/json": { schema: named(schema) },
+});
+
+export function openapi(): Record<string, unknown> {
+  const paths: Record<string, Record<string, unknown>> = {};
+  for (const route of routes) {
+    if (route.api === undefined) continue;
+    const { summary, body, answer, status, query } = route.api;
+    const path = route.path.replace(/:(\\w+)/g, "{$1}");
+    const params = [...route.path.matchAll(/:(\\w+)/g)].map(([, name]) => ({
+      name,
+      in: "path",
+      required: true,
+      schema: { type: "integer" },
+    }));
+    const door = doorOf(route.method, route.path.replace(/:\\w+/g, "0"));
+    const least =
+      door === undefined
+        ? undefined
+        : contract.resources[door.resource]?.can[door.verb];
+    paths[path] ??= {};
+    paths[path][route.method.toLowerCase()] = {
+      summary,
+      operationId: \`\${route.method.toLowerCase()}\${path.replace(/[{}]/g, "").replace(/(^|[/._-])(\\w)/g, (_, __, c: string) => c.toUpperCase())}\`,
+      ...(params.length > 0 || query !== undefined
+        ? {
+            parameters: [
+              ...params,
+              ...Object.entries(query ?? {}).map(([name, schema]) => ({
+                name,
+                in: "query",
+                schema: named(schema),
+              })),
+            ],
+          }
+        : {}),
+      ...(body === undefined
+        ? {}
+        : { requestBody: { required: true, content: content(body) } }),
+      responses: {
+        [String(status ?? 200)]: {
+          description: summary,
+          content: content(answer),
+        },
+        default: {
+          description: "{ error, message }: why not",
+          content: content(ERROR),
+        },
+      },
+      ...(door === undefined ? {} : { "x-contract": { ...door, least } }),
+    };
+  }
+  return {
+    openapi: "3.1.0",
+    info: { title, version, description },
+    paths,
+    components: {
+      schemas: Object.fromEntries(
+        [...NAMED].map(([schema, name]) => [name, schema]),
+      ),
+    },
+  };
+}
+
+/** The file's text: stable, so the same table always writes the same bytes. */
+export const emit = (): string => \`\${JSON.stringify(openapi(), null, 2)}\\n\`;
+`;
+
+// The description, written where git keeps it.
+const CONTRACT_EMIT_TS = `/**
+ * Write the API's description where git keeps it: contract/openapi.json,
+ * from the routes' own \`api\` entries (src/openapi.ts). Run it after
+ * changing a route or a cell of contract.json; the tests say when it is due.
+ */
+
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { emit } from "../src/openapi.ts";
+
+const dir = join(import.meta.dir, "..", "contract");
+mkdirSync(dir, { recursive: true });
+writeFileSync(join(dir, "openapi.json"), emit());
+console.log("wrote contract/openapi.json");
+`;
+
+// The tests for each of those.
+const DESIGN_TEST = `/**
+ * The look holds: the tokens compile to both themes, every pair of colours
+ * a person must read meets WCAG AA in both, and no colour is spelled out
+ * anywhere but design/tokens.json.
+ */
+import { expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { lint, rawColours, unknownTokens } from "../scripts/lint-design.ts";
+import { compile, flatten, token, tokens, tokensCss } from "./tokens.ts";
+
+test("the tokens compile: light on :root, dark for the system and for data-theme", () => {
+  expect(tokensCss).toContain(\`--color-bg: \${token("color-bg")};\`);
+  expect(tokensCss).toContain("--space-4: 1rem;");
+  expect(tokensCss).toContain(
+    '--font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;',
+  );
+  expect(tokensCss).toContain("@media (prefers-color-scheme: dark)");
+  expect(tokensCss).toContain(':root:not([data-theme="light"])');
+  expect(tokensCss).toContain(':root[data-theme="dark"]');
+  // Every colour has a dark value, or the dark theme would inherit a light one.
+  for (const t of tokens.filter((t) => t.type === "color"))
+    expect([t.name, t.dark !== undefined]).toEqual([t.name, true]);
+  expect(
+    tokensCss.split(\`--color-bg: \${token("color-bg", "dark")};\`).length,
+  ).toBe(3);
+});
+
+test("tokens that do not read stop the app, with the path named", () => {
+  expect(() => flatten({ color: { bg: { $value: "#fff" } } })).toThrow(
+    "color.bg: no $type",
+  );
+  expect(() =>
+    flatten({
+      color: { $type: "color", bg: { $value: "red; } body { display: none" } },
+    }),
+  ).toThrow("color.bg: $value is not a CSS value");
+  expect(() =>
+    flatten({ color: { $type: "color", "b g": { $value: "#fff" } } }),
+  ).toThrow("not a name CSS can carry");
+  expect(
+    compile(flatten({ size: { $type: "dimension", tap: { $value: "44px" } } })),
+  ).toContain("--size-tap: 44px;");
+});
+
+// WCAG 2 relative luminance and contrast, from a #rrggbb.
+const luminance = (hex: string): number => {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const contrast = (a: string, b: string): number => {
+  const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p) as [
+    number,
+    number,
+  ];
+  return (x + 0.05) / (y + 0.05);
+};
+
+test("every pair a person reads is at least 4.5:1, in both themes", () => {
+  const pairs = [
+    ["color-fg", "color-bg"],
+    ["color-fg", "color-surface"],
+    ["color-muted", "color-bg"],
+    ["color-muted", "color-surface"],
+    ["color-accent", "color-bg"],
+    ["color-accent", "color-surface"],
+    ["color-accent-fg", "color-accent"],
+    ["color-toast-fg", "color-toast-bg"],
+  ] as const;
+  for (const mode of ["light", "dark"] as const)
+    for (const [fg, bg] of pairs) {
+      const ratio = contrast(token(fg, mode), token(bg, mode));
+      expect([mode, fg, bg, ratio >= 4.5]).toEqual([mode, fg, bg, true]);
+    }
+});
+
+test("the app spells out no colour but in its tokens", () => {
+  expect(lint(join(import.meta.dir, ".."))).toEqual([]);
+});
+
+test("the lint refuses a raw colour and a token that is not there", () => {
+  expect(
+    rawColours(
+      "a.css",
+      ".x { color: #ff0000; }\\n.y { background: rgb(0 0 0); }",
+    ),
+  ).toEqual([
+    "a.css:1: raw colour #ff0000 — name it in design/tokens.json and use var(--…)",
+    "a.css:2: raw colour rgb( — name it in design/tokens.json and use var(--…)",
+  ]);
+  // Not colours: an entity, an id selector's word, a pull number.
+  expect(rawColours("a.ts", "\`&#39;\` #notes pull #12 #abcdefg")).toEqual([]);
+  expect(
+    unknownTokens(
+      "a.css",
+      ".x { color: var(--color-fg); gap: var(--spcae-2); }",
+    ),
+  ).toEqual(["a.css:1: --spcae-2 is not a token in design/tokens.json"]);
+  const root = mkdtempSync(join(tmpdir(), "app-lint-"));
+  mkdirSync(join(root, "static"));
+  mkdirSync(join(root, "src"));
+  writeFileSync(join(root, "static", "extra.css"), "a {\\n  color: #fff;\\n}\\n");
+  writeFileSync(join(root, "src", "ok.test.ts"), "const red = '#f00';\\n");
+  expect(lint(root)).toEqual([
+    "static/extra.css:2: raw colour #fff — name it in design/tokens.json and use var(--…)",
+  ]);
+});
+`;
+
+const AUDIT_TEST = `/**
+ * The trail: an allowed change and a refused one each leave a row, through
+ * the real server; only an admin reads them; and a trail that cannot be
+ * written costs a log line, never the request.
+ */
+import { afterAll, expect, spyOn, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { addNote } from "./actions.ts";
+import type { AuditRow } from "./audit.ts";
+import { openDb } from "./db.ts";
+import { serve } from "./server.ts";
+import { sign } from "./who.ts";
+
+const KEY = "a-key-only-the-forge-holds";
+const server = serve({
+  port: 0,
+  dataDir: mkdtempSync(join(tmpdir(), "app-audit-")),
+  identityKey: KEY,
+});
+const base = \`http://\${server.hostname}:\${server.port}\`;
+afterAll(() => server.stop(true));
+
+const as = (
+  id: string,
+  name: string,
+  role: "user" | "admin" = "user",
+): Record<string, string> => {
+  const identity = \`\${id}|\${name}|\${role}|\${Date.now() + 60_000}\`;
+  return {
+    "x-forge-identity": identity,
+    "x-forge-signature": sign(identity, KEY),
+  };
+};
+const alice = as("u1", "alice");
+const bob = as("u2", "bob");
+const root = as("u0", "root", "admin");
+const call = (
+  path: string,
+  init: RequestInit = {},
+  who: Record<string, string> = {},
+) =>
+  fetch(base + path, {
+    ...init,
+    headers: { "content-type": "application/json", ...who },
+  });
+const trail = async (): Promise<AuditRow[]> =>
+  (await (await call("/api/audit", {}, root)).json()) as AuditRow[];
+
+test("an allowed change and a refused one each leave a row", async () => {
+  const made = await call(
+    "/api/notes",
+    { method: "POST", body: JSON.stringify({ body: "kept" }) },
+    alice,
+  );
+  expect(made.status).toBe(201);
+  const note = (await made.json()) as { id: number };
+  // Refused at the door: a stranger may create nothing.
+  expect(
+    (
+      await call("/api/notes", {
+        method: "POST",
+        body: JSON.stringify({ body: "x" }),
+      })
+    ).status,
+  ).toBe(401);
+  // Refused by the action: bob could delete a note of his own, not alice's.
+  expect(
+    (await call(\`/api/notes/\${note.id}\`, { method: "DELETE" }, bob)).status,
+  ).toBe(403);
+  // Refused as cross-site, before the table is asked.
+  const forged = await fetch(\`\${base}/api/notes/\${note.id}\`, {
+    method: "DELETE",
+    headers: { ...alice, "sec-fetch-site": "cross-site" },
+  });
+  expect(forged.status).toBe(403);
+
+  const rows = (await trail()).slice(0, 4).reverse();
+  expect(
+    rows.map(
+      ({ who_name, role, resource, verb, target, allowed, outcome }) => ({
+        who_name,
+        role,
+        resource,
+        verb,
+        target,
+        allowed,
+        outcome,
+      }),
+    ),
+  ).toEqual([
+    {
+      who_name: "alice",
+      role: "user",
+      resource: "note",
+      verb: "create",
+      target: String(note.id),
+      allowed: 1,
+      outcome: "ok",
+    },
+    {
+      who_name: null,
+      role: "anon",
+      resource: "note",
+      verb: "create",
+      target: null,
+      allowed: 0,
+      outcome: "signin_required",
+    },
+    {
+      who_name: "bob",
+      role: "user",
+      resource: "note",
+      verb: "delete",
+      target: String(note.id),
+      allowed: 0,
+      outcome: "forbidden",
+    },
+    {
+      who_name: "alice",
+      role: "user",
+      resource: "note",
+      verb: "delete",
+      target: null,
+      allowed: 0,
+      outcome: "cross_site",
+    },
+  ]);
+  for (const row of rows)
+    expect(Date.parse(row.at)).toBeGreaterThan(Date.now() - 60_000);
+});
+
+test("reading is not an event: a GET leaves no row", async () => {
+  const before = (await trail()).length;
+  await call("/api/notes");
+  await call("/", {}, alice);
+  expect((await trail()).length).toBe(before);
+});
+
+test("only an admin reads the trail, at every door the table names", async () => {
+  expect((await call("/api/audit")).status).toBe(401);
+  expect((await call("/api/audit", {}, alice)).status).toBe(403);
+  const rows = await trail();
+  expect(rows.length).toBeGreaterThan(0);
+  expect((await call(\`/api/audit/\${rows[0]!.id}\`, {}, root)).status).toBe(200);
+  expect((await call(\`/api/audit/\${rows[0]!.id}\`, {}, alice)).status).toBe(403);
+  expect((await call("/api/audit/999999", {}, root)).status).toBe(404);
+  // Nobody writes the trail through a door: not even an admin.
+  expect(
+    (await call("/api/audit", { method: "POST", body: "{}" }, root)).status,
+  ).toBe(403);
+  expect(
+    (await call(\`/api/audit/\${rows[0]!.id}\`, { method: "DELETE" }, root))
+      .status,
+  ).toBe(403);
+  // Paging back: \`before\` an id is everything older.
+  const older = (await (
+    await call(\`/api/audit?before=\${rows[0]!.id}&limit=1\`, {}, root)
+  ).json()) as AuditRow[];
+  expect(older.map((r) => r.id)).toEqual([rows[1]!.id]);
+});
+
+test("a trail that cannot be written is a log line, and the change still happens", () => {
+  const db = openDb(mkdtempSync(join(tmpdir(), "app-audit-broken-")));
+  db.exec("DROP TABLE audit");
+  const said = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    const added = addNote(
+      db,
+      { role: "user", id: "u1", name: "alice" },
+      { body: "still here" },
+    );
+    expect(added.ok).toBe(true);
+    expect(said).toHaveBeenCalledTimes(1);
+    const line = JSON.parse(String(said.mock.calls[0]![0]));
+    expect(line.audit).toMatchObject({
+      who_name: "alice",
+      resource: "note",
+      verb: "create",
+      allowed: 1,
+      outcome: "ok",
+    });
+    expect(line.unrecorded).toContain("audit");
+  } finally {
+    said.mockRestore();
+  }
+});
+`;
+
+const SECURITY_TEST = `/**
+ * The door turns away, before a byte of the body is read, exactly who the
+ * table says could never pass — and nobody it would let through.
+ */
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readContract } from "./can.ts";
+import { openDb } from "./db.ts";
+import {
+  allow,
+  door,
+  doorOf,
+  mayKnock,
+  openToStrangers,
+  STRANGERS,
+} from "./security.ts";
+import { serve } from "./server.ts";
+import { sign } from "./who.ts";
+
+const KEY = "a-key-only-the-forge-holds";
+const server = serve({
+  port: 0,
+  dataDir: mkdtempSync(join(tmpdir(), "app-door-")),
+  identityKey: KEY,
+});
+const base = \`http://\${server.hostname}:\${server.port}\`;
+afterAll(() => server.stop(true));
+const as = (id: string, role: "user" | "admin"): Record<string, string> => {
+  const identity = \`\${id}|\${id}|\${role}|\${Date.now() + 60_000}\`;
+  return {
+    "x-forge-identity": identity,
+    "x-forge-signature": sign(identity, KEY),
+  };
+};
+
+test("a path is a resource's door by the contract's api, and nothing else is", () => {
+  expect(doorOf("GET", "/api/notes")).toEqual({
+    resource: "note",
+    verb: "list",
+  });
+  expect(doorOf("POST", "/api/notes")).toEqual({
+    resource: "note",
+    verb: "create",
+  });
+  expect(doorOf("GET", "/api/notes/7")).toEqual({
+    resource: "note",
+    verb: "read",
+  });
+  expect(doorOf("PATCH", "/api/notes/7")).toEqual({
+    resource: "note",
+    verb: "update",
+  });
+  expect(doorOf("DELETE", "/api/notes/7")).toEqual({
+    resource: "note",
+    verb: "delete",
+  });
+  expect(doorOf("GET", "/api/audit")).toEqual({
+    resource: "audit",
+    verb: "list",
+  });
+  for (const [method, path] of [
+    ["PUT", "/api/notes"],
+    ["GET", "/api/notes/7/x"],
+    ["GET", "/api/notesy"],
+    ["GET", "/api/notes/"],
+    ["POST", "/notes"],
+  ] as const)
+    expect(doorOf(method, path)).toBeUndefined();
+});
+
+test("the door refuses only what no row would open", () => {
+  const anon = { role: "anon" } as const;
+  const alice = { role: "user", id: "u1", name: "alice" } as const;
+  const root = { role: "admin", id: "u0", name: "root" } as const;
+  expect(mayKnock(anon, "note", "list")).toBe(true);
+  expect(mayKnock(anon, "note", "create")).toBe(false);
+  expect(mayKnock(anon, "note", "delete")).toBe(false);
+  // alice may delete a note of her own, so the door lets her ask; the action decides which.
+  expect(mayKnock(alice, "note", "delete")).toBe(true);
+  expect(mayKnock(alice, "audit", "list")).toBe(false);
+  expect(mayKnock(root, "audit", "list")).toBe(true);
+  expect(mayKnock(root, "audit", "create")).toBe(false);
+});
+
+test("a stranger is refused /api before the body is read, when the contract closes it", async () => {
+  // A body past the cap: read, it would be 413. The door answers first.
+  const huge = "x".repeat(128 * 1024);
+  const refused = await fetch(\`\${base}/api/notes\`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: huge,
+  });
+  expect(refused.status).toBe(401);
+  const signedIn = await fetch(\`\${base}/api/notes\`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...as("u1", "user") },
+    body: huge,
+  });
+  expect(signedIn.status).toBe(413);
+  expect(await refused.json()).toEqual({
+    error: "signin_required",
+    message: "Sign in first.",
+  });
+  expect((await fetch(\`\${base}/api/audit\`)).status).toBe(401);
+  expect((await fetch(\`\${base}/api/audit/1\`)).status).toBe(401);
+  expect(
+    (await fetch(\`\${base}/api/audit\`, { headers: as("u1", "user") })).status,
+  ).toBe(403);
+  // What the table opens stays open.
+  expect((await fetch(\`\${base}/api/notes\`)).status).toBe(200);
+  expect((await fetch(\`\${base}/api/notes/0\`)).status).toBe(404);
+  expect((await fetch(\`\${base}/openapi.json\`)).status).toBe(200);
+});
+
+test("the API's description is shut to strangers when the table opens them no door", () => {
+  const closed = readContract(
+    JSON.stringify({
+      roles: {
+        anon: { above: [], held: { by: "everyone" } },
+        user: { above: ["anon"], held: { by: "identity", role: "user" } },
+      },
+      resources: {
+        note: {
+          api: "/api/notes",
+          can: {
+            create: "user",
+            read: "user",
+            update: "user",
+            delete: "user",
+            list: "user",
+          },
+        },
+      },
+    }),
+  );
+  if (!closed.ok) throw new Error(closed.problems.join("; "));
+  expect(openToStrangers(closed.contract)).toBe(false);
+  expect(openToStrangers()).toBe(true);
+});
+
+test("strangers are rationed at the API, reads too", () => {
+  const db = openDb(mkdtempSync(join(tmpdir(), "app-door-rate-")));
+  const knock = () =>
+    door(
+      db,
+      new Request("http://app/api/notes"),
+      new URL("http://app/api/notes"),
+      { role: "anon" },
+      "203.0.113.7",
+    );
+  const answers = Array.from({ length: STRANGERS.burst + 5 }, knock);
+  expect(answers.slice(0, STRANGERS.burst).every((a) => a === undefined)).toBe(
+    true,
+  );
+  expect(answers.at(-1)?.status).toBe(429);
+  // The page itself is not the API: a stranger reading it is never rationed here.
+  expect(
+    door(
+      db,
+      new Request("http://app/"),
+      new URL("http://app/"),
+      { role: "anon" },
+      "203.0.113.7",
+    ),
+  ).toBeUndefined();
+  // A bucket refills.
+  const t = Date.now();
+  for (let i = 0; i < 25; i++) allow("k", { burst: 20, perSecond: 2 }, t);
+  expect(allow("k", { burst: 20, perSecond: 2 }, t)).toBe(false);
+  expect(allow("k", { burst: 20, perSecond: 2 }, t + 1000)).toBe(true);
+});
+`;
+
+const OPENAPI_TEST = `/**
+ * The API's description is the routes' own, committed: emitting it twice
+ * says the same bytes, the file in git is what the table says now, and the
+ * app serves exactly that file.
+ */
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { emit, openapi } from "./openapi.ts";
+import { routes } from "./routes.ts";
+import { serve } from "./server.ts";
+
+const committed = readFileSync(
+  new URL("../contract/openapi.json", import.meta.url),
+  "utf8",
+);
+
+test("emission is stable", () => {
+  expect(emit()).toBe(emit());
+});
+
+test("contract/openapi.json is what the routes say now (else: bun run contract:emit)", () => {
+  const now = JSON.parse(emit());
+  const stale = !Bun.deepEquals(JSON.parse(committed), now);
+  if (stale)
+    console.error(
+      "contract/openapi.json is stale: run \`bun run contract:emit\` and commit it",
+    );
+  expect(stale).toBe(false);
+});
+
+test("every API route is described, and every door names its cell of the table", () => {
+  const doc = openapi() as {
+    paths: Record<
+      string,
+      Record<
+        string,
+        { "x-contract"?: { resource: string; verb: string; least: string } }
+      >
+    >;
+  };
+  for (const route of routes.filter((r) => r.path.startsWith("/api/"))) {
+    const op =
+      doc.paths[route.path.replace(/:(\\w+)/g, "{$1}")]?.[
+        route.method.toLowerCase()
+      ];
+    expect([route.method, route.path, op !== undefined]).toEqual([
+      route.method,
+      route.path,
+      true,
+    ]);
+    expect(typeof op?.["x-contract"]?.least).toBe("string");
+  }
+  expect(doc.paths["/api/audit"]?.get?.["x-contract"]).toEqual({
+    resource: "audit",
+    verb: "list",
+    least: "admin",
+  });
+});
+
+test("GET /openapi.json serves the committed file", async () => {
+  const server = serve({
+    port: 0,
+    dataDir: mkdtempSync(join(tmpdir(), "app-openapi-")),
+    identityKey: "k",
+  });
+  afterAll(() => server.stop(true));
+  const response = await fetch(
+    \`http://\${server.hostname}:\${server.port}/openapi.json\`,
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("content-type")).toContain("application/json");
+  expect(await response.text()).toBe(committed);
+});
+`;
+
+/**
+ * What `bun run contract:emit` writes for the routes above, with the app's
+ * own name and sentence (`src/env.ts` reads them from package.json): the
+ * app's `src/openapi.test.ts` holds the two equal from the first commit.
+ */
+const openapiJson = (title: string, description: string): string => {
+  const doc = JSON.parse(OPENAPI_JSON) as { info: Record<string, string> };
+  doc.info.title = title;
+  doc.info.description = description || "A new app on the forge.";
+  return `${JSON.stringify(doc, null, 2)}\n`;
+};
+const OPENAPI_JSON = `{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "notes",
+    "version": "0.1.0",
+    "description": "A place for notes"
+  },
+  "paths": {
+    "/api/notes": {
+      "get": {
+        "summary": "The notes, newest first.",
+        "operationId": "getApiNotes",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The notes, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Note"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "note",
+          "verb": "list",
+          "least": "anon"
+        }
+      },
+      "post": {
+        "summary": "Add a note as the person asking.",
+        "operationId": "postApiNotes",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "body"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Add a note as the person asking.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "note",
+          "verb": "create",
+          "least": "user"
+        }
+      }
+    },
+    "/api/notes/{id}": {
+      "get": {
+        "summary": "One note.",
+        "operationId": "getApiNotesId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One note.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "note",
+          "verb": "read",
+          "least": "anon"
+        }
+      },
+      "patch": {
+        "summary": "Change a note's words.",
+        "operationId": "patchApiNotesId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "body": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "body"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Change a note's words.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Note"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "note",
+          "verb": "update",
+          "least": "author"
+        }
+      },
+      "delete": {
+        "summary": "Remove a note.",
+        "operationId": "deleteApiNotesId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Remove a note.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "note",
+          "verb": "delete",
+          "least": "author"
+        }
+      }
+    },
+    "/api/audit": {
+      "get": {
+        "summary": "The audit trail, newest first; \`before\` pages back by id.",
+        "operationId": "getApiAudit",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audit trail, newest first; \`before\` pages back by id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AuditRow"
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "audit",
+          "verb": "list",
+          "least": "admin"
+        }
+      }
+    },
+    "/api/audit/{id}": {
+      "get": {
+        "summary": "One row of the audit trail.",
+        "operationId": "getApiAuditId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One row of the audit trail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditRow"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-contract": {
+          "resource": "audit",
+          "verb": "read",
+          "least": "admin"
+        }
+      }
+    },
+    "/mcp": {
+      "post": {
+        "summary": "One JSON-RPC 2.0 message to the MCP server; its tools are the actions.",
+        "operationId": "postMcp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "jsonrpc": {
+                    "const": "2.0"
+                  },
+                  "id": {},
+                  "method": {
+                    "type": "string"
+                  },
+                  "params": {
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "jsonrpc",
+                  "method"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "One JSON-RPC 2.0 message to the MCP server; its tools are the actions.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "summary": "Whether the app is up: its version, commit, environment and seconds since it started.",
+        "operationId": "getHealthz",
+        "responses": {
+          "200": {
+            "description": "Whether the app is up: its version, commit, environment and seconds since it started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "commit": {
+                      "type": "string"
+                    },
+                    "env": {
+                      "type": "string"
+                    },
+                    "uptime": {
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "version",
+                    "uptime"
+                  ]
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "{ error, message }: why not",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Note": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "author_id": {
+            "type": "string"
+          },
+          "author_name": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "body",
+          "author_id",
+          "author_name",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "AuditRow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "who_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "who_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "enum": [
+              "anon",
+              "user",
+              "admin"
+            ]
+          },
+          "resource": {
+            "type": "string"
+          },
+          "verb": {
+            "type": "string"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "allowed": {
+            "enum": [
+              0,
+              1
+            ]
+          },
+          "outcome": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "role",
+          "resource",
+          "verb",
+          "allowed",
+          "outcome"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
+  }
+}
 `;

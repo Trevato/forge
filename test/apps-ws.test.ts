@@ -240,6 +240,10 @@ describe("apps: websockets through the proxy", () => {
       files: [
         { path: "src/server.ts", content: ECHO_SERVER },
         { path: "src/server.test.ts", content: ECHO_TEST },
+        // The scaffold's suites that boot its real server go with it.
+        { path: "src/audit.test.ts", content: null },
+        { path: "src/openapi.test.ts", content: null },
+        { path: "src/security.test.ts", content: null },
       ],
     });
     if (!committed.ok) throw new Error(String(committed.error));
