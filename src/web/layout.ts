@@ -168,6 +168,7 @@ function newMenu(): Html {
   const items: MenuItem[] = [
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
+    { label: "Migrate", href: "/migrate", icon: "download" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
   ];
   return menu({
@@ -190,6 +191,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     // screen; creating things stays one tap away here.
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
+    { label: "Migrate", href: "/migrate", icon: "download" },
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
@@ -258,6 +260,7 @@ const STATIC_PALETTE_DEV: PaletteItem[] = [
   { t: "Map", h: "/map", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
+  { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
@@ -277,6 +280,7 @@ const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Map", h: "/map", c: "Go to" },
   { t: "Asks you", h: "/", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
+  { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },

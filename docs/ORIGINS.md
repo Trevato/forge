@@ -348,6 +348,54 @@ local client (`src/cli/`) reads them over the API, clones under
 `~/src/<host>/<owner>/<repo>`, keeps them fetched, and reports
 ahead/behind/dirty. The server never knows local state.
 
+## Migrate — bringing a repository here for good
+
+A mirror keeps answering to its origin. A **migration** does not: it is a
+one-time clone of the whole history into a native repository that is yours
+from the first second. No `origin_id`, no remote in its config, no
+write-through; after it, this forge is where the repository lives. It is
+the "+" menu's **Migrate** (`/migrate`), and `migrateRepo`
+(`src/actions/migrate.ts`) is the whole act.
+
+**The source** is one of two things. A repository on one of your origins,
+picked from the same list the mirror picker reads (`listRemoteRepos`), is
+cloned with that origin's credential — the auth header in the environment,
+scoped to its host (`origins/credentials.ts`), never in argv, the URL or the
+repository's config — so private ones come too. Or a pasted URL, cloned
+anonymously: public repositories only. A URL is `https://`, `http://` or
+`git://` and nothing else — `file://`, `ssh://`, `ext::`, a leading `-` and a
+URL carrying a password are refused before anything exists, and
+`GIT_ALLOW_PROTOCOL` pins the transports again at the fetch in case a
+redirect has other ideas. `github.com/a/b` gets the `https://` a person meant.
+
+**The clone** fetches every branch and tag — the mirror's explicit
+refspecs, never `--mirror` (every `refs/pull/*`, and a remote marked for
+push-mirroring) and never `--single-branch` — straight from the URL, with no
+remote configured, under a 120-second wall-clock cap. The source's default
+branch is kept (asked with `ls-remote --symref`); a source that never says
+keeps the forge's `main`, else `master`, else its first branch. One `push`
+event with `via: "migrate"` announces what arrived, so the feed, webhooks
+and the default branch's check see it like any push. Everything a person
+can get wrong — the URL, the owner, the name (collision-checked like any new
+repository), the agent — is refused in words before the repository exists;
+what is left for the job is the network. A clone that fails removes the
+empty repository it made, so the name is free to try again.
+
+**Put a crew on it.** Name an agent and, after the clone, the same job puts
+it on the crew, makes the repository an app, sets it autonomous when asked,
+and `tell`s the crew one thing: make it run here. The brief is the
+importer's — adapt, don't rewrite: declare `run` and `health` in
+`forge.json` (and `install`/`test` when the repository has them), listen on
+`PORT`, keep persistent state under `FORGE_APP_DATA`, keep behaviour, no
+Dockerfile and no compose file (the forge runs processes), and write down
+what could not fit. The crew proposes; a person lands — autonomy included,
+exactly as for any app (docs/APPS.md).
+
+The clone runs as a job in the mirror's registry (`origins/jobs.ts`, kind
+`migrate`, owned by whoever started it — anyone else's is `not_found`).
+`/migrate/jobs/:job` refreshes until it stops, then lands on the repository
+with what happened as the flash.
+
 ## API
 
 ```
@@ -384,6 +432,13 @@ POST   /api/v1/user/origin-apps                {host, clientId, clientSecret?}
 DELETE /api/v1/user/origin-apps/:id
 POST   /api/v1/repos/:o/:n/sync                sync this mirror now
 GET    /api/v1/user/pins  PUT/DELETE /api/v1/user/pins/:owner/:name
+
+POST   /api/v1/migrate                         {source: {url} | {originId, fullName},
+                                                owner?, name?, visibility?,
+                                                crew?: {agent, autonomous}}
+                                               → 202 {repo, job}
+GET    /api/v1/migrate/:job                    poll one migration (its starter only)
+GET    /api/v1/migrate/:job/stream             SSE: migrate.<stage>, ends on done
 ```
 
 Everything under `/api/v1/user/origins` and `/api/v1/user/origin-apps` needs
@@ -392,7 +447,11 @@ token. A `ro` or `rw` token is refused — otherwise a leaked repo-write token
 escalates into "read this person's GitHub credentials by proxy". That covers
 the browse routes too: they read another forge with this account's
 credential, which is the same authority as spending it. Repo-level sync and
-pins take the ordinary `rw` floor.
+pins take the ordinary `rw` floor; so does a migration from a URL, while one
+from an origin takes `admin` — it spends the origin's credential. Its
+refusals are 422 `{ error, message }`: `invalid_url`, `no_such_origin`,
+`unreachable`, `no_such_agent`, and the new-repository codes (`name_taken`,
+`invalid_name`, `forbidden_owner`).
 
 A contribute answers 201 with
 `{ via: "fork"|"direct", repo: {owner,name}, forkFullName, branch, commit,

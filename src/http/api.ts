@@ -154,6 +154,12 @@ import {
   type AppSettingsInput,
 } from "../actions/apps.ts";
 import {
+  migrateMessage,
+  migrateRepo,
+  migrationJobFor,
+  type MigrateSource,
+} from "../actions/migrate.ts";
+import {
   cancelRepoRun,
   getRepoRun,
   listRepoRuns,
@@ -341,6 +347,21 @@ function jobJson(ctx: Ctx, job: MirrorJob) {
     finishedAt: job.finishedAt ?? null,
     repo: job.repo === undefined ? null : repoJson(ctx, job.repo),
     error: job.error ?? null,
+  };
+}
+
+/**
+ * A migration job. A failed one has no repository: the empty one it made
+ * was removed so the name is free to try again.
+ */
+function migrationJson(ctx: Ctx, job: MirrorJob) {
+  return {
+    ...jobJson(ctx, job),
+    source: job.fullName,
+    repo:
+      job.repo === undefined || job.stage === "failed"
+        ? null
+        : repoJson(ctx, job.repo),
   };
 }
 
@@ -2679,6 +2700,83 @@ export function apiRoutes(router: Router<Handler>): void {
         issue: made.value.issue ? withLabels(ctx, made.value.issue) : null,
       },
       201,
+    );
+  });
+
+  // ── migrate ──────────────────────────────────────────────────────────
+  //
+  // A repository brought here for good: `source` is `{ originId, fullName }`
+  // (one of your origins, its credential in the environment) or `{ url }`
+  // (public, anonymous). Refusals are words before anything exists; the
+  // clone itself is the job this answers with, watched at /migrate/:job.
+
+  router.add("POST", "/api/v1/migrate", async (ctx) => {
+    const input = await body(ctx.request);
+    const raw =
+      typeof input.source === "object" && input.source !== null
+        ? (input.source as Record<string, unknown>)
+        : {};
+    const source: MigrateSource | undefined =
+      typeof raw.url === "string"
+        ? { url: raw.url }
+        : typeof raw.originId === "string" && typeof raw.fullName === "string"
+          ? { originId: raw.originId, fullName: raw.fullName }
+          : undefined;
+    // Cloning through an origin spends that account's credential, so it
+    // takes the `admin` floor every origin route keeps; a URL takes `rw`.
+    const denied = requireScope(
+      ctx,
+      source !== undefined && "originId" in source ? "admin" : "rw",
+    );
+    if (denied) return denied;
+    if (source === undefined)
+      return apiError(
+        "invalid_source",
+        422,
+        "source is { url } or { originId, fullName }",
+      );
+    const crew =
+      typeof input.crew === "object" && input.crew !== null
+        ? (input.crew as Record<string, unknown>)
+        : undefined;
+    const started = await migrateRepo(ctx.app, ctx.auth.user, {
+      source,
+      ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
+      ...(typeof input.name === "string" ? { name: input.name } : {}),
+      ...(input.visibility === "public" || input.visibility === "private"
+        ? { visibility: input.visibility }
+        : {}),
+      ...(crew !== undefined && typeof crew.agent === "string"
+        ? { crew: { agent: crew.agent, autonomous: crew.autonomous === true } }
+        : {}),
+    });
+    if (!started.ok)
+      return started.error === "unauthorized"
+        ? respondAccess(started.error, 401)
+        : apiError(started.error, 422, migrateMessage(started.error));
+    return json(
+      {
+        repo: repoJson(ctx, started.value.repo),
+        job: migrationJson(ctx, started.value.job),
+      },
+      202,
+    );
+  });
+
+  router.add("GET", "/api/v1/migrate/:job", (ctx) => {
+    const found = migrationJobFor(ctx.auth.user, ctx.params.job!);
+    if (!found.ok) return respondAccess(found.error, 404);
+    return json({ job: migrationJson(ctx, found.value) });
+  });
+
+  router.add("GET", "/api/v1/migrate/:job/stream", (ctx) => {
+    const found = migrationJobFor(ctx.auth.user, ctx.params.job!);
+    if (!found.ok) return respondAccess(found.error, 404);
+    return eventStream(ctx.request, (emit, close) =>
+      subscribeJob(found.value.id, (job) => {
+        emit(`migrate.${job.stage}`, migrationJson(ctx, job), job.id);
+        if (job.stage === "done" || job.stage === "failed") close();
+      }),
     );
   });
 
