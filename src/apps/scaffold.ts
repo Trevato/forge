@@ -757,7 +757,9 @@ export const addNote = (
   audited(db, who, "note", "create", undefined, add(db, who, input));
 
 function add(db: Database, who: Who, input: { body: string }): Result<Note> {
-  if (permit(who, "note", "create") !== "yes")
+  // The table decides; the type only learns it here: whoever may create is
+  // signed in, and carries a name to write beside the note.
+  if (who.role === "anon" || permit(who, "note", "create") !== "yes")
     return refuse(who, "Sign in to add a note.", "You may not add a note.");
   const body = input.body.trim();
   if (body.length === 0 || body.length > BODY_MAX)
@@ -790,7 +792,8 @@ function noteFor(
   // With no row to show, the door is asked about a row of their own: whoever
   // could not pass even then is refused, and learns nothing about what
   // exists; whoever could is told there is no such note.
-  const row = note ?? { author_id: who.role === "anon" ? null : who.id };
+  const row: Readonly<Record<string, unknown>> =
+    note === null ? { author_id: who.role === "anon" ? null : who.id } : { ...note };
   if (permit(who, "note", verb, row) !== "yes")
     return refuse(who, said.signIn, said.no);
   if (note !== null) return ok(note);
@@ -1151,7 +1154,7 @@ export async function readForm(request: Request) {
   return new Request(request.url, {
     method: "POST",
     headers: { "content-type": request.headers.get("content-type") ?? "" },
-    body,
+    body: new Uint8Array(body),
   }).formData();
 }
 

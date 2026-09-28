@@ -7,8 +7,16 @@
  * two scripts the app ships run as a person would run them.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+  readdir,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseManifest } from "../src/apps/manifest.ts";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
@@ -100,6 +108,39 @@ describe("a scaffolded app, written out and run on its own", () => {
       description: "A new app on the forge.",
     });
   }, 30_000);
+
+  test("it typechecks under strict settings, with the forge's own type definitions", async () => {
+    // The app ships no dependencies, so the checker borrows the forge's
+    // Bun types; the app's code itself must be clean under the same strictness
+    // the forge holds itself to.
+    const root = fileURLToPath(new URL("..", import.meta.url));
+    const sources = [
+      ...(await readdir(join(dir, "src"))).map((f) => join("src", f)),
+      ...(await readdir(join(dir, "scripts"))).map((f) => join("scripts", f)),
+    ].filter((f) => f.endsWith(".ts"));
+    const { code, out } = await run(dir, [
+      process.execPath,
+      "x",
+      "tsc",
+      "--noEmit",
+      "--strict",
+      "--target",
+      "esnext",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--allowImportingTsExtensions",
+      "--noUncheckedIndexedAccess",
+      "--exactOptionalPropertyTypes",
+      "--types",
+      "bun-types",
+      "--typeRoots",
+      `${root}node_modules/@types,${root}node_modules`,
+      ...sources,
+    ]);
+    expect([code, out.trim()]).toEqual([0, ""]);
+  }, 120_000);
 
   test("forge.json points the forge's health poll at /healthz", () => {
     const manifest = parseManifest(
