@@ -37,6 +37,8 @@ import {
   type AppEnvScope,
 } from "../core/app_env.ts";
 import { addCrew, getAgentByName } from "../core/agents.ts";
+import { listAllAgents } from "./crew.ts";
+import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
@@ -44,6 +46,7 @@ import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { sshCommand } from "../ssh/command.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   requireReader,
@@ -240,6 +243,12 @@ export interface NewAppInput {
   visibility?: "public" | "private";
   /** An agent to put on the crew and hand the first issue to. */
   agent?: string;
+  /**
+   * Turn the sentence into a checklist and pick the agent instead of
+   * `agent` naming one. Ignored without a description, or when `agent` is
+   * also given.
+   */
+  pickAgent?: boolean;
 }
 
 export interface NewAppResult {
@@ -247,6 +256,8 @@ export interface NewAppResult {
   readonly app: AppRecord;
   /** The first issue, when a description was given and an agent named. */
   readonly issue?: Issue;
+  /** Who the plan picked and why, when `pickAgent` landed one. */
+  readonly plan?: { agent: string; summary: string; confidence: number };
 }
 
 export type NewAppError =
@@ -294,27 +305,69 @@ export async function newApp(
   if (!record.ok)
     return err(record.error === "not_found" ? "scaffold_failed" : record.error);
 
+  const description = (input.description ?? "").trim();
+  let chosen = agent;
+  let body = description;
+  let picked: NewAppResult["plan"];
+
+  // Off the critical path only in the sense that a slow or absent decider
+  // costs at most `PLAN_TIMEOUT_MS` and never a wrong answer (crew/plan.ts):
+  // the repository, the app and production above have already started.
+  if (!agent && input.pickAgent && description !== "") {
+    const binary = process.env["FORGE_CLAUDE"] ?? "claude";
+    if (planningAvailable(binary)) {
+      const roster = listAllAgents(app, user.value);
+      const agents = roster.ok ? roster.value : [];
+      if (agents.length > 0) {
+        const result = await plan(
+          {
+            name: input.name,
+            description,
+            agents: agents.map((a) => ({ name: a.user.username, brief: a.brief })),
+          },
+          { binary },
+        );
+        const match =
+          result && agents.find((a) => a.user.username === result.agent);
+        if (result && match) {
+          chosen = match;
+          body = planIssueBody(result);
+          picked = {
+            agent: result.agent,
+            summary: result.summary,
+            confidence: result.confidence,
+          };
+        }
+      }
+    }
+  }
+
   let issue: Issue | undefined;
-  if (agent) {
-    addCrew(app.db, repo.value.id, agent.user.id, user.value.id);
+  if (chosen) {
+    addCrew(app.db, repo.value.id, chosen.user.id, user.value.id);
     app.bus.append({
       kind: "crew.added",
       repoId: repo.value.id,
       actorId: user.value.id,
-      payload: { agent: agent.user.username },
+      payload: { agent: chosen.user.username },
     });
-    if (input.description && input.description.trim() !== "") {
-      const opened = openIssue(app, user.value, repo.value, {
-        title: `Build ${input.name}`,
-        body: input.description.trim(),
-      });
-      if (opened.ok) {
+  }
+  // The sentence is the one thing the person wrote: it opens the first
+  // issue whether or not anyone was picked for it, unassigned when not.
+  if (body !== "") {
+    const opened = openIssue(app, user.value, repo.value, {
+      title: `Build ${input.name}`,
+      body,
+    });
+    if (opened.ok) {
+      issue = opened.value;
+      if (chosen) {
         const assigned = assignIssue(
           app,
           user.value,
           repo.value,
           opened.value,
-          agent.user,
+          chosen.user,
         );
         issue = assigned.ok ? assigned.value : opened.value;
       }
@@ -324,6 +377,7 @@ export async function newApp(
     repo: repo.value,
     app: record.value,
     ...(issue === undefined ? {} : { issue }),
+    ...(picked === undefined ? {} : { plan: picked }),
   });
 }
 
@@ -332,8 +386,6 @@ export interface AppView {
   readonly environments: EnvStatus[];
   /** Whether a runtime is serving at all (`FORGE_APPS=0` means no). */
   readonly serving: boolean;
-  /** `ssh -p 2222 notes@host` — how to reach production's terminal, when SSH is on. */
-  readonly ssh: string | undefined;
 }
 
 /**
@@ -348,6 +400,27 @@ export function sshCommandFor(
 ): string | undefined {
   // Without a runtime nothing can answer that ssh, so there is no command.
   return appsRuntime(app)?.sshFor(record, env);
+}
+
+/**
+ * The one fact behind every "Terminal" line a page draws: the exact
+ * command, or — when there is nothing to show — why: this environment's
+ * app declares no `tty`, or this forge itself has no SSH listener
+ * (`app.config.sshPort`, `0` on a forge hosted as an app of another —
+ * issue #283). A status that has never been live does not know its `tty`
+ * yet, so the command still shows when SSH is on; the environment's own
+ * state already says it is not running.
+ */
+export function terminalFor(
+  app: App,
+  record: AppRecord,
+  env: EnvName,
+  status: EnvStatus | undefined,
+): { readonly command?: string; readonly reason?: "no_tty" | "no_listener" } {
+  if (status?.tty === null) return { reason: "no_tty" };
+  const command = sshCommandFor(app, record, env);
+  if (command !== undefined) return { command };
+  return sshCommand(app) === undefined ? { reason: "no_listener" } : {};
 }
 
 /** What is running, for anyone who can see the repository. */
@@ -365,7 +438,6 @@ export function appView(
     app: record,
     environments: runtime === undefined ? [] : runtime.status(record),
     serving: runtime !== undefined,
-    ssh: sshCommandFor(app, record, "production"),
   });
 }
 

@@ -19,15 +19,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { enableApp } from "../src/actions/apps.ts";
 import { createToken, signUp } from "../src/actions/users.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { getRepo, updateRepoSettings } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { listIssues } from "../src/core/issues.ts";
+import { getPull } from "../src/core/pulls.ts";
+import { recordLook } from "../src/core/looks.ts";
 import { listRefs } from "../src/git/read.ts";
+import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { localSource } from "../src/view/local.ts";
 import {
   MAX_MIRROR_LINES,
@@ -37,7 +41,7 @@ import {
 import { highlightAsset } from "../src/web/asset.ts";
 import { highlightToHtml } from "../src/web/highlight-html.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const PASSWORD = "a-long-web-editor-passphrase";
 const LAMP = "export const lamp = 'lit'\n";
@@ -257,6 +261,80 @@ describe("editing files on the web", () => {
     const page = await text(to, alice);
     expect(page).toContain("Dim it");
     expect(page).toContain("Because fog.");
+  });
+
+  test("a second commit to a change's branch, through the editor, becomes its head", async () => {
+    const made = await createRepo(app, aliceUser, {
+      name: "lighthouse",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error("repo failed");
+    const repo = made.value;
+    await commitToBranch(app, aliceUser, repo, {
+      message: "first",
+      files: [{ path: "README.md", content: "# lighthouse\n" }],
+    });
+    const enabled = enableApp(app, aliceUser, repo, { slug: "lighthouse" });
+    if (!enabled.ok) throw new Error("enable failed");
+
+    const opened = await post(
+      "/alice/lighthouse/edit",
+      {
+        ref: "main",
+        path: "README.md",
+        content: "# lighthouse\n\nfirst edit\n",
+        message: "First edit",
+        description: "",
+        target: "new",
+        branch: "alice/edit-readme",
+        pull: "1",
+        pullTitle: "Edit the readme",
+        pullBody: "",
+      },
+      { cookie: alice },
+    );
+    expect(opened.status).toBe(303);
+    const to = opened.headers.get("location") ?? "";
+    const number = Number(to.split("/").pop());
+
+    // The most ordinary act there is: fixing something and committing again,
+    // on the same branch the first commit opened the change on.
+    const again = await post(
+      "/alice/lighthouse/edit",
+      {
+        ref: "alice/edit-readme",
+        path: "README.md",
+        content: "# lighthouse\n\nsecond edit\n",
+        message: "Second edit",
+        description: "",
+        target: "current",
+        branch: "",
+      },
+      { cookie: alice },
+    );
+    expect(again.status).toBe(303);
+
+    const tip = await resolveOid(
+      repoDir(app.reposRoot, repo.ownerName, repo.name),
+      "refs/heads/alice/edit-readme",
+    );
+    if (tip === undefined) throw new Error("branch has no tip");
+
+    // The pull's stored head is the second commit, not the first.
+    const pull = getPull(app.db, repo.id, number)!;
+    expect(pull.headOid).toBe(tip);
+
+    // A look taken of the true, current head is not called stale.
+    recordLook(app.db, {
+      appId: enabled.value.id,
+      env: `pull-${number}`,
+      commitOid: tip,
+      kind: "phone",
+      path: "does/not/exist.png",
+    });
+    const page = await text(to, alice);
+    expect(page).toContain(tip.slice(0, 7));
+    expect(page).not.toContain("the head has moved");
   });
 
   test("a new file arrives with the path the person typed", async () => {

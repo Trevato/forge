@@ -14,7 +14,8 @@ import {
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLog, setLogLevel } from "../src/kernel/log.ts";
+import { createLog } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { Channels } from "../src/ssh/channels.ts";
 import { MSG, WireError, Writer } from "../src/ssh/wire.ts";
 import {
@@ -24,16 +25,19 @@ import {
   type SshServerOptions,
   type SshSession,
 } from "../src/ssh/server.ts";
+import { missing } from "./helpers/tools.ts";
 
 const SSH = "/usr/bin/ssh";
 const SSH_KEYGEN = "/usr/bin/ssh-keygen";
+/** These drive the real OpenSSH client; without it they skip, loudly. */
+const NO_OPENSSH = missing(SSH, SSH_KEYGEN);
 const log = createLog("ssh-test");
 
 let root = "";
 const servers: SshServer[] = [];
 const keys: Record<string, string> = {};
 
-setLogLevel("error");
+quietLogs();
 
 function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
@@ -354,6 +358,10 @@ function probe(
 }
 
 beforeAll(async () => {
+  // This hook belongs to the file, not to a describe, so it runs even when
+  // every case in it is skipped: with no ssh-keygen there are no keys to
+  // make, and nothing that wanted them will run.
+  if (NO_OPENSSH) return;
   root = mkdtempSync(join(tmpdir(), "forge-ssh-"));
   const specs: [string, string[]][] = [
     ["ed25519", ["-t", "ed25519"]],
@@ -377,7 +385,7 @@ afterAll(() => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
-describe("ssh drain", () => {
+describe.skipIf(NO_OPENSSH)("ssh drain", () => {
   test("a draining server keeps who is connected, answers nobody new, and ends when the last leaves", async () => {
     const server = await start({ onSession: () => {} });
     const opened = await Bun.connect({
@@ -417,7 +425,7 @@ describe("ssh drain", () => {
   });
 });
 
-describe("ssh exec sessions", () => {
+describe.skipIf(NO_OPENSSH)("ssh exec sessions", () => {
   test("runs a command, returns output and an exit status", async () => {
     let seen: SshSession | undefined;
     const server = await start({
@@ -508,7 +516,7 @@ describe("ssh exec sessions", () => {
   });
 });
 
-describe("ssh shell sessions", () => {
+describe.skipIf(NO_OPENSSH)("ssh shell sessions", () => {
   test("pty-req, echo, and EOF ending the session", async () => {
     let seen: SshSession | undefined;
     let ended = false;
@@ -584,7 +592,7 @@ describe("ssh shell sessions", () => {
   });
 });
 
-describe("ssh publickey authentication", () => {
+describe.skipIf(NO_OPENSSH)("ssh publickey authentication", () => {
   const cases: [string, string][] = [
     ["ed25519", "ssh-ed25519"],
     ["ecdsa", "ecdsa-sha2-nistp256"],
@@ -696,7 +704,7 @@ describe("ssh publickey authentication", () => {
   });
 });
 
-describe("ssh flow control", () => {
+describe.skipIf(NO_OPENSSH)("ssh flow control", () => {
   const SIZE = 3 * 1024 * 1024;
 
   test("server writes 3 MiB past the peer window", async () => {
@@ -738,7 +746,7 @@ describe("ssh flow control", () => {
   }, 30_000);
 });
 
-describe("ssh rekey", () => {
+describe.skipIf(NO_OPENSSH)("ssh rekey", () => {
   test("survives client-initiated rekey with RekeyLimit=64K", async () => {
     const size = 1024 * 1024;
     const down = payload(size);
@@ -775,7 +783,7 @@ describe("ssh rekey", () => {
   }, 60_000);
 });
 
-describe("ssh resilience", () => {
+describe.skipIf(NO_OPENSSH)("ssh resilience", () => {
   test("garbage after the version line is disconnected, server keeps serving", async () => {
     const server = await start({
       onSession(session) {
@@ -853,7 +861,7 @@ describe("ssh resilience", () => {
   }
 });
 
-describe("ssh host key", () => {
+describe.skipIf(NO_OPENSSH)("ssh host key", () => {
   test("persists across restarts and matches ssh-keygen", async () => {
     const dir = mkdtempSync(join(root, "persist-"));
     const first = await start({ hostKeyDir: dir, onSession: (s) => s.exit(0) });
@@ -877,7 +885,7 @@ describe("ssh host key", () => {
   });
 });
 
-describe("ssh key exchange discipline", () => {
+describe.skipIf(NO_OPENSSH)("ssh key exchange discipline", () => {
   test("a client that never sends NEWKEYS cannot smuggle USERAUTH_REQUEST through in plaintext", async () => {
     let authCalls = 0;
     let sessionCalls = 0;
@@ -938,7 +946,7 @@ describe("ssh key exchange discipline", () => {
  * the connection layer directly with hand-built wire payloads so the
  * dimension, resize and rejection paths are still covered.
  */
-describe("ssh channel layer", () => {
+describe.skipIf(NO_OPENSSH)("ssh channel layer", () => {
   function harness() {
     const sent: Uint8Array[] = [];
     let session: SshSession | undefined;
@@ -1110,7 +1118,7 @@ describe("ssh channel layer", () => {
   });
 });
 
-describe("ssh fuzzing", () => {
+describe.skipIf(NO_OPENSSH)("ssh fuzzing", () => {
   test("random garbage on many connections never takes the server down", async () => {
     const server = await start({
       // Random bytes are often merely *incomplete* rather than illegal — a

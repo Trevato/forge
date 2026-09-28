@@ -10,7 +10,8 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import type { EnvState } from "../apps/runtime.ts";
+import type { EnvState, EnvStatus } from "../apps/runtime.ts";
+import type { PreviewData } from "../apps/data.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
@@ -49,6 +50,61 @@ export function time(iso: string): Html {
   return html`<time datetime="${at.toISOString()}" title="${exact}"
     >${timeAgo(iso)}</time
   >`;
+}
+
+/** Seconds to one decimal: `3.4s`. A clock that ran backwards reads `0.0s`. */
+function seconds(ms: number): string {
+  return `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+}
+
+/** The wait a phrase bothers to name: under this it is noise, not news. */
+const QUEUED_FLOOR_MS = 1_000;
+
+/**
+ * How long a deployment took to start serving, worded for a person:
+ * `3.4s after the push` — measured from the instant the push created the
+ * deploy run, so however long it waited for a permit is inside the number.
+ * When that wait was a second or more it is named too, because the number
+ * is otherwise a puzzle: `6.1s after the push · 2.4s queued`.
+ *
+ * A deploy no push asked for (a redeploy someone pressed, a boot reconcile)
+ * has no push to measure from: it is measured from its own start and says
+ * so, the same sentence its log makes. Undefined until it serves — never a
+ * zero, and never a negative when two clocks disagree.
+ */
+export function servedPhrase(env: EnvStatus): string | undefined {
+  if (env.servingAt === undefined) return undefined;
+  const servedAt = Date.parse(env.servingAt);
+  const pushedAt = env.createdAt === undefined ? NaN : Date.parse(env.createdAt);
+  const startedAt =
+    env.deployStartedAt === undefined ? NaN : Date.parse(env.deployStartedAt);
+  const pushed = Number.isFinite(pushedAt);
+  const from = pushed ? pushedAt : startedAt;
+  if (!Number.isFinite(servedAt) || !Number.isFinite(from)) return undefined;
+  const phrase = `${seconds(servedAt - from)} ${
+    pushed ? "after the push" : "after the deploy started"
+  }`;
+  if (!pushed || !Number.isFinite(startedAt)) return phrase;
+  const queued = startedAt - pushedAt;
+  return queued >= QUEUED_FLOOR_MS
+    ? `${phrase} · ${seconds(queued)} queued`
+    : phrase;
+}
+
+/**
+ * How long a queued run has waited, worded like the run list's own line
+ * (`queued 12m ago`) but compact enough to sit beside a state word: `queued
+ * 12m`. `just now` under a minute, so a check that only just queued never
+ * reads as `queued 0m`.
+ */
+export function queuedPhrase(createdAt: string, now = Date.now()): string {
+  const seconds = Math.max(0, (now - Date.parse(createdAt)) / 1000);
+  if (seconds < 60) return "queued just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `queued ${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `queued ${hours}h`;
+  return `queued ${Math.floor(hours / 24)}d`;
 }
 
 /** Bytes, three significant figures, never more precision than is true. */
@@ -250,6 +306,183 @@ export function envTone(state: EnvState | undefined): Tone {
       : state === "failed"
         ? "danger"
         : "default";
+}
+
+/**
+ * An environment's state in a person's words rather than a badge's —
+ * `live`, `serving · tests failed`, `not up`, `not running` — for a head
+ * that speaks one line. A card head wears `envStateBadge` instead. How fast
+ * it came up belongs to `envFacts`, which sits under this and says it once.
+ *
+ * A serving app is never called down because its tests are red: the words
+ * say the tests failed, the tone stays the tone of something that answers.
+ */
+export function envPhrase(env: EnvStatus | undefined): {
+  word: string;
+  tone: Tone;
+} {
+  if (env === undefined || env.state === "stopped")
+    return { word: "not running", tone: "default" };
+  if (env.state === "failed") return { word: "not up", tone: "danger" };
+  if (env.state === "deploying") return { word: "starting", tone: "default" };
+  // It answers, so it is not "not up" — but a newer push never came up
+  // behind it, so it is not plain green either.
+  if (env.failedDeploy !== undefined)
+    return { word: "live · a newer push failed", tone: "attn" };
+  return {
+    word: env.error === undefined ? "live" : "serving · tests failed",
+    tone: "success",
+  };
+}
+
+export interface EnvFactsOptions {
+  /** Name the environment's address in full — a card has room for it, a
+   * head that already links the app does not. */
+  readonly url?: boolean;
+}
+
+/**
+ * What an environment is doing, as facts: the commit it runs, how fast it
+ * came up, how long it has been up, a link to the deploy that produced it,
+ * and — when the deployment has words of its own — its note and its error.
+ * Every page showing an environment renders this one, so `not up` never
+ * says less on one page than on another. Facts, not a card: the caller
+ * decides what box they sit in.
+ */
+export function envFacts(
+  base: string,
+  env: EnvStatus,
+  o: EnvFactsOptions = {},
+): Html {
+  return html`<div class="env-facts">
+      ${when(env.commitOid !== "", () =>
+        sha(env.commitOid, `${base}/commit/${env.commitOid}`),
+      )}
+      ${when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`)}
+      ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
+      ${when(
+        env.runId,
+        (id) =>
+          html`<a href="${base}/runs/${id}"
+            >${env.state === "deploying"
+              ? "deploy in progress"
+              : env.note !== undefined
+                ? "verifying tests"
+                : "last deploy"}</a
+          >`,
+      )}
+    </div>
+    ${when(
+      o.url === true,
+      () =>
+        html`<p class="env-facts mt">
+          <span class="mono truncate" title="${env.url}">${env.url}</span>
+        </p>`,
+    )}
+    ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
+    ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
+    ${when(
+      env.failedDeploy,
+      // Two `sha`s, never nested inside the run link — a link inside a link
+      // tears the paragraph apart, the same reason `userTag` gives a row.
+      (fd) => html`<p class="env-error">
+        serving ${sha(env.commitOid, `${base}/commit/${env.commitOid}`)} —
+        ${sha(fd.commitOid, `${base}/commit/${fd.commitOid}`)} did not come up:
+        ${fd.error} (<a href="${base}/runs/${fd.runId}">its deploy</a>)
+      </p>`,
+    )}`;
+}
+
+/**
+ * The one fact a preview says about whose data it has: its own copy of
+ * production's, taken the moment the change that opened it did — the only
+ * moment `ensureEnvData` (`apps/data.ts`) ever takes one, since a redeploy
+ * of the same preview keeps what is already there. That instant is a
+ * pull's own `createdAt`, already known wherever a preview is drawn, so
+ * this never stats the data directory to answer. An app whose preview
+ * policy is `empty` has no production data to name, so there is nothing to
+ * say — and production's own card never calls this at all: there is
+ * nothing to warn about data it simply *is*. Bare text, not a card or a
+ * paragraph: the caller decides how it sits beside the rest of the facts.
+ */
+export function previewDataNote(
+  policy: PreviewData,
+  openedAt: string,
+): Html | null {
+  if (policy !== "copy") return null;
+  return html`its own copy of production's data, taken ${time(openedAt)}`;
+}
+
+/**
+ * An environment's terminal, as copyable monospace text with the host key
+ * fingerprint beside it — so a first connection can be trusted deliberately
+ * — or one line saying the terminal is off, when there is no command to
+ * show. Every page that names a way in draws this one, never its own words
+ * for "off".
+ *
+ * "Off" has two causes and a reader deserves to know which: the app
+ * declares no `tty` (nothing would answer that connection even if one were
+ * open — the sentence stays exactly what it always said), or this forge has
+ * no SSH listener (`FORGE_SSH_PORT`, `0` on a forge hosted as an app of
+ * another — issue #283) and the app is otherwise willing. The second names
+ * the variable that turns it on; neither ever invents a connection string —
+ * a command is shown only once there is a listener to reach.
+ *
+ * The command has a `login@host` in it, which an email-scanning edge on the
+ * forge's own domain will otherwise rewrite into a `mailto:` link — turning
+ * the one line a reader must copy character for character into a link that
+ * hides the login. `<!--email_off-->…<!--/email_off-->` is the marker such
+ * scanners honour; it costs nothing where none runs, and the text between
+ * the markers is exactly the command, unchanged and still one selectable,
+ * copyable line.
+ */
+export function terminalLine(
+  terminal: {
+    readonly command?: string;
+    readonly reason?: "no_tty" | "no_listener";
+  },
+  fingerprint?: string | undefined,
+): Html {
+  if (terminal.command === undefined)
+    return terminal.reason === "no_listener"
+      ? html`<p class="muted small">
+          The terminal is off — this forge has no SSH listener. Set
+          <span class="mono">FORGE_SSH_PORT</span> to turn it on.
+        </p>`
+      : html`<p class="muted small">The terminal is off.</p>`;
+  return html`<p class="terminal-line">
+    <code class="mono"><!--email_off-->${terminal.command}<!--/email_off--></code>
+    ${when(
+      fingerprint,
+      (fp) => html`<span class="muted small">host key ${fp}</span>`,
+    )}
+  </p>`;
+}
+
+/**
+ * The two things a writer can do to an environment. Both are POST forms —
+ * the routes they post to make the same-origin check — and a reader is
+ * handed nothing at all.
+ */
+export function envActions(
+  base: string,
+  env: EnvStatus,
+  writer: boolean,
+): Html {
+  return when(
+    writer,
+    () =>
+      html`<form method="post" action="${base}/app/${env.env}/redeploy">
+          ${btn("Redeploy", { size: "sm", icon: "sync" })}
+        </form>
+        ${when(
+          env.state !== "stopped",
+          () =>
+            html`<form method="post" action="${base}/app/${env.env}/stop">
+              ${btn("Stop", { size: "sm", icon: "square" })}
+            </form>`,
+        )}`,
+  );
 }
 
 export interface LabelLike {

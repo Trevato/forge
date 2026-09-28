@@ -104,10 +104,14 @@ makes "production data" and "preview data" two different things.
 
 \`\`\`sh
 PORT=8080 FORGE_APP_DATA=./data bun run src/server.ts   # run it here
-bun test                                                # the check every pull runs
+bun test                                                # what \`forge.json\`'s app.test runs on every push
 FORGE_APP_DATA=./data bun run src/tty.ts                # the terminal
 FORGE_APP_DATA=./data bun run src/db.ts --check         # schema version, integrity
 \`\`\`
+
+\`app.test\` in \`forge.json\` runs beside \`app.run\` in every deploy, not before
+it: the preview comes up the moment the app answers, and says \`live\`, or
+\`serving · tests failed\` the moment the suite disagrees.
 
 ## The shape
 
@@ -195,8 +199,11 @@ preview at its own address, deployed from your branch as you push.
 - Work on the branch you were given. You cannot move the default branch;
   a person merges your pull once it is reviewed.
 - Keep state under \`FORGE_APP_DATA\`. Never write elsewhere at runtime.
-- Run \`bun test\` before you push. It is the check the pull shows, and every
-  behaviour you add gets a test that would fail without it.
+- Run \`bun test\` before you push. \`forge.json\`'s \`app.test\` runs it beside
+  the app on every deploy, not before it: the preview comes up the moment
+  the app answers and says \`live\`, or \`serving · tests failed\` the moment
+  the suite disagrees. Every behaviour you add gets a test that would fail
+  without it.
 - \`src/tty.ts\` is the app's terminal. The exact command that reaches it is
   \`FORGE_APP_SSH\` at runtime; print that verbatim wherever the app tells
   people how to connect. What a person can do on the page they can do here,

@@ -13,6 +13,7 @@ import { edgeLoginUrl } from "../http/edge.ts";
 import {
   canAdmin,
   canRead,
+  forkParentFor,
   getRepo,
   getRepoById,
   listForks,
@@ -26,10 +27,12 @@ import {
   browseActions,
   hostOf,
   localScope,
+  studioOriginNote,
   upstreamHref,
   whereRow,
   type RepoScope,
 } from "./scope.ts";
+import { changesHref, tellsHref } from "./studio/nouns.ts";
 import { badge, btn, empty, tabs, type TabItem } from "./ui.ts";
 
 // ---- loading ----
@@ -148,10 +151,12 @@ export function scopeHeader(
   const repo = scope.repo;
   const facts = scope.facts;
   const admin = repo !== undefined && canAdmin(ctx.app.db, repo, ctx.auth.user);
+  // "forked from …" names another repository, so it says nothing to somebody
+  // who cannot read that one — same rule as the About rail's Fork-of row.
   const parent =
-    repo?.forkParentId != null
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
+    repo === undefined
+      ? undefined
+      : forkParentFor(ctx.app.db, repo, ctx.auth.user);
 
   const isApp =
     repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
@@ -167,16 +172,21 @@ export function scopeHeader(
       shortcut: "g c",
     },
     {
-      label: "Issues",
-      href: `${base}/issues`,
-      icon: "issue",
+      // Studio names its own lists — told, not issues; dev's tabs are
+      // unchanged in dev mode and on a repository that is not an app.
+      label: studio ? "Told" : "Issues",
+      href: studio ? tellsHref(base) : `${base}/issues`,
+      icon: studio ? "clock" : "issue",
       ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
       current: active === "issues",
       shortcut: "g i",
     },
     {
-      label: "Pulls",
-      href: `${base}/pulls`,
+      // "Look" is the five-word state a green pull is in, and the name of
+      // the picture card on one — not the noun for this list, which is the
+      // same one `/changes` and "Every change" already use.
+      label: studio ? "Changes" : "Pulls",
+      href: studio ? changesHref(base) : `${base}/pulls`,
       icon: "pull",
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
@@ -295,16 +305,35 @@ export function scopeHeader(
           <span class="mono">${scope.upstream}</span>
         </p>`,
     )}
-    ${whereRow(ctx, scope)} ${tabs(items, "Repository")}
+    ${studio ? studioOriginNote(repo) : whereRow(ctx, scope)}
+    ${tabs(items, "Repository")}
   </header>`;
 }
 
 export { hostOf };
 
-/** This repo's own rows for the command palette. */
-export function repoPalette(repo: Repo): PaletteItem[] {
+/** This repo's own rows for the command palette — the studio's nouns for a
+ * studio-mode viewer of an app, so the palette never sends someone to a
+ * list under a name the address bar would not use. Commits is dev's own
+ * page (no studio tab reaches it, `scopeHeader` above), so it drops out of
+ * a studio app's rows rather than sit there under a dev word; New issue
+ * gives way to the studio's own first verb, telling the crew, which posts
+ * from the app page itself (`${base}#tell`, `studio/app.ts`). */
+export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
   const base = repoBase(repo);
   const name = `${repo.ownerName}/${repo.name}`;
+  const studio =
+    ctx.mode === "studio" && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  if (studio) {
+    return [
+      { t: `${name} — Studio`, h: base, c: "This repo" },
+      { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
+      { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
+      { t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" },
+      { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
+      { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
+    ];
+  }
   return [
     { t: `${name} — Code`, h: base, c: "This repo" },
     { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },

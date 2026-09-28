@@ -32,12 +32,15 @@ import {
   CHECK_KINDS,
   failAbandonedRuns,
   finishRun,
+  markServing,
+  STOPPED_SUMMARY,
   type Run,
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
@@ -51,11 +54,17 @@ import {
   previewEnv,
   removeApp,
   removeEnv,
+  reseedEmpty,
   type EnvName,
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
-import { startProcess, type ProcessHandle } from "./process.ts";
+import {
+  startProcess,
+  type ProcessHandle,
+  type StartError,
+  type StartInput,
+} from "./process.ts";
 
 const log = createLog("apps");
 
@@ -102,7 +111,51 @@ export interface EnvStatus {
   /** The run that produced this state — a link to its log. */
   readonly runId?: string | undefined;
   readonly since?: string | undefined;
+  /** The instant this deployment started serving, set once at the swap-in. */
+  readonly servingAt?: string | undefined;
+  /**
+   * The instant the push created this deploy run — what a person means by
+   * "after the push", and the reference `servedPhrase` measures from. Unset
+   * for a deploy no push asked for (a redeploy someone pressed, a boot
+   * reconcile), so the words for those never claim a push that never was.
+   */
+  readonly createdAt?: string | undefined;
+  /** The deploy run's own start — after however long it waited for a permit. */
+  readonly deployStartedAt?: string | undefined;
   readonly error?: string | undefined;
+  /**
+   * A running environment whose deploy is still checking itself: its tests
+   * are still running, or ran and failed. Never set while `state` is
+   * anything but `running` — a failed test never stops a deployment that
+   * already answers.
+   */
+  readonly note?: string | undefined;
+  /**
+   * The app's own `tty` command, once known live — `null` when its
+   * `forge.json` declares none. Unset while never live, since a checkout
+   * that has not started has not said either way.
+   */
+  readonly tty?: string | null | undefined;
+  /**
+   * The pages `app.looks` names worth a picture, once known live — `["/"]`
+   * when its `forge.json` says nothing. Unset while never live, the same
+   * as `tty`.
+   */
+  readonly looks?: readonly string[] | undefined;
+  /**
+   * A deploy newer than the one serving that never came up — set only
+   * while an older deployment keeps answering in its place. A later
+   * successful deploy of this environment clears it (it is the newest
+   * attempt's own outcome, never a history), and it is never set once
+   * nothing serves at all: `state: "failed"` and `error` already say that.
+   */
+  readonly failedDeploy?:
+    | {
+        readonly commitOid: string;
+        readonly runId: string;
+        readonly error: string;
+      }
+    | undefined;
 }
 
 interface Live {
@@ -113,6 +166,45 @@ interface Live {
   readonly since: string;
   /** How this checkout runs — its `tty` is what an ssh session opens. */
   readonly manifest: AppManifest;
+  /** Unset while tests are still running or there are none; the message once they fail. */
+  readonly testsFailed?: string | undefined;
+  /**
+   * The instant this deployment started serving, set once at the swap-in —
+   * unset on the value `bringUp` returns, which does not yet know it.
+   */
+  readonly servingAt?: string | undefined;
+  /** The instant the push created this deploy run, when a push did. */
+  readonly createdAt?: string | undefined;
+  /** The deploy run's own start — the reference the deploy log measures from. */
+  readonly deployStartedAt?: string | null | undefined;
+}
+
+/**
+ * The deploy reasons a ref moving created: for these the run's `createdAt`
+ * is the instant of the push that asked for the deploy, so the wait for a
+ * permit sits inside the number the studio prints. A redeploy someone
+ * pressed, a crash restart, and a boot or enable reconcile are not pushes.
+ */
+const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
+
+/** How long between two instants, in seconds to one decimal place: `3.4s`. */
+function elapsedSeconds(fromIso: string, toIso: string): string {
+  const ms = Math.max(0, Date.parse(toIso) - Date.parse(fromIso));
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * Whether a start failure is the process itself exiting before it ever
+ * answered its health path — as opposed to install failing, or the process
+ * staying up but never answering. Only this shape of failure is worth
+ * retrying on empty data: it is what a build too old for the data it was
+ * given looks like.
+ */
+function diedBeforeAnswering(error: StartError): boolean {
+  return (
+    error.stage === "start" &&
+    /^exited with code \d+ before answering/.test(error.message)
+  );
 }
 
 /** A running environment, as a terminal session needs it. */
@@ -154,6 +246,8 @@ interface Environment {
   chain: Promise<void>;
   lastError?: string | undefined;
   lastRunId?: string | undefined;
+  /** The commit `lastError` belongs to — set together, cleared together. */
+  lastErrorCommitOid?: string | undefined;
   /** Crash restarts in the current window, for backing off. */
   restarts: number[];
 }
@@ -237,26 +331,85 @@ export class AppsRuntime {
 
   private describe(state: Environment): EnvStatus {
     const url = this.urlFor(state.app, state.env);
-    if (state.deploying !== undefined) {
+    // Once a deploy's own commit has answered and swapped in, it is
+    // "running" from here — even though its run stays open, checking its
+    // tests, until they finish. Only a build still short of that point (no
+    // live process yet, or the live one is an older commit) is "deploying".
+    const swapped =
+      state.deploying !== undefined &&
+      state.live?.commitOid === state.deploying.run.commitOid;
+    if (state.deploying !== undefined && !swapped) {
       return {
         env: state.env,
         state: "deploying",
         commitOid: state.deploying.run.commitOid,
         url,
-        ...(state.live === undefined ? {} : { port: state.live.handle.port }),
+        ...(state.live === undefined
+          ? {}
+          : {
+              port: state.live.handle.port,
+              since: state.live.since,
+              servingAt: state.live.servingAt,
+              createdAt: state.live.createdAt,
+              tty: state.live.manifest.tty,
+              looks: state.live.manifest.looks,
+              ...(state.live.deployStartedAt === null
+                ? {}
+                : { deployStartedAt: state.live.deployStartedAt }),
+            }),
         runId: state.deploying.run.id,
-        ...(state.live === undefined ? {} : { since: state.live.since }),
       };
     }
     if (state.live !== undefined) {
+      // The most recent deploy attempt failed, and it was not this one — a
+      // newer commit that never came up, while this older deployment kept
+      // serving. `swapped` already covers the alternative (the newest
+      // attempt is this one and it succeeded, however its tests read).
+      const failedDeploy =
+        !swapped &&
+        state.lastError !== undefined &&
+        state.lastErrorCommitOid !== undefined &&
+        state.lastErrorCommitOid !== state.live.commitOid &&
+        state.lastRunId !== undefined
+          ? {
+              commitOid: state.lastErrorCommitOid,
+              runId: state.lastRunId,
+              error: state.lastError,
+            }
+          : undefined;
       return {
         env: state.env,
         state: "running",
         commitOid: state.live.commitOid,
         url,
         port: state.live.handle.port,
-        runId: state.live.runId,
+        runId: swapped ? state.deploying!.run.id : state.live.runId,
         since: state.live.since,
+        servingAt: state.live.servingAt,
+        createdAt: state.live.createdAt,
+        tty: state.live.manifest.tty,
+        looks: state.live.manifest.looks,
+        ...(state.live.deployStartedAt === null
+          ? {}
+          : { deployStartedAt: state.live.deployStartedAt }),
+        ...(swapped ? { note: "serving — still verifying its tests" } : {}),
+        ...(state.live.testsFailed === undefined
+          ? {}
+          : { error: `serving · tests failed: ${state.live.testsFailed}` }),
+        ...(failedDeploy === undefined ? {} : { failedDeploy }),
+      };
+    }
+    // Nothing is live and nothing is in flight yet, but a deploy already
+    // waits its turn on the chain — a restart's own reconcile queues one
+    // the instant it boots. That is "starting", not the stale error (if
+    // any) a cancelled attempt before it left behind.
+    if (state.queued !== undefined) {
+      return {
+        env: state.env,
+        state: "deploying",
+        commitOid: state.queued.commitOid,
+        url,
+        runId: state.queued.id,
       };
     }
     if (state.asleep !== undefined) {
@@ -323,7 +476,7 @@ export class AppsRuntime {
     for (const state of this.envs.values()) {
       state.deploying?.abort.abort();
       if (state.queued)
-        cancelRun(this.app.db, state.queued.id, "the forge stopped");
+        cancelRun(this.app.db, state.queued.id, STOPPED_SUMMARY);
       if (state.live) stops.push(state.live.handle.stop());
       // Abort only cancels the step in flight; the `execute()` continuation
       // chained onto `state.chain` still runs afterwards to record the
@@ -344,7 +497,6 @@ export class AppsRuntime {
     record: AppRecord,
     repo: Repo,
     reason: string,
-    /** Deploy only these: a variable scoped to previews leaves production be. */
     only?: "production" | "preview",
   ): Promise<void> {
     const dir = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
@@ -620,35 +772,23 @@ export class AppsRuntime {
         error: `deploy failed: ${error instanceof Error ? error.message : String(error)}`,
       }));
 
-    state.deploying = undefined;
-    lease();
-    if (outcome.ok) {
-      const previous = state.live;
-      const rested = state.asleep;
-      state.live = outcome.value;
-      state.asleep = undefined;
-      state.lastRequestAt = Date.now();
-      state.lastError = undefined;
-      if (rested !== undefined && rested.dir !== outcome.value.dir)
-        rmSync(rested.dir, { recursive: true, force: true });
-      if (previous !== undefined) {
-        write(
-          `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
-        );
-        await previous.handle.stop();
-        if (previous.dir !== outcome.value.dir)
-          rmSync(previous.dir, { recursive: true, force: true });
+    if (!outcome.ok) {
+      state.deploying = undefined;
+      lease();
+      // The runtime itself stopping is what aborted the step in flight —
+      // the forge's own business, never this commit's fault, and the same
+      // honest reason the still-queued case already carries. A real
+      // failure (a non-zero exit, a genuine timeout) still fails the run
+      // below even if the runtime happens to be stopping at the same time:
+      // only an abort this runtime raised earns the quieter outcome.
+      if (this.stopped && abort.signal.aborted) {
+        const done = cancelRun(this.app.db, run.id, STOPPED_SUMMARY);
+        write(`cancelled: ${STOPPED_SUMMARY}`);
+        if (done) announceRun(this.app, done);
+        return;
       }
-      this.watch(state, repo, outcome.value);
-      const url = this.urlFor(state.app, state.env);
-      const done = finishRun(this.app.db, run.id, {
-        state: "ok",
-        summary: `running at ${url}`,
-      });
-      write(`done: ${url}`);
-      if (done) announceRun(this.app, done);
-    } else {
       state.lastError = outcome.error;
+      state.lastErrorCommitOid = run.commitOid;
       const done = finishRun(this.app.db, run.id, {
         state: "failed",
         summary: outcome.error,
@@ -659,7 +799,96 @@ export class AppsRuntime {
           `the previous deployment (${state.live.commitOid.slice(0, 7)}) keeps serving`,
         );
       if (done) announceRun(this.app, done);
+      return;
     }
+
+    // It answers: swap it in now, before its tests are done. `state.deploying`
+    // stays set — the run is still open, and a stop or a teardown must still
+    // be able to reach in and kill the test step — until they finish below.
+    // `servingAt` is stamped here, at the swap-in, the same instant the log
+    // says so — never the moment the tests beside it finish.
+    const previous = state.live;
+    const rested = state.asleep;
+    const served = markServing(this.app.db, run.id);
+    const servingAt = served?.servingAt ?? new Date().toISOString();
+    const deployStartedAt = claimed.startedAt;
+    // The run was created the instant the push asked for it; it started when
+    // the gate handed it a permit. Both travel with the deployment: the log
+    // below is measured from the start, the studio's phrase from the push.
+    const createdAt = PUSH_REASONS.includes(run.reason)
+      ? run.createdAt
+      : undefined;
+    const live: Live = {
+      ...outcome.value,
+      servingAt,
+      createdAt,
+      deployStartedAt,
+    };
+    state.live = live;
+    state.asleep = undefined;
+    state.lastRequestAt = Date.now();
+    state.lastError = undefined;
+    if (rested !== undefined && rested.dir !== live.dir)
+      rmSync(rested.dir, { recursive: true, force: true });
+    state.lastErrorCommitOid = undefined;
+    if (previous !== undefined) {
+      write(
+        `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
+      );
+      await previous.handle.stop();
+      if (previous.dir !== live.dir)
+        rmSync(previous.dir, { recursive: true, force: true });
+    }
+    this.watch(state, repo, live);
+    const url = this.urlFor(state.app, state.env);
+    write(
+      deployStartedAt
+        ? `serving ${url} — ${elapsedSeconds(deployStartedAt, servingAt)} after the deploy started`
+        : `serving ${url}`,
+    );
+    // The same statement the log line above just made, on the bus: a
+    // subscriber (the looks service) must never be able to take the
+    // deploy path down with it.
+    try {
+      this.app.bus.append({
+        kind: "app.serving",
+        repoId: repo.id,
+        payload: {
+          app: state.app.slug,
+          env: state.env,
+          commitOid: live.commitOid,
+          servingAt,
+          ...(deployStartedAt === null ? {} : { deployStartedAt }),
+          testsRunning: live.manifest.test !== null,
+        },
+      });
+    } catch (error) {
+      log.error("could not publish app.serving", { error: String(error) });
+    }
+
+    const tested = await outcome.tested;
+    state.deploying = undefined;
+    lease();
+    if (tested.ok) {
+      const done = finishRun(this.app.db, run.id, {
+        state: "ok",
+        summary: `running at ${url}`,
+      });
+      write(`done: ${url}`);
+      if (done) announceRun(this.app, done);
+      return;
+    }
+    // The tests failed, but the deployment that answered is what was asked
+    // for: it keeps serving, and the run — the check a pull shows — fails.
+    if (state.live === live)
+      state.live = { ...live, testsFailed: tested.error };
+    const done = finishRun(this.app.db, run.id, {
+      state: "failed",
+      summary: `test: ${tested.error}`,
+    });
+    write(`failed: test: ${tested.error}`);
+    write(`serving ${url} anyway — its tests failed`);
+    if (done) announceRun(this.app, done);
   }
 
   private async bringUp(
@@ -668,7 +897,10 @@ export class AppsRuntime {
     run: Run,
     write: (line: string) => void,
     signal: AbortSignal,
-  ): Promise<{ ok: true; value: Live } | { ok: false; error: string }> {
+  ): Promise<
+    | { ok: true; value: Live; tested: Promise<Result<void, string>> }
+    | { ok: false; error: string }
+  > {
     const bare = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
@@ -715,7 +947,7 @@ export class AppsRuntime {
     else if (seeded === "empty" && state.env !== "production")
       write("data: starting empty");
 
-    const started = await startProcess({
+    const startInput: Omit<StartInput, "signal"> = {
       dir,
       dataDir,
       manifest: manifest.value,
@@ -734,10 +966,34 @@ export class AppsRuntime {
         state.env,
       ),
       log: write,
-      signal,
       warm,
-    });
-    if (!started.ok) {
+    };
+    let started = await startProcess({ ...startInput, signal });
+
+    // The one retry this deploy gets: a preview seeded from production whose
+    // process died before it ever answered — schema ahead of what this build
+    // knows, most often — is tried again on empty data, once. A production
+    // deploy is never seeded from a copy, so it never takes this path.
+    if (
+      !started.ok &&
+      (seeded === "cloned" || seeded === "copied") &&
+      diedBeforeAnswering(started.error)
+    ) {
+      const first = started.error;
+      write(`failed: ${first.stage}: ${first.message}`);
+      write(
+        "the copied data was not usable by this build; the preview is starting on empty data",
+      );
+      reseedEmpty(this.app.config.dataDir, state.app.id, state.env);
+      started = await startProcess({ ...startInput, signal });
+      if (!started.ok) {
+        rmSync(dir, { recursive: true, force: true });
+        return {
+          ok: false,
+          error: `${started.error.stage}: ${started.error.message} (retried on empty data after the copy failed with ${first.stage}: ${first.message})`,
+        };
+      }
+    } else if (!started.ok) {
       rmSync(dir, { recursive: true, force: true });
       return {
         ok: false,
@@ -748,12 +1004,13 @@ export class AppsRuntime {
       ok: true,
       value: {
         commitOid: run.commitOid,
-        handle: started.value,
+        handle: started.value.handle,
         dir,
         runId: run.id,
         since: new Date().toISOString(),
         manifest: manifest.value,
       },
+      tested: started.value.tested,
     };
   }
 
@@ -863,7 +1120,7 @@ export class AppsRuntime {
       });
       if (state.asleep !== asleep) {
         // Replaced while waking — a deploy landed. What we started is spare.
-        if (started.ok) await started.value.stop();
+        if (started.ok) await started.value.handle.stop();
         return;
       }
       if (!started.ok) {
@@ -872,13 +1129,15 @@ export class AppsRuntime {
         write(`failed: ${state.lastError}`);
         return;
       }
+      const now = new Date().toISOString();
       const live: Live = {
         commitOid: asleep.commitOid,
-        handle: started.value,
+        handle: started.value.handle,
         dir: asleep.dir,
         runId: asleep.runId,
-        since: new Date().toISOString(),
+        since: now,
         manifest: asleep.manifest,
+        servingAt: now,
       };
       state.asleep = undefined;
       state.live = live;

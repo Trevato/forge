@@ -79,6 +79,26 @@ export function readRunLog(
 }
 
 /**
+ * A window onto the end of a run's log, sized for a caller that wants
+ * `maxLines` of them rather than a byte count to guess at. A worst-case
+ * line runs to `MAX_LINE`, so `maxLines` of those plus one more (the
+ * partial line `readRunLog` drops after the cut) is enough bytes to always
+ * come back with at least `maxLines` whole lines, however long they run —
+ * never the file's full history for a tail a few lines deep. The window
+ * itself is returned unsliced: a caller after exactly `maxLines` takes the
+ * last of them; one building a "N more above" notice (`logBox`) needs the
+ * few extra to know there's more.
+ */
+export function readRunLogTail(
+  dataDir: string,
+  runId: string,
+  maxLines: number,
+): { lines: string[]; truncated: boolean } {
+  const maxBytes = (maxLines + 1) * (MAX_LINE + 1);
+  return readRunLog(dataDir, runId, maxBytes);
+}
+
+/**
  * Follow a run's log. Released by `signal` — a TUI screen's abort or an SSE
  * connection closing — so a dead watcher never holds a set entry.
  */

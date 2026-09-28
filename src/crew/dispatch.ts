@@ -51,7 +51,7 @@ import {
   spentToday,
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
-import { certain, decideOr } from "./decide.ts";
+import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
 import {
@@ -395,9 +395,6 @@ function route(app: App, event: ForgeEvent): void {
         });
         return;
       }
-      // Whose fault: the change, or the environment the check ran in? A
-      // flaky runner or a broken base is not the agent's to rework; the
-      // check runs again instead, once, and the agent's tries are not spent.
       const runId = event.payload["runId"];
       // Without a decider the rule answers at once, and the rework queues
       // in the same tick the event landed — nothing waits on a promise.
@@ -405,44 +402,20 @@ function route(app: App, event: ForgeEvent): void {
         queueAgentRun(app, repo, issue, agent, "check_failed");
         return;
       }
-      void retryOrStop(app, repo, issue, runId, since).then((verdict) => {
-        if (verdict === "stop") {
-          // The decider's stop is the crew's stop: parked, never waiting,
-          // in a repository on its own.
-          const pull = getPull(app.db, repo.id, issue.number);
-          if (pull)
-            parkPull(
-              app,
-              repo,
-              pull,
-              "the check failed and the decider saw no point in another try",
-            );
-          return;
-        }
-        return whoseFault(app, runId).then((fault) => {
-          const checks = checksFor(app);
-          const kind = event.payload["kind"];
-          const commit = event.payload["commitOid"];
-          const env = event.payload["env"];
-          if (
-            fault === "environment" &&
-            kind === "check" &&
-            checks !== undefined &&
-            typeof commit === "string" &&
-            typeof env === "string" &&
-            !retriedChecks.has(`${issue.id}:${commit}`)
-          ) {
-            retriedChecks.add(`${issue.id}:${commit}`);
-            log.info(
-              "check looked like the environment's fault; running it again",
-              { issue: issue.number },
-            );
-            void checks.request(repo, env, commit, "retry", issue.id);
-            return;
-          }
-          queueAgentRun(app, repo, issue, agent, "check_failed");
-        });
-      });
+      const commitOid = event.payload["commitOid"];
+      const env = event.payload["env"];
+      void answerFailedCheck(app, repo, issue, agent, {
+        runId,
+        kind: String(event.payload["kind"] ?? ""),
+        commitOid: typeof commitOid === "string" ? commitOid : undefined,
+        env: typeof env === "string" ? env : undefined,
+        since,
+      }).catch((error) =>
+        log.error("a failed check went unanswered", {
+          issue: issue.number,
+          error: String(error),
+        }),
+      );
       return;
     }
     case "pull.closed":
@@ -484,32 +457,186 @@ function route(app: App, event: ForgeEvent): void {
   }
 }
 
-/** The agent an issue or pull belongs to: the assignee, or the pull's author. */
 /** Checks already run again once for a head; a second red is real. */
 const retriedChecks = new Set<string>();
 
+/** What a failed check led to, once the crew had read it. */
+export type CheckAnswer = "reran" | "reworked" | "parked" | "waiting";
+
 /**
- * Whose fault a red check is, from the tail of its log: the change
- * (the agent reworks it), the environment (the check runs again), or the
- * base branch (a person's). The rule says the change; a decider may know
- * better from the log — a network timeout, a missing tool, a flake.
+ * A failed check, answered. The cause is established *before* the pull is
+ * parked, because the two questions are one decision (`judgeFailedCheck`):
+ *
+ * - the environment's fault — a timeout, a flaky runner, a full disk — and
+ *   the check runs again, once for that commit, without spending the
+ *   agent's tries. A stop on that would throw away a change nobody has
+ *   found fault with.
+ * - `stop` — the pull is parked, with a reason that says which of the two
+ *   it was, so the next reader (and the planner) can tell a change that
+ *   failed from a change that was unlucky. The re-run is bounded by
+ *   `retriedChecks`: a permanently broken runner parks on the second red.
+ * - `again` — the agent reworks it, as ever.
  */
-async function whoseFault(
+export async function answerFailedCheck(
   app: App,
-  runId: string | undefined,
-): Promise<"change" | "environment" | "base"> {
-  const decider = app.config.decider;
-  if (decider === undefined || runId === undefined) return "change";
-  const tail = readRunLog(app.config.dataDir, runId)
-    .lines.join("\n")
-    .slice(-4_000);
-  const options = ["change", "environment", "base"] as const;
-  const decided = await decideOr(
-    decider,
-    { checkLogTail: tail },
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+  failed: {
+    readonly runId: string;
+    readonly kind: string;
+    readonly commitOid?: string | undefined;
+    readonly env?: string | undefined;
+    /** When a person last spoke: what the tries are counted from. */
+    readonly since: string;
+  },
+): Promise<CheckAnswer> {
+  const judged = await judgeFailedCheck(
+    app,
+    repo,
+    issue,
+    failed.runId,
+    failed.since,
+  );
+  const head = `${issue.id}:${failed.commitOid ?? ""}`;
+  const checks = checksFor(app);
+  if (
+    judged.cause === "environment" &&
+    failed.kind === "check" &&
+    checks !== undefined &&
+    failed.commitOid !== undefined &&
+    failed.env !== undefined &&
+    !retriedChecks.has(head)
+  ) {
+    retriedChecks.add(head);
+    log.info("check looked like the environment's fault; running it again", {
+      issue: issue.number,
+      retry: judged.retry,
+    });
+    await checks
+      .request(repo, failed.env, failed.commitOid, "retry", issue.id)
+      .catch((error) =>
+        log.warn("the check could not be run again", {
+          issue: issue.number,
+          error: String(error),
+        }),
+      );
+    return "reran";
+  }
+  if (judged.retry === "stop") {
+    // The decider's stop is the crew's stop: parked, never waiting, in a
+    // repository on its own.
+    const pull = getPull(app.db, repo.id, issue.number);
+    if (
+      pull &&
+      parkPull(app, repo, pull, parkedReason(judged, failed.kind, head))
+    )
+      return "parked";
+    log.info("check failed; waiting for a person", { issue: issue.number });
+    return "waiting";
+  }
+  queueAgentRun(app, repo, issue, agent, "check_failed");
+  return "reworked";
+}
+
+/**
+ * Why a parked pull was parked, in the two cases a reader must tell apart:
+ * a change that failed, and a change that was unlucky. It names what
+ * failed too — a preview that would not boot is not a red test.
+ */
+function parkedReason(
+  judged: CheckJudgement,
+  kind: string,
+  head: string,
+): string {
+  const what = kind === "deploy" ? "the preview's deploy" : "the check";
+  if (judged.cause !== "environment") {
+    const named =
+      judged.failingTest === undefined
+        ? ""
+        : ` ("${judged.failingTest}")`;
+    return `${what} failed${named} and the decider saw no point in another try`;
+  }
+  return retriedChecks.has(head)
+    ? `${what} failed in the place it ran, not in the change, and failed the same way when it was run again`
+    : `${what} failed in the place it ran, not in the change, and it could not be run again`;
+}
+
+export function agentFor(app: App, issue: Issue): Agent | undefined {
+  if (issue.assigneeId !== null) {
+    const assigned = getAgent(app.db, issue.assigneeId);
+    if (assigned) return assigned;
+  }
+  return issue.kind === "pull" ? getAgent(app.db, issue.authorId) : undefined;
+}
+
+/** What the crew makes of a red check: whose fault, and whether to try again. */
+export interface CheckJudgement {
+  /** Whether another automatic try by the agent is worth its cost. */
+  readonly retry: "again" | "stop";
+  /** Whose fault the failure is, from the tail of the check's log. */
+  readonly cause: "change" | "environment" | "base";
+  /** The failing test's own name, when the run's output named one. */
+  readonly failingTest: string | undefined;
+}
+
+const RETRY_OPTIONS = ["again", "stop"];
+const CAUSE_OPTIONS = ["change", "environment", "base"];
+
+/**
+ * Whose fault the failure is, and whether to try again — asked together,
+ * of one log tail, in one round trip, because the answers are only useful
+ * together: a `stop` on a flaky runner throws away a change that is fine,
+ * and an `again` on a broken environment reworks code that is not at
+ * fault. The rule says the change's fault and another try, up to the
+ * limit; the decider reads the failure, the log's tail and the count and
+ * may know better. `retry` is the answer the ledger keeps (the next
+ * check's result is its outcome); `cause` rides along.
+ */
+export async function judgeFailedCheck(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  runId: string,
+  since: string,
+): Promise<CheckJudgement> {
+  const run = getRun(app.db, runId);
+  const failingTest = run?.checkDetail?.names[0];
+  if (app.config.decider === undefined)
+    return { retry: "again", cause: "change", failingTest };
+  const tail = readRunLog(app.config.dataDir, runId, 8 * 1024).lines.slice(-25);
+  const decided = await decideAndRecord(
+    app,
+    { kind: "retry", repo, issue },
     {
+      direction: repo.autonomyDirection,
+      pull: { number: issue.number, title: issue.title },
+      tries: automaticRunsSince(app.db, issue.id, since),
+      limit: CHECK_FAILED_LIMIT,
+      check: {
+        kind: run?.kind ?? "check",
+        summary: run?.summary ?? "",
+        // What the check's own output said, parsed once when it finished
+        // (`checks/bun-test.ts`): one red name beside 274 green ones reads
+        // very differently from a suite that is red all through, and that
+        // difference is most of what `cause` turns on.
+        ...(run?.checkDetail == null ? {} : { failing: run.checkDetail }),
+      },
+      log: tail,
+    },
+    {
+      retry: {
+        options: RETRY_OPTIONS,
+        about:
+          "The check failed. Is another automatic try by the agent worth its cost, or should a person look?",
+        describe: {
+          again:
+            "Try again: the failure reads as something the agent can fix from the log.",
+          stop: "Stop: the failure repeats an earlier one, or is beyond what another run would fix.",
+        },
+      },
       cause: {
-        options,
+        options: CAUSE_OPTIONS,
         about:
           "Why the repository's check failed, judging from the end of its log.",
         describe: {
@@ -521,70 +648,26 @@ async function whoseFault(
         },
       },
     },
-    () => ({ cause: certain(options, "change") }),
+    () => ({
+      retry: certain(RETRY_OPTIONS, "again"),
+      cause: certain(CAUSE_OPTIONS, "change"),
+    }),
   );
-  return decided.answers.cause.p >= 0.7
-    ? (decided.answers.cause.choice as "change" | "environment" | "base")
-    : "change";
-}
-
-export function agentFor(app: App, issue: Issue): Agent | undefined {
-  if (issue.assigneeId !== null) {
-    const assigned = getAgent(app.db, issue.assigneeId);
-    if (assigned) return assigned;
-  }
-  return issue.kind === "pull" ? getAgent(app.db, issue.authorId) : undefined;
-}
-
-/**
- * Try again, or stop and wait for a person. The rule tries again up to the
- * limit; the decider reads the failure and the count and may stop sooner,
- * before another run's money is spent. The next check's result is the
- * outcome, written back on the ledger row.
- */
-export async function retryOrStop(
-  app: App,
-  repo: Repo,
-  issue: Issue,
-  runId: string,
-  since: string,
-): Promise<"again" | "stop"> {
-  if (app.config.decider === undefined) return "again";
-  const run = getRun(app.db, runId);
-  const tail = readRunLog(app.config.dataDir, runId, 8 * 1024).lines.slice(-25);
-  const options = ["again", "stop"];
-  const decided = await decideAndRecord(
-    app,
-    { kind: "retry", repo, issue },
-    {
-      direction: repo.autonomyDirection,
-      pull: { number: issue.number, title: issue.title },
-      tries: automaticRunsSince(app.db, issue.id, since),
-      limit: CHECK_FAILED_LIMIT,
-      check: { kind: run?.kind ?? "check", summary: run?.summary ?? "" },
-      log: tail,
-    },
-    {
-      retry: {
-        options,
-        about:
-          "The check failed. Is another automatic try by the agent worth its cost, or should a person look?",
-        describe: {
-          again:
-            "Try again: the failure reads as something the agent can fix from the log.",
-          stop: "Stop: the failure is environmental, repeats an earlier one, or is beyond what another run would fix.",
-        },
-      },
-    },
-    () => ({ retry: certain(options, "again") }),
-  );
-  if (decided.answers.retry.choice === "stop")
+  const retry = decided.answers.retry.choice === "stop" ? "stop" : "again";
+  // The change is what a half-sure answer means: an environment called
+  // that way on a hunch is how a broken change escapes a rework.
+  const cause =
+    decided.answers.cause.p >= 0.7
+      ? (decided.answers.cause.choice as CheckJudgement["cause"])
+      : "change";
+  if (retry === "stop")
     log.info("check failed; the decider stopped here for a person", {
       issue: issue.number,
       by: decided.by,
       p: decided.answers.retry.p.toFixed(2),
+      cause,
     });
-  return decided.answers.retry.choice === "stop" ? "stop" : "again";
+  return { retry, cause, failingTest };
 }
 
 /** When a person last said anything on the conversation, or its start. */

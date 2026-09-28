@@ -30,23 +30,38 @@ export interface MergeResult {
 }
 
 /**
- * Can head be merged into base, and if so what would the tree be? Pure
- * computation — writes nothing. Returns the merged tree oid or the conflicted
- * paths. Used both to show mergeability and as the first half of a merge.
+ * The plumbing both `mergeable` and a revert's three-way merge share: run
+ * `merge-tree --write-tree` over two sides and report the merged tree oid or
+ * the conflicted paths. `base` overrides the merge base git would otherwise
+ * compute from history — a revert needs the commit being undone as the base,
+ * not whatever `ours`/`theirs` share an ancestor with.
  */
-export async function mergeable(
+export async function writeMergeTree(
   dir: string,
-  baseOid: string,
-  headOid: string,
+  ours: string,
+  theirs: string,
+  base?: string,
 ): Promise<Result<{ treeOid: string }, MergeError>> {
-  if (!isSafeOid(baseOid) || !isSafeOid(headOid))
+  if (
+    !isSafeOid(ours) ||
+    !isSafeOid(theirs) ||
+    (base !== undefined && !isSafeOid(base))
+  ) {
     return err({ kind: "unsafe" });
+  }
 
   // merge-tree exits 0 on a clean merge (stdout = tree oid) and 1 on conflict
   // (stdout = tree oid, blank line, then conflicted file names). Both outcomes
   // are data on stdout, so capture regardless of exit code.
   const out = await runGitCapture(
-    ["merge-tree", "--write-tree", "--name-only", baseOid, headOid],
+    [
+      "merge-tree",
+      "--write-tree",
+      "--name-only",
+      ...(base === undefined ? [] : [`--merge-base=${base}`]),
+      ours,
+      theirs,
+    ],
     { cwd: dir, timeoutMs: 60_000 },
   );
 
@@ -68,6 +83,19 @@ export async function mergeable(
     kind: "git",
     message: out.stderr.trim() || `merge-tree exited ${out.code}`,
   });
+}
+
+/**
+ * Can head be merged into base, and if so what would the tree be? Pure
+ * computation — writes nothing. Returns the merged tree oid or the conflicted
+ * paths. Used both to show mergeability and as the first half of a merge.
+ */
+export async function mergeable(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<Result<{ treeOid: string }, MergeError>> {
+  return writeMergeTree(dir, baseOid, headOid);
 }
 
 /** Land head onto base with the chosen strategy, only if base is unmoved. */
@@ -143,6 +171,20 @@ export async function mergeBase(
   if (!isSafeOid(a) || !isSafeOid(b)) return undefined;
   const result = await runGit(["merge-base", a, b], { cwd: dir });
   return result.ok ? result.value.trim() : undefined;
+}
+
+/**
+ * Every commit reachable from `oid`, itself included — the whole ancestry in
+ * one spawn, so a page asking "is this at or behind that" of many commits
+ * reads a set instead of running `mergeBase` once per commit.
+ */
+export async function ancestorsOf(
+  dir: string,
+  oid: string,
+): Promise<ReadonlySet<string> | undefined> {
+  if (!isSafeOid(oid)) return undefined;
+  const result = await runGit(["rev-list", oid], { cwd: dir });
+  return result.ok ? new Set(result.value.split("\n")) : undefined;
 }
 
 /** Count commits reachable from head but not base (the PR's commit count). */

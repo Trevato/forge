@@ -11,8 +11,22 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
-import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
-import { checksForHead, listRuns, type Run } from "../src/core/runs.ts";
+import { parseBunTestFailure } from "../src/checks/bun-test.ts";
+import { summariseCheckFailure } from "../src/checks/summary.ts";
+import {
+  pickNext,
+  startChecks,
+  STARVATION_MS,
+  type ChecksHandle,
+} from "../src/checks/service.ts";
+import {
+  cancelRun,
+  checksForHead,
+  createRun,
+  getRun,
+  listRuns,
+  type Run,
+} from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -20,6 +34,100 @@ import { readRunLog } from "../src/runs/log.ts";
 
 const checkJson = (run: string, extra = ""): string =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""${extra}}}\n`;
+
+describe("parseBunTestFailure: a convenience over one known runner, not a general protocol", () => {
+  test("bun test's own tail: the counts, and the failing names bounded to a few", () => {
+    const lines = [
+      "bun test v1.3.14 (0d9b296a)",
+      "",
+      "check.test.ts:",
+      "(fail) first [0.16ms]",
+      "(fail) second [0.07ms]",
+      "(fail) third [0.05ms]",
+      "(fail) fourth [0.04ms]",
+      "",
+      " 3 pass",
+      " 4 fail",
+      " 7 expect() calls",
+      "Ran 7 tests across 1 file. [51.00ms]",
+    ];
+    expect(parseBunTestFailure(lines)).toEqual({
+      passed: 3,
+      failed: 4,
+      names: ["first", "second", "third"],
+    });
+  });
+
+  test("a name arbitrary text from a subprocess, kept verbatim — escaping is the page's job, not the parser's", () => {
+    const lines = ["(fail) <script>alert(1)</script> [1.00ms]", " 0 pass", " 1 fail", "Ran 1 test across 1 file. [1.00ms]"];
+    expect(parseBunTestFailure(lines)?.names).toEqual([
+      "<script>alert(1)</script>",
+    ]);
+  });
+
+  test("output that is not bun test's own shape is not guessed at", () => {
+    expect(
+      parseBunTestFailure(["$ test -f NOPE.md", "test: NOPE.md: No such file or directory"]),
+    ).toBeUndefined();
+    // A `pass` line with no `fail` line beside it is not this shape either.
+    expect(parseBunTestFailure([" 5 pass", "Ran 5 tests across 1 file."])).toBeUndefined();
+    // All green: nothing failed, so there is nothing to summarise.
+    expect(parseBunTestFailure([" 5 pass", " 0 fail", "Ran 5 tests across 1 file."])).toBeUndefined();
+  });
+});
+
+describe("summariseCheckFailure: what a failed check's summary says first", () => {
+  test("real bun test output with one failure yields the name and the counts", () => {
+    const lines = [
+      "bun test v1.3.14 (0d9b296a)",
+      "",
+      "check.test.ts:",
+      "1 tests failed:",
+      '(fail) the forge\'s own restart never reads as this deploy\'s failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed [30000.49ms]',
+      "  ^ this test timed out after 30000ms.",
+      "",
+      " 409 pass",
+      " 1 fail",
+      "Ran 410 tests across 1 file. [30.05s]",
+    ];
+    expect(summariseCheckFailure(lines, "check exited with code 1")).toEqual({
+      summary:
+        '1 of 410 tests — "the forge\'s own restart never reads as this deploy\'s failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed"',
+      detail: {
+        passed: 409,
+        failed: 1,
+        names: [
+          "the forge's own restart never reads as this deploy's failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed",
+        ],
+      },
+    });
+  });
+
+  test("output with no bun test shape yields the last non-empty line, not the bare exit code", () => {
+    const lines = ["src/foo.ts(10,5): error TS2345: not assignable", ""];
+    expect(
+      summariseCheckFailure(lines, "check exited with code 2"),
+    ).toEqual({
+      summary: "src/foo.ts(10,5): error TS2345: not assignable",
+      detail: undefined,
+    });
+  });
+
+  test("no output at all falls back to the bare exit code — nothing was there to name", () => {
+    expect(summariseCheckFailure([], "check exited with code 1")).toEqual({
+      summary: "check exited with code 1",
+      detail: undefined,
+    });
+  });
+
+  test("a very long name is bounded to one line", () => {
+    const long = "x".repeat(500);
+    const lines = [`(fail) ${long} [1.00ms]`, " 0 pass", " 1 fail"];
+    const { summary } = summariseCheckFailure(lines, "check exited with code 1");
+    expect(summary.length).toBeLessThanOrEqual(200);
+    expect(summary.endsWith("…")).toBe(true);
+  });
+});
 
 describe("checks", () => {
   let dataDir: string;
@@ -136,6 +244,9 @@ describe("checks", () => {
     expect(failed.env).toBe(`pull-${pull.number}`);
     expect(failed.reason).toBe("pull");
     expect(failed.summary).toBe("check failed: check exited with code 1");
+    // `test -f` is not `bun test`: its output is not this shape, so nothing
+    // is guessed at it.
+    expect(failed.checkDetail).toBeNull();
     expect(
       checksForHead(app.db, pull.id, branched.value.commitOid)[0]?.id,
     ).toBe(failed.id);
@@ -152,6 +263,46 @@ describe("checks", () => {
     expect(passed.state).toBe("ok");
     expect(passed.reason).toBe("push");
   }, 60_000);
+
+  test("a bun test failure in the check step is summarised: how many passed, how many failed, and their names", async () => {
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "red-tests",
+      message: "A check that runs bun test, with two failures",
+      files: [
+        { path: "forge.json", content: checkJson("bun test check.test.ts") },
+        {
+          path: "check.test.ts",
+          content: [
+            'import { test, expect } from "bun:test";',
+            'test("a passing test", () => { expect(1).toBe(1); });',
+            'test("first failing test", () => { expect(1).toBe(2); });',
+            'test("second failing test", () => { expect(1).toBe(2); });',
+            "",
+          ].join("\n"),
+        },
+      ],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Red tests",
+      baseBranch: "main",
+      headBranch: "red-tests",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const failed = await settled(
+      (r) => r.issueId === pull.id && r.commitOid === branched.value.commitOid,
+    );
+    expect(failed.state).toBe("failed");
+    expect(failed.checkDetail).toEqual({
+      passed: 1,
+      failed: 2,
+      names: ["first failing test", "second failing test"],
+    });
+    expect(failed.summary).toBe(
+      'check failed: 2 of 3 tests — "first failing test"',
+    );
+  }, 30_000);
 
   test("a fork's pull is checked at the base's snapshot, and follows the fork's pushes", async () => {
     const forked = await forkRepo(app, bob, repo);
@@ -224,6 +375,106 @@ describe("checks", () => {
     expect(middle?.state).toBe("cancelled");
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
+
+  test("pickNext takes the newest queued check, unless one has starved", () => {
+    const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
+    const b = createRun(app.db, { repoId: repo.id, kind: "check", env: "b" });
+    const c = createRun(app.db, { repoId: repo.id, kind: "check", env: "c" });
+    // ids are creation-ordered, so this is oldest-to-newest already.
+    expect(pickNext([a, b, c])?.id).toBe(c.id);
+    expect(pickNext([c, a, b])?.id).toBe(c.id);
+    expect(pickNext([a])?.id).toBe(a.id);
+    expect(pickNext([])).toBeUndefined();
+
+    // `a` has waited past the starvation bound: it outranks `c`, however new.
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(a.id, new Date(Date.now() - STARVATION_MS - 1_000).toISOString());
+    const starved = getRun(app.db, a.id)!;
+    expect(pickNext([starved, b, c])?.id).toBe(starved.id);
+    // Just short of the bound, the newest still wins.
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(a.id, new Date(Date.now() - STARVATION_MS + 1_000).toISOString());
+    expect(pickNext([getRun(app.db, a.id)!, b, c])?.id).toBe(c.id);
+
+    // These never named a real commit: cancel them rather than leave them
+    // for the live checks service running beside this test to trip over.
+    for (const run of [a, b, c]) cancelRun(app.db, run.id);
+  });
+
+  test("when a slot frees, the newest of several queued checks runs first", async () => {
+    // A slow check on its own environment holds the only slot.
+    const held = await commitToBranch(app, alice, repo, {
+      branch: "order-hold",
+      message: "Hold the slot",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
+      ],
+    });
+    if (!held.ok) throw new Error(JSON.stringify(held.error));
+    const holder = await checks.request(
+      repo,
+      "order-hold",
+      held.value.commitOid,
+      "push",
+    );
+    expect(holder).toBeDefined();
+
+    // Three more, on three environments so none supersedes another, queue
+    // behind it — oldest requested first.
+    const oldest = await commitToBranch(app, alice, repo, {
+      branch: "order-a",
+      message: "A",
+      files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
+    });
+    if (!oldest.ok) throw new Error(JSON.stringify(oldest.error));
+    const middle = await commitToBranch(app, alice, repo, {
+      branch: "order-b",
+      message: "B",
+      files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
+    });
+    if (!middle.ok) throw new Error(JSON.stringify(middle.error));
+    const newest = await commitToBranch(app, alice, repo, {
+      branch: "order-c",
+      message: "C",
+      files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
+    });
+    if (!newest.ok) throw new Error(JSON.stringify(newest.error));
+
+    const oldestRun = await checks.request(
+      repo,
+      "order-a",
+      oldest.value.commitOid,
+      "push",
+    );
+    const middleRun = await checks.request(
+      repo,
+      "order-b",
+      middle.value.commitOid,
+      "push",
+    );
+    const newestRun = await checks.request(
+      repo,
+      "order-c",
+      newest.value.commitOid,
+      "push",
+    );
+    expect(oldestRun && middleRun && newestRun).toBeTruthy();
+    expect(oldestRun?.state).toBe("queued");
+    expect(middleRun?.state).toBe("queued");
+    expect(newestRun?.state).toBe("queued");
+
+    await settled((r) => r.id === newestRun!.id);
+    await settled((r) => r.id === middleRun!.id);
+    await settled((r) => r.id === oldestRun!.id);
+
+    const runs = listRuns(app.db, repo.id, { kind: "check", limit: 50 });
+    const startedAt = (id: string): number =>
+      Date.parse(runs.find((r) => r.id === id)!.startedAt!);
+    expect(startedAt(newestRun!.id)).toBeLessThan(startedAt(middleRun!.id));
+    expect(startedAt(middleRun!.id)).toBeLessThan(startedAt(oldestRun!.id));
+  }, 30_000);
 
   test("a check in flight when the forge stops is queued again, and the next forge runs it", async () => {
     const slow = await commitToBranch(app, alice, repo, {

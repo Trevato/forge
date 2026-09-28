@@ -36,6 +36,9 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { studioRuns } from "../studio/lists.ts";
+import { pageTitle, studioRecord } from "../studio/nouns.ts";
+import { studioRun } from "../studio/run.ts";
 import {
   btn,
   empty,
@@ -100,7 +103,6 @@ export const reasonWords = (reason: string): string =>
 /** Dollars, two places — a run's spend is a small number read at a glance. */
 export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
 
-/** `12s`, `3m 4s`, `1h 2m` — how long a run took, or has taken so far. */
 /**
  * What kind of line a run wrote: a tool the agent reached for (`→ Bash …`),
  * a word from the forge itself (cloning, pushing, what the model cost), or
@@ -144,13 +146,18 @@ export function logLine(line: string, who = "agent"): Html {
   </div>`;
 }
 
+/**
+ * `0.3s`, `12s`, `3m 4s`, `1h 2m` — how long a run took, or has taken so
+ * far. Under ten seconds it names tenths, the way `servedPhrase` (`ui.ts`)
+ * already does for a deploy's own arrival — whole seconds there would round
+ * a deploy the head card calls "live 0.3s after the push" down to "took 0s".
+ */
 export function durationText(run: Run): string | undefined {
   if (run.startedAt === null) return undefined;
   const end = run.finishedAt === null ? Date.now() : Date.parse(run.finishedAt);
-  const seconds = Math.max(
-    0,
-    Math.round((end - Date.parse(run.startedAt)) / 1000),
-  );
+  const ms = Math.max(0, end - Date.parse(run.startedAt));
+  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+  const seconds = Math.round(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
@@ -254,9 +261,14 @@ export function crewActivityCard(ctx: Ctx, repo: Repo, issue: Issue): Html {
 const PER_PAGE = 30;
 
 // GET /:owner/:name/runs
-export function runsList(ctx: Ctx): Response {
+export async function runsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  // In the studio "every run" is the run list in the studio's own words —
+  // the same rule `runPage` follows for one run. `?mode=dev` is the
+  // one-off way to dev's list without switching the browser.
+  const record = studioRecord(ctx, repo);
+  if (record !== undefined) return await studioRuns(ctx, repo, record);
   const base = repoBase(repo);
   const q = ctx.url.searchParams;
   const kindRaw = q.get("kind");
@@ -320,9 +332,9 @@ export function runsList(ctx: Ctx): Response {
 
   return page({
     ctx,
-    title: `Runs · ${repo.name}`,
+    title: pageTitle("runs", repo, false),
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     scriptJs: liveClientJs,
   });
@@ -331,12 +343,18 @@ export function runsList(ctx: Ctx): Response {
 // ---- one run ----
 
 // GET /:owner/:name/runs/:id
-export function runPage(ctx: Ctx): Response {
+export async function runPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   if (!found.ok) return notFoundPage(ctx);
   const { run, lines, truncated } = found.value;
+  // In the studio, working is a run: who is on it, the tell it came from,
+  // what it has cost, and the box to steer it — the same rule `repoHome`
+  // and `pullPage` follow. `?mode=dev` on the URL is the escape hatch to
+  // the transcript dev already renders, resolved once for `ctx.mode`.
+  if (studioRecord(ctx, repo) !== undefined)
+    return await studioRun(ctx, repo, run, lines, truncated);
   const base = repoBase(repo);
   const actor =
     run.actorId === null ? undefined : getUserById(ctx.app.db, run.actorId);
@@ -517,7 +535,7 @@ export function runPage(ctx: Ctx): Response {
     ctx,
     title: `${title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     scriptJs: runLogJs,
     // The no-script half of a live log: while the run is going, the page

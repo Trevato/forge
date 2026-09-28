@@ -1,8 +1,9 @@
 /**
- * One deployment's process: install, test, start, and wait until it
- * answers. Everything the app is handed is listed here and nothing else
- * reaches it — the forge's own environment carries secrets, and a child
- * inherits exactly what `childEnv` names (rule 8 in docs/APPS.md).
+ * One deployment's process: install, then start the app and run its tests
+ * side by side, and wait until the app answers. Everything the app is
+ * handed is listed here and nothing else reaches it — the forge's own
+ * environment carries secrets, and a child inherits exactly what `childEnv`
+ * names (rule 8 in docs/APPS.md).
  *
  * Commands run through `sh -c` with an `exec` in front, so the shell
  * replaces itself with the app and a signal to the pid is a signal to the
@@ -14,6 +15,7 @@ import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { stripForgeDirs } from "../runs/paths.ts";
 
 export interface ProcessHandle {
   readonly pid: number;
@@ -53,6 +55,17 @@ export type StartStage = "install" | "test" | "start" | "ready";
 export interface StartError {
   readonly stage: StartStage;
   readonly message: string;
+}
+
+export interface StartedProcess {
+  readonly handle: ProcessHandle;
+  /**
+   * The `test` step's outcome. Already running by the time this resolves —
+   * it started alongside `start`, not before it — so a caller that wants a
+   * fast preview can swap the handle in now and await this afterwards.
+   * `ok()` immediately when the manifest has no `test`.
+   */
+  readonly tested: Promise<Result<void, string>>;
 }
 
 const STEP_TIMEOUT_MS = 10 * 60_000;
@@ -136,6 +149,44 @@ function operatorVars(
   return out;
 }
 
+/** A stack frame in any of the languages a step's runtime might throw from. */
+const STACK_FRAME_RE = /^at\s/;
+/** A runtime's version banner, printed after an uncaught error — `Bun v1.3.14 (Linux x64 baseline)`. */
+const VERSION_BANNER_RE = /^\S+ v[\d.]+ *\(/;
+/**
+ * A line that reads as an error rather than context around one — anchored
+ * at the start, so a source line merely mentioning `Error` (`throw new
+ * Error(...)`, echoed above the frames) is not mistaken for the message.
+ */
+const ERROR_LINE_RE = /^[A-Za-z]*Error\b/i;
+const TAIL_LINES = 20;
+const REASON_MAX = 300;
+
+/**
+ * The reason a person would read out of a step's failed output: the first
+ * line that isn't a blank, a stack frame, or a version banner, and reads as
+ * an error — the message, printed before the frames that bury it. Falls
+ * back to the tail when nothing qualifies, since some failures (a plain
+ * `exit 1`) never print one.
+ */
+export function failureReason(recent: readonly string[]): string {
+  for (const raw of recent) {
+    const line = raw.trim();
+    if (
+      line === "" ||
+      STACK_FRAME_RE.test(line) ||
+      VERSION_BANNER_RE.test(line)
+    )
+      continue;
+    if (ERROR_LINE_RE.test(line)) return truncate(line);
+  }
+  return truncate(recent.slice(-3).join(" | "));
+}
+
+function truncate(line: string): string {
+  return line.length > REASON_MAX ? `${line.slice(0, REASON_MAX)}…` : line;
+}
+
 /**
  * Run a step to completion, streaming its output. A non-zero exit, a
  * timeout, or an abort is an Err with the reason a person would want.
@@ -159,26 +210,42 @@ export async function runStep(
     stdout: "pipe",
     stderr: "pipe",
   });
+  const recent: string[] = [];
+  const scrub = (raw: string): void => {
+    const line = stripForgeDirs([options.cwd], raw);
+    recent.push(line);
+    if (recent.length > TAIL_LINES) recent.shift();
+    options.log(line);
+  };
   const timeoutMs = options.timeoutMs ?? STEP_TIMEOUT_MS;
   let why: string | undefined;
+  // A killed process's pipes are not guaranteed to close on their own
+  // (see `pump`); this stops the reads directly the same moment the kill
+  // is sent, so a step in flight never outlives its own cancellation.
+  const stopReading = new AbortController();
   const timer = setTimeout(() => {
     why = `${name} took longer than ${Math.round(timeoutMs / 1000)}s`;
     proc.kill("SIGKILL");
+    stopReading.abort();
   }, timeoutMs);
   const onAbort = (): void => {
     why = `${name} cancelled`;
     proc.kill("SIGKILL");
+    stopReading.abort();
   };
   if (options.signal.aborted) onAbort();
   else options.signal.addEventListener("abort", onAbort, { once: true });
   try {
     const [, , code] = await Promise.all([
-      pump(proc.stdout, options.log),
-      pump(proc.stderr, options.log),
+      pump(proc.stdout, scrub, stopReading.signal),
+      pump(proc.stderr, scrub, stopReading.signal),
       proc.exited,
     ]);
     if (why !== undefined) return err(why);
-    if (code !== 0) return err(`${name} exited with code ${code}`);
+    if (code !== 0) {
+      const reason = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
+      return err(`${name} exited with code ${code}${reason}`);
+    }
     return ok();
   } finally {
     clearTimeout(timer);
@@ -187,13 +254,15 @@ export async function runStep(
 }
 
 /**
- * Install, test, start, and wait for the app to answer on its port.
- * Returns the running process; on failure the process (if it started) is
- * already gone.
+ * Install, then start the app and run its tests side by side, and wait for
+ * the app to answer on its port. Returns as soon as it does — `tested`
+ * keeps running and is the caller's to await — so a preview is never held
+ * behind its own test suite. On failure the process (if it started) and the
+ * test step (if one was running) are both already gone.
  */
 export async function startProcess(
   input: StartInput,
-): Promise<Result<ProcessHandle, StartError>> {
+): Promise<Result<StartedProcess, StartError>> {
   const { manifest, log } = input;
   const stepEnv = childEnv({
     CI: "1",
@@ -210,17 +279,27 @@ export async function startProcess(
     if (!installed.ok)
       return err({ stage: "install", message: installed.error });
   }
-  if (manifest.test !== null && input.warm !== true) {
-    const tested = await runStep("test", manifest.test, {
-      cwd: input.dir,
-      env: stepEnv,
-      log,
-      signal: input.signal,
-    });
-    if (!tested.ok) return err({ stage: "test", message: tested.error });
-  }
   if (input.signal.aborted)
     return err({ stage: "start", message: "cancelled" });
+
+  // `test` starts here, alongside the app below, and is aborted on its own
+  // signal — a start failure must not leave it running past its run, and
+  // neither may the caller's abort after this function has already returned.
+  const testAbort = new AbortController();
+  if (input.signal.aborted) testAbort.abort();
+  else
+    input.signal.addEventListener("abort", () => testAbort.abort(), {
+      once: true,
+    });
+  const tested: Promise<Result<void, string>> =
+    manifest.test === null || input.warm === true
+      ? Promise.resolve(ok())
+      : runStep("test", manifest.test, {
+          cwd: input.dir,
+          env: stepEnv,
+          log,
+          signal: testAbort.signal,
+        });
 
   const port = freePort();
   log(`$ ${manifest.run}  (PORT=${port})`);
@@ -243,7 +322,8 @@ export async function startProcess(
   });
   // Output is pumped for the life of the process, not just the start.
   const recent: string[] = [];
-  const remember = (line: string): void => {
+  const remember = (raw: string): void => {
+    const line = stripForgeDirs([input.dir, input.dataDir], raw);
     recent.push(line);
     if (recent.length > 20) recent.shift();
     log(line);
@@ -278,17 +358,18 @@ export async function startProcess(
   });
   if (!ready.ok) {
     await handle.stop();
-    const tail =
-      recent.length > 0
-        ? ` — last output: ${recent.slice(-3).join(" | ")}`
-        : "";
+    // The app never came up: the test step running beside it has nothing
+    // left to verify, and must not outlive this failed run.
+    testAbort.abort();
+    await tested.catch(() => {});
+    const tail = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
     return err({
       stage: ready.error.stage,
       message: ready.error.message + tail,
     });
   }
   log(`ready: ${input.url}`);
-  return ok(handle);
+  return ok({ handle, tested });
 }
 
 /**
@@ -354,17 +435,29 @@ export function freePort(): number {
   return port;
 }
 
-/** Read a stream as lines, calling `onLine` for each; never throws. */
+/**
+ * Read a stream as lines, calling `onLine` for each; never throws. A killed
+ * process's pipe does not always signal end-of-stream on its own — `signal`
+ * cancels the read directly, or a caller racing a dead process would wait on
+ * a stream that never closes.
+ */
 export async function pump(
   stream: ReadableStream<Uint8Array> | null | undefined,
   onLine: (line: string) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   if (!stream) return;
   const decoder = new TextDecoder();
   let carry = "";
+  const reader = stream.getReader();
+  const onAbort = (): void => void reader.cancel().catch(() => {});
+  if (signal?.aborted) onAbort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    for await (const chunk of stream) {
-      carry += decoder.decode(chunk, { stream: true });
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      carry += decoder.decode(value, { stream: true });
       let at = carry.indexOf("\n");
       while (at !== -1) {
         onLine(carry.slice(0, at).replace(/\r$/, ""));
@@ -376,5 +469,7 @@ export async function pump(
     if (carry !== "") onLine(carry);
   } catch {
     // The process went away mid-read; whatever arrived was delivered.
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
   }
 }

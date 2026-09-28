@@ -65,11 +65,32 @@ around it. None is advisory.
    where the filesystem offers it — APFS, XFS, btrfs — a plain copy
    otherwise, and `empty` is a per-app choice). A preview process is handed
    its own `FORGE_APP_DATA` and nothing that names production's. Merging a
-   pull moves code; it never touches data.
+   pull moves code; it never touches data. A copy the build cannot read —
+   its process exits before it ever answers, most often a migration on
+   `main` the pull's commit predates — is tried exactly once more on an
+   empty data directory before the deploy is failed; production is never
+   seeded from a copy, so this never applies to it.
 4. **A deployment is a check.** Every deploy is a run; the run's state is
    what the pull shows. With `require_checks` on, `mergePull` refuses
    `checks_required` until the head's deploy run is `ok`, read live inside
-   the merge — never from a status a caller computed earlier.
+   the merge — never from a status a caller computed earlier. Install still
+   comes first, but `test` and `start` run side by side: the environment is
+   swapped in and serving the moment the app answers, and the run stays
+   `running` — checking, not blocking — until `test` finishes and decides
+   `ok` or `failed`. A deployment that answers is what was asked for; the
+   suite going green is confirmed a few seconds later, not stood in front
+   of the door. That instant is recorded, not just logged: the run's
+   `servingAt` is stamped once, at the swap-in, distinct from `startedAt`
+   (the deploy's own start) and `finishedAt` (which waits on `test`
+   beside it) — so how long a change took to reach its preview is a
+   number the forge can read back, not a line buried in the log. A page
+   words that number from `createdAt`, the instant the push created the
+   run, because the deploy may have waited on the concurrency gate for a
+   permit first: `servedPhrase` (`web/ui.ts`) says `6.1s after the push ·
+   2.4s queued` and is the only place it is worded. The deploy's own log
+   line stays measured from `startedAt` and says `after the deploy
+   started`; a deploy no push asked for — a redeploy someone pressed, a
+   boot reconcile — is worded the same way and never claims a push.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
    visibility), and it is set apart from the repository's own: the code can
@@ -99,11 +120,12 @@ around it. None is advisory.
 
 What a person sees, in order:
 
-1. **New app.** A name, and — optionally — a sentence about what it should
-   do. The forge creates the repository with a small working app in it,
-   makes it an app, and starts production. Seconds later there is a URL.
-   If a sentence was given, it becomes the first issue, assigned to an agent
-   on the crew, and the agent starts.
+1. **New app.** A sentence about what it should do — that's the one thing
+   that's required. The forge derives a name from it (shown, editable,
+   before you submit) unless you set one yourself, creates the repository
+   with a small working app in it, makes it an app, and starts production.
+   Seconds later there is a URL. The sentence becomes the first issue,
+   assigned to an agent on the crew, and the agent starts.
 2. **A pull appears**, opened by the agent, with a preview. Open the preview
    (a link, or a QR code from a phone), use it. Leave feedback as review
    comments and a verdict. Request changes and the agent picks it up in the
@@ -131,7 +153,8 @@ The repository says how to run itself, in `forge.json` at its root:
     "test": "bun test",
     "health": "/",
     "ready": 30,
-    "tty": "bun run src/tty.ts"
+    "tty": "bun run src/tty.ts",
+    "looks": ["/", "/board"]
   }
 }
 ```
@@ -140,9 +163,10 @@ Only `run` is required, and even it defaults: a `package.json` with a `start`
 script is enough. `install` defaults to `bun install` when a `package.json`
 exists and to nothing otherwise; `test` defaults to nothing; `health` is the
 path polled until it answers; `ready` is the number of seconds to wait for
-that before the deploy fails; `tty` is the app's terminal interface (below). The file is read from the commit being
-deployed, never from the database — a pull that changes how the app runs is
-previewed the way it will run.
+that before the deploy fails; `tty` is the app's terminal interface (below);
+`looks` names the pages worth a picture (below), and defaults to `["/"]`. The
+file is read from the commit being deployed, never from the database — a
+pull that changes how the app runs is previewed the way it will run.
 
 The forge starts the app with:
 
@@ -157,6 +181,11 @@ The forge starts the app with:
 | `FORGE_APP_PULL`   | the pull number, on a preview                                            |
 | `FORGE_APP_SSH`    | the exact `ssh …` that opens this environment's terminal, when SSH is on |
 | `FORGE_URL`        | the forge's own base URL                                                 |
+
+That last one is for the app to call the forge back on, not to run the forge
+software itself — a shell that already has it set (a crew workspace does)
+will make a locally-run forge refuse browser form posts as cross-site; see
+`README.md`'s "Run it".
 
 A terminal session (`tty`) gets the same variables plus `FORGE_APP_TTY=1`
 and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
@@ -186,13 +215,21 @@ verdict is a run of kind `check`, kept with its log beside the pull, in
 the same place a preview's deploy reports and read by the same code: the
 inbox badge, the pull's status, the crew. A failing check on an agent's
 pull goes back to the agent with the log's tail, as a failed preview does,
-bounded the same way. An app's own `test` still runs inside its deploy;
-`check` is for a repository that is not an app, or an app whose check is
-more than its test. `install` defaults to `bun install` when the package
+bounded the same way. An app's own `test` still runs inside its deploy,
+concurrently with `start` rather than before it; `check` is for a
+repository that is not an app, or an app whose check is more than its
+test. `install` defaults to `bun install` when the package
 declares dependencies; `timeout` is seconds, twenty minutes by default.
 A `check` that is present and wrong fails with the reason, so a commit is
 never silently unchecked. A check under way when the forge restarts is
 queued again, and the forge that carries on runs it from the start.
+
+Checks share `FORGE_CHECKS_CONCURRENCY` slots (default `1`), and when one
+frees, it goes to the most recently requested check waiting, not the one
+queued longest — a fresh push is never stuck behind pulls that queued hours
+earlier. The one exception is starvation: a check that has waited ten
+minutes to start outranks a newer one regardless, so nothing waits forever.
+A pull's status names how long its queued check has been waiting.
 
 ### Environment
 
@@ -323,6 +360,18 @@ whole, a bare domain gets the dot. Browsers resolve every `*.localhost` name to
 loopback, which is what makes a laptop forge work with no configuration at
 all: `http://hello.localhost:3000`.
 
+A forge needs a hostname to hand out for this — not every address it can be
+reached at is one. Attach a slug to a bare IP address (`127.0.0.1`, the
+default when nothing sets `FORGE_URL` or `FORGE_HOST`) and the result,
+`notes.127.0.0.1`, is not a URL: WHATWG rejects a hostname whose last label
+is all digits unless the whole thing parses as an IPv4 address. The forge
+checks this once at boot, for the host it is about to hand out. A loopback
+address falls back to `localhost` on its own — same as the paragraph above,
+and it says so in the log. Reached any other way by IP, there is no host to
+fall back to that would resolve anywhere but here, so apps are left off
+rather than started to crash: set `FORGE_APP_DOMAIN` to a real hostname
+(anything DNS resolves to this machine) to serve apps on a forge like that.
+
 The proxy is a `fetch` to the deployment's loopback port, streamed back.
 Headers are forwarded with the usual `X-Forwarded-*` additions. An
 environment that is not running gets a page from the forge that says so and
@@ -377,8 +426,9 @@ either derived or ephemeral:
 ```
 
 Rows: `app` (repo, slug, access, preview_data), `app_env` (name, sealed
-value), `run` (repo, kind, issue, commit, state, summary, cost, timings),
-`agent` (user, model, brief, budget), and `issue.assignee_id`. The current deployment of each environment is in
+value), `run` (repo, kind, issue, commit, state, summary, cost, timings —
+`startedAt`, `servingAt`, `finishedAt`), `agent` (user, model, brief,
+budget), and `issue.assignee_id`. The current deployment of each environment is in
 memory only: a process is not state, and a restart rebuilds every
 environment from the default branch and the open pulls, exactly as
 `core/reconcile.ts` rebuilds the index from git.
@@ -419,20 +469,32 @@ many landed, pulls a person merged, spend, and the mean cost, time and
 turns of a run.
 
 On a pull, the runs for the current head are its checks. A deploy run that
-fails — install, build, test, or the app never answering — fails the check
-and the preview shows the log where it stopped. A push makes new runs;
+fails — install, build, or the app never answering — fails the check before
+anything serves; the preview shows the log where it stopped. A deploy whose
+app answers but whose `test` then fails is different: the preview keeps
+serving that commit, but the run still fails the check, and the page says
+in words that it is serving code whose tests failed. A push makes new runs;
 older ones are history, not status.
 
 ### The look
 
-When a deploy comes up green the forge takes a picture of it — the page at
-`/`, at a phone's width (390×844) and a laptop's (1280×800) — and keeps the
-pictures beside the commit they are of, so a person judges a change from
-what it is rather than from what it says. The pull page shows both under
-the checks, with the commit and a word when the head has moved since; the
-studio's ask row leads with the phone picture; an app's studio head shows
-how production looks now. Pictures are served at
-`/:owner/:name/looks/<env>/<commit>/{phone,desktop}.png` with the
+When a deploy comes up green the forge takes a picture of it — every page
+`app.looks` names, `/` alone when it names none — at a phone's width
+(390×844), a laptop's (1280×800), and a thumb's (200×125, desktop's own
+aspect, small), and keeps the pictures beside the commit they are of, so a
+person judges a change from what it is rather than from what it says.
+`app.looks` may name at most three pages: a browser start per picture per
+width is the heaviest thing the forge does, and more is a manifest error
+rather than a silent, slower deploy. The pull page shows the phone and
+desktop pair under the checks, with the commit and a word when the head has
+moved since; more than one page gets one group per page, each labelled by
+its path, since a page that failed keeps its last good picture while another
+moves on. The studio's ask row, the board's landed row, and an app's studio
+head always show the home page's own picture, whatever else `app.looks`
+names — the thumb, or (before it existed on that commit) the phone shot that
+slot used to load, so nothing goes blank. Pictures are served at
+`/:owner/:name/looks/<env>/<commit>/<kind>.png` for the home page, or
+`/:owner/:name/looks/<env>/<commit>/<page>-<kind>.png` for another, with the
 repository's own read access, cached by commit.
 
 The picture is what the repository's owner would see: headless Chromium is
@@ -473,7 +535,11 @@ outbox with a sweep behind the wake-up:
   lands as a new pull that names the one it continues.
 - **A failed check.** A deploy that fails on the agent's pull, or the
   repository's own check failing on it, starts a follow-up with the log's
-  tail. Bounded by rule 7.
+  tail. Bounded by rule 7. A failure the crew reads as the place it ran —
+  a timeout, a missing tool, a flaky runner — runs the check again once
+  for that commit instead, and spends none of the pull's tries; a second
+  red on the same commit is taken at face value, and what the pull is
+  parked with says which of the two failed.
 
 Forks follow their parents. A fork's default branch is a copy of the
 parent's until someone commits on it, and while that is so the parent

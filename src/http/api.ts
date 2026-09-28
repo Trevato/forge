@@ -111,11 +111,12 @@ import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
 import {
   canAdmin,
   canRead,
+  canSeeOwnerFacts,
   countsForRepos,
   getRepo,
-  listForks,
   listReposByOwner,
   listReposVisibleTo,
+  visibleForks,
   type Repo,
   type RepoCounts,
   canWrite,
@@ -175,6 +176,7 @@ import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
+import { getAppByRepo } from "../core/apps.ts";
 import type { Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import { listAssignedTo } from "../core/issues.ts";
@@ -777,7 +779,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("DELETE", "/api/v1/sessions", (ctx) => {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
-    if (crossOrigin(ctx.request, ctx.url)) return forbidden();
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     const token = cookieValue(ctx.request, "forge_session");
     if (token !== undefined) destroySession(ctx.app.db, token);
     return json({}, 200, {
@@ -861,7 +863,7 @@ export function apiRoutes(router: Router<Handler>): void {
       (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
       ctx.auth.user
     ) {
-      if (crossOrigin(ctx.request, ctx.url)) return forbidden();
+      if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
       user = ctx.auth.user;
     } else {
       const verified = await verifyPassword(
@@ -1112,11 +1114,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/forks", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(
-      listForks(ctx.app.db, repo.id).filter((f) =>
-        canRead(ctx.app.db, f, ctx.auth.user),
-      ),
-    );
+    return json(visibleForks(ctx.app.db, repo.id, ctx.auth.user));
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/forks", async (ctx) => {
@@ -2801,6 +2799,14 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({ url: link.value });
   });
 
+  // A run's cost and turn count are the owner's own facts (`canSeeOwnerFacts`,
+  // same predicate the studio page uses) — a viewer who can only read a
+  // public repository gets every other field, never those two.
+  const runForViewer = (ctx: Ctx, repo: Repo) =>
+    canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)
+      ? (r: Run): Run => r
+      : (r: Run): Run => ({ ...r, costUsd: 0, turns: 0 });
+
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
@@ -2815,14 +2821,15 @@ export function apiRoutes(router: Router<Handler>): void {
       limit,
     });
     if (!runs.ok) return notFound();
-    return json(paged(runs.value, limit, (r) => r.id));
+    const forViewer = runForViewer(ctx, repo);
+    return json(paged(runs.value.map(forViewer), limit, (r) => r.id));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    return run.ok ? json(run.value) : notFound();
+    return run.ok ? json(runForViewer(ctx, repo)(run.value)) : notFound();
   });
 
   // The log: text, or a live tail as server-sent events (`?follow=1`, or
@@ -2845,10 +2852,37 @@ export function apiRoutes(router: Router<Handler>): void {
       });
     }
     const run = found.value.run;
+    // The cost and turn count are the owner's own facts, same as the studio
+    // page beside this stream — a viewer who cannot write here never gets
+    // them, whether the page renders or a fetch asks this stream directly.
+    const ownerFacts = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
+    const forViewer = (r: Run): Run =>
+      ownerFacts ? r : { ...r, costUsd: 0, turns: 0 };
     // Every line carries its number, so a browser that reconnects — a
     // proxy in front of the forge cuts long responses — sends the last it
     // saw and hears only what followed, never the log again from the top.
     const seen = Number(ctx.request.headers.get("last-event-id") ?? "0") || 0;
+    // A deploy run's own file keeps growing for as long as its app process
+    // runs (`apps/process.ts` pumps its stdout/stderr for the process's
+    // life, into the same log) — long past the run itself finishing
+    // (`apps/runtime.ts` calls `finishRun` at the swap-in, not at exit). So
+    // a finished run whose environment still points at it as the one
+    // serving has not actually stopped saying things, and the stream must
+    // not hang up on it (#284).
+    const stillLive = (): boolean => {
+      if (!isEnvName(run.env)) return false;
+      const record = getAppByRepo(ctx.app.db, repo.id);
+      const runtime = appsRuntime(ctx.app);
+      if (!record || !runtime) return false;
+      const status = runtime.envStatus(record, run.env);
+      // "stopped" and "failed" keep the last run's id too — as history, not
+      // as a claim that it is still the one serving — so only "running" and
+      // "deploying" (a swap-in still checking its own tests) count.
+      return (
+        status?.runId === run.id &&
+        (status.state === "running" || status.state === "deploying")
+      );
+    };
     return eventStream(ctx.request, (emit, close) => {
       const controller = new AbortController();
       let index = 0;
@@ -2862,15 +2896,27 @@ export function apiRoutes(router: Router<Handler>): void {
       for (const line of readRunLog(ctx.app.config.dataDir, run.id).lines)
         send(line);
       const finish = (final: Run): void => {
-        emit("done", final, final.id);
+        emit("done", forViewer(final), final.id);
         close();
       };
       const unsubscribe = ctx.app.bus.subscribe((event) => {
-        if (event.kind !== "run.finished" || event.payload["runId"] !== run.id)
+        if (event.kind === "run.finished" && event.payload["runId"] === run.id) {
+          if (!stillLive()) finish(getRun(ctx.app.db, run.id) ?? run);
           return;
-        finish(getRun(ctx.app.db, run.id) ?? run);
+        }
+        // A redeploy that swaps this run out, or the environment being
+        // stopped, is what actually retires its log — only then, for a run
+        // already finished, does the stream close.
+        if (
+          (event.kind === "app.serving" || event.kind === "app.stopped") &&
+          event.repoId === repo.id &&
+          event.payload["env"] === run.env &&
+          isTerminal(run.state) &&
+          !stillLive()
+        )
+          finish(getRun(ctx.app.db, run.id) ?? run);
       });
-      if (isTerminal(run.state)) finish(run);
+      if (isTerminal(run.state) && !stillLive()) finish(run);
       return () => {
         controller.abort();
         unsubscribe();

@@ -6,7 +6,6 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
-import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { settled, subscribe, type MirrorStage } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import {
@@ -22,6 +21,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { fastFirstFetch } from "./helpers/globals.ts";
 
 /**
  * Browsing before mirroring.
@@ -52,6 +52,9 @@ const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
 
 const text = (body: Uint8Array): string => new TextDecoder().decode(body);
+
+// A fetch that fails should say so now, not after the forge's patience.
+fastFirstFetch();
 
 describe("RepoSource: one repository, two places to read it from", () => {
   let dataDir: string;
@@ -97,8 +100,6 @@ describe("RepoSource: one repository, two places to read it from", () => {
   const requests = (): number => fake.state.requests.length;
 
   beforeAll(async () => {
-    // A fetch that fails should say so now, not after the forge's patience.
-    firstFetchRetry.ms = [50];
     dataDir = await mkdtemp(join(tmpdir(), "forge-view-"));
     originDataDir = await mkdtemp(join(tmpdir(), "forge-view-up-"));
 

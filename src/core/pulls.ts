@@ -51,6 +51,8 @@ export interface Pull extends Issue {
    * not hold): `owner/name` there. Null for a native pull.
    */
   readonly originHeadRepo: string | null;
+  /** The pull this one reverts, when it was opened by "Take it back". */
+  readonly revertsPullId: string | null;
 }
 
 interface PullRow {
@@ -62,6 +64,7 @@ interface PullRow {
   merged_oid: string | null;
   head_repo_id: string | null;
   origin_head_repo: string | null;
+  reverts_issue_id: string | null;
 }
 
 function fromRow(issue: Issue, row: PullRow): Pull {
@@ -77,6 +80,7 @@ function fromRow(issue: Issue, row: PullRow): Pull {
     headRepoId,
     crossRepo: headRepoId !== issue.repoId,
     originHeadRepo: row.origin_head_repo,
+    revertsPullId: row.reverts_issue_id,
   };
 }
 
@@ -110,6 +114,8 @@ export interface CreatePullInput {
   headRepoId?: string;
   /** The fork's on-disk dir, required when headRepoId differs from the base. */
   headDir?: string;
+  /** The issue id of the pull this one reverts ("Take it back"). */
+  revertsIssueId?: string;
 }
 
 export async function createPull(
@@ -148,8 +154,8 @@ export async function createPull(
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(
-    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, reverts_issue_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
   ).run(
     issue.value.id,
     input.baseBranch,
@@ -157,6 +163,7 @@ export async function createPull(
     baseOid,
     headOid,
     headRepoId,
+    input.revertsIssueId ?? null,
   );
 
   // A durable, fetchable ref for the PR head — the way tooling addresses it,
@@ -177,6 +184,83 @@ export function getPull(
 }
 
 /**
+ * The newest pull, in any state, whose head is this branch of this
+ * repository — what an agent run's own `branch` names, and how
+ * `landWork` (`crew/runner.ts`) finds the pull it already opened. A pull
+ * is its own issue, unrelated in the schema to the issue that asked for
+ * it; the branch is the only durable link a run's outcome leaves behind.
+ */
+export function pullForBranch(
+  db: Database,
+  repoId: string,
+  branch: string,
+): Pull | undefined {
+  const row = db
+    .query<
+      { number: number },
+      [string, string]
+    >(`SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.head_branch = ?2
+       ORDER BY issue.created_at DESC LIMIT 1`)
+    .get(repoId, branch);
+  return row ? getPull(db, repoId, row.number) : undefined;
+}
+
+/**
+ * Bring a same-repo pull's stored head up to its branch's new tip. Every seam
+ * that lands a commit on a branch — a git push, the web editor, the API —
+ * calls this one function, so `pull.headOid` never names a commit the branch
+ * has moved past. The cross-repo counterpart is `refreshPullHead`
+ * (`core/following.ts`), which fetches from another repo; here the commit is
+ * already local, so this is a plain write. Called before the landing is
+ * announced on the bus, so no listener — a check, a deploy — can read the
+ * row before it catches up.
+ */
+export function trackPullHead(
+  db: Database,
+  repoId: string,
+  branch: string,
+  newOid: string,
+): void {
+  const pull = pullForBranch(db, repoId, branch);
+  if (
+    pull === undefined ||
+    pull.crossRepo ||
+    pull.mergedAt !== null ||
+    pull.state === "closed" ||
+    pull.headOid === newOid
+  )
+    return;
+  db.query("UPDATE pull SET head_oid = ?2 WHERE issue_id = ?1").run(
+    pull.id,
+    newOid,
+  );
+}
+
+/**
+ * The pull that already reverts this one, if taking it back has already
+ * been done — open, or merged, either one counts as "already taken back".
+ * A revert pull that was closed *without* merging is an abandoned attempt,
+ * not a standing answer, so it does not block a second try.
+ */
+export function revertOf(
+  db: Database,
+  repoId: string,
+  pullId: string,
+): Pull | undefined {
+  const row = db
+    .query<
+      { number: number },
+      [string, string]
+    >(`SELECT issue.number AS number FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND pull.reverts_issue_id = ?2
+         AND (issue.state = 'open' OR pull.merged_at IS NOT NULL)
+       ORDER BY issue.created_at DESC LIMIT 1`)
+    .get(repoId, pullId);
+  return row ? getPull(db, repoId, row.number) : undefined;
+}
+
+/**
  * Open pulls, in any repository, whose head is this branch of this one:
  * what a push to a fork moves.
  */
@@ -194,6 +278,37 @@ export function listOpenPullsFromHead(
     .all(headRepoId, branch)
     .map((r) => r.issue_id);
   return joinMany(db, [...getIssuesByIds(db, ids).values()]);
+}
+
+/**
+ * The newest open pull of each repository, in one query — what a shelf row
+ * shows when nothing about the app is moving otherwise: a change waits for
+ * a look whether an agent opened it or a person did, and the row is about
+ * the app, not about who typed it.
+ */
+export function openPullsForRepos(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, Pull> {
+  const out = new Map<string, Pull>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ issue_id: string }, string[]>(
+        `SELECT issue_id FROM (
+           SELECT pull.issue_id AS issue_id,
+                  ROW_NUMBER() OVER (PARTITION BY issue.repo_id ORDER BY issue.created_at DESC) AS rn
+           FROM pull JOIN issue ON issue.id = pull.issue_id
+           WHERE issue.state = 'open' AND issue.repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ) WHERE rn = 1`,
+      )
+      .all(...batch);
+    const issues = getIssuesByIds(db, rows.map((r) => r.issue_id));
+    for (const pull of joinMany(db, [...issues.values()])) out.set(pull.repoId, pull);
+  }
+  return out;
 }
 
 export type ListPullsOptions = Omit<ListIssuesOptions, "kind">;
@@ -263,6 +378,32 @@ export function mergedPullsForRepos(
     db,
     ids.map((id) => issues.get(id)).filter((i): i is Issue => i !== undefined),
   );
+}
+
+/**
+ * How many of a repository's pulls have landed since an instant — what
+ * "shipped this week" counts, and what the cost of a shipped change
+ * divides by. Counted by the database over the whole window, not off a
+ * page of closed pulls: past a hundred of those the week under-reports,
+ * and the cost per change reads high with nothing saying why.
+ *
+ * Closed is not shipped. A pull closed without a merge has no `merged_at`,
+ * and `NULL >= anything` is `NULL` — never true, so it never counts; the
+ * `IS NOT NULL` says so to the reader as well as the planner.
+ */
+export function mergedPullCount(
+  db: Database,
+  repoId: string,
+  since: string,
+): number {
+  const row = db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM issue JOIN pull ON pull.issue_id = issue.id
+        WHERE issue.repo_id = ?1
+          AND pull.merged_at IS NOT NULL AND pull.merged_at >= ?2`,
+    )
+    .get(repoId, since);
+  return row?.n ?? 0;
 }
 
 /** The pull rows for a page of issues, keyed by issue id. */

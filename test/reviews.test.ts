@@ -5,17 +5,14 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { hashLine } from "../src/core/reviews.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Rev",
   GIT_AUTHOR_EMAIL: "rev@f.dev",
   GIT_COMMITTER_NAME: "Rev",
   GIT_COMMITTER_EMAIL: "rev@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 describe("review comments on diff lines", () => {
   let dataDir: string;

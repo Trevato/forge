@@ -29,11 +29,11 @@ import { getUserByName } from "../src/core/users.ts";
 import { settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { clearViewCache } from "../src/view/cache.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { codeJs } from "../src/web/client.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const ORIGIN_LOGIN = "octo";
 const ORIGIN_TOKEN = "octo-origin-secret-7c31";
@@ -412,6 +412,8 @@ describe("browsing an origin repository on the web", () => {
     expect(html).not.toContain("/branches/main/delete");
     // The banner still says where the bytes came from.
     expect(html).toContain("Reading live from");
+    // A live-browse origin has no local repo to open an SSE stream against.
+    expect(html).not.toContain("new EventSource");
   });
 
   test("commits and one commit render live, with the origin's author", async () => {

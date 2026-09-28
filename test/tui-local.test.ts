@@ -19,18 +19,17 @@ import {
 } from "../src/tui/term/terminal.ts";
 import { createLocalApp } from "../src/tui/local/app.ts";
 import { localBusy, localIdle } from "../src/tui/local/common.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 async function sh(args: string[], cwd: string): Promise<void> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    env: {
-      ...process.env,
+    env: gitClientEnv({
       GIT_AUTHOR_NAME: "Ada",
       GIT_AUTHOR_EMAIL: "ada@forge.local",
       GIT_COMMITTER_NAME: "Ada",
       GIT_COMMITTER_EMAIL: "ada@forge.local",
-      LC_ALL: "C",
-    },
+    }),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -68,13 +67,31 @@ async function type(
   await settle(app);
 }
 
+const IDENTITY = {
+  GIT_AUTHOR_NAME: "Ada",
+  GIT_AUTHOR_EMAIL: "ada@forge.local",
+  GIT_COMMITTER_NAME: "Ada",
+  GIT_COMMITTER_EMAIL: "ada@forge.local",
+};
+
 describe("the local terminal UI", () => {
   let root = "";
   let dir = "";
   let term: HeadlessTerminal;
   let app: App;
+  const ambient: Record<string, string | undefined> = {};
 
   beforeAll(async () => {
+    // `git/local.ts` (driven here through the app, not through `sh` above)
+    // inherits this process's environment on purpose — it is the person at
+    // the keyboard's own identity. A crew sandbox's shell already names an
+    // author (its agent), so a commit the app writes must not pick that up
+    // instead of Ada.
+    for (const [key, value] of Object.entries(IDENTITY)) {
+      ambient[key] = process.env[key];
+      process.env[key] = value;
+    }
+
     root = await mkdtemp(join(tmpdir(), "forge-tui-local-"));
     dir = join(root, "forge.test", "ada", "workshop");
     await mkdir(dir, { recursive: true });
@@ -108,6 +125,10 @@ describe("the local terminal UI", () => {
 
   afterAll(async () => {
     app.stop();
+    for (const [key, value] of Object.entries(ambient)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await rm(root, { recursive: true, force: true });
   });
 

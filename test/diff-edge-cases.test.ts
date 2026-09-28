@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 describe("diff engine + resource edge cases", () => {
   let dataDir: string;
@@ -18,16 +19,12 @@ describe("diff engine + resource edge cases", () => {
   let cookie = "";
   let token = "";
 
-  const clientEnv = {
-    ...process.env,
+  const clientEnv = gitClientEnv({
     GIT_AUTHOR_NAME: "Ada",
     GIT_AUTHOR_EMAIL: "ada@forge.local",
     GIT_COMMITTER_NAME: "Ada",
     GIT_COMMITTER_EMAIL: "ada@forge.local",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
+  });
 
   async function shOk(args: string[], cwd: string): Promise<string> {
     const proc = Bun.spawn(args, {
@@ -340,7 +337,9 @@ describe("diff engine + resource edge cases", () => {
       `[perf] 210k-line file diff took ${elapsed.toFixed(0)}ms, ${text.length} bytes`,
     );
     expect(resp.status).toBe(200);
-    expect(text).toContain("Large diff not shown");
+    expect(text).toContain("huge.txt");
+    expect(text).toContain("Diff not shown");
+    expect(text).toContain("210,000 changed lines");
     // Confirmed clean: the cap makes this fast and small, not a resource sink.
     expect(elapsed).toBeLessThan(5_000);
   }, 60_000);
@@ -367,9 +366,15 @@ describe("diff engine + resource edge cases", () => {
       `[perf] 2MB-single-line modify diff took ${elapsed.toFixed(0)}ms, ${text.length} bytes`,
     );
     expect(resp.status).toBe(200);
-    // Confirmed clean: CAP_BYTES in diff-syntax.ts bounds this independent of
-    // line count, so this stays fast even though the changed-line count (1)
-    // is far under MAX_CHANGED.
-    expect(elapsed).toBeLessThan(5_000);
+    expect(text).toContain("hugeline.txt");
+    expect(text).toContain("Diff not shown");
+    expect(text).toContain("bytes of diff");
+    // The byte ceiling this issue asks for: a 4MB-of-diff single line must
+    // not put anywhere near that on the wire, and must not creep back up.
+    expect(text.length).toBeLessThan(500_000);
+    // Confirmed clean: MAX_FILE_BYTES/MAX_LINE_WIDTH in diff-view.ts stub the
+    // file before it is ever tokenized or rendered as rows, so this stays
+    // fast even though the changed-line count (1) is far under MAX_FILE_LINES.
+    expect(elapsed).toBeLessThan(200);
   }, 60_000);
 });

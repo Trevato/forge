@@ -141,7 +141,12 @@ async function reviewInputs(
     record === undefined
       ? []
       : looksForEnv(app.db, record.id, `pull-${pull.number}`)
-          .filter((l) => l.commitOid === pull.headOid && l.error === null)
+          .filter(
+            (l) =>
+              l.commitOid === pull.headOid &&
+              l.error === null &&
+              (l.kind === "phone" || l.kind === "desktop"),
+          )
           .sort(
             (a, b) =>
               (a.kind === "phone" ? -1 : 1) - (b.kind === "phone" ? -1 : 1),

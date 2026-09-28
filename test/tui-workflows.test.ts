@@ -35,7 +35,7 @@ import { listReviews } from "../src/core/reviews.ts";
 import { getPull } from "../src/core/pulls.ts";
 import type { User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import type { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -47,7 +47,7 @@ import {
 import { settleApp } from "./helpers/tui.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 
-setLogLevel("error");
+quietLogs();
 
 interface Harness {
   app: App;
@@ -61,6 +61,13 @@ interface Harness {
   settle(): Promise<void>;
   /** Pump until the screen says something, or give up loudly. */
   until(what: string, ms?: number): Promise<void>;
+  /**
+   * The title of every screen pushed since boot, in order. A card that
+   * comes down the moment its work is done — the mirror card over a small
+   * repository — can be up and gone between two looks at the screen; this
+   * is how a test says it was shown without racing it.
+   */
+  opened(): string[];
   /** Press one key until the screen says something — for walking a viewport. */
   walk(key: string, what: string, limit?: number): Promise<void>;
   stop(): void;
@@ -77,6 +84,12 @@ function boot(
     terminal,
     exitHooks: false,
   });
+  const opened: string[] = [];
+  const push = app.push.bind(app);
+  app.push = (screen) => {
+    opened.push(screen.title);
+    push(screen);
+  };
   app.start();
   const settle = (): Promise<void> => settleApp(app);
   const grid = (): string[] => app.screen.toText().split("\n");
@@ -123,6 +136,7 @@ function boot(
       await settle();
     },
     settle,
+    opened: () => [...opened],
     async until(what, ms = 30_000) {
       const deadline = Date.now() + ms;
       for (;;) {
@@ -386,10 +400,12 @@ describe("workflows at an origin", () => {
       expect(h.text()).toContain("and mirror it here?");
 
       await h.press("enter");
-      // The ordinary mirror card, over the job the fork started.
-      await h.until("Mirroring");
-      // …and then the fork's own workspace, which says whose work it is.
+      // The mirror runs over the job the fork started; wait for the
+      // outcome — the fork's own workspace — rather than the mirror card,
+      // which can finish and be gone before the next poll ever sees it.
       await h.until(`fork of ${UPSTREAM}/gears`, 60_000);
+      // The card was still shown: the harness saw it pushed.
+      expect(h.opened().some((t) => t.startsWith("Mirroring"))).toBe(true);
 
       const fork = getRepo(forge.db, "alice", "gears");
       expect(fork).toBeDefined();
@@ -417,8 +433,11 @@ describe("workflows at an origin", () => {
       // somewhere here to be imported into — the "local import" half.
       await select(h, `${UPSTREAM}/widgets`);
       await h.press("m");
-      await h.until("Mirroring");
+      // Wait for the outcome, not the mirror card: on a fast machine the
+      // job can finish before the next poll ever sees "Mirroring".
       await h.until("mirrored as alice/widgets", 60_000);
+      expect(getRepo(forge.db, "alice", "widgets")).toBeDefined();
+      expect(h.opened()).toContain(`Mirroring ${UPSTREAM}/widgets`);
 
       // Now browse it live: read-only, and not ours to push to.
       await h.press("enter");
@@ -480,9 +499,10 @@ describe("workflows at an origin", () => {
       await openPicker(h);
       await select(h, `${ORIGIN_LOGIN}/own`);
       // Mirror it, then work on the copy: this is the push-capable path.
+      // Wait for the outcome, not the mirror card — see the fork test above.
       await h.press("m");
-      await h.until("Mirroring");
       await h.until("mirrored as alice/own", 60_000);
+      expect(h.opened()).toContain(`Mirroring ${ORIGIN_LOGIN}/own`);
       await h.press("enter");
       await h.until("read live");
       // The origin says this one is ours to push to, so nothing is proposed.

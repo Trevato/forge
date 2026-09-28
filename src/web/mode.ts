@@ -3,8 +3,8 @@
  * code, commits, branches, runs. Studio makes apps the unit: a person tells
  * the crew, looks at what it made, and decides when it asks. The choice is
  * a cookie on this browser, like the theme; the URLs are the same in both,
- * so a link works whichever way its reader sees. Dev is the default until
- * the studio has earned the front door.
+ * so a link works whichever way its reader sees. Studio is the front door;
+ * `?mode=dev` on any URL is the way out, one click, no form.
  */
 
 export type Mode = "studio" | "dev";
@@ -12,7 +12,7 @@ export type Mode = "studio" | "dev";
 export const isMode = (value: unknown): value is Mode =>
   value === "studio" || value === "dev";
 
-export const DEFAULT_MODE: Mode = "dev";
+export const DEFAULT_MODE: Mode = "studio";
 
 export function modeCookie(mode: Mode | undefined, secure: boolean): string {
   const flags = `Path=/; SameSite=Lax; HttpOnly${secure ? "; Secure" : ""}`;

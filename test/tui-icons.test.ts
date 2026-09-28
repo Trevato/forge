@@ -22,7 +22,7 @@ import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getUserSetting } from "../src/core/settings.ts";
 import type { User } from "../src/core/users.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import {
@@ -35,7 +35,7 @@ import {
 import { clusterWidth, clusters, displayWidth } from "../src/tui/term/width.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const SETS = ["plain", "nerd"] as const;
 

@@ -25,6 +25,7 @@ import {
   type FakeForge,
   type FakeOAuth,
 } from "./fake-origin.ts";
+import { withoutEnv } from "./helpers/globals.ts";
 
 /**
  * Connecting an origin without pasting a token, and the security properties
@@ -82,6 +83,10 @@ async function shutdown(f: Fixture): Promise<void> {
   forgetProviders(f.dataDir);
   await rm(f.dataDir, { recursive: true, force: true });
 }
+
+// The code flow's redirect_uri is this test server's own — never the forge a
+// crew machine's `FORGE_URL` names.
+withoutEnv("FORGE_URL");
 
 // ---------------------------------------------------------------- device
 

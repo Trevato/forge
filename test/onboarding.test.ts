@@ -4,17 +4,14 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-  GIT_TERMINAL_PROMPT: "0",
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "N",
   GIT_AUTHOR_EMAIL: "n@f.dev",
   GIT_COMMITTER_NAME: "N",
   GIT_COMMITTER_EMAIL: "n@f.dev",
-};
+});
 
 describe("onboarding: a person with just a login", () => {
   let dataDir: string;

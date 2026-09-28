@@ -731,7 +731,13 @@ export const migrations: readonly string[] = [
   CREATE INDEX decision_repo ON decision(repo_id, created_at);
   `,
 
-  // 23 — the look: a picture of an environment at a commit, at each of two
+  // 23 — the moment a deploy started serving: set once, at the swap-in,
+  // distinct from `finished_at` which waits on the tests beside it.
+  `
+  ALTER TABLE run ADD COLUMN serving_at TEXT;
+  `,
+
+  // 24 — the look: a picture of an environment at a commit, at each of two
   // widths, or the reason there is none. Rows go with the app.
   `
   CREATE TABLE look (
@@ -784,7 +790,7 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX probe_app ON probe (app_id, created_at);
   `,
-  // Subscriptions: the Claude accounts the crew works on, sealed, and the
+  // 26 — subscriptions: the Claude accounts the crew works on, sealed, and the
   // grants that say which repository or organization (and which agent) each
   // one pays for. A run remembers the account it spent, for the ledger.
   `
@@ -807,5 +813,70 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX subscription_grant_scope ON subscription_grant (scope_id, agent_id);
   ALTER TABLE run ADD COLUMN subscription_id TEXT;
+  `,
+
+  // 27 — a failed check's own detail: the pass/fail counts and the first
+  // few failing names, recognised once from a `bun test` tail as the run
+  // finishes (`checks/bun-test.ts`) and stored as JSON beside the run, so a
+  // page that shows it never re-parses a log. Empty when the run passed or
+  // its output was not recognised — the studio then says exactly what it
+  // said before this column existed.
+  `
+  ALTER TABLE run ADD COLUMN check_detail TEXT NOT NULL DEFAULT '';
+  `,
+
+  // 28 — a third width: thumb, a picture taken small for a slot that only
+  // ever showed one small, instead of a full phone or desktop picture
+  // squeezed into it. SQLite's CHECK cannot be altered in place, so the
+  // table is rebuilt; every row already there keeps its id and content.
+  `
+  CREATE TABLE look_new (
+    id         TEXT PRIMARY KEY,
+    app_id     TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+    env        TEXT NOT NULL,
+    commit_oid TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('phone','desktop','thumb')),
+    path       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    error      TEXT,
+    UNIQUE (app_id, env, commit_oid, kind)
+  );
+  INSERT INTO look_new SELECT * FROM look;
+  DROP TABLE look;
+  ALTER TABLE look_new RENAME TO look;
+  `,
+
+  // 29 — take it back: a pull that reverts another, named explicitly rather
+  // than sniffed from its title. `reverts_issue_id` points at the issue the
+  // shipped pull was (a pull is its own issue), so "was this already taken
+  // back" is one lookup rather than a guess from wording.
+  `
+  ALTER TABLE pull ADD COLUMN reverts_issue_id TEXT REFERENCES issue(id) ON DELETE SET NULL;
+  CREATE INDEX pull_reverts ON pull(reverts_issue_id) WHERE reverts_issue_id IS NOT NULL;
+  `,
+
+  // 30 — a look knows which page it is of: `app.looks` in `forge.json` can
+  // name more than the home page. `page` defaults to `/`, so every row
+  // taken before this migration reads as exactly what it always was — a
+  // picture of the home page. The unique constraint gains `page` so two
+  // pages of one commit never collide; SQLite cannot alter a constraint in
+  // place, so the table is rebuilt, as `look_new` was before it.
+  `
+  CREATE TABLE look_new (
+    id         TEXT PRIMARY KEY,
+    app_id     TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+    env        TEXT NOT NULL,
+    commit_oid TEXT NOT NULL,
+    page       TEXT NOT NULL DEFAULT '/',
+    kind       TEXT NOT NULL CHECK (kind IN ('phone','desktop','thumb')),
+    path       TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    error      TEXT,
+    UNIQUE (app_id, env, commit_oid, page, kind)
+  );
+  INSERT INTO look_new (id, app_id, env, commit_oid, kind, path, created_at, error)
+    SELECT id, app_id, env, commit_oid, kind, path, created_at, error FROM look;
+  DROP TABLE look;
+  ALTER TABLE look_new RENAME TO look;
   `,
 ];

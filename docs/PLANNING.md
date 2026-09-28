@@ -183,13 +183,17 @@ passed before autonomy was on — land, so nothing green waits on chance.
 
 **What holds it.** The ceiling is dollars of agent spend per UTC day; at
 the ceiling the crew stops picking until midnight, and nothing in flight is
-cut. Slots are runs at once — the WIP limit — and a repository never
-starts more than that, whatever the forge-wide concurrency allows. A
-failing check on an agent's pull goes back to the agent as ever, and after
-the same bounded number of tries the crew stops and waits for a person:
-autonomy re-queues nothing a person must decide. The map page says how it
-stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why it is
-paused when it is.
+cut. Slots are the builders' runs at once — the WIP limit — and a
+repository never starts more than that, whatever the forge-wide concurrency
+allows. A reviewer's pass over a pull and a planner's run on the direction
+take no slot: they refill the map rather than work it, and they never keep
+a builder from picking the next issue. The number a page shows is that
+same count, so what the page says and what the loop gates on are one
+thing. A failing check on an agent's pull goes back to the agent as ever,
+and after the same bounded number of tries the crew stops and waits for a
+person: autonomy re-queues nothing a person must decide. The map page says
+how it stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why
+it is paused when it is.
 
 ## The decider
 
@@ -230,11 +234,15 @@ Where it decides today:
   lands by rule, once its base merges cleanly and it does not cross the
   wall (`docs/CONTRACT.md`). Nobody is asked; the ledger keeps the landing
   as a `ship` by the rule, once per head, so the week's numbers add up.
-- **Try again or stop** (`crew/dispatch.ts`, `retryOrStop`): a failed check
-  gets another automatic run by rule, up to the limit. The decider reads
-  the failure, the log's tail and the count, and may stop sooner, before
-  the run's money is spent; the pull then waits for a person as a stopped
-  ask.
+- **Whose fault, and try again or stop** (`crew/dispatch.ts`,
+  `judgeFailedCheck`): a failed check gets another automatic run by rule,
+  up to the limit. The decider reads the failure, the log's tail and the
+  count and answers both at once — whether another try is worth its money,
+  and whether the change, the environment or the base branch is what
+  failed. The cause is settled before anything is parked: an environmental
+  failure runs the check again (below) whatever the verdict, so a flaky
+  runner never throws a change away. Otherwise _stop_ waits for a person as
+  a stopped ask, and the parked reason says which of the two it was.
 
 **The ledger.** Each of these is written to the `decision` table
 (`core/decisions.ts`): what the decider saw, what it answered and with what
@@ -244,10 +252,13 @@ shipped. `GET /api/v1/repos/:owner/:name/decisions`
 lists it with the week summed per kind. It is the value function's raw
 material: whether the decider beats the rule is a query, not an opinion.
 
-- **A red check** (`crew/dispatch.ts`): from the tail of the check's log,
-  whether the change, the environment or the base branch failed. When it
-  is the environment's fault, at 70% or better, the check runs again once
-  instead of the agent reworking a change that is fine.
+- **A red check** (`crew/dispatch.ts`): the `cause` half of the decision
+  above — from the tail of the check's log, whether the change, the
+  environment or the base branch failed. At 70% or better the
+  environment's fault runs the check again, once per head commit, instead
+  of the agent reworking a change that is fine or the pull being parked
+  for someone else's bad luck. A second red on the same commit is real:
+  the pull parks, saying the environment.
 
 Every answer a decider gives is a log line — `decided by=typesafe ms=270
 answers=builder=mason@0.99 size=tiny@0.58 …` — so what it said and how

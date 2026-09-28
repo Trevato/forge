@@ -21,7 +21,7 @@ import { listEvents } from "../../core/events.ts";
 import type { Issue, Label } from "../../core/issues.ts";
 import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
-import type { IconName as Glyph } from "../icons.ts";
+import { inlineIcons, type IconName as Glyph } from "../icons.ts";
 import {
   getUserById,
   getUserByName,
@@ -47,6 +47,7 @@ import {
   type Tone,
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { studioRecord } from "../studio/nouns.ts";
 
 /**
  * The four ways a write can fail *because of the origin*, in words.
@@ -253,7 +254,9 @@ export function threadComment(
 /**
  * GET …/thread?after=<id> — the comments the page has not seen, as a bare
  * fragment. Served under a `sandbox` CSP with nothing else allowed, so the
- * fragment can only ever be what it is: markup to append.
+ * fragment can only ever be what it is: markup to append. Its icons are
+ * inlined, like any fragment's: the page's sprite is not this markup's to
+ * reference (`inlineIcons`, `../icons.ts`).
  */
 export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
   const repo = loadRepo(ctx);
@@ -273,7 +276,7 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
       originKind: glyph,
     }),
   )}`;
-  return new Response(fragment.text, {
+  return new Response(inlineIcons(fragment.text), {
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
@@ -292,7 +295,10 @@ export interface ComposerOptions {
   state: "open" | "closed";
   /** A merged pull can never reopen. */
   locked?: boolean;
-  kind: "issue" | "pull";
+  /** What the close button calls the thing here — dev's own noun
+   * ("pull request", "issue") or the studio's ("change", "tell"). The
+   * caller knows which page it is drawing; the composer does not have to. */
+  closeLabel: string;
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -323,16 +329,11 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
       : null;
   const closeButton =
     o.stateAction !== undefined && !o.locked
-      ? btn(
-          o.state === "open"
-            ? `Close ${o.kind === "pull" ? "pull request" : "issue"}`
-            : "Reopen",
-          {
-            size: "sm",
-            icon: o.state === "open" ? "issueClosed" : "issue",
-            form: "thread-state",
-          },
-        )
+      ? btn(o.state === "open" ? o.closeLabel : "Reopen", {
+          size: "sm",
+          icon: o.state === "open" ? "issueClosed" : "issue",
+          form: "thread-state",
+        })
       : null;
   return html`${stateForm}
     <form
@@ -588,10 +589,16 @@ export async function stateSubmit(
     wanted,
   );
   if (!changed.ok) {
+    // The same noun the redirect target is about to render with
+    // (`studioRecord`), so a flash never says dev's word on a studio page.
+    const merged =
+      studioRecord(ctx, found.repo) !== undefined
+        ? "A merged change cannot be reopened."
+        : "A merged pull request cannot be reopened.";
     const message =
       originError(changed.error) ??
       (changed.error === "already_merged"
-        ? "A merged pull request cannot be reopened."
+        ? merged
         : changed.error === "forbidden"
           ? "Only the author or someone with write access can do that."
           : "That could not be changed.");

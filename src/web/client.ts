@@ -149,6 +149,75 @@ export const mirrorJs = /* js */ `
 `;
 
 /**
+ * Turning one log line into an element, the way every reader of a run's log
+ * draws it: a tool call bolds its name, the forge's own words go quiet and
+ * italic, "you: " gets its own highlighted row, and anything else is the
+ * agent speaking as \`who\`. Shared by \`runLogJs\`, \`studioRunJs\` and
+ * \`appTailJs\` so a fourth live log never grows a fourth copy of it —
+ * interpolated inline, so \`who\` closes over whichever script uses it.
+ */
+/**
+ * The clock beside a run's own log: elapsed time ticks while it goes, and
+ * stops at "took" — under ten seconds in tenths, matching \`durationText\`
+ * (\`pages/runs.ts\`) exactly, since the two paint the very same number
+ * first server-side, then live; a mismatched rounding here would flicker
+ * the instant this script takes over. Shared by \`runLogJs\` and
+ * \`studioRunJs\` so the two can never drift apart.
+ */
+const elapsedTickJs = /* js */ `
+  function tick() {
+    var elapsed = document.getElementById('run-elapsed');
+    if (!elapsed) return;
+    var started = Date.parse(elapsed.getAttribute('data-started') || '');
+    if (!started) return;
+    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
+    var end = finished || Date.now();
+    var ms = Math.max(0, end - started);
+    var text;
+    if (ms < 10000) {
+      text = (ms / 1000).toFixed(1) + 's';
+    } else {
+      var s = Math.round(ms / 1000);
+      text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
+    }
+    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
+  }
+  var clock = window.setInterval(tick, 100);
+  tick();
+`;
+
+const logLineJs = /* js */ `
+  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+  function line(kind, speaker, fill) {
+    var el = document.createElement('div');
+    el.className = 'ln ln-' + kind;
+    var w = document.createElement('span');
+    w.className = 'who';
+    w.textContent = speaker;
+    var t = document.createElement('span');
+    t.className = 'txt';
+    fill(t);
+    el.appendChild(w);
+    el.appendChild(t);
+    return el;
+  }
+  function draw(text) {
+    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); });
+    if (text.indexOf('\\u2192 ') === 0) {
+      var rest = text.slice(2), at = rest.indexOf(' ');
+      return line('tool', '', function (t) {
+        var b = document.createElement('b');
+        b.textContent = at === -1 ? rest : rest.slice(0, at);
+        t.appendChild(b);
+        t.appendChild(document.createTextNode(at === -1 ? '' : ' ' + rest.slice(at + 1)));
+      });
+    }
+    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; });
+    return line('say', who, function (t) { t.textContent = text; });
+  }
+`;
+
+/**
  * A run's log, live. The page renders every line already written and, for
  * a run still going, refreshes itself without a script; this replaces that
  * poll with the log's own event stream, so a line lands the moment it is
@@ -216,55 +285,15 @@ export const runLogJs = /* js */ `
     if (elapsed && !elapsed.getAttribute('data-finished')) elapsed.setAttribute('data-finished', new Date().toISOString());
   }
 
-  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
   // The same sorting the page did for the lines it rendered: a speaker
   // column and the words, so a reader can tell who said what at a glance.
-  function line(kind, speaker, fill) {
-    var el = document.createElement('div');
-    el.className = 'ln ln-' + kind;
-    var w = document.createElement('span');
-    w.className = 'who';
-    w.textContent = speaker;
-    var t = document.createElement('span');
-    t.className = 'txt';
-    fill(t);
-    el.appendChild(w);
-    el.appendChild(t);
-    return el;
-  }
-  function draw(text) {
-    if (text.indexOf('you: ') === 0) return line('you', 'you', function (t) { t.textContent = text.slice(5); });
-    if (text.indexOf('→ ') === 0) {
-      var rest = text.slice(2), at = rest.indexOf(' ');
-      return line('tool', '', function (t) {
-        var b = document.createElement('b');
-        b.textContent = at === -1 ? rest : rest.slice(0, at);
-        t.appendChild(b);
-        t.appendChild(document.createTextNode(at === -1 ? '' : ' ' + rest.slice(at + 1)));
-      });
-    }
-    if (FORGE.test(text)) return line('forge', 'forge', function (t) { t.textContent = text; });
-    return line('say', who, function (t) { t.textContent = text; });
-  }
+  ${logLineJs}
   function add(el) {
     log.insertBefore(el, pulse && pulse.parentNode === log ? pulse : jump);
     if (follow) toEnd(); else if (jump) jump.hidden = false;
   }
 
-  // The clock: elapsed time ticks while the run goes, and stops at "took".
-  function tick() {
-    var elapsed = document.getElementById('run-elapsed');
-    if (!elapsed) return;
-    var started = Date.parse(elapsed.getAttribute('data-started') || '');
-    if (!started) return;
-    var finished = Date.parse(elapsed.getAttribute('data-finished') || '');
-    var end = finished || Date.now();
-    var s = Math.max(0, Math.round((end - started) / 1000));
-    var text = s < 60 ? s + 's' : s < 3600 ? Math.floor(s / 60) + 'm ' + (s % 60) + 's' : Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm';
-    elapsed.textContent = (finished ? 'took ' : 'running for ') + text;
-  }
-  var clock = window.setInterval(tick, 1000);
-  tick();
+  ${elapsedTickJs}
 
   // Steering without a reload: Enter sends, Shift+Enter breaks a line, the
   // words go to the API, and the line the forge writes for them arrives on
@@ -336,6 +365,216 @@ export const runLogJs = /* js */ `
     window.clearInterval(clock);
     tick();
   });
+})();
+`;
+
+/**
+ * The same live transcript as \`runLogJs\`, painted in the studio's own five
+ * words instead of dev's queued/running/passed/failed — the one thing that
+ * cannot be shared, since the two pages speak different vocabularies for the
+ * same run. \`data-cap\` on \`#run-log\` bounds how many lines a long-running
+ * agent can pile into the DOM: past it, the oldest line is dropped as a new
+ * one arrives, so an hour-long run never grows without bound.
+ */
+export const studioRunJs = /* js */ `
+(function () {
+  var log = document.getElementById('run-log');
+  if (!log) return;
+  var url = log.getAttribute('data-stream');
+  var who = log.getAttribute('data-who') || 'agent';
+  var cap = parseInt(log.getAttribute('data-cap') || '0', 10) || 0;
+  var pulse = document.getElementById('run-pulse');
+  var jump = document.getElementById('run-jump');
+  var word = document.getElementById('run-word');
+  var summary = document.getElementById('run-summary');
+  var cancel = document.getElementById('run-cancel');
+  var stop = document.getElementById('run-stop');
+  var steer = document.getElementById('run-steer');
+  var live = document.getElementById('run-live');
+
+  var follow = true;
+  function atEnd() { return log.scrollTop + log.clientHeight >= log.scrollHeight - 12; }
+  function toEnd() { log.scrollTop = log.scrollHeight; follow = true; if (jump) jump.hidden = true; }
+  log.addEventListener('scroll', function () { follow = atEnd(); if (follow && jump) jump.hidden = true; });
+  if (jump) jump.addEventListener('click', toEnd);
+  function fit() {
+    var room = window.innerHeight - log.getBoundingClientRect().top - (steer ? steer.offsetHeight : 0) - 16;
+    if (room > 240) log.style.maxHeight = room + 'px';
+    if (follow) toEnd();
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  function studioWord(run) {
+    if (run.state === 'queued') return 'waiting';
+    if (run.state === 'running') return 'working';
+    if (run.state === 'cancelled') return 'cancelled';
+    if (run.state === 'failed') return 'stopped';
+    var s = run.summary || '';
+    if (/opened pull|updated pull/.test(s)) return 'look';
+    if (/planned|no changes pushed/.test(s)) return 'planned';
+    return 'shipped';
+  }
+  function variantFor(w) {
+    return w === 'look' || w === 'shipped' ? 'success' : w === 'stopped' ? 'danger' : w === 'working' ? 'accent' : 'secondary';
+  }
+  function money(n) { return n < 0.01 ? '<$0.01' : '$' + n.toFixed(2); }
+  function paint(run) {
+    if (word) {
+      var w = studioWord(run);
+      word.setAttribute('data-word', w);
+      word.setAttribute('data-variant', variantFor(w));
+      word.textContent = w;
+    }
+    if (live) live.setAttribute('data-state', run.state);
+    if (summary && run.summary) summary.textContent = run.summary;
+    var cost = document.getElementById('run-cost');
+    if (cost && typeof run.costUsd === 'number' && run.costUsd > 0) { cost.textContent = money(run.costUsd) + ' spent'; cost.hidden = false; }
+    var turns = document.getElementById('run-turns');
+    if (turns && typeof run.turns === 'number' && run.turns > 0) { turns.textContent = run.turns + (run.turns === 1 ? ' turn' : ' turns'); turns.hidden = false; }
+    if (cancel) cancel.hidden = true;
+    if (stop) stop.hidden = true;
+    if (pulse && pulse.parentNode) pulse.parentNode.removeChild(pulse);
+    var elapsed = document.getElementById('run-elapsed');
+    if (elapsed && !elapsed.getAttribute('data-finished')) elapsed.setAttribute('data-finished', new Date().toISOString());
+  }
+
+  ${logLineJs}
+  function add(el) {
+    log.insertBefore(el, pulse && pulse.parentNode === log ? pulse : jump);
+    if (cap) {
+      var kept = log.querySelectorAll('.ln:not(#run-pulse)');
+      while (kept.length > cap) { log.removeChild(kept[0]); kept = log.querySelectorAll('.ln:not(#run-pulse)'); }
+    }
+    if (follow) toEnd(); else if (jump) jump.hidden = false;
+  }
+
+  ${elapsedTickJs}
+
+  if (steer && window.fetch) {
+    var text = steer.querySelector('textarea');
+    function size() { if (!text) return; text.style.height = 'auto'; text.style.height = Math.min(160, text.scrollHeight) + 'px'; fit(); }
+    if (text) {
+      text.addEventListener('input', size);
+      text.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); if (steer.requestSubmit) steer.requestSubmit(); else steer.submit(); }
+      });
+      size();
+    }
+    steer.addEventListener('submit', function (ev) {
+      if (ev.submitter && ev.submitter.id === 'run-stop') return;
+      var api = steer.getAttribute('data-api');
+      if (!text || !api || steer.getAttribute('data-running') !== '1') return;
+      ev.preventDefault();
+      var said = text.value.trim();
+      if (!said) return;
+      text.disabled = true;
+      fetch(api, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ text: said }) })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
+        .then(function (out) {
+          text.value = '';
+          size();
+          var note = document.getElementById('run-steer-note');
+          if (note) note.textContent = out.outcome === 'sent' ? 'Heard at its next step. Every word is kept in the log.' : 'Nobody was listening; it went on the conversation.';
+        })
+        .catch(function () { steer.submit(); })
+        .then(function () { text.disabled = false; text.focus(); });
+    });
+  }
+
+  if (!url || typeof EventSource === 'undefined') return;
+  var meta = document.querySelector('meta[http-equiv="refresh"]');
+  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
+  var source = new EventSource(url);
+  var empty = document.getElementById('run-empty');
+  var seeded = false;
+  source.addEventListener('line', function (event) {
+    if (!seeded) {
+      if (event.lastEventId === '1') {
+        Array.prototype.slice.call(log.querySelectorAll('.ln:not(#run-pulse)')).forEach(function (el) { log.removeChild(el); });
+      }
+      seeded = true;
+      if (empty) empty.hidden = true;
+    }
+    var text = event.data;
+    try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
+    add(draw(text));
+  });
+  source.addEventListener('done', function (event) {
+    source.close();
+    var run;
+    try { run = JSON.parse(event.data); } catch (err) { return; }
+    paint(run);
+    if (steer) {
+      steer.setAttribute('data-running', '0');
+      var n = document.getElementById('run-steer-note');
+      if (n) n.textContent = 'The run is over; this goes on the conversation and starts a run.';
+      var t = steer.querySelector('textarea');
+      if (t) t.placeholder = 'Tell ' + who + ' for its next run';
+    }
+    window.clearInterval(clock);
+    tick();
+  });
+})();
+`;
+
+/**
+ * The tail beside a running row, or in the head card, on the app's own page
+ * in the studio (\`studio/app.ts\`, \`studio/previews.ts\`, \`#app-run-tail\`):
+ * the same lines a run's own page streams, a handful at a time, so a person
+ * on the app's page sees the crew at work — or the app itself coming up,
+ * before any agent has touched it — without opening the run. \`data-cap\`
+ * bounds what stays in the DOM as new lines arrive — a chatty run left open
+ * cannot grow the page without bound. There is exactly one of these on a
+ * page at once (an agent run's own work outranks a background deploy, so
+ * only one of the two ever renders the id), so it opens one more stream
+ * beside the app's own state stream and the page's live regions, never one
+ * per row. It carries no controls of its own: Stop lives on the row, the
+ * full transcript is one click away, and the row's own word — or the head
+ * card's own state — swaps in once the run is over (the page's existing
+ * live regions already repaint on \`run.*\`) — this only ever appends lines
+ * and stops.
+ */
+export const appTailJs = /* js */ `
+(function () {
+  var tail = document.getElementById('app-run-tail');
+  if (!tail || typeof EventSource === 'undefined') return;
+  var url = tail.getAttribute('data-stream');
+  if (!url) return;
+  var who = tail.getAttribute('data-who') || 'the crew';
+  var cap = parseInt(tail.getAttribute('data-cap') || '0', 10) || 0;
+  // The no-script half refreshed the whole page while this run went; the
+  // stream above does better, so it steps aside the moment it can run.
+  var meta = document.querySelector('meta[http-equiv="refresh"]');
+  if (meta) meta.remove();
+
+  ${logLineJs}
+  function add(el) {
+    tail.appendChild(el);
+    if (cap) {
+      var kept = tail.querySelectorAll('.ln');
+      while (kept.length > cap) { tail.removeChild(kept[0]); kept = tail.querySelectorAll('.ln'); }
+    }
+    tail.scrollTop = tail.scrollHeight;
+  }
+
+  var source = new EventSource(url);
+  var seeded = false;
+  source.addEventListener('line', function (event) {
+    if (!seeded) {
+      if (event.lastEventId === '1') {
+        Array.prototype.slice.call(tail.querySelectorAll('.ln')).forEach(function (el) { tail.removeChild(el); });
+      }
+      seeded = true;
+    }
+    var text = event.data;
+    try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
+    add(draw(text));
+  });
+  // The run is over: stop appending. The row above settles on its final
+  // word the next time the page's own "Now" region repaints, which the
+  // \`run.finished\` event this very moment triggers.
+  source.addEventListener('done', function () { source.close(); });
 })();
 `;
 
@@ -1447,12 +1686,19 @@ export const shellJs = /* js */ `
             d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
         : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
     });
+    // Which noun a tell or a change lives under is the mode's, and the index
+    // carries it — the studio's /tells/:n and /changes/:n, dev's /issues/:n
+    // and /pulls/:n, the same addresses the server just rendered into the
+    // page behind this box (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
+    var studio = loadIndex().studio === true;
     (out.issues || []).slice(0, 5).forEach(function (i) {
       if (i.source !== 'local') return;
+      var tell = i.kind === 'issue';
+      var noun = tell ? (studio ? 'tells' : 'issues') : (studio ? 'changes' : 'pulls');
       rows.push({
         t: i.title,
-        h: '/' + i.repo.owner + '/' + i.repo.name + '/' + (i.kind === 'issue' ? 'issues' : 'pulls') + '/' + i.number,
-        g: i.kind === 'issue' ? 'Issues' : 'Pull requests',
+        h: '/' + i.repo.owner + '/' + i.repo.name + '/' + noun + '/' + i.number,
+        g: tell ? 'Issues' : 'Pull requests',
         d: i.repo.owner + '/' + i.repo.name + ' #' + i.number,
       });
     });
@@ -1785,10 +2031,20 @@ export const liveRegionsJs = /* js */ `
         // page carries a fresh nonce the live document's CSP cannot match —
         // parsing it would log an inline-style violation for nothing.
         var fresh = new DOMParser().parseFromString(text.replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, ''), 'text/html');
+        // The fresh page's drawings come across first: a region swapping in
+        // an icon this page never painted would otherwise point at a
+        // <symbol> the document does not have (src/web/icons.ts).
+        var theirSprite = fresh.querySelector('.sprite');
+        var mySprite = document.querySelector('.sprite');
+        if (theirSprite && mySprite) mySprite.replaceWith(theirSprite);
         ids.forEach(function (id) {
           var mine = document.getElementById(id);
           var theirs = fresh.getElementById(id);
           if (!mine || !theirs) return;
+          // A card mid-decision (asksJs marks it data-busy while its post is
+          // in flight) is never pulled out from under the click that is
+          // deciding it; the next matching event tries the swap again.
+          if (mine.querySelector('[data-busy]')) return;
           var active = document.activeElement;
           if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
           mine.innerHTML = theirs.innerHTML;

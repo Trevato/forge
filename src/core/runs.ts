@@ -12,6 +12,15 @@ import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 
 export type RunKind = "deploy" | "agent" | "check";
+
+/**
+ * The one summary a run cancelled by the forge's own restart carries — never
+ * the commit's fault, so callers that count failures (`previewLatency`) or
+ * word one (`runWord` in `web/studio/words.ts`) can tell it apart from a
+ * person's own Cancel or a real failure by this one string.
+ */
+export const STOPPED_SUMMARY = "the forge stopped";
+
 /** The kinds that pass judgement on a commit: a preview's deploy, or a repository's own check. */
 export const CHECK_KINDS: readonly RunKind[] = ["deploy", "check"];
 export const RUN_KINDS: readonly RunKind[] = ["deploy", "agent", "check"];
@@ -20,6 +29,18 @@ export type RunState = "queued" | "running" | "ok" | "failed" | "cancelled";
 export const RUN_TERMINAL: readonly RunState[] = ["ok", "failed", "cancelled"];
 export const isTerminal = (state: RunState): boolean =>
   RUN_TERMINAL.includes(state);
+
+/**
+ * What a failed check's own output said, recognised once as the run
+ * finishes (`checks/bun-test.ts`) and never re-parsed: the pass/fail
+ * counts, and the first few failing names — already bounded, so a run with
+ * forty failures still fits on one line wherever this is shown.
+ */
+export interface CheckDetail {
+  readonly passed: number;
+  readonly failed: number;
+  readonly names: readonly string[];
+}
 
 export interface Run {
   readonly id: string;
@@ -50,8 +71,12 @@ export interface Run {
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
   readonly turns: number;
+  /** A failed check's own detail, when its output was recognised; null otherwise. */
+  readonly checkDetail: CheckDetail | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
+  /** When this deploy's environment started serving — set once, at the swap-in. */
+  readonly servingAt: string | null;
   readonly finishedAt: string | null;
 }
 
@@ -73,8 +98,10 @@ interface RunRow {
   attempt: number;
   heartbeat_at: string | null;
   turns: number;
+  check_detail: string;
   created_at: string;
   started_at: string | null;
+  serving_at: string | null;
   finished_at: string | null;
 }
 
@@ -96,8 +123,10 @@ const toRun = (r: RunRow): Run => ({
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
+  checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
+  servingAt: r.serving_at,
   finishedAt: r.finished_at,
 });
 
@@ -148,6 +177,30 @@ export function getRun(db: Database, runId: string): Run | undefined {
 }
 
 /**
+ * Several runs by id, in one query — for a caller that already has a batch
+ * of run ids from elsewhere (an environment's `runId`, a `failedDeploy`'s)
+ * and wants the rows without asking once per id.
+ */
+export function getRunsByIds(
+  db: Database,
+  runIds: readonly string[],
+): Map<string, Run> {
+  const out = new Map<string, Run>();
+  const unique = [...new Set(runIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...batch);
+    for (const row of rows) out.set(row.id, toRun(row));
+  }
+  return out;
+}
+
+/**
  * Take a queued run. The UPDATE's WHERE is the claim: a second worker's
  * changes count is zero and it moves on. Returns the run as running, or
  * undefined when someone else has it (or it was cancelled meanwhile).
@@ -158,6 +211,21 @@ export function claimRun(db: Database, runId: string): Run | undefined {
       `UPDATE run SET state = 'running', started_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
          heartbeat_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'queued'`,
+    )
+    .run(runId).changes;
+  return changes > 0 ? getRun(db, runId) : undefined;
+}
+
+/**
+ * Record the instant a deploy's environment started serving — the swap-in,
+ * not the tests finishing beside it. Set once: a second call, on a run
+ * already stamped, changes nothing.
+ */
+export function markServing(db: Database, runId: string): Run | undefined {
+  const changes = db
+    .query(
+      `UPDATE run SET serving_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+       WHERE id = ?1 AND state = 'running' AND serving_at IS NULL`,
     )
     .run(runId).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
@@ -177,13 +245,15 @@ export function finishRun(
     sessionId?: string | undefined;
     costUsd?: number | undefined;
     turns?: number | undefined;
+    /** A failed check's own detail, when its output was recognised. */
+    checkDetail?: CheckDetail | undefined;
   },
 ): Run | undefined {
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3,
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
-         turns = COALESCE(?6, turns),
+         turns = COALESCE(?6, turns), check_detail = ?7,
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
        WHERE id = ?1 AND state = 'running'`,
     )
@@ -194,6 +264,7 @@ export function finishRun(
       outcome.sessionId ?? null,
       outcome.costUsd ?? null,
       outcome.turns ?? null,
+      outcome.checkDetail ? JSON.stringify(outcome.checkDetail) : "",
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }
@@ -556,6 +627,32 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
   );
 }
 
+/** One repository's agent runs over a window: what "this week" is made of. */
+export interface AgentRunTotals {
+  readonly runs: number;
+  readonly spentUsd: number;
+}
+
+/**
+ * How many agent runs a repository has had since an instant, and what they
+ * cost — counted by the database, not by listing rows and adding them up in
+ * JavaScript. `SUM` over no rows is `NULL`, so a quiet week reads `0`, and
+ * the float dollars are summed once here and rounded once where printed.
+ */
+export function agentRunTotals(
+  db: Database,
+  repoId: string,
+  since: string,
+): AgentRunTotals {
+  const row = db
+    .query<{ runs: number; spent: number | null }, [string, string]>(
+      `SELECT COUNT(*) AS runs, SUM(cost_usd) AS spent FROM run
+        WHERE repo_id = ?1 AND kind = 'agent' AND created_at >= ?2`,
+    )
+    .get(repoId, since);
+  return { runs: row?.runs ?? 0, spentUsd: row?.spent ?? 0 };
+}
+
 /** The newest agent run of each repository, in one query. */
 export function latestAgentRunsForRepos(
   db: Database,
@@ -577,6 +674,100 @@ export function latestAgentRunsForRepos(
     for (const row of rows) out.set(row.repo_id, toRun(row));
   }
   return out;
+}
+
+/**
+ * How fast this app's deploys have reached their preview: the total median
+ * and the count it is drawn from, plus the same walk split at `started_at`
+ * — the wait to be picked up, and the boot once it was. The split is its
+ * own two medians, not half of the total's; they will not sum to it.
+ * Beside them, how many of this window's deploys finished without ever
+ * serving — counted, never folded into the median a dead deploy says
+ * nothing about.
+ */
+export interface PreviewLatency {
+  /** Undefined only when nothing served in the window — `n` is then 0. */
+  readonly medianSeconds: number | undefined;
+  readonly n: number;
+  /** Undefined when no served deploy in the window also has a `started_at`. */
+  readonly queueMedianSeconds: number | undefined;
+  readonly bootMedianSeconds: number | undefined;
+  /** How many of `n` carried a `started_at` and so fed the split. */
+  readonly splitN: number;
+  /** Deploys in the window that finished (`ok`, `failed` or `cancelled`) without ever serving. A deploy still queued or running is neither served nor counted here. */
+  readonly failedN: number;
+}
+
+const median = (xs: readonly number[]): number => {
+  const mid = Math.floor(xs.length / 2);
+  return xs.length % 2 === 0 ? (xs[mid - 1]! + xs[mid]!) / 2 : xs[mid]!;
+};
+
+/**
+ * The median seconds from push (`created_at`) to serving (`serving_at`)
+ * over this repo's deploys since `since` — the same reference instant
+ * `servedPhrase` (`web/ui.ts`) words a single deploy from. A deploy that
+ * never served says nothing about speed and is left out of the median,
+ * never a zero; one that served but never records a `started_at` feeds
+ * the total but not the split. Beside the median, the same walk counts
+ * deploys that finished — `ok`, `failed` or `cancelled` — without ever
+ * serving; one still `queued` or `running` is neither, and counts as
+ * neither. A deploy the forge's own restart cancelled (`STOPPED_SUMMARY`)
+ * is left out entirely, from both the failure count and the total it is
+ * "of" — the forge's own interruption, never the commit's. One query,
+ * bounded by `limit` and served by the `run_repo` index (it walks
+ * newest-first and stops at the cap), never a scan of the table.
+ */
+export function previewLatency(
+  db: Database,
+  repoId: string,
+  since: string,
+  limit = 500,
+): PreviewLatency | undefined {
+  const rows = db
+    .query<
+      {
+        secs: number | null;
+        queueSecs: number | null;
+        bootSecs: number | null;
+        finished: 0 | 1;
+      },
+      [string, string, string, number]
+    >(
+      `SELECT CASE WHEN serving_at IS NOT NULL
+                   THEN (julianday(serving_at) - julianday(created_at)) * 86400 END AS secs,
+              CASE WHEN serving_at IS NOT NULL AND started_at IS NOT NULL
+                   THEN (julianday(started_at) - julianday(created_at)) * 86400 END AS queueSecs,
+              CASE WHEN serving_at IS NOT NULL AND started_at IS NOT NULL
+                   THEN (julianday(serving_at) - julianday(started_at)) * 86400 END AS bootSecs,
+              state IN ('ok','failed','cancelled') AS finished
+         FROM run
+        WHERE repo_id = ?1 AND kind = 'deploy'
+          AND created_at >= ?2
+          AND NOT (state = 'cancelled' AND summary = ?3)
+        ORDER BY id DESC LIMIT ?4`,
+    )
+    .all(repoId, since, STOPPED_SUMMARY, limit);
+  const served = rows.filter((r) => r.secs !== null);
+  const failedN = rows.filter((r) => r.secs === null && r.finished === 1).length;
+  if (served.length === 0 && failedN === 0) return undefined;
+  const secs = served.map((r) => r.secs!).sort((a, b) => a - b);
+  const queueSecs = served
+    .map((r) => r.queueSecs)
+    .filter((s): s is number => s !== null)
+    .sort((a, b) => a - b);
+  const bootSecs = served
+    .map((r) => r.bootSecs)
+    .filter((s): s is number => s !== null)
+    .sort((a, b) => a - b);
+  return {
+    medianSeconds: secs.length === 0 ? undefined : median(secs),
+    n: secs.length,
+    queueMedianSeconds: queueSecs.length === 0 ? undefined : median(queueSecs),
+    bootMedianSeconds: bootSecs.length === 0 ? undefined : median(bootSecs),
+    splitN: queueSecs.length,
+    failedN,
+  };
 }
 
 /** Agent runs queued or running across many repositories, newest first. */

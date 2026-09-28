@@ -1,0 +1,277 @@
+/**
+ * An app as one row on a shelf: its name and the one line under it, a dot
+ * and a badge for whether it is live, what the crew last did there and when,
+ * a pill for how many things it asks of you, and the way in — the row the
+ * studio's home draws its *Your apps* card from, and the one every other
+ * page that lists apps draws too, so an app looks the same wherever it is
+ * shelved. Hand over repositories, get rows; nothing here knows what card
+ * they land in.
+ *
+ * Every read is made once for the whole shelf and never once per row: the
+ * app records in one query, the newest run of every app in one, who ran them
+ * in one, the newest open change of every app in one, the asks in one pass.
+ * The words are gathered together because `runWord` reads git. A caller that
+ * has already read what asks the viewer — the home draws its asks panel from
+ * the same list — hands that list in rather than paying for it twice.
+ *
+ * What a row says it is doing, in order: a run still in flight (that is the
+ * thing moving); else an open change, whoever opened it — the row is about
+ * the app, not about who typed it; else the most recent of the last run's
+ * own word and production's own fact (`words.ts`'s `productionFact` — a
+ * deploy that just landed or just failed), preferring the run's word when it
+ * already says *shipped* so a change stays credited to whoever's own history
+ * carries it rather than to the deploy behind it; else quiet, or
+ * told-but-stuck when nobody on the crew can take it.
+ */
+
+import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsForRepos } from "../../core/apps.ts";
+import { reposWithBuilder } from "../../core/agents.ts";
+import { reposWithUnclaimedTell } from "../../core/issues.ts";
+import { openPullsForRepos } from "../../core/pulls.ts";
+import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import {
+  getRunsByIds,
+  isTerminal,
+  latestAgentRunsForRepos,
+} from "../../core/runs.ts";
+import { getUsersByIds } from "../../core/users.ts";
+import { repoDir } from "../../git/repos.ts";
+import type { Ctx } from "../../http/context.ts";
+import { repoBase } from "../chrome.ts";
+import { html, type Html } from "../html.ts";
+import { dot, envPhrase, envTone, pill, row, time } from "../ui.ts";
+import {
+  productionFact,
+  pullWord,
+  runWord,
+  servingHistory,
+  type ProductionFact,
+  type ServingHistory,
+  type WordCtx,
+} from "./words.ts";
+
+/** Reads the caller has already made, so the shelf does not make them again. */
+export interface ShelfReads {
+  /** Production's own fact for each app — a deploy that just landed or just
+   * failed. The home rail reads the same map for its own rows. */
+  readonly productionFacts?: ReadonlyMap<string, ProductionFact> | undefined;
+  /** The page's memo of production's history, when the page words more
+   * than the shelf — the home's own rows ask the same question. */
+  readonly history?: ServingHistory | undefined;
+}
+
+/**
+ * Production's own fact for every one of these repositories, in one batch:
+ * `runtime.status` is in-memory (no query), so the only read is the run rows
+ * a fact points to — one `IN` for the whole shelf, never one per row.
+ */
+export function productionFactsForRepos(
+  ctx: Ctx,
+  repos: readonly Repo[],
+): Map<string, ProductionFact> {
+  const db = ctx.app.db;
+  const runtime = appsRuntime(ctx.app);
+  const out = new Map<string, ProductionFact>();
+  if (runtime === undefined) return out;
+  const records = appsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  const productions = new Map<string, EnvStatus | undefined>();
+  const runIds = new Set<string>();
+  for (const repo of repos) {
+    const record = records.get(repo.id);
+    const production = record
+      ? runtime.status(record).find((e) => e.env === "production")
+      : undefined;
+    productions.set(repo.id, production);
+    if (production?.runId !== undefined && production.createdAt !== undefined)
+      runIds.add(production.runId);
+    if (production?.failedDeploy !== undefined)
+      runIds.add(production.failedDeploy.runId);
+  }
+  const runs = getRunsByIds(db, [...runIds]);
+  for (const [repoId, production] of productions) {
+    const fact = productionFact(production, runs);
+    if (fact !== undefined) out.set(repoId, fact);
+  }
+  return out;
+}
+
+/**
+ * These repositories as shelf rows, in the order they were handed in.
+ */
+export async function shelfRows(
+  ctx: Ctx,
+  repos: readonly Repo[],
+  reads: ShelfReads = {},
+): Promise<Html[]> {
+  const db = ctx.app.db;
+  const user = ctx.auth.user;
+  const runtime = appsRuntime(ctx.app);
+  const history = reads.history ?? servingHistory();
+  const records = appsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  // A public app you can only read appears here too, but who is on its
+  // crew is its owner's fact, not yours to see — same predicate as the
+  // app's own page.
+  const ownerFacts = new Set(
+    repos.filter((r) => canSeeOwnerFacts(db, r, user)).map((r) => r.id),
+  );
+  // One read for the newest run of every app, one for who ran them: the
+  // shelf must not get slower as the apps grow.
+  const latestRuns = latestAgentRunsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  // Production's own fact, per app, one batch — a deploy that just landed or
+  // just failed, the other half of what "the last thing that happened" can
+  // mean now that it is not only an agent run.
+  const productionFacts =
+    reads.productionFacts ?? productionFactsForRepos(ctx, repos);
+  const actors = getUsersByIds(
+    db,
+    [
+      ...[...latestRuns.values()].map((r) => r.actorId),
+      ...[...productionFacts.values()].map((f) => f.actorId),
+    ].filter((id): id is string => id !== null),
+  );
+  // The newest open change of every app, one read — a person's own change
+  // counts here too, not only one an agent run produced.
+  const openPulls = openPullsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  // A tell nobody can pick up (no builder on the crew) is stuck, not quiet —
+  // both reads batched across the whole shelf, never once per row.
+  const repoIds = repos.map((r) => r.id);
+  const withBuilder = reposWithBuilder(db, repoIds);
+  const stuck = new Set(
+    [...reposWithUnclaimedTell(db, repoIds)].filter(
+      (id) => !withBuilder.has(id),
+    ),
+  );
+
+  return await Promise.all(
+    repos.map(async (repo) => {
+      const record = records.get(repo.id);
+      const envs =
+        runtime === undefined || record === undefined
+          ? []
+          : runtime.status(record);
+      const production = envs.find((e) => e.env === "production");
+      const latest = latestRuns.get(repo.id);
+      // A run still in flight is the thing that is moving, and outranks a
+      // change sitting open; once nothing is moving, an open change — an
+      // agent's or a person's own — outranks the quiet of the last run's
+      // history.
+      const runIsMoving = latest !== undefined && !isTerminal(latest.state);
+      const openPull = openPulls.get(repo.id);
+      const useOpenPull = openPull !== undefined && !runIsMoving;
+      const wordCtx: WordCtx = {
+        db,
+        dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+        runtime,
+        record,
+        history,
+      };
+      const agentWord =
+        useOpenPull || latest === undefined
+          ? undefined
+          : await runWord(wordCtx, latest);
+      const agentAt =
+        latest === undefined
+          ? undefined
+          : (latest.finishedAt ?? latest.createdAt);
+      const deployFact =
+        useOpenPull || runIsMoving ? undefined : productionFacts.get(repo.id);
+      // Production's fact only displaces the run's own word when the run's
+      // word is not already *shipped* — a change stays credited to whoever's
+      // history carries it, never double-told as the deploy behind it — or
+      // when it is a failure at least as new: #200's case outranks a stale
+      // *shipped* the same way a fresher one would.
+      const useDeployFact =
+        deployFact !== undefined &&
+        (agentWord === undefined ||
+          deployFact.word === "stopped" ||
+          agentWord.word !== "shipped") &&
+        (agentAt === undefined || deployFact.at >= agentAt);
+      const word = useOpenPull
+        ? await pullWord(wordCtx, openPull)
+        : useDeployFact
+          ? { word: deployFact!.word, note: deployFact!.note }
+          : agentWord;
+      const who = useOpenPull
+        ? ownerFacts.has(repo.id)
+          ? openPull.authorName
+          : undefined
+        : useDeployFact
+          ? deployFact!.actorId == null || !ownerFacts.has(repo.id)
+            ? undefined
+            : actors.get(deployFact!.actorId)?.username
+          : latest?.actorId == null || !ownerFacts.has(repo.id)
+            ? undefined
+            : actors.get(latest.actorId)?.username;
+      // The badge is production's own word (`envPhrase`) — whether a newer
+      // push failed behind what is serving is a fact of the environment, not
+      // of the run or change history `happening` reads (#191's own word for
+      // that stays put; this is the other half of the row, decided once here
+      // rather than folded into a second vocabulary). The tone rides with it:
+      // `envTone` only knows the runtime's raw state, which still reads
+      // "success" while an older deploy answers for a push that failed behind
+      // it — this row is not untroubled green just because `envTone` cannot
+      // see that fact.
+      const live = envPhrase(production);
+      const tone =
+        production?.failedDeploy !== undefined
+          ? "attn"
+          : envTone(production?.state);
+      // Telling the crew something is a writer's move — a reader who can only
+      // see this app is never invited to it, the same floor `ownerFacts` holds
+      // for who worked and what it cost.
+      const canTell = ownerFacts.has(repo.id);
+      const happening =
+        word === undefined
+          ? stuck.has(repo.id)
+            ? html`<span class="muted"
+                >told — nobody on the crew to take it</span
+              >`
+            : canTell
+              ? html`<span class="muted">quiet — tell the crew something</span>`
+              : html`<span class="muted">quiet</span>`
+          : html`<span class="studio-word" data-word="${word.word}"
+                >${word.word}</span
+              >
+              ${who ? html`· ${who}` : null}
+              ${word.word === "working"
+                ? html`· now`
+                : useOpenPull
+                  ? html`· ${time(openPull.updatedAt)}`
+                  : useDeployFact
+                    ? html`· ${time(deployFact!.at)}`
+                    : html`· ${time(latest!.finishedAt ?? latest!.createdAt)}`}`;
+      // Two apps can share a bare name across owners — a row for one that is
+      // not the viewer's own names its owner, everywhere a row can appear.
+      const mine = user !== undefined && repo.ownerId === user.id;
+      const title = mine
+        ? repo.name
+        : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`;
+      return row({
+        href: repoBase(repo),
+        nav: true,
+        lead: dot(tone),
+        title,
+        titleAttr: repo.description || repo.name,
+        meta: html`${repo.description
+          ? html`${repo.description} · `
+          : null}${happening}`,
+        trail: html`<span class="badge" data-tone="${tone}"
+          >${live.word}</span
+        >`,
+      });
+    }),
+  );
+}

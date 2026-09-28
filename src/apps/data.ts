@@ -99,6 +99,18 @@ export function ensureEnvData(
   return cloneDir(source, target);
 }
 
+/**
+ * Discard a data directory that turned out to be unusable and recreate it
+ * empty. Used only after a copy has already been tried and its process
+ * would not come up: the copy is not kept beside the fresh directory, and
+ * nothing outside this one environment's data directory is touched.
+ */
+export function reseedEmpty(dataDir: string, appId: string, env: EnvName): void {
+  const target = envDataDir(dataDir, appId, env);
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(target, { recursive: true });
+}
+
 /** Remove an environment entirely: checkouts, data, everything. */
 export function removeEnv(dataDir: string, appId: string, env: EnvName): void {
   rmSync(envDir(dataDir, appId, env), { recursive: true, force: true });

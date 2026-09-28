@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as git from "../src/git/local.ts";
 import { unwrap } from "../src/kernel/result.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 const IDENTITY = {
   GIT_AUTHOR_NAME: "Ada",
@@ -25,7 +26,7 @@ const IDENTITY = {
 async function sh(args: string[], cwd: string): Promise<string> {
   const proc = Bun.spawn(["git", ...args], {
     cwd,
-    env: { ...process.env, ...IDENTITY, LC_ALL: "C", GIT_TERMINAL_PROMPT: "0" },
+    env: gitClientEnv(IDENTITY),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -47,12 +48,27 @@ async function newRepo(root: string, name: string): Promise<string> {
 }
 
 let root = "";
+const ambient: Record<string, string | undefined> = {};
 
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "forge-local-"));
+  // `git/local.ts` acts as the person at the keyboard: it inherits their
+  // environment on purpose (their identity, their credential helpers — see
+  // "the environment", below), so a commit *it* writes is authored by
+  // whoever this machine says you are. Here that person is Ada, and a
+  // machine whose shell already names an author (a crew run names its
+  // agent) must not decide it instead.
+  for (const [key, value] of Object.entries(IDENTITY)) {
+    ambient[key] = process.env[key];
+    process.env[key] = value;
+  }
 });
 
 afterAll(async () => {
+  for (const [key, value] of Object.entries(ambient)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   await rm(root, { recursive: true, force: true });
 });
 

@@ -13,9 +13,9 @@ import { isEnvName, previewEnv, type EnvName } from "../../apps/data.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import {
-  getLook,
-  isLookKind,
+  DEFAULT_PAGE,
   LOOK_SIZES,
+  lookSlot,
   looksForEnv,
   type Look,
   type LookKind,
@@ -28,34 +28,49 @@ import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { card, icon, sha, time } from "../ui.ts";
 
-/** Where a picture is served. */
+/** Where a picture is served. Named by page and kind, unless the page is
+ * the home page, when it is the kind alone — exactly the URL from before
+ * `app.looks` existed. */
 export const lookUrl = (
   base: string,
   env: EnvName,
   commitOid: string,
+  page: string,
   kind: LookKind,
-): string => `${base}/looks/${env}/${commitOid}/${kind}.png`;
+): string => `${base}/looks/${env}/${commitOid}/${lookSlot(page, kind)}.png`;
 
 /** The newest picture at one width, when there is one. */
-const pictured = (looks: readonly Look[], kind: LookKind): Look | undefined =>
-  looks.find((l) => l.kind === kind && l.error === null);
+export const pictured = (
+  looks: readonly Look[],
+  kind: LookKind,
+): Look | undefined => looks.find((l) => l.kind === kind && l.error === null);
 
-// GET /:owner/:name/looks/:env/:commit/:kind.png
+/**
+ * The picture for a small slot: the dedicated thumb, or — for a commit
+ * taken before it existed — the phone shot a thumbnail loaded before.
+ * Always the home page: a slot this small has room for one picture of an
+ * app, and the home page is the one everyone means by it.
+ */
+export const thumbLook = (looks: readonly Look[]): Look | undefined => {
+  const home = looks.filter((l) => l.page === DEFAULT_PAGE);
+  return pictured(home, "thumb") ?? pictured(home, "phone");
+};
+
+// GET /:owner/:name/looks/:env/:commit/:kind.png — the last segment is
+// really a slot (`lookSlot`): the kind alone for the home page, the page
+// and the kind for any other.
 export function lookImage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   const env = ctx.params.env ?? "";
   const commit = ctx.params.commit ?? "";
-  const kind = ctx.params.kind ?? "";
-  if (
-    !repo ||
-    !isEnvName(env) ||
-    !/^[0-9a-f]{40}$/.test(commit) ||
-    !isLookKind(kind)
-  )
+  const slot = ctx.params.kind ?? "";
+  if (!repo || !isEnvName(env) || !/^[0-9a-f]{40}$/.test(commit) || slot === "")
     return notFound();
   const record = getAppByRepo(ctx.app.db, repo.id);
   if (!record) return notFound();
-  const look = getLook(ctx.app.db, record.id, env, commit, kind);
+  const look = looksForEnv(ctx.app.db, record.id, env).find(
+    (l) => l.commitOid === commit && lookSlot(l.page, l.kind) === slot,
+  );
   if (look === undefined || look.error !== null) return notFound();
   const path = join(ctx.app.config.dataDir, look.path);
   if (!existsSync(path)) return notFound();
@@ -71,7 +86,10 @@ export function lookImage(ctx: Ctx): Response {
 /**
  * The Look card on a pull: phone and desktop side by side, the commit
  * they are of, and a word when the head has moved since — or, honestly,
- * why there is no picture. Nothing once the preview is gone.
+ * why there is no picture. More than one page in `app.looks` gets one
+ * group per page, each labelled by its path, since each can be at a
+ * different commit (a page that failed keeps its last good picture while
+ * another moves on). Nothing once the preview is gone.
  */
 export function lookCard(
   ctx: Ctx,
@@ -83,82 +101,112 @@ export function lookCard(
   const base = repoBase(repo);
   const env = previewEnv(pull.number);
   const looks = looksForEnv(ctx.app.db, record.id, env);
-  const phone = pictured(looks, "phone");
-  const desktop = pictured(looks, "desktop");
-  const failed = looks.find((l) => l.commitOid === headOid && l.error !== null);
   const head = html`${icon("eye")}
     <h2>Look</h2>`;
-  const shown = phone ?? desktop;
-  if (shown === undefined) {
+  if (looks.length === 0) {
     if (pull.state !== "open" || pull.mergedAt !== null) return html``;
     return card(
       html`<p class="muted small">
-        ${failed === undefined
-          ? "No picture yet. One is taken when the preview comes up green."
-          : html`No picture of ${sha(headOid)}: ${failed.error}.`}
+        No picture yet. One is taken when the preview comes up green.
       </p>`,
       { head, extra: "look-card" },
     );
   }
-  const moved = shown.commitOid !== headOid;
-  const picture = (look: Look, kind: LookKind): Html => {
-    const url = lookUrl(base, env, look.commitOid, kind);
+  // Home first, then the rest in the order the manifest is likeliest to
+  // read them — alphabetically, since the row order says nothing about it.
+  const pages = [...new Set(looks.map((l) => l.page))].sort((a, b) =>
+    a === DEFAULT_PAGE ? -1 : b === DEFAULT_PAGE ? 1 : a.localeCompare(b),
+  );
+  const labelled = pages.length > 1;
+  const picture = (look: Look, kind: LookKind, page: string): Html => {
+    const url = lookUrl(base, env, look.commitOid, page, kind);
     return html`<a class="look look-${kind}" href="${url}">
       <img
         src="${url}"
         width="${LOOK_SIZES[kind].width}"
         height="${LOOK_SIZES[kind].height}"
-        alt="${repo.name} #${pull.number} on a ${kind}"
+        alt="${repo.name}${page === DEFAULT_PAGE
+          ? ""
+          : ` ${page}`} #${pull.number} on a ${kind}"
         loading="lazy"
       />
     </a>`;
   };
+  const group = (page: string): Html => {
+    const looksOfPage = looks.filter((l) => l.page === page);
+    const phone = pictured(looksOfPage, "phone");
+    const desktop = pictured(looksOfPage, "desktop");
+    const failed = looksOfPage.find(
+      (l) => l.commitOid === headOid && l.error !== null,
+    );
+    const label = when(labelled, () =>
+      html`<p class="muted small look-page">${page}</p>`,
+    );
+    const shown = phone ?? desktop;
+    if (shown === undefined)
+      return html`<div class="look-group">
+        ${label}
+        <p class="muted small">
+          ${failed === undefined
+            ? "No picture yet. One is taken when the preview comes up green."
+            : html`No picture of ${sha(headOid)}: ${failed.error}.`}
+        </p>
+      </div>`;
+    const moved = shown.commitOid !== headOid;
+    return html`<div class="look-group">
+      ${label}
+      <div class="look-pair">
+        ${when(phone, (l) => picture(l, "phone", page))}
+        ${when(desktop, (l) => picture(l, "desktop", page))}
+      </div>
+      <span class="muted small look-of"
+        >at ${sha(shown.commitOid, `${base}/commit/${shown.commitOid}`)} ·
+        ${time(shown.createdAt)}${when(
+          moved,
+          () =>
+            html` · the head has moved
+            since${failed === undefined
+              ? html`; a new picture follows its deploy`
+              : html`; no picture of ${sha(headOid)}: ${failed.error}`}`,
+        )}</span
+      >
+    </div>`;
+  };
   return card(
-    html`<div class="look-pair">
-      ${when(phone, (l) => picture(l, "phone"))}
-      ${when(desktop, (l) => picture(l, "desktop"))}
-    </div>`,
-    {
-      head: html`${head}
-        <span class="muted small look-of"
-          >at ${sha(shown.commitOid, `${base}/commit/${shown.commitOid}`)} ·
-          ${time(shown.createdAt)}${when(
-            moved,
-            () =>
-              html` · the head has moved
-              since${failed === undefined
-                ? html`; a new picture follows its deploy`
-                : html`; no picture of ${sha(headOid)}: ${failed.error}`}`,
-          )}</span
-        >`,
-      extra: "look-card",
-    },
+    html`${pages.map(group)}`,
+    { head, extra: "look-card" },
   );
 }
 
-/** How production looks now, small, for the app's studio head. */
+/**
+ * How production looks now, small, for the app's studio head — the
+ * dedicated thumb, or a commit from before it existed still shows what it
+ * always showed. It is the first picture on the app's own page, so it is
+ * not lazy: a person opening the app wants to see it at once.
+ */
 export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
-  const look = pictured(
-    looksForEnv(ctx.app.db, record.id, "production"),
-    "desktop",
+  const looks = looksForEnv(ctx.app.db, record.id, "production").filter(
+    (l) => l.page === DEFAULT_PAGE,
   );
+  const look = pictured(looks, "thumb") ?? pictured(looks, "desktop");
   if (look === undefined) return html``;
   const base = repoBase(repo);
+  const size = LOOK_SIZES[look.kind];
   return html`<a
     class="look-now"
     href="${base}/app/production/open"
     title="How it looks now, at ${look.commitOid.slice(0, 7)}"
   >
     <img
-      src="${lookUrl(base, "production", look.commitOid, "desktop")}"
-      width="${LOOK_SIZES.desktop.width}"
-      height="${LOOK_SIZES.desktop.height}"
+      src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+      width="${size.width}"
+      height="${size.height}"
       alt="${repo.name} as it looks now"
     />
   </a>`;
 }
 
-/** A phone picture as a thumbnail that opens the pull. */
+/** A small picture as a thumbnail that opens the pull. */
 export function lookThumb(href: string, src: string): Html {
   return html`<a class="look-thumb" href="${href}"
     ><img src="${src}" width="30" height="40" alt="" loading="lazy"

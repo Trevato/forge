@@ -8,23 +8,27 @@
  * path segment and can never smuggle a path of its own.
  */
 
-import type { Repo } from "../../core/repos.ts";
+import { canRead, listForks, type Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
-import { takeUpdates } from "../../actions/forks.ts";
+import {
+  forkDrift,
+  syncFork,
+  takeUpdates,
+  type ForkDrift,
+} from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import { followingCard, followingOf, lineageCard } from "./following.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
-  canRead,
   canWrite,
-  getRepoById,
-  listForks,
+  forkParentFor,
+  visibleForks,
 } from "../../core/repos.ts";
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
-import type { Ctx } from "../../http/context.ts";
+import { safeBack, type Ctx } from "../../http/context.ts";
 import { json, notFound } from "../../http/respond.ts";
 import type { Blob, RepoSource } from "../../view/source.ts";
 import {
@@ -38,8 +42,9 @@ import {
 } from "../chrome.ts";
 import { codeJs } from "../client.ts";
 import { highlightBlob } from "../code.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { appStrip } from "./apps.ts";
-import { studioApp } from "./studio.ts";
+import { studioApp } from "../studio/app.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
@@ -81,6 +86,39 @@ export { pathCrumbs, refMenu, refSet, refSetFrom } from "./refs.ts";
 
 // ---- fork ----
 
+/** The parent and the forks this viewer may see, from the request. */
+const forkParent = (ctx: Ctx, repo: Repo): Repo | undefined =>
+  forkParentFor(ctx.app.db, repo, ctx.auth.user);
+const forksFor = (ctx: Ctx, repo: Repo): Repo[] =>
+  visibleForks(ctx.app.db, repo.id, ctx.auth.user);
+
+/**
+ * How far the fork has slipped from its parent, in a phrase. A fork with
+ * commits of its own says so: an update would be refused, so the sentence
+ * has to explain the missing button.
+ */
+function driftNote(drift: ForkDrift | undefined): string | undefined {
+  if (drift === undefined || drift.ahead === null || drift.behind === null)
+    return undefined;
+  const commits = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
+  const { ahead, behind } = drift;
+  if (ahead === 0)
+    return behind === 0 ? "up to date" : `${commits(behind)} behind`;
+  if (behind === 0) return `${commits(ahead)} of its own`;
+  return `${commits(ahead)} of its own, ${behind} behind — merge by hand`;
+}
+
+/**
+ * Offer the update only when it would fast-forward: something to take, and
+ * nothing of the fork's own in the way. Unknown drift keeps the button, since
+ * the action itself is the thing that decides.
+ */
+function updatable(drift: ForkDrift | undefined): boolean {
+  if (drift === undefined || drift.ahead === null || drift.behind === null)
+    return true;
+  return drift.behind > 0 && drift.ahead === 0;
+}
+
 /**
  * GET /:owner/:name/forks — every fork of this repository the viewer may
  * see, newest first. The count on the repository page is the way in.
@@ -114,7 +152,7 @@ export async function forksPage(ctx: Ctx): Promise<Response> {
 function forkBar(ctx: Ctx, repo: Repo): Html {
   const canFork =
     ctx.auth.user !== undefined && ctx.auth.user.id !== repo.ownerId;
-  const forkCount = listForks(ctx.app.db, repo.id).length;
+  const forkCount = forksFor(ctx, repo).length;
   if (!canFork && forkCount === 0) return html``;
   return html`<div class="fork-bar">
     ${when(
@@ -242,15 +280,6 @@ export async function pinSubmit(ctx: Ctx): Promise<Response> {
       ? "Pinned. The local client keeps it cloned on your machine."
       : "Unpinned.",
   });
-}
-
-/** The page the form was submitted from, when it is one of ours. */
-function safeBack(ctx: Ctx): string | undefined {
-  const referer = ctx.request.headers.get("referer");
-  if (referer === null) return undefined;
-  const parsed = URL.parse(referer);
-  if (!parsed || parsed.origin !== ctx.url.origin) return undefined;
-  return parsed.pathname + parsed.search;
 }
 
 // ---- shared pieces ----
@@ -448,16 +477,21 @@ export function codeBar(
  * now, and where a push actually lands. Those four facts used to be spread
  * across three parts of the card, which is how someone ends up pushing to a
  * mirror without knowing the origin gets the last word.
+ *
+ * `drift` is how far the fork has slipped from its parent, read by the caller
+ * (git, so asynchronous); `undefined` on anything that is not a native fork.
  */
-function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
+function aboutCard(
+  ctx: Ctx,
+  repo: Repo,
+  refs: RefSet,
+  drift?: ForkDrift,
+): Html {
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   // An SSH listener is not built yet; when a deployment configures one, the
   // second clone line appears with no further change here.
   const sshPort = (ctx.app.config as { sshPort?: number }).sshPort;
-  const parent =
-    repo.forkParentId !== null
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
+  const parent = forkParent(ctx, repo);
   const origin = repo.origin;
   // A fork made at the origin has no `forkParentId` — its parent is a
   // repository on another forge — so the lineage row reads it off the link
@@ -575,6 +609,31 @@ function aboutCard(ctx: Ctx, repo: Repo, refs: RefSet): Html {
 }
 
 // ---- pages ----
+
+/**
+ * Studio's own word for a repository it otherwise has nothing to say about:
+ * no app record, so no head card, no box, no Now — just the code underneath,
+ * same as it always rendered. One line says so, and the one door out —
+ * `/settings/app`, the same "Run as an app" form Settings already carries —
+ * opens only for whoever could actually submit it, so a reader never sees a
+ * button that would just come back refused.
+ */
+function noAppCard(ctx: Ctx, repo: Repo): Html {
+  const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
+  return empty({
+    icon: "rocket",
+    title: "This repository has no app yet.",
+    ...(admin
+      ? {
+          action: btn("Run as an app", {
+            href: `${repoBase(repo)}/settings/app`,
+            variant: "primary",
+            icon: "rocket",
+          }),
+        }
+      : {}),
+  });
+}
 
 /** The tree, the README under it, and the ref switcher above both. */
 export async function renderCode(
@@ -791,17 +850,18 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   // In the studio an app's home is the app: what it serves, who is on it,
-  // what it asks. Dev mode is the code, as ever.
-  if (ctx.mode === "studio") {
-    const record = getAppByRepo(ctx.app.db, repo.id);
-    if (record !== undefined) return await studioApp(ctx, repo, record);
-  }
+  // what it asks. Dev mode is the code, as ever. A repository with no app
+  // record has nothing of that to show — read once, used either way below.
+  const studioMode = ctx.mode === "studio";
+  const record = studioMode ? getAppByRepo(ctx.app.db, repo.id) : undefined;
+  if (record !== undefined) return await studioApp(ctx, repo, record);
+  const noApp = studioMode ? noAppCard(ctx, repo) : null;
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);
 
   if (refs.branches.length === 0) {
-    const body = html`${scopeHeader(ctx, scope, "code")}
+    const body = html`${scopeHeader(ctx, scope, "code")}${noApp}
       <div class="mt">
         ${empty({
           icon: "repo",
@@ -842,13 +902,20 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
       : knownRef(refs, repo.defaultBranch)
         ? repo.defaultBranch
         : refs.branches[0]!;
-  const entries = await scope.source.tree(ref, "");
+  // A fork's rail says how far its default branch is from its parent's; the
+  // count is git's, so it is read here rather than inside the card — beside
+  // the tree read, not after it, because neither waits on the other.
+  const parent = forkParent(ctx, repo);
+  const [entries, drift] = await Promise.all([
+    scope.source.tree(ref, ""),
+    parent === undefined ? undefined : forkDrift(ctx.app, repo, parent),
+  ]);
   const tree = entries.ok ? entries.value : [];
 
   const following = await followingOf(ctx, repo);
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}
+  })}${noApp}
   ${appStrip(ctx, repo)}
   ${following === undefined
     ? forkBar(ctx, repo)
@@ -858,9 +925,9 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
     ref,
     path: "",
     entries: tree,
-    rail: aboutCard(ctx, repo, refs),
+    rail: aboutCard(ctx, repo, refs, drift),
   })}
-  ${codeMount(scope, ref)} ${finderDialog()}`;
+  ${codeMount(scope, ref)} ${finderDialog()} ${liveMount({ repo: scope.base })}`;
   return page({
     ctx,
     title: repo.name,
@@ -872,7 +939,7 @@ export async function repoHome(ctx: Ctx): Promise<Response> {
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
-    scriptJs: codeJs,
+    scriptJs: `${codeJs}\n${liveClientJs}`,
   });
 }
 

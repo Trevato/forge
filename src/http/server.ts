@@ -6,6 +6,7 @@
  */
 
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
+import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
@@ -92,10 +93,18 @@ import {
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
+  newTellPage,
+  tellPage,
 } from "../web/pages/issues.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
-import { modeSubmit, tellSubmit } from "../web/pages/studio.ts";
-import { DEFAULT_MODE, isMode } from "../web/mode.ts";
+import {
+  modeSubmit,
+  takeBackSubmit,
+  tellSubmit,
+} from "../web/studio/actions.ts";
+import { appStateFragment } from "../web/studio/previews.ts";
+import { changesList, tellsList } from "../web/studio/lists.ts";
+import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
@@ -131,6 +140,7 @@ import {
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
 import {
+  changePage,
   pullCommentSubmit,
   pullMergeSubmit,
   pullPage,
@@ -233,7 +243,14 @@ import {
   type Ctx,
   type Handler,
 } from "./context.ts";
-import { apiError, json, noRoute, notFound } from "./respond.ts";
+import {
+  apiError,
+  json,
+  noRoute,
+  notFound,
+  prefersHtml,
+  securityFloor,
+} from "./respond.ts";
 import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
 import {
   MAX_KEY_LENGTH,
@@ -554,14 +571,25 @@ export function buildRouter(): Router<Handler> {
     ),
   );
 
-  // The JSON API lives in api.ts; its routes all sit under /api/v1.
+  // The JSON API lives in api.ts, on its own router (`buildApiRouter`
+  // below) — never here, so a `/:owner`-shaped studio route can never
+  // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
-  apiRoutes(router);
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
   router.add("GET", "/:owner/:name/issues", issuesList);
+  // The studio's own nouns for the same list and the same page — everything
+  // told, and one tell. Each is a second door onto the one handler, never a
+  // second copy of the page; `/issues` and `/issues/:number` stay dev's own
+  // canonical addresses and answer exactly as they always have, in both
+  // modes (`tellsList`/`tellPage` redirect there when the studio does not
+  // apply). The literal /tells is registered before /tells/:number for the
+  // same reason /issues/new is.
+  router.add("GET", "/:owner/:name/tells", tellsList);
+  router.add("GET", "/:owner/:name/tells/new", newTellPage);
+  router.add("GET", "/:owner/:name/tells/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", issuePage);
@@ -581,8 +609,14 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
     assigneeSubmit(ctx, "issue"),
   );
-  // The studio's three verbs on an app: tell, ship, say.
+  // The studio's verbs on an app: tell, ship, say, and — on a shipped
+  // change — take it back.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/take-back",
+    takeBackSubmit,
+  );
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",
@@ -593,6 +627,11 @@ export function buildRouter(): Router<Handler> {
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   router.add("GET", "/:owner/:name/pulls", pullsList);
+  // The studio's own nouns for the same list and the same page — every
+  // change, and one change. See the tells above for the rule; the forms
+  // that ship, close and comment keep posting under /pulls/:number.
+  router.add("GET", "/:owner/:name/changes", changesList);
+  router.add("GET", "/:owner/:name/changes/:number", changePage);
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
@@ -629,6 +668,9 @@ export function buildRouter(): Router<Handler> {
   // The app a repository runs as, and the runs it produced. Opening an
   // environment goes through the forge so a private app gets its grant.
   router.add("GET", "/:owner/:name/app", appPage);
+  // The studio page's own live refresh: the head card and previews list,
+  // bare, fetched on a deploy run event for the app being viewed.
+  router.add("GET", "/:owner/:name/app/state", appStateFragment);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);
@@ -750,6 +792,18 @@ export function buildRouter(): Router<Handler> {
   return router;
 }
 
+/**
+ * The JSON API's own router, matched before the studio's when a path starts
+ * with `/api` — so a miss under `/api/` can never fall through to a
+ * `/:owner`-shaped page route and answer with a repo's or a profile's 404
+ * page instead of the API's own.
+ */
+export function buildApiRouter(): Router<Handler> {
+  const router = new Router<Handler>();
+  apiRoutes(router);
+  return router;
+}
+
 async function withGitAccess(
   ctx: Ctx,
   service: GitService,
@@ -844,6 +898,26 @@ function withRateHeaders(
   } catch {
     // An immutable header set is not worth failing a request over; the
     // limit itself is still enforced.
+  }
+  return response;
+}
+
+/**
+ * `?mode=studio` or `?mode=dev` on any URL sets the cookie, exactly like the
+ * toggle's POST — a link someone is handed must work as a switch by itself,
+ * not just for the one page it lands on.
+ */
+function withModeCookie(
+  response: Response,
+  mode: Mode | undefined,
+  secure: boolean,
+): Response {
+  if (mode === undefined) return response;
+  try {
+    response.headers.append("set-cookie", modeCookie(mode, secure));
+  } catch {
+    // Same tradeoff as the rate headers: a frozen header set should not
+    // fail the request.
   }
   return response;
 }
@@ -1026,6 +1100,21 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     return new Response("");
   }
 
+  // post-receive: a same-repo pull whose head is one of these branches
+  // follows the push before anything hears about it — the same call the web
+  // editor and the API make, so a real `git push` lands on the identical
+  // updater rather than a second one that could drift from it.
+  for (const update of input.updates) {
+    if (!update.ref.startsWith("refs/heads/") || ZERO_OID.test(update.newOid))
+      continue;
+    trackPullHead(
+      app.db,
+      repo.id,
+      update.ref.slice("refs/heads/".length),
+      update.newOid,
+    );
+  }
+
   // post-receive: the push is durable — record it and wake listeners.
   app.bus.append({
     kind: "push",
@@ -1089,6 +1178,7 @@ async function clearStaleSockets(app: App): Promise<void> {
 
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
+  const apiRouter = buildApiRouter();
   await clearStaleSockets(app);
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
@@ -1106,51 +1196,23 @@ export async function serve(app: App): Promise<Servers> {
       const runtime = appsRuntime(app);
       if (runtime !== undefined) {
         const target = resolveAppHost(app, runtime.options.domain, request);
-        if (target === "unknown")
-          return new Response("not found", { status: 404 });
-        if (target !== undefined)
+        // A preview's headers are the app's business: what `proxyApp`
+        // carries back leaves exactly as the app wrote it, which is why the
+        // floor below sits after this return and not around it.
+        if (target !== undefined && target !== "unknown")
           return proxyApp(runtime, request, target, server);
+        if (target === "unknown")
+          return securityFloor(new Response("not found", { status: 404 }));
       }
-      const url = publicUrl(request, app.config.url);
-      if (url.pathname === "/healthz") return healthResponse();
-      const matched = router.match(request.method, url.pathname);
-      if (!matched) return noRoute(request.method, url.pathname);
-      const auth = await resolveAuth(app, request);
-
-      // The two things standing between one runaway agent and everybody
-      // else's latency, applied before a handler runs and after auth is
-      // known — a limit needs an identity, and a replay needs a credential.
-      const credential = tokenCredential(request, auth);
-      const verdict =
-        credential === undefined
-          ? undefined
-          : limiter.take(credential, auth.scope ?? "ro");
-      if (verdict !== undefined && !verdict.allowed) {
-        return withRateHeaders(tooManyRequests(verdict), verdict);
-      }
-
-      const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      const modeCookie = cookieValue(request, "forge_mode") ?? "";
-      const invoke = (into: Request): Response | Promise<Response> =>
-        matched.handler({
-          app,
-          request: into,
-          url,
-          params: matched.params,
-          auth,
-          theme: isThemeName(themeCookie) ? themeCookie : undefined,
-          mode: isMode(modeCookie) ? modeCookie : DEFAULT_MODE,
-        });
-
-      const response =
-        credential === undefined
-          ? await invoke(request)
-          : await withIdempotency(app, request, url, credential, invoke);
-      return withRateHeaders(response, verdict);
+      // Everything the forge answers for itself leaves through this one
+      // door, so a responder added next year cannot forget the floor.
+      return securityFloor(
+        await answer(app, router, apiRouter, limiter, request),
+      );
     },
     error(error) {
       app.log.error("unhandled request error", { error: String(error) });
-      return json({ error: "internal" }, 500);
+      return securityFloor(json({ error: "internal" }, 500));
     },
   });
 
@@ -1176,4 +1238,116 @@ export async function serve(app: App): Promise<Servers> {
       rmSync(app.socketPath, { force: true });
     },
   };
+}
+
+/**
+ * One request against the forge's own routes: health, the route that
+ * matched or the two shapes of "no route", the limiter, and the handler.
+ * The response it returns has not been given the security floor yet — that
+ * is the caller's single door, above.
+ *
+ * HEAD is answered here too, in one place: it routes as the GET it stands
+ * in for — so a path with only a POST route still 404s — and the body is
+ * dropped from whatever GET would have returned, after the one render that
+ * produced it.
+ */
+async function answer(
+  app: App,
+  router: Router<Handler>,
+  apiRouter: Router<Handler>,
+  limiter: RateLimiter,
+  request: Request,
+): Promise<Response> {
+  const response = await answerGet(app, router, apiRouter, limiter, request);
+  return request.method === "HEAD"
+    ? new Response(null, { status: response.status, headers: response.headers })
+    : response;
+}
+
+async function answerGet(
+  app: App,
+  router: Router<Handler>,
+  apiRouter: Router<Handler>,
+  limiter: RateLimiter,
+  request: Request,
+): Promise<Response> {
+  const url = publicUrl(request, app.config.url);
+  if (url.pathname === "/healthz") return healthResponse();
+  const routeMethod = request.method === "HEAD" ? "GET" : request.method;
+  // The one place a path decides its own shape of miss: anything under
+  // `/api` matches only against the API's own routes, so a studio route as
+  // generic as `/:owner/:name` can never claim it — a route added there
+  // next year still can't bring the HTML 404 back for an API caller.
+  const isApiPath = url.pathname === "/api" || url.pathname.startsWith("/api/");
+  const matched = isApiPath
+    ? apiRouter.match(routeMethod, url.pathname)
+    : router.match(routeMethod, url.pathname);
+  if (!matched) {
+    // A path under no route at all is what a mistyped or stale studio
+    // URL lands on. A browser gets the forge's own page for it, same as
+    // any other 404; an API client — anything under `/api/` — keeps the
+    // `no_route` body, distinct from `not_found` so it can tell a typo
+    // from a resource that is really gone. The page is rendered from a
+    // viewer-less `Ctx`: resolving a session or token here would spend a
+    // database read on a path that, by construction, cannot belong to a
+    // signed-in-only route, at the cost of the topbar reading "Sign in"
+    // even for someone who is.
+    if (!isApiPath && prefersHtml(request, url.pathname)) {
+      const themeCookie = cookieValue(request, "forge_theme") ?? "";
+      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
+      const anonCtx: Ctx = {
+        app,
+        request,
+        url,
+        params: {},
+        auth: { user: undefined, scope: undefined, via: "none" },
+        theme: isThemeName(themeCookie) ? themeCookie : undefined,
+        mode: isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE,
+      };
+      return notFoundPage(anonCtx);
+    }
+    return noRoute(request.method, url.pathname);
+  }
+  const auth = await resolveAuth(app, request);
+
+  // The two things standing between one runaway agent and everybody
+  // else's latency, applied before a handler runs and after auth is
+  // known — a limit needs an identity, and a replay needs a credential.
+  const credential = tokenCredential(request, auth);
+  const verdict =
+    credential === undefined
+      ? undefined
+      : limiter.take(credential, auth.scope ?? "ro");
+  if (verdict !== undefined && !verdict.allowed) {
+    return withRateHeaders(tooManyRequests(verdict), verdict);
+  }
+
+  const themeCookie = cookieValue(request, "forge_theme") ?? "";
+  const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
+  // `?mode=` on the URL is the escape hatch: a plain link a person is
+  // handed switches the browser by itself, the same way the toggle's
+  // POST does, so it must work in both directions with no form.
+  const modeParam = url.searchParams.get("mode");
+  const modeOverride = isMode(modeParam) ? modeParam : undefined;
+  const mode =
+    modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
+  const invoke = (into: Request): Response | Promise<Response> =>
+    matched.handler({
+      app,
+      request: into,
+      url,
+      params: matched.params,
+      auth,
+      theme: isThemeName(themeCookie) ? themeCookie : undefined,
+      mode,
+    });
+
+  const response =
+    credential === undefined
+      ? await invoke(request)
+      : await withIdempotency(app, request, url, credential, invoke);
+  return withRateHeaders(
+    withModeCookie(response, modeOverride, url.protocol === "https:"),
+    verdict,
+  );
 }

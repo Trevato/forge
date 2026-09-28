@@ -6,8 +6,17 @@ import { createApp, type App } from "../src/app.ts";
 import { health } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
+import {
+  icon,
+  iconSprite,
+  inlineIcons,
+  type IconName,
+} from "../src/web/icons.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
+import { highlightAsset } from "../src/web/asset.ts";
+import { securityFloor } from "../src/http/respond.ts";
 import { THEME_NAMES } from "../src/design/themes.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {
@@ -101,6 +110,173 @@ describe("markdown", () => {
   });
 });
 
+describe("icons", () => {
+  test("the slot is a reference; the drawing is defined once, on the symbol", () => {
+    expect(icon("issue").text).toBe(
+      `<svg class="ico ico-issue" width="16" height="16" aria-hidden="true" ` +
+        `focusable="false"><use href="#i-issue"/></svg>`,
+    );
+    // The spinner's class is what the CSS animation reaches for, and both
+    // sizes `icon()` offers still stamp the slot they sit in.
+    expect(icon("loader").text).toContain('class="ico ico-loader"');
+    expect(icon("issue", 20).text).toContain('width="20" height="20"');
+
+    const sprite = iconSprite(icon("issue").text.repeat(4)).text;
+    expect(sprite.match(/<symbol /g)).toHaveLength(1);
+    expect(sprite).toContain(
+      `<symbol id="i-issue" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"`,
+    );
+    expect(sprite).toContain('<circle cx="12" cy="12" r="1"/>');
+    // Markup with no icons defines none at all.
+    expect(iconSprite("<p>a page of words</p>").text).toBe("");
+  });
+
+  test("a fragment carries its drawings inline, referencing no sprite", () => {
+    const inlined = inlineIcons(icon("issue").text);
+    expect(inlined).not.toContain("<use");
+    expect(inlined).not.toContain("symbol");
+    // A nested <svg> with the drawing's viewBox is what <use> instantiates.
+    expect(inlined).toContain(
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"`,
+    );
+    expect(inlined).toContain('<circle cx="12" cy="12" r="1"/>');
+    expect(inlined).toContain('class="ico ico-issue"');
+  });
+
+  test("a hundred uses of twenty drawings weigh twenty drawings", () => {
+    // The census the front door showed: 98 uses, 20 distinct.
+    const census: [IconName, number][] = [
+      ["issue", 18],
+      ["check", 17],
+      ["fork", 17],
+      ["pull", 15],
+      ["rocket", 7],
+      ["repo", 5],
+      ["user", 2],
+      ["comment", 2],
+      ["clock", 2],
+      ["branch", 2],
+      ["commit", 2],
+      ["search", 1],
+      ["plus", 1],
+      ["help", 1],
+      ["signOut", 1],
+      ["users", 1],
+      ["map", 1],
+      ["settings", 1],
+      ["key", 1],
+      ["lock", 1],
+    ];
+    const markup = census
+      .map(([name, count]) => icon(name).text.repeat(count))
+      .join("");
+    const shipped = markup.length + iconSprite(markup).text.length;
+    // What the same page would weigh with a drawing per use.
+    const perUse = inlineIcons(markup).length;
+    expect(perUse - shipped).toBeGreaterThan(15_000);
+  });
+});
+
+describe("a page ships each drawing once", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let cookie = "";
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-icons-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const signup = await fetch(`${base}/signup`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "ada",
+        email: "ada@forge.local",
+        password: "analytical-engine",
+      }),
+      redirect: "manual",
+    });
+    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const mode = await fetch(`${base}/mode`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ mode: "studio", back: "/" }),
+      redirect: "manual",
+    });
+    cookie = `${cookie}; ${(mode.headers.get("set-cookie") ?? "").split(";")[0]}`;
+    await fetch(`${base}/new`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ name: "engine", visibility: "public" }),
+      redirect: "manual",
+    });
+    for (let n = 0; n < 12; n++) {
+      await fetch(`${base}/ada/engine/issues/new`, {
+        method: "POST",
+        headers: { cookie, origin: base },
+        body: new URLSearchParams({ title: `bug ${n}`, body: "a body" }),
+        redirect: "manual",
+      });
+    }
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a list of a dozen rows sends the row's drawing once, not a dozen times", async () => {
+    const text = await (
+      await fetch(`${base}/ada/engine/issues`, { headers: { cookie } })
+    ).text();
+    expect(text.match(/<use href="#i-issue"\/>/g)!.length).toBeGreaterThan(11);
+    // The drawing itself — the issue glyph's inner dot — exactly once.
+    expect(text.match(/<circle cx="12" cy="12" r="1"\/>/g)).toHaveLength(1);
+    expect(text.match(/<symbol id="i-issue"/g)).toHaveLength(1);
+  });
+
+  test("what a page defines is exactly what it used — no more, no less", async () => {
+    for (const path of ["/", "/ada/engine/issues", "/settings"]) {
+      const text = await (
+        await fetch(`${base}${path}`, { headers: { cookie } })
+      ).text();
+      const used = new Set(
+        [...text.matchAll(/<use href="#i-([A-Za-z]+)"\/>/g)].map((m) => m[1]),
+      );
+      const defined = [...text.matchAll(/<symbol id="i-([A-Za-z]+)"/g)].map(
+        (m) => m[1],
+      );
+      expect(defined.length).toBe(used.size); // each defined once
+      expect(new Set(defined)).toEqual(used); // and nothing else shipped
+      expect(used.size).toBeGreaterThan(0);
+    }
+    // The front door is not the settings page's icons: a page with three
+    // drawings does not ship twenty.
+    const home = await (await fetch(base, { headers: { cookie } })).text();
+    expect(home).not.toContain('id="i-webhook"');
+  });
+
+  test("the thread fragment inlines its own drawings", async () => {
+    await fetch(`${base}/ada/engine/issues/1/comments`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ intent: "comment", body: "I can repro." }),
+      redirect: "manual",
+    });
+    const fragment = await (
+      await fetch(`${base}/ada/engine/issues/1/thread?after=`, {
+        headers: { cookie },
+      })
+    ).text();
+    expect(fragment).toContain("I can repro.");
+    expect(fragment).toContain('class="ico ico-comment"');
+    expect(fragment).not.toContain("<use href=");
+  });
+});
+
 describe("web pages end to end", () => {
   let dataDir: string;
   let work: string;
@@ -110,16 +286,12 @@ describe("web pages end to end", () => {
   let cookie = "";
   let token = "";
 
-  const clientEnv = {
-    ...process.env,
+  const clientEnv = gitClientEnv({
     GIT_AUTHOR_NAME: "Ada",
     GIT_AUTHOR_EMAIL: "ada@forge.local",
     GIT_COMMITTER_NAME: "Ada",
     GIT_COMMITTER_EMAIL: "ada@forge.local",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
+  });
 
   async function shOk(args: string[], cwd: string): Promise<string> {
     const proc = Bun.spawn(args, {
@@ -302,6 +474,42 @@ describe("web pages end to end", () => {
       expect(text).toContain("404");
     }
   });
+
+  test("a path under no route at all gets the forge's page for a browser, and no_route for anyone else", async () => {
+    const browser = await fetch(`${base}/ada/engine/frobnicate`, {
+      headers: {
+        accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
+    expect(browser.status).toBe(404);
+    expect(browser.headers.get("content-type")).toContain("text/html");
+    expect(browser.headers.get("content-security-policy")).toContain(
+      "default-src 'none'",
+    );
+    expect(browser.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(browser.headers.get("referrer-policy")).toBeTruthy();
+    const html = await browser.text();
+    expect(html).toContain("404");
+    expect(html).toContain("Go home");
+
+    // No Accept header at all — a plain script or `curl` — keeps the JSON
+    // contract, same as before this page existed.
+    const plain = await fetch(`${base}/ada/engine/frobnicate`);
+    expect(plain.status).toBe(404);
+    expect(plain.headers.get("content-type")).toContain("application/json");
+    const body = (await plain.json()) as { error: string; message: string };
+    expect(body.error).toBe("no_route");
+    expect(body.message).toContain("/ada/engine/frobnicate");
+
+    // An API path is unchanged even for a browser's own Accept header.
+    const api = await fetch(`${base}/api/v1/nonsense`, {
+      headers: { accept: "text/html,*/*;q=0.8" },
+    });
+    expect(api.headers.get("content-type")).toContain("application/json");
+    const apiBody = (await api.json()) as { error: string };
+    expect(apiBody.error).toBe("no_route");
+  });
 });
 
 describe("themes", () => {
@@ -431,5 +639,240 @@ describe("readiness", () => {
     expect(draining.status).toBe(503);
     expect(await draining.text()).toBe("draining");
     expect((await fetch(`${servers.url}/`)).status).toBe(200);
+  });
+});
+
+describe("HEAD mirrors the GET it stands in for", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-head-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("HEAD / is 200, empty, with the same content-type and security floor as GET /", async () => {
+    const get = await fetch(`${base}/`);
+    const getBody = await get.text();
+    expect(getBody.length).toBeGreaterThan(0);
+
+    const head = await fetch(`${base}/`, { method: "HEAD" });
+    expect(head.status).toBe(get.status);
+    expect(await head.text()).toBe("");
+    expect(head.headers.get("content-type")).toBe(get.headers.get("content-type"));
+    expect(head.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(head.headers.get("referrer-policy")).toBeTruthy();
+    expect(head.headers.get("content-security-policy")).toContain("nonce-");
+  });
+
+  test("HEAD /healthz is 200 with an empty body", async () => {
+    const head = await fetch(`${base}/healthz`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(await head.text()).toBe("");
+  });
+
+  test("HEAD of a path with no route at all is 404", async () => {
+    const head = await fetch(`${base}/no/such/route`, { method: "HEAD" });
+    expect(head.status).toBe(404);
+    expect(await head.text()).toBe("");
+  });
+
+  test("HEAD of a path that only has a POST route is 404, and never runs the handler", async () => {
+    const head = await fetch(`${base}/theme`, { method: "HEAD" });
+    expect(head.status).toBe(404);
+    expect(await head.text()).toBe("");
+    // The POST handler would have set a cookie; a HEAD must never reach it.
+    expect(head.headers.get("set-cookie")).toBeNull();
+  });
+});
+
+const FLOOR_POLICY =
+  "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+
+/**
+ * The floor, on one response: never sniffed, never a referrer off-site, and
+ * — unless the body is a document with a policy of its own — inert.
+ */
+function expectFloor(what: string, response: Response): void {
+  const label = `${what}: `;
+  expect(label + response.headers.get("x-content-type-options")).toBe(
+    label + "nosniff",
+  );
+  expect(label + response.headers.get("referrer-policy")).toBe(
+    label + "same-origin",
+  );
+  const policy = response.headers.get("content-security-policy") ?? "";
+  expect(label + (policy === "" ? "(none)" : "(a policy)")).toBe(
+    label + "(a policy)",
+  );
+  const html = (response.headers.get("content-type") ?? "").startsWith(
+    "text/html",
+  );
+  if (!html) expect(label + policy).toBe(label + FLOOR_POLICY);
+}
+
+describe("the security floor is on every response", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-floor-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("one of each kind the forge serves carries it", async () => {
+    const asset = await highlightAsset();
+    expect(asset).not.toBeNull();
+
+    const page = await fetch(`${base}/`);
+    expect(page.status).toBe(200);
+    expectFloor("html page", page);
+    // An HTML body keeps the nonce'd policy it writes for itself: the floor
+    // adds the other two headers and does not touch a policy already there.
+    expect(page.headers.get("content-security-policy")).toContain("nonce-");
+
+    const list = await fetch(`${base}/api/v1/repos`);
+    expect(list.status).toBe(200);
+    expectFloor("json", list);
+
+    const missing = await fetch(`${base}/api/v1/repos/nobody/nothing`);
+    expect(missing.status).toBe(404);
+    expectFloor("error json", missing);
+
+    const typo = await fetch(`${base}/no/such/route`, {
+      headers: { accept: "application/json" },
+    });
+    expect(typo.status).toBe(404);
+    expect(((await typo.json()) as { error: string }).error).toBe("no_route");
+    expectFloor("no_route json", typo);
+
+    const stylesheet = await fetch(`${base}/assets/forge.css`);
+    expect(stylesheet.status).toBe(200);
+    expectFloor("stylesheet", stylesheet);
+
+    const built = await fetch(`${base}${asset!.path}`);
+    expect(built.status).toBe(200);
+    expectFloor("built asset", built);
+
+    const redirect = await fetch(`${base}/theme`, {
+      method: "POST",
+      body: new URLSearchParams({ theme: "dark" }),
+      redirect: "manual",
+    });
+    expect(redirect.status).toBe(303);
+    expectFloor("redirect", redirect);
+
+    const health = await fetch(`${base}/healthz`);
+    expect(health.status).toBe(200);
+    expectFloor("healthz", health);
+  });
+
+  test("a responder that set one of these keeps its own value", () => {
+    const own = securityFloor(
+      new Response("<p>fragment</p>", {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "content-security-policy": "default-src 'none'; sandbox",
+          "referrer-policy": "no-referrer",
+        },
+      }),
+    );
+    expect(own.headers.get("content-security-policy")).toBe(
+      "default-src 'none'; sandbox",
+    );
+    expect(own.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(own.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+});
+
+describe("a refused cross-origin mutation says why in the log", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-crossorigin-"));
+    app = createApp({ dataDir, port: 0, url: "https://forge.example" });
+    servers = await serve(app);
+    base = servers.url;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function post(
+    username: string,
+    origin: string | undefined,
+  ): Promise<{ status: number; logs: string }> {
+    const logs: string[] = [];
+    const wrote = (...args: unknown[]): void => {
+      logs.push(args.map(String).join(" "));
+    };
+    const real = { log: console.log, warn: console.warn, error: console.error };
+    console.log = wrote;
+    console.warn = wrote;
+    console.error = wrote;
+    let response: Response;
+    try {
+      response = await fetch(`${base}/signup`, {
+        method: "POST",
+        ...(origin === undefined ? {} : { headers: { origin } }),
+        body: new URLSearchParams({
+          username,
+          email: `${username}@forge.example`,
+          password: "not-from-here-either",
+        }),
+        redirect: "manual",
+      });
+    } finally {
+      console.log = real.log;
+      console.warn = real.warn;
+      console.error = real.error;
+    }
+    return { status: response.status, logs: logs.join("\n") };
+  }
+
+  test("a mismatched origin is refused and logged with both origins", async () => {
+    const { status, logs } = await post("mallory", base);
+    expect(status).toBe(403);
+    expect(logs).toContain("refused cross-origin mutation");
+    expect(logs).toContain(`origin=${base}`);
+    expect(logs).toContain("expected=https://forge.example");
+  });
+
+  test("the matching origin passes, and logs nothing about it", async () => {
+    const { status, logs } = await post("ada", "https://forge.example");
+    expect(status).toBe(303);
+    expect(logs).not.toContain("refused cross-origin mutation");
+  });
+
+  test("no Origin header at all also passes, and logs nothing about it", async () => {
+    const { status, logs } = await post("bob", undefined);
+    expect(status).toBe(303);
+    expect(logs).not.toContain("refused cross-origin mutation");
   });
 });

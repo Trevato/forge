@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { appsOf } from "./studio/asks.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
@@ -28,8 +29,8 @@ import {
 } from "./flash.ts";
 import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
-import { icon, themeGlyph } from "./icons.ts";
-import { btn, iconBtn, kbd, menu, type MenuItem } from "./ui.ts";
+import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
+import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -48,13 +49,23 @@ export interface PageOptions {
    * an issue's first line. Absent, the forge's own line stands in.
    */
   description?: string;
+  /**
+   * The shell without its column width: a page whose content earns a wide
+   * monitor (the code browser, a tree beside a file). The topbar and footer
+   * are unchanged; only the main column lets go of `--page`.
+   */
+  wide?: boolean;
   /** This page's feed, advertised in the head so a reader can find it. */
   feed?: { href: string; title: string };
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
   crumbs?: { label: string; href: string }[];
   body: Html;
   /**
-   * Page-specific CSS (e.g. dynamic label colors). Emitted in a nonce'd
+   * CSS this request computed: label colors mixed from the labels actually
+   * on the page (`labelCss`) are the case this exists for. A rule that is
+   * the same for every visitor belongs in the served stylesheet
+   * (`web/style.ts`), which the browser already has — the studio's and the
+   * board's used to be sent from here and now live there. Emitted in a nonce'd
    * <style> the strict CSP allows. Must be trusted CSS the page generated —
    * never unescaped user text.
    */
@@ -87,12 +98,6 @@ export interface PageOptions {
    * (the board). The overlays stay, so the palette is still one chord away.
    */
   bare?: boolean;
-  /**
-   * The shell without its column width: a page whose content earns a wide
-   * monitor (the code browser, a tree beside a file). The topbar and footer
-   * are unchanged; only the main column lets go of `--page`.
-   */
-  wide?: boolean;
   /** The theme when the viewer has chosen none: for a page that is dark by nature. */
   theme?: ThemeName;
 }
@@ -180,7 +185,6 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
     { label: "Map", href: "/map", icon: "map" },
-    { label: "Audit", href: "/audit", icon: "shield" },
     { separator: true, label: "" },
     // The "+" menu is hidden on a phone to keep the topbar inside the
     // screen; creating things stays one tap away here.
@@ -248,14 +252,31 @@ function helpButton(): Html {
 
 // ---- palette index ----
 
-const STATIC_PALETTE: PaletteItem[] = [
+const STATIC_PALETTE_DEV: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Audit", h: "/audit", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
+  { t: "Search", h: "/search", c: "Go to" },
+  { t: "Account settings", h: "/settings", c: "Settings" },
+  { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
+  { t: "SSH keys", h: "/settings/keys", c: "Settings" },
+  { t: "Origins", h: "/settings/origins", c: "Settings" },
+];
+
+/**
+ * The studio's own verbs: no "New repository" or "New organization" — dev's
+ * own way of making one, which would land a studio reader on dev's own form
+ * unannounced. "Asks you" goes to the home, where the asks panel lives.
+ */
+const STATIC_PALETTE_STUDIO: PaletteItem[] = [
+  { t: "Home", h: "/", c: "Go to" },
+  { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Map", h: "/map", c: "Go to" },
+  { t: "Asks you", h: "/", c: "Go to" },
+  { t: "New app", h: "/apps/new", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
@@ -268,19 +289,29 @@ const STATIC_PALETTE: PaletteItem[] = [
  * The HTML spec stops parsing such a block as script, so the CSP never
  * applies and no nonce is needed — but `</script` must not appear inside it,
  * which escaping `<` guarantees.
+ *
+ * In the studio the by-name rows are apps, not every repository — the same
+ * visibility (`appsOf` is `listReposVisibleTo` underneath), just apps first.
  */
 function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
+  const studio = ctx.mode === "studio";
+  const repos = studio
+    ? appsOf(ctx, ctx.auth.user).repos.slice(0, 30)
+    : listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r) => ({
       t: `${r.ownerName}/${r.name}`,
       h: `/${r.ownerName}/${r.name}`,
-      c: "Repositories",
+      c: studio ? "Apps" : "Repositories",
     })),
-    ...STATIC_PALETTE,
+    ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
   ];
-  const json = JSON.stringify({ items }).replaceAll("<", "\\u003c");
+  // `studio` rides along so the palette's *remote* rows — what the search
+  // API found, folded in the browser — build the same addresses the server
+  // just rendered (`tellHref`/`changeHref`, `src/web/studio/nouns.ts`). The
+  // palette can never hand out a noun the page behind it would not.
+  const json = JSON.stringify({ items, studio }).replaceAll("<", "\\u003c");
   return raw(
     `<script type="application/json" id="palette-index">${json}</script>`,
   );
@@ -439,7 +470,6 @@ function footer(): Html {
 
 const SITE_LINE = "Your code, your machine.";
 
-/** The one sentence a page carries into a search result or an unfurled link. */
 function pageDescription(options: PageOptions): string {
   const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";
   const line = own === "" ? SITE_LINE : own;
@@ -457,50 +487,33 @@ export function page(options: PageOptions, status = 200): Response {
     ? `${shellJs}\n${options.scriptJs}`
     : shellJs;
 
+  // The body's markup, built before the document so the icons it used can be
+  // counted: every `icon()` left a `<use>` behind, and the sprite defining
+  // them goes last, after the markup that references it (legal, and resolved
+  // once the document is parsed). Only what this page used ships.
+  const shell = html`${options.bare ? null : topbar(ctx, theme, options.crumbs)}
+    <main
+      class="${options.bare
+        ? "bare"
+        : options.wide
+          ? "shell shell-wide"
+          : "shell"}"
+      id="main"
+    >
+      ${flash ? flashToast(flash) : null}${options.body}
+    </main>
+    ${options.bare ? null : footer()} ${overlays()}
+    ${paletteIndex(ctx, options.palette ?? [])}`;
+
   const doc = html`<!doctype html>
     <html lang="en" ${theme ? html`data-theme="${theme}"` : null}>
       <head>
         <meta charset="utf-8" />
-        <meta
-          name="viewport"
-          content="width=device-width, initial-scale=1, viewport-fit=cover"
-        />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${options.title} · forge</title>
         <meta name="description" content="${pageDescription(options)}" />
-        <meta property="og:site_name" content="forge" />
-        <meta property="og:type" content="website" />
         <meta property="og:title" content="${options.title}" />
         <meta property="og:description" content="${pageDescription(options)}" />
-        ${
-          // Only a page that exists has a canonical address. An error page
-          // never echoes the path that was asked for: two dead links must be
-          // the same bytes, or the difference tells a guesser something.
-          status === 200
-            ? html`<meta
-                property="og:url"
-                content="${ctx.url.origin}${ctx.url.pathname}"
-              />`
-            : null
-        }
-        <meta
-          property="og:image"
-          content="${ctx.url.origin}/icons/forge-512.png"
-        />
-        <meta name="twitter:card" content="summary" />
-        ${when(
-          options.feed,
-          (f) =>
-            html`<link
-              rel="alternate"
-              type="application/atom+xml"
-              title="${f.title}"
-              href="${f.href}"
-            />`,
-        )}
-        <link rel="manifest" href="/manifest.webmanifest" />
-        <link rel="apple-touch-icon" href="/icons/forge-180.png" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-title" content="forge" />
         ${when(
           options.refresh,
           (r) =>
@@ -537,19 +550,7 @@ export function page(options: PageOptions, status = 200): Response {
           : null}
       </head>
       <body>
-        ${options.bare ? null : topbar(ctx, theme, options.crumbs)}
-        <main
-          class="${options.bare
-            ? "bare"
-            : options.wide
-              ? "shell shell-wide"
-              : "shell"}"
-          id="main"
-        >
-          ${flash ? flashToast(flash) : null}${options.body}
-        </main>
-        ${options.bare ? null : footer()} ${overlays()}
-        ${paletteIndex(ctx, options.palette ?? [])}
+        ${shell}${iconSprite(shell.text)}
         ${raw(`<script nonce="${nonce}">${scriptJs}</script>`)}
       </body>
     </html>`;
@@ -558,10 +559,8 @@ export function page(options: PageOptions, status = 200): Response {
     "content-type": "text/html; charset=utf-8",
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
-    // event stream (EventSource) and fragment fetches reach same-origin, and
-    // manifest-src 'self' lets a browser read the forge's own web manifest —
-    // under default-src 'none' it is refused like everything else.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; img-src 'self' data:; manifest-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    // event stream (EventSource) and fragment fetches reach same-origin.
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
   });
@@ -597,14 +596,20 @@ export function redirect(
  * sandbox CSP is the point: this markup is inserted into a live document, so
  * it is served with a policy that would make it inert if anything ever
  * navigated to it directly.
+ *
+ * Its icons are inlined rather than referenced: a fragment cannot count on
+ * the sprite of the document it is being dropped into, and must not add ids
+ * to it (`inlineIcons`, `icons.ts`).
  */
 export function fragment(body: Html, status = 200): Response {
-  return new Response(body.text, {
+  return new Response(inlineIcons(body.text), {
     status,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "content-security-policy":
         "default-src 'none'; style-src 'none'; sandbox",
+      "referrer-policy": "same-origin",
+      "x-content-type-options": "nosniff",
       "cache-control": "no-store",
     },
   });

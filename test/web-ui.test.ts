@@ -18,6 +18,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { shellJs } from "../src/web/client.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 const form = (fields: Record<string, string>) => new URLSearchParams(fields);
 
@@ -31,16 +32,12 @@ describe("web ui", () => {
   let stranger = "";
   let pullNumber = 0;
 
-  const gitEnv = {
-    ...process.env,
+  const gitEnv = gitClientEnv({
     GIT_AUTHOR_NAME: "Mel",
     GIT_AUTHOR_EMAIL: "mel@forge.local",
     GIT_COMMITTER_NAME: "Mel",
     GIT_COMMITTER_EMAIL: "mel@forge.local",
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_SYSTEM: "/dev/null",
-  };
+  });
 
   async function git(args: string[], cwd: string): Promise<number> {
     const proc = Bun.spawn(["git", ...args], {
@@ -193,6 +190,9 @@ describe("web ui", () => {
     expect(page).toContain("lc-d73a4a");
     expect(page).toContain(".lc-d73a4a{--label:#d73a4a}");
     expect(page).toContain(">bug</span>");
+    // A colour mixed from the labels on *this* page is what `styleCss` is
+    // for, and the only thing left using it: nothing static rides along.
+    expect(page).toMatch(/<style nonce="[^"]+">\.lc-d73a4a\{--label:#d73a4a\}<\/style>/);
 
     // And the list can filter by it.
     const filtered = await (
@@ -323,8 +323,11 @@ describe("web ui", () => {
       body: form({ name: "sc-ript", visibility: "public" }),
       redirect: "manual",
     });
+    // `mode=dev` because the by-name rows in the studio's own palette are
+    // apps, not every repository (`paletteIndex`, `src/web/layout.ts`) — a
+    // plain repository like this one is dev's box to find.
     const html = await (
-      await fetch(base, { headers: { cookie: owner } })
+      await fetch(`${base}/?mode=dev`, { headers: { cookie: owner } })
     ).text();
     const start = html.indexOf(
       '<script type="application/json" id="palette-index">',
@@ -538,8 +541,13 @@ describe("web ui", () => {
     ).text();
     expect(wildcard).not.toContain("needs a label");
 
+    // `mode=dev`: the studio's own `/search` is over apps, changes and
+    // tells (see `studioSearchPage`), never a plain repository — `proj` is
+    // dev's box to find, the same escape hatch `searchPage` documents.
     const whole = await (
-      await fetch(`${base}/search?q=proj`, { headers: { cookie: owner } })
+      await fetch(`${base}/search?q=proj&mode=dev`, {
+        headers: { cookie: owner },
+      })
     ).text();
     // Just the results, not the shell: the palette index legitimately carries
     // every repo the viewer may see, and mel is the site admin here.

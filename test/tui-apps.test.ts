@@ -27,7 +27,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAgentByName, type Agent } from "../src/core/agents.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
-import { getIssue, type Issue } from "../src/core/issues.ts";
+import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { getRepo, getRepoById, type Repo } from "../src/core/repos.ts";
 import {
   claimRun,
@@ -38,7 +38,7 @@ import {
 } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { appendRunLog } from "../src/runs/log.ts";
 import type { App, Screen } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -54,7 +54,7 @@ import {
 } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const DOMAIN = "apps.test";
 const NOT_AN_APP = "this commit is not an app";
@@ -586,6 +586,41 @@ describe("terminal: apps, runs and the crew", () => {
       await h.press("tab", "tab", "enter");
       await h.until("assigned to alice");
       expect(h.text()).toContain("Tune the drums");
+    } finally {
+      h.stop();
+    }
+  }, 30_000);
+
+  test("T on the app screen: tell the crew, and the free builder takes it", async () => {
+    const h = boot(forge, identityFor(alice));
+    try {
+      await h.press("a");
+      await h.until("alice/site");
+      await h.press("enter");
+      await h.until("slug site");
+      await h.press("T");
+      await h.until("Tell the crew");
+      await h.type("Make the header pop");
+      await h.press("enter");
+      await h.until("robo is on it");
+      const told = listIssues(forge.db, site.id, { state: "all" }).find(
+        (i) => i.title === "Make the header pop",
+      );
+      expect(told?.assigneeId).toBe(robo.user.id);
+    } finally {
+      h.stop();
+    }
+  }, 30_000);
+
+  test("N on the dashboard reaches New app directly, with no detour through Apps", async () => {
+    const h = boot(forge, identityFor(alice));
+    try {
+      await h.until("Apps");
+      await h.press("N");
+      await h.until("New app");
+      await h.press("esc");
+      // Esc discarded the flow: the dashboard is back underneath it.
+      await h.until("Apps");
     } finally {
       h.stop();
     }

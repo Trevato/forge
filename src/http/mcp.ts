@@ -37,7 +37,7 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
-import { appsOf } from "../web/pages/studio.ts";
+import { appsOf } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";

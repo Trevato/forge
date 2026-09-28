@@ -1039,7 +1039,9 @@ export function checksText(
     case "running":
       return "checks: deploying this head";
     case "queued":
-      return "checks: a deploy of this head is queued";
+      return `checks: a deploy of this head is queued${
+        run === null ? "" : ` (queued ${relTime(run.createdAt)})`
+      }`;
     case "cancelled":
       return `checks: the deploy was cancelled${summary}`;
   }

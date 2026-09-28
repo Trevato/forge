@@ -13,6 +13,7 @@
  */
 
 import { childEnv, pump } from "../apps/process.ts";
+import { stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
 
 export interface ClaudeInput {
@@ -139,6 +140,10 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
+    // Its own session, so a cancel can reach whatever it spawned in turn
+    // (a tool call left running) and not just the agent itself: a signal
+    // to one pid never touches a grandchild holding stdout open.
+    detached: true,
   });
   // What the agent hears: the prompt first, then whatever a person says
   // while it works. Each is a user turn; the session ends when the forge
@@ -205,7 +210,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       return;
     }
     if (type === "assistant") {
-      for (const text of assistantLines(e)) input.log(text);
+      for (const text of assistantLines(e, input.cwd)) input.log(text);
       return;
     }
     if (type === "result") {
@@ -243,13 +248,23 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     // `user` records are tool results: long and mostly file contents.
   };
 
+  // Signals the whole process group (a negative pid), so anything the
+  // agent spawned in turn goes with it; falls back to the process alone
+  // if the group is already gone.
+  const signalGroup = (sig: "SIGTERM" | "SIGKILL"): void => {
+    try {
+      process.kill(-proc.pid, sig);
+    } catch {
+      proc.kill(sig);
+    }
+  };
   let why: "timeout" | "cancelled" | undefined;
   const stopChild = (): void => {
     closeInput();
-    proc.kill("SIGTERM");
+    signalGroup("SIGTERM");
     setTimeout(() => {
       if (proc.exitCode === null && proc.signalCode === null)
-        proc.kill("SIGKILL");
+        signalGroup("SIGKILL");
     }, 5_000);
   };
   const timer = setTimeout(() => {
@@ -295,7 +310,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
 }
 
 /** The lines a person wants from an assistant turn: its words and its tool calls. */
-function assistantLines(e: Record<string, unknown>): string[] {
+function assistantLines(e: Record<string, unknown>, cwd: string): string[] {
   const message = e["message"];
   if (typeof message !== "object" || message === null) return [];
   const content = (message as Record<string, unknown>)["content"];
@@ -307,14 +322,14 @@ function assistantLines(e: Record<string, unknown>): string[] {
         if (line.trim() !== "") out.push(line);
     } else if (block["type"] === "tool_use") {
       out.push(
-        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"])}`,
+        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"], cwd)}`,
       );
     }
   }
   return out;
 }
 
-function describeTool(name: string, input: unknown): string {
+function describeTool(name: string, input: unknown, cwd: string): string {
   const args =
     typeof input === "object" && input !== null
       ? (input as Record<string, unknown>)
@@ -326,15 +341,18 @@ function describeTool(name: string, input: unknown): string {
     }
     return "";
   };
-  const detail = first([
-    "command",
-    "file_path",
-    "path",
-    "pattern",
-    "url",
-    "description",
-    "prompt",
-  ]);
+  const detail = stripForgeDirs(
+    [cwd],
+    first([
+      "command",
+      "file_path",
+      "path",
+      "pattern",
+      "url",
+      "description",
+      "prompt",
+    ]),
+  );
   const short = detail.length > 160 ? `${detail.slice(0, 157)}…` : detail;
   return short === "" ? name : `${name} ${short}`;
 }

@@ -29,6 +29,12 @@ export interface AppManifest {
    * environment's own variables. `null` means the app has none.
    */
   readonly tty: string | null;
+  /**
+   * The pages worth a look: each pictured at every width, once a deploy
+   * comes up green. `["/"]` when the manifest says nothing, exactly as
+   * before this field existed.
+   */
+  readonly looks: readonly string[];
 }
 
 export type ManifestError =
@@ -40,6 +46,10 @@ export type ManifestError =
 const READY_DEFAULT = 30;
 const READY_MAX = 600;
 const COMMAND_MAX = 1_000;
+/** More than this many pages is a manifest error: a browser start per
+ * picture per width is the heaviest thing the forge does. */
+const LOOKS_MAX = 3;
+const LOOK_PATH_MAX = 200;
 
 /**
  * Resolve a manifest from the two files that can declare one. `forgeJson`
@@ -64,6 +74,7 @@ export function parseManifest(
       health: "/",
       ready: READY_DEFAULT,
       tty: null,
+      looks: ["/"],
     });
   }
 
@@ -104,6 +115,8 @@ export function parseManifest(
     return invalid(
       `forge.json: app.ready must be a whole number of seconds, 1–${READY_MAX}`,
     );
+  const looks = looksField(app);
+  if (!looks.ok) return looks;
 
   return ok({
     run: runCommand,
@@ -119,7 +132,46 @@ export function parseManifest(
     health: health ?? "/",
     ready: ready ?? READY_DEFAULT,
     tty: tty.value || null,
+    looks: looks.value,
   });
+}
+
+/**
+ * `app.looks`: the pages worth a picture. Absent is `["/"]`, exactly as
+ * before this field existed. Validated like any other boundary input — a
+ * path beginning with `/`, no scheme, no host, no `..`, no control bytes,
+ * capped in length — and capped in count, because a browser start per
+ * picture per width is the heaviest thing the forge does.
+ */
+function looksField(app: Json): Result<readonly string[], ManifestError> {
+  const value = app["looks"];
+  if (value === undefined) return ok(["/"]);
+  if (!Array.isArray(value))
+    return invalid("forge.json: app.looks must be an array of paths");
+  if (value.length > LOOKS_MAX)
+    return invalid(`forge.json: app.looks may name at most ${LOOKS_MAX} paths`);
+  if (value.length === 0) return ok(["/"]);
+  const paths: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string")
+      return invalid("forge.json: app.looks entries must be strings");
+    if (item.length > LOOK_PATH_MAX)
+      return invalid(
+        `forge.json: app.looks entries must be at most ${LOOK_PATH_MAX} characters`,
+      );
+    if (!item.startsWith("/") || item.startsWith("//"))
+      return invalid(
+        "forge.json: app.looks entries must be a path starting with / (no scheme, no host)",
+      );
+    if (item.includes(".."))
+      return invalid("forge.json: app.looks entries must not contain ..");
+    if (/[\x00-\x1f\x7f]/.test(item))
+      return invalid(
+        "forge.json: app.looks entries must not contain control characters",
+      );
+    paths.push(item);
+  }
+  return ok(paths);
 }
 
 /**

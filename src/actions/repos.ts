@@ -39,6 +39,7 @@ import {
   type FileWrite,
 } from "../git/write.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { trackPullHead } from "../core/pulls.ts";
 import {
   requireParticipant,
   requireRepoAdmin,
@@ -340,6 +341,10 @@ export async function commitToBranch(
     },
   );
   if (!committed.ok) return committed;
+  // A same-repo pull whose head is this branch follows the commit before
+  // anything hears about it, so a check or a deploy triggered below never
+  // reads a row the branch has already moved past.
+  trackPullHead(app.db, repo.id, branch, committed.value.commitOid);
   app.bus.append({
     kind: "push",
     repoId: repo.id,

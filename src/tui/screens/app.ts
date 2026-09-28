@@ -20,6 +20,7 @@ import {
   stopEnv,
   type AppView,
 } from "../../actions/apps.ts";
+import { tellCrew } from "../../actions/crew.ts";
 import type { EnvStatus } from "../../apps/runtime.ts";
 import { envPull } from "../../apps/data.ts";
 import { getIssuesByRef } from "../../core/issues.ts";
@@ -42,6 +43,7 @@ import {
   live,
   metaOf,
   openLink,
+  promptScreen,
   runAsync,
   type ListRow,
 } from "./common.ts";
@@ -187,6 +189,34 @@ export function appScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     );
   };
 
+  /** `T`: a sentence becomes an issue, handed to whichever builder is free. */
+  const tell = (): void => {
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Tell the crew",
+        label: "What should change?",
+        hint: "Becomes an issue, and starts whichever builder on the crew is free.",
+        onSubmit: (text) => {
+          if (text === "") return "say something first";
+          return (async () => {
+            const told = await tellCrew(f.app, f.user, repo, text);
+            if (!told.ok) {
+              ctx.toast(errorText(told.error), "danger");
+              return;
+            }
+            const { routed } = told.value;
+            ctx.toast(
+              routed === undefined
+                ? "told, but nobody is on the crew to take it yet"
+                : `${routed.builder.user.username} is on it`,
+              "success",
+            );
+          })();
+        },
+      }),
+    );
+  };
+
   const screen: Screen = {
     title: `${repo.ownerName}/${repo.name} · app`,
     get keys() {
@@ -195,6 +225,7 @@ export function appScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         binding(["j", "k"], "move"),
         binding(["o"], "open"),
         binding(["t"], "terminal"),
+        binding(["T"], "tell the crew", { disabled: !writer }),
         binding(["enter"], "log"),
         binding(["r"], "redeploy", { disabled: !writer }),
         binding(["s"], "stop", { disabled: !writer }),
@@ -316,6 +347,10 @@ export function appScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       if (e.key === "t") {
         const env = selected();
         if (env) void openAppTerminal(f, ctx, repo, env.env);
+        return true;
+      }
+      if (e.key === "T" && mayWrite()) {
+        tell();
         return true;
       }
       if (e.key === "r" && mayWrite()) {

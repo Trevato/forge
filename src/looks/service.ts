@@ -1,8 +1,11 @@
 /**
- * The look (docs/APPS.md): when an environment's deploy comes up green,
- * the forge takes a picture of it at phone and desktop width, as the
+ * The look (docs/APPS.md): when an environment's deploy answers and swaps
+ * in, the forge takes a picture of it at phone and desktop width, as the
  * repository's owner would see it, and keeps the pictures beside the
- * commit they are of. A person judges a change from what it is.
+ * commit they are of. A person judges a change from what it is — the
+ * moment it starts serving, not the moment its tests, still running
+ * beside it, happen to finish (and a preview whose tests then fail keeps
+ * the picture it already has).
  *
  * Best-effort by design: a look never blocks a check, never fails a run,
  * and a picture that could not be taken is a row that says why, so a page
@@ -29,8 +32,10 @@ import { getAppById, getAppByRepo, listApps } from "../core/apps.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
+  DEFAULT_PAGE,
   LOOK_KINDS,
   LOOK_SIZES,
+  lookSlot,
   looksForEnv,
   recordLook,
   type LookKind,
@@ -122,8 +127,10 @@ export const lookPath = (
   appId: string,
   env: EnvName,
   commitOid: string,
+  page: string,
   kind: LookKind,
-): string => join("looks", appId, env, `${commitOid}-${kind}.png`);
+): string =>
+  join("looks", appId, env, `${commitOid}-${lookSlot(page, kind)}.png`);
 
 interface Pending {
   readonly appId: string;
@@ -162,6 +169,23 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     if (stopped || event.repoId === null) return;
     const payload = event.payload;
     switch (event.kind) {
+      // The instant a deploy answers and swaps in — the look is of what
+      // is serving, not of whether its tests, still running beside it,
+      // turn out green.
+      case "app.serving": {
+        const env = payload["env"];
+        const commitOid = payload["commitOid"];
+        if (typeof env !== "string" || !isEnvName(env)) return;
+        if (typeof commitOid !== "string" || commitOid === "") return;
+        const record = getAppByRepo(app.db, event.repoId);
+        if (!record) return;
+        enqueue({ appId: record.id, env, commitOid, at: Date.now() });
+        return;
+      }
+      // Kept for an environment brought up by a forge from before this
+      // event existed: its deploy never published `app.serving`, so this
+      // is the only signal it has. For one deployed since, `app.serving`
+      // already queued the same commit — `enqueue` below dedupes it.
       case "run.finished": {
         if (payload["kind"] !== "deploy" || payload["state"] !== "ok") return;
         const env = payload["env"];
@@ -186,12 +210,19 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     }
   }
 
-  /** One waiting look per environment: a newer head takes the older's place. */
+  /**
+   * One waiting look per environment: a newer head takes the older's
+   * place. The same head queued twice — `app.serving` and then
+   * `run.finished` for the one deploy — is one entry, not two.
+   */
   function enqueue(item: Pending): void {
     const at = queue.findIndex(
       (q) => q.appId === item.appId && q.env === item.env,
     );
-    if (at !== -1) queue.splice(at, 1);
+    if (at !== -1) {
+      if (queue[at]!.commitOid === item.commitOid) return;
+      queue.splice(at, 1);
+    }
     queue.push(item);
     if (pumping) return;
     pumping = true;
@@ -243,12 +274,17 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
+    const pages = status.looks ?? [DEFAULT_PAGE];
     const have = new Set(
       looksForEnv(app.db, item.appId, item.env)
         .filter((l) => l.commitOid === item.commitOid && l.error === null)
-        .map((l) => l.kind),
+        .map((l) => lookSlot(l.page, l.kind)),
     );
-    const wanted = LOOK_KINDS.filter((kind) => !have.has(kind));
+    const wanted = pages.flatMap((page) =>
+      LOOK_KINDS.filter((kind) => !have.has(lookSlot(page, kind))).map(
+        (kind) => ({ page, kind }),
+      ),
+    );
     if (wanted.length === 0) return;
     // The picture is what the owner sees: the app renders for a signed-in
     // admin, exactly as when they open it from the forge.
@@ -259,7 +295,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         : { id: owner.id, name: owner.username, role: "admin" };
     const host = runtime.hostFor(record.slug, item.env);
     let allOk = true;
-    for (const kind of wanted) {
+    for (const { page, kind } of wanted) {
       if (stopped) return;
       const token = signGrant(
         dataDir,
@@ -268,8 +304,8 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         Date.now(),
         who,
       );
-      const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent("/")}`;
-      const path = lookPath(item.appId, item.env, item.commitOid, kind);
+      const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
+      const path = lookPath(item.appId, item.env, item.commitOid, page, kind);
       const out = join(dataDir, path);
       // Taken to one side and moved in whole. A pull that closes while its
       // picture is being taken sweeps its environment's folder away, and a
@@ -277,7 +313,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
       // give; this way the sweep and the picture never meet.
       const staged = join(
         stagingRoot(dataDir),
-        `${item.appId}-${item.env}-${item.commitOid}-${kind}.png`,
+        `${item.appId}-${item.env}-${item.commitOid}-${lookSlot(page, kind)}.png`,
       );
       mkdirSync(dirname(staged), { recursive: true });
       const taken = await capture({
@@ -290,6 +326,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         appId: item.appId,
         env: item.env,
         commitOid: item.commitOid,
+        page,
       };
       if (taken.ok) {
         // The environment moved on while the picture was taken: it shows
@@ -312,6 +349,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         log.warn("no picture", {
           app: record.slug,
           env: item.env,
+          page,
           kind,
           error: taken.error,
         });

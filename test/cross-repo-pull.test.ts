@@ -4,17 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
+const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "X",
   GIT_AUTHOR_EMAIL: "x@f.dev",
   GIT_COMMITTER_NAME: "X",
   GIT_COMMITTER_EMAIL: "x@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 describe("cross-repo pull requests (fork → upstream)", () => {
   let dataDir: string;

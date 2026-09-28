@@ -27,6 +27,7 @@ import {
   type Permission,
   type Team,
 } from "../../core/orgs.ts";
+import { appsForRepos } from "../../core/apps.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -36,6 +37,7 @@ import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
 import { agentsOnForge, grantsSection, saveGrants } from "./subscriptions.ts";
+import { shelfRows } from "../studio/shelf.ts";
 import {
   avatar,
   badge,
@@ -56,8 +58,16 @@ const PER_PAGE = 20;
 
 // ---- profile ----
 
-/** The repo list, filtered by the box above it and paged by repo id. */
-function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
+/**
+ * The repo list, filtered by the box above it and paged by repo id. In the
+ * studio, apps are drawn once, by `appsSection` above — so this list omits
+ * whatever page of results already showed there, and says so when that
+ * leaves it with nothing: "no other repositories" reads as the true state
+ * of the world, not as a bug. Pagination still walks the raw, unfiltered
+ * rows (the cursor is a repo id), so leaving apps out of what is *shown*
+ * never skips or repeats a plain repository across pages.
+ */
+function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): Html {
   const query = (ctx.url.searchParams.get("q") ?? "").slice(0, 100);
   const cursor = ctx.url.searchParams.get("cursor") ?? "";
   const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
@@ -65,11 +75,19 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
     ...(query !== "" ? { query } : {}),
     ...(cursor !== "" ? { cursor } : {}),
   });
-  const shown = repos.slice(0, PER_PAGE);
-  const last = shown[shown.length - 1];
+  const page = repos.slice(0, PER_PAGE);
+  const last = page[page.length - 1];
   const nextParams = new URLSearchParams();
   if (query !== "") nextParams.set("q", query);
   if (last) nextParams.set("cursor", last.id);
+
+  const apps = studio
+    ? appsForRepos(
+        ctx.app.db,
+        page.map((r) => r.id),
+      )
+    : undefined;
+  const shown = apps ? page.filter((repo) => !apps.has(repo.id)) : page;
 
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
@@ -91,11 +109,18 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
     ${shown.length === 0
       ? empty({
           icon: "repo",
-          title: query === "" ? "No repositories yet" : "No matches",
+          title:
+            query !== ""
+              ? "No matches"
+              : studio
+                ? "No other repositories"
+                : "No repositories yet",
           note:
-            query === ""
-              ? `${owner.username} has not published anything you can see.`
-              : "Try a different search.",
+            query !== ""
+              ? "Try a different search."
+              : studio
+                ? `Every repository ${owner.username} has is already listed as an app above.`
+                : `${owner.username} has not published anything you can see.`,
           ...(isSelf && query === ""
             ? {
                 action: btn("New repository", {
@@ -123,12 +148,61 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean): Html {
                 : badge("Public", { variant: "secondary" })}`,
             }),
           ),
+          studio
+            ? { head: html`${icon("repo")}<h2>Other repositories</h2>` }
+            : {},
         )}
     ${pager(
       repos.length > PER_PAGE && last
         ? { next: `/${owner.username}?${nextParams.toString()}` }
         : {},
     )}`;
+}
+
+/**
+ * The owner's apps in the studio, one shelf row each — the same row the
+ * studio home's *Your apps* card draws (`shelfRows`, `studio/shelf.ts`),
+ * never a second copy of it. Visibility is `listReposByOwner`'s own, the
+ * same rule the repository list below uses, so a stranger never sees a
+ * private app here either.
+ */
+async function appsSection(ctx: Ctx, owner: User, isSelf: boolean): Promise<Html> {
+  const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
+    limit: 200,
+  });
+  const records = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
+  const appRepos = repos.filter((r) => records.has(r.id));
+  const newAppHref = `/apps/new?owner=${owner.username}`;
+
+  if (appRepos.length === 0)
+    return empty({
+      icon: "rocket",
+      title: "No apps yet",
+      note: isSelf
+        ? "Make one, tell the crew what it is, and watch it come up."
+        : `${owner.username} has no apps you can see.`,
+      ...(isSelf
+        ? { action: btn("New app", { href: newAppHref, variant: "primary" }) }
+        : {}),
+    });
+
+  const rows = await shelfRows(ctx, appRepos);
+  return listCard(rows, {
+    head: html`${icon("rocket")}
+      <h2>Apps</h2>
+      ${when(
+        isSelf,
+        () =>
+          html`<span class="spacer"></span>${btn("New app", {
+              href: newAppHref,
+              size: "sm",
+              icon: "plus",
+            })}`,
+      )}`,
+  });
 }
 
 /** Everyone on any of the org's teams, once each. */
@@ -208,8 +282,11 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
     )}`;
 }
 
-// GET /:owner — a person or an org, with their repos.
-export function ownerProfile(ctx: Ctx): Response {
+// GET /:owner — a person or an org, with their repos. In the studio this
+// leads with the owner's apps, drawn by the same shelf the studio's own
+// home draws its *Your apps* card from; dev mode is byte-identical to what
+// this page has always rendered.
+export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
   if (!owner) return notFoundPage(ctx);
 
@@ -220,6 +297,9 @@ export function ownerProfile(ctx: Ctx): Response {
   const canManage = isOrg && accessAllows(access, "admin");
   const isSelf =
     ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
+  const studio = ctx.mode === "studio";
+
+  const apps = studio ? await appsSection(ctx, owner, isSelf) : null;
 
   const body = html`<div class="page-head">
       ${avatar(owner.username, "lg")}
@@ -233,13 +313,14 @@ export function ownerProfile(ctx: Ctx): Response {
       ${when(isSelf, () =>
         btn("New repository", {
           href: `/new?owner=${owner.username}`,
-          variant: "primary",
+          variant: studio ? "ghost" : "primary",
           size: "sm",
           icon: "plus",
         }),
       )}
     </div>
-    ${repoSection(ctx, owner, isSelf)}
+    ${apps}
+    ${repoSection(ctx, owner, isSelf, studio)}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}

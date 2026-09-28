@@ -1,8 +1,8 @@
 /**
- * The look (docs/APPS.md): a green deploy is pictured at phone and desktop
- * width, once per head, as the owner would see it; the pictures are served
- * with the repository's own read access and shown on the pull, on the
- * studio's ask row and in the app's head; a picture that could not be
+ * The look (docs/APPS.md): a green deploy is pictured at phone, desktop
+ * and thumb width, once per head, as the owner would see it; the pictures
+ * are served with the repository's own read access and shown on the pull,
+ * on the studio's ask row and in the app's head; a picture that could not be
  * taken is recorded as such and the page says so; a closed pull's pictures
  * go with its preview. A stand-in capturer drives all of that; a real
  * Chromium, when this machine has one, proves the browser end.
@@ -23,6 +23,7 @@ import { envDataDir, previewEnv } from "../src/apps/data.ts";
 import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import type { AppRecord } from "../src/core/apps.ts";
+import { listEvents } from "../src/core/events.ts";
 import { looksForEnv, type Look } from "../src/core/looks.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -30,7 +31,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { err, ok } from "../src/kernel/result.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import {
   findChromium,
   takeLook,
@@ -39,7 +40,7 @@ import {
 } from "../src/looks/capture.ts";
 import { startLooks, type LooksHandle } from "../src/looks/service.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const DOMAIN = "apps.test";
 const PASSWORD = "a-good-passphrase";
@@ -120,13 +121,13 @@ describe("the look", () => {
         : undefined;
     });
 
-  /** Both looks of a commit, once they are recorded — pictured or not. */
+  /** All three looks of a commit, once they are recorded — pictured or not. */
   const pictured = (env: string, commitOid: string): Promise<Look[]> =>
     until(() => {
       const rows = looksForEnv(app.db, record.id, env).filter(
         (l) => l.commitOid === commitOid,
       );
-      return rows.length === 2 ? rows : undefined;
+      return rows.length === 3 ? rows : undefined;
     }, 30_000);
 
   beforeAll(async () => {
@@ -182,11 +183,15 @@ describe("the look", () => {
   let first = "";
   let second = "";
 
-  test("a green deploy is pictured at both widths, as the owner, once per head; a newer head replaces", async () => {
+  test("a green deploy is pictured at all three widths, as the owner, once per head; a newer head replaces", async () => {
     const production = await settled((r) => r.env === "production");
     expect(production.state).toBe("ok");
     const rows = await pictured("production", production.commitOid);
-    expect(rows.map((l) => l.kind).sort()).toEqual(["desktop", "phone"]);
+    expect(rows.map((l) => l.kind).sort()).toEqual([
+      "desktop",
+      "phone",
+      "thumb",
+    ]);
     for (const look of rows) {
       expect(look.error).toBeNull();
       expect(look.path).toBe(
@@ -196,7 +201,7 @@ describe("the look", () => {
     }
     // The browser was pointed at the grant door on the forge's own port,
     // and the grant names the owner as an admin.
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
     // Taken to one side and moved in whole: nothing half-written lives
     // under the environment, and nothing is left behind on the side.
     for (const call of calls)
@@ -205,6 +210,7 @@ describe("the look", () => {
     const phone = calls.find((c) => c.width === 390)!;
     expect(phone.height).toBe(844);
     expect(calls.find((c) => c.width === 1280)?.height).toBe(800);
+    expect(calls.find((c) => c.width === 200)?.height).toBe(125);
     const url = new URL(phone.url);
     expect(url.host).toBe(`hello.${DOMAIN}:${servers.port}`);
     expect(url.pathname).toBe("/__forge/grant");
@@ -233,9 +239,9 @@ describe("the look", () => {
     pull = opened.value;
     const env = previewEnv(pull.number);
     expect((await settled((r) => r.env === env)).state).toBe("ok");
-    expect(await pictured(env, first)).toHaveLength(2);
-    expect(calls).toHaveLength(4);
-    expect(new URL(calls[2]!.url).hostname).toBe(
+    expect(await pictured(env, first)).toHaveLength(3);
+    expect(calls).toHaveLength(6);
+    expect(new URL(calls[3]!.url).hostname).toBe(
       `hello--${pull.number}.${DOMAIN}`,
     );
 
@@ -245,8 +251,8 @@ describe("the look", () => {
       (await settled((r) => r.env === env && r.reason === "redeploy")).state,
     ).toBe("ok");
     await looks.idle();
-    expect(calls).toHaveLength(4);
-    expect(looksForEnv(app.db, record.id, env)).toHaveLength(2);
+    expect(calls).toHaveLength(6);
+    expect(looksForEnv(app.db, record.id, env)).toHaveLength(3);
 
     // A newer head is pictured, and the older head's pictures go.
     const again = await commitToBranch(app, alice, repo, {
@@ -259,8 +265,8 @@ describe("the look", () => {
     expect(
       (await settled((r) => r.env === env && r.commitOid === second)).state,
     ).toBe("ok");
-    expect(await pictured(env, second)).toHaveLength(2);
-    expect(calls).toHaveLength(6);
+    expect(await pictured(env, second)).toHaveLength(3);
+    expect(calls).toHaveLength(9);
     await until(() =>
       looksForEnv(app.db, record.id, env).every((l) => l.commitOid === second)
         ? true
@@ -395,7 +401,110 @@ describe("the look", () => {
     expect(page).not.toContain("<h2>Look</h2>");
   });
 
-  test("the pull carries its phone picture, and the app's head shows production", async () => {
+  test("a look is taken from `app.serving`, while the deploy's tests are still running, and a red check afterward does not remove it", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "slow-red-test",
+      base: repo.defaultBranch,
+      message: "Slow, then red, test",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                run: "bun run src/server.ts",
+                test: "sleep 2 && exit 1",
+                tty: "bun run src/tty.ts",
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Slow, then red, test",
+      baseBranch: repo.defaultBranch,
+      headBranch: "slow-red-test",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const commitOid = branch.value.commitOid;
+
+    // Pictured well before the two-second test step could have finished —
+    // the run is still open, checking.
+    const rows = await pictured(env, commitOid);
+    expect(rows.every((l) => l.error === null)).toBe(true);
+    const run = listRuns(app.db, repo.id, { env }).find(
+      (r) => r.commitOid === commitOid,
+    );
+    expect(run?.state).toBe("running");
+    const serving = listEvents(app.db, { repoId: repo.id, limit: 200 }).find(
+      (e) => e.kind === "app.serving" && e.payload["commitOid"] === commitOid,
+    );
+    expect(serving?.payload["env"]).toBe(env);
+    expect(serving?.payload["testsRunning"]).toBe(true);
+
+    // The test then finishes red; the run fails, but the picture already
+    // taken of what is serving is untouched.
+    const failed = await settled(
+      (r) => r.env === env && r.commitOid === commitOid,
+    );
+    expect(failed.state).toBe("failed");
+    expect(
+      looksForEnv(app.db, record.id, env).filter(
+        (l) => l.commitOid === commitOid && l.error === null,
+      ),
+    ).toHaveLength(3);
+
+    expect(
+      (await setIssueStateThrough(app, alice, repo, opened.value, "closed"))
+        .ok,
+    ).toBe(true);
+  }, 30_000);
+
+  test("two events for one environment, back to back, leave one queued look — at the newer commit", async () => {
+    const before = calls.length;
+    const live = runtime.envStatus(record, "production");
+    if (live === undefined) throw new Error("production is not live");
+    const superseded = `${"0".repeat(39)}1`;
+    // Same tick, before the queue's pump has run at all: the second
+    // replaces the first in `enqueue` rather than both being taken.
+    app.bus.append({
+      kind: "app.serving",
+      repoId: repo.id,
+      payload: {
+        env: "production",
+        commitOid: superseded,
+        servingAt: new Date().toISOString(),
+        testsRunning: true,
+      },
+    });
+    app.bus.append({
+      kind: "app.serving",
+      repoId: repo.id,
+      payload: {
+        env: "production",
+        commitOid: live.commitOid,
+        servingAt: new Date().toISOString(),
+        testsRunning: false,
+      },
+    });
+    await looks.idle();
+    // The superseded commit was never even looked at: production's own
+    // head was already pictured (from the first test), so nothing new
+    // was captured for it either.
+    expect(calls.length).toBe(before);
+    expect(
+      looksForEnv(app.db, record.id, "production").some(
+        (l) => l.commitOid === superseded,
+      ),
+    ).toBe(false);
+  });
+
+  test("the studio's look ask leads with the thumb picture, and the app's head shows production", async () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
@@ -419,20 +528,125 @@ describe("the look", () => {
     expect(rows.every((l) => l.error === null)).toBe(true);
 
     const studio = `${aliceCookie}; forge_mode=studio`;
-    const pull = await (
-      await web(`/alice/hello/pulls/${ask.number}`, studio)
-    ).text();
-    expect(pull).toContain(
-      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/phone.png"`,
-    );
     const page = await (await web("/alice/hello", studio)).text();
+    expect(page).toContain(`value="look:${ask.id}"`);
+    expect(page).toContain(
+      `<a class="look-thumb" href="/alice/hello/pulls/${ask.number}"`,
+    );
+    expect(page).toContain(
+      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/thumb.png"`,
+    );
     const production = looksForEnv(app.db, record.id, "production").find(
-      (l) => l.kind === "desktop",
+      (l) => l.kind === "thumb",
     )!;
     expect(page).toContain(`class="look-now"`);
     expect(page).toContain(
-      `src="/alice/hello/looks/production/${production.commitOid}/desktop.png"`,
+      `src="/alice/hello/looks/production/${production.commitOid}/thumb.png"`,
     );
+    const home = await (await web("/", studio)).text();
+    expect(home).toContain(`class="look-thumb"`);
+
+    // A commit pictured before the thumb kind existed has only its phone
+    // and desktop rows — this is exactly that, with the thumb dropped —
+    // and every slot that would show a thumb falls back to what it showed
+    // before, rather than going blank.
+    app.db
+      .query(
+        `DELETE FROM look WHERE app_id = ?1 AND env = ?2 AND kind = 'thumb'`,
+      )
+      .run(record.id, env);
+    app.db
+      .query(
+        `DELETE FROM look WHERE app_id = ?1 AND env = 'production' AND kind = 'thumb'`,
+      )
+      .run(record.id);
+    const fallback = await (await web("/alice/hello", studio)).text();
+    expect(fallback).toContain(
+      `src="/alice/hello/looks/${env}/${branch.value.commitOid}/phone.png"`,
+    );
+    const productionDesktop = looksForEnv(
+      app.db,
+      record.id,
+      "production",
+    ).find((l) => l.kind === "desktop")!;
+    expect(fallback).toContain(
+      `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png"`,
+    );
+  }, 120_000);
+
+  test("app.looks naming two pages pictures both, distinctly, and the pull page groups them", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "two-pages",
+      base: repo.defaultBranch,
+      message: "Look at two pages",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                run: "bun run src/server.ts",
+                test: "bun test",
+                tty: "bun run src/tty.ts",
+                looks: ["/", "/board"],
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Look at two pages",
+      baseBranch: repo.defaultBranch,
+      headBranch: "two-pages",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const commitOid = branch.value.commitOid;
+    expect((await settled((r) => r.env === env)).state).toBe("ok");
+
+    const rows = await until(() => {
+      const found = looksForEnv(app.db, record.id, env).filter(
+        (l) => l.commitOid === commitOid,
+      );
+      return found.length === 6 ? found : undefined;
+    }, 30_000);
+    const home = rows.filter((l) => l.page === "/");
+    const board = rows.filter((l) => l.page === "/board");
+    expect(home).toHaveLength(3);
+    expect(board).toHaveLength(3);
+    // Two pages of one commit never collide on disk.
+    expect(new Set(rows.map((l) => l.path)).size).toBe(6);
+    const boardPhone = board.find((l) => l.kind === "phone")!;
+    expect(boardPhone.path).toBe(
+      `looks/${record.id}/${env}/${commitOid}-board-phone.png`,
+    );
+    const homePhone = home.find((l) => l.kind === "phone")!;
+    expect(homePhone.path).toBe(
+      `looks/${record.id}/${env}/${commitOid}-phone.png`,
+    );
+    // The browser was pointed at each page in turn.
+    const boardCall = calls.find(
+      (c) => new URL(c.url).searchParams.get("to") === "/board",
+    );
+    expect(boardCall).toBeDefined();
+
+    const page = await (
+      await web(`/alice/hello/pulls/${opened.value.number}`, aliceCookie)
+    ).text();
+    expect(page).toContain(`<p class="muted small look-page">/</p>`);
+    expect(page).toContain(`<p class="muted small look-page">/board</p>`);
+    expect(page).toContain(
+      `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png"`,
+    );
+    expect(page).toContain(
+      `src="/alice/hello/looks/${env}/${commitOid}/phone.png"`,
+    );
+    expect(page).toContain(`alt="hello /board #${opened.value.number} on a phone"`);
+    expect(page).toContain(`alt="hello #${opened.value.number} on a phone"`);
   }, 120_000);
 
   test("memory pressure is what the container truly holds, never its page cache", async () => {

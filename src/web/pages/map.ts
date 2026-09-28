@@ -54,6 +54,11 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
+import { studioRecord, tellHref } from "../studio/nouns.ts";
+
+/** Where a card's own link goes: dev's issue page, by default. */
+const devIssueHref = (base: string, number: number): string =>
+  `${base}/issues/${number}`;
 
 // ---- layout ----
 
@@ -583,7 +588,13 @@ function geometry(placed: Layout, minWidth: number): Geometry {
   };
 }
 
-function node(base: string, n: Placed, g: Geometry, emphasis: Emphasis): Html {
+function node(
+  base: string,
+  n: Placed,
+  g: Geometry,
+  emphasis: Emphasis,
+  issueHref: (base: string, number: number) => string,
+): Html {
   const word = wordFor(n.issue, emphasis.ready, emphasis.marks);
   const run = emphasis.marks.crew.get(n.issue.id);
   const [first, second] = wrapTitle(n.issue.title);
@@ -600,7 +611,7 @@ function node(base: string, n: Placed, g: Geometry, emphasis: Emphasis): Html {
     data-key="issue:${n.issue.id}"
     data-crit="${emphasis.critical.has(n.issue.id) ? "1" : "0"}"
     ${run ? html`data-run="${run}"` : null}
-    href="${base}/issues/${n.issue.number}"
+    href="${issueHref(base, n.issue.number)}"
   >
     <title>${number} ${n.issue.title} — ${word}</title>
     ${word === "working"
@@ -695,7 +706,13 @@ export interface DrawOptions {
   readonly minWidth?: number;
   /** The most of the window's height the canvas takes before it pans. */
   readonly cap?: number;
+  /** Where a card's own link goes. Defaults to dev's `/issues/:number`. */
+  readonly issueHref?: (base: string, number: number) => string;
+  /** What the empty state says, in the reader's own noun for an issue. */
+  readonly emptyHtml?: Html;
 }
+
+const DEV_EMPTY = html`<p>No open issues to map. Open one, then link what it waits for.</p>`;
 
 export function drawMap(
   repo: Repo,
@@ -706,10 +723,10 @@ export function drawMap(
 ): Html {
   if (placed.nodes.length === 0)
     return html`<div class="map-empty">
-      ${icon("map", 20)}
-      <p>No open issues to map. Open one, then link what it waits for.</p>
+      ${icon("map", 20)} ${options.emptyHtml ?? DEV_EMPTY}
     </div>`;
   const base = repoBase(repo);
+  const issueHref = options.issueHref ?? devIssueHref;
   const g = geometry(placed, options.minWidth ?? 0);
   const at = new Map(placed.nodes.map((n) => [n.issue.id, n]));
   const ry = g.y(placed.islandFrom) - GY / 2 - RULE / 2;
@@ -747,7 +764,7 @@ export function drawMap(
       ${graph.edges.map((e) =>
         edge(e, at, routed.get(routeKey(e)) ?? [], g, emphasis),
       )}
-      ${placed.nodes.map((n) => node(base, n, g, emphasis))}
+      ${placed.nodes.map((n) => node(base, n, g, emphasis, issueHref))}
     </svg>
     <div class="map-tools js-only" role="group" aria-label="Zoom">
       <button
@@ -803,6 +820,7 @@ function rankedList(
   items: Ranked[],
   say: (r: Ranked) => string,
   empty: string,
+  issueHref: (base: string, number: number) => string,
 ): Html {
   const base = repoBase(repo);
   return html`<section class="map-list">
@@ -813,7 +831,9 @@ function rankedList(
           ${items.slice(0, 6).map(
             (r) =>
               html`<li>
-                <a href="${base}/issues/${r.issue.number}">${r.issue.title}</a>
+                <a href="${issueHref(base, r.issue.number)}"
+                  >${r.issue.title}</a
+                >
                 <span class="muted small">#${r.issue.number} · ${say(r)}</span>
               </li>`,
           )}
@@ -1161,11 +1181,20 @@ function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
 
 const LIVE_KINDS = "run.*,issue.*,pull.*";
 
+/** The empty state in the studio's own words, pointing at the app page's
+ * own box for telling the crew (`#tell`, `src/web/studio/app.ts`). */
+const studioEmpty = (base: string): Html =>
+  html`<p>No tells to map yet. <a href="${base}#tell">Say one</a>, then link what it waits for.</p>`;
+
 /** GET /:owner/:name/map */
 export function mapPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
+  // In the studio a card is a tell and its link is `/tells/:number` — the
+  // same rule every other studio surface follows (`studioRecord`).
+  const studio = studioRecord(ctx, repo) !== undefined;
+  const issueHref = studio ? tellHref : devIssueHref;
   const graph = repoGraph(db, repo.id);
   const ready = readyNow(graph);
   const blocked = blockedOn(graph);
@@ -1195,6 +1224,8 @@ export function mapPage(ctx: Ctx): Response {
         ${drawMap(repo, graph, placed, emphasisFor(ready, critical, marks), {
           id: "map-canvas",
           cap: 1,
+          issueHref,
+          ...(studio ? { emptyHtml: studioEmpty(repoBase(repo)) } : {}),
         })}
         ${placed.nodes.length === 0 ? null : countsLine(counts)}
       </div>
@@ -1210,6 +1241,7 @@ export function mapPage(ctx: Ctx): Response {
                   ? "holds nothing up"
                   : `finishing it frees ${r.holdsUp}`,
               "Nothing is ready: everything open waits for something.",
+              issueHref,
             )}
         ${rankedList(
           repo,
@@ -1217,6 +1249,7 @@ export function mapPage(ctx: Ctx): Response {
           blocked,
           (r) => `holds up ${r.holdsUp}`,
           "Nothing open holds anything up.",
+          issueHref,
         )}
         ${critical.length > 1
           ? html`<section class="map-list">
@@ -1225,7 +1258,7 @@ export function mapPage(ctx: Ctx): Response {
                 ${critical.map(
                   (i) =>
                     html`<li>
-                      <a href="${repoBase(repo)}/issues/${i.number}"
+                      <a href="${issueHref(repoBase(repo), i.number)}"
                         >${i.title}</a
                       >
                     </li>`,
@@ -1240,7 +1273,7 @@ export function mapPage(ctx: Ctx): Response {
     ctx,
     title: `Map · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: mapCss,
     scriptJs: `${liveRegionsJs}\n${mapViewJs}`,

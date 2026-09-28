@@ -61,6 +61,10 @@ export interface DiffViewOptions {
   /** Base path for comment forms and "+" links, e.g. `/owner/repo/pulls/3`.
    * When set, lines become commentable. */
   reviewBase?: string;
+  /** Base path for a stubbed file's "View file" link, e.g.
+   * `/owner/repo/blob/<oid>` — the file's path is appended. Omit to render
+   * the stub without a link (a live/origin diff has no local blob route). */
+  fileLinkBase?: string;
 }
 
 /** Per-file render context, resolved once per file. */
@@ -79,8 +83,62 @@ const MAX_FILE_LINES = 5000;
 // commit is a DoS, not something anyone reads top to bottom.
 export const MAX_DIFF_FILES = 100;
 
+// A file's diff renders as a stub, not a table, once it holds this many
+// bytes — a bound on the diff's own content, independent of MAX_FILE_LINES,
+// because a committed bundle can carry megabytes in only a handful of lines.
+export const MAX_FILE_BYTES = 100_000;
+
+// ...or once any single line is this wide. Catches a minified file even when
+// MAX_FILE_LINES and MAX_FILE_BYTES both pass — a page must never grow wider
+// than its viewport because one line happened to be short in count.
+export const MAX_LINE_WIDTH = 2000;
+
 const GENERATED =
   /(^|\/)(package-lock\.json|bun\.lock|yarn\.lock|pnpm-lock\.yaml|go\.sum|Cargo\.lock)$/;
+
+/** Why a file's diff was replaced with a stub, in one sentence fragment. */
+export interface FileStub {
+  readonly reason: string;
+}
+
+/** Total bytes and the widest single line across a file's hunks. The hunks
+ * are already parsed in memory, so this costs nothing extra to compute. */
+function diffSize(file: FileDiff): { bytes: number; longestLine: number } {
+  let bytes = 0;
+  let longestLine = 0;
+  for (const hunk of file.hunks) {
+    for (const line of hunk.lines) {
+      bytes += line.content.length;
+      if (line.content.length > longestLine) longestLine = line.content.length;
+    }
+  }
+  return { bytes, longestLine };
+}
+
+/** Whether a file's diff exceeds the render budget, and why — checked before
+ * building rows so an oversized file never reaches the syntax highlighter
+ * (diff-syntax.ts) or the page (fileBody below). Binary files have their own
+ * short-circuit and are never stubbed. */
+export function stubFor(file: FileDiff): FileStub | null {
+  const changed = file.additions + file.deletions;
+  if (changed > MAX_FILE_LINES) {
+    return {
+      reason: `${changed.toLocaleString()} changed lines (limit ${MAX_FILE_LINES.toLocaleString()})`,
+    };
+  }
+  const { bytes, longestLine } = diffSize(file);
+  if (bytes > MAX_FILE_BYTES) {
+    return {
+      reason: `${bytes.toLocaleString()} bytes of diff (limit ${MAX_FILE_BYTES.toLocaleString()})`,
+    };
+  }
+  if (longestLine > MAX_LINE_WIDTH) {
+    return {
+      reason: `a line ${longestLine.toLocaleString()} characters wide (limit ${MAX_LINE_WIDTH.toLocaleString()})`,
+    };
+  }
+  return null;
+}
 
 function statusLabel(status: FileDiff["status"]): string {
   switch (status) {
@@ -368,19 +426,45 @@ function hunkHeader(hunk: Hunk): Html {
   </tr>`;
 }
 
+/** A stub in place of hunks: the path is already in the header above this,
+ * inside the same `<details>`; this adds why, the real counts, and a way to
+ * read the file without paying for it here. No hunks reach the HTML. */
+function stubBody(file: FileDiff, stub: FileStub, opts: DiffViewOptions): Html {
+  const href = opts.fileLinkBase ? `${opts.fileLinkBase}/${file.path}` : null;
+  return html`<div class="diff-note diff-stub">
+    <p>
+      Diff not shown — ${stub.reason}.
+      <span class="diff-stat"
+        >${when(
+          file.additions > 0,
+          () => html`<span class="add">+${file.additions}</span>`,
+        )}
+        ${when(
+          file.deletions > 0,
+          () => html`<span class="del">−${file.deletions}</span>`,
+        )}</span
+      >
+    </p>
+    ${when(
+      href,
+      (h) =>
+        html`<a class="btn" data-size="sm" data-variant="outline" href="${h}"
+          >${icon("file")} View file</a
+        >`,
+    )}
+  </div>`;
+}
+
 function fileBody(file: FileDiff, ctx: RowCtx): Html {
   if (file.binary) {
     return html`<div class="diff-note">Binary file not shown.</div>`;
   }
-  const changed = file.additions + file.deletions;
-  if (changed > MAX_FILE_LINES) {
-    return html`<div class="diff-note">
-      Large diff not shown — ${file.additions.toLocaleString()} additions,
-      ${file.deletions.toLocaleString()} deletions.
-    </div>`;
-  }
   if (file.hunks.length === 0) {
     return html`<div class="diff-note">No content changes.</div>`;
+  }
+  const stub = stubFor(file);
+  if (stub && !fileHasReview(file, ctx.opts)) {
+    return stubBody(file, stub, ctx.opts);
   }
   return html`<table class="diff-table">
     <tbody>

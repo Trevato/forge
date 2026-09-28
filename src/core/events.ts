@@ -78,6 +78,8 @@ export class EventBus {
 
 export interface ListEventsOptions {
   repoId?: string;
+  /** Restrict to events of this kind. */
+  kind?: string;
   /** Return events with id greater than this (exclusive). */
   afterId?: string;
   /** @default 100 */
@@ -147,6 +149,10 @@ export function listEvents(
   if (options.repoId !== undefined) {
     params.push(options.repoId);
     clauses.push(`repo_id = ?${params.length}`);
+  }
+  if (options.kind !== undefined) {
+    params.push(options.kind);
+    clauses.push(`kind = ?${params.length}`);
   }
   if (options.afterId !== undefined) {
     params.push(options.afterId);

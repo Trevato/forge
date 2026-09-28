@@ -2,6 +2,22 @@
 
 A software forge you can read in an afternoon and mold by hand.
 
+It runs the apps it hosts, and a **crew** of agents builds them. You describe
+an app in a sentence; the sentence becomes an issue, and the agent it is
+assigned to works it in its own fork and opens a pull. Every push redeploys
+that pull's own preview — its own URL, on its own copy of production's data —
+and every deploy is the check on that pull. No agent can move the default
+branch, so the only way code reaches production is a merge a person made: the
+crew proposes, you decide what ships.
+
+That view is the **studio**, and it is the front door — a browser with no
+`forge_mode` cookie lands there. It speaks five words for the whole loop:
+_tell_, _working_, _look_, _shipped_, and _asks you_, the last being everything
+waiting on a person to answer. [`docs/STUDIO.md`](docs/STUDIO.md) is the tour;
+[`docs/APPS.md`](docs/APPS.md) is the contract for apps, previews and runs. The
+git underneath is one click away — the switch in the top bar, or `?mode=dev` on
+any URL — and it is the rest of this page.
+
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
 stays that way. Everything worth having is written here: the Result type, the
@@ -17,6 +33,12 @@ feeling on a foundation sized for one person.
 bun install          # dev-only: types + tsc, no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222
 ```
+
+If your shell already has `FORGE_URL` set — a crew workspace sets it to the
+forge you work for — this forge takes it as its own canonical address and
+refuses every form a browser posts to `localhost`: run it with
+`env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
+will actually browse it.
 
 The first account you create becomes the admin — from the browser, the API, or
 a terminal (`ssh -p 2222 localhost` on a fresh forge offers to create it). Then:
@@ -225,6 +247,18 @@ environment. Browsers resolve `*.localhost` to loopback, so a laptop forge
 needs no DNS at all; elsewhere point a wildcard at it and set
 `FORGE_APP_DOMAIN`.
 
+With a sentence and **Pick for me**, the sentence becomes a plan before the
+page comes back: `src/crew/plan.ts` makes one non-interactive call to
+`claude` — the quickest model, a fixed JSON shape, at most 3 seconds — for a
+short checklist and a crew pick, so issue #1 opens as a checklist already
+assigned to whoever the plan named, instead of a paragraph and a dropdown.
+It costs one small model call per app made this way (a few tenths of a
+cent), never blocks the repository or the app starting, and a bad or slow
+answer is the same as none: no pick, no checklist, exactly what naming an
+agent yourself already does. `FORGE_APP_PLAN=0` turns it off; so does having
+no `claude` on `PATH` — either way **Pick for me** stops being offered and
+`New app` behaves exactly as it did before this existed.
+
 ## The crew
 
 An **agent** is an account of kind `agent`: no password, no session, and it
@@ -262,8 +296,9 @@ mechanical rather than advisory.
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew.
 
-`docs/STUDIO.md` is the forge with apps as the unit: tell, working, look,
-shipped — and the switch to dev.
+`docs/STUDIO.md` is the front door from the top of this page in full: the five
+words and where each is decided, the box, the three lists, a tell, a run
+and a change each on its own page, and the board.
 
 `docs/CONTRACT.md` is who may do what, as a table: an app's `contract.json`,
 the one evaluator every app decides with, the audit that reads it from git,
@@ -284,7 +319,30 @@ holds, where it goes, and the one command that restores it.
 ```sh
 bun test              # protocol-level + adversarial suite
 bun x tsc --noEmit    # zero type errors is the standard
+bun run check         # exactly what the forge runs against every push
 ```
+
+`bun run check` is the gate: the same command `forge.json` declares, so what
+it says here is what the deploy will say. It type-checks once, then runs the
+test files named in `check.run` as parallel `bun test` shards
+(`scripts/test-shards.ts`): one per CPU the process may use, at most eight,
+and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
+shard's output is written whole as it finishes; the log ends with every
+failing test from every shard, or on green with one line — how many tests,
+across how many files, in how long. Every file is independent (its own forge,
+its own database, port 0), so a test that fails only beside another is a bug
+in that test. Two things it will not do:
+
+- **It never borrows your git configuration.** A test drives a real `git`
+  against a forge it booted a second ago, and builds that child's
+  environment rather than inheriting yours (`test/helpers/git-client.ts`) —
+  otherwise a `GIT_CONFIG_COUNT` in your shell (a crew run sets one, holding
+  its own forge credential) would send that credential to the test's server
+  and every push in the suite would come back `401`.
+- **It skips what this machine cannot run, out loud.** The OpenSSH interop
+  tests need `ssh` and `ssh-keygen`; without them the log says `SKIPPING:`
+  and names the tool (`test/helpers/tools.ts`). Install OpenSSH and they run
+  again — the skip is conditional on the binary, never on anything else.
 
 ## Shape
 

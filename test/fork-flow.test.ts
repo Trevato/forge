@@ -793,7 +793,11 @@ describe("the fork flow", () => {
       body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
     });
     expect(started.status).toBe(202);
-    setTimeout(() => void seedUpstream("late"), 1_200);
+    // Seeded well inside the first retry's own wait (`firstFetchRetry.ms`,
+    // `src/origins/mirror.ts`, 2s by default): the immediate first fetch
+    // still finds nothing and fails, same as it would on a slower machine,
+    // but the retry has margin to spare rather than racing it.
+    setTimeout(() => void seedUpstream("late"), 300);
     const job = await mirrorAndWait(started);
     expect(job?.stage).toBe("done");
     expect(job?.repo?.name).toBe("late");

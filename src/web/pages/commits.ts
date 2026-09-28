@@ -21,6 +21,7 @@ import { diffSyntax } from "../diff-syntax.ts";
 import { renderDiff, type SyntaxMap } from "../diff-view.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { localScope, type RepoScope } from "../scope.ts";
 import {
   avatar,
@@ -133,7 +134,12 @@ export function renderCommit(
     { extra: "commit-head" },
   );
   return html`<div class="mt">${head}</div>
-    <div class="mt">${renderDiff(diff, syntax)}</div>`;
+    <div class="mt">
+      ${renderDiff(diff, {
+        syntax,
+        fileLinkBase: `${scope.base}/blob/${commit.oid}`,
+      })}
+    </div>`;
 }
 
 /** The ref switcher (and path crumbs) above a history list. */
@@ -210,7 +216,8 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
       crumbs: scope.crumbs,
       palette: scope.palette,
       body: html`${scopeHeader(ctx, scope, "commits")}${switcher}
-      ${noCommits(num > 1)}`,
+      ${noCommits(num > 1)} ${liveMount({ repo: base })}`,
+      scriptJs: liveClientJs,
     });
   }
 
@@ -223,13 +230,15 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
     ...(num > 1 ? { prev: query(num - 1) } : {}),
     ...(hasMore ? { next: query(num + 1) } : {}),
     note: `Page ${num}`,
-  })}`;
+  })}
+  ${liveMount({ repo: base })}`;
   return page({
     ctx,
     title: `Commits · ${repo.name}`,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
+    scriptJs: liveClientJs,
   });
 }
 

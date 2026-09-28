@@ -13,7 +13,9 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
 import { recordDecision } from "../src/core/decisions.ts";
+import { recordLook } from "../src/core/looks.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun } from "../src/core/runs.ts";
@@ -136,6 +138,10 @@ describe("the board", () => {
     expect(html).toContain('id="board-clock"');
     expect(html).toContain("new EventSource('/events')");
     expect(html).toContain("requestFullscreen");
+    // A wall left open all day fetches its 13 KB of rules once, with the rest
+    // of the design, instead of carrying them inline on every reload.
+    expect(html).not.toContain("<style");
+    expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
     // A viewer who chose a theme keeps it.
     const paper = await (
       await get("/board", { cookie: `${cookie}; forge_theme=paper` })
@@ -182,6 +188,16 @@ describe("the board", () => {
     const merged = await mergePull(app, alice, notes, opened.value, "squash");
     if (!merged.ok) throw new Error(JSON.stringify(merged.error));
     const pull = getPull(app.db, notes.id, opened.value.number)!;
+    // A production thumb of the app that just landed: the board's landed
+    // row leads with it, not with the full phone shot.
+    const notesApp = getAppByRepo(app.db, notes.id)!;
+    recordLook(app.db, {
+      appId: notesApp.id,
+      env: "production",
+      commitOid: pull.headOid,
+      kind: "thumb",
+      path: "looks/does-not-matter.png",
+    });
     recordDecision(app.db, {
       kind: "land",
       repoId: notes.id,
@@ -226,6 +242,9 @@ describe("the board", () => {
     expect(landed).toContain("Faster notes");
     expect(landed).toContain("notes · scout");
     expect(landed).toContain(`/alice/notes/pulls/${pull.number}`);
+    expect(landed).toContain(
+      `src="/alice/notes/looks/production/${pull.headOid}/thumb.png"`,
+    );
     // Decided: kind in words, the answer, how sure, the pick's issue.
     const decided = html.slice(
       html.indexOf('id="decided"'),

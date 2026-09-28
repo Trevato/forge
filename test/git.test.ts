@@ -27,18 +27,15 @@ import {
   serviceRpc,
 } from "../src/git/smart-http.ts";
 import { unwrap } from "../src/kernel/result.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 // Client-side git for driving the server under test.
-const clientEnv = {
-  ...process.env,
+const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@forge.local",
   GIT_COMMITTER_NAME: "Test",
   GIT_COMMITTER_EMAIL: "test@forge.local",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function sh(args: string[], cwd: string): Promise<string> {
   const proc = Bun.spawn(args, {

@@ -16,7 +16,11 @@ import {
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import { listPulls, mergedPullsForRepos, type Pull } from "../../core/pulls.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import {
+  canSeeOwnerFacts,
+  listReposVisibleTo,
+  type Repo,
+} from "../../core/repos.ts";
 import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { autonomyStatus, startOfTodayUtc } from "../../crew/autonomy.ts";
@@ -26,7 +30,8 @@ import { boardJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, icon, time } from "../ui.ts";
-import { lookUrl } from "./looks.ts";
+import { voiceFor } from "../studio/voice.ts";
+import { lookUrl, thumbLook } from "./looks.ts";
 
 // ---- words ----
 
@@ -61,6 +66,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   next: "next issue",
   land: "ship or show",
   retry: "try again",
+  lean: "which way",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
@@ -75,6 +81,10 @@ export interface BoardScope {
   readonly ids: readonly string[];
   readonly byId: ReadonlyMap<string, Repo>;
   readonly records: ReadonlyMap<string, AppRecord>;
+  /** Repos whose spend, runs and decisions this viewer may see — write
+   * access, same as the studio. A repo the viewer can only read is on the
+   * board (it is still theirs to watch land) but carries none of that. */
+  readonly ownerFacts: ReadonlySet<string>;
 }
 
 /** The scope for some app repositories: the board's, or the big view's. */
@@ -89,6 +99,11 @@ export function boardScope(ctx: Ctx, repos: readonly Repo[]): BoardScope {
     ids: kept.map((r) => r.id),
     byId: new Map(kept.map((r) => [r.id, r])),
     records,
+    ownerFacts: new Set(
+      kept
+        .filter((r) => canSeeOwnerFacts(ctx.app.db, r, ctx.auth.user))
+        .map((r) => r.id),
+    ),
   };
 }
 
@@ -168,7 +183,6 @@ export function boardPage(ctx: Ctx): Response {
     body,
     bare: true,
     theme: "dark",
-    styleCss: boardCss,
     scriptJs: `${liveRegionsJs}\n${boardJs}`,
   });
 }
@@ -225,10 +239,17 @@ function working(ctx: Ctx, scope: BoardScope): Html {
   );
   const rows = runs.map((run) => {
     const repo = scope.byId.get(run.repoId)!;
-    const who =
-      run.actorId === null
-        ? "crew"
-        : (actors.get(run.actorId)?.username ?? "crew");
+    // The same rule the app's page signs its rows by, `voiceFor`
+    // (`studio/voice.ts`): the crew's own work reads as the app's own story
+    // for a viewer who cannot see the roster; a person is always named.
+    const actor = run.actorId === null ? undefined : actors.get(run.actorId);
+    const who = voiceFor(
+      {
+        name: actor?.username,
+        isAgent: actor === undefined || actor.kind === "agent",
+      },
+      scope.ownerFacts.has(repo.id),
+    );
     const issue = run.issueId === null ? undefined : about.get(run.issueId);
     const word = stateWord(run);
     return html`<li>
@@ -252,7 +273,7 @@ function working(ctx: Ctx, scope: BoardScope): Html {
               : reasonWords(run.reason)}</span
           >
           ${when(
-            run.costUsd > 0,
+            run.costUsd > 0 && scope.ownerFacts.has(repo.id),
             () => html`<span class="num">${money(run.costUsd)}</span>`,
           )}
         </span>
@@ -286,20 +307,27 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
   const pictureOf = (repo: Repo): string | undefined => {
     const record = scope.records.get(repo.id);
     if (record === undefined) return undefined;
-    const look = looks.find(
-      (l) =>
-        l.appId === record.id &&
-        l.env === "production" &&
-        l.kind === "phone" &&
-        l.error === null,
+    const look = thumbLook(
+      looks.filter((l) => l.appId === record.id && l.env === "production"),
     );
     return (
-      look && lookUrl(repoBase(repo), "production", look.commitOid, "phone")
+      look &&
+      lookUrl(
+        repoBase(repo),
+        "production",
+        look.commitOid,
+        look.page,
+        look.kind,
+      )
     );
   };
   const rows = pulls.map((pull: Pull) => {
     const repo = scope.byId.get(pull.repoId)!;
     const picture = pictureOf(repo);
+    const author = voiceFor(
+      { name: pull.authorName, isAgent: pull.authorIsAgent },
+      scope.ownerFacts.has(repo.id),
+    );
     return html`<li>
       <a
         class="board-card board-landed"
@@ -319,7 +347,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
         >
         <span class="board-landed-title">${pull.title}</span>
         <span class="board-when">${time(pull.mergedAt ?? pull.createdAt)}</span>
-        <span class="board-landed-meta">${repo.name} · ${pull.authorName}</span>
+        <span class="board-landed-meta">${repo.name} · ${author}</span>
       </a>
     </li>`;
   });
@@ -337,7 +365,12 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
 
 function decided(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
-  const decisions = listDecisionsForRepos(db, scope.ids, 12);
+  // The decision ledger is the owner's own record of what the crew chose —
+  // never shown for a repository this viewer can only read.
+  const ids = scope.repos
+    .filter((r) => scope.ownerFacts.has(r.id))
+    .map((r) => r.id);
+  const decisions = listDecisionsForRepos(db, ids, 12);
   const about = getIssuesByIds(
     db,
     decisions.map((d) => d.issueId).filter((id): id is string => id !== null),
@@ -400,8 +433,9 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
 function today(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   const since = startOfTodayUtc(new Date()).toISOString();
+  // Today's spend against the ceiling is the owner's own dashboard.
   const rows = scope.repos
-    .filter((r) => r.autonomy !== "off")
+    .filter((r) => r.autonomy !== "off" && scope.ownerFacts.has(r.id))
     .map((repo) => {
       const s = autonomyStatus(ctx.app, repo);
       const runs = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
@@ -464,7 +498,14 @@ const widths = Array.from(
   (_, n) => `.board-fill[data-w="${n}"] { width: ${n}%; }`,
 ).join("\n");
 
+/**
+ * The board's own components, assembled into the served stylesheet by
+ * `web/style.ts` rather than sent inline with the page. Every rule here is
+ * a `.board-*` selector nothing else in the sheet mentions, so the
+ * `components` layer is where they read the same as they always did.
+ */
 export const boardCss = /* css */ `
+@layer components {
 .board { --pad: clamp(16px, 2.2vw, 32px); display: flex; flex-direction: column; min-height: 100dvh; font-size: 16px; }
 .board-top { display: flex; align-items: center; gap: 14px; padding: 14px var(--pad) 0; color: var(--faint); font-size: 13px; }
 .board-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -0.03em; font-size: 15px; color: var(--muted-fg); }
@@ -581,4 +622,5 @@ ${widths}
 .board[data-focus] .board-region { display: none; }
 .board[data-focus="working"] #working, .board[data-focus="landed"] #landed,
 .board[data-focus="decided"] #decided, .board[data-focus="today"] #today { display: flex; }
+}
 `;

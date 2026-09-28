@@ -51,10 +51,10 @@ import {
   sweepReaderPool,
   closeReader,
 } from "../src/git/read.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import type { User } from "../src/core/users.ts";
 
-setLogLevel("error");
+quietLogs();
 
 /** The `detail` lines EXPLAIN QUERY PLAN produces for a statement. */
 function plan(app: App, sql: string, params: (string | number)[] = []): string {

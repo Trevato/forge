@@ -40,7 +40,12 @@ import {
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
-import { getIssue, getIssueById, type Issue } from "../core/issues.ts";
+import {
+  getIssue,
+  getIssueById,
+  MAX_TITLE,
+  type Issue,
+} from "../core/issues.ts";
 import {
   getPull,
   closesFromBody,
@@ -90,7 +95,10 @@ export interface AutonomyStatus {
   readonly spentTodayUsd: number;
   readonly ceilingUsd: number;
   readonly slots: number;
-  /** Agent runs queued or running here now. */
+  /**
+   * Agent runs in flight here that spend a slot — what `slottedRuns` counts,
+   * which is what the loop gates on. Not every run in flight: see there.
+   */
   readonly active: number;
   readonly paused: Paused | null;
   /** When a ceiling pause lifts: the next UTC midnight. */
@@ -133,8 +141,86 @@ export function spentTodayEverywhere(db: Database, now = new Date()): number {
   );
 }
 
+/**
+ * Agent spend since UTC midnight for many repositories at once, keyed by
+ * repo id — one query, for a count that must not slow down as the apps
+ * grow (the topbar's ask count is the reason this exists).
+ */
+export function spentTodayForRepos(
+  db: App["db"],
+  repoIds: readonly string[],
+  now = new Date(),
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const unique = [...new Set(repoIds)];
+  if (unique.length === 0) return out;
+  const since = startOfTodayUtc(now).toISOString();
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        { repo_id: string; spent: number | null },
+        string[]
+      >(
+        `SELECT repo_id, SUM(cost_usd) AS spent FROM run
+         WHERE kind = 'agent' AND created_at >= ?${batch.length + 1}
+           AND repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         GROUP BY repo_id`,
+      )
+      .all(...batch, since);
+    for (const row of rows) out.set(row.repo_id, row.spent ?? 0);
+  }
+  return out;
+}
+
+/**
+ * Whether a repository is paused at today's ceiling right now — the same
+ * three conditions `autonomyStatus`'s own `"ceiling"` reads for one, but
+ * asked of crew and spend already read for the whole set
+ * (`crewForRepos`, `spentTodayForRepos`), never a query of its own. The
+ * ask card (`studio/asks.ts`) and the studio home's cost line
+ * (`studio/home.ts`) both decide from this, so neither can disagree with
+ * the other about which app is paused.
+ */
+export function isPausedAtCeiling(
+  repo: Repo,
+  crew: ReadonlyMap<string, readonly string[]>,
+  spent: ReadonlyMap<string, number>,
+): boolean {
+  if (repo.autonomy === "off" || repo.autonomyBy === null) return false;
+  if ((crew.get(repo.id)?.length ?? 0) === 0) return false;
+  return (spent.get(repo.id) ?? 0) >= repo.autonomyCeilingUsd;
+}
+
 function activeRuns(app: App, repoId: string) {
   return listActive(app.db, "agent").filter((r) => r.repoId === repoId);
+}
+
+/**
+ * Of the agent runs in flight here, the ones that spend a slot. Slots are
+ * the builders' work-in-progress limit, so two kinds of run take none: a
+ * review, which is the reviewer's short pass over a pull and must never
+ * keep a builder from picking up the next issue, and any run by a planner
+ * or a reviewer, whose work refills the map rather than works it.
+ *
+ * The rule lives here only: `driveRepo` gates on this set and
+ * `autonomyStatus` counts it, so the number a page shows is the number the
+ * loop enforces. The runs it leaves out are still in flight and still shown
+ * — Now on the studio page lists every one of them.
+ */
+export function slottedRuns(
+  active: readonly Run[],
+  crew: readonly { readonly agent: Agent; readonly role: CrewRole }[],
+): Run[] {
+  const notBuilders = new Set(
+    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
+  );
+  return active.filter(
+    (r) =>
+      r.reason !== "review" &&
+      (r.actorId === null || !notBuilders.has(r.actorId)),
+  );
 }
 
 export function autonomyStatus(
@@ -165,7 +251,7 @@ export function autonomyStatus(
     spentTodayUsd: spent,
     ceilingUsd: repo.autonomyCeilingUsd,
     slots: repo.autonomySlots,
-    active: activeRuns(app, repo.id).length,
+    active: slottedRuns(activeRuns(app, repo.id), crew).length,
     paused,
     resumesAt:
       paused === "ceiling" || paused === "forge ceiling"
@@ -195,15 +281,11 @@ export async function driveRepo(
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
-  // Slots bound the builders. A review is the reviewer's short pass on a
-  // pull and never keeps a builder from picking the next issue.
+  // An issue a planner or a reviewer holds is theirs, not a builder's.
   const planners = new Set(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
-  const slotted = active.filter(
-    (r) =>
-      r.reason !== "review" && (r.actorId === null || !planners.has(r.actorId)),
-  );
+  const slotted = slottedRuns(active, crew);
   if (slotted.length >= repo.autonomySlots) {
     // The builders are busy; the planner can still refill the map.
     if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
@@ -490,6 +572,28 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   return landed;
 }
 
+/** The label every direction issue's title starts with. Read elsewhere to
+ * find a repository's standing direction — keep it exactly as it is. */
+const DIRECTION_PREFIX = "Direction: ";
+/** How much of the direction fits in the title, capped so the title
+ * (prefix included) never exceeds `MAX_TITLE`. */
+const DIRECTION_TITLE_LIMIT = Math.min(120, MAX_TITLE - DIRECTION_PREFIX.length);
+
+/** Cuts `text` to at most `limit` characters at a word boundary, ending in
+ * "…" when something was cut — never mid-word, never a dangling "(" before
+ * the ellipsis. Text that already fits is returned unchanged. */
+export function truncateAtWord(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const ellipsis = "…";
+  const budget = Math.max(limit - ellipsis.length, 0);
+  let cut = text.slice(0, budget);
+  if (text[budget] !== " " && text[budget] !== undefined) {
+    const lastSpace = cut.lastIndexOf(" ");
+    cut = lastSpace === -1 ? "" : cut.slice(0, lastSpace);
+  }
+  return cut.replace(/[\s(]+$/, "") + ellipsis;
+}
+
 /**
  * The issue the planner works from: the direction, as an open issue the
  * run can be about. Made once, kept, and never counted as work.
@@ -504,7 +608,7 @@ function ensureDirectionIssue(
     if (existing && existing.state === "open") return existing;
   }
   const opened = openIssue(app, by, repo, {
-    title: `Direction: ${repo.autonomyDirection.trim().slice(0, 120)}`,
+    title: `${DIRECTION_PREFIX}${truncateAtWord(repo.autonomyDirection.trim(), DIRECTION_TITLE_LIMIT)}`,
     body: `${repo.autonomyDirection.trim()}\n\nThis issue carries the repository's direction. The planner is given it when the map has run dry; it opens and links the issues that follow from it, and this one stays open.`,
   });
   if (!opened.ok) return undefined;

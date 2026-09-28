@@ -16,10 +16,12 @@ import {
   newApp,
   openEnvUrl,
   redeployEnv,
-  sshCommandFor,
   stopEnv,
+  terminalFor,
 } from "../../actions/apps.ts";
 import { listAllAgents, listCrew } from "../../actions/crew.ts";
+import { planningAvailable } from "../../crew/plan.ts";
+import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
@@ -34,9 +36,8 @@ import {
   listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
-import { isTerminal } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
-import type { Ctx } from "../../http/context.ts";
+import { safeBack, type Ctx } from "../../http/context.ts";
 import { resolveAppHostname } from "../../apps/proxy.ts";
 import {
   crumbsFor,
@@ -52,19 +53,25 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
   btn,
   card,
   dot,
   empty,
+  envActions,
+  envFacts,
+  envPhrase,
   envStateBadge,
-  envTone,
   icon,
   listCard,
+  previewDataNote,
   row,
+  seg,
   selectField,
   sha,
+  terminalLine,
   time,
   userLink,
   field as formField,
@@ -129,7 +136,7 @@ function appRow(entry: AppEntry): Html {
   const name = `${entry.repo.ownerName}/${entry.repo.name}`;
   return row({
     nav: true,
-    lead: dot(envTone(entry.production?.state)),
+    lead: dot(envPhrase(entry.production).tone),
     title: html`<a href="${base}/app">${name}</a>`,
     titleAttr: name,
     meta: html`${entry.url === undefined
@@ -182,7 +189,10 @@ export function appsCard(ctx: Ctx): Html {
 }
 
 // GET /apps
-export function appsList(ctx: Ctx): Response {
+export async function appsList(ctx: Ctx): Promise<Response> {
+  // In the studio, the same list a person's home links to is the shelf,
+  // not dev's table — `?mode=dev` still renders what follows, unchanged.
+  if (ctx.mode === "studio") return await studioAppsList(ctx);
   const entries = appsForViewer(ctx);
   const create = ctx.auth.user
     ? btn("New app", {
@@ -208,6 +218,72 @@ export function appsList(ctx: Ctx): Response {
   return page({ ctx, title: "Apps", body });
 }
 
+/**
+ * GET /apps in the studio: every app the viewer can land, drawn as the
+ * shelf (`shelfRows`, `studio/shelf.ts`) — the same row the home's *Your
+ * apps* card draws, never a second copy of it. `?live=1` is a link, not a
+ * form, narrowing the shelf to what production is actually serving; with
+ * neither filter it's every app, newest first. Visibility and the owner's
+ * facts are exactly `appsForViewer`'s and `shelfRows`'s own — a signed-out
+ * viewer gets the public shelf, and a reader who cannot write to an app
+ * never sees its crew or its cost.
+ */
+async function studioAppsList(ctx: Ctx): Promise<Response> {
+  const entries = appsForViewer(ctx);
+  const liveCount = entries.filter(
+    (e) => e.production?.state === "running",
+  ).length;
+  const live = ctx.url.searchParams.get("live") === "1";
+  const shown = live
+    ? entries.filter((e) => e.production?.state === "running")
+    : entries;
+  const create = ctx.auth.user
+    ? btn("New app", {
+        href: "/apps/new",
+        variant: "primary",
+        size: "sm",
+        icon: "plus",
+        shortcut: "c",
+      })
+    : btn("Sign in to make one", { href: "/signin", size: "sm" });
+  const filters =
+    entries.length === 0
+      ? null
+      : html`<div class="filters mb">
+          ${seg([
+            {
+              label: "All",
+              href: "/apps",
+              current: !live,
+              count: entries.length,
+            },
+            {
+              label: "Live",
+              href: "/apps?live=1",
+              current: live,
+              count: liveCount,
+            },
+          ])}
+        </div>`;
+  const rows = await shelfRows(
+    ctx,
+    shown.map((e) => e.repo),
+  );
+  const body = html`${pageHead("Apps", { actions: create })}
+    ${filters}
+    ${shown.length === 0
+      ? empty({
+          icon: "rocket",
+          title: live ? "Nothing is live" : "Nothing runs here yet",
+          note: live
+            ? "Nothing is serving right now — clear the filter to see every app."
+            : "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
+          action: create,
+        })
+      : listCard(rows)}`;
+  return page({ ctx, title: "Apps", body });
+}
+
 // ---- new app ----
 
 interface NewAppValues {
@@ -218,6 +294,9 @@ interface NewAppValues {
   agent: string;
 }
 
+/** The agent select's sentinel for "turn the sentence into a plan and pick". */
+const PICK_AGENT = "__pick__";
+
 function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
   const user = ctx.auth.user!;
   const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
@@ -227,13 +306,24 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
   const agents = listAllAgents(ctx.app, user);
   const crew = agents.ok ? agents.value : [];
   const domain = appsRuntime(ctx.app)?.options.domain;
+  const canPlan = planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude");
 
   return html`<div class="narrow-wide">
     ${pageHead("New app", {
-      sub: "A repository with a small working app in it, running in production a few seconds from now.",
+      sub: "A repository with a small working app in it: a first issue from your sentence, a crew member on it, production at its hostname, and a preview for every change.",
     })}
     ${card(
       html`<form method="post" action="/apps/new">
+        ${formField({
+          label: "What should it do?",
+          name: "description",
+          type: "textarea",
+          rows: 3,
+          value: values.description,
+          required: true,
+          autofocus: true,
+          hint: "A sentence is enough — it becomes the first issue, and the agent you pick below starts on it.",
+        })}
         ${selectField({
           label: "Owner",
           name: "owner",
@@ -247,22 +337,12 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
           label: "Name",
           name: "name",
           value: values.name,
-          required: true,
-          autofocus: true,
           pattern: "[A-Za-z0-9][A-Za-z0-9._-]*",
           hint:
             domain === undefined
-              ? "Letters, digits, dots, dashes and underscores. The hostname is made from it."
-              : `Letters, digits, dots, dashes and underscores. It runs at <name>${appHostSuffix(domain)}.`,
+              ? "Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; the hostname is made from it."
+              : `Left blank, it's made from your sentence above. Letters, digits, dots, dashes and underscores; it runs at <name>${appHostSuffix(domain)}.`,
           ...(error ? { error } : {}),
-        })}
-        ${formField({
-          label: "What should it do?",
-          name: "description",
-          type: "textarea",
-          rows: 3,
-          value: values.description,
-          hint: "Optional. A sentence is enough — it becomes the first issue, and the agent you pick below starts on it.",
         })}
         ${selectField({
           label: "Visibility",
@@ -293,8 +373,19 @@ function newAppForm(ctx: Ctx, values: NewAppValues, error?: string): Html {
           : selectField({
               label: "Agent",
               name: "agent",
-              hint: "Joins the crew of the new app. With a sentence above, it gets the first issue and starts on it.",
+              hint: canPlan
+                ? "Pick for me turns the sentence into a checklist and picks who's likeliest to do it well. Otherwise it joins the crew and, with a sentence, gets the first issue."
+                : "Joins the crew of the new app. With a sentence above, it gets the first issue and starts on it.",
               options: [
+                ...(canPlan
+                  ? [
+                      {
+                        value: PICK_AGENT,
+                        label: "Pick for me",
+                        selected: values.agent === PICK_AGENT,
+                      },
+                    ]
+                  : []),
                 {
                   value: "",
                   label: "Nobody — I'll build it myself",
@@ -330,10 +421,20 @@ export function newAppPage(ctx: Ctx): Response {
       name: "",
       description: "",
       visibility: "private",
-      agent: "",
+      agent: planningAvailable(process.env["FORGE_CLAUDE"] ?? "claude")
+        ? PICK_AGENT
+        : "",
     }),
+    scriptJs: appNameJs,
   });
 }
+
+/** Nothing in the sentence a slug can carry: punctuation only, or a script `[a-z0-9]` cannot. */
+const NO_NAME_ERROR =
+  "That doesn't leave anything to make a name from — type one below.";
+
+/** How many suffixed names (`x-2`, `x-3`, …) a derived name will try before giving up. */
+const MAX_NAME_ATTEMPTS = 30;
 
 const NEW_APP_ERRORS: Record<string, string> = {
   name_taken: "That owner already has a repository by that name.",
@@ -360,13 +461,46 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
   };
-  const made = await newApp(ctx.app, ctx.auth.user, {
-    name: values.name,
+  const pickAgent = values.agent === PICK_AGENT;
+  // An explicit name is never second-guessed; left blank, the sentence
+  // names the app — and the server derives that name itself (never trusting
+  // whatever the field carried in): the field is only a client-side preview.
+  const explicitName = values.name.trim();
+  const base = explicitName === "" ? deriveAppName(values.description) : explicitName;
+  if (base === undefined) {
+    return page(
+      {
+        ctx,
+        title: "New app",
+        body: newAppForm(ctx, values, NO_NAME_ERROR),
+        scriptJs: appNameJs,
+      },
+      422,
+    );
+  }
+  const rest = {
     owner: values.owner,
     description: values.description,
     visibility: values.visibility === "public" ? "public" : "private",
-    ...(values.agent === "" ? {} : { agent: values.agent }),
-  });
+    ...(pickAgent
+      ? { pickAgent: true }
+      : values.agent === ""
+        ? {}
+        : { agent: values.agent }),
+  } as const;
+  let made = await newApp(ctx.app, ctx.auth.user, { ...rest, name: base });
+  // A derived name that collides tries `base-2`, `base-3`, … — the same
+  // `name_taken` check an explicit name gets, just run more than once.
+  for (
+    let n = 2;
+    explicitName === "" && !made.ok && made.error === "name_taken" && n <= MAX_NAME_ATTEMPTS;
+    n++
+  ) {
+    made = await newApp(ctx.app, ctx.auth.user, {
+      ...rest,
+      name: `${base}-${n}`,
+    });
+  }
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
       return new Response("forbidden", { status: 403 });
@@ -379,21 +513,29 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
           values,
           NEW_APP_ERRORS[made.error] ?? "That app could not be created.",
         ),
+        scriptJs: appNameJs,
       },
       422,
     );
   }
-  const { repo, app: record, issue } = made.value;
+  const { repo, app: record, issue, plan } = made.value;
   const url = appsRuntime(ctx.app)?.urlFor(record, "production");
   const first =
     url === undefined
       ? `${repo.name} is an app, but nothing is serving apps on this forge.`
       : `${repo.name} is starting at ${url}.`;
   const second =
-    issue === undefined || issue.assigneeName === null
+    issue === undefined
       ? ""
-      : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
-  return flashTo(ctx, repoBase(repo), { message: `${first}${second}` });
+      : issue.assigneeName === null
+        ? ` #${issue.number} is waiting for someone.`
+        : plan
+          ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
+          : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
+  // The studio's app page (repoHome, once the record exists) is where this
+  // moment belongs; dev mode keeps the controls' page.
+  const target = ctx.mode === "studio" ? repoBase(repo) : `${repoBase(repo)}/app`;
+  return flashTo(ctx, target, { message: `${first}${second}` });
 }
 
 // ---- the repo home's strip ----
@@ -448,35 +590,18 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
 
 // ---- the app page ----
 
-const envFacts = (base: string, env: EnvStatus): Html =>
-  html`<div class="env-facts">
-    ${when(env.commitOid !== "", () =>
-      sha(env.commitOid, `${base}/commit/${env.commitOid}`),
-    )}
-    ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
-    ${when(
-      env.runId,
-      (id) =>
-        html`<a href="${base}/runs/${id}"
-          >${env.state === "deploying"
-            ? "deploy in progress"
-            : "last deploy"}</a
-        >`,
-    )}
-  </div>`;
-
 /** One environment: what it is doing, the facts, and the buttons. */
 function envCard(base: string, env: EnvStatus, writer: boolean): Html {
   const number = envPull(env.env);
   return card(
-    html`${envFacts(base, env)}
-      <p class="env-facts mt">
-        <span class="mono truncate" title="${env.url}">${env.url}</span>
-      </p>
-      ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}`,
+    envFacts(base, env, { url: true }),
     {
       extra: "env-card",
-      ...(env.state === "failed" ? { tone: "danger" as const } : {}),
+      ...(env.state === "failed" || env.error !== undefined
+        ? { tone: "danger" as const }
+        : env.failedDeploy !== undefined
+          ? { tone: "attn" as const }
+          : {}),
       head: html`${icon(number === undefined ? "rocket" : "pull")}
         <h2>
           ${number === undefined
@@ -490,20 +615,7 @@ function envCard(base: string, env: EnvStatus, writer: boolean): Html {
         variant: "outline",
         icon: "external",
       })}
-      ${when(
-        writer,
-        () =>
-          html`<form method="post" action="${base}/app/${env.env}/redeploy">
-              ${btn("Redeploy", { size: "sm", icon: "sync" })}
-            </form>
-            ${when(
-              env.state !== "stopped",
-              () =>
-                html`<form method="post" action="${base}/app/${env.env}/stop">
-                  ${btn("Stop", { size: "sm", icon: "square" })}
-                </form>`,
-            )}`,
-      )}`,
+      ${envActions(base, env, writer)}`,
     },
   );
 }
@@ -524,7 +636,10 @@ export function appPage(ctx: Ctx): Response {
   const runs = listed.ok ? listed.value : [];
   const crew = listCrew(ctx.app, ctx.auth.user, repo);
   const url = appsRuntime(ctx.app)?.urlFor(record, "production");
-  const ssh = sshCommandFor(ctx.app, record, "production");
+  const production = envs.find((env) => env.env === "production");
+  const ssh = writer
+    ? terminalFor(ctx.app, record, "production", production)
+    : {};
   // The same rows the runs page draws, from the same two grouped reads: a
   // table's first column folds into a sliver at phone width, a row does not.
   const runsHead = html`${icon("activity")}
@@ -545,12 +660,6 @@ export function appPage(ctx: Ctx): Response {
           runs.map((run) => runRow(base, run, actors, issues)),
           { head: runsHead },
         );
-  // Something still moving is news the live pill announces; the page is
-  // never pulled out from under a reader.
-  const moving =
-    envs.some((env) => env.state === "deploying") ||
-    runs.some((run) => !isTerminal(run.state));
-
   const environmentsBlock = !serving
     ? card(
         html`<p class="muted small">
@@ -583,10 +692,10 @@ export function appPage(ctx: Ctx): Response {
           : html`<a href="${base}/app/production/open" class="mono">${url}</a>`}
       </dd>
       ${when(
-        ssh !== undefined,
+        writer,
         () =>
           html`<dt>Terminal</dt>
-            <dd><code class="mono">${ssh ?? ""}</code></dd>`,
+            <dd>${terminalLine(ssh, ctx.app.config.sshHostKey)}</dd>`,
       )}
       <dt>Access</dt>
       <dd>
@@ -646,13 +755,13 @@ export function appPage(ctx: Ctx): Response {
       </div>
       <aside>${about} ${crewCard}</aside>
     </div>
-    ${when(moving, () => liveMount({ repo: base }))}`;
+    ${liveMount({ repo: base })}`;
 
   return page({
     ctx,
     title: `App · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     scriptJs: liveClientJs,
   });
@@ -685,9 +794,19 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
           : "No preview yet — one starts when this pull request's head deploys.";
     return card(html`<p class="muted small">${why}</p>`, { head });
   }
+  // A preview's terminal is a different login from production's — its own
+  // command, shown only to a writer, same as the app page's.
+  const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
+  const dataNote = previewDataNote(view.value.app.previewData, pull.createdAt);
   return card(
     html`${envFacts(base, env)}
-      ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
+      ${dataNote === null ? null : html`<p class="muted small">${dataNote}</p>`}
+      ${when(writer, () =>
+        terminalLine(
+          terminalFor(ctx.app, view.value.app, env.env, env),
+          ctx.app.config.sshHostKey,
+        ),
+      )}
       <div class="bar mt">
         ${btn("Open preview", {
           href: `${base}/app/${env.env}/open`,
@@ -699,7 +818,11 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
     {
       head,
       extra: "env-card",
-      ...(env.state === "failed" ? { tone: "danger" as const } : {}),
+      ...(env.state === "failed" || env.error !== undefined
+        ? { tone: "danger" as const }
+        : env.failedDeploy !== undefined
+          ? { tone: "attn" as const }
+          : {}),
     },
   );
 }
@@ -767,6 +890,22 @@ async function envForm(
   return { repo, env: ctx.params.env ?? "", user: ctx.auth.user };
 }
 
+/**
+ * Where an environment form sends the person who pressed it. In the studio
+ * that is the page the form was on — the app's own page, or a change's —
+ * because the head card refreshes itself on the deploy event
+ * (`appStateFragment`, `GET /:owner/:name/app/state`), so staying put shows
+ * the result better than any page a redirect could pick. The page comes
+ * from the referer, and only when the referer is this forge's own origin
+ * (`safeBack`), never from a form field; with no referer the fallback is
+ * the app's studio page. Dev mode keeps its own App page.
+ */
+function envBack(ctx: Ctx, repo: Repo): string {
+  const base = repoBase(repo);
+  if (ctx.mode !== "studio") return `${base}/app`;
+  return safeBack(ctx) ?? base;
+}
+
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
   if (error === "not_found" || error === "no_such_env")
     return notFoundPage(ctx);
@@ -776,7 +915,7 @@ function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
     nothing_to_deploy:
       "There is nothing to deploy: the branch has no commits, or the pull request is closed.",
   };
-  return flashTo(ctx, `${repoBase(repo)}/app`, {
+  return flashTo(ctx, envBack(ctx, repo), {
     tone: "danger",
     message: words[error] ?? "That could not be done.",
   });
@@ -791,18 +930,24 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   if (!queued.ok) return envFailure(ctx, repo, queued.error);
   const base = repoBase(repo);
   const run = queued.value;
-  return redirect(
-    run === undefined ? `${base}/app` : `${base}/runs/${run.id}`,
-    {
-      url: ctx.url,
-      flash: {
-        message:
-          run === undefined
-            ? `${envLabel(env as EnvName)} already serves that commit.`
-            : `Redeploying ${envLabel(env as EnvName)}.`,
-      },
+  // Dev's App page hands the deploy over to its run; the studio stays on the
+  // page that asked for it and watches the head card change there. When
+  // there is no run at all, both fall back to a page that exists.
+  const to =
+    ctx.mode === "studio"
+      ? envBack(ctx, repo)
+      : run === undefined
+        ? `${base}/app`
+        : `${base}/runs/${run.id}`;
+  return redirect(to, {
+    url: ctx.url,
+    flash: {
+      message:
+        run === undefined
+          ? `${envLabel(env as EnvName)} already serves that commit.`
+          : `Redeploying ${envLabel(env as EnvName)}.`,
     },
-  );
+  });
 }
 
 // POST /:owner/:name/app/:env/stop
@@ -812,7 +957,7 @@ export async function appStop(ctx: Ctx): Promise<Response> {
   const { repo, env, user } = gate;
   const stopped = await stopEnv(ctx.app, user, repo, env);
   if (!stopped.ok) return envFailure(ctx, repo, stopped.error);
-  return flashTo(ctx, `${repoBase(repo)}/app`, {
+  return flashTo(ctx, envBack(ctx, repo), {
     message: `Stopped ${envLabel(env as EnvName)}. Its data is kept; Redeploy brings it back.`,
   });
 }

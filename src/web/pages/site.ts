@@ -10,14 +10,16 @@
 
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import { appsForRepos } from "../../core/apps.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
-import { audienceFilter } from "../../core/event_audience.ts";
 import {
   getIssuesByRef,
   listAssignedTo,
   listOpenAgentPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
+import { DEFAULT_PAGE, LOOK_SIZES, looksForApps } from "../../core/looks.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins, pinnedRepoIds } from "../../core/pins.ts";
 import {
@@ -28,7 +30,6 @@ import {
   type Repo,
 } from "../../core/repos.ts";
 import { latestRunsForIssues } from "../../core/runs.ts";
-import { RateLimiter } from "../../core/ratelimit.ts";
 import { createSession, destroySession } from "../../core/sessions.ts";
 import {
   getUsersByIds,
@@ -38,13 +39,20 @@ import {
 } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
-import { studioHome } from "./studio.ts";
+import { studioHome } from "../studio/home.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { hostOf, notFoundPage, pageHead, signInFirst } from "../chrome.ts";
+import {
+  hostOf,
+  notFoundPage,
+  pageHead,
+  repoBase,
+  signInFirst,
+} from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon, type IconName } from "../icons.ts";
+import { lookUrl, pictured } from "./looks.ts";
 import {
   eventActor,
   eventVerb,
@@ -56,6 +64,7 @@ import {
   btn,
   card,
   empty,
+  envStateBadge,
   field as formField,
   iconBtn,
   listCard,
@@ -204,7 +213,6 @@ function activityRail(
   // A run being queued or started is a moment, not a fact; the rail shows
   // what came of it. Read a little past twelve so the cut keeps its size.
   const events = listEventsVisibleTo(db, user, { limit: 24 })
-    .filter(audienceFilter(db, user))
     .filter((e: ForgeEvent) => !isTransientEvent(e.kind))
     .slice(0, 12);
   const byId = getReposByIds(
@@ -512,6 +520,96 @@ function orgsCard(ctx: Ctx, user: User): Html {
   );
 }
 
+/**
+ * The studio's front door for a stranger: the public apps actually
+ * serving, as a shelf of pictures, name and one clamped line — not the dev
+ * pitch, which a signed-out reader reaches through `?mode=dev` (unchanged,
+ * `landing` below) exactly as a signed-in one reaches it through the mode
+ * switch. A forge with nothing public up yet — most people's first visit —
+ * falls back to that same dev landing rather than showing an empty shelf.
+ *
+ * Two grouped reads carry the whole shelf (the apps, then their looks), and
+ * a repository's runtime state is a map lookup (`AppsRuntime.status`), not
+ * a process call — so this never gets slower as the forge grows apps, the
+ * one page anonymous traffic actually hits.
+ */
+function studioLanding(ctx: Ctx): Html {
+  const db = ctx.app.db;
+  const publicRepos = listReposVisibleTo(db, undefined, { limit: 24 });
+  const records = appsForRepos(
+    db,
+    publicRepos.map((repo) => repo.id),
+  );
+  const appRepos = publicRepos.filter((repo) => records.has(repo.id));
+  if (appRepos.length === 0) return landing(ctx);
+
+  const runtime = appsRuntime(ctx.app);
+  const looks = looksForApps(
+    db,
+    appRepos.map((repo) => records.get(repo.id)!.id),
+  );
+  const tiles = appRepos.map((repo) => {
+    const record = records.get(repo.id)!;
+    const production = (
+      runtime === undefined ? [] : runtime.status(record)
+    ).find((env) => env.env === "production");
+    const ofApp = looks.filter(
+      (l) =>
+        l.appId === record.id &&
+        l.env === "production" &&
+        l.page === DEFAULT_PAGE,
+    );
+    const look = pictured(ofApp, "thumb") ?? pictured(ofApp, "desktop");
+    const base = repoBase(repo);
+    return html`<a class="app-tile" href="${base}">
+      ${look
+        ? html`<img
+            class="app-tile-look"
+            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+            width="${LOOK_SIZES[look.kind].width}"
+            height="${LOOK_SIZES[look.kind].height}"
+            alt=""
+            loading="lazy"
+          />`
+        : html`<span class="app-tile-blank" aria-hidden="true"
+            >${icon("rocket")}</span
+          >`}
+      <span class="app-tile-body">
+        <span class="app-tile-name">${repo.name}</span>
+        ${repo.description !== ""
+          ? html`<span class="app-tile-desc truncate"
+              >${repo.description}</span
+            >`
+          : null}
+        ${envStateBadge(production?.state ?? "stopped")}
+      </span>
+    </a>`;
+  });
+
+  return html`<section class="hero">
+      <h1>Apps, live.</h1>
+      <p>
+        A software forge that builds and serves its own apps — these are
+        running here right now.
+      </p>
+      <div class="bar">
+        ${ctx.app.config.edgeToken === undefined
+          ? html`${btn("Create an account", {
+              href: "/signup",
+              variant: "primary",
+              size: "lg",
+            })}
+            ${btn("Sign in", { href: "/signin", size: "lg" })}`
+          : btn("Sign in", {
+              href: edgeLoginUrl("/"),
+              variant: "primary",
+              size: "lg",
+            })}
+      </div>
+    </section>
+    <div class="mt app-shelf">${tiles}</div>`;
+}
+
 function landing(ctx: Ctx): Html {
   const publicRepos = listReposVisibleTo(ctx.app.db, undefined, { limit: 8 });
   return html`<section class="hero">
@@ -673,18 +771,19 @@ function dashboard(ctx: Ctx, user: User): Html {
 
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  // Studio by default: apps, the crew, what is on you. `?mode=dev` on the
-  // home is the one-off way in without switching the browser.
-  if (
-    user !== undefined &&
-    ctx.mode === "studio" &&
-    ctx.url.searchParams.get("mode") !== "dev"
-  )
-    return await studioHome(ctx, user);
+  // Studio by default: apps, the crew, what asks you. `?mode=dev` on the
+  // home is the escape hatch — for a stranger as much as for someone
+  // signed in — resolved once for `ctx.mode`.
+  const studio = ctx.mode === "studio";
+  if (user !== undefined && studio) return await studioHome(ctx, user);
   return page({
     ctx,
     title: "forge",
-    body: user ? dashboard(ctx, user) : landing(ctx),
+    body: user
+      ? dashboard(ctx, user)
+      : studio
+        ? studioLanding(ctx)
+        : landing(ctx),
     ...(user === undefined ? {} : { scriptJs: liveClientJs }),
   });
 }
@@ -821,58 +920,10 @@ export function signupPage(ctx: Ctx): Response {
   return page({ ctx, title: "Sign up", body: authForm(ctx, "signup") });
 }
 
-/**
- * Sign-in attempts, throttled. The token limiter does not see a password
- * form — a stranger has no credential yet — so guessing a password runs at
- * line speed and each guess costs a slow hash. Two sliding windows, checked
- * before the hash: an account may be tried twenty times a minute, and the
- * forge as a whole two hundred, so neither one account nor every account at
- * once is worth the trying. A person signing in does not notice; a refused
- * attempt is not counted, so the door reopens exactly a window later. One
- * limiter per forge, so a test's forge never throttles another's.
- */
-const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
-const SIGNIN_PER_ACCOUNT = 20;
-const SIGNIN_PER_FORGE = 200;
-
-function signinAllowed(ctx: Ctx, username: string): number | undefined {
-  let limiter = signinLimits.get(ctx.app);
-  if (limiter === undefined) {
-    limiter = new RateLimiter({
-      perMinute: SIGNIN_PER_ACCOUNT,
-      adminPerMinute: SIGNIN_PER_FORGE,
-      enabled: true,
-    });
-    signinLimits.set(ctx.app, limiter);
-  }
-  const whole = limiter.take("forge", "admin");
-  if (!whole.allowed) return whole.retryAfter;
-  const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
-  return one.allowed ? undefined : one.retryAfter;
-}
-
 export async function signinSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const username = field(form, "username");
-  const wait = signinAllowed(ctx, username);
-  if (wait !== undefined) {
-    const response = page(
-      {
-        ctx,
-        title: "Sign in",
-        body: authForm(ctx, "signin", {
-          values: { username },
-          errors: {
-            password: `Too many attempts. Try again in ${wait === 1 ? "a second" : `${wait} seconds`}.`,
-          },
-        }),
-      },
-      429,
-    );
-    response.headers.set("retry-after", String(wait));
-    return response;
-  }
   const verified = await verifyPassword(
     ctx.app.db,
     username,
@@ -963,7 +1014,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 }
 
 export function logoutSubmit(ctx: Ctx): Response {
-  if (crossOrigin(ctx.request, ctx.url))
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
   const cookie = ctx.request.headers.get("cookie") ?? "";
   const match = cookie.match(/forge_session=([^;]+)/);

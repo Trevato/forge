@@ -80,7 +80,6 @@ import {
   reasonWords,
   runTitle,
 } from "./runs.ts";
-import { decisionsFor, type Decision as Ask } from "./studio.ts";
 import { runLog } from "../../actions/runs.ts";
 
 // ---- words ----
@@ -118,8 +117,9 @@ function why(run: Run): string {
 
 const KIND_WORDS = {
   next: "next issue",
-  land: "ship or show",
+  land: "landing",
   retry: "try again",
+  lean: "a lean",
 };
 
 // ---- the shell ----
@@ -425,12 +425,9 @@ function homeView(
     db,
     running.map((r) => r.issueId).filter((id): id is string => id !== null),
   );
-  const asks = decisionsFor(ctx, apps);
   const runsBy = new Map<string, Run[]>();
   for (const r of running)
     runsBy.set(r.repoId, [...(runsBy.get(r.repoId) ?? []), r]);
-  const asksBy = new Map<string, number>();
-  for (const d of asks) asksBy.set(d.repo.id, (asksBy.get(d.repo.id) ?? 0) + 1);
   const working = running.filter((r) => r.state === "running").length;
   const waiting = running.length - working;
 
@@ -438,7 +435,6 @@ function homeView(
     const key = `app:${slug(repo)}`;
     const flying = runsBy.get(repo.id) ?? [];
     const working = flying.filter((r) => r.state === "running").length;
-    const n = asksBy.get(repo.id) ?? 0;
     const status =
       repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
     const share =
@@ -469,9 +465,6 @@ function homeView(
         class="big-n"
         ${working === 0 ? html`data-zero=""` : html`data-hot=""`}
         ><b>${working}</b> working</span
-      >
-      <span class="big-n" ${n === 0 ? html`data-zero=""` : null}
-        ><b>${n}</b> ask${n === 1 ? "" : "s"}</span
       >
       ${status === undefined
         ? html`<span class="big-spend"><span></span><span>—</span></span>`
@@ -544,8 +537,7 @@ function homeView(
     title: "Apps",
     count: apps.length,
     note: html`${working}
-    working${waiting > 0 ? html` · ${waiting} waiting` : null} · ${asks.length}
-    ask${asks.length === 1 ? "" : "s"} you`,
+    working${waiting > 0 ? html` · ${waiting} waiting` : null}`,
     body: rows(appRows, "No apps yet. Make one at /apps/new."),
     live,
   })}
@@ -702,58 +694,6 @@ const stopForms = (
     ),
   )}`;
 
-/** One ask as a row: the kind, what it is about, the keys that decide it. */
-function askRow(d: Ask): Html {
-  const base = repoBase(d.repo);
-  const pull = d.pull;
-  const href =
-    pull === undefined
-      ? `${base}/settings/autonomy`
-      : `${base}/pulls/${pull.number}`;
-  const formId = `ask-${d.id}`;
-  const acts =
-    d.kind === "look" && pull
-      ? html`${act("s", "ship", formId, true)}${sayChip()}`
-      : d.kind === "stopped" && pull
-        ? html`${sayChip(true)}${act("x", "close", formId)}`
-        : null;
-  return html`<li
-    class="big-row"
-    data-kind="ask"
-    data-key="ask:${d.id}"
-    data-href="${href}"
-    ${when(pull, (p) => html`data-say="${base}/pulls/${p.number}/say"`)}
-    data-say-who="${d.who}"
-    tabindex="-1"
-  >
-    <span class="big-word" data-word="${d.kind}"
-      >${d.kind === "look" ? "green" : d.kind}</span
-    >
-    <span class="big-t">${pull?.title ?? d.repo.name}</span>
-    <span class="big-m"
-      >${pull ? html`#${pull.number} · ` : null}${d.who} · ${d.short}</span
-    >
-    <span class="big-acts">${acts}</span>
-  </li>`;
-}
-
-/** The hidden form behind an ask's landing key: ship, or close. */
-function askForm(d: Ask): Html | null {
-  const pull = d.pull;
-  if (pull === undefined) return null;
-  const base = repoBase(d.repo);
-  const own = html`id="ask-${d.id}" method="post" hidden`;
-  if (d.kind === "look")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
-      <input type="hidden" name="pull" value="${pull.number}" />
-    </form>`;
-  if (d.kind === "stopped")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/state">
-      <input type="hidden" name="state" value="closed" />
-    </form>`;
-  return null;
-}
-
 // ---- app: working, asks, the map, landed ----
 
 function appView(
@@ -785,7 +725,6 @@ function appView(
   }
   const status =
     repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
-  const asks = decisionsFor(ctx, [repo]);
   const landed = mergedPullsForRepos(db, [repo.id], 12);
 
   const graph = repoGraph(db, repo.id);
@@ -815,18 +754,6 @@ function appView(
       "Nobody is working right now. Tell the crew something.",
     )}${stopForms(base, running, stops)}`,
     live: "run.*",
-    repo,
-  })}
-  ${pane({
-    name: "asks",
-    n: 2,
-    title: "Asks you",
-    count: asks.length,
-    note: html`decide, and the crew carries on`,
-    body: html`${rows(asks.map(askRow), "Nothing asks you.")}${asks.map(
-      askForm,
-    )}`,
-    live: "run.*,pull.*,issue.*,check.*",
     repo,
   })}
   ${pane({

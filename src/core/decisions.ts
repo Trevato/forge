@@ -9,7 +9,10 @@
 import type { Database } from "bun:sqlite";
 import { id as newId } from "../kernel/id.ts";
 
-export type DecisionKind = "next" | "land" | "retry";
+/** `lean` is which option on a studio ask card a careful owner would pick
+ * — see `web/studio/leans.ts`, which stores `{ card, head }` in `state` so
+ * `latestLean` can tell a fresh answer from one about a head that moved. */
+export type DecisionKind = "next" | "land" | "retry" | "lean";
 
 export interface Decision {
   readonly id: string;
@@ -141,6 +144,43 @@ export function resolveOpen(
     `UPDATE decision SET outcome = ?2, outcome_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1`,
   ).run(open.id, outcome);
   return true;
+}
+
+/**
+ * The newest `lean` decision still about the same head: the option a
+ * decider offered for one studio ask card, good only as long as the head it
+ * was asked about. `head` is a pull's head oid, or `""` for a card about a
+ * repository rather than a pull. A handful of rows back covers a card whose
+ * kind changed (the same issue asked as `stopped`, then as `look`) without
+ * a join on anything but what is already indexed.
+ */
+export function latestLean(
+  db: Database,
+  repoId: string,
+  issueId: string | null,
+  card: string,
+  head: string,
+): Decision | undefined {
+  const rows =
+    issueId === null
+      ? db
+          .query<
+            Row,
+            [string]
+          >("SELECT * FROM decision WHERE kind = 'lean' AND issue_id IS NULL AND repo_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 10")
+          .all(repoId)
+      : db
+          .query<
+            Row,
+            [string]
+          >("SELECT * FROM decision WHERE kind = 'lean' AND issue_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 10")
+          .all(issueId);
+  return rows.map(toDecision).find((d) => {
+    const s = d.state as { card?: unknown; head?: unknown } | null;
+    return (
+      typeof s === "object" && s !== null && s.card === card && s.head === head
+    );
+  });
 }
 
 export function listDecisions(

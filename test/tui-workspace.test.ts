@@ -26,7 +26,7 @@ import { listPulls } from "../src/core/pulls.ts";
 import type { User } from "../src/core/users.ts";
 import { blobForRender } from "../src/git/read.ts";
 import { listBranches } from "../src/git/branches.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { App } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
@@ -36,7 +36,7 @@ import {
 } from "../src/tui/term/terminal.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
 
-setLogLevel("error");
+quietLogs();
 
 /**
  * The colour the first `export` keyword is drawn in. A theme switch has to

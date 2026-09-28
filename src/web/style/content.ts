@@ -342,6 +342,25 @@ form.inline { display: inline; margin-left: auto; }
 .hero-points .card-body { font-size: 13px; color: var(--muted-fg); }
 .hero-points strong { display: block; color: var(--fg); font-size: 14px; margin-bottom: 3px; }
 
+/* The studio's front door: the public apps that are serving, as pictures. */
+.app-shelf {
+  display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.app-tile {
+  display: block; border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; background: var(--card); color: inherit; text-decoration: none;
+}
+.app-tile:hover { border-color: var(--accent); }
+.app-tile-look { display: block; width: 100%; height: auto; background: var(--muted); }
+.app-tile-blank {
+  display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 1280 / 800; background: var(--muted); color: var(--muted-fg);
+}
+.app-tile-body { display: grid; gap: 6px; padding: 10px 12px; }
+.app-tile-name { font-weight: 600; font-size: 14px; }
+.app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
+
 /* Every page grid, in one rule: a grid item's automatic minimum size is its
    *content*, so a column with a long unbreakable line pushes the page wider
    than the phone rather than letting its own ellipsis do the work. A zero
@@ -497,6 +516,8 @@ form.inline { display: inline; margin-left: auto; }
 .diff-stat .add { color: var(--add-fg); }
 .diff-stat .del { color: var(--del-fg); }
 .diff-note { padding: 20px 16px; text-align: center; color: var(--muted-fg); font-size: 13px; }
+.diff-stub p { margin: 0 0 10px; }
+.diff-stub .diff-stat { display: inline-flex; }
 .diff-viewed {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   font-size: 12px; color: var(--muted-fg); cursor: pointer; margin: 0;
@@ -624,10 +645,12 @@ form.inline { display: inline; margin-left: auto; }
 .app-strip .spacer { flex: 1; }
 /* One environment: name and state in the head, the facts and the reason it
    failed in the body, its buttons in the foot. A card rather than a row so a
-   deploy error has a whole line to be read on. */
+   deploy error has a whole line to be read on. The facts and the error read
+   the same wherever they are shown — the App page's card, a pull's preview,
+   the studio head — so they are not scoped to the card. */
 .env-card .card-head { gap: 10px; }
-.env-card .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); }
-.env-card .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
+.env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); }
+.env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
 .env-card .card-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .env-card .card-foot form { display: inline-flex; }
 /* The look: a phone beside a desktop, each in a hairline frame. The phone
@@ -699,6 +722,11 @@ form.inline { display: inline; margin-left: auto; }
 .run-summary { margin: 10px 0 0; text-wrap: pretty; }
 .run-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 .run-actions form { display: inline-flex; }
+/* A tail beside a running row (studio/app.ts): the same log, a peek at it
+   — fixed height so nothing around it shifts as lines arrive, and it
+   scrolls itself rather than the page. */
+.log-tail-row { padding: 0 14px 10px; }
+.run-log.log-tail { max-height: 8.5em; min-height: 0; margin: 6px 0 0; font-size: 12.5px; }
 .table .truncate { max-width: 34ch; display: inline-block; vertical-align: bottom; }
 .agent-brief { white-space: pre-wrap; font-size: 13px; color: var(--muted-fg); max-height: 6.5em; overflow: hidden; }
 

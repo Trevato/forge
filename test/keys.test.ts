@@ -19,6 +19,10 @@ import {
 } from "../src/core/keys.ts";
 import type { User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { missing } from "./helpers/tools.ts";
+
+/** Real keys come from real ssh-keygen; without it these skip, loudly. */
+const NO_KEYGEN = missing("ssh-keygen");
 
 async function keygen(dir: string, name: string, args: string[]) {
   const file = join(dir, name);
@@ -34,7 +38,7 @@ async function keygen(dir: string, name: string, args: string[]) {
   return (await readFile(`${file}.pub`, "utf8")).trim();
 }
 
-describe("ssh keys", () => {
+describe.skipIf(NO_KEYGEN)("ssh keys", () => {
   let dataDir: string;
   let keyDir: string;
   let app: App;

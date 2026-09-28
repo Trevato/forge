@@ -4,17 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
-const gitEnv = {
-  ...process.env,
-  GIT_AUTHOR_NAME: "Dev",
-  GIT_AUTHOR_EMAIL: "dev@f.dev",
-  GIT_COMMITTER_NAME: "Dev",
-  GIT_COMMITTER_EMAIL: "dev@f.dev",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+const gitEnv = gitClientEnv();
 
 describe("pull requests end to end", () => {
   let dataDir: string;

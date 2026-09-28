@@ -31,7 +31,8 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import type { Answer, Decider, Questions } from "../src/crew/decide.ts";
 import { driveRepo, landIfGreen } from "../src/crew/autonomy.ts";
-import { retryOrStop } from "../src/crew/dispatch.ts";
+import { answerFailedCheck, judgeFailedCheck } from "../src/crew/dispatch.ts";
+import { startChecks } from "../src/checks/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 /** A decider that answers from a script: question name → choice. */
@@ -229,7 +230,8 @@ describe("the decision ledger", () => {
     });
     script["retry"] = "stop";
     expect(
-      await retryOrStop(app, fresh(), pull, failed.id, pull.createdAt),
+      (await judgeFailedCheck(app, fresh(), pull, failed.id, pull.createdAt))
+        .retry,
     ).toBe("stop");
     const seen = decider.seen.at(-1) as {
       tries: number;
@@ -250,6 +252,165 @@ describe("the decision ledger", () => {
     expect(resolveOpen(app.db, pull.id, "retry", "green")).toBe(true);
     expect(latestDecision(app.db, pull.id, "retry")?.outcome).toBe("green");
     expect(resolveOpen(app.db, pull.id, "retry", "green")).toBe(false);
+  });
+
+  test("stop is not the last word on a red check: the environment's fault runs it again, once per commit, before anything is parked", async () => {
+    const { getAgentByName } = await import("../src/core/agents.ts");
+    const { listComments } = await import("../src/core/issues.ts");
+    const scoutAgent = getAgentByName(app.db, "scout")!;
+    const checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    try {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: "feature/flaky",
+        base: "main",
+        message: "Flaky",
+        files: [
+          {
+            path: "forge.json",
+            content: `{"check": {"run": "test -f OK.md", "install": ""}}\n`,
+          },
+          { path: "OK.md", content: "ok\n" },
+        ],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, scout, repo, {
+        title: "Flaky",
+        baseBranch: "main",
+        headBranch: "feature/flaky",
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const pull = opened.value;
+      const red = (): string => {
+        const run = createRun(app.db, {
+          repoId: repo.id,
+          kind: "check",
+          issueId: pull.id,
+          env: `pull-${pull.number}`,
+          commitOid: pull.headOid,
+          reason: "pull",
+        });
+        claimRun(app.db, run.id);
+        finishRun(app.db, run.id, {
+          state: "failed",
+          summary: "(fail) a pull closed under a running agent [60000.50ms]",
+        });
+        return run.id;
+      };
+      const failure = {
+        kind: "check",
+        commitOid: pull.headOid,
+        env: `pull-${pull.number}`,
+        since: pull.createdAt,
+      };
+      const retries = (): number =>
+        listRuns(app.db, repo.id, { kind: "check", limit: 50 }).filter(
+          (r) => r.issueId === pull.id && r.reason === "retry",
+        ).length;
+
+      // A timeout in a file the change never touched, and the decider says
+      // stop. Today that parked the pull on the spot; the cause is asked
+      // first now, and it is the environment's — the check runs again.
+      script["retry"] = "stop";
+      script["cause"] = "environment";
+      const asked = decider.seen.length;
+      expect(
+        await answerFailedCheck(app, fresh(), pull, scoutAgent, {
+          runId: red(),
+          ...failure,
+        }),
+      ).toBe("reran");
+      // One decision, not two: whose fault and whether to try again come
+      // back from the same round trip.
+      expect(decider.seen.length).toBe(asked + 1);
+      expect(getPull(app.db, repo.id, pull.number)?.state).toBe("open");
+      expect(retries()).toBe(1);
+      // The agent's tries are not spent: no rework was queued.
+      expect(
+        listRuns(app.db, repo.id, { kind: "agent" }).some(
+          (r) => r.issueId === pull.id && r.reason === "check_failed",
+        ),
+      ).toBe(false);
+
+      // Once per head commit: red again on the same commit is real, and
+      // the pull parks with a reason that says the environment.
+      expect(
+        await answerFailedCheck(app, fresh(), pull, scoutAgent, {
+          runId: red(),
+          ...failure,
+        }),
+      ).toBe("parked");
+      expect(retries()).toBe(1);
+      expect(getPull(app.db, repo.id, pull.number)?.state).toBe("closed");
+      const why = listComments(app.db, pull.id).map((c) => c.body);
+      expect(
+        why.some((b) => b.includes("in the place it ran, not in the change")),
+      ).toBe(true);
+    } finally {
+      await checks.stop();
+      delete script["cause"];
+    }
+  }, 60_000);
+
+  test("the change's fault parks as it always has, and says so", async () => {
+    const { getAgentByName } = await import("../src/core/agents.ts");
+    const { listComments } = await import("../src/core/issues.ts");
+    const scoutAgent = getAgentByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/broken",
+      base: "main",
+      message: "Broken",
+      files: [{ path: "broken.ts", content: "export const broken = 1;\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Broken",
+      baseBranch: "main",
+      headBranch: "feature/broken",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, {
+      state: "failed",
+      summary: 'check failed: 1 of 274 tests — "renders the broken widget"',
+      checkDetail: {
+        passed: 273,
+        failed: 1,
+        names: ["renders the broken widget"],
+      },
+    });
+    script["retry"] = "stop";
+    script["cause"] = "change";
+    try {
+      expect(
+        await answerFailedCheck(app, fresh(), pull, scoutAgent, {
+          runId: run.id,
+          kind: "check",
+          commitOid: pull.headOid,
+          env: `pull-${pull.number}`,
+          since: pull.createdAt,
+        }),
+      ).toBe("parked");
+      expect(getPull(app.db, repo.id, pull.number)?.state).toBe("closed");
+      const comments = listComments(app.db, pull.id).map((c) => c.body);
+      expect(
+        comments.some((b) => b.includes("saw no point in another try")),
+      ).toBe(true);
+      // The red test's own name, not just "the check failed".
+      expect(
+        comments.some((b) => b.includes('"renders the broken widget"')),
+      ).toBe(true);
+    } finally {
+      delete script["cause"];
+    }
   });
 
   test("conflicts come first: a green pull that no longer merges gets a conflict run before anyone decides", async () => {

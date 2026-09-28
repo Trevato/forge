@@ -17,7 +17,7 @@ export async function readForm(
   ctx: Ctx,
   minScope?: TokenScope,
 ): Promise<Form | Response> {
-  if (crossOrigin(ctx.request, ctx.url))
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
   if (minScope !== undefined) {
     if (

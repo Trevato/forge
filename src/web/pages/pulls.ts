@@ -52,6 +52,8 @@ import {
 } from "../ui.ts";
 import { refSet } from "./refs.ts";
 import { threadRow } from "./issues.ts";
+import { studioChanges } from "../studio/lists.ts";
+import { pageTitle, studioRecord } from "../studio/nouns.ts";
 import { originGlyph } from "./thread.ts";
 
 const PER_PAGE = 25;
@@ -123,6 +125,11 @@ function verdictMark(summary: ReviewSummary | undefined): Html {
 export async function pullsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  // In the studio "every change" is the pull list in the studio's own
+  // words — the same rule `pullPage` follows for one change. `?mode=dev` is
+  // the one-off way to dev's list without switching the browser.
+  const record = studioRecord(ctx, repo);
+  if (record !== undefined) return await studioChanges(ctx, repo, record);
   const base = repoBase(repo);
   const db = ctx.app.db;
   const params = ctx.url.searchParams;
@@ -269,9 +276,9 @@ export async function pullsList(ctx: Ctx): Promise<Response> {
 
   return page({
     ctx,
-    title: `Pull requests · ${repo.name}`,
+    title: pageTitle("changes", repo, false),
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
     styleCss: labelCss([
       ...listLabels(db, repo.id),
@@ -438,7 +445,7 @@ export async function newPullPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `New pull request · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    palette: repoPalette(repo),
+    palette: repoPalette(ctx, repo),
     body,
   });
 }

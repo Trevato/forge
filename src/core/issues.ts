@@ -45,6 +45,8 @@ export interface Issue {
   readonly assigneeName: string | null;
   /** Whether the assignee is a crew member. */
   readonly assigneeIsAgent: boolean;
+  /** Whether the author is a crew member, not a person. */
+  readonly authorIsAgent: boolean;
 }
 
 interface IssueRow {
@@ -65,10 +67,11 @@ interface IssueRow {
   assignee_id: string | null;
   assignee_name: string | null;
   assignee_is_agent: number | null;
+  author_is_agent: number;
 }
 
 const SELECT = `
-  SELECT issue.*, user.username AS author_name,
+  SELECT issue.*, user.username AS author_name, user.is_agent AS author_is_agent,
          assignee.username AS assignee_name, assignee.is_agent AS assignee_is_agent
   FROM issue JOIN user ON user.id = issue.author_id
   LEFT JOIN user AS assignee ON assignee.id = issue.assignee_id`;
@@ -92,6 +95,7 @@ function toIssue(row: IssueRow): Issue {
     assigneeId: row.assignee_id,
     assigneeName: row.assignee_name,
     assigneeIsAgent: row.assignee_is_agent === 1,
+    authorIsAgent: row.author_is_agent === 1,
   };
 }
 
@@ -152,6 +156,31 @@ export function listOpenAgentPullsVisibleTo(
     .query<IssueRow, [string, number]>(
       `${SELECT} JOIN repo ON repo.id = issue.repo_id
        WHERE issue.kind = 'pull' AND issue.state = 'open' AND user.is_agent = 1
+         AND ${repoVisible(true)}
+       ORDER BY issue.updated_at DESC LIMIT ?2`,
+    )
+    .all(viewer.id, Math.min(Math.max(limit, 1), 200))
+    .map(toIssue);
+}
+
+/**
+ * Open pulls in repositories the viewer can see, newest activity first —
+ * whoever opened them. The same query as `listOpenAgentPullsVisibleTo`
+ * without the crew-only filter, for a surface that judges a change by what
+ * it does rather than by who typed it (the studio's asks panel, the board,
+ * a change's own Decide card). Autonomy code keeps reading the agent-only
+ * list above: what a person is *shown* here must never widen what the crew
+ * is left to decide on its own.
+ */
+export function listOpenPullsVisibleTo(
+  db: Database,
+  viewer: { id: string },
+  limit = 25,
+): Issue[] {
+  return db
+    .query<IssueRow, [string, number]>(
+      `${SELECT} JOIN repo ON repo.id = issue.repo_id
+       WHERE issue.kind = 'pull' AND issue.state = 'open'
          AND ${repoVisible(true)}
        ORDER BY issue.updated_at DESC LIMIT ?2`,
     )
@@ -735,6 +764,37 @@ export function issueCounts(
     else open = row.n;
   }
   return { open, closed };
+}
+
+/**
+ * Which of these repositories have an open tell nobody holds — no assignee,
+ * and not the repository's own standing direction issue, which is never
+ * picked up like an ordinary tell. The shelf's one batched read for that
+ * question, paired with `reposWithBuilder` (core/agents.ts) to say whether
+ * it is stuck for want of a builder, not merely unclaimed for a moment.
+ */
+export function reposWithUnclaimedTell(
+  db: Database,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ repo_id: string }, string[]>(
+        `SELECT DISTINCT issue.repo_id FROM issue
+         JOIN repo ON repo.id = issue.repo_id
+         WHERE issue.kind = 'issue' AND issue.state = 'open'
+           AND issue.assignee_id IS NULL
+           AND (repo.direction_issue_id IS NULL OR repo.direction_issue_id != issue.id)
+           AND issue.repo_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...batch);
+    for (const row of rows) out.add(row.repo_id);
+  }
+  return out;
 }
 
 /** Issues addressed the way an activity feed has them: by repo and number. */

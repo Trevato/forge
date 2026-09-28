@@ -30,11 +30,11 @@ import {
 import { RateLimiter } from "../src/core/ratelimit.ts";
 import { deliveryBusy, runDelivery } from "../src/core/webhooks.ts";
 import { Gate, gitGate, runGit } from "../src/git/env.ts";
-import { setLogLevel } from "../src/kernel/log.ts";
+import { quietLogs } from "./helpers/globals.ts";
 import { isBusy, transact } from "../src/kernel/db.ts";
 import { repoDir } from "../src/git/repos.ts";
 
-setLogLevel("error");
+quietLogs();
 
 const WRITERS = 50;
 

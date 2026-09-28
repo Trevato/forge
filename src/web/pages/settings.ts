@@ -69,6 +69,7 @@ import {
   repoPalette,
   settingsLayout,
 } from "../chrome.ts";
+import { studioCrewSettings } from "../studio/crew.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
@@ -171,7 +172,7 @@ function settingsPageResponse(
       ctx,
       title: `${title} · ${repo.name}`,
       crumbs: crumbsFor(repo),
-      palette: repoPalette(repo),
+      palette: repoPalette(ctx, repo),
       ...(styleCss !== undefined ? { styleCss } : {}),
       body: html`${repoHeader(ctx, repo, "settings", { compact: true })}
       ${settingsLayout(sections(repoBase(repo), active), body)}`,
@@ -194,6 +195,17 @@ async function adminForm(
 // ---- general ----
 
 export async function settingsPage(ctx: Ctx): Promise<Response> {
+  // In the studio, the app's head leads to one page for the crew and the
+  // ceiling — the two decisions that are the studio's own story — rather
+  // than dev's full settings shell. `?mode=dev` is the way to the rest.
+  const studio =
+    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
+  if (studio) {
+    const readable = loadRepo(ctx);
+    if (!readable) return repoNotFound(ctx);
+    const record = getAppByRepo(ctx.app.db, readable.id);
+    if (record !== undefined) return studioCrewSettings(ctx, readable, record);
+  }
   const repo = loadAdminRepo(ctx);
   if (!repo) return repoNotFound(ctx);
   const base = repoBase(repo);

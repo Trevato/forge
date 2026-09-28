@@ -7,7 +7,11 @@
  * edges: stale state, races, forged input, and the boundary of a bound.
  */
 
-import { appHostSuffix } from "../src/apps/host.ts";
+import {
+  appHostSuffix,
+  domainHoldsAppHosts,
+  resolveAppDomain,
+} from "../src/apps/host.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -59,23 +63,21 @@ import { serve, type Servers } from "../src/http/server.ts";
 import {
   appendRunLog,
   readRunLog,
+  readRunLogTail,
   runLogListenerCount,
   subscribeRunLog,
 } from "../src/runs/log.ts";
 import { grantedCookie } from "./helpers/identity.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 const DOMAIN = "apps.test";
 
-const clientEnv = {
-  ...process.env,
+const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Agent",
   GIT_AUTHOR_EMAIL: "agent@forge.local",
   GIT_COMMITTER_NAME: "Agent",
   GIT_COMMITTER_EMAIL: "agent@forge.local",
-  GIT_TERMINAL_PROMPT: "0",
-  GIT_CONFIG_GLOBAL: "/dev/null",
-  GIT_CONFIG_SYSTEM: "/dev/null",
-};
+});
 
 async function sh(args: string[], cwd: string) {
   const proc = Bun.spawn(args, {
@@ -139,6 +141,88 @@ describe("host routing: a single-label attachment", () => {
     expect(appHostSuffix("forge.example")).toBe(".forge.example");
     expect(appHostSuffix("--forge.example")).toBe("--forge.example");
     expect(appHostSuffix(".forge.example")).toBe(".forge.example");
+  });
+});
+
+describe("host routing: domainHoldsAppHosts (issue #269)", () => {
+  test("the hostnames a person really uses hold an app's slug", () => {
+    expect(domainHoldsAppHosts("localhost")).toBe(true);
+    expect(domainHoldsAppHosts("forge.example")).toBe(true);
+    expect(domainHoldsAppHosts("--forge.example")).toBe(true);
+  });
+
+  test("an IPv4 address does not: WHATWG rejects a numeric last label", () => {
+    expect(domainHoldsAppHosts("127.0.0.1")).toBe(false);
+    expect(domainHoldsAppHosts("--127.0.0.1")).toBe(false);
+    expect(domainHoldsAppHosts("203.0.113.5")).toBe(false);
+  });
+});
+
+describe("resolveAppDomain: what app hostnames attach to (issue #269)", () => {
+  test("an explicit FORGE_APP_DOMAIN wins outright, IP forge or not", () => {
+    expect(
+      resolveAppDomain({
+        explicit: "apps.example",
+        hosted: false,
+        hostname: "203.0.113.5",
+      }),
+    ).toEqual({ ok: true, domain: "apps.example" });
+    expect(
+      resolveAppDomain({
+        explicit: "apps.example",
+        hosted: false,
+        hostname: "forge.example",
+      }),
+    ).toEqual({ ok: true, domain: "apps.example" });
+  });
+
+  test("an ordinary hostname is used as-is, nothing changes", () => {
+    expect(
+      resolveAppDomain({
+        explicit: undefined,
+        hosted: false,
+        hostname: "forge.example",
+      }),
+    ).toEqual({ ok: true, domain: "forge.example" });
+  });
+
+  test("a loopback forge addressed by IP falls back to localhost, not off", () => {
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: false,
+      hostname: "127.0.0.1",
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.domain).toBe("localhost");
+    expect(resolved.note).toContain("FORGE_APP_DOMAIN");
+    // And it actually holds a slug, unlike what it replaced.
+    expect(domainHoldsAppHosts(resolved.domain)).toBe(true);
+  });
+
+  test("a forge hosted inside another falls back the same way, nested form", () => {
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: true,
+      hostname: "127.0.0.1",
+    });
+    expect(resolved).toEqual({
+      ok: true,
+      domain: "--localhost",
+      note: expect.stringContaining("FORGE_APP_DOMAIN"),
+    });
+  });
+
+  test("a forge reached by a real, non-loopback IP leaves apps off, message names the fix", () => {
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: false,
+      hostname: "203.0.113.5",
+    });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.reason).toContain("FORGE_APP_DOMAIN");
+    expect(resolved.reason).toContain("203.0.113.5");
   });
 });
 
@@ -305,6 +389,57 @@ describe("manifest: parseManifest edge cases", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.kind).toBe("not_an_app");
   });
+
+  test("app.looks absent behaves exactly as today: the home page alone", () => {
+    const result = parseManifest(JSON.stringify({ app: { run: "x" } }), undefined);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.looks).toEqual(["/"]);
+  });
+
+  test("app.looks names up to three pages", () => {
+    const result = parseManifest(
+      JSON.stringify({ app: { run: "x", looks: ["/", "/board"] } }),
+      undefined,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.looks).toEqual(["/", "/board"]);
+  });
+
+  test("app.looks with more than three paths is refused", () => {
+    const result = parseManifest(
+      JSON.stringify({
+        app: { run: "x", looks: ["/", "/a", "/b", "/c"] },
+      }),
+      undefined,
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.kind).toBe("invalid");
+  });
+
+  test("app.looks entries must be a path: no scheme, no host, no .., no control bytes", () => {
+    for (const bad of [
+      "board",
+      "//evil.example/board",
+      "https://evil.example/board",
+      "/../secret",
+      "/board\u0000",
+      "/board\n",
+    ]) {
+      const result = parseManifest(
+        JSON.stringify({ app: { run: "x", looks: [bad] } }),
+        undefined,
+      );
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  test("an over-long app.looks entry is refused", () => {
+    const result = parseManifest(
+      JSON.stringify({ app: { run: "x", looks: [`/${"a".repeat(300)}`] } }),
+      undefined,
+    );
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe("run log: redaction, truncation, and the listener seam", () => {
@@ -344,6 +479,42 @@ describe("run log: redaction, truncation, and the listener seam", () => {
     // Every remaining line must be whole: none may be a mid-word fragment
     // of "line N" that a byte cut would otherwise leave.
     for (const line of lines) expect(line).toMatch(/^line \d+$/);
+  });
+
+  test("readRunLogTail reads a bounded slice and still ends at the true last line", () => {
+    const runId = "test-run-tail";
+    // Far more lines than fit in a window sized for a handful of them.
+    for (let i = 0; i < 20_000; i++) appendRunLog(dataDir, runId, `line ${i}`);
+    const { lines, truncated } = readRunLogTail(dataDir, runId, 6);
+    expect(truncated).toBe(true);
+    expect(lines.length).toBeLessThan(20_000);
+    expect(lines.at(-1)).toBe("line 19999");
+    expect(lines.slice(-6)).toEqual(
+      [19994, 19995, 19996, 19997, 19998, 19999].map((i) => `line ${i}`),
+    );
+  });
+
+  test("readRunLogTail still returns at least the cap's worth of lines when a line is near the max length", () => {
+    const runId = "test-run-tail-long-lines";
+    // Lines this long are rare (real logs run 1KB-45KB total) but the cap
+    // must not assume otherwise: it is sized from MAX_LINE, not a guess.
+    for (let i = 0; i < 8; i++)
+      appendRunLog(dataDir, runId, `${i}-`.repeat(8000));
+    const { lines, truncated } = readRunLogTail(dataDir, runId, 6);
+    expect(lines.length).toBeGreaterThanOrEqual(6);
+    expect(truncated).toBe(true);
+    // Every line kept must be whole: none may be a mid-repeat fragment left
+    // by a byte cut landing inside it.
+    for (const line of lines) expect(line).toMatch(/^(\d-)+$/);
+    expect(lines.at(-1)).toBe("7-".repeat(8000));
+  });
+
+  test("readRunLogTail on a log shorter than the cap returns every line, untruncated", () => {
+    const runId = "test-run-tail-short";
+    appendRunLog(dataDir, runId, "only line");
+    const { lines, truncated } = readRunLogTail(dataDir, runId, 6);
+    expect(lines).toEqual(["only line"]);
+    expect(truncated).toBe(false);
   });
 
   test("subscribe/abort a thousand times leaves no listener behind", () => {
@@ -1077,6 +1248,143 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     );
   }, 60_000);
 
+  test("install failing fails before test or start ever run — nothing from a half-installed tree", async () => {
+    const made = await newApp(app, alice, {
+      name: "badinstall",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value.repo;
+    await settled(repo.id, (r) => r.env === "production");
+
+    const testMarker = join(work, `install-test-marker-${Date.now()}`);
+    const runMarker = join(work, `install-run-marker-${Date.now()}`);
+    const committed = await commitToBranch(app, alice, repo, {
+      branch: "bad-install",
+      base: repo.defaultBranch,
+      message: "install fails",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                install: "exit 1",
+                run: `touch ${runMarker} && bun run src/server.ts`,
+                test: `touch ${testMarker} && bun test`,
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const opened = await openPull(app, alice, repo, {
+      title: "Bad install",
+      baseBranch: repo.defaultBranch,
+      headBranch: "bad-install",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    const failed = await settled(
+      repo.id,
+      (r) =>
+        r.env === `pull-${opened.value.number}` &&
+        r.commitOid === committed.value.commitOid,
+    );
+    expect(failed.state).toBe("failed");
+    expect(failed.summary).toContain("install");
+    // Neither `test` nor `run` ever executed.
+    expect(existsSync(testMarker)).toBe(false);
+    expect(existsSync(runMarker)).toBe(false);
+    expect(
+      (await viaHost(`badinstall--${opened.value.number}.${DOMAIN}`)).status,
+    ).toBe(502);
+  }, 60_000);
+
+  test("closing a pull whose deploy already answered kills its still-running test step — no orphan `bun test`", async () => {
+    const made = await newApp(app, alice, {
+      name: "slowtest",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value.repo;
+    await settled(repo.id, (r) => r.env === "production");
+
+    // A merge lands this same forge.json on the default branch and
+    // production redeploys it too, running this same test step to
+    // completion (nothing aborts a deploy that was never in flight when the
+    // pull closed) — a marker keyed by $FORGE_APP_ENV keeps that legitimate
+    // production run from being mistaken for the preview's orphan.
+    const marker = join(work, `slowtest-marker-${Date.now()}`);
+    const committed = await commitToBranch(app, alice, repo, {
+      branch: "slow-test",
+      base: repo.defaultBranch,
+      message: "slow test",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify(
+            {
+              app: {
+                run: "bun run src/server.ts",
+                test: `sleep 5 && touch ${marker}-$FORGE_APP_ENV`,
+              },
+            },
+            null,
+            2,
+          )}\n`,
+        },
+      ],
+    });
+    expect(committed.ok).toBe(true);
+    if (!committed.ok) return;
+    const opened = await openPull(app, alice, repo, {
+      title: "Slow test",
+      baseBranch: repo.defaultBranch,
+      headBranch: "slow-test",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    // Wait for the app to answer — well before the test step's sleep ends.
+    const upDeadline = Date.now() + 10_000;
+    let up = false;
+    while (Date.now() < upDeadline) {
+      if (
+        (await viaHost(`slowtest--${opened.value.number}.${DOMAIN}`))
+          .status === 200
+      ) {
+        up = true;
+        break;
+      }
+      await Bun.sleep(50);
+    }
+    expect(up).toBe(true);
+
+    // Close it while the test step is still sleeping.
+    const closed = await mergePull(
+      app,
+      alice,
+      repo,
+      getPull(app.db, repo.id, opened.value.number)!,
+      "merge",
+    );
+    expect(closed.ok).toBe(true);
+
+    // Wait well past the sleep the test step was doing, and confirm it
+    // never finished: the preview's own marker is not there (production's,
+    // from its own unrelated redeploy of the same merged commit, may be).
+    await Bun.sleep(6_500);
+    expect(existsSync(`${marker}-preview`)).toBe(false);
+  }, 60_000);
+
   test("private grant: forged, tampered, expired, wrong-env, and open-redirect are all refused; cookie is HttpOnly/SameSite", async () => {
     const made = await newApp(app, alice, {
       name: "grants",
@@ -1691,4 +1999,108 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       ).ok,
     ).toBe(true);
   }, 30_000);
+});
+
+describe("boot: a forge addressed by IP hands every app a host that works (issue #269)", () => {
+  let dataDir: string;
+  let work: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let alice: User;
+  let domain: string;
+
+  const viaHost = (host: string, path = "/", init: RequestInit = {}) =>
+    fetch(`${servers.url}${path}`, {
+      ...init,
+      headers: { ...(init.headers as Record<string, string>), host },
+      redirect: "manual",
+    });
+
+  async function settled(
+    repoId: string,
+    where: (run: Run) => boolean,
+    timeoutMs = 60_000,
+  ): Promise<Run> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const run = listRuns(app.db, repoId, { kind: "deploy", limit: 50 }).find(
+        where,
+      );
+      if (
+        run &&
+        (run.state === "ok" ||
+          run.state === "failed" ||
+          run.state === "cancelled")
+      )
+        return run;
+      await Bun.sleep(50);
+    }
+    throw new Error("run did not settle in time");
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-ip-"));
+    work = await mkdtemp(join(tmpdir(), "forge-ip-work-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    // The exact computation main.ts does at boot, for a forge reached at
+    // `http://127.0.0.1:<port>` with no FORGE_APP_DOMAIN set — the report in
+    // the issue. Before this fix, the domain below was `127.0.0.1` and every
+    // app's FORGE_APP_URL failed `new URL()` before it ever answered.
+    const resolved = resolveAppDomain({
+      explicit: undefined,
+      hosted: false,
+      hostname: "127.0.0.1",
+    });
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error(resolved.reason);
+    domain = resolved.domain;
+    runtime = new AppsRuntime(app, {
+      domain,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 2,
+    });
+    await runtime.start();
+    const created = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+  }, 30_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+    await rm(work, { recursive: true, force: true });
+  });
+
+  test("the scaffolded app deploys and answers — never the FORGE_APP_URL crash loop", async () => {
+    const made = await newApp(app, alice, {
+      name: "ip-forge",
+      visibility: "public",
+    });
+    expect(made.ok).toBe(true);
+    if (!made.ok) return;
+    const repo = made.value.repo;
+    const record = made.value.app;
+    const run = await settled(repo.id, (r) => r.env === "production");
+    // Before this fix: "start: exited with code 1 before answering" — the
+    // scaffold's own src/env.ts throwing on `new URL(FORGE_APP_URL)`.
+    expect(run.state).toBe("ok");
+    const url = runtime.urlFor(record, "production");
+    // The exact check the scaffold makes at import time on FORGE_APP_URL.
+    expect(() => new URL(url)).not.toThrow();
+    const host = new URL(url).host;
+    const page = await viaHost(host);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("<h1>ip-forge</h1>");
+  }, 90_000);
 });

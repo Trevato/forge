@@ -62,6 +62,18 @@ bun run src/main.ts   # boots on :3000, data in ./data
 - **`git push` is blocked at the shell level.** In tests and scripts that need a
   git _client_, drive it through `Bun.spawn(["git", ...])`, never a shell push.
   See `test/app.test.ts` / `test/onboarding.test.ts` for the pattern.
+- **A test's git child gets a built environment, never the host's.** Use
+  `gitClientEnv` (`test/helpers/git-client.ts`) — `...process.env` carries
+  `GIT_CONFIG_COUNT` (git configuration no `GIT_CONFIG_GLOBAL=/dev/null`
+  turns off, and on a crew machine it holds that agent's forge credential)
+  into a child pointed at a forge that never issued it. Same rule as
+  `src/git/env.ts` server-side.
+- **A test that needs a binary this machine may lack skips, and says so.**
+  `describe.skipIf(missing("/usr/bin/ssh"))` (`test/helpers/tools.ts`) —
+  conditional on the tool, so nothing is lost where the tool is there, and
+  the reason is printed so a skip is never read as a pass.
+- **`bun run check` is the gate**, and it reads its command from
+  `forge.json`, so what you see is exactly what the push will be judged by.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.
@@ -99,7 +111,8 @@ src/
               updates reach its origin — and contents.ts is the whole edit
               (files, a new branch, a pull) as one call
   http/       router, request context (Ctx/auth), respond (json/error shapes,
-              scope floors, pagination), api (every /api/v1 route), server
+              scope floors, pagination, `securityFloor` — the headers every
+              response leaves with), api (every /api/v1 route), server
               (auth resolution, git smart HTTP, web routes, hook socket), sse
   design/     shared design tokens: themes (palettes both surfaces render)
   origins/    other forges as one Provider interface: discover (version-endpoint
@@ -118,7 +131,11 @@ src/
               string), style/{base,components,content} assembled by style.ts,
               markdown, highlight, code, worddiff, diff-view, live, and
               pages/{site,repo,issues,pulls,pull,thread,commits,refs,search,
-              org,account,settings}
+              org,account,settings}, and studio/ — the app-as-the-unit
+              surface, one module per concept: words (the vocabulary every
+              page says it in), asks, leans, previews, shelf (an app as one
+              row, for any page that lists apps), home, app, change, tell,
+              run, lists, actions, style (the page sheet, assembled)
   ssh/        the SSH server: transport (kex/ciphers), auth (publickey),
               channels (session only), keys, wire — zero deps, no forwarding
   tui/        the terminal UI. term/ is the transport boundary (`Terminal`);

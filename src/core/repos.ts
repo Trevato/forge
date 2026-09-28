@@ -372,6 +372,33 @@ export function listForks(db: Database, repoId: string): Repo[] {
     .map(toRepo);
 }
 
+/**
+ * The repository this one was forked from, while that parent is still here
+ * and the viewer may read it. A fork's lineage — the parent's name, and how
+ * far the fork has drifted from it — is a fact about the parent, so a fork
+ * that has been opened up never speaks for a parent that has not.
+ */
+export function forkParentFor(
+  db: Database,
+  repo: Repo,
+  viewer: User | undefined,
+): Repo | undefined {
+  const parent =
+    repo.forkParentId === null ? undefined : getRepoById(db, repo.forkParentId);
+  return parent !== undefined && canRead(db, parent, viewer)
+    ? parent
+    : undefined;
+}
+
+/** The forks of this repository the viewer may see — the list, and its count. */
+export function visibleForks(
+  db: Database,
+  repoId: string,
+  viewer: User | undefined,
+): Repo[] {
+  return listForks(db, repoId).filter((fork) => canRead(db, fork, viewer));
+}
+
 export function getRepo(
   db: Database,
   ownerName: string,
@@ -441,6 +468,40 @@ export function listReposVisibleTo(
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? ""];
   let where = viewer ? VISIBLE : "repo.visibility = 'public'";
+  if (options.query !== undefined && options.query.trim() !== "") {
+    params.push(`%${likeEscape(options.query.trim())}%`);
+    const p = params.length;
+    where += ` AND (repo.name LIKE ?${p} ESCAPE '\\' COLLATE NOCASE
+      OR user.username LIKE ?${p} ESCAPE '\\' COLLATE NOCASE)`;
+  }
+  if (options.cursor !== undefined) {
+    params.push(options.cursor);
+    where += ` AND repo.id < ?${params.length}`;
+  }
+  params.push(pageLimit(options.limit));
+  const rows = db
+    .query<RepoRow, (string | number)[]>(
+      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+    )
+    .all(...params)
+    .map(toRepo);
+  return withCounts(db, rows);
+}
+
+/**
+ * Repos this viewer may write: their own, or an org's through a team with
+ * write or admin access — `REPO_WRITABLE`, the SQL twin of `canWrite`, for a
+ * list of rows rather than one permission check per row. An anonymous viewer
+ * writes nothing.
+ */
+export function listReposWritableTo(
+  db: Database,
+  viewer: User | undefined,
+  options: ListReposOptions = {},
+): Repo[] {
+  if (!viewer) return [];
+  const params: (string | number)[] = [viewer.id];
+  let where = REPO_WRITABLE;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
     const p = params.length;
@@ -582,6 +643,22 @@ export function canWrite(
 ): boolean {
   if (personalOrDirect(repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
+}
+
+/**
+ * Money, the crew roster, autonomy limits and a run's own cost describe
+ * running the app, not what it is — a stranger who can only read a public
+ * app sees what it does and what it has shipped, never what it costs or
+ * who is on it. The same test as `canWrite`, named for what it decides
+ * here, so every surface that shows one of these facts asks this one
+ * question rather than inventing its own.
+ */
+export function canSeeOwnerFacts(
+  db: Database,
+  repo: Repo,
+  user: User | undefined,
+): boolean {
+  return canWrite(db, repo, user);
 }
 
 /**
