@@ -68,6 +68,7 @@ export type AccountSection =
   | "keys"
   | "origins"
   | "crew"
+  | "subscriptions"
   | "backups";
 
 /**
@@ -88,6 +89,12 @@ export function accountSections(
             href: "/settings/crew",
             icon: "bot" as const,
             current: current === "crew",
+          },
+          {
+            label: "Subscriptions",
+            href: "/settings/subscriptions",
+            icon: "key" as const,
+            current: current === "subscriptions",
           },
           {
             label: "Backups",
@@ -565,7 +572,13 @@ function shell(ctx: Ctx, body: Html, status = 200): Response {
       ctx,
       title: "Origins",
       body: html`<div class="page-head"><h1>Origins</h1></div>
-        ${settingsLayout(accountSections("origins", { admin: ctx.auth.user?.isAdmin === true }), body, "Account settings")}`,
+        ${settingsLayout(
+          accountSections("origins", {
+            admin: ctx.auth.user?.isAdmin === true,
+          }),
+          body,
+          "Account settings",
+        )}`,
     },
     status,
   );

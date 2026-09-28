@@ -288,6 +288,12 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .audit-said { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .audit-alarm { color: var(--danger); }
 .wall-cells { margin: 8px 0 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
+.grants th, .grants td { padding: 8px 12px; border-top: 1px solid var(--border); }
+.grants thead th { border-top: 0; font-weight: 600; }
+.grants th[scope="col"], .grants td { text-align: center; }
+.grants th[scope="row"] { text-align: left; font-weight: 500; white-space: nowrap; }
+.grants input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+.grants-foot { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
 .backups-now { margin-top: 12px; }
 .backups-error { display: flex; align-items: center; gap: 8px; color: var(--danger); }
 .backups-restore { margin: 8px 0 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }

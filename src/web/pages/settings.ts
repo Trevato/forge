@@ -90,6 +90,7 @@ import {
   userLink,
 } from "../ui.ts";
 import { crewReadiness } from "./crew.ts";
+import { grantsSection, saveGrants } from "./subscriptions.ts";
 
 type Section =
   | "general"
@@ -818,9 +819,34 @@ export function crewSettingsPage(ctx: Ctx): Response {
           { head: html`<h2>Add an agent</h2>` },
         );
 
+  // Whose money the crew spends here is the forge admin's to say.
+  const grants = admin
+    ? html`<div class="mt">
+        ${grantsSection(ctx, {
+          scopeId: repo.id,
+          agents: crew,
+          action: `${base}/settings/crew/subscriptions`,
+          wider: "the owner's grant, or the forge's own token",
+        })}
+      </div>`
+    : null;
   const body = html`${crewReadiness(ctx)} ${list}
-    <div class="mt">${add}</div>`;
+    <div class="mt">${add}</div>
+    ${grants}`;
   return settingsPageResponse(ctx, repo, "crew", "Crew", body);
+}
+
+// POST /:owner/:name/settings/crew/subscriptions
+export async function crewSubscriptionsSave(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  if (ctx.auth.user?.isAdmin !== true) return repoNotFound(ctx);
+  const crew = listCrew(ctx.app, ctx.auth.user, repo);
+  saveGrants(ctx, form, repo.id, crew.ok ? crew.value : []);
+  return flashTo(ctx, `${repoBase(repo)}/settings/crew`, {
+    message: "Saved. The next run here works on what is ticked.",
+  });
 }
 
 // POST /:owner/:name/settings/crew

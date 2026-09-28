@@ -531,6 +531,29 @@ is handed to the run, or the machine's own Claude Code login is used when
 there is neither. When neither
 works the crew page says so, in words, before anyone assigns anything.
 
+### Subscriptions
+
+One token in the environment is one account for the whole forge. An admin
+with more than one — a personal plan and a work plan — adds each under
+Settings → Subscriptions (a token from `claude setup-token`, or an API key;
+sealed under the forge's key, never shown again) and grants it:
+
+- on a repository's Settings → Crew, to everyone on the crew or to one agent;
+- on an organization's page, for every repository under it.
+
+A run takes its token from the nearest grant, whole: the repository's before
+the owner's, the agent's own before the crew's. A grant whose accounts are
+all resting holds the run until the first wakes rather than falling through
+to a wider one, so a work repository never quietly spends the personal plan.
+Two accounts on one grant take turns, the one used longest ago first. When
+the provider turns an account away — a session's window, the week's limit —
+that account rests until the time the provider names (now read from
+`resets Sep 26 at 9pm (America/Chicago)` as well as `resets 7am (UTC)`), the
+next account on the grant takes the run at once, and the pool page shows who
+is resting and why, with a button to use it again sooner. Nothing granted
+anywhere means the forge's own token, as before. Every run remembers the
+account it spent.
+
 ## Configuration
 
 | variable                  | default                         | meaning                                           |

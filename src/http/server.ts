@@ -46,6 +46,12 @@ import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { backupsNow, backupsPage } from "../web/pages/backups.ts";
 import {
+  subscriptionAdd,
+  subscriptionDelete,
+  subscriptionsPage,
+  subscriptionWake,
+} from "../web/pages/subscriptions.ts";
+import {
   changePassword,
   iconPng,
   robotsTxt,
@@ -148,6 +154,7 @@ import {
   autonomySettingsPage,
   autonomySettingsUpdate,
   crewAdd,
+  crewSubscriptionsSave,
   crewRemove,
   crewRoleUpdate,
   crewSettingsPage,
@@ -168,6 +175,7 @@ import {
   newOrgSubmit,
   ownerProfile,
   teamCreate,
+  orgSubscriptionsSave,
   teamDelete,
   teamMemberAdd,
   teamMemberRemove,
@@ -403,6 +411,10 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
   // The crew: a forge admin's section, hidden from everyone else.
+  router.add("GET", "/settings/subscriptions", subscriptionsPage);
+  router.add("POST", "/settings/subscriptions", subscriptionAdd);
+  router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
+  router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("GET", "/settings/crew", crewPage);
@@ -656,6 +668,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/-/teams/:team/add", teamMemberAdd);
   router.add("POST", "/:owner/-/teams/:team/remove", teamMemberRemove);
   router.add("POST", "/:owner/-/teams/:team/delete", teamDelete);
+  router.add("POST", "/:owner/-/subscriptions", orgSubscriptionsSave);
 
   // Owner profile (a person or org) is a single segment — after all literals.
   router.add("GET", "/:owner", ownerProfile);
@@ -716,6 +729,11 @@ export function buildRouter(): Router<Handler> {
   );
   router.add("GET", "/:owner/:name/settings/crew", crewSettingsPage);
   router.add("POST", "/:owner/:name/settings/crew", crewAdd);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/crew/subscriptions",
+    crewSubscriptionsSave,
+  );
   router.add(
     "POST",
     "/:owner/:name/settings/crew/:username/remove",

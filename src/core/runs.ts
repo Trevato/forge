@@ -222,17 +222,20 @@ export function noteRunProgress(
     sessionId?: string | undefined;
     costUsd?: number | undefined;
     branch?: string | undefined;
+    /** The subscription the run works on, once picked. */
+    subscriptionId?: string | undefined;
   },
 ): void {
   db.query(
     `UPDATE run SET session_id = COALESCE(?2, session_id), cost_usd = COALESCE(?3, cost_usd),
-       branch = COALESCE(?4, branch)
+       branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id)
      WHERE id = ?1`,
   ).run(
     runId,
     progress.sessionId ?? null,
     progress.costUsd ?? null,
     progress.branch ?? null,
+    progress.subscriptionId ?? null,
   );
 }
 

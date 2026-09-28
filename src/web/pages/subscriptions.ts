@@ -1,0 +1,374 @@
+/**
+ * Subscriptions — the Claude accounts the crew works on, and where each is
+ * used. The pool is a forge admin's: an account is money, so only an admin
+ * adds one, removes one, or says which repository or organization it pays
+ * for. A token is typed once and never shown again.
+ */
+
+import { listAgents, type Agent } from "../../core/agents.ts";
+import {
+  addSubscription,
+  deleteSubscription,
+  EVERYONE,
+  listGrantPlaces,
+  listGrants,
+  listSubscriptions,
+  NAME_MAX,
+  setGrants,
+  wakeSubscription,
+  type Subscription,
+} from "../../core/subscriptions.ts";
+import { getUserById } from "../../core/users.ts";
+import type { Ctx } from "../../http/context.ts";
+import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
+import { field, readForm, type Form } from "../form.ts";
+import { html, when, type Html } from "../html.ts";
+import { icon } from "../icons.ts";
+import { flashTo, page } from "../layout.ts";
+import {
+  badge,
+  btn,
+  card,
+  confirmAction,
+  empty,
+  listCard,
+  row,
+  time,
+  timeAgo,
+  userLink,
+} from "../ui.ts";
+import { whenText } from "../../crew/limits.ts";
+import { accountSections } from "./origins.ts";
+
+const POOL = "/settings/subscriptions";
+
+function requireAdmin(ctx: Ctx): Response | undefined {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  return undefined;
+}
+
+const kindText = (s: Subscription): string =>
+  s.kind === "oauth" ? "Claude subscription" : "API key";
+
+const resting = (s: Subscription, now: Date): boolean =>
+  s.restingUntil !== null && s.restingUntil > now.toISOString();
+
+function shell(ctx: Ctx, body: Html): Response {
+  return page({
+    ctx,
+    title: "Subscriptions",
+    body: html`<div class="page-head"><h1>Subscriptions</h1></div>
+      ${settingsLayout(
+        accountSections("subscriptions", { admin: true }),
+        body,
+        "Account settings",
+      )}`,
+  });
+}
+
+// GET /settings/subscriptions
+export function subscriptionsPage(ctx: Ctx): Response {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const now = new Date();
+  const pool = listSubscriptions(ctx.app.db);
+  const places = listGrantPlaces(ctx.app.db);
+
+  const list =
+    pool.length === 0
+      ? empty({
+          icon: "key",
+          title: "The crew works on the forge's own token",
+          note: "Add a subscription here and grant it to a repository or an organization; its runs spend that account instead. Two on one grant take turns, and one the provider rests hands over to the other.",
+        })
+      : listCard(
+          pool.map((s) => {
+            const rests = resting(s, now);
+            const by =
+              s.createdBy === null
+                ? undefined
+                : getUserById(ctx.app.db, s.createdBy);
+            return row({
+              lead: icon("key"),
+              title: html`${s.name}
+              ${when(rests, () =>
+                badge(`resting until ${whenText(new Date(s.restingUntil!))}`, {
+                  tone: "attn",
+                  icon: "clock",
+                }),
+              )}`,
+              meta: html`${kindText(s)} · added
+              ${time(s.createdAt)}${by
+                ? html` by ${userLink(by.username)}`
+                : null}
+              ·
+              ${s.lastUsedAt === null
+                ? "never used"
+                : html`last used ${timeAgo(s.lastUsedAt)}`}${when(
+                rests && s.restingSaid !== "",
+                () => html` · ${s.restingSaid}`,
+              )}`,
+              trail: html`${when(
+                rests,
+                () =>
+                  html`<form
+                    class="row-actions"
+                    method="post"
+                    action="${POOL}/${s.id}/wake"
+                  >
+                    ${btn("Use again now", { size: "sm", icon: "play" })}
+                  </form>`,
+              )}
+              ${confirmAction({
+                action: `${POOL}/${s.id}/delete`,
+                verb: "Remove",
+                size: "sm",
+              })}`,
+            });
+          }),
+        );
+
+  const add = card(
+    html`<form class="stack" method="post" action="${POOL}">
+      <div class="field">
+        <label for="f-name">Name</label>
+        <input
+          class="input"
+          id="f-name"
+          name="name"
+          maxlength="${NAME_MAX}"
+          placeholder="work"
+          required
+          autocomplete="off"
+        />
+      </div>
+      <div class="field">
+        <label for="f-token">Token</label>
+        <input
+          class="input"
+          id="f-token"
+          name="token"
+          type="password"
+          placeholder="sk-ant-…"
+          required
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="hint"
+          ><code>claude setup-token</code> prints a subscription's token; an API
+          key works too. It is sealed on this forge and never shown again.</span
+        >
+      </div>
+      <div>${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}</div>
+    </form>`,
+    {
+      head: html`${icon("plus")}
+        <h2>Add one</h2>`,
+    },
+  );
+
+  const used =
+    places.length === 0
+      ? null
+      : card(
+          html`<ul class="list">
+            ${places.map(
+              (g) =>
+                html`<li>
+                  <div class="row">
+                    <span class="row-lead">${icon("key")}</span>
+                    <span class="row-main">
+                      <span class="row-title">${g.subscription}</span>
+                      <span class="row-meta"
+                        >${g.place} ·
+                        ${g.agent === undefined
+                          ? "everyone on the crew"
+                          : g.agent}</span
+                      >
+                    </span>
+                    <a class="row-trail small" href="${g.href}">change</a>
+                  </div>
+                </li>`,
+            )}
+          </ul>`,
+          {
+            pad: false,
+            head: html`${icon("map")}
+              <h2>Where each is used</h2>`,
+          },
+        );
+
+  return shell(
+    ctx,
+    html`${list}
+      <div class="mt">${add}</div>
+      ${used === null ? null : html`<div class="mt">${used}</div>`}`,
+  );
+}
+
+// POST /settings/subscriptions
+export async function subscriptionAdd(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const name = field(form, "name");
+  const added = addSubscription(ctx.app.db, ctx.app.config.dataDir, {
+    name,
+    token: field(form, "token").trim(),
+    createdBy: ctx.auth.user!.id,
+  });
+  if (!added.ok) {
+    const messages = {
+      invalid_name: `A name is a word or two, up to ${NAME_MAX} characters.`,
+      name_taken: `There is already a subscription called ${name.trim()}.`,
+      invalid_token:
+        "That is not a Claude token. One from `claude setup-token` begins sk-ant-oat; an API key begins sk-ant-api.",
+    };
+    return flashTo(ctx, POOL, {
+      tone: "danger",
+      message: messages[added.error],
+    });
+  }
+  return flashTo(ctx, POOL, {
+    message: `${added.value.name} is in the pool. Grant it to a repository under its Settings → Crew, or to an organization on its page.`,
+  });
+}
+
+// POST /settings/subscriptions/:id/delete
+export async function subscriptionDelete(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const removed = deleteSubscription(ctx.app.db, ctx.params.id ?? "");
+  return flashTo(
+    ctx,
+    POOL,
+    removed
+      ? {
+          message:
+            "Removed, with its grants. Runs it paid for keep it in their history.",
+        }
+      : { tone: "danger", message: "No such subscription." },
+  );
+}
+
+// POST /settings/subscriptions/:id/wake
+export async function subscriptionWake(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  wakeSubscription(ctx.app.db, ctx.params.id ?? "");
+  return flashTo(ctx, POOL, { message: "In use again." });
+}
+
+// ---- grants, on a repository's Crew settings and an organization's page ----
+
+/**
+ * The table an admin ticks: one row for everyone on the crew and one per
+ * agent, one column per account. A row with nothing ticked has no grant of
+ * its own, and the wider one applies. Rendered only for a forge admin.
+ */
+export function grantsSection(
+  ctx: Ctx,
+  o: {
+    scopeId: string;
+    agents: readonly Agent[];
+    action: string;
+    /** What applies to a row with nothing ticked, in a few words. */
+    wider: string;
+    title?: string | undefined;
+  },
+): Html {
+  const pool = listSubscriptions(ctx.app.db);
+  const head = html`${icon("key")}
+    <h2>${o.title ?? "Subscriptions"}</h2>`;
+  if (pool.length === 0)
+    return card(
+      html`<p class="muted small">
+        Runs here work on the forge's own token. Add a subscription under
+        <a href="${POOL}">Settings → Subscriptions</a> to spend a particular
+        account here.
+      </p>`,
+      { head },
+    );
+  const granted = new Set(
+    listGrants(ctx.app.db, o.scopeId).map(
+      (g) => `${g.agentId}:${g.subscriptionId}`,
+    ),
+  );
+  const line = (agentId: string, label: Html): Html =>
+    html`<tr>
+      <th scope="row">${label}</th>
+      ${pool.map(
+        (s) =>
+          html`<td>
+            <input
+              type="checkbox"
+              name="grant"
+              value="${agentId === EVERYONE ? "*" : agentId}:${s.id}"
+              aria-label="${s.name} for ${agentId === EVERYONE
+                ? "everyone"
+                : label}"
+              ${granted.has(`${agentId}:${s.id}`) ? html`checked` : null}
+            />
+          </td>`,
+      )}
+    </tr>`;
+  return card(
+    html`<form method="post" action="${o.action}">
+      <table class="table grants">
+        <thead>
+          <tr>
+            <th></th>
+            ${pool.map((s) => html`<th scope="col">${s.name}</th>`)}
+          </tr>
+        </thead>
+        <tbody>
+          ${line(EVERYONE, html`Everyone on the crew`)}
+          ${o.agents.map((a) => line(a.user.id, html`${a.user.username}`))}
+        </tbody>
+      </table>
+      <div class="grants-foot">
+        ${btn("Save", { variant: "primary", size: "sm" })}
+        <span class="muted small"
+          >Two ticked on one row take turns. Nothing ticked means the wider
+          grant applies: ${o.wider}.</span
+        >
+      </div>
+    </form>`,
+    { head, pad: false },
+  );
+}
+
+/**
+ * Read a grants table back. Only the rows offered — everyone and the agents
+ * given — are written, so a form cannot plant a grant for anyone else.
+ */
+export function saveGrants(
+  ctx: Ctx,
+  form: Form,
+  scopeId: string,
+  agents: readonly Agent[],
+): void {
+  const ticked = new Map<string, string[]>();
+  for (const value of form.getAll("grant")) {
+    if (typeof value !== "string") continue;
+    const at = value.indexOf(":");
+    if (at <= 0) continue;
+    const who = value.slice(0, at);
+    const agentId = who === "*" ? EVERYONE : who;
+    ticked.set(agentId, [...(ticked.get(agentId) ?? []), value.slice(at + 1)]);
+  }
+  const rows = [EVERYONE, ...agents.map((a) => a.user.id)];
+  for (const agentId of rows)
+    setGrants(ctx.app.db, scopeId, agentId, ticked.get(agentId) ?? []);
+}
+
+/** Every agent on the forge — the rows of an organization's table. */
+export function agentsOnForge(ctx: Ctx): Agent[] {
+  return listAgents(ctx.app.db);
+}

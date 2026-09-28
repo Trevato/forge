@@ -35,6 +35,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
+import { agentsOnForge, grantsSection, saveGrants } from "./subscriptions.ts";
 import {
   avatar,
   badge,
@@ -241,9 +242,35 @@ export function ownerProfile(ctx: Ctx): Response {
     ${repoSection(ctx, owner, isSelf)}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
+    )}
+    ${when(
+      isOrg && ctx.auth.user?.isAdmin === true,
+      () =>
+        html`<div class="mt">
+          ${grantsSection(ctx, {
+            scopeId: owner.id,
+            agents: agentsOnForge(ctx),
+            action: `/${owner.username}/-/subscriptions`,
+            wider: "the forge's own token",
+            title: "Subscriptions for every repository here",
+          })}
+        </div>`,
     )}`;
 
   return page({ ctx, title: owner.username, body });
+}
+
+// POST /:owner/-/subscriptions
+export async function orgSubscriptionsSave(ctx: Ctx): Promise<Response> {
+  const org = requireOrgAdmin(ctx);
+  if (!org || ctx.auth.user?.isAdmin !== true) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  saveGrants(ctx, form, org.id, agentsOnForge(ctx));
+  return flashTo(ctx, `/${org.username}`, {
+    message:
+      "Saved. Every repository here without a grant of its own follows it.",
+  });
 }
 
 // ---- creating an org ----

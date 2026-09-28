@@ -62,6 +62,11 @@ import {
 import { policyBrief } from "../contract/audit.ts";
 import { BUDGET_REACHED, runClaude } from "./claude.ts";
 import { isRateLimited, MAX_PAUSES, resumeAt, whenText } from "./limits.ts";
+import {
+  pickSubscription,
+  restSubscription,
+  type Pick,
+} from "../core/subscriptions.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 import { workdirFor } from "./workdir.ts";
@@ -461,7 +466,8 @@ async function work(
       record && runtime && pull && !continuing
         ? runtime.urlFor(record, previewEnv(pull.number))
         : undefined;
-    const policy = record === undefined ? undefined : await policyBrief(app, repo);
+    const policy =
+      record === undefined ? undefined : await policyBrief(app, repo);
     const brief = {
       agent,
       repo,
@@ -529,17 +535,50 @@ async function work(
         : undefined,
     });
 
+    // The account this run works on: the nearest grant's, rotating; the
+    // forge's own token when nothing is granted. A grant whose accounts are
+    // all resting holds the run until the first wakes, without a call.
+    const scope = {
+      repoId: repo.id,
+      ownerId: repo.ownerId,
+      agentId: agent.user.id,
+    };
+    const picked = pickSubscription(
+      app.db,
+      app.config.dataDir,
+      scope,
+      new Date(),
+    );
+    if (picked.kind === "resting") {
+      const names = picked.names.join(", ");
+      write(
+        `${names}: resting (${picked.said}) until ${whenText(new Date(picked.until))}`,
+      );
+      if (run.attempt < MAX_PAUSES)
+        return {
+          state: "paused",
+          summary: `paused: ${names} resting — ${picked.said}; resumes ${whenText(new Date(picked.until))}`,
+          resumeAt: picked.until,
+          sessionId: previous?.sessionId ?? "",
+          costUsd: 0,
+        };
+      return {
+        state: "failed",
+        summary: `every subscription this repository may use is resting (${picked.said})`,
+      };
+    }
+    if (picked.kind === "ready") {
+      write(`subscription: ${picked.subscription.name}`);
+      noteRunProgress(app.db, run.id, {
+        subscriptionId: picked.subscription.id,
+      });
+    }
     const env: Record<string, string> = {
       ...gitAuth,
       ...identity,
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
-      ...(process.env["ANTHROPIC_API_KEY"] === undefined
-        ? {}
-        : { ANTHROPIC_API_KEY: process.env["ANTHROPIC_API_KEY"] }),
-      ...(process.env["CLAUDE_CODE_OAUTH_TOKEN"] === undefined
-        ? {}
-        : { CLAUDE_CODE_OAUTH_TOKEN: process.env["CLAUDE_CODE_OAUTH_TOKEN"] }),
+      ...credentialEnv(picked),
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -617,6 +656,38 @@ async function work(
       const said = (
         result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
       ).slice(0, 160);
+      // The account rests until the provider's time; another on the same
+      // grant, if one is awake, takes the run straight away.
+      if (picked.kind === "ready") {
+        const until = resumeAt(result.result, new Date());
+        restSubscription(
+          app.db,
+          picked.subscription.id,
+          until.toISOString(),
+          said,
+        );
+        const next = pickSubscription(
+          app.db,
+          app.config.dataDir,
+          scope,
+          new Date(),
+        );
+        if (
+          next.kind === "ready" &&
+          next.subscription.id !== picked.subscription.id
+        ) {
+          write(
+            `${picked.subscription.name} rests until ${whenText(until)}; ${next.subscription.name} takes the run`,
+          );
+          return {
+            state: "paused",
+            summary: `paused: ${said}; ${next.subscription.name} takes over`,
+            resumeAt: new Date().toISOString(),
+            sessionId: result.sessionId,
+            costUsd: result.costUsd,
+          };
+        }
+      }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());
         return {
@@ -1006,4 +1077,19 @@ async function landWork(
     pushed: true,
     summary: `opened pull #${opened.value.number}${committedForIt ? ", committing its leftover changes" : ""}`,
   };
+}
+
+/**
+ * The credential a run's environment carries: the picked account's token
+ * under the variable Claude Code reads it from, or — with nothing granted —
+ * whatever the forge itself was started with.
+ */
+function credentialEnv(picked: Pick): Record<string, string> {
+  if (picked.kind === "ready") return { [picked.envName]: picked.token };
+  const own: Record<string, string> = {};
+  for (const name of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+    const value = process.env[name];
+    if (value !== undefined) own[name] = value;
+  }
+  return own;
 }

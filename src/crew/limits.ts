@@ -24,27 +24,52 @@ export function isRateLimited(outcome: ClaudeOutcome): boolean {
   if (outcome.ok) return false;
   return (
     outcome.reason === "api_error" ||
-    /rate[ _-]?limit|session limit|usage limit|overloaded|too many requests|\b(?:429|529)\b/i.test(
+    /rate[ _-]?limit|session limit|usage limit|weekly limit|hit your \w+ limit|overloaded|too many requests|\b(?:429|529)\b/i.test(
       outcome.result,
     )
   );
 }
 
+const MONTHS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+];
+
 /**
  * When to try again. Claude Code says `resets 7:20am (UTC)` or
- * `resets 2:20am (America/Chicago)`; that clock time in that zone, next
- * occurring, plus a minute. Anything else waits the default.
+ * `resets 2:20am (America/Chicago)` for a session's window, and
+ * `resets Sep 26 at 9pm (America/Chicago)` for the week's; that clock time
+ * in that zone, on that date or the next occurrence, plus a minute.
+ * Anything else waits the default.
  */
 export function resumeAt(message: string, now: Date): Date {
   const match =
-    /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i.exec(
+    /resets?\s+(?:at\s+)?(?:([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i.exec(
       message,
     );
   if (match === null) return new Date(now.getTime() + DEFAULT_WAIT_MS);
-  const [, h, m, meridiem, zone] = match;
+  const [, monthName, day, h, m, meridiem, zone] = match;
   const hour = (Number(h) % 12) + (meridiem!.toLowerCase() === "pm" ? 12 : 0);
   const minute = Number(m ?? "0");
-  const at = nextWallTime(now, hour, minute, zone!);
+  const month =
+    monthName === undefined
+      ? -1
+      : MONTHS.indexOf(monthName.slice(0, 3).toLowerCase());
+  const date =
+    monthName !== undefined && month >= 0
+      ? { month: month + 1, day: Number(day) }
+      : undefined;
+  const at = nextWallTime(now, hour, minute, zone!, date);
   if (at === undefined) return new Date(now.getTime() + DEFAULT_WAIT_MS);
   return new Date(at.getTime() + SLACK_MS);
 }
@@ -64,6 +89,7 @@ function nextWallTime(
   hour: number,
   minute: number,
   zone: string,
+  date?: { month: number; day: number },
 ): Date | undefined {
   let parts: Intl.DateTimeFormat;
   try {
@@ -106,6 +132,12 @@ function nextWallTime(
     return guess;
   };
   const today = wall(now);
+  if (date !== undefined) {
+    // A named date this year, or next year's if it has already passed.
+    const thisYear = instantOf(today["year"]!, date.month, date.day);
+    if (thisYear.getTime() > now.getTime()) return thisYear;
+    return instantOf(today["year"]! + 1, date.month, date.day);
+  }
   const candidate = instantOf(today["year"]!, today["month"]!, today["day"]!);
   if (candidate.getTime() > now.getTime()) return candidate;
   const tomorrow = new Date(candidate.getTime() + 36 * 3_600_000);

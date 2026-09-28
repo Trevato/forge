@@ -251,6 +251,11 @@ works when there is none). `FORGE_CREW_CONCURRENCY` (2) and
 `FORGE_CREW_BUDGET_USD` (5) bound it; `FORGE_CREW_CEILING_USD` caps what the
 crew may spend across every repository in a UTC day, whatever each
 repository's own ceiling says; `FORGE_APPS=0` turns apps and crew off.
+An admin with more than one Claude account keeps them under Settings →
+Subscriptions, sealed, and grants each to a repository (Settings → Crew) or
+an organization (its page), down to one crew member: a work plan pays for
+the work repositories and nothing else. Two on one grant take turns, and
+one the provider rests hands its runs to the other until the reset.
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 
