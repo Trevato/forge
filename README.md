@@ -263,7 +263,7 @@ mechanical rather than advisory.
 what "ready now" means to a person and to the crew.
 
 `docs/STUDIO.md` is the forge with apps as the unit: tell, working, look,
-shipped, asks you — and the switch to dev.
+shipped — and the switch to dev.
 
 `docs/CONTRACT.md` is who may do what, as a table: an app's `contract.json`,
 the one evaluator every app decides with, the audit that reads it from git,

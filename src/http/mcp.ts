@@ -1,7 +1,7 @@
 /**
  * The forge as a Model Context Protocol server: `POST /mcp`.
  *
- * The studio's verbs — tell, asks, decide, say, now, stop, and a fork's
+ * The studio's verbs — tell, say, now, stop, and a fork's
  * following — as tools, so an assistant a person already talks to can run
  * their forge from wherever they are. Added to Claude as a connector, the
  * Claude app is the forge's phone UI with no app to build.
@@ -18,8 +18,7 @@
  */
 
 import { relationOf, takeUpdates } from "../actions/forks.ts";
-import { addCommentThrough, setIssueStateThrough } from "../actions/issues.ts";
-import { mergePull } from "../actions/pulls.ts";
+import { addCommentThrough } from "../actions/issues.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { tell, toldWords } from "../actions/tell.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -35,11 +34,10 @@ import {
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
-import { bringUpToDate } from "../crew/autonomy.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
-import { appsOf, decisionsFor, type Decision } from "../web/pages/studio.ts";
+import { appsOf } from "../web/pages/studio.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -90,44 +88,16 @@ function repoArg(ctx: Ctx, user: User, args: Args): Repo | Answer {
 
 const isAnswer = (v: Repo | Answer): v is Answer => "ok" in v;
 
-function askOut(ctx: Ctx, d: Decision) {
-  const repo = `${d.repo.ownerName}/${d.repo.name}`;
-  const runtime = appsRuntime(ctx.app);
-  return {
-    ask: d.id,
-    app: repo,
-    kind: d.kind,
-    says: d.says,
-    pull: d.pull?.number ?? null,
-    likely: d.likely ?? null,
-    takes:
-      d.kind === "look" || d.kind === "wall"
-        ? ["ship", "close"]
-        : d.kind === "stale"
-          ? ["update", "close"]
-          : d.kind === "stopped"
-            ? ["close"]
-            : [],
-    page:
-      d.pull === undefined
-        ? `${ctx.url.origin}/${repo}`
-        : `${ctx.url.origin}/${repo}/pulls/${d.pull.number}`,
-    picture: d.picture === undefined ? null : `${ctx.url.origin}${d.picture}`,
-    runtime: runtime === undefined ? "off" : "on",
-  };
-}
-
 const TOOLS: readonly Tool[] = [
   {
     name: "apps",
     description:
-      "The apps on this forge you can see: whether each is live, where it is served, how it runs itself, and how many things ask you.",
+      "The apps on this forge you can see: whether each is live, where it is served, how it runs itself, and what is working.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     async run(ctx, user) {
       const { repos, records } = appsOf(ctx, user);
       const runtime = appsRuntime(ctx.app);
-      const asks = await decisionsFor(ctx, repos);
       const active = listActiveRuns(
         ctx.app.db,
         repos.map((r) => r.id),
@@ -145,97 +115,8 @@ const TOOLS: readonly Tool[] = [
             url: runtime?.urlFor(record, "production") ?? null,
             autonomy: repo.autonomy,
             working: active.filter((r) => r.repoId === repo.id).length,
-            asks: asks.filter((d) => d.repo.id === repo.id).length,
           };
         }),
-      );
-    },
-  },
-  {
-    name: "asks",
-    description:
-      "What asks you, across every app you can land: changes the crew finished that wait for a look, changes it stopped on, apps paused at their ceiling. Each has an id for `decide`.",
-    inputSchema: { type: "object", properties: {} },
-    writes: false,
-    async run(ctx, user) {
-      const { repos } = appsOf(ctx, user);
-      return good((await decisionsFor(ctx, repos)).map((d) => askOut(ctx, d)));
-    },
-  },
-  {
-    name: "decide",
-    description:
-      "Answer an ask: `ship` lands a green change, `update` has the crew bring a stale one up to date, `close` declines a change. To say what is off instead, use `say` on its pull.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        ask: { type: "string", description: "The ask's id, from `asks`." },
-        action: { type: "string", enum: ["ship", "update", "close"] },
-      },
-      required: ["ask", "action"],
-    },
-    writes: true,
-    async run(ctx, user, args) {
-      const action = str(args["action"]);
-      if (action !== "ship" && action !== "update" && action !== "close")
-        return bad("invalid_action", "action is ship, update or close");
-      const { repos } = appsOf(ctx, user);
-      const d = (await decisionsFor(ctx, repos)).find(
-        (x) => x.id === str(args["ask"]),
-      );
-      // An ask that was answered since it was listed is simply gone.
-      if (d === undefined || d.pull === undefined)
-        return bad("no_such_ask", "that ask is not waiting any more");
-      if (action === "ship" && d.kind !== "look" && d.kind !== "wall")
-        return bad("not_green", "only a green change can ship");
-      if (action === "update" && d.kind !== "stale")
-        return bad(
-          "not_stale",
-          "only a change main moved under can be brought up to date",
-        );
-      const name = `${d.repo.ownerName}/${d.repo.name}#${d.pull.number}`;
-      if (action === "update") {
-        const who = bringUpToDate(ctx.app, d.repo, d.pull, d.files ?? []);
-        return who === undefined
-          ? bad(
-              "crew_stopped",
-              `the crew has already tried its limit on ${name}; say what to do on the pull`,
-            )
-          : good({
-              says: `${who} is bringing ${name} up to date; it comes back green.`,
-            });
-      }
-      if (action === "close") {
-        const closed = await setIssueStateThrough(
-          ctx.app,
-          user,
-          d.repo,
-          d.pull,
-          "closed",
-        );
-        return closed.ok
-          ? good({ says: `Closed ${name}.` })
-          : bad("refused", `could not close ${name}`);
-      }
-      const merged = await mergePull(ctx.app, user, d.repo, d.pull, "squash");
-      if (merged.ok) return good({ says: `Shipped ${name}.` });
-      if (
-        typeof merged.error !== "string" &&
-        merged.error.kind === "conflict"
-      ) {
-        // A conflict is never the person's to fix: the builder brings the
-        // branch up to date, and it comes back green or lands on its own.
-        const who = bringUpToDate(ctx.app, d.repo, d.pull, merged.error.files);
-        return good({
-          says:
-            who === undefined
-              ? `${name} conflicts with main and the crew has tried its limit; say what to do on the pull.`
-              : `${name} conflicts with main; ${who} is bringing it up to date${d.repo.autonomy === "autonomous" ? ", then it lands on its own" : ", then it comes back to you"}.`,
-        });
-      }
-      return bad(
-        "refused",
-        `could not ship ${name}: ${typeof merged.error === "string" ? merged.error : merged.error.kind}`,
       );
     },
   },
@@ -574,7 +455,7 @@ function rpcOne(
         capabilities: { tools: {} },
         serverInfo: SERVER,
         instructions:
-          "This is a person's forge: their apps, and the crew that builds them. `asks` is what waits for them; `decide`, `say` and `tell` are how they answer and direct. Keep what you relay short — three sentences and the real options.",
+          "This is a person's forge: their apps, and the crew that builds them. `tell` and `say` are how they direct it. Keep what you relay short — three sentences and the real options.",
       });
     }
     case "ping":

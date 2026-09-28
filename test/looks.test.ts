@@ -395,7 +395,7 @@ describe("the look", () => {
     expect(page).not.toContain("<h2>Look</h2>");
   });
 
-  test("the studio's look ask leads with the phone picture, and the app's head shows production", async () => {
+  test("the pull carries its phone picture, and the app's head shows production", async () => {
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
     expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
@@ -419,14 +419,13 @@ describe("the look", () => {
     expect(rows.every((l) => l.error === null)).toBe(true);
 
     const studio = `${aliceCookie}; forge_mode=studio`;
-    const page = await (await web("/alice/hello", studio)).text();
-    expect(page).toContain(`value="look:${ask.id}"`);
-    expect(page).toContain(
-      `<a class="look-thumb" href="/alice/hello/pulls/${ask.number}"`,
-    );
-    expect(page).toContain(
+    const pull = await (
+      await web(`/alice/hello/pulls/${ask.number}`, studio)
+    ).text();
+    expect(pull).toContain(
       `src="/alice/hello/looks/${env}/${branch.value.commitOid}/phone.png"`,
     );
+    const page = await (await web("/alice/hello", studio)).text();
     const production = looksForEnv(app.db, record.id, "production").find(
       (l) => l.kind === "desktop",
     )!;
@@ -434,8 +433,6 @@ describe("the look", () => {
     expect(page).toContain(
       `src="/alice/hello/looks/production/${production.commitOid}/desktop.png"`,
     );
-    const home = await (await web("/", studio)).text();
-    expect(home).toContain(`class="look-thumb"`);
   }, 120_000);
 
   test("memory pressure is what the container truly holds, never its page cache", async () => {

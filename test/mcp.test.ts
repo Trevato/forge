@@ -155,8 +155,6 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual([
       "apps",
-      "asks",
-      "decide",
       "tell",
       "say",
       "now",
@@ -170,7 +168,6 @@ describe("the forge over MCP", () => {
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
     );
-    expect(byName.get("asks").annotations.readOnlyHint).toBe(true);
     expect(byName.get("tell").annotations.readOnlyHint).toBe(false);
     expect(byName.get("tell").inputSchema.required).toEqual(["repo", "text"]);
 
@@ -180,12 +177,10 @@ describe("the forge over MCP", () => {
     ).toBe(-32602);
   });
 
-  test("apps and asks read what the studio reads", async () => {
+  test("apps and now read what the studio reads", async () => {
     const apps = await tool(ro, "apps");
     expect(apps.value).toHaveLength(1);
     expect(apps.value[0].app).toBe("alice/game");
-    expect(apps.value[0].asks).toBe(0);
-    expect((await tool(ro, "asks")).value).toEqual([]);
     expect((await tool(ro, "now")).value).toEqual([]);
     // Bob cannot see alice's private app: not in his list, not by name.
     expect((await tool(bobRw, "apps")).value).toEqual([]);
@@ -302,19 +297,6 @@ describe("the forge over MCP", () => {
       (await tool(rw, "say", { repo: "alice/game", number: 999, text: "x" }))
         .error,
     ).toContain("not_found");
-  });
-
-  test("decide refuses what is not waiting", async () => {
-    const gone = await tool(rw, "decide", {
-      ask: "look:nothing",
-      action: "ship",
-    });
-    expect(gone.error).toContain("no_such_ask");
-    const odd = await tool(rw, "decide", {
-      ask: "look:nothing",
-      action: "burn",
-    });
-    expect(odd.error).toContain("invalid_action");
   });
 
   test("following, take_updates and converge are the fork's page", async () => {

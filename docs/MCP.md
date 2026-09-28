@@ -26,9 +26,7 @@ for a tunnel and a forge that sleeps.
 
 | tool           | does                                                                                   | writes |
 | -------------- | -------------------------------------------------------------------------------------- | ------ |
-| `apps`         | the apps you can see: live or not, where served, how each runs itself, what asks you   |        |
-| `asks`         | what waits for you across every app: green changes to look at, stopped ones, ceilings  |        |
-| `decide`       | answer an ask: `ship` a green change, `close` one; a conflict goes to the builder      | yes    |
+| `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working |        |
 | `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick | yes    |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step               | yes    |
 | `now`          | what the crew is doing right now: who, on what, since when, at what cost               |        |

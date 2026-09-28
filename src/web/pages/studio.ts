@@ -1,58 +1,32 @@
 /**
- * The studio: the forge with apps as the unit. A person does three things
- * to an app here — tell the crew, look at what it made, decide when it
- * asks — and every word on the page maps to one thing in git that dev mode
- * shows. Nothing here is a second system: these pages read the same tables
+ * The studio: the forge with apps as the unit. A person does two things to
+ * an app here — tell the crew, look at what it made — and every word on the
+ * page maps to one thing in git that dev mode shows. Nothing here is a second system: these pages read the same tables
  * as the rest and act through the same actions a person would take by
  * hand.
  *
  * Words: *tell* is an issue; *working* is a run; *look* is an open pull
- * with a green check and a preview; *shipped* is a merge; *asks you* is a
- * pull the crew stopped on, or a green one waiting for a look.
+ * with a green check and a preview; *shipped* is a merge. An autonomous
+ * app lands its own green changes; nothing here waits on a person.
  */
 
-import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
-import { mergePull } from "../../actions/pulls.ts";
 import { tell } from "../../actions/tell.ts";
 import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
-import { listCrewRoles, type Agent } from "../../core/agents.ts";
-import { appsForRepos, getAppByRepo, type AppRecord } from "../../core/apps.ts";
-import {
-  getIssueById,
-  listComments,
-  listIssues,
-  listOpenAgentPullsVisibleTo,
-  type Issue,
-} from "../../core/issues.ts";
-import {
-  getPull,
-  joinMany,
-  listPulls,
-  openPullsClosing,
-  type Pull,
-} from "../../core/pulls.ts";
+import { listCrewRoles } from "../../core/agents.ts";
+import { appsForRepos, type AppRecord } from "../../core/apps.ts";
+import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
+import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
-import { listReviews } from "../../core/reviews.ts";
 import {
-  activeRunFor,
-  automaticRunsSince,
   latestAgentRunsForRepos,
   latestRunsForIssues,
   listActiveRuns,
   listRuns,
   type Run,
 } from "../../core/runs.ts";
-import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
-import { autonomyStatus, bringUpToDate } from "../../crew/autonomy.ts";
-import { mergeable, resolveOid } from "../../git/merge.ts";
-import { repoDir } from "../../git/repos.ts";
-import {
-  decisionStats,
-  latestDecision,
-  type DecisionStat,
-} from "../../core/decisions.ts";
-import { certain, decideOr } from "../../crew/decide.ts";
-import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
+import { getUsersByIds, type User } from "../../core/users.ts";
+import { autonomyStatus } from "../../crew/autonomy.ts";
+import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -68,8 +42,8 @@ import { html, when, type Html } from "../html.ts";
 import { followingCard, followingOf } from "./following.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
-import { asksJs, liveRegionsJs } from "../client.ts";
-import { flashOrJson, flashTo, page, redirect } from "../layout.ts";
+import { liveRegionsJs } from "../client.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { isMode, modeCookie } from "../mode.ts";
 import {
@@ -80,465 +54,13 @@ import {
   empty,
   icon,
   listCard,
-  pill,
   row,
   time,
   userTag,
   type Tone,
 } from "../ui.ts";
-import { looksForApps } from "../../core/looks.ts";
-import { previewEnv } from "../../apps/data.ts";
-import { lookNow, lookThumb, lookUrl } from "./looks.ts";
+import { lookNow } from "./looks.ts";
 import { onYouCard } from "./site.ts";
-
-// ---- decisions: what asks a person ----
-
-export type DecisionKind = "stopped" | "look" | "stale" | "wall" | "paused";
-
-/** Dollars as a person reads them: cents when small, whole when not. */
-const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
-
-export interface Decision {
-  readonly kind: DecisionKind;
-  /** Stable across renders — the kind and what it is about — so a form can
-   * name it and a later request can find it again. */
-  readonly id: string;
-  readonly repo: Repo;
-  readonly pull?: Pull | undefined;
-  readonly who: string;
-  /** Three sentences at most: what, why, what happens next. */
-  readonly says: string;
-  /** The same in one clause, for a row. */
-  readonly short: string;
-  /** The option the decider thinks is right, and how sure; none for a rule. */
-  readonly likely?: { readonly option: string; readonly p: number } | undefined;
-  /** The preview pictured on a phone, when the forge has taken one. */
-  readonly picture?: string | undefined;
-  /** `stale`: the files main changed under the pull. */
-  readonly files?: readonly string[] | undefined;
-}
-
-/** The options a card offers, by name, as the decider sees them. */
-const CARD_OPTIONS: Record<DecisionKind, Readonly<Record<string, string>>> = {
-  stopped: {
-    say: "Tell the builder what to try; the check can pass with guidance.",
-    close: "Close it; the change is not worth more tries.",
-    look: "A person should read the change before deciding.",
-  },
-  look: {
-    ship: "Ship it; the change is green and small enough to land on its check.",
-    say: "Say what is off; something in it needs a change first.",
-    preview: "Open the preview first; it must be seen before shipping.",
-  },
-  paused: { settings: "Raise the ceiling.", wait: "Wait for midnight." },
-  stale: {
-    update:
-      "Have the crew bring it up to date; the work is good and main moved.",
-    close: "Close it; what main did makes this change moot.",
-  },
-  // A wall is a person's alone; the decider is never asked which way.
-  wall: {},
-};
-
-/**
- * Ask the decider which option on each card is likely right, so the card
- * can lead with it. Bounded to a short wait: a page is being drawn.
- */
-export async function withLikely(
-  ctx: Ctx,
-  decisions: readonly Decision[],
-): Promise<Decision[]> {
-  const decider = ctx.app.config.decider;
-  if (decider === undefined || decisions.length === 0) return [...decisions];
-  return Promise.all(
-    decisions.map(async (d) => {
-      const options = Object.keys(CARD_OPTIONS[d.kind]);
-      if (options.length === 0) return d;
-      const decided = await decideOr(
-        decider,
-        {
-          repository: `${d.repo.ownerName}/${d.repo.name}`,
-          situation: d.says,
-          ...(d.pull === undefined
-            ? {}
-            : { change: d.pull.title, description: d.pull.body.slice(0, 800) }),
-        },
-        {
-          option: {
-            options,
-            about: "Which of these a careful owner of the app would pick.",
-            describe: CARD_OPTIONS[d.kind],
-          },
-        },
-        () => ({ option: certain(options, options[0]!) }),
-        800,
-      );
-      return decided.by === "rule"
-        ? d
-        : {
-            ...d,
-            likely: {
-              option: decided.answers.option.choice,
-              p: decided.answers.option.p,
-            },
-          };
-    }),
-  );
-}
-
-/** When a person last spoke on a conversation, or its start. */
-function lastHumanWord(ctx: Ctx, issue: Issue, agentName: string): string {
-  let latest = issue.createdAt;
-  for (const c of listComments(ctx.app.db, issue.id))
-    if (c.authorName !== agentName && c.createdAt > latest)
-      latest = c.createdAt;
-  for (const r of listReviews(ctx.app.db, issue.id))
-    if (r.authorName !== agentName && r.createdAt > latest)
-      latest = r.createdAt;
-  return latest;
-}
-
-/**
- * The crew's open pulls the viewer may land, sorted into what asks them:
- * stopped (red past the crew's own limit since a person last spoke), or
- * green and waiting for a look. Plus a repository paused at its ceiling.
- */
-/** The files main changed under a pull; empty when it still merges clean. */
-async function conflictsWithMain(
-  ctx: Ctx,
-  repo: Repo,
-  pull: Pull,
-): Promise<readonly string[]> {
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const base = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
-  if (base === undefined) return [];
-  const merged = await mergeable(dir, base, pull.headOid);
-  return !merged.ok && merged.error.kind === "conflict"
-    ? merged.error.files
-    : [];
-}
-
-export async function decisionsFor(
-  ctx: Ctx,
-  repos: readonly Repo[],
-): Promise<Decision[]> {
-  const db = ctx.app.db;
-  const out: Decision[] = [];
-  const byId = new Map(repos.map((r) => [r.id, r]));
-  const user = ctx.auth.user;
-  if (!user) return out;
-  const pulls = listOpenAgentPullsVisibleTo(db, user, 50).filter((p) =>
-    byId.has(p.repoId),
-  );
-  const checks = latestRunsForIssues(
-    db,
-    pulls.map((p) => p.id),
-  );
-  const joined = new Map(joinMany(db, pulls).map((p) => [p.id, p]));
-  // The pictures, in one read: a green pull's row leads with its preview.
-  const records = appsForRepos(db, [...byId.keys()]);
-  const looks = looksForApps(
-    db,
-    [...records.values()].map((r) => r.id),
-  );
-  const pictureOf = (repo: Repo, pull: Pull): string | undefined => {
-    const record = records.get(repo.id);
-    if (record === undefined) return undefined;
-    const env = previewEnv(pull.number);
-    const look = looks.find(
-      (l) =>
-        l.appId === record.id &&
-        l.env === env &&
-        l.kind === "phone" &&
-        l.error === null,
-    );
-    return look && lookUrl(repoBase(repo), env, look.commitOid, "phone");
-  };
-  for (const issue of pulls) {
-    const repo = byId.get(issue.repoId)!;
-    const pull = joined.get(issue.id);
-    if (!pull) continue;
-    const check = checks.get(issue.id);
-    const who = issue.authorName;
-    // The crew is on it: that is working, not a question for a person.
-    if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
-    // At the wall: green, and a change of policy the crew left to a person.
-    const land = latestDecision(db, issue.id, "land");
-    const atWall =
-      land?.answer === "wall" &&
-      typeof land.state === "object" &&
-      land.state !== null &&
-      (land.state as { head?: unknown }).head === pull.headOid;
-    if (atWall && check?.state === "ok") {
-      const cells = (land.state as { cells?: unknown }).cells;
-      const n = Array.isArray(cells) ? cells.length : 0;
-      out.push({
-        kind: "wall",
-        id: `wall:${pull.id}`,
-        repo,
-        pull,
-        who,
-        says: `${who} finished "${pull.title}" and the check is green, but it changes the policy: ${n === 1 ? "one door opens" : `${n} doors open`} wider than before. The crew leaves that to you. Read the cells, then land it or say what is off.`,
-        short: `${who} finished it; it opens ${n === 1 ? "a door" : `${n} doors`} wider`,
-      });
-      continue;
-    }
-    if (check?.state === "failed") {
-      const since = lastHumanWord(ctx, issue, who);
-      const tries = automaticRunsSince(db, issue.id, since);
-      const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
-      // A repository on its own parks what it cannot finish and moves on;
-      // only an assisted one stops here for a person.
-      if (
-        (tries >= CHECK_FAILED_LIMIT || stopped) &&
-        repo.autonomy !== "autonomous"
-      )
-        out.push({
-          kind: "stopped",
-          id: `stopped:${pull.id}`,
-          repo,
-          pull,
-          who,
-          says: stopped
-            ? `${who}'s check failed and the crew's decider stopped rather than spend another run. Say what to try, or close it.`
-            : `${who} tried ${tries + 1} times and the check still fails. The crew stopped here. Say what to try, or close it.`,
-          short: stopped
-            ? `the check failed; the decider stopped for you`
-            : `${who} tried ${tries + 1} times; the check still fails`,
-        });
-    } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
-      // Green, but does it still merge? Main may have moved under it since
-      // the check ran. A pull that no longer merges is not a person's to
-      // ship — ship would only fail — it is the crew's to bring up to date,
-      // and the card says so instead of offering a button that errors.
-      const files = await conflictsWithMain(ctx, repo, pull);
-      if (files.length > 0) {
-        out.push({
-          kind: "stale",
-          id: `stale:${pull.id}`,
-          repo,
-          pull,
-          who,
-          says: `${who} finished "${pull.title}" and the check is green, but main moved under it (${files.join(", ")}). Have ${who} bring it up to date, or close it.`,
-          short: `${who} finished it, but main moved under it`,
-          files,
-        });
-        continue;
-      }
-      // Autonomous repositories look at their own green pulls: the decider,
-      // then the crew's reviewer. Everything else waits for a person.
-      const picture = pictureOf(repo, pull);
-      out.push({
-        kind: "look",
-        id: `look:${pull.id}`,
-        repo,
-        pull,
-        who,
-        says: `${who} finished "${pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`,
-        short: `${who} finished it; the check is green`,
-        ...(picture === undefined ? {} : { picture }),
-      });
-    }
-  }
-  for (const repo of repos) {
-    if (repo.autonomy === "off") continue;
-    const s = autonomyStatus(ctx.app, repo);
-    if (s.paused === "ceiling" || s.paused === "forge ceiling")
-      out.push({
-        kind: "paused",
-        id: `paused:${repo.id}`,
-        repo,
-        who: "the crew",
-        says:
-          s.paused === "forge ceiling"
-            ? `The forge reached its $${dollars(ctx.app.config.crewCeilingUsd ?? 0)} for today across every app. The crew picks nothing more until 00:00 UTC. FORGE_CREW_CEILING_USD is the knob.`
-            : `${repo.name} reached its $${dollars(s.ceilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
-        short: `at its $${dollars(s.ceilingUsd)} ceiling until 00:00 UTC`,
-      });
-  }
-  return out;
-}
-
-/** The variant a card's button takes: primary when the decider leans to it. */
-function leanVariant(
-  d: Decision,
-  option: string,
-  fallback: "primary" | undefined,
-): { variant?: "primary" } {
-  const variant =
-    d.likely === undefined
-      ? fallback
-      : d.likely.option === option
-        ? "primary"
-        : undefined;
-  return variant === undefined ? {} : { variant };
-}
-
-/** A word beside the leaned-to option: how sure, in plain terms. */
-function leanNote(d: Decision, option: string): Html | null {
-  if (d.likely === undefined || d.likely.option !== option) return null;
-  const sure =
-    d.likely.p >= 0.85 ? "likely" : d.likely.p >= 0.6 ? "probably" : "maybe";
-  return html`<span
-    class="muted small studio-lean"
-    title="${Math.round(d.likely.p * 100)}% by the decider"
-    >${sure}</span
-  >`;
-}
-
-// ---- deciding several at once ----
-
-/**
- * What a person can decide for several asks in one go: an ask's own landing
- * button, applied to each. Only what needs no words qualifies — saying
- * something happens on the change's page. The page shows an action only
- * while every checked ask takes it; the route skips one that does not.
- */
-export type BulkAction = "ship" | "update" | "close";
-
-const BULK: Readonly<
-  Record<
-    BulkAction,
-    {
-      readonly kinds: readonly DecisionKind[];
-      readonly label: string;
-      readonly done: string;
-    }
-  >
-> = {
-  ship: { kinds: ["look"], label: "Ship", done: "Shipped" },
-  update: {
-    kinds: ["stale"],
-    label: "Bring up to date",
-    done: "Being brought up to date",
-  },
-  close: { kinds: ["stopped", "stale"], label: "Close", done: "Closed" },
-};
-const BULK_ACTIONS = Object.keys(BULK) as readonly BulkAction[];
-const isBulkAction = (v: string): v is BulkAction => Object.hasOwn(BULK, v);
-const takes = (d: Decision, a: BulkAction): boolean =>
-  BULK[a].kinds.includes(d.kind);
-
-/** The id of the form a row's own button submits (see `decisionForm`). */
-const askFormId = (d: Decision): string => `ask-${d.id}`;
-
-/**
- * The form behind a row's landing button — its own post, exactly as it was.
- * It sits after the panel's form, because a form inside a form is not
- * HTML; the button reaches it by id.
- */
-function decisionForm(d: Decision): Html | null {
-  const pull = d.pull;
-  if (pull === undefined) return null;
-  const base = repoBase(d.repo);
-  const own = html`id="${askFormId(d)}" method="post" hidden`;
-  if (d.kind === "stopped")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/state">
-      <input type="hidden" name="state" value="closed" />
-    </form>`;
-  if (d.kind === "look" || d.kind === "wall")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
-      <input type="hidden" name="pull" value="${pull.number}" />
-    </form>`;
-  if (d.kind === "stale")
-    return html`<form ${own} action="${base}/pulls/${pull.number}/update">
-      <input type="hidden" name="pull" value="${pull.number}" />
-    </form>`;
-  return null;
-}
-
-/**
- * The actions on one ask, on one line: a button for what lands (submitting
- * the row's own form, `decisionForm`), links for what needs a look or a
- * word. Saying something to the crew happens on the change's own page,
- * where the conversation is — not in a box in a list.
- */
-function decisionActions(ctx: Ctx, d: Decision): Html {
-  const base = repoBase(d.repo);
-  const pull = d.pull;
-  const preview =
-    pull === undefined
-      ? undefined
-      : getAppByRepo(ctx.app.db, d.repo.id) === undefined
-        ? undefined
-        : `${base}/app/pull-${pull.number}/open`;
-  if (d.kind === "stopped" && pull)
-    return html`${btn("Tell them", {
-      href: `${base}/pulls/${pull.number}#comment-body`,
-      size: "sm",
-      ...leanVariant(d, "say", "primary"),
-    })}${leanNote(d, "say")}
-    ${btn("Close", {
-      size: "sm",
-      form: askFormId(d),
-      ...leanVariant(d, "close", undefined),
-    })}${leanNote(d, "close")}
-    ${btn("See", {
-      href: `${base}/pulls/${pull.number}`,
-      size: "sm",
-      ...leanVariant(d, "look", undefined),
-    })}${leanNote(d, "look")}`;
-  if (d.kind === "stale" && pull)
-    return html`${btn("Bring up to date", {
-      size: "sm",
-      form: askFormId(d),
-      ...leanVariant(d, "update", "primary"),
-    })}${leanNote(d, "update")}
-    ${btn("Close", {
-      href: `${base}/pulls/${pull.number}#comment-body`,
-      size: "sm",
-      ...leanVariant(d, "close", undefined),
-    })}${leanNote(d, "close")}
-    ${btn("See", { href: `${base}/pulls/${pull.number}`, size: "sm" })}`;
-  if (d.kind === "wall" && pull)
-    return html`${btn("Read the cells", {
-      href: `${base}/pulls/${pull.number}`,
-      size: "sm",
-      variant: "primary",
-    })}
-    ${btn("Land it", { size: "sm", form: askFormId(d) })}
-    ${btn("Not like this", {
-      href: `${base}/pulls/${pull.number}#comment-body`,
-      size: "sm",
-    })}`;
-  if (d.kind === "look" && pull)
-    return html`${btn("Ship", {
-      size: "sm",
-      form: askFormId(d),
-      ...leanVariant(d, "ship", "primary"),
-    })}${leanNote(d, "ship")}
-    ${when(
-      preview,
-      (href) =>
-        html`${btn("Preview", {
-          href,
-          size: "sm",
-          ...leanVariant(d, "preview", undefined),
-        })}${leanNote(d, "preview")}`,
-    )}
-    ${btn("Not like this", {
-      href: `${base}/pulls/${pull.number}#comment-body`,
-      size: "sm",
-      ...leanVariant(d, "say", undefined),
-    })}${leanNote(d, "say")}`;
-  return html`${btn("Settings", {
-    href: `${base}/settings/autonomy`,
-    size: "sm",
-  })}`;
-}
-
-// ---- studio words for what the crew is doing ----
-
-/** A merge refusal in a person's words. */
-function mergeWords(error: unknown): string {
-  if (typeof error === "string") return error.replace(/_/g, " ");
-  if (typeof error === "object" && error !== null && "kind" in error) {
-    const e = error as { kind: string; message?: string };
-    if (e.kind === "git") return `git said ${e.message ?? "no"}`;
-    return e.kind.replace(/_/g, " ");
-  }
-  return String(error);
-}
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -688,7 +210,6 @@ export async function studioApp(
       const i = getIssueById(db, r.issueId);
       if (i) issues.set(r.issueId, i);
     }
-  const decisions = await withLikely(ctx, await decisionsFor(ctx, [repo]));
   const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
   const pullChecks = latestRunsForIssues(
     db,
@@ -881,7 +402,7 @@ export async function studioApp(
           ? null
           : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
         trail: stop
-          ? html`<span class="studio-ask-actions"
+          ? html`<span class="studio-row-actions"
               >${wordBadge(word)} ${stop}</span
             >`
           : wordBadge(word),
@@ -916,10 +437,6 @@ export async function studioApp(
             <span class="spacer"></span>
             ${btn("Every run", { href: `${base}/runs`, size: "sm" })}`,
         });
-
-  const asks = when(decisions.length > 0, () =>
-    asksPanel(ctx, decisions, base),
-  );
 
   // ---- the rail ----
   const crewCard =
@@ -1034,13 +551,6 @@ export async function studioApp(
       <div class="dash-main stack">
         ${tell}
         <div
-          id="live-asks"
-          data-live="run.*,pull.*,issue.*,check.*"
-          data-live-repo="${repo.ownerName}/${repo.name}"
-        >
-          ${asks}
-        </div>
-        <div
           id="live-now"
           data-live="run.*,pull.*,issue.*"
           data-live-repo="${repo.ownerName}/${repo.name}"
@@ -1060,7 +570,7 @@ export async function studioApp(
     palette: repoPalette(repo),
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
 }
 
@@ -1071,7 +581,7 @@ function avatarOf(username: string): Html {
 // ---- the studio home ----
 
 /**
- * The home in the studio: what asks you first, then every app as one row
+ * The home in the studio: what is on you first, then every app as one row
  * that carries a real signal — live or not, what the crew last did there,
  * how many things wait on you — and beside it what is happening right now
  * across all of them, and what a person put on you. Built from the same
@@ -1093,10 +603,6 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       .map((r) => r.actorId)
       .filter((id): id is string => id !== null),
   );
-  const decisions = await withLikely(ctx, await decisionsFor(ctx, appRepos));
-  const asksByRepo = new Map<string, number>();
-  for (const d of decisions)
-    asksByRepo.set(d.repo.id, (asksByRepo.get(d.repo.id) ?? 0) + 1);
 
   const appRows = appRepos.map((repo) => {
     const record = records.get(repo.id)!;
@@ -1109,7 +615,6 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       latest?.actorId == null
         ? undefined
         : actors.get(latest.actorId)?.username;
-    const asks = asksByRepo.get(repo.id) ?? 0;
     const tone: Tone =
       state === "running"
         ? "success"
@@ -1135,14 +640,13 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       meta: html`${repo.description
         ? html`${repo.description} · `
         : null}${happening}`,
-      trail: html`${asks > 0 ? pill(`${asks} asks you`, "accent") : null}
-        <span class="badge" data-tone="${tone}"
-          >${state === "running"
-            ? "live"
-            : state === "stopped"
-              ? "not running"
-              : state}</span
-        >`,
+      trail: html`<span class="badge" data-tone="${tone}"
+        >${state === "running"
+          ? "live"
+          : state === "stopped"
+            ? "not running"
+            : state}</span
+      >`,
     });
   });
 
@@ -1162,8 +666,6 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
             ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
             ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`,
         });
-
-  const asks = when(decisions.length > 0, () => asksPanel(ctx, decisions, "/"));
 
   // Happening now: every run in flight across the apps, one read.
   const running = listActiveRuns(
@@ -1212,7 +714,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
                 : null}`,
               ...(stop
                 ? {
-                    trail: html`<span class="studio-ask-actions"
+                    trail: html`<span class="studio-row-actions"
                       >${stop}</span
                     >`,
                   }
@@ -1224,7 +726,6 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
 
   const body = html`<div class="dash">
     <div class="dash-main stack">
-      <div id="live-asks" data-live="run.*,pull.*,issue.*,check.*">${asks}</div>
       <div id="live-apps" data-live="run.finished,pull.merged,pull.opened">
         ${apps}
       </div>
@@ -1239,98 +740,8 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     title: "Studio",
     body,
     styleCss: studioCss,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${asksJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
-}
-
-/** One decision as a row: a box to pick it, what it says, the options in place. */
-function decisionRow(ctx: Ctx, d: Decision): Html {
-  const base = repoBase(d.repo);
-  const glyph =
-    d.kind === "stopped"
-      ? "alert"
-      : d.kind === "look"
-        ? "eye"
-        : d.kind === "stale"
-          ? "sync"
-          : d.kind === "wall"
-            ? "shield"
-            : "clock";
-  // The title links; the row itself does not, because it holds controls
-  // and a control inside an anchor is not HTML a browser will keep together.
-  const href = d.pull ? `${base}/pulls/${d.pull.number}` : base;
-  const title = html`<a href="${href}">${d.pull?.title ?? d.repo.name}</a>`;
-  return row({
-    lead: html`<input
-        class="studio-ask-pick"
-        type="checkbox"
-        name="ask"
-        value="${d.id}"
-        data-kind="${d.kind}"
-        data-repo="${base}"
-        aria-label="Select: ${d.pull?.title ?? d.repo.name}"
-      />${d.picture === undefined ? icon(glyph) : lookThumb(href, d.picture)}`,
-    title,
-    titleAttr: d.says,
-    meta: html`${d.repo.name}${d.pull ? html` #${d.pull.number}` : null} ·
-    ${d.short}`,
-    trail: html`<span class="studio-ask-actions"
-      >${decisionActions(ctx, d)}</span
-    >`,
-  });
-}
-
-/**
- * The asks as one form. Every row has a box; check any and a bar appears
- * with what fits them all, posting to /studio/asks. A row's own button
- * submits that row's form, placed after this one — nothing is nested, and
- * one decision is exactly the post it was before.
- *
- * Over the column of boxes, one more that picks them all — in the head,
- * where it is reachable before anything is checked (the bar is not). It
- * has no name, so it never posts, and it stays hidden until the script
- * that makes it act has run: a box that does nothing is a lie. For one
- * ask, its own box is the whole choice.
- */
-function asksPanel(
-  ctx: Ctx,
-  decisions: readonly Decision[],
-  back: string,
-): Html {
-  const all =
-    decisions.length > 1
-      ? html`<input
-          class="studio-ask-pick studio-ask-all"
-          type="checkbox"
-          aria-label="Select all asks"
-          hidden
-        />`
-      : null;
-  const bar = html`<div class="studio-bulk">
-    <output class="studio-bulk-count">Selected</output>
-    ${BULK_ACTIONS.map((a) =>
-      btn(BULK[a].label, { size: "sm", name: "action", value: a }),
-    )}
-    <span class="muted studio-bulk-none">no one action fits them all</span>
-  </div>`;
-  return html`<div class="studio-asks">
-    <form method="post" action="/studio/asks">
-      <input type="hidden" name="back" value="${back}" />
-      ${card(
-        html`${bar}
-          <ul class="list">
-            ${decisions.map((d) => decisionRow(ctx, d))}
-          </ul>`,
-        {
-          head: html`${all}${icon("alert")}
-            <h2>Asks you</h2>
-            <span class="muted small">decide, and the crew carries on</span>`,
-          pad: false,
-        },
-      )}
-    </form>
-    ${decisions.map(decisionForm)}
-  </div>`;
 }
 
 /** The apps a person can see, as repositories, with their records. */
@@ -1376,178 +787,6 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   });
 }
 
-/** POST /:owner/:name/pulls/:number/ship — land a green change. */
-/** POST /:owner/:name/pulls/:number/update — have the crew bring a stale pull up to date. */
-export async function updateSubmit(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return signInFirst(ctx);
-  const form = await readForm(ctx, "rw");
-  if (form instanceof Response) return form;
-  const base = repoBase(repo);
-  const number = Number(ctx.params.number);
-  const pull = Number.isInteger(number)
-    ? getPull(ctx.app.db, repo.id, number)
-    : undefined;
-  if (!pull) return notFoundPage(ctx);
-  if (!canWrite(ctx.app.db, repo, ctx.auth.user))
-    return flashOrJson(ctx, base, {
-      tone: "danger",
-      message: "You need write access to do that.",
-    });
-  const files = await conflictsWithMain(ctx, repo, pull);
-  if (files.length === 0)
-    return flashOrJson(ctx, base, {
-      message: `"${pull.title}" merges clean now; ship it when you are ready.`,
-    });
-  const who = bringUpToDate(ctx.app, repo, pull, files);
-  return flashOrJson(ctx, base, {
-    ...(who === undefined ? { tone: "danger" as const } : {}),
-    message:
-      who === undefined
-        ? `It conflicts with main (${files.join(", ")}) and the crew has already tried its limit; say what to do on the pull.`
-        : `${who} is bringing "${pull.title}" up to date (${files.join(", ")}); it comes back to you green.`,
-  });
-}
-
-export async function shipSubmit(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return signInFirst(ctx);
-  const form = await readForm(ctx, "rw");
-  if (form instanceof Response) return form;
-  const base = repoBase(repo);
-  const number = Number(ctx.params.number);
-  const pull = Number.isInteger(number)
-    ? getPull(ctx.app.db, repo.id, number)
-    : undefined;
-  if (!pull) return notFoundPage(ctx);
-  const merged = await mergePull(ctx.app, ctx.auth.user, repo, pull, "squash");
-  // A conflict is never the person's to fix: the pull's agent brings the
-  // branch up to date, and the pull comes back green, or lands on its own.
-  if (
-    !merged.ok &&
-    typeof merged.error !== "string" &&
-    merged.error.kind === "conflict"
-  ) {
-    const who = bringUpToDate(ctx.app, repo, pull, merged.error.files);
-    return flashOrJson(ctx, base, {
-      tone: "danger" as const,
-      message:
-        who === undefined
-          ? `It conflicts with main (${merged.error.files.join(", ")}) and the crew has already tried its limit; say what to do on the pull.`
-          : `It conflicts with main (${merged.error.files.join(", ")}); ${who} is bringing it up to date${repo.autonomy === "autonomous" ? ", then it lands on its own" : ", then it comes back to you"}.`,
-    });
-  }
-  return flashOrJson(ctx, base, {
-    ...(merged.ok
-      ? { message: `Shipped "${pull.title}". Production is redeploying.` }
-      : {
-          tone: "danger" as const,
-          message: `That could not ship: ${mergeWords(merged.error)}.`,
-        }),
-  });
-}
-
-/** POST /:owner/:name/pulls/:number/say  { text } — feedback to the crew. */
-export async function saySubmit(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return signInFirst(ctx);
-  const form = await readForm(ctx, "rw");
-  if (form instanceof Response) return form;
-  const base = repoBase(repo);
-  const number = Number(ctx.params.number);
-  const pull = Number.isInteger(number)
-    ? getPull(ctx.app.db, repo.id, number)
-    : undefined;
-  if (!pull) return notFoundPage(ctx);
-  const text = field(form, "text").trim();
-  if (text === "")
-    return flashTo(ctx, base, {
-      tone: "danger",
-      message: "Say something first.",
-    });
-  const said = addComment(ctx.app, ctx.auth.user, repo, pull, text);
-  return flashOrJson(ctx, base, {
-    ...(said.ok
-      ? { message: `Told ${pull.authorName}. It picks the change back up.` }
-      : { tone: "danger" as const, message: "That could not be said." }),
-  });
-}
-
-/**
- * POST /studio/asks  { ask*, action, back } — one decision for several asks.
- * Each is the same act as its row's own button. An ask that is gone, or
- * never took this action, is skipped and counted, never guessed at.
- */
-export async function asksSubmit(ctx: Ctx): Promise<Response> {
-  const user = ctx.auth.user;
-  if (!user) return signInFirst(ctx);
-  const form = await readForm(ctx, "rw");
-  if (form instanceof Response) return form;
-  const back = backTo(ctx, field(form, "back"));
-  const action = field(form, "action");
-  const picked = [
-    ...new Set(
-      form.getAll("ask").filter((v): v is string => typeof v === "string"),
-    ),
-  ];
-  if (!isBulkAction(action) || picked.length === 0)
-    return flashOrJson(ctx, back, {
-      tone: "danger",
-      message: "Pick some asks, and what to do with them.",
-    });
-  // The asks as they stand now, not as the page had them.
-  const asks = new Map(
-    (await decisionsFor(ctx, appsOf(ctx, user).repos)).map((d) => [d.id, d]),
-  );
-  const done: string[] = [];
-  const skipped: string[] = [];
-  const failed: string[] = [];
-  for (const id of picked) {
-    const d = asks.get(id);
-    if (d?.pull === undefined || !takes(d, action)) {
-      skipped.push(id);
-      continue;
-    }
-    if (action === "update") {
-      // The crew's conflict run, for the pull's own author.
-      const who = bringUpToDate(ctx.app, d.repo, d.pull, d.files ?? []);
-      (who === undefined ? failed : done).push(id);
-      continue;
-    }
-    const r =
-      action === "ship"
-        ? await mergePull(ctx.app, user, d.repo, d.pull, "squash")
-        : await setIssueStateThrough(ctx.app, user, d.repo, d.pull, "closed");
-    // A ship that hits a conflict is not a failure to record and forget:
-    // main moved since the page was drawn, and the crew brings it up to
-    // date, as the single button does.
-    if (
-      !r.ok &&
-      action === "ship" &&
-      typeof r.error !== "string" &&
-      r.error.kind === "conflict"
-    ) {
-      bringUpToDate(ctx.app, d.repo, d.pull, r.error.files);
-    }
-    (r.ok ? done : failed).push(id);
-  }
-  const tally = [`${BULK[action].done} ${done.length}`];
-  if (skipped.length > 0) tally.push(`skipped ${skipped.length}`);
-  if (failed.length > 0) tally.push(`could not ${action} ${failed.length}`);
-  return flashOrJson(
-    ctx,
-    back,
-    {
-      ...(done.length === 0 ? { tone: "danger" as const } : {}),
-      message: tally.join(" · "),
-    },
-    { done, skipped, failed },
-  );
-}
-
 /** Where a form sends a person back: what it said, else the referer, else
  * home — and never off this forge. */
 function backTo(ctx: Ctx, said: string): string {
@@ -1569,24 +808,6 @@ export async function modeSubmit(ctx: Ctx): Promise<Response> {
     modeCookie(isMode(choice) ? choice : undefined, secure),
   );
 }
-
-/**
- * An action in the bar shows only while every checked ask takes it, and a
- * note when none does — from the same table the route enforces, so the
- * page cannot offer what the server would skip. CSS alone: it holds with
- * scripts off.
- */
-const bulkCss = ((): string => {
-  const other = (a: BulkAction): string =>
-    `[name="ask"]${BULK[a].kinds.map((k) => `:not([data-kind="${k}"])`).join("")}:checked`;
-  return [
-    ...BULK_ACTIONS.map(
-      (a) =>
-        `.studio-asks:has(${other(a)}) [name="action"][value="${a}"] { display: none; }`,
-    ),
-    `.studio-asks${BULK_ACTIONS.map((a) => `:has(${other(a)})`).join("")} .studio-bulk-none { display: inline; }`,
-  ].join("\n");
-})();
 
 export const studioCss = /* css */ `
 .studio { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 22px; margin-top: 16px; }
@@ -1611,21 +832,7 @@ export const studioCss = /* css */ `
 .studio-list li[data-word="working"] .studio-word { color: var(--accent); opacity: 1; }
 .studio-list li[data-word="look"] .studio-word { color: var(--merged); opacity: 1; }
 .studio-list li[data-word="stopped"] .studio-word { color: var(--danger, #c33); opacity: 1; }
-.studio-ask-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.studio-lean { margin-left: 2px; }
-.studio-asks .row-lead { gap: 8px; }
-.studio-ask-pick { accent-color: var(--accent); margin: 0; width: 13px; height: 13px; opacity: .6; }
-.studio-ask-pick:checked, .studio-ask-pick:indeterminate, .studio-ask-pick:focus-visible, .row:hover .studio-ask-pick { opacity: 1; }
-.studio-bulk { display: none; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--border); font-size: 12.5px; background: color-mix(in srgb, var(--accent) 7%, var(--card)); }
-.studio-asks:has([name="ask"]:checked) .studio-bulk { display: flex; }
-.studio-bulk-count { font-weight: 550; font-variant-numeric: tabular-nums; }
-.studio-bulk-none { display: none; }
-.studio-asks li[data-busy] { opacity: .6; }
-.studio-asks li[data-busy] .studio-ask-actions { visibility: hidden; }
-.studio-asks li[data-busy] .row-lead svg { display: none; }
-.studio-asks li[data-busy] .row-lead::after { content: ""; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
-.studio-ask-note { color: var(--danger, #c33); }
-${bulkCss}
+.studio-row-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .studio-rail { display: grid; gap: 18px; align-content: start; }
 .studio-rail h3 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 6px; font-weight: 600; }
 .studio-crew { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }

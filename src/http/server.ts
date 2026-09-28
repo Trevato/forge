@@ -94,14 +94,7 @@ import {
   newIssueSubmit,
 } from "../web/pages/issues.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
-import {
-  asksSubmit,
-  modeSubmit,
-  saySubmit,
-  shipSubmit,
-  tellSubmit,
-  updateSubmit,
-} from "../web/pages/studio.ts";
+import { modeSubmit, tellSubmit } from "../web/pages/studio.ts";
 import { DEFAULT_MODE, isMode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
@@ -380,8 +373,6 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
   router.add("POST", "/mode", modeSubmit);
-  // Several asks, one decision — the studio's bar over its asks panel.
-  router.add("POST", "/studio/asks", asksSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
   router.add("GET", "/search", searchPage);
@@ -589,9 +580,6 @@ export function buildRouter(): Router<Handler> {
   );
   // The studio's three verbs on an app: tell, ship, say.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
-  router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
-  router.add("POST", "/:owner/:name/pulls/:number/update", updateSubmit);
-  router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",

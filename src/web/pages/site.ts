@@ -673,7 +673,7 @@ function dashboard(ctx: Ctx, user: User): Html {
 
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  // Studio by default: apps, the crew, what asks you. `?mode=dev` on the
+  // Studio by default: apps, the crew, what is on you. `?mode=dev` on the
   // home is the one-off way in without switching the browser.
   if (
     user !== undefined &&

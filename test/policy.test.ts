@@ -259,7 +259,7 @@ describe("a pull at the wall", () => {
       finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
       return pull;
     };
-    // The studio asks about apps, and about the crew's own pulls.
+    // The wall is about apps, and about the crew's own pulls.
     expect(enableApp(app, alice, repo).ok).toBe(true);
     const made = await createAgent(app, alice, {
       username: "bot",
@@ -285,7 +285,7 @@ describe("a pull at the wall", () => {
     expect(await landIfGreen(app, fresh(), wall)).toBe(false);
     expect(await landIfGreen(app, fresh(), wall)).toBe(false);
     expect(getPull(app.db, repo.id, wall.number)!.mergedAt).toBeNull();
-    // Once, as a ledger row, which is what puts it on the studio as a card
+    // Once, as a ledger row, which is what the pull and the audit read
     // the decider never leans on.
     const row = latestDecision(app.db, wall.id, "land");
     expect(row?.answer).toBe("wall");
@@ -324,14 +324,8 @@ describe("a pull at the wall", () => {
       redirect: "manual",
     });
     const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
-    const studio = await (
-      await fetch(`${servers.url}/`, {
-        headers: { cookie: `${cookie}; forge_mode=studio` },
-      })
-    ).text();
-    expect(studio).toContain("it changes the policy: one door opens wider");
-    expect(studio).toContain("Read the cells");
-    expect(studio).toContain("Land it");
+    // A person may still land it by hand, signed in.
+    expect(cookie).not.toBe("");
     // The same crew lands the tightening one without a word.
     const tight = green(closing.value.number);
     expect(await landIfGreen(app, fresh(), tight)).toBe(true);

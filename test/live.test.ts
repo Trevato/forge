@@ -128,7 +128,7 @@ describe("the viewer's stream", () => {
       headers: { cookie: `${cookie}; forge_mode=studio` },
     });
     const page = await res.text();
-    expect(page).toContain('id="live-asks"');
+    expect(page).toContain('id="live-apps"');
     expect(page).toContain('data-live="run.*"');
     expect(page).toContain("new EventSource('/events')");
   });

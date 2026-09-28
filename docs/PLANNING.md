@@ -226,10 +226,10 @@ Where it decides today:
   on its own has more than one ready issue, the decider chooses among the
   first six with the direction in hand. The rule takes the top of the ready
   list, the critical path.
-- **Ship or show** (`shipOrShow`): a green pull in an autonomous repository
-  lands by rule. The decider reads the pull against the direction and may
-  say _show_: the pull stays open and appears in the studio as a look,
-  saying the decider asked. One answer per head; a new push is asked again.
+- **Landing** (`landIfGreen`): a green pull in an autonomous repository
+  lands by rule, once its base merges cleanly and it does not cross the
+  wall (`docs/CONTRACT.md`). Nobody is asked; the ledger keeps the landing
+  as a `ship` by the rule, once per head, so the week's numbers add up.
 - **Try again or stop** (`crew/dispatch.ts`, `retryOrStop`): a failed check
   gets another automatic run by rule, up to the limit. The decider reads
   the failure, the log's tail and the count, and may stop sooner, before
@@ -239,8 +239,8 @@ Where it decides today:
 **The ledger.** Each of these is written to the `decision` table
 (`core/decisions.ts`): what the decider saw, what it answered and with what
 probability, who answered (the decider or the rule), and later what came of
-it — a shown pull shipped or closed by a person, a retry's next check green
-or red, a picked issue shipped. `GET /api/v1/repos/:owner/:name/decisions`
+it — a landed pull, a retry's next check green or red, a picked issue
+shipped. `GET /api/v1/repos/:owner/:name/decisions`
 lists it with the week summed per kind. It is the value function's raw
 material: whether the decider beats the rule is a query, not an opinion.
 
@@ -248,9 +248,6 @@ material: whether the decider beats the rule is a query, not an opinion.
   whether the change, the environment or the base branch failed. When it
   is the environment's fault, at 70% or better, the check runs again once
   instead of the agent reworking a change that is fine.
-- **Cards** (`web/pages/studio.ts`): which option on an "asks you" card is
-  likely right, so the card leads with it — _likely_, _probably_ or _maybe_
-  beside the button, the probability on hover. The person still decides.
 
 Every answer a decider gives is a log line — `decided by=typesafe ms=270
 answers=builder=mason@0.99 size=tiny@0.58 …` — so what it said and how

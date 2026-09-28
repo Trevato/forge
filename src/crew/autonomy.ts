@@ -22,7 +22,6 @@ import {
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
-import { listReviews } from "../core/reviews.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
 import {
@@ -62,7 +61,6 @@ import {
   checksForHead,
   listActive,
   type Run,
-  cancelRun,
 } from "../core/runs.ts";
 import {
   agentFor,
@@ -591,152 +589,6 @@ async function nextOf(
   );
 }
 
-/**
- * Ship a green pull, or show it to a person first. The rule ships; the
- * decider may say show when the change looks large, off-direction, or
- * touches money, sign-in or data. One answer per head: the same head is
- * not asked about twice.
- */
-export async function shipOrShow(
-  app: App,
-  repo: Repo,
-  pull: Pull,
-  checks: readonly Run[],
-): Promise<"ship" | "show"> {
-  if (app.config.decider === undefined) return "ship";
-  const earlier = latestDecision(app.db, pull.id, "land");
-  if (
-    earlier !== undefined &&
-    typeof earlier.state === "object" &&
-    earlier.state !== null &&
-    (earlier.state as { head?: unknown }).head === pull.headOid
-  )
-    return earlier.answer === "show" ? "show" : "ship";
-  const options = ["ship", "show"];
-  const decided = await decideAndRecord(
-    app,
-    { kind: "land", repo, issue: pull },
-    {
-      direction: repo.autonomyDirection,
-      head: pull.headOid,
-      pull: {
-        number: pull.number,
-        title: pull.title,
-        body: pull.body.slice(0, 1200),
-      },
-      checks: checks.map((c) => ({ kind: c.kind, summary: c.summary })),
-    },
-    {
-      land: {
-        options,
-        about:
-          "The check is green. Land this pull now, or have a person look first?",
-        describe: {
-          ship: "Land it now: the change is within the direction and the kind a crew lands on its own.",
-          show: "Show a person first: the change is large, off the direction, or touches money, sign-in, data, or what people see first.",
-        },
-      },
-    },
-    () => ({ land: certain(options, "ship") }),
-  );
-  if (decided.answers.land.choice === "show")
-    log.info("green; shown to a person first", {
-      repo: `${repo.ownerName}/${repo.name}`,
-      pull: pull.number,
-      by: decided.by,
-      p: decided.answers.land.p.toFixed(2),
-    });
-  return decided.answers.land.choice === "show" ? "show" : "ship";
-}
-
-/**
- * The reviewer's pass. When the decider would rather not land a pull
- * unseen, the crew's reviewer looks first: one review run per head, then
- * its verdict decides — approved lands, changes requested go back to the
- * builder as feedback (dispatch handles that review like a person's). A
- * crew with no reviewer lands it.
- */
-export async function reviewFirst(
-  app: App,
-  repo: Repo,
-  pull: Pull,
-): Promise<"ship" | "wait"> {
-  const reviewer = listCrewRoles(app.db, repo.id).find(
-    (c) => c.role === "reviewer",
-  )?.agent;
-  if (reviewer === undefined) return "ship";
-  const verdicts = listReviews(app.db, pull.id)
-    .filter(
-      (r) => r.authorId === reviewer.user.id && r.commitOid === pull.headOid,
-    )
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const last = verdicts.at(-1);
-  if (last?.state === "approved") {
-    // A review run still waiting for a head that is already approved has
-    // nothing left to do.
-    const pending = activeRunFor(app.db, "agent", pull.id);
-    if (pending?.reason === "review" && pending.state === "queued")
-      cancelRun(app.db, pending.id, "approved before the run started");
-    return "ship";
-  }
-  if (last?.state === "changes_requested") return "wait";
-  // A reviewer that could not run — the run failed before a verdict — is
-  // not asked again for this head: autonomous lands, and the log says so.
-  // One pass per head. A review run that already ended for this head —
-  // with a verdict the forge could not match, or none at all — is not run
-  // again: the reviewer had its look, and autonomous lands. Three review
-  // runs on one pull, whatever their heads, is the reviewer's whole say.
-  const passes = app.db
-    .query<
-      { state: string; summary: string },
-      [string]
-    >("SELECT state, summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason = 'review' AND state IN ('ok','failed','cancelled') ORDER BY created_at DESC")
-    .all(pull.id);
-  const forHead = passes.find(
-    (p) =>
-      p.summary.startsWith(`review at ${pull.headOid.slice(0, 7)}`) ||
-      p.state === "failed" ||
-      p.state === "cancelled",
-  );
-  if (forHead !== undefined || passes.length >= 3) {
-    log.info("the reviewer had its look; landing", {
-      repo: `${repo.ownerName}/${repo.name}`,
-      pull: pull.number,
-      why: forHead?.summary ?? `${passes.length} review runs`,
-    });
-    return "ship";
-  }
-  // Two rounds of changes are the reviewer's say; after that it lands,
-  // and what is left is the reviewer's to open as an issue.
-  const rounds = listReviews(app.db, pull.id).filter(
-    (r) => r.authorId === reviewer.user.id && r.state === "changes_requested",
-  ).length;
-  if (rounds >= 2) return "ship";
-  if (activeRunFor(app.db, "agent", pull.id) !== undefined) return "wait";
-  const issue = getIssueById(app.db, pull.id);
-  if (!issue) return "wait";
-  const queued = queueAgentRun(
-    app,
-    repo,
-    issue,
-    reviewer,
-    "review",
-    undefined,
-    {
-      notBefore: new Date().toISOString(),
-      attempt: 0,
-      summary: `review at ${pull.headOid.slice(0, 7)}`,
-    },
-  );
-  if (queued)
-    log.info("green; the reviewer looks first", {
-      repo: `${repo.ownerName}/${repo.name}`,
-      pull: pull.number,
-      reviewer: reviewer.user.username,
-    });
-  return "wait";
-}
-
 /** Pull id → the `head:base` tips a merge last conflicted between. */
 const conflicted = new Map<string, string>();
 
@@ -877,9 +729,28 @@ export async function landIfGreen(
   // A rule ships everything green; the decider is what makes "autonomous"
   // mean judgement rather than a conveyor belt — and the look is the crew's
   // own reviewer, not a person. Without a reviewer, it lands.
-  if ((await shipOrShow(app, repo, pull, checks)) === "show") {
-    if ((await reviewFirst(app, repo, pull)) === "wait") return false;
-  }
+  // Green and clear of the wall lands. An autonomous repository does not
+  // wait on a person; the ledger keeps the landing as the rule it is, once
+  // per head, so the week's numbers still add up.
+  const already = latestDecision(app.db, pull.id, "land");
+  if (
+    !(
+      already?.answer === "ship" &&
+      typeof already.state === "object" &&
+      already.state !== null &&
+      (already.state as { head?: unknown }).head === pull.headOid
+    )
+  )
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: repo.id,
+      issueId: pull.id,
+      state: { head: pull.headOid },
+      answer: "ship",
+      p: 1,
+      by: "rule",
+      ms: 0,
+    });
   const merged = await mergePull(app, by, repo, pull, "squash");
   if (!merged.ok) {
     const why = mergeWhy(merged.error);

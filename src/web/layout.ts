@@ -146,7 +146,7 @@ function modeToggle(ctx: Ctx): Html {
         aria-pressed="${ctx.mode === mode ? "true" : "false"}"
         aria-label="${label}"
         title="${mode === "studio"
-          ? "Apps, the crew, what asks you"
+          ? "Apps, the crew, what is on you"
           : "Code, commits, branches, runs"}"
       >
         ${icon(mode === "studio" ? "rocket" : "code")}<span class="hide-sm"
