@@ -31,6 +31,7 @@ import {
 } from "../../crew/converge.ts";
 import type { Lineage, LineageNode } from "../../core/following.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
@@ -210,6 +211,27 @@ export function followingCard(
       }),
     );
 
+  // The fork's own work, offered upstream in one click: the words come
+  // from what landed here, so nothing waits on the crew.
+  if (writer && relation.ahead > 0) {
+    const proposal = openProposal(ctx.app, repo, parent);
+    actions.push(
+      proposal === undefined
+        ? html`<form method="post" action="${base}/following">
+            <input type="hidden" name="do" value="propose" />
+            ${btn("Propose upstream", {
+              size: "sm",
+              type: "submit",
+              icon: "merge",
+            })}
+          </form>`
+        : btn("See the upstream proposal", {
+            size: "sm",
+            href: `/${parent.ownerName}/${parent.name}/pulls/${proposal.number}`,
+          }),
+    );
+  }
+
   const foot: Html | null =
     converge === undefined
       ? conflict
@@ -304,6 +326,33 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   if (field(form, "do") === "converge") {
     const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
     return flashOrJson(ctx, base, convergeWords(outcome, parentName));
+  }
+  if (field(form, "do") === "propose") {
+    const proposed = await proposeUpstream(ctx.app, ctx.auth.user, repo);
+    if (!proposed.ok) {
+      const e = proposed.error;
+      return flashOrJson(ctx, base, {
+        tone: "danger",
+        message:
+          e === "not_a_fork"
+            ? "This repository follows nothing."
+            : e === "nothing_to_propose"
+              ? `Nothing here is ahead of ${parentName}.`
+              : typeof e === "string"
+                ? "You need write access to propose from here."
+                : `${parentName} did not take the proposal: ${e.reason}.`,
+      });
+    }
+    const { pull, opened, changes } = proposed.value;
+    return flashOrJson(
+      ctx,
+      `/${parent.ownerName}/${parent.name}/pulls/${pull.number}`,
+      {
+        message: opened
+          ? `Proposed to ${parentName}: ${changes === 1 ? "one change" : changes === 0 ? "the commits ahead" : `${changes} changes`}, as #${pull.number}.`
+          : `Already proposed to ${parentName} as #${pull.number}.`,
+      },
+    );
   }
 
   const took = await takeUpdates(ctx.app, ctx.auth.user, repo);

@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import {
@@ -1204,6 +1205,33 @@ export function apiRoutes(router: Router<Handler>): void {
         );
       }
       return json(took.value);
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/following/propose",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const proposed = await proposeUpstream(ctx.app, ctx.auth.user, repo);
+      if (!proposed.ok) {
+        const e = proposed.error;
+        if (e === "not_a_fork")
+          return apiError("not_a_fork", 404, "this repository follows nothing");
+        if (e === "nothing_to_propose")
+          return apiError(
+            "nothing_to_propose",
+            409,
+            "nothing here is ahead of the parent",
+          );
+        if (typeof e === "string") return respondAccess(e, 403);
+        return apiError("refused", 409, e.reason);
+      }
+      const { pull, opened, changes } = proposed.value;
+      return json({ number: pull.number, opened, changes, title: pull.title });
     },
   );
 
@@ -2900,7 +2928,10 @@ export function apiRoutes(router: Router<Handler>): void {
         close();
       };
       const unsubscribe = ctx.app.bus.subscribe((event) => {
-        if (event.kind === "run.finished" && event.payload["runId"] === run.id) {
+        if (
+          event.kind === "run.finished" &&
+          event.payload["runId"] === run.id
+        ) {
           if (!stillLive()) finish(getRun(ctx.app.db, run.id) ?? run);
           return;
         }

@@ -125,3 +125,17 @@ without any simply moves.
   without the branch it was told to fetch.
 - The converge run's assignee is set without the assignment event, so the
   run queues under its own reason and not as an ordinary assignment.
+
+## The way back up
+
+A fork's own work goes upstream in one press. When a fork is ahead of what
+it follows, its following card offers **Propose upstream**: one pull opens
+on the parent from the fork's default branch, its title the one landed
+change's title, or `N changes from owner/fork` when there are several, its
+body one line per change that landed here since the fork last proposed,
+each linked — assembled from what already exists, so nothing waits on the
+crew and nobody writes a description twice. A proposal already open is
+shown, not doubled. When the parent is a mirror of an origin, the pull opens
+on the origin itself (`docs/ORIGINS.md`, write-through), and landing it there
+is landing it upstream. `POST /api/v1/repos/:owner/:name/following/propose`
+is the same press over the API.

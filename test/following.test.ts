@@ -537,6 +537,66 @@ describe("a fork that follows its parent", () => {
     expect(await relationOf(app, bob, pf.value)).toBeUndefined();
     expect(await relationOf(app, alice, pf.value)).toBeDefined();
   });
+
+  test("the fork's own work is proposed upstream in one call, with the words taken from what landed", async () => {
+    // Something lands on the fork as a pull of its own.
+    const branch = await commitToBranch(app, bob, fork, {
+      branch: "feature/glow",
+      base: fork.defaultBranch,
+      message: "Glow",
+      files: [{ path: "glow.txt", content: "on\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, bob, fork, {
+      title: "Glow in the dark",
+      baseBranch: fork.defaultBranch,
+      headBranch: "feature/glow",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const landed = await mergePull(app, bob, fork, opened.value, "squash");
+    expect(landed.ok).toBe(true);
+
+    const res = await fetch(`${base}/api/v1/repos/bob/game/following/propose`, {
+      method: "POST",
+      headers: as(bobToken),
+    });
+    expect(res.status).toBe(200);
+    const j = (await res.json()) as {
+      number: number;
+      opened: boolean;
+      changes: number;
+      title: string;
+    };
+    expect(j.opened).toBe(true);
+    expect(j.changes).toBe(1);
+    expect(j.title).toBe("Glow in the dark");
+    const { getPull } = await import("../src/core/pulls.ts");
+    const upstream = getPull(app.db, parent.id, j.number)!;
+    expect(upstream.headRepoId).toBe(fork.id);
+    expect(upstream.headBranch).toBe(fork.defaultBranch);
+    expect(upstream.body).toContain("- Glow in the dark (bob/game#");
+    expect(upstream.body).toContain("proposed from bob/game's following card");
+
+    // Pressed again, the same proposal comes back rather than a second one.
+    const again = await fetch(
+      `${base}/api/v1/repos/bob/game/following/propose`,
+      {
+        method: "POST",
+        headers: as(bobToken),
+      },
+    );
+    expect(again.status).toBe(200);
+    const k = (await again.json()) as { number: number; opened: boolean };
+    expect(k.opened).toBe(false);
+    expect(k.number).toBe(j.number);
+
+    // The card offers the way to it now, not another proposal.
+    const page = await (
+      await fetch(`${base}/bob/game`, { headers: as(bobToken) })
+    ).text();
+    expect(page).toContain("See the upstream proposal");
+    expect(page).not.toContain('value="propose"');
+  });
 });
 
 /**
