@@ -319,6 +319,10 @@ it answers by default: `.well-known`, feeds, cards, the manifest.
 `docs/SNAPSHOT.md` is a forge back from a copy: what a nightly snapshot
 holds, where it goes, and the one command that restores it.
 
+`docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
+grew up in switched off: what a host owes it, the moves in order, and what is
+given up.
+
 ## Develop
 
 ```sh

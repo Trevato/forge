@@ -304,7 +304,7 @@ how many there are and a filter for whether they are live, each a link
 carrying `?live=1` rather than a form, and **New app** beside them.
 `?mode=dev` on the same URL is dev's table of repositories, unchanged.
 
-The home keeps itself current. _Your apps_, _happening now_ and _on you_
+The home keeps itself current. _Your apps_ and _on you_
 are each a live region (`data-live`, `src/web/client.ts`): a deploy
 serving, a pull opening, closing or merging, a run starting or ending, or an
 assignment changing refetches the home — the very same `studioHome` render
@@ -325,7 +325,7 @@ than showing an empty shelf.
 
 ## The board
 
-`/board` is the home's _Happening now_ as a wall for a second monitor
+`/board` is what is happening now across your apps, as a wall for a second monitor
 (**Focus** on that card opens it): no top bar, dark unless you chose a
 theme, four regions that fill the window. **Working now** is one card per
 run in flight — who, which app, what it is on, why, how long, what it has

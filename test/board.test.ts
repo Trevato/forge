@@ -272,11 +272,11 @@ describe("the board", () => {
     expect(byOwner).not.toContain("on the cart");
   });
 
-  test("the home's Happening now card opens the board", async () => {
+  test("the home's shelf opens the board", async () => {
     const home = await (
       await get("/", { cookie: `${cookie}; forge_mode=studio` })
     ).text();
     expect(home).toContain('href="/board"');
-    expect(home).toContain("Focus");
+    expect(home).toContain("Board");
   });
 });

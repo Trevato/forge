@@ -129,7 +129,7 @@ describe("the viewer's stream", () => {
     });
     const page = await res.text();
     expect(page).toContain('id="live-apps"');
-    expect(page).toContain('data-live="run.*"');
+    expect(page).toContain('id="live-apps"');
     expect(page).toContain("new EventSource('/events')");
   });
 });

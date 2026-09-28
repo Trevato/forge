@@ -161,7 +161,6 @@ describe("live browsing pages", () => {
       })
     ).text();
     expect(html).toContain('id="live-apps"');
-    expect(html).toContain('id="live-now"');
     expect(html).toContain('id="live-on-you"');
     expect(html).toContain("new EventSource('/events')");
   });

@@ -2036,17 +2036,15 @@ describe("the studio home keeps itself current", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("Your apps, Happening now and On you are each a live region, with the security floor's headers", async () => {
+  test("Your apps and On you are each a live region, with the security floor's headers", async () => {
     const res = await get();
     expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("referrer-policy")).toBe("same-origin");
     const home = await res.text();
     expect(home).toMatch(/id="live-apps"\s*\n?\s*data-live="/);
-    expect(home).toMatch(/id="live-now"\s+data-live="/);
     expect(home).toMatch(/id="live-on-you"\s*\n?\s*data-live="/);
     expect(home).toContain("new EventSource('/events')");
-    expect(home).toContain("Add x");
     expect(home).toContain("Write the README");
   });
 
@@ -2063,9 +2061,8 @@ describe("the studio home keeps itself current", () => {
     expect(home).not.toContain("Write the README");
   });
 
-  test("a card leaves Asks you and Your apps once its pull merges; On you once its issue closes", async () => {
+  test("a card leaves On you once its issue closes", async () => {
     const before = await (await get()).text();
-    expect(before).toContain("Add x");
     expect(before).toContain("Write the README");
 
     const merged = await mergePull(app, alice, repo, pull, "squash");
@@ -2073,7 +2070,6 @@ describe("the studio home keeps itself current", () => {
     expect(setIssueState(app, alice, repo, readme, "closed").ok).toBe(true);
 
     const after = await (await get()).text();
-    expect(after).not.toContain("Add x");
     expect(after).not.toContain("Write the README");
   });
 });
@@ -4538,13 +4534,6 @@ describe("an open change is never quiet on the front door", () => {
     expect(shelfRow).toContain('class="badge"');
   });
 
-  test('"Happening now" links to the open change instead of reporting silence', async () => {
-    const home = await (await get("/")).text();
-    expect(home).not.toContain("Nobody is working right now.");
-    expect(home).toContain("A note");
-    expect(home).toContain(`href="/alice/pad/changes/${pull.number}"`);
-  });
-
   test("an app with nothing open still reads quiet", async () => {
     const home = await (await get("/")).text();
     const at = home.indexOf('href="/alice/quiet"');
@@ -4719,12 +4708,6 @@ describe("a deploy that just landed is news on the front door", () => {
     expect(shelfRow).not.toContain("quiet — tell the crew something");
     expect(shelfRow).toContain('data-word="shipped"');
     expect(shelfRow).toContain("alice");
-  });
-
-  test('"Happening now" links to what shipped instead of reporting silence', async () => {
-    const home = await (await get("/")).text();
-    expect(home).not.toContain("Nobody is working right now.");
-    expect(home).toContain(`href="/alice/sap/runs/${deployRun.id}"`);
   });
 
   test("an app with no recent deploy still reads quiet", async () => {
