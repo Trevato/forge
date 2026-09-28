@@ -226,22 +226,91 @@ export function isPrivateHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (h === "localhost" || h.endsWith(".localhost") || h === "0.0.0.0")
     return true;
-  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
-  if (v4 !== null) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return (
-      a === 127 ||
-      a === 10 ||
-      a === 0 ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 169 && b === 254) ||
-      (a === 100 && b >= 64 && b <= 127)
-    );
+  const v4 = privateV4(h);
+  if (v4 !== undefined) return v4;
+  const groups = expandV6(h);
+  if (groups === undefined) return false;
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups;
+  if (groups.every((g) => g === 0)) return true; // ::
+  if ([g0, g1, g2, g3, g4].every((g) => g === 0)) {
+    if (g5 === 0 && g6 === 0 && g7 === 1) return true; // ::1
+    // ::ffff:a.b.c.d — an IPv4 address in IPv6 clothes: judge the IPv4.
+    if (g5 === 0xffff)
+      return (
+        privateV4(
+          `${(g6! >> 8) & 0xff}.${g6! & 0xff}.${(g7! >> 8) & 0xff}.${g7! & 0xff}`,
+        ) === true
+      );
   }
-  if (h === "::1" || h === "::") return true;
-  if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe[89ab][0-9a-f]:/.test(h)) return true;
+  if ((g0! & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
+  if ((g0! & 0xffc0) === 0xfe80) return true; // fe80::/10 link local
   return false;
+}
+
+/**
+ * Whatever the source's own git config says, a clone follows no redirect:
+ * the address that was checked is the only address that is fetched. Added
+ * after any entries the credential brought, at the next free index.
+ */
+function noRedirects(env: Record<string, string>): Record<string, string> {
+  const n = Number(env["GIT_CONFIG_COUNT"] ?? "0");
+  return {
+    ...env,
+    GIT_CONFIG_COUNT: String(n + 1),
+    [`GIT_CONFIG_KEY_${n}`]: "http.followRedirects",
+    [`GIT_CONFIG_VALUE_${n}`]: "false",
+  };
+}
+
+/** Dotted IPv4 → inside the network?; `undefined` when not IPv4 at all. */
+function privateV4(h: string): boolean | undefined {
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4 === null) return undefined;
+  const [a, b] = [Number(v4[1]), Number(v4[2])];
+  return (
+    a === 127 ||
+    a === 10 ||
+    a === 0 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) ||
+    (a === 100 && b >= 64 && b <= 127)
+  );
+}
+
+/**
+ * An IPv6 literal as eight 16-bit groups, `::` expanded and a trailing
+ * dotted IPv4 folded in; `undefined` when the text is not IPv6.
+ */
+function expandV6(h: string): number[] | undefined {
+  if (!h.includes(":")) return undefined;
+  let text = h;
+  const dotted = /:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(text);
+  if (dotted !== null) {
+    const p = dotted[1]!.split(".").map(Number);
+    if (p.some((n) => n > 255)) return undefined;
+    text =
+      text.slice(0, dotted.index) +
+      `:${((p[0]! << 8) | p[1]!).toString(16)}:${((p[2]! << 8) | p[3]!).toString(16)}`;
+  }
+  const halves = text.split("::");
+  if (halves.length > 2) return undefined;
+  const parse = (part: string): number[] | undefined => {
+    if (part === "") return [];
+    const out: number[] = [];
+    for (const g of part.split(":")) {
+      if (!/^[0-9a-f]{1,4}$/.test(g)) return undefined;
+      out.push(parseInt(g, 16));
+    }
+    return out;
+  };
+  const head = parse(halves[0]!);
+  const tail = halves.length === 2 ? parse(halves[1]!) : [];
+  if (head === undefined || tail === undefined) return undefined;
+  if (halves.length === 1) return head.length === 8 ? head : undefined;
+  const fill = 8 - head.length - tail.length;
+  if (fill < 1) return undefined;
+  return [...head, ...new Array<number>(fill).fill(0), ...tail];
 }
 
 /** The last path segment without `.git`: what the repository was called. */
@@ -397,7 +466,7 @@ async function cloneInto(
   const deadline = Date.now() + MIGRATE_TIMEOUT_MS;
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const authEnv = await source.authEnv();
-  const env = { ...authEnv, GIT_ALLOW_PROTOCOL: ALLOWED_PROTOCOL };
+  const env = { ...noRedirects(authEnv), GIT_ALLOW_PROTOCOL: ALLOWED_PROTOCOL };
   const said = (stderr: string, fallback: string): string =>
     redact(stderr.trim(), ...secretsIn(authEnv))
       .split("\n")

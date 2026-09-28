@@ -570,6 +570,13 @@ describe("migrate", () => {
       "::1",
       "fd00::1",
       "0.0.0.0",
+      "[::ffff:127.0.0.1]",
+      "::ffff:7f00:1",
+      "0:0:0:0:0:ffff:7f00:1",
+      "::FFFF:10.0.0.1",
+      "[::ffff:c0a8:1]",
+      "fe80::1",
+      "[::]",
     ])
       expect(isPrivateHost(h)).toBe(true);
     for (const h of [
@@ -578,6 +585,8 @@ describe("migrate", () => {
       "172.32.0.1",
       "git.open-platform.sh",
       "2606:4700::1",
+      "::ffff:8.8.8.8",
+      "[2001:db8::1]",
     ])
       expect(isPrivateHost(h)).toBe(false);
     const strictDir = await mkdtemp(join(tmpdir(), "forge-migrate-strict-"));
@@ -607,6 +616,44 @@ describe("migrate", () => {
     } finally {
       strict.close();
       await rm(strictDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a clone follows no redirect: the address that was checked is the only one fetched", async () => {
+    let hits = 0;
+    const target = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        hits++;
+        return new Response("here", { status: 200 });
+      },
+    });
+    const hop = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(null, {
+          status: 302,
+          headers: {
+            location: `http://127.0.0.1:${target.port}/x.git/info/refs?service=git-upload-pack`,
+          },
+        });
+      },
+    });
+    try {
+      const started = await migrateRepo(app, alice, {
+        source: { url: `http://127.0.0.1:${hop.port}/hop.git` },
+        name: "hopped",
+      });
+      expect(started.ok).toBe(true);
+      if (!started.ok) return;
+      const job = await settled(started.value.job.id);
+      expect(job?.stage).toBe("failed");
+      expect(hits).toBe(0);
+    } finally {
+      hop.stop(true);
+      target.stop(true);
     }
   });
 });
