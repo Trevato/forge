@@ -24,6 +24,8 @@ import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
+import { graphInstagram } from "./crew/instagram.ts";
+import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
@@ -180,6 +182,10 @@ const crew = appsOn
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// Prompts from Instagram (docs/APPS.md): once a day, for each repository
+// that connected an account, the top comment on its latest Reel is told to
+// the crew. A minute's clock; nothing leaves the box until a source exists.
+const prompts = startPromptRoutine(app, { client: graphInstagram() });
 
 // The webhook delivery worker: poll the outbox for due deliveries. The event
 // row is the source of truth, so a missed tick only delays delivery, never
@@ -265,6 +271,7 @@ function shutdown(): void {
   clearInterval(syncTimer);
   clearInterval(leaseTimer);
   Promise.all([
+    prompts.stop(),
     crew?.stop({ drain: true }),
     apps?.stop(),
     checks?.stop(),

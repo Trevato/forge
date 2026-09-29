@@ -412,6 +412,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/prompts\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Disconnect",
+      title: "Disconnect Instagram?",
+      detail: `The daily tell from Instagram stops for ${m[1]}/${m[2]}, and the token is forgotten. The issues it already told stay.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/labels\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete label",

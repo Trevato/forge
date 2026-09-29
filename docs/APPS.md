@@ -713,6 +713,74 @@ is resting and why, with a button to use it again sooner. Nothing granted
 anywhere means the forge's own token, as before. Every run remembers the
 account it spent.
 
+### Prompts from Instagram
+
+A repository's next tell can come from its audience. Under Settings →
+Prompts an admin connects the Instagram account of the app — a game with
+an account of its own, say — and once a day the forge reads the account's
+latest Reel, takes its most-liked top-level comment, and tells the crew
+exactly as a person would from the studio box: an issue is opened and
+routed to a builder. The comment is the tell; the forge invents nothing.
+
+What happens at the hour, every day, in UTC:
+
+1. The token is refreshed when it is more than fifty days old (below).
+2. The account's username is read once, the first time, and shown.
+3. The latest Reel is found — the newest item Instagram marks `REELS`, or
+   the newest video where it marks nothing.
+4. Its top-level comments are read, at most four pages of fifty. The top
+   comment is the one with the most likes; a tie goes to the earliest. A
+   comment with no text does not count.
+5. The crew is told, and the Reel is remembered as told.
+
+The tell has one shape. Its first line is the issue's title, as with any
+tell, and the rest is its body:
+
+```
+<the comment, as written>
+
+From Instagram: the top comment (<n> likes) by @<username> on the Reel of <YYYY-MM-DD>. <permalink>
+```
+
+Nothing is told twice, and nothing is told early. A Reel already told is
+skipped ("No new Reel since <date>; the last one was told as #<n>."), a
+Reel with no comments yet is left for tomorrow and _not_ remembered as told
+("The latest Reel has no comments yet."), and an account with no Reel says
+so ("No Reel yet."). Every run leaves its sentence on the settings page, and
+**Fetch now** runs the same routine at once, whatever the hour. A run that
+meets an error ends in a sentence too, never a throw: Instagram's own words
+in one line, or — for a token Instagram no longer accepts — "connect the
+account again". A repository whose routine ran today does not run again
+until tomorrow, and one whose forge was down at the hour catches up on the
+next tick.
+
+The token is a long-lived Instagram user token, which lives sixty days. It
+is sealed under the forge's key, bound to its row, opened only for the run,
+and never listed or shown again; the API's listing carries the account, the
+hour, and what the last run said, and nothing else. When it is more than
+fifty days old the forge refreshes it — Instagram allows a refresh once a
+token is a day old — stores the new one sealed, and notes the time, so a
+token pasted once stays good for as long as the account does. A token the
+forge cannot open (a data directory restored under another key) asks to be
+connected again, like everything else about a lost key.
+
+The one-time steps at Meta, none of which needs App Review for an account
+of your own:
+
+1. Make the Instagram account a professional one (Business or Creator).
+2. At developers.facebook.com, make a Meta app and add the **Instagram**
+   product with Business Login for Instagram. No Facebook Page is needed.
+3. Get a token for the account with the scopes `instagram_business_basic`
+   and `instagram_business_manage_comments`.
+4. Exchange it for a long-lived token, the one that lives sixty days.
+5. Paste it under Settings → Prompts, choose the hour, and press Add — or
+   `POST /api/v1/repos/:owner/:name/prompts` with
+   `{ "kind": "instagram", "token": "…", "at": "15:00" }`.
+
+`prompt.told` on the outbox names the source, the Reel, the comment and the
+issue; it is for the repository's admins, like everything else about its
+settings.
+
 ## Configuration
 
 | variable                  | default                         | meaning                                           |

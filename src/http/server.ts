@@ -180,6 +180,10 @@ import {
   labelDelete,
   labelUpdate,
   labelsPage,
+  promptSourceAdd,
+  promptSourceDelete,
+  promptSourceRun,
+  promptsSettingsPage,
   repoDelete,
   settingsPage,
   settingsUpdate,
@@ -808,6 +812,14 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/settings/app/domains/:host/delete",
     appDomainDelete,
+  );
+  router.add("GET", "/:owner/:name/settings/prompts", promptsSettingsPage);
+  router.add("POST", "/:owner/:name/settings/prompts", promptSourceAdd);
+  router.add("POST", "/:owner/:name/settings/prompts/:id/run", promptSourceRun);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/prompts/:id/delete",
+    promptSourceDelete,
   );
   router.add("GET", "/:owner/:name/settings/crew", crewSettingsPage);
   router.add("POST", "/:owner/:name/settings/crew", crewAdd);

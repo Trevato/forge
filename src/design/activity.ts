@@ -69,6 +69,12 @@ export function eventVerb(event: ForgeEvent): string {
     if (kind === "app.domain.verified") return `verified the domain ${which}`;
     return `removed the domain ${which}`;
   }
+  if (kind === "prompt.told") {
+    const issue = payload["issue"];
+    return typeof issue === "number"
+      ? `told the crew the top Instagram comment as #${issue}`
+      : "told the crew the top Instagram comment";
+  }
   return WORDS[kind] ?? "acted on this repository";
 }
 
@@ -78,7 +84,9 @@ export function eventActor(
   actorName: string | undefined,
 ): string {
   if (actorName !== undefined) return actorName;
-  return event.kind.startsWith("run.") || event.kind.startsWith("app.")
+  return event.kind.startsWith("run.") ||
+    event.kind.startsWith("app.") ||
+    event.kind.startsWith("prompt.")
     ? "the forge"
     : "someone";
 }
@@ -120,4 +128,6 @@ const WORDS: Record<string, string> = {
   "app.created": "made it an app",
   "app.updated": "changed the app's settings",
   "app.deleted": "stopped serving it as an app",
+  "prompt.source_added": "connected an Instagram account to prompt the crew",
+  "prompt.source_removed": "disconnected the Instagram account",
 };

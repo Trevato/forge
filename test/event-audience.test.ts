@@ -107,6 +107,8 @@ describe("who an event is for", () => {
     expect(eventAudience("app.env_set")).toBe("admins");
     expect(eventAudience("app.env_deleted")).toBe("admins");
     expect(eventAudience("repo.settings_updated")).toBe("admins");
+    expect(eventAudience("prompt.told")).toBe("admins");
+    expect(eventAudience("prompt.source_added")).toBe("admins");
     expect(eventAudience("repo.pinned")).toBe("actor");
     expect(eventAudience("push")).toBe("readers");
     expect(eventAudience("a.kind.nobody.classified")).toBe("readers");
