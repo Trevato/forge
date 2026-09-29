@@ -112,15 +112,27 @@ export function withAuthority(
   primary: DomainResolver,
   authority: Authority,
 ): DomainResolver {
+  const authoritative = async (name: string): Promise<string[][]> => {
+    const servers = await nameserversFor(name, authority);
+    return authority.resolveTxtAt(servers, name);
+  };
   return {
     async resolveTxt(name) {
+      // A stale answer is as misleading as a stale "none": a record changed
+      // a minute ago still reads as its old value for as long as its TTL
+      // says. So the authority is asked either way, and both answers count.
+      let near: string[][] = [];
       try {
-        return await primary.resolveTxt(name);
+        near = await primary.resolveTxt(name);
       } catch (error) {
         if (!isNone(error)) throw error;
-        const servers = await nameserversFor(name, authority);
-        return authority.resolveTxtAt(servers, name);
       }
+      const far = await authoritative(name).catch((error: unknown) => {
+        if (near.length > 0 && isNone(error)) return [] as string[][];
+        throw error;
+      });
+      const seen = new Set(near.map((r) => r.join("")));
+      return [...near, ...far.filter((r) => !seen.has(r.join("")))];
     },
     resolveCname: (name) => primary.resolveCname(name),
   };

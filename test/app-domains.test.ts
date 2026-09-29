@@ -159,6 +159,17 @@ describe("checkDomain: every outcome is a sentence", () => {
       "a ns1.example.net",
       "txt@192.0.2.53 _forge-verify.app.example.com",
     ]);
+    // A stale value from the box's resolver does not hide the authority's.
+    const stale2 = withAuthority(
+      {
+        resolveTxt: () => Promise.resolve([["forge-verify=old-token-value"]]),
+        resolveCname: stale.resolveCname,
+      },
+      authority,
+    );
+    const fresh = await checkDomain("app.example.com", token, "notes.apps.test", stale2);
+    expect(fresh.verified).toBe(true);
+
     // And a resolver that says something other than "none" is believed.
     const broken = withAuthority(
       {
