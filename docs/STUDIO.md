@@ -327,8 +327,10 @@ everything the viewer may see) and works like this:
   fetch of the page; that is the fallback, not the design.
 - **Nothing painted that did not change.** A fragment's `etag` is a hash of
   its bytes; the client sends it back as `if-none-match` and an unchanged
-  region is a 304 with no body. When bytes do arrive, two renders that
-  differ only in a relative time ("3m ago") are the same region.
+  region is a 304 with no body. The same tag is stamped on the fragment's
+  first element (`data-etag`), because a proxy may drop the header —
+  Cloudflare strips `etag` from HTML. When bytes do arrive, two renders
+  that differ only in a relative time ("3m ago") are the same region.
 - **One fetch per burst.** Events within a beat of each other cost one
   fetch per address, never more often than every second and a half; a
   hidden tab fetches nothing and catches up on the first look back.

@@ -2077,9 +2077,12 @@ export const liveRegionsJs = /* js */ `
         if (text === null) return;
         if (own) {
           // A fragment's icons come inlined (layout.fragment), so it needs
-          // nothing from this page's sprite.
+          // nothing from this page's sprite. Its tag is stamped on it too,
+          // for when a proxy between us dropped the header.
           var holder = document.createElement('template');
           holder.innerHTML = text;
+          var stamped = holder.content.querySelector('[data-etag]');
+          if (stamped) tags[src] = '"' + stamped.getAttribute('data-etag') + '"';
           swap(holder.content, ids);
           return;
         }
