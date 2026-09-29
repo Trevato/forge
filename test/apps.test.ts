@@ -39,7 +39,7 @@ import {
 import type { AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { getRepo, getRepoById, type Repo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import {
@@ -1371,6 +1371,15 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.value.issue?.body).toContain("Build a notes app");
     expect(made.value.issue?.body).toContain("- [ ] Set up storage");
     expect(made.value.issue?.body).toContain("- [ ] Add a form");
+  });
+
+  test("a slug already in use is refused before any repository exists", async () => {
+    const first = await newApp(app, alice, { name: "held-x" });
+    expect(first.ok).toBe(true);
+    const second = await newApp(app, alice, { name: "held_x" });
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toBe("slug_taken");
+    expect(getRepo(app.db, alice.username, "held_x")).toBeUndefined();
   });
 
   test("a plan naming an agent not on the forge is refused; the sentence still opens unassigned", async () => {

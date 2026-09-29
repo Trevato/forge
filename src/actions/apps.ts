@@ -20,6 +20,7 @@ import {
   createApp as insertApp,
   deleteApp as removeApp,
   getAppByRepo,
+  getAppBySlug,
   slugFor,
   updateApp as patchApp,
   type AppAccess,
@@ -41,7 +42,7 @@ import { listAllAgents } from "./crew.ts";
 import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
-import { canWrite, type Repo } from "../core/repos.ts";
+import { canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -59,6 +60,7 @@ import { assignIssue, openIssue } from "./issues.ts";
 import {
   commitToBranch,
   createRepo,
+  deleteRepo,
   type CreateRepoActionError,
 } from "./repos.ts";
 
@@ -284,6 +286,14 @@ export async function newApp(
       : getAgentByName(app.db, input.agent);
   if (input.agent && !agent) return err("no_such_agent");
 
+  // Refuse a taken slug before anything exists to take back.
+  // A name the owner already has stays `name_taken`, which createRepo says.
+  if (
+    getAppBySlug(app.db, slugFor(input.name)) &&
+    !getRepo(app.db, input.owner || user.value.username, input.name)
+  )
+    return err("slug_taken");
+
   const repo = await createRepo(app, user.value, {
     name: input.name,
     visibility: input.visibility ?? "private",
@@ -298,12 +308,17 @@ export async function newApp(
       description: input.description ?? "",
     }),
   });
-  if (!committed.ok) return err("scaffold_failed");
+  if (!committed.ok) {
+    await deleteRepo(app, user.value, repo.value);
+    return err("scaffold_failed");
+  }
   const record = enableApp(app, user.value, repo.value, {});
   // The creator administers the repository they just made, so `not_found`
   // here can only mean the row vanished under us — a failed scaffold.
-  if (!record.ok)
+  if (!record.ok) {
+    await deleteRepo(app, user.value, repo.value);
     return err(record.error === "not_found" ? "scaffold_failed" : record.error);
+  }
 
   const description = (input.description ?? "").trim();
   let chosen = agent;
