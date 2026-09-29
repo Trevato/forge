@@ -5071,7 +5071,10 @@ describe("a stranger sees the app, not the owner's books", () => {
       )
     ).text();
     expect(tailAsStranger).toContain("event: done");
-    expect(tailAsStranger).not.toContain("42.5");
+    // The cost by its key, not its digits: a timestamp's seconds can read
+    // "42.5" too, and once did.
+    expect(tailAsStranger).not.toContain('"costUsd":42.5');
+    expect(tailAsStranger).toContain('"costUsd":0');
     const tailAsOwner = await (
       await get(
         `/api/v1/repos/alice/beacon/runs/${run.id}/log?follow=1`,
