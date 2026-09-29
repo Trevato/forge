@@ -13,6 +13,8 @@ import { forkRelation } from "../core/following.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listPulls, mergedPullsForRepos, type Pull } from "../core/pulls.ts";
 import type { User } from "../core/users.ts";
+import { aheadOids } from "../git/merge.ts";
+import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireWriter, type AccessError } from "./access.ts";
 import { openPull } from "./pulls.ts";
@@ -62,7 +64,11 @@ export async function proposeUpstream(
     return err("nothing_to_propose");
 
   // What landed on the fork since it last proposed: the pulls, newest last,
-  // so the body reads in the order the work happened.
+  // so the body reads in the order the work happened — and only the pulls
+  // whose landing commit is actually ahead of the parent. A fork whose work
+  // reached upstream some other way (a push, a release) does not propose it
+  // twice; without this, a first proposal once listed forty changes for one
+  // commit ahead.
   const lastProposal = listPulls(app.db, parent.id, {
     state: "closed",
     limit: 200,
@@ -71,10 +77,17 @@ export async function proposeUpstream(
     .map((p) => p.createdAt)
     .sort()
     .at(-1);
+  const ahead = await aheadOids(
+    repoDir(app.reposRoot, fork.ownerName, fork.name),
+    relation.parentTip,
+    relation.forkTip,
+  );
   const landed = mergedPullsForRepos(app.db, [fork.id], 40)
     .filter(
       (p) =>
         p.mergedAt !== null &&
+        p.mergedOid !== null &&
+        ahead.has(p.mergedOid) &&
         (lastProposal === undefined || p.mergedAt > lastProposal),
     )
     .reverse();

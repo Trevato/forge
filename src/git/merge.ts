@@ -187,6 +187,19 @@ export async function ancestorsOf(
   return result.ok ? new Set(result.value.split("\n")) : undefined;
 }
 
+/** The commits reachable from head but not base — what a proposal carries. */
+export async function aheadOids(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<ReadonlySet<string>> {
+  if (!isSafeOid(baseOid) || !isSafeOid(headOid)) return new Set();
+  const result = await runGit(["rev-list", `${baseOid}..${headOid}`], {
+    cwd: dir,
+  });
+  return new Set(result.ok ? result.value.split("\n").filter(Boolean) : []);
+}
+
 /** Count commits reachable from head but not base (the PR's commit count). */
 export async function aheadCount(
   dir: string,

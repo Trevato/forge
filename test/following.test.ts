@@ -597,6 +597,59 @@ describe("a fork that follows its parent", () => {
     expect(page).toContain("See the upstream proposal");
     expect(page).not.toContain('value="propose"');
   });
+
+  test("a proposal names only what is actually ahead: work the parent already has is not listed again", async () => {
+    // A clean pair of its own: the fixture's pair has diverged on purpose.
+    const made = await createRepo(app, alice, { name: "lamp", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const lamp = made.value;
+    await commit(alice, lamp, "README.md", "# lamp\n");
+    const forked = await forkRepo(app, bob, lamp);
+    if (!forked.ok) throw new Error(String(forked.error));
+    const mine = forked.value;
+    const land = async (title: string, file: string): Promise<void> => {
+      const branch = await commitToBranch(app, bob, mine, {
+        branch: `feature/${file}`,
+        base: mine.defaultBranch,
+        message: title,
+        files: [{ path: `${file}.txt`, content: `${file}\n` }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, bob, mine, {
+        title,
+        baseBranch: mine.defaultBranch,
+        headBranch: `feature/${file}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const landed = await mergePull(app, bob, mine, opened.value, "squash");
+      if (!landed.ok) throw new Error(JSON.stringify(landed.error));
+    };
+    const propose = async () => {
+      const res = await fetch(`${base}/api/v1/repos/bob/lamp/following/propose`, {
+        method: "POST",
+        headers: as(bobToken),
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()) as { number: number; changes: number; title: string };
+    };
+    const { getPull } = await import("../src/core/pulls.ts");
+
+    await land("Glow in the dark", "glow");
+    const first = await propose();
+    expect(first.title).toBe("Glow in the dark");
+    // The parent takes it, so Glow is upstream now.
+    const standing = getPull(app.db, lamp.id, first.number)!;
+    const taken = await mergePull(app, alice, lamp, standing, "merge");
+    if (!taken.ok) throw new Error(JSON.stringify(taken.error));
+
+    await land("Dim the lights", "dim");
+    const second = await propose();
+    expect(second.title).toBe("Dim the lights");
+    expect(second.changes).toBe(1);
+    const upstream = getPull(app.db, lamp.id, second.number)!;
+    expect(upstream.body).toContain("- Dim the lights (bob/lamp#");
+    expect(upstream.body).not.toContain("Glow in the dark");
+  });
 });
 
 /**
