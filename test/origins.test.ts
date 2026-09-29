@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { commitToBranch, forkRepo } from "../src/actions/repos.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { getUserByName } from "../src/core/users.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
 import { settled } from "../src/origins/jobs.ts";
 import { open, seal } from "../src/kernel/secret.ts";
@@ -575,6 +578,47 @@ describe("origins: connecting, mirroring, writing through", () => {
       .find((i) => i.number === pull.number);
     expect(upstream?.title).toBe("Loosen the bolt");
     expect(upstream?.pull?.head).toBe("loosen");
+  });
+
+  test("a fork proposing its main upstream travels under its owner's name, never onto the origin's main", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const mirror = getRepo(app.db, "alice", "widgets")!;
+    const forked = await forkRepo(app, alice, mirror, "widgets-fork");
+    if (!forked.ok) throw new Error(String(forked.error));
+    const fork = forked.value;
+    const committed = await commitToBranch(app, alice, fork, {
+      message: "Oil the gear",
+      files: [{ path: "OIL.md", content: "a drop\n" }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const branchesOf = async (): Promise<Map<string, string>> => {
+      const listed = (await (
+        await fetch(`${originServers.url}/api/v1/repos/octo/widgets/branches`)
+      ).json()) as { name: string; oid: string }[];
+      return new Map(listed.map((b) => [b.name, b.oid]));
+    };
+    const before = await branchesOf();
+
+    const response = await api(
+      "/api/v1/repos/alice/widgets-fork/following/propose",
+      { method: "POST" },
+    );
+    expect(response.status).toBe(200);
+    const proposed = (await response.json()) as {
+      number: number;
+      opened: boolean;
+    };
+    expect(proposed.opened).toBe(true);
+    const upstream = fake.state.issues
+      .get("octo/widgets")!
+      .find((i) => i.number === proposed.number);
+    expect(upstream?.pull?.base).toBe("main");
+    expect(upstream?.pull?.head).toBe("alice/main");
+
+    // The origin holds the proposal as alice/main; its own main did not move.
+    const after = await branchesOf();
+    expect(after.get("alice/main")).toBe(committed.value.commitOid);
+    expect(after.get("main")).toBe(before.get("main"));
   });
 
   test("merging a mirrored pull is refused, with a reason", async () => {

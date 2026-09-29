@@ -106,22 +106,27 @@ export async function openPull(
     // credential like any push through, and the origin opens the pull
     // from the branch it now holds.
     const head = input.headRepo;
+    let carriedAs = input.headBranch;
     if (head !== undefined && head.id !== baseRepo.id) {
       if (
         !canRead(app.db, head, user.value) ||
         head.forkParentId !== baseRepo.id
       )
         return err("not_found");
-      // The fork's copy of the base branch carried up would land on the
-      // origin's base branch itself — a push, not a proposal. Propose a
-      // branch made for it.
-      if (input.headBranch === input.baseBranch) return err("same_branch");
+      // The fork's copy of the base branch cannot travel up under its own
+      // name — it would land on the origin's base branch itself, a push
+      // rather than a proposal — so it goes up under the fork owner's:
+      // `trevato/main`, proposing into `main`. Any other branch keeps its
+      // name.
+      if (input.headBranch === input.baseBranch)
+        carriedAs = `${head.ownerName}/${input.headBranch}`;
       const carried = await carryBranchThrough(
         app,
         baseRepo,
         head,
         input.headBranch,
         user.value.id,
+        carriedAs,
       );
       if (!carried.ok) return err(refusal(carried.error.message));
     }
@@ -131,7 +136,7 @@ export async function openPull(
         title,
         body: input.body ?? "",
         base: input.baseBranch,
-        head: input.headBranch,
+        head: carriedAs,
       },
     );
     if (!created.ok) return err(refusal(created.error.error));

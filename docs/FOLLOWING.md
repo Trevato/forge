@@ -136,6 +136,10 @@ body one line per change that landed here since the fork last proposed,
 each linked — assembled from what already exists, so nothing waits on the
 crew and nobody writes a description twice. A proposal already open is
 shown, not doubled. When the parent is a mirror of an origin, the pull opens
-on the origin itself (`docs/ORIGINS.md`, write-through), and landing it there
-is landing it upstream. `POST /api/v1/repos/:owner/:name/following/propose`
-is the same press over the API.
+on the origin itself (`docs/ORIGINS.md`, write-through): the fork's branch
+is carried up first, and because its `main` cannot travel as `main` — that
+would be a push onto the origin's own, not a proposal — it goes up under
+the fork owner's name, `trevato/main` proposing into `main`. Landing it
+there is landing it upstream.
+`POST /api/v1/repos/:owner/:name/following/propose` is the same press over
+the API.

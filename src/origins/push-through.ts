@@ -91,6 +91,8 @@ export async function carryBranchThrough(
   fork: Repo,
   branch: string,
   actorId: string,
+  /** The branch's name on the origin; the fork's own name unless given. */
+  as: string = branch,
 ): Promise<Result<string, PushThroughRefusal>> {
   const way = await wayThrough(app, mirror, actorId);
   if (!way.ok) return way;
@@ -100,22 +102,23 @@ export async function carryBranchThrough(
   const forkDir = repoDir(app.reposRoot, fork.ownerName, fork.name);
   const mirrorDir = repoDir(app.reposRoot, mirror.ownerName, mirror.name);
   const ref = `refs/heads/${branch}`;
+  const carriedRef = `refs/heads/${as}`;
   const tip = await resolveOid(forkDir, ref);
   if (tip === undefined)
     return err({
       message: `${fork.ownerName}/${fork.name} has no branch ${branch}`,
     });
-  const held = (await resolveOid(mirrorDir, ref)) ?? ZERO_OID_STRING;
+  const held = (await resolveOid(mirrorDir, carriedRef)) ?? ZERO_OID_STRING;
   const pushed = await pushToOrigin(
     forkDir,
     link.cloneUrl,
-    [{ ref, oldOid: held, newOid: tip }],
+    [{ ref: carriedRef, oldOid: held, newOid: tip }],
     authEnv,
     { timeoutMs: TIMEOUT_MS },
   );
   if (!pushed.ok) return err(refusedBy(link, pushed.error.message, authEnv));
   const fetched = await fetchInto(mirrorDir, forkDir, ref);
-  if (fetched !== undefined) await writeRef(mirrorDir, ref, fetched);
+  if (fetched !== undefined) await writeRef(mirrorDir, carriedRef, fetched);
   return ok(tip);
 }
 
