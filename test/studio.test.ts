@@ -2683,6 +2683,9 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     const etag = first.headers.get("etag");
     expect(etag).toMatch(/^"[0-9a-f]{16}"$/);
     const text = await first.text();
+    // The tag rides in the markup as well, for a proxy that drops the header.
+    expect(text).toMatch(/^\s*<div data-etag="[0-9a-f]{16}"/);
+    expect(`"${/data-etag="([0-9a-f]{16})"/.exec(text)![1]}"`).toBe(etag!);
     expect(text).toContain('id="live-now"');
     expect(text).toContain('data-live="run.*,pull.*,issue.*"');
     expect(text).toContain('data-live-src="/alice/vault/app/now"');

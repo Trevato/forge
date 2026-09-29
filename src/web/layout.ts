@@ -646,6 +646,12 @@ export function redirect(
  * paint. `cache-control: no-store` keeps the browser's own cache out of it —
  * the live client holds the tag itself and asks conditionally on purpose,
  * so an unchanged region costs one round trip and no repaint.
+ *
+ * The same tag is stamped on the fragment's first element as `data-etag`,
+ * because a proxy in between may drop the header: Cloudflare strips `etag`
+ * from HTML it reserves the right to rewrite, and did on the live forge.
+ * The hash is of the unstamped body, so the server recomputes it the same
+ * way next time; the request header is what it compares.
  */
 export function fragment(
   body: Html,
@@ -661,11 +667,14 @@ export function fragment(
     "cache-control": "no-store",
   };
   if (status !== 200) return new Response(text, { status, headers });
-  const etag = `"${sha256(text).slice(0, 16)}"`;
-  headers.etag = etag;
-  if (o.request?.headers.get("if-none-match") === etag)
+  const hash = sha256(text).slice(0, 16);
+  headers.etag = `"${hash}"`;
+  if (o.request?.headers.get("if-none-match") === headers.etag)
     return new Response(null, { status: 304, headers });
-  return new Response(text, { status, headers });
+  return new Response(
+    text.replace(/^(\s*<[a-zA-Z][^\s>]*)/, `$1 data-etag="${hash}"`),
+    { status, headers },
+  );
 }
 
 /** Redirect back to a page carrying a message — the shape most handlers want. */
