@@ -304,15 +304,40 @@ how many there are and a filter for whether they are live, each a link
 carrying `?live=1` rather than a form, and **New app** beside them.
 `?mode=dev` on the same URL is dev's table of repositories, unchanged.
 
-The home keeps itself current. _Your apps_ and _on you_
-are each a live region (`data-live`, `src/web/client.ts`): a deploy
-serving, a pull opening, closing or merging, a run starting or ending, or an
-assignment changing refetches the home — the very same `studioHome` render
-that drew the first paint, never a second copy of that markup — and swaps
-just that region in place, so a card that is answered goes and a new one
-arrives without a reload. Events within half a second of each other cost one
-fetch. A card mid-decision (its post to the crew still in flight) is never
-swapped out from under the click deciding it.
+The home keeps itself current. _Your apps_ and _on you_ are each a live
+region (`data-live`, `src/web/client.ts`): a deploy serving, a pull
+opening, closing or merging, a run starting or ending, or an assignment
+changing fetches that region again — the very same render that drew the
+first paint, never a second copy of that markup — and swaps it in place,
+so a card that is answered goes and a new one arrives without a reload.
+
+### Live regions
+
+A page with a script never reloads itself: the `meta refresh` some pages
+carry is the no-script fallback, and the script removes it the moment it
+can stream. Every live region listens to one `EventSource` (`/events`,
+everything the viewer may see) and works like this:
+
+- **An address of its own.** A region carries `data-live-src` — `/live/apps`
+  and `/live/on-you` on the home, `<repo>/app/now` for _Now_ on the app
+  page, `<repo>/app/state` for its head card — and an event fetches that
+  address, not the page. The fragment answers with the same element, id
+  and all, rendered by the same function as the page, with its icons
+  inlined (`layout.fragment`). A region without an address shares one
+  fetch of the page; that is the fallback, not the design.
+- **Nothing painted that did not change.** A fragment's `etag` is a hash of
+  its bytes; the client sends it back as `if-none-match` and an unchanged
+  region is a 304 with no body. When bytes do arrive, two renders that
+  differ only in a relative time ("3m ago") are the same region.
+- **One fetch per burst.** Events within a beat of each other cost one
+  fetch per address, never more often than every second and a half; a
+  hidden tab fetches nothing and catches up on the first look back.
+- **Never out from under a hand.** A region holding a focused input, or a
+  card whose post is still in flight (`data-busy`), is left alone until
+  the next event.
+
+Run logs and the crew's transcript stream line by line over their own
+`?follow=1` answers; they are the streamed part of a page, not a region.
 
 Signed out, `/` in the studio is a stranger's front door, not the dev
 pitch: a shelf of the public apps actually serving — name, one line of

@@ -104,6 +104,8 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
+import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
 import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
@@ -425,6 +427,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
+  // Live regions' own addresses (docs/STUDIO.md, "Live regions"): the
+  // home's shelf and its "On you" card answer for themselves, so an event
+  // fetches a region and not the page. Literal, above /:owner.
+  router.add("GET", "/live/apps", liveAppsFragment);
+  router.add("GET", "/live/on-you", liveOnYouFragment);
   router.add("GET", "/runs/:id", runRedirect);
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
@@ -681,6 +688,8 @@ export function buildRouter(): Router<Handler> {
   // The studio page's own live refresh: the head card and previews list,
   // bare, fetched on a deploy run event for the app being viewed.
   router.add("GET", "/:owner/:name/app/state", appStateFragment);
+  // "Now" on the same page, alone: the region's own address.
+  router.add("GET", "/:owner/:name/app/now", appNowFragment);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);

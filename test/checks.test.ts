@@ -65,6 +65,22 @@ describe("parseBunTestFailure: a convenience over one known runner, not a genera
     ]);
   });
 
+  test("a failing test bun printed without a duration — as it does under CI for one that took no time — is still named", () => {
+    const lines = [
+      "(pass) a passing test",
+      "(fail) first failing test [0.10ms]",
+      "(fail) second failing test",
+      " 1 pass",
+      " 2 fail",
+      "Ran 3 tests across 1 file. [9.00ms]",
+    ];
+    expect(parseBunTestFailure(lines)).toEqual({
+      passed: 1,
+      failed: 2,
+      names: ["first failing test", "second failing test"],
+    });
+  });
+
   test("output that is not bun test's own shape is not guessed at", () => {
     expect(
       parseBunTestFailure(["$ test -f NOPE.md", "test: NOPE.md: No such file or directory"]),

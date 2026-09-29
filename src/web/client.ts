@@ -2031,20 +2031,60 @@ export const liveRegionsJs = /* js */ `
   var timer = null;
   var last = 0;
   var MIN_GAP = 1500;
-  function refresh() {
-    timer = null;
-    // Hidden, the page waits: a tab in the background paints nothing, and
-    // the first look back brings everything at once.
-    if (document.hidden) return;
-    var ids = Object.keys(due);
-    due = {};
-    if (ids.length === 0) return;
-    last = Date.now();
-    fetch(location.href, { headers: { accept: 'text/html' }, credentials: 'same-origin' })
-      .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
+  // What each address last answered with, so the next ask is conditional:
+  // a region that did not change comes back 304 and paints nothing.
+  var tags = {};
+  // Relative times ("3m ago") drift on their own; two renders that differ
+  // only there are the same region, and the clock is not a change.
+  function same(a, b) {
+    var t = /<time\\b[^>]*>[^<]*<\\/time>/g;
+    return a.replace(t, '') === b.replace(t, '');
+  }
+  function swap(fresh, ids) {
+    ids.forEach(function (id) {
+      var mine = document.getElementById(id);
+      var theirs = fresh.getElementById(id);
+      if (!mine || !theirs) return;
+      // A card mid-action (the big view marks it data-busy while its post
+      // is in flight) is never pulled out from under the click; the next
+      // matching event tries the swap again.
+      if (mine.querySelector('[data-busy]')) return;
+      var active = document.activeElement;
+      if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
+      if (same(mine.innerHTML, theirs.innerHTML)) return;
+      mine.innerHTML = theirs.innerHTML;
+      Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
+      mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
+    });
+  }
+  // A region with an address of its own (data-live-src) answers for itself:
+  // the server renders that region and nothing else, and its etag says
+  // whether anything changed. Regions without one share one fetch of the
+  // page, which is the fallback, not the design.
+  function pull(src, ids) {
+    var own = src !== location.href;
+    var headers = { accept: 'text/html' };
+    if (tags[src]) headers['if-none-match'] = tags[src];
+    fetch(src, { headers: headers, credentials: 'same-origin' })
+      .then(function (r) {
+        if (r.status === 304) return null;
+        if (!r.ok) return Promise.reject(r);
+        var tag = r.headers.get('etag');
+        if (tag) tags[src] = tag;
+        return r.text();
+      })
       .then(function (text) {
-        // Parse a copy without the page's own style element: the swap only ever
-        // reads a live region's innerHTML, never the head, and the fresh
+        if (text === null) return;
+        if (own) {
+          // A fragment's icons come inlined (layout.fragment), so it needs
+          // nothing from this page's sprite.
+          var holder = document.createElement('template');
+          holder.innerHTML = text;
+          swap(holder.content, ids);
+          return;
+        }
+        // Parse a copy without the page's own style element: the swap only
+        // ever reads a region's innerHTML, never the head, and the fresh
         // page carries a fresh nonce the live document's CSP cannot match —
         // parsing it would log an inline-style violation for nothing.
         var fresh = new DOMParser().parseFromString(text.replace(/<(style)[^>]*>[\\s\\S]*?<\\/\\1>/gi, ''), 'text/html');
@@ -2054,25 +2094,27 @@ export const liveRegionsJs = /* js */ `
         var theirSprite = fresh.querySelector('.sprite');
         var mySprite = document.querySelector('.sprite');
         if (theirSprite && mySprite) mySprite.replaceWith(theirSprite);
-        ids.forEach(function (id) {
-          var mine = document.getElementById(id);
-          var theirs = fresh.getElementById(id);
-          if (!mine || !theirs) return;
-          // A card mid-decision (asksJs marks it data-busy while its post is
-          // in flight) is never pulled out from under the click that is
-          // deciding it; the next matching event tries the swap again.
-          if (mine.querySelector('[data-busy]')) return;
-          var active = document.activeElement;
-          if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
-          // Nothing to paint when nothing changed: an event about this
-          // region that left its markup as it was is not a flicker.
-          if (mine.innerHTML === theirs.innerHTML) return;
-          mine.innerHTML = theirs.innerHTML;
-          Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
-          mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
-        });
+        swap(fresh, ids);
       })
       .catch(function () {});
+  }
+  function refresh() {
+    timer = null;
+    // Hidden, the page waits: a tab in the background paints nothing, and
+    // the first look back brings everything at once.
+    if (document.hidden) return;
+    var ids = Object.keys(due);
+    due = {};
+    if (ids.length === 0) return;
+    last = Date.now();
+    var groups = {};
+    ids.forEach(function (id) {
+      var region = document.getElementById(id);
+      if (!region) return;
+      var src = region.getAttribute('data-live-src') || location.href;
+      (groups[src] = groups[src] || []).push(id);
+    });
+    Object.keys(groups).forEach(function (src) { pull(src, groups[src]); });
   }
   var source = new EventSource('/events');
   // The stream's own state, for a page that shows whether it is connected.

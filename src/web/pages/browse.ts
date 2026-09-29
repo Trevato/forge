@@ -229,7 +229,9 @@ export async function browseTree(ctx: Ctx): Promise<Response> {
   if (!entries.ok) return notFoundPage(ctx);
 
   if (ctx.url.searchParams.get("fragment") === "explorer")
-    return fragment(explorerFragment(scope.base, ref, path, entries.value));
+    return fragment(explorerFragment(scope.base, ref, path, entries.value), {
+      request: ctx.request,
+    });
 
   const [refs, explorer] = await Promise.all([
     refSetFrom(scope.source),
@@ -266,7 +268,8 @@ export async function browseBlob(ctx: Ctx): Promise<Response> {
     blob: blob.value,
     view: blobView(ctx.url.searchParams.get("view")),
   });
-  if (ctx.url.searchParams.get("fragment") === "1") return fragment(pane);
+  if (ctx.url.searchParams.get("fragment") === "1")
+    return fragment(pane, { request: ctx.request });
 
   const explorer = await loadExplorer(scope.source, ref, path, true);
   return codePage(ctx, scope, {

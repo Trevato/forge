@@ -7,7 +7,9 @@
 
 import type { CheckDetail } from "../core/runs.ts";
 
-const FAIL_LINE = /^\(fail\) (.+) \[[0-9.]+m?s\]$/;
+// The duration is bun's to print or not: under CI it leaves it off a test
+// that took next to no time, so a name is a name with or without one.
+const FAIL_LINE = /^\(fail\) (.+?)(?: \[[0-9.]+m?s\])?$/;
 const PASS_COUNT = /^\s*(\d+) pass$/;
 const FAIL_COUNT = /^\s*(\d+) fail$/;
 

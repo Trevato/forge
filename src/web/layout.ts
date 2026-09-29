@@ -13,6 +13,7 @@ import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
+import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
 import {
   metaThemeColor,
@@ -639,19 +640,32 @@ export function redirect(
  * Its icons are inlined rather than referenced: a fragment cannot count on
  * the sprite of the document it is being dropped into, and must not add ids
  * to it (`inlineIcons`, `icons.ts`).
+ *
+ * A fragment names its own bytes: the `etag` is a hash of the body, and a
+ * request carrying it back as `if-none-match` gets a 304 and nothing to
+ * paint. `cache-control: no-store` keeps the browser's own cache out of it —
+ * the live client holds the tag itself and asks conditionally on purpose,
+ * so an unchanged region costs one round trip and no repaint.
  */
-export function fragment(body: Html, status = 200): Response {
-  return new Response(inlineIcons(body.text), {
-    status,
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "content-security-policy":
-        "default-src 'none'; style-src 'none'; sandbox",
-      "referrer-policy": "same-origin",
-      "x-content-type-options": "nosniff",
-      "cache-control": "no-store",
-    },
-  });
+export function fragment(
+  body: Html,
+  o: { status?: number; request?: Request } = {},
+): Response {
+  const text = inlineIcons(body.text);
+  const status = o.status ?? 200;
+  const headers: Record<string, string> = {
+    "content-type": "text/html; charset=utf-8",
+    "content-security-policy": "default-src 'none'; style-src 'none'; sandbox",
+    "referrer-policy": "same-origin",
+    "x-content-type-options": "nosniff",
+    "cache-control": "no-store",
+  };
+  if (status !== 200) return new Response(text, { status, headers });
+  const etag = `"${sha256(text).slice(0, 16)}"`;
+  headers.etag = etag;
+  if (o.request?.headers.get("if-none-match") === etag)
+    return new Response(null, { status: 304, headers });
+  return new Response(text, { status, headers });
 }
 
 /** Redirect back to a page carrying a message — the shape most handlers want. */

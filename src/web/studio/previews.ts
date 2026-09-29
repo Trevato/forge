@@ -306,14 +306,14 @@ export function appPanels(
  */
 export function appStateFragment(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
-  if (!repo) return fragment(html``, 404);
+  if (!repo) return fragment(html``, { status: 404 });
   const record = getAppByRepo(ctx.app.db, repo.id);
-  if (!record) return fragment(html``, 404);
+  if (!record) return fragment(html``, { status: 404 });
   const openPulls = listPulls(ctx.app.db, repo.id, {
     state: "open",
     limit: 10,
   });
   const { head, previews } = appPanels(ctx, repo, record, openPulls);
   return fragment(html`<div id="app-head">${head}</div>
-    <div id="app-previews">${previews}</div>`);
+    <div id="app-previews">${previews}</div>`, { request: ctx.request });
 }

@@ -979,13 +979,15 @@ export async function deleteFileSubmit(ctx: Ctx): Promise<Response> {
  */
 export async function previewSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
-  if (!repo) return fragment(html``, 404);
+  if (!repo) return fragment(html``, { status: 404 });
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const scope = localScope(ctx, repo);
-  if (!scope.caps.write) return fragment(html``, 404);
+  if (!scope.caps.write) return fragment(html``, { status: 404 });
   const body = formValue(form, "body");
   const path = formValue(form, "path");
   const markdown = path === "" || /\.(md|markdown)$/i.test(path);
-  return fragment(markdown ? renderMarkdown(body) : html`<pre>${body}</pre>`);
+  return fragment(markdown ? renderMarkdown(body) : html`<pre>${body}</pre>`, {
+    request: ctx.request,
+  });
 }

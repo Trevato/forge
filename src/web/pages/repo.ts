@@ -1021,7 +1021,9 @@ export async function treePage(ctx: Ctx): Promise<Response> {
 
   // The explorer's lazy expansion asks for exactly one directory.
   if (ctx.url.searchParams.get("fragment") === "explorer")
-    return fragment(explorerFragment(scope.base, ref, path, entries.value));
+    return fragment(explorerFragment(scope.base, ref, path, entries.value), {
+      request: ctx.request,
+    });
 
   const [refs, explorer] = await Promise.all([
     refSetFrom(scope.source),
@@ -1063,7 +1065,8 @@ export async function blobPage(ctx: Ctx): Promise<Response> {
 
   // The preview a script drops into the pane beside the explorer. Same
   // renderer, same markup — a preview and a real page load are the same file.
-  if (ctx.url.searchParams.get("fragment") === "1") return fragment(pane);
+  if (ctx.url.searchParams.get("fragment") === "1")
+    return fragment(pane, { request: ctx.request });
 
   const explorer = await loadExplorer(scope.source, ref, path, true);
   const filename = path.split("/").pop() ?? path;

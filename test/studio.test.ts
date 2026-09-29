@@ -2048,6 +2048,34 @@ describe("the studio home keeps itself current", () => {
     expect(home).toContain("Write the README");
   });
 
+  test("each region on the home has an address of its own, answering with that region alone and 304 when it has not changed", async () => {
+    const page = await (await get()).text();
+    expect(page).toContain('data-live-src="/live/apps"');
+    expect(page).toContain('data-live-src="/live/on-you"');
+
+    const headers = { cookie: `${cookie}; forge_mode=studio` };
+    const apps = await fetch(`${base}/live/apps`, { headers });
+    expect(apps.status).toBe(200);
+    const appsText = await apps.text();
+    expect(appsText).toContain('id="live-apps"');
+    expect(appsText).toContain(`${repo.name}`);
+    expect(appsText).not.toContain("<html");
+    const tag = apps.headers.get("etag");
+    expect(tag).toMatch(/^"[0-9a-f]{16}"$/);
+    const unchanged = await fetch(`${base}/live/apps`, {
+      headers: { ...headers, "if-none-match": tag! },
+    });
+    expect(unchanged.status).toBe(304);
+
+    const onYou = await fetch(`${base}/live/on-you`, { headers });
+    expect(onYou.status).toBe(200);
+    expect(await onYou.text()).toContain('id="live-on-you"');
+
+    // Signed out, the regions are nobody's.
+    expect((await fetch(`${base}/live/apps`)).status).toBe(404);
+    expect((await fetch(`${base}/live/on-you`)).status).toBe(404);
+  });
+
   test("a signed-out request gets a signed-out home: no per-viewer live regions, nothing of alice's", async () => {
     const res = await fetch(`${base}/`, {
       headers: { cookie: "forge_mode=studio" },
@@ -2641,6 +2669,45 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(refusedFragment.status).toBe(404);
     const refusedPage = await get("/alice/vault", stranger);
     expect(refusedPage.status).toBe(404);
+  });
+
+  test("Now has an address of its own: the page's region names it, the fragment answers with the same region, and unchanged bytes come back 304", async () => {
+    const page = await (await get("/alice/vault", owner)).text();
+    expect(page).toContain('id="live-now"');
+    expect(page).toContain('data-live-src="/alice/vault/app/now"');
+
+    const first = await get("/alice/vault/app/now", owner);
+    expect(first.status).toBe(200);
+    expect(first.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(first.headers.get("cache-control")).toBe("no-store");
+    const etag = first.headers.get("etag");
+    expect(etag).toMatch(/^"[0-9a-f]{16}"$/);
+    const text = await first.text();
+    expect(text).toContain('id="live-now"');
+    expect(text).toContain('data-live="run.*,pull.*,issue.*"');
+    expect(text).toContain('data-live-src="/alice/vault/app/now"');
+    expect(text).toContain("<h2>Now</h2>");
+
+    // The same bytes again: nothing to paint, and nothing sent to paint.
+    const again = await fetch(`${base}/alice/vault/app/now`, {
+      headers: {
+        cookie: `${owner}; forge_mode=studio`,
+        "if-none-match": etag!,
+      },
+    });
+    expect(again.status).toBe(304);
+    expect(again.headers.get("etag")).toBe(etag);
+    expect(await again.text()).toBe("");
+
+    // A stale tag is answered in full.
+    const stale = await fetch(`${base}/alice/vault/app/now`, {
+      headers: { cookie: `${owner}; forge_mode=studio`, "if-none-match": '"0"' },
+    });
+    expect(stale.status).toBe(200);
+    expect(await stale.text()).toContain("<h2>Now</h2>");
+
+    expect((await get("/alice/vault/app/now", stranger)).status).toBe(404);
+    expect((await fetch(`${base}/alice/vault/app/now`)).status).toBe(404);
   });
 
   test("a preview flips from deploying to live between two calls, and the link stays correct", async () => {
