@@ -9,7 +9,13 @@
  * that will not answer — is a sentence a person can act on, never a throw.
  */
 
-import { resolveCname, resolveTxt } from "node:dns/promises";
+import {
+  Resolver,
+  resolve4,
+  resolveCname,
+  resolveNs,
+  resolveTxt,
+} from "node:dns/promises";
 
 export interface DnsRecord {
   readonly type: "TXT" | "CNAME" | "ALIAS";
@@ -52,10 +58,92 @@ export interface DomainResolver {
   resolveCname(name: string): Promise<string[]>;
 }
 
-const systemResolver: DomainResolver = { resolveTxt, resolveCname };
+/** The three questions the authoritative lookup asks, so a test can answer them. */
+export interface Authority {
+  resolveNs(zone: string): Promise<string[]>;
+  resolve4(host: string): Promise<string[]>;
+  /** TXT for `name`, asked of exactly these servers. */
+  resolveTxtAt(servers: string[], name: string): Promise<string[][]>;
+}
+
+const isNone = (error: unknown): boolean => {
+  const code =
+    typeof error === "object" && error !== null && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+  return code === "ENODATA" || code === "ENOTFOUND";
+};
+
+/**
+ * The zone's own nameservers, found by walking up from the record's name:
+ * `_forge-verify.game.example.com` → `game.example.com` (no NS) →
+ * `example.com` (its NS). The top label is never a zone anyone answers for.
+ */
+async function nameserversFor(
+  name: string,
+  authority: Authority,
+): Promise<string[]> {
+  const labels = name.split(".");
+  for (let at = 1; at < labels.length - 1; at++) {
+    const zone = labels.slice(at).join(".");
+    const hosts = await authority.resolveNs(zone).catch(() => [] as string[]);
+    if (hosts.length === 0) continue;
+    const addresses = (
+      await Promise.all(
+        hosts.slice(0, 4).map((h) => authority.resolve4(h).catch(() => [])),
+      )
+    ).flat();
+    if (addresses.length > 0) return addresses;
+  }
+  throw Object.assign(new Error(`no nameservers for ${name}`), {
+    code: "ENOTFOUND",
+  });
+}
+
+/**
+ * The system resolver first — the box's own view — and, when it says there
+ * is no such record, the zone's own nameservers. A resolver on the way (a
+ * cluster's, a tailnet's) may hold a "not found" from a minute before the
+ * record was published, for as long as the zone's negative TTL says; the
+ * authority never does. Certificate issuers look a proof up the same way.
+ * Names are asked absolute, so a search suffix never widens the question.
+ */
+export function withAuthority(
+  primary: DomainResolver,
+  authority: Authority,
+): DomainResolver {
+  return {
+    async resolveTxt(name) {
+      try {
+        return await primary.resolveTxt(name);
+      } catch (error) {
+        if (!isNone(error)) throw error;
+        const servers = await nameserversFor(name, authority);
+        return authority.resolveTxtAt(servers, name);
+      }
+    },
+    resolveCname: (name) => primary.resolveCname(name),
+  };
+}
+
+const systemResolver: DomainResolver = withAuthority(
+  {
+    resolveTxt: (name) => resolveTxt(`${name}.`),
+    resolveCname: (name) => resolveCname(`${name}.`),
+  },
+  {
+    resolveNs: (zone) => resolveNs(`${zone}.`),
+    resolve4: (host) => resolve4(`${host}.`),
+    resolveTxtAt(servers, name) {
+      const asked = new Resolver({ timeout: 3_000, tries: 1 });
+      asked.setServers(servers);
+      return asked.resolveTxt(`${name}.`);
+    },
+  },
+);
 
 /** How long a lookup may take before it is called a timeout. */
-const LOOKUP_TIMEOUT_MS = 5_000;
+const LOOKUP_TIMEOUT_MS = 8_000;
 
 export interface DomainCheck {
   readonly verified: boolean;
@@ -139,11 +227,11 @@ async function lookup<T>(run: () => Promise<T>): Promise<Lookup<T>> {
   try {
     return { kind: "found", value: await Promise.race([run(), timeout]) };
   } catch (error) {
+    if (isNone(error)) return { kind: "none" };
     const code =
       typeof error === "object" && error !== null && "code" in error
         ? String((error as { code: unknown }).code)
         : "";
-    if (code === "ENODATA" || code === "ENOTFOUND") return { kind: "none" };
     return {
       kind: "failed",
       why: code === "ETIMEOUT" ? "timed out" : `failed (${code || "error"})`,

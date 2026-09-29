@@ -120,6 +120,59 @@ describe("checkDomain: every outcome is a sentence", () => {
     });
   });
 
+  test("when the box's resolver holds a stale not-found, the zone's own nameservers are asked", async () => {
+    const { withAuthority } = await import("../src/apps/domains.ts");
+    const asked: string[] = [];
+    const stale = {
+      resolveTxt: () =>
+        Promise.reject(Object.assign(new Error("nx"), { code: "ENOTFOUND" })),
+      resolveCname: () =>
+        Promise.reject(Object.assign(new Error("nx"), { code: "ENODATA" })),
+    };
+    const authority = {
+      resolveNs: (zone: string) => {
+        asked.push(`ns ${zone}`);
+        return zone === "example.com"
+          ? Promise.resolve(["ns1.example.net"])
+          : Promise.reject(Object.assign(new Error("nx"), { code: "ENODATA" }));
+      },
+      resolve4: (host: string) => {
+        asked.push(`a ${host}`);
+        return Promise.resolve(["192.0.2.53"]);
+      },
+      resolveTxtAt: (servers: string[], name: string) => {
+        asked.push(`txt@${servers.join(",")} ${name}`);
+        return Promise.resolve([[`forge-verify=${token}`]]);
+      },
+    };
+    const result = await checkDomain(
+      "app.example.com",
+      token,
+      "notes.apps.test",
+      withAuthority(stale, authority),
+    );
+    expect(result.verified).toBe(true);
+    // Walked up past the record's own label and the host, to the zone.
+    expect(asked).toEqual([
+      "ns app.example.com",
+      "ns example.com",
+      "a ns1.example.net",
+      "txt@192.0.2.53 _forge-verify.app.example.com",
+    ]);
+    // And a resolver that says something other than "none" is believed.
+    const broken = withAuthority(
+      {
+        resolveTxt: () =>
+          Promise.reject(Object.assign(new Error("x"), { code: "ESERVFAIL" })),
+        resolveCname: stale.resolveCname,
+      },
+      authority,
+    );
+    const failed = await checkDomain("app.example.com", token, "notes.apps.test", broken);
+    expect(failed.verified).toBe(false);
+    expect(failed.said).toContain("failed");
+  });
+
   test("an apex gets an ALIAS line instead of a CNAME, and is told why", () => {
     expect(recordsFor(HOST, token, "notes.apps.test")).toEqual([
       { type: "TXT", name: PROOF, value: `forge-verify=${token}` },
