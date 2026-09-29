@@ -62,6 +62,13 @@ export function eventVerb(event: ForgeEvent): string {
       ? `set ${which} in the app's environment`
       : `removed ${which} from the app's environment`;
   }
+  if (kind.startsWith("app.domain.")) {
+    const host = payload["host"];
+    const which = typeof host === "string" ? host : "a domain";
+    if (kind === "app.domain.added") return `gave the app the domain ${which}`;
+    if (kind === "app.domain.verified") return `verified the domain ${which}`;
+    return `removed the domain ${which}`;
+  }
   return WORDS[kind] ?? "acted on this repository";
 }
 

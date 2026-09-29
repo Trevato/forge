@@ -403,6 +403,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/app\/domains\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Remove domain",
+      title: `Remove ${decodeURIComponent(m[3] ?? "")}?`,
+      detail: `The forge stops answering there at once; links to it stop working until the name is added and verified again. ${m[1]}/${m[2]} keeps its own hostname.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/labels\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete label",
@@ -488,7 +497,9 @@ const DESTRUCTIVE: {
       // this page never becomes a way to read a private pull's title.
       const repo = getRepo(ctx.app.db, m[1]!, m[2]!);
       const writer = repo && canWrite(ctx.app.db, repo, ctx.auth.user);
-      const pull = writer ? getPull(ctx.app.db, repo.id, Number(m[3])) : undefined;
+      const pull = writer
+        ? getPull(ctx.app.db, repo.id, Number(m[3]))
+        : undefined;
       const name = pull ? `"${pull.title}"` : `change #${m[3]}`;
       return {
         verb: "Take it back",

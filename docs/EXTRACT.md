@@ -44,7 +44,31 @@ turned off, with what each move costs and what it gives up.
    `forge.example, *.forge.example { reverse_proxy 127.0.0.1:3000 }` with a
    DNS-challenge wildcard, or the existing Cloudflare tunnel with two ingress
    rules to `http://127.0.0.1:3000`. Either way the forge sees
-   `x-forwarded-proto` and answers with its canonical URL.
+   `x-forwarded-proto` and answers with its canonical URL. An app's own
+   domain (`docs/APPS.md`, _Your own domain_) is a name the wildcard does
+   not cover, so Caddy fetches its certificate on demand — after asking the
+   forge whether the name is anyone's:
+
+   ```
+   {
+     on_demand_tls {
+       ask http://127.0.0.1:3000/__forge/domains/ask
+     }
+   }
+   forge.example, *.forge.example {
+     reverse_proxy 127.0.0.1:3000
+   }
+   https:// {
+     tls { on_demand }
+     reverse_proxy 127.0.0.1:3000
+   }
+   ```
+
+   The forge answers the ask with 200 for a verified domain and 404 for
+   anything else, so nobody can make the proxy fetch certificates for names
+   that are not here. With the tunnel, each domain is one more ingress rule
+   to the same address.
+
 5. **DNS cutover.** Point `forge.example` and the wildcard at the box (or
    the tunnel). The old cluster keeps serving until the switch; after it,
    the platform's forge is a copy nobody visits.

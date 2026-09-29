@@ -154,6 +154,14 @@ import {
   type AppSettingsInput,
 } from "../actions/apps.ts";
 import {
+  addAppDomain,
+  checkAppDomain,
+  listAppDomains,
+  removeAppDomain,
+} from "../actions/domains.ts";
+import { listDomains } from "../core/domains.ts";
+import type { Database } from "bun:sqlite";
+import {
   migrateMessage,
   migrateRepo,
   migrationJobFor,
@@ -635,8 +643,12 @@ function repoQuery(ctx: Ctx) {
   };
 }
 
-/** An app as the API returns it, with what is running when a runtime is up. */
+/**
+ * An app as the API returns it, with what is running when a runtime is up
+ * and the domains of its own that are verified — the ones the forge serves.
+ */
 function appJson(
+  db: Database,
   record: AppRecord,
   repo: Repo,
   runtime: AppsRuntime | undefined,
@@ -645,6 +657,9 @@ function appJson(
     ...record,
     repo: { owner: repo.ownerName, name: repo.name },
     url: runtime?.urlFor(record, "production") ?? null,
+    domains: listDomains(db, record.id)
+      .filter((d) => d.verifiedAt !== null)
+      .map((d) => d.host),
     serving: runtime !== undefined,
     environments: runtime?.status(record) ?? [],
   };
@@ -2672,7 +2687,7 @@ export function apiRoutes(router: Router<Handler>): void {
     for (const record of records) {
       const repo = repos.get(record.repoId);
       if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
-      items.push(appJson(record, repo, runtime));
+      items.push(appJson(ctx.app.db, record, repo, runtime));
     }
     return json({ items, next_cursor: null });
   });
@@ -2696,7 +2711,12 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(
       {
         repo: repoJson(ctx, made.value.repo),
-        app: appJson(made.value.app, made.value.repo, appsRuntime(ctx.app)),
+        app: appJson(
+          ctx.app.db,
+          made.value.app,
+          made.value.repo,
+          appsRuntime(ctx.app),
+        ),
         issue: made.value.issue ? withLabels(ctx, made.value.issue) : null,
       },
       201,
@@ -2785,7 +2805,9 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const view = appView(ctx.app, ctx.auth.user, repo);
     if (!view.ok) return notFound();
-    return json(appJson(view.value.app, repo, appsRuntime(ctx.app)));
+    return json(
+      appJson(ctx.app.db, view.value.app, repo, appsRuntime(ctx.app)),
+    );
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app", async (ctx) => {
@@ -2796,7 +2818,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const input = await body(ctx.request);
     const enabled = enableApp(ctx.app, ctx.auth.user, repo, appPatch(input));
     if (!enabled.ok) return respondAccess(enabled.error, 422);
-    return json(appJson(enabled.value, repo, appsRuntime(ctx.app)), 201);
+    return json(
+      appJson(ctx.app.db, enabled.value, repo, appsRuntime(ctx.app)),
+      201,
+    );
   });
 
   router.add("PATCH", "/api/v1/repos/:owner/:name/app", async (ctx) => {
@@ -2812,7 +2837,7 @@ export function apiRoutes(router: Router<Handler>): void {
       appPatch(input),
     );
     if (!updated.ok) return respondAccess(updated.error, 422);
-    return json(appJson(updated.value, repo, appsRuntime(ctx.app)));
+    return json(appJson(ctx.app.db, updated.value, repo, appsRuntime(ctx.app)));
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name/app", (ctx) => {
@@ -2824,6 +2849,68 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!disabled.ok) return respondAccess(disabled.error, 422);
     return json({}, 200);
   });
+
+  // The app's own domains (docs/APPS.md, "Your own domain"). Admin scope
+  // and admin over the repository, like the environment below; `:host` is
+  // one path segment, dots included.
+  router.add("GET", "/api/v1/repos/:owner/:name/app/domains", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const listed = listAppDomains(ctx.app, ctx.auth.user, repo);
+    if (!listed.ok) return respondAccess(listed.error, 422);
+    return json({ items: listed.value, next_cursor: null });
+  });
+
+  router.add("POST", "/api/v1/repos/:owner/:name/app/domains", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const added = addAppDomain(ctx.app, ctx.auth.user, repo, str(input.host));
+    if (!added.ok) return respondAccess(added.error, 422);
+    return json(added.value, 201);
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/app/domains/:host/check",
+    async (ctx) => {
+      const denied = requireScope(ctx, "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const checked = await checkAppDomain(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.host ?? "",
+      );
+      if (!checked.ok) return respondAccess(checked.error, 422);
+      return json(checked.value);
+    },
+  );
+
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/app/domains/:host",
+    (ctx) => {
+      const denied = requireScope(ctx, "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const removed = removeAppDomain(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.host ?? "",
+      );
+      if (!removed.ok) return respondAccess(removed.error, 422);
+      return json({}, 200);
+    },
+  );
 
   // The app's environment: names in, names out, and never a value back.
   // `:var`, not `:name` — `:name` is the repository's.

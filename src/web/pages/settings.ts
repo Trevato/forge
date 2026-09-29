@@ -16,6 +16,14 @@ import {
   updateAppSettings,
 } from "../../actions/apps.ts";
 import {
+  addAppDomain,
+  checkAppDomain,
+  listAppDomains,
+  removeAppDomain,
+  type AppDomainView,
+} from "../../actions/domains.ts";
+import type { DnsRecord } from "../../apps/domains.ts";
+import {
   listAppEnvNames,
   NAME_MAX,
   type AppEnvName,
@@ -76,6 +84,7 @@ import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
 import type { Flash } from "../flash.ts";
 import {
+  badge,
   btn,
   card,
   confirmAction,
@@ -442,9 +451,13 @@ function appSettingsView(
     },
   );
   if (record === undefined) return form;
+  const domains = listAppDomains(ctx.app, ctx.auth.user, repo);
   return html`${form}
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
+    </div>
+    <div class="mt">
+      ${appDomainsView(base, domains.ok ? domains.value : undefined)}
     </div>
     <div class="mt">
       ${card(
@@ -551,6 +564,117 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
       pad: false,
     },
   );
+}
+
+/**
+ * The app's own domains: each with what the last check said, the records
+ * to publish while it waits, and a form for one more. The forge serves a
+ * domain the moment it is verified; the app itself hears its new address
+ * at its next deploy, because a process reads its URL once, at start.
+ * `undefined` is a forge where nothing serves apps: a domain would have
+ * nowhere to point, so the card says so and offers no form.
+ */
+function appDomainsView(
+  base: string,
+  domains: AppDomainView[] | undefined,
+): Html {
+  const at = (host: string) =>
+    `${base}/settings/app/domains/${encodeURIComponent(host)}`;
+  const rows = (domains ?? []).map(
+    (d) =>
+      html`<li>
+        <div class="row">
+          <span class="row-lead">${icon("globe")}</span>
+          <span class="row-main">
+            <span class="row-title"
+              ><span class="mono">${d.host}</span> ${d.verified
+                ? badge("live", { tone: "success" })
+                : badge("waiting for DNS", { tone: "attn" })}</span
+            >
+            <span class="row-meta" title="${d.said}"
+              >${d.said === "" ? "Not checked yet." : d.said}
+              ${d.checkedAt === null
+                ? null
+                : html` · checked ${time(d.checkedAt)}`}</span
+            >
+            ${when(!d.verified, () => recordsToPublish(d.records))}
+          </span>
+          <span class="row-trail">
+            <form method="post" action="${at(d.host)}/check">
+              ${btn("Check now", { size: "sm", icon: "globe" })}
+            </form>
+            ${confirmAction({
+              action: `${at(d.host)}/delete`,
+              verb: "Remove",
+              size: "sm",
+            })}
+          </span>
+        </div>
+      </li>`,
+  );
+  return card(
+    html`<div class="card-body">
+        <p class="muted small">
+          Serve the app at a name of your own —
+          <span class="mono">app.example.com</span>, or an apex. Add it, publish
+          the two records it shows, and press Check now.
+        </p>
+      </div>
+      ${when(
+        rows.length > 0,
+        () =>
+          html`<ul class="list">
+            ${rows}
+          </ul>`,
+      )}
+      ${domains === undefined
+        ? html`<div class="card-body">
+            <p class="muted small">
+              Nothing is serving apps on this forge, so a domain would have
+              nowhere to point.
+            </p>
+          </div>`
+        : html`<div class="card-body">
+              <p class="muted small">
+                The forge serves the app there as soon as the record is
+                verified. The app itself learns its new address at its next
+                deploy.
+              </p>
+            </div>
+            <form
+              class="edit-row"
+              method="post"
+              action="${base}/settings/app/domains"
+            >
+              <input
+                class="input mono"
+                type="text"
+                name="host"
+                placeholder="app.example.com"
+                aria-label="Domain"
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+              ${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}
+            </form>`}`,
+    {
+      head: html`${icon("globe")}
+        <h2>Domains</h2>`,
+      pad: false,
+    },
+  );
+}
+
+/** The records as a person copies them into a zone: type, name, value. */
+function recordsToPublish(records: DnsRecord[]): Html {
+  const width = Math.max(...records.map((r) => r.name.length)) + 2;
+  const lines = records
+    .map((r) => `${r.type.padEnd(6)} ${r.name.padEnd(width)} ${r.value}`)
+    .join("\n");
+  const notes = records.filter((r) => r.note !== undefined);
+  return html`<pre class="domain-records">${lines}</pre>
+    ${notes.map((r) => html`<span class="row-meta">${r.note}</span>`)}`;
 }
 
 const appValues = (repo: Repo, record: AppRecord | undefined): AppValues => ({
@@ -699,6 +823,94 @@ export async function appEnvDelete(ctx: Ctx): Promise<Response> {
     removed.ok
       ? { message: `${name} is removed.${redeploying(ctx, "without it")}` }
       : { tone: "danger", message: "No variable by that name." },
+  );
+}
+
+const APP_DOMAIN_ERRORS: Record<string, string> = {
+  invalid_host:
+    "A domain is a hostname: letters, digits and hyphens in at least two labels, like app.example.com.",
+  reserved_host: "That name is the forge's own to hand out.",
+  taken: "Another app already answers to that domain.",
+  no_runtime: "Nothing is serving apps on this forge.",
+};
+
+/** What the records say, as one flash: type, name and value, in words. */
+function recordsInWords(records: DnsRecord[]): string {
+  return records
+    .map((r) =>
+      r.type === "TXT"
+        ? `a TXT record at ${r.name} with the value ${r.value}`
+        : r.type === "CNAME"
+          ? `a CNAME from ${r.name} to ${r.value}`
+          : `an ALIAS from ${r.name} to ${r.value}`,
+    )
+    .join(" and ");
+}
+
+// POST /:owner/:name/settings/app/domains — add one.
+export async function appDomainAdd(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const added = addAppDomain(ctx.app, ctx.auth.user, repo, field(form, "host"));
+  if (!added.ok && added.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    added.ok
+      ? {
+          message: `${added.value.host} is added. Publish ${recordsInWords(added.value.records)}, then press Check now.`,
+        }
+      : {
+          tone: "danger",
+          message:
+            APP_DOMAIN_ERRORS[added.error] ?? "That domain could not be added.",
+        },
+  );
+}
+
+// POST /:owner/:name/settings/app/domains/:host/check — look the proof up.
+export async function appDomainCheck(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const checked = await checkAppDomain(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    ctx.params.host ?? "",
+  );
+  if (!checked.ok && checked.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    checked.ok
+      ? {
+          ...(checked.value.verified ? {} : { tone: "attn" as const }),
+          message: checked.value.said,
+        }
+      : {
+          tone: "danger",
+          message:
+            APP_DOMAIN_ERRORS[checked.error] ?? "No domain by that name.",
+        },
+  );
+}
+
+// POST /:owner/:name/settings/app/domains/:host/delete
+export async function appDomainDelete(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const host = ctx.params.host ?? "";
+  const removed = removeAppDomain(ctx.app, ctx.auth.user, repo, host);
+  if (!removed.ok && removed.error === "not_found") return repoNotFound(ctx);
+  return flashTo(
+    ctx,
+    `${repoBase(repo)}/settings/app`,
+    removed.ok
+      ? { message: `${host} is removed. The forge no longer answers there.` }
+      : { tone: "danger", message: "No domain by that name." },
   );
 }
 

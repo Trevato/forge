@@ -38,7 +38,7 @@ import {
 } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
-import { resolveAppHostname } from "../../apps/proxy.ts";
+import { isHostPort, resolveAppHostname } from "../../apps/proxy.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -845,7 +845,7 @@ export function appsOpen(ctx: Ctx): Response {
   const wanted = ctx.url.searchParams.get("to") ?? "/";
   const path =
     wanted.startsWith("/") && !wanted.startsWith("//") ? wanted : "/";
-  if (runtime === undefined || host === "") return notFoundPage(ctx);
+  if (runtime === undefined || !isHostPort(host)) return notFoundPage(ctx);
   const target = resolveAppHostname(ctx.app, runtime.options.domain, host);
   if (target === undefined || target === "unknown") return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);

@@ -43,7 +43,9 @@ import { createLog } from "../kernel/log.ts";
 import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { primaryDomain } from "../core/domains.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
+import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
   ensureEnvData,
@@ -89,6 +91,11 @@ export interface RuntimeOptions {
     | undefined;
   /** How often the runtime looks for environments to put to sleep. */
   readonly sweepEveryMs?: number | undefined;
+  /**
+   * What a domain check asks: the system resolver unless a test hands in
+   * its own, so proving `app.example.com` needs no network in a test.
+   */
+  readonly dns?: DomainResolver | undefined;
 }
 
 export type EnvState =
@@ -294,7 +301,19 @@ export class AppsRuntime {
     return sshCommand(this.app, login);
   }
 
+  /**
+   * Where an environment is reached. Production answers at the app's own
+   * domain once one is verified — every link, the app's JSON `url` and the
+   * `FORGE_APP_URL` its next process starts with all follow — and at
+   * `<slug>.<domain>` until then; a preview is always at its label. A
+   * domain carries no port: it reaches the forge through whatever fronts
+   * it, which holds its own.
+   */
   urlFor(record: AppRecord, env: EnvName): string {
+    if (env === "production") {
+      const own = primaryDomain(this.app.db, record.id);
+      if (own !== undefined) return `${this.options.scheme}://${own.host}`;
+    }
     const port =
       this.options.publicPort === undefined ||
       (this.options.scheme === "http" && this.options.publicPort === 80) ||

@@ -160,6 +160,9 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appDomainAdd,
+  appDomainCheck,
+  appDomainDelete,
   appEnvDelete,
   appEnvSet,
   appSettingsPage,
@@ -275,6 +278,7 @@ import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { appWebSocket, proxyApp, resolveAppHost } from "../apps/proxy.ts";
+import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
 
@@ -432,6 +436,20 @@ export function buildRouter(): Router<Handler> {
   // fetches a region and not the page. Literal, above /:owner.
   router.add("GET", "/live/apps", liveAppsFragment);
   router.add("GET", "/live/on-you", liveOnYouFragment);
+  // Whether a hostname is an app's verified domain — what Caddy's
+  // `on_demand_tls { ask … }` asks before it fetches a certificate for a
+  // name it has never seen (docs/EXTRACT.md). 200 says yes, 404 says no,
+  // and nothing else is told: a hostname is not a secret, an app is.
+  // Literal, above /:owner.
+  router.add("GET", "/__forge/domains/ask", (ctx) => {
+    const host = ctx.url.searchParams.get("domain") ?? "";
+    const known =
+      host !== "" && getVerifiedDomain(ctx.app.db, host) !== undefined;
+    return new Response(null, {
+      status: known ? 200 : 404,
+      headers: { "cache-control": "no-store" },
+    });
+  });
   router.add("GET", "/runs/:id", runRedirect);
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
@@ -778,6 +796,18 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/settings/app/env/:var/delete",
     appEnvDelete,
+  );
+  // `:host` is one path segment — dots and all — like `:var` above it.
+  router.add("POST", "/:owner/:name/settings/app/domains", appDomainAdd);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/app/domains/:host/check",
+    appDomainCheck,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/settings/app/domains/:host/delete",
+    appDomainDelete,
   );
   router.add("GET", "/:owner/:name/settings/crew", crewSettingsPage);
   router.add("POST", "/:owner/:name/settings/crew", crewAdd);

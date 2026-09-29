@@ -25,6 +25,7 @@ export function eventAudience(kind: string): EventAudience {
   if (
     kind.startsWith("webhook.") ||
     kind.startsWith("app.env_") ||
+    kind.startsWith("app.domain.") ||
     kind === "repo.settings_updated"
   )
     return "admins";

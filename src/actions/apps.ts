@@ -8,7 +8,7 @@
 
 import type { App } from "../app.ts";
 import { appsRuntime, type EnvStatus } from "../apps/runtime.ts";
-import { grantUrl } from "../apps/proxy.ts";
+import { grantUrl, originFor } from "../apps/proxy.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
   isEnvName,
@@ -323,7 +323,10 @@ export async function newApp(
           {
             name: input.name,
             description,
-            agents: agents.map((a) => ({ name: a.user.username, brief: a.brief })),
+            agents: agents.map((a) => ({
+              name: a.user.username,
+              brief: a.brief,
+            })),
           },
           { binary },
         );
@@ -474,9 +477,8 @@ export function openEnvUrl(
     return ok(grantUrl(runtime, { app: record, env }, path, host, who));
   }
   if (record.access === "private") return err("unauthorized");
-  const base = new URL(runtime.urlFor(record, env));
-  if (host !== undefined) base.hostname = host.replace(/:\d+$/, "");
-  return ok(`${base.origin}${path === "/" ? "" : path}`);
+  const origin = originFor(runtime, { app: record, env }, host);
+  return ok(`${origin}${path === "/" ? "" : path}`);
 }
 
 /** Deploy an environment again at its current commit. */

@@ -17,7 +17,8 @@
 import { appHostSuffix } from "./host.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
-import { getAppBySlug, type AppRecord } from "../core/apps.ts";
+import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
+import { getVerifiedDomain } from "../core/domains.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
@@ -35,6 +36,15 @@ export interface AppTarget {
 }
 
 /**
+ * What a `Host` may look like before it is read as anything: a hostname of
+ * letters, digits, dots and hyphens, and at most a port. Nothing here can
+ * be reparsed into another host by a URL parser (`#`, `@`, `/`, `?`,
+ * spaces), so every reading below agrees on which machine is meant.
+ */
+export const isHostPort = (host: string): boolean =>
+  /^[a-z0-9](?:[a-z0-9.-]{0,252})?(?::\d{1,5})?$/i.test(host);
+
+/**
  * Which app and environment a `Host` names, if any. Hostnames are
  * case-insensitive and may carry a port. Only one label may sit in front
  * of the domain: `a.b.<domain>` is not an app.
@@ -43,6 +53,7 @@ export function parseAppHost(
   hostHeader: string,
   domain: string,
 ): { slug: string; env: EnvName; nested: boolean } | undefined {
+  if (!isHostPort(hostHeader)) return undefined;
   const host = hostHeader.toLowerCase().replace(/:\d+$/, "");
   const suffix = appHostSuffix(domain.toLowerCase().replace(/:\d+$/, ""));
   if (!host.endsWith(suffix)) return undefined;
@@ -89,11 +100,52 @@ export function resolveAppHostname(
   host: string,
 ): AppTarget | "unknown" | undefined {
   const parsed = parseAppHost(host, domain);
-  if (parsed === undefined) return undefined;
+  if (parsed === undefined) return ownDomain(app, host);
   const record = getAppBySlug(app.db, parsed.slug);
   return record
     ? { app: record, env: parsed.env, nested: parsed.nested }
     : "unknown";
+}
+
+/**
+ * A hostname that is no label of ours may still be an app's own domain,
+ * once the person who added it has proved they hold it (core/domains.ts).
+ * Until then, and for every other name, the forge answers for itself —
+ * its own pages, at whatever name it is reached by — so a domain added
+ * but not yet verified serves nothing of the app.
+ */
+function ownDomain(app: App, host: string): AppTarget | undefined {
+  const domain = getVerifiedDomain(app.db, host.replace(/:\d+$/, ""));
+  if (domain === undefined) return undefined;
+  const record = getAppById(app.db, domain.appId);
+  return record === undefined
+    ? undefined
+    : { app: record, env: domain.env, nested: false };
+}
+
+/**
+ * The origin a visitor is sent back to: the hostname they asked for, at
+ * the port they asked for it on when the name carried one; otherwise the
+ * environment's own URL decides the port. An app's canonical host carries
+ * the forge's, its own domain none — and only what the browser sent says
+ * which the visitor is at.
+ */
+export function originFor(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  host?: string,
+): string {
+  const base = new URL(runtime.urlFor(target.app, target.env));
+  // Only a bare hostname, with or without a port, is a place to send
+  // anyone. A URL parser reads `evil#x--notes.apps.test` as the host `evil`
+  // while the label check above read it as ours — the same string must
+  // never mean two hosts, so anything else is not a host at all.
+  if (host === undefined || !isHostPort(host)) return base.origin;
+  const asked = URL.parse(`${base.protocol}//${host}`);
+  if (asked === null) return base.origin;
+  base.hostname = asked.hostname;
+  if (asked.port !== "") base.port = asked.port;
+  return base.origin;
 }
 
 /**
@@ -240,11 +292,10 @@ export function grantUrl(
   );
   // The cookie a grant sets belongs to one hostname. A visitor who asked
   // for a hostname inside the app's own world — an app of a forge hosted
-  // here — must be granted on that hostname, not the app's canonical one,
+  // here, or the app's canonical host when it has a domain of its own —
+  // must be granted on that hostname, not the one production's URL names,
   // or the cookie lands where the request never goes.
-  const base = new URL(runtime.urlFor(target.app, target.env));
-  if (host !== undefined) base.hostname = host.replace(/:\d+$/, "");
-  return `${base.origin}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(path)}`;
+  return `${originFor(runtime, target, host)}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(path)}`;
 }
 
 const HOP_BY_HOP = [

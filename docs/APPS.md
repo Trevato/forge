@@ -422,6 +422,59 @@ ping for 120 seconds is dropped. The app's own 101 response headers are
 not carried — a cookie an app sets on the handshake does not reach the
 browser.
 
+## Your own domain
+
+An app can answer at a name you own — `app.example.com`, or an apex like
+`example.com` — beside the hostname the forge gave it. Under **Settings →
+App → Domains** an admin of the repository adds the name (or `POST
+/api/v1/repos/:owner/:name/app/domains` with a `{ "host" }` body) and is
+shown the two records to publish in the zone:
+
+- a TXT record at `_forge-verify.<host>` whose value is `forge-verify=<token>`
+  — the proof that whoever added the name holds it. The token is made for
+  that one domain and is not a secret: it is published;
+- a CNAME from `<host>` to the app's own hostname (`notes.forge.example`),
+  which carries the traffic. An apex cannot carry a CNAME: use the DNS
+  provider's ALIAS or ANAME record instead, or A and AAAA records with the
+  address the forge is served at.
+
+The forge checks when asked — **Check now** on the page, or `POST
+…/app/domains/:host/check` — never on a timer. It looks the TXT record up;
+the domain is verified when some record there is exactly the value shown.
+Every check leaves one sentence a person can act on ("No TXT record at
+`_forge-verify.app.example.com` yet.", "The TXT record is there but holds a
+different value.", "Verified; app.example.com points at
+notes.forge.example."), and when it was said. Verification is a proof of
+control at one moment, like a certificate's: the first check that finds the
+record verifies the domain, and a record tidied away later does not take a
+live site down. Removing the domain is what stops the forge answering there.
+
+Once verified, the forge serves the app at that host — production, at the
+same port, through the same proxy, with the same grant — and production's
+URL becomes `https://app.example.com`: every "Open the app" link, the app's
+JSON `url`, and the `FORGE_APP_URL` its process starts with. The app itself
+learns its new address at its next deploy, because a process reads its
+environment once. Until a domain is verified the forge answers for itself
+at that name, exactly as it does for any hostname it does not know; a name
+that is nobody's proof serves nobody's app. The hostname the forge gave the
+app keeps working beside the domain.
+
+A private app's sign-in works on the new host as it does on the old: a
+visitor arriving at `app.example.com` is sent to the forge, vouched for, and
+sent back to `app.example.com/__forge/grant`, where the grant cookie is set
+for that host. One host names one app's production; a second domain on the
+same app is served too, and the oldest verified one is the URL.
+
+Whatever fronts the forge must route the name to it. A wildcard certificate
+covers `*.forge.example` and not `app.example.com`, so the proxy needs a
+certificate per domain. With Caddy, `on_demand_tls` fetches one the first
+time a name is asked for, and asks the forge first whether the name is
+anyone's: `GET /__forge/domains/ask?domain=<host>` answers 200 for a
+verified domain and 404 for anything else, so a stranger cannot make the
+proxy fetch certificates for names that are not here (`docs/EXTRACT.md`
+has the Caddyfile). A tunnel routes the host the way it routes the
+wildcard. The forge itself speaks plain HTTP either way.
+
 ## A release does not drop a session
 
 The forge is one process on one volume, and a release replaces it. The new
@@ -693,7 +746,7 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 Containers. An app runs as the forge's own user, in its own directory, and
 nothing more separates it from the host than that. On the machine one
 person owns this is the honest, fast answer; a sandboxed runtime is the
-next layer, and the process boundary here is where it will attach. Custom
-domains, TLS termination, and an approve-and-land gate are additions of
-the same kind: the shapes above hold, and a new column or listener carries
-each of them.
+next layer, and the process boundary here is where it will attach. TLS
+termination and an approve-and-land gate are additions of the same kind:
+the shapes above hold, and a new column or listener carries each of them —
+as one column carried a domain of the app's own.
