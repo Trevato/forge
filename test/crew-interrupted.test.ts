@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
+import { listComments } from "../src/core/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createApp, type App } from "../src/app.ts";
@@ -293,4 +294,97 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while
       listQueued(app.db, "agent").filter((r) => r.issueId === issue.id),
     ).toHaveLength(0);
   }, 40_000);
+});
+
+describe("an issue handed to someone else", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let crew: CrewHandle;
+  let alice: User;
+  let bot: User;
+  let other: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-reassign-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const one = await createAgent(app, alice, { username: "bot" });
+    const two = await createAgent(app, alice, { username: "other" });
+    if (!one.ok || !two.ok) throw new Error("agents");
+    bot = one.value.user;
+    other = two.value.user;
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: join(dataDir, "no-such-claude"),
+      concurrency: 0,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+  });
+
+  afterAll(async () => {
+    await crew.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function setup(name: string) {
+    const made = await createRepo(app, alice, { name, visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = made.value;
+    addToCrew(app, alice, repo, "bot");
+    addToCrew(app, alice, repo, "other");
+    const issued = openIssue(app, alice, repo, { title: "Work", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    return { repo, issue: issued.value };
+  }
+
+  const queuedRun = (repoId: string, issueId: string, actorId: string) =>
+    createRun(app.db, {
+      repoId,
+      kind: "agent",
+      issueId,
+      actorId,
+      reason: "assigned",
+    });
+
+  test("a person taking it cancels the queued run, and their word starts none", async () => {
+    const { repo, issue } = await setup("to-person");
+    const run = queuedRun(repo.id, issue.id, bot.id);
+    expect(assignIssue(app, alice, repo, issue, alice).ok).toBe(true);
+    expect(getRun(app.db, run.id)?.state).toBe("cancelled");
+    const said = listComments(app.db, issue.id).map((c) => c.body);
+    expect(said.some((b) => b.includes("@alice") && b.includes("@bot"))).toBe(
+      true,
+    );
+    const talk = addComment(app, alice, repo, issue, "I have this one");
+    expect(talk.ok).toBe(true);
+    expect(
+      listQueued(app.db, "agent").some((r) => r.issueId === issue.id),
+    ).toBe(false);
+  });
+
+  test("another agent taking it stops the running run and queues its own", async () => {
+    const { repo, issue } = await setup("to-agent");
+    const run = queuedRun(repo.id, issue.id, bot.id);
+    claimRun(app.db, run.id);
+    expect(assignIssue(app, alice, repo, issue, other).ok).toBe(true);
+    expect(getRun(app.db, run.id)?.state).toBe("cancelled");
+    const queued = listQueued(app.db, "agent").filter(
+      (r) => r.issueId === issue.id,
+    );
+    expect(queued).toHaveLength(1);
+    expect(queued[0]!.actorId).toBe(other.id);
+  });
 });

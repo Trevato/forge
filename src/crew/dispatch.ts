@@ -16,6 +16,7 @@ import type { ForgeEvent } from "../core/events.ts";
 import {
   getIssue,
   getIssueById,
+  addComment as insertComment,
   listComments,
   type Issue,
 } from "../core/issues.ts";
@@ -254,6 +255,49 @@ export function queueAgentRun(
   return run;
 }
 
+/**
+ * An issue belongs to one builder: when it is handed to a person, to
+ * nobody, or to another agent, the runs of everyone else on it end — a
+ * queued one is cancelled, a running one is aborted — and one line on the
+ * issue says who took it.
+ */
+function releaseOtherRuns(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actorId: string | null,
+): void {
+  const released: Run[] = [];
+  for (const live of listActive(app.db, "agent")) {
+    if (live.issueId !== issue.id || live.actorId === issue.assigneeId)
+      continue;
+    const cancelled = cancelRun(
+      app.db,
+      live.id,
+      "the issue was reassigned; this run no longer holds it",
+    );
+    if (!cancelled) continue;
+    announceRun(app, cancelled);
+    if (live.state === "running") abortAgentRun(live.id);
+    released.push(cancelled);
+  }
+  if (released.length === 0 || actorId === null) return;
+  const holder =
+    issue.assigneeId === null
+      ? undefined
+      : getUserById(app.db, issue.assigneeId);
+  const who = holder ? `@${holder.username}` : "nobody";
+  const stopped = released
+    .map((r) => (r.actorId ? getUserById(app.db, r.actorId) : undefined))
+    .filter((u) => u !== undefined)
+    .map((u) => `@${u.username}`);
+  insertComment(app.db, {
+    issueId: issue.id,
+    authorId: actorId,
+    body: `Taken over by ${who}; stopped ${[...new Set(stopped)].join(", ") || "the earlier run"}.`,
+  });
+}
+
 function route(app: App, event: ForgeEvent): void {
   if (event.repoId === null) return;
   const number = event.payload["number"];
@@ -263,12 +307,15 @@ function route(app: App, event: ForgeEvent): void {
   switch (event.kind) {
     case "issue.assigned":
     case "pull.assigned": {
-      if (event.payload["agent"] !== true || typeof number !== "number") return;
+      if (typeof number !== "number") return;
       const issue = getIssue(app.db, repo.id, number);
-      const agent = issue?.assigneeId
+      if (!issue) return;
+      releaseOtherRuns(app, repo, issue, event.actorId);
+      if (event.payload["agent"] !== true) return;
+      const agent = issue.assigneeId
         ? getAgent(app.db, issue.assigneeId)
         : undefined;
-      if (!issue || !agent || issue.state !== "open") return;
+      if (!agent || issue.state !== "open") return;
       queueAgentRun(
         app,
         repo,
@@ -562,9 +609,7 @@ function parkedReason(
   const what = kind === "deploy" ? "the preview's deploy" : "the check";
   if (judged.cause !== "environment") {
     const named =
-      judged.failingTest === undefined
-        ? ""
-        : ` ("${judged.failingTest}")`;
+      judged.failingTest === undefined ? "" : ` ("${judged.failingTest}")`;
     return `${what} failed${named} and the decider saw no point in another try`;
   }
   return retriedChecks.has(head)
@@ -576,6 +621,8 @@ export function agentFor(app: App, issue: Issue): Agent | undefined {
   if (issue.assigneeId !== null) {
     const assigned = getAgent(app.db, issue.assigneeId);
     if (assigned) return assigned;
+    // A person holds it: nothing the agent's name is on starts a run.
+    return undefined;
   }
   return issue.kind === "pull" ? getAgent(app.db, issue.authorId) : undefined;
 }
