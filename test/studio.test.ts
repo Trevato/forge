@@ -4592,6 +4592,43 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     expect(shelfRow).not.toContain("quiet — tell the crew something");
     expect(shelfRow).toContain("nobody on the crew to take it");
   });
+
+  test("a reader of the public app sees the fact, not the owner's invitation or a link to settings", async () => {
+    app.db.run("UPDATE repo SET visibility = 'public' WHERE id = ?", [
+      repo.id,
+    ]);
+    const b = await createUser(app.db, {
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    const bobCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "bob",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const read = await (
+      await fetch(`${base}/alice/pad`, {
+        headers: { cookie: `${bobCookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(read).toContain("Add a dark mode toggle.");
+    expect(read).toContain("nobody on the crew to take it");
+    expect(read).not.toContain("add someone");
+    expect(read).not.toContain(`href="/alice/pad/settings"`);
+    // The writer still gets the invitation, link included.
+    const write = await (await get("/alice/pad")).text();
+    expect(write).toContain("add someone");
+    expect(write).toContain(`href="/alice/pad/settings"`);
+  });
 });
 
 /**

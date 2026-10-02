@@ -291,9 +291,12 @@ export async function nowCard(
       return row({
         lead: avatar("crew"),
         title: html`<a href="${tellHref(base, i.number)}">${i.title}</a>`,
+        // The invitation is a writer's (the shelf's rule, `ownerFacts`); the
+        // fact — nobody has taken it — stays for everyone.
         meta: html`told ${time(i.createdAt)} ·
-          <span class="muted">nobody on the crew to take it —</span>
-          <a href="${base}/settings">add someone</a>`,
+          <span class="muted">nobody on the crew to take it</span>${ownerFacts
+            ? html` — <a href="${base}/settings">add someone</a>`
+            : null}`,
         trail: wordBadge("told"),
       });
     }),
