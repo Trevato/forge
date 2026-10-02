@@ -335,7 +335,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     ).toBe(tip);
   }, 60_000);
 
-  test("an agent may decline: nothing lands, the reason is posted", async () => {
+  test("an agent may decline: nothing lands, the reason is on the run, not a comment", async () => {
     const issue = openIssue(app, alice, repo, {
       title: "Do something shady",
       body: "DECLINE-ME",
@@ -355,9 +355,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     );
     expect(tip).toBeUndefined();
     const comments = listComments(app.db, issue.value.id);
-    expect(comments.map((c) => `${c.authorName}: ${c.body}`)).toContain(
-      "bot: Declined: this is out of scope for me.",
-    );
+    expect(comments.some((c) => c.authorName === "bot")).toBe(false);
   }, 60_000);
 
   test("closing the pull removes the clone; a closed issue starts nothing", async () => {

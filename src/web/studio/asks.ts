@@ -14,6 +14,7 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision } from "../../core/decisions.ts";
 import {
+  getIssueById,
   listComments,
   listOpenPullsVisibleTo,
   type Issue,
@@ -34,6 +35,7 @@ import {
 } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
+import { breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
@@ -79,7 +81,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "paused";
+export type DecisionKind = "stopped" | "look" | "paused" | "parked";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -91,6 +93,8 @@ export interface Decision {
   readonly id: string;
   readonly repo: Repo;
   readonly pull?: Pull | undefined;
+  /** For "parked": the issue the breaker stopped. */
+  readonly issue?: Issue | undefined;
   readonly who: string;
   /** Three sentences at most: what, why, what happens next. */
   readonly says: string;
@@ -123,6 +127,7 @@ interface AskCandidate {
   readonly kind: DecisionKind;
   readonly repo: Repo;
   readonly pull?: Pull;
+  readonly issue?: Issue;
   readonly who: string;
   /** Whether the author is a crew member — a "look" card words itself
    * differently for a person's own change than for the crew's (below).
@@ -222,6 +227,15 @@ function askCandidatesFor(
   for (const repo of repos)
     if (isPausedAtCeiling(repo, crew, spent))
       out.push({ kind: "paused", repo, who: "the crew" });
+  // An issue the breaker parked waits for a person's word.
+  for (const p of breakerParked(
+    db,
+    repos.map((r) => r.id),
+  )) {
+    const issue = getIssueById(db, p.issueId);
+    const repo = byId.get(p.repoId);
+    if (issue && repo) out.push({ kind: "parked", repo, issue, who: "the crew" });
+  }
   return out;
 }
 
@@ -250,6 +264,13 @@ export function askLinesFor(
         ...about,
         id: `paused:${c.repo.id}`,
         line: `${repo} is paused at its ceiling`,
+      };
+    if (c.kind === "parked")
+      return {
+        ...about,
+        number: c.issue!.number,
+        id: `parked:${c.issue!.id}`,
+        line: `${repo}: the crew parked #${c.issue!.number} after three failed runs`,
       };
     const title = c.pull?.title ?? "";
     const number = c.pull!.number;
@@ -291,6 +312,16 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
     );
   };
   return candidates.map((c): Decision => {
+    if (c.kind === "parked" && c.issue)
+      return {
+        kind: "parked",
+        id: `parked:${c.issue.id}`,
+        repo: c.repo,
+        issue: c.issue,
+        who: c.who,
+        says: `Three runs on #${c.issue.number} failed or were declined within an hour, so the crew parked it. Say what to try and it starts again.`,
+        short: `#${c.issue.number} parked after three failed runs`,
+      };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
       const stopped = c.stoppedByDecider ?? false;
@@ -408,6 +439,12 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
     ${btn("Not like this", {
       href: `${changeHref(base, pull.number)}#comment-body`,
       size: "sm",
+    })}`;
+  if (d.kind === "parked" && d.issue)
+    return html`${btn("Tell them", {
+      href: `${base}/issues/${d.issue.number}#comment-body`,
+      size: "sm",
+      variant: "primary",
     })}`;
   return html`${btn("Settings", {
     href: `${base}/settings/autonomy`,

@@ -861,14 +861,9 @@ async function work(
     if (declined) {
       const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
       write(`declined: ${why.split("\n")[0] ?? ""}`);
-      const target = pull ?? issue;
-      addComment(
-        app,
-        agent.user,
-        repo,
-        target,
-        `Declined: ${why || "no reason given"}`,
-      );
+      // The reason lives on the run record (its summary) and the ledger
+      // line, never as a comment: a comment on an assigned issue is the
+      // thing that starts the next run.
       return {
         state: "failed",
         summary: `declined: ${(why.split("\n")[0] ?? "").slice(0, 200)}`,

@@ -43,6 +43,7 @@ import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
   getIssueById,
+  listComments,
   MAX_TITLE,
   type Issue,
 } from "../core/issues.ts";
@@ -77,6 +78,7 @@ import { getUserById, type User } from "../core/users.ts";
 import { grantedAccounts } from "../core/subscriptions.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
+import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { createLog } from "../kernel/log.ts";
 import { crewOffInPreview } from "./preview.ts";
 
@@ -422,7 +424,13 @@ async function planIfThin(
        ORDER BY created_at DESC LIMIT 1`,
     )
     .get(direction.id);
+  if (breakerTripped(app.db, direction.id, now))
+    return notPlanned(repo, "parked: three failed runs in an hour");
   if (lastPlan !== null && lastPlan !== undefined) {
+    // A planner that declined the direction is not asked again until a
+    // person has said something on it.
+    if (lastPlan.state === "failed" && declinedUnanswered(app, direction))
+      return notPlanned(repo, "the planner declined; waiting for a person");
     if (lastPlan.state === "queued" || lastPlan.state === "running")
       return notPlanned(repo, "a planning run is in flight");
     if (
@@ -480,6 +488,48 @@ function stalled(app: App, issue: Issue): boolean {
   return (spoken?.n ?? 0) === 0;
 }
 
+/** Whether the newest run on the issue was a decline and no person has spoken since. */
+function declinedUnanswered(app: App, issue: Issue): boolean {
+  const last = app.db
+    .query<{ summary: string; created_at: string }, [string]>(
+      `SELECT summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(issue.id);
+  if (!last || !last.summary.startsWith("declined")) return false;
+  const spoken = app.db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
+       WHERE c.issue_id = ?1 AND c.created_at > ?2 AND u.is_agent = 0
+         AND c.body NOT LIKE 'Parked by the crew%'`,
+    )
+    .get(issue.id, last.created_at);
+  return (spoken?.n ?? 0) === 0;
+}
+
+/**
+ * The breaker trips: the assignment is cleared and one note says why, once.
+ * The map reads the note as `parked`; the board's "needs you" lists it.
+ */
+export function parkForBreaker(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  agent: Agent,
+): void {
+  const author =
+    (repo.autonomyBy === null ? undefined : getUserById(app.db, repo.autonomyBy)) ??
+    agent.user;
+  if (issue.assigneeId !== null) assignIssue(app, author, repo, issue, null);
+  const last = listComments(app.db, issue.id).at(-1);
+  if (last?.body === BREAKER_NOTE) return;
+  addComment(app, author, repo, issue, BREAKER_NOTE);
+  log.info("parked by the breaker", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    issue: issue.number,
+  });
+}
+
 /** How many times the crew has parked work on this issue. */
 export function parkedCount(app: App, issueId: string): number {
   const row = app.db
@@ -532,6 +582,14 @@ export function settleAgentRun(
 ): boolean {
   if (repo.autonomy !== "autonomous") return false;
   if (run.state !== "ok" && run.state !== "failed") return false;
+  // A planner is done with the direction once its run ends, whichever way:
+  // a stale assignment must not start another.
+  if (run.issueId === repo.directionIssueId && repo.autonomyBy !== null) {
+    const direction = getIssueById(app.db, run.issueId);
+    const by = getUserById(app.db, repo.autonomyBy);
+    if (direction?.assigneeId && by) assignIssue(app, by, repo, direction, null);
+    return false;
+  }
   if (run.reason === "review") return false;
   if (/opened pull #|updated pull #/.test(run.summary)) return false;
   const issue = getIssueById(app.db, run.issueId);

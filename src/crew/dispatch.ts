@@ -41,11 +41,13 @@ import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
+import { breakerTripped } from "./breaker.ts";
 import { sandboxAvailable } from "./sandbox.ts";
 import {
   AUTONOMY_TICK_MS,
   autonomyTick,
   landIfGreen,
+  parkForBreaker,
   parkPull,
   settleAgentRun,
   spentToday,
@@ -224,6 +226,11 @@ export function queueAgentRun(
       issue: issue.number,
       reason,
     });
+    return undefined;
+  }
+  // Three failed or declined runs in an hour: parked, until a person speaks.
+  if (breakerTripped(app.db, issue.id)) {
+    parkForBreaker(app, repo, issue, agent);
     return undefined;
   }
   const active = activeRunFor(app.db, "agent", issue.id);
