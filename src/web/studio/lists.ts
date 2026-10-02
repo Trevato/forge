@@ -94,6 +94,17 @@ function inWordFilter(word: Word, filter: WordFilter | undefined): boolean {
     : bucket === filter;
 }
 
+/** The empty card's one line. A filter that is set is named, so the way out
+ * is visible; none set is not the filter's fault, so it says what to do. */
+function emptyNote(
+  filter: WordFilter | undefined,
+  subject: string,
+  starter: string,
+): string {
+  if (filter === undefined) return starter;
+  return `${subject} is ${filter} yet.`;
+}
+
 /** A filter bar of five words, each a link carrying `?word=` — never a
  * form, so the filter lives in the address and can be shared. No filter
  * reads as "Open": what is open and moving. */
@@ -169,7 +180,7 @@ export async function studioTells(
       ? empty({
           icon: "issue",
           title: "Nothing here",
-          note: "Nothing told matches this filter yet.",
+          note: emptyNote(filter, "Nothing told", "Nothing open. Tell the crew what you want and it shows up here."),
         })
       : listCard(
           rows.map(({ issue, info }) =>
@@ -259,7 +270,7 @@ export async function studioChanges(
       ? empty({
           icon: "pull",
           title: "Nothing here",
-          note: "Nothing matches this filter yet.",
+          note: emptyNote(filter, "No change", "Nothing open. A change is the crew's proposed edit to your app; the crew opens them as it works."),
         })
       : listCard(
           rows.map(({ pull, info }) =>
@@ -374,7 +385,7 @@ export async function studioRuns(
       ? empty({
           icon: "bot",
           title: "Nothing here",
-          note: "Nothing matches this filter yet.",
+          note: emptyNote(filter, "No run", "Nothing open. A run is one go the crew takes at a job; each one shows up here."),
         })
       : listCard(
           rows.map(({ run, info }) => {

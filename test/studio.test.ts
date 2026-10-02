@@ -8117,3 +8117,100 @@ describe("the studio names a person on the app's page, and the crew only for the
     expect(rowWith(appPage, `/changes/${personPull.number}`)).toContain("ivy");
   });
 });
+
+describe("the studio's empty lists", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let cookie: string;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  const setup = async (name: string) => {
+    const made = await createRepo(app, alice, {
+      name,
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, alice, made.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"x","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        { path: "server.ts", content: "export {};\n" },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, made.value, { slug: name });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    return made.value;
+  };
+  let alice: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-empty-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a repository with nothing in it says what to do, and blames no filter", async () => {
+    await setup("blank");
+    for (const [path, words] of [
+      ["issues", "Tell the crew what you want"],
+      ["pulls", "A change is the crew"],
+      ["runs", "A run is one go"],
+    ] as const) {
+      const page = await get(`/alice/blank/${path}`);
+      expect(page).toContain("Nothing here");
+      expect(page).toContain(words);
+      expect(page).not.toContain("this filter");
+    }
+  });
+
+  test("a filter that hides every row is named", async () => {
+    const repo = await setup("busy");
+    const told = openIssue(app, alice, repo, { title: "Add a tab", body: "" });
+    if (!told.ok) throw new Error(String(told.error));
+    const issues = await get("/alice/busy/issues?word=shipped");
+    expect(issues).toContain("Nothing told is shipped yet.");
+    expect(issues).not.toContain("Tell the crew what you want");
+    const pulls = await get("/alice/busy/pulls?word=look");
+    expect(pulls).toContain("No change is look yet.");
+    const runs = await get("/alice/busy/runs?word=stopped");
+    expect(runs).toContain("No run is stopped yet.");
+  });
+});
