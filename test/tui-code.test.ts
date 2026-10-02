@@ -435,7 +435,7 @@ describe("the terminal, around the workspace", () => {
       await h.settle();
       await openRepo(h, "lighthouse");
       // A native repo has no origin page, and the screen says so rather than
-      // pretending. (The mirrored case is covered in tui-origins.)
+      // pretending. (The mirrored case is covered on the web.)
       await h.press("O");
       expect(h.text()).toContain("no origin page");
     } finally {

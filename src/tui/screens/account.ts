@@ -39,7 +39,6 @@ import {
   runAsync,
 } from "./common.ts";
 import { crewScreen } from "./crew.ts";
-import { originsScreen } from "./origins.ts";
 
 const TABS = ["Profile", "Tokens", "SSH keys"] as const;
 
@@ -68,7 +67,6 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           binding(["d"], "display name"),
           binding(["e"], "email"),
           binding(["p"], "password"),
-          binding(["o"], "origins"),
           ...crew,
         ];
       if (tab === 1)
@@ -76,14 +74,12 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           binding(["tab"], "next tab"),
           binding(["n"], "new token"),
           binding(["D"], "revoke"),
-          binding(["o"], "origins"),
           ...crew,
         ];
       return [
         binding(["tab"], "next tab"),
         binding(["n"], "add key"),
         binding(["D"], "delete key"),
-        binding(["o"], "origins"),
         ...crew,
       ];
     },
@@ -146,12 +142,6 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
       if (e.key === "tab") {
         tab = (tab + 1) % TABS.length;
         state.index = 0;
-        return true;
-      }
-      // Origins are an account-level thing, like tokens and keys, so they
-      // hang off this screen from every tab rather than becoming a fourth.
-      if (e.key === "o") {
-        ctx.push(originsScreen(f, ctx));
         return true;
       }
       if (e.key === "c" && f.user?.isAdmin === true) {

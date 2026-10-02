@@ -496,12 +496,7 @@ JavaScript at all it is a `<textarea>` in a `<form>`, which is what it was
 before any of this. The Preview tab is offered on Markdown only, and renders
 through the same `/preview` fragment the server will use for the file.
 
-**Terminal keys and glyphs for origins.** Account → `o` opens Origins; there
-`c` connects, `s` syncs now, `r` browses the origin's repositories and `D`
-disconnects. In the picker `enter` **browses** the row — live, read-only,
-nothing downloaded — and `m` mirrors it into the workbench; a second `m` on a
-running mirror joins the job rather than starting a second one. On a repo's
-home `y` syncs the mirror and `P` pins it — `p` has meant _pulls_ on that
+**Origins are web-only.** Connecting, syncing and browsing an origin live on the web pages (`/origins`) and in migrate; the terminal has no origins screen. On a mirrored repo's home `y` syncs the mirror and `P` pins it — `p` has meant _pulls_ on that
 screen since before pins existed, so the toggle takes the shifted key there
 and the plain `p` everywhere a repo is a _row_ (the dashboard, explore).
 
@@ -599,8 +594,8 @@ Four rules hold the gestures together:
 Clickable today: every list row, the dashboard's four panes, the workspace's
 explorer rows and tab chips (including the active tab's `✗`), the file pane
 (focus, and the wheel), the where-strip's three places, the palette's results,
-the appearance picker's rows, the owner, refs, settings, account and origins
-lists, the origin picker's rows, the pull's diff-and-threads pane, and **every
+the appearance picker's rows, the owner, refs, settings, account
+lists, the pull's diff-and-threads pane, and **every
 hint in the help bar** — clicking a hint presses the key it names, taken from
 the binding itself so a label can never drift from the action. A list with no
 `hitList` is a bug, not a design decision: "everything you can see is
