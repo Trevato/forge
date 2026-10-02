@@ -66,13 +66,14 @@ import {
   type RunReason,
 } from "./brief.ts";
 import { policyBrief } from "../contract/audit.ts";
-import { BUDGET_REACHED, runClaude } from "./claude.ts";
+import { BUDGET_REACHED, runClaude, type ClaudeOutcome } from "./claude.ts";
 import { isRateLimited, MAX_PAUSES, resumeAt, whenText } from "./limits.ts";
 import {
   pickSubscription,
   restSubscription,
   type Pick,
 } from "../core/subscriptions.ts";
+import { recordUsage, type UsageOutcome } from "../core/usage.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
@@ -202,9 +203,11 @@ export async function executeAgentRun(
   const write = (line: string): void =>
     appendRunLog(app.config.dataDir, run.id, line);
   announceRun(app, claimed);
+  const started = Date.now();
+  const meter: Meter = { tokensIn: 0, tokensOut: 0, subscriptionId: null };
   let outcome: Outcome;
   try {
-    outcome = await work(app, claimed, options, write, controller.signal);
+    outcome = await work(app, claimed, options, write, controller.signal, meter);
   } catch (error) {
     log.error("agent run threw", { run: run.id, error: String(error) });
     outcome = {
@@ -221,6 +224,7 @@ export async function executeAgentRun(
   // forge does the tidying, by the directory the process is working in.
   await reapOrphans(app, run, write);
   forgetLandedClone(app, run);
+  meterUsage(app, claimed, outcome, meter, started);
   if (outcome.state === "paused") {
     write(outcome.summary);
     noteRunProgress(app.db, run.id, {
@@ -338,6 +342,48 @@ type Outcome =
       readonly costUsd: number;
     };
 
+/**
+ * What a run spent that its outcome does not carry: the tokens of every
+ * model invocation it made, and the account it made them on. Filled by
+ * `work` as it goes, read once the run ends.
+ */
+interface Meter {
+  tokensIn: number;
+  tokensOut: number;
+  subscriptionId: string | null;
+}
+
+/** The run's line in the usage ledger (`core/usage.ts`), written once it ends. */
+function meterUsage(
+  app: App,
+  run: Run,
+  outcome: Outcome,
+  meter: Meter,
+  started: number,
+): void {
+  const ended = new Date();
+  const result: UsageOutcome = outcome.state;
+  // The ledger is bookkeeping: a line it cannot write (the repository
+  // deleted under the run) is logged, never the run's failure.
+  try {
+    recordUsage(app.db, {
+    runId: run.id,
+    repoId: run.repoId,
+    issueId: run.issueId,
+    agentId: run.actorId,
+    subscriptionId: meter.subscriptionId,
+    tokensIn: meter.tokensIn,
+    tokensOut: meter.tokensOut,
+    costUsd: outcome.costUsd ?? 0,
+    wallMs: ended.getTime() - started,
+    outcome: result,
+    at: ended.toISOString(),
+    });
+  } catch (error) {
+    log.warn("usage not recorded", { run: run.id, error: String(error) });
+  }
+}
+
 /** What a paused run hands back: when its task may start again, and the count. */
 export interface Pause {
   readonly resumeAt: string;
@@ -350,6 +396,7 @@ async function work(
   options: CrewOptions,
   write: (line: string) => void,
   signal: AbortSignal,
+  meter: Meter,
 ): Promise<Outcome> {
   const repo = getRepoById(app.db, run.repoId);
   const issue =
@@ -613,6 +660,7 @@ async function work(
       noteRunProgress(app.db, run.id, {
         subscriptionId: picked.subscription.id,
       });
+      meter.subscriptionId = picked.subscription.id;
     }
     const env: Record<string, string> = {
       ...gitAuth,
@@ -644,8 +692,9 @@ async function work(
       prompt: string,
       budgetUsd: number,
       resume: string | undefined,
-    ) =>
-      redactResult(await runClaude({
+    ): Promise<ClaudeOutcome> => {
+      const spent = redactResult(
+        await runClaude({
         binary: options.binary,
         cwd: dir,
         prompt,
@@ -659,7 +708,12 @@ async function work(
         log: write,
         signal,
         onSteer: (send) => steering.set(run.id, send),
-      }));
+        }),
+      );
+      meter.tokensIn += spent.tokensIn;
+      meter.tokensOut += spent.tokensOut;
+      return spent;
+    };
     write(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );

@@ -27,6 +27,12 @@ import {
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { tell, toldWords } from "../actions/tell.ts";
+import {
+  readUsage,
+  usageDays,
+  USAGE_DAYS_DEFAULT,
+  USAGE_DAYS_MAX,
+} from "../actions/usage.ts";
 import { ITEM_ID } from "../core/interactions.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
@@ -502,6 +508,37 @@ const TOOLS: readonly Tool[] = [
           ),
         ),
       );
+    },
+  },
+  {
+    name: "usage",
+    description:
+      "What the crew's runs on an app spent over the last days (1–90, default 7): tokens in and out, cost in US dollars, wall time and outcome, by subscription, agent and issue, with the newest runs. The same data as /api/v1/repos/:owner/:name/usage; refused unless you can write the app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        days: { type: "integer", minimum: 1, maximum: USAGE_DAYS_MAX },
+      },
+      required: ["repo"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const raw = args["days"];
+      const days =
+        raw === undefined
+          ? USAGE_DAYS_DEFAULT
+          : typeof raw === "number"
+            ? usageDays(String(raw))
+            : undefined;
+      if (days === undefined)
+        return bad("invalid_days", `days is a whole number from 1 to ${USAGE_DAYS_MAX}`);
+      const report = readUsage(ctx.app, user, repo, days);
+      return report.ok
+        ? good(report.value)
+        : bad("forbidden", "spend is for those who can write this app");
     },
   },
   {

@@ -192,6 +192,8 @@ describe("the provider's reset time", () => {
         result: "You've hit your weekly limit · resets Sep 26 at 9pm (UTC)",
         costUsd: 0,
         turns: 0,
+        tokensIn: 0,
+        tokensOut: 0,
         reason: "error_during_execution",
       }),
     ).toBe(true);

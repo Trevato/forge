@@ -716,12 +716,14 @@ describe("rule 6: a run token dies with the run, and only with the run", () => {
   });
 
   test("a token expiring one millisecond from now is refused once that instant passes", async () => {
-    const soon = new Date(Date.now() + 5).toISOString();
+    // Half a second, not a few milliseconds: on a loaded test shard the
+    // first verify could otherwise land after the instant and read red.
+    const soon = new Date(Date.now() + 500).toISOString();
     const minted = createToken(app.db, alice.id, "soon", "rw", {
       expiresAt: soon,
     });
     expect(verifyToken(app.db, minted.token).ok).toBe(true);
-    await Bun.sleep(30);
+    await Bun.sleep(600);
     expect(verifyToken(app.db, minted.token).ok).toBe(false);
   });
 });

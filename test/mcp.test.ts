@@ -156,6 +156,7 @@ describe("the forge over MCP", () => {
     expect(names).toEqual([
       "apps",
       "tell",
+      "share",
       "say",
       "now",
       "stop",
@@ -165,6 +166,7 @@ describe("the forge over MCP", () => {
       "take_updates",
       "converge",
       "map",
+      "usage",
       "link",
       "unlink",
       "plan",

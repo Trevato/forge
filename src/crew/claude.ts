@@ -46,6 +46,12 @@ export interface ClaudeOutcome {
   readonly result: string;
   readonly costUsd: number;
   readonly turns: number;
+  /**
+   * Tokens the model read (fresh input, cache writes and cache reads) and
+   * wrote, from the result's `usage`; 0 when the run reported none.
+   */
+  readonly tokensIn: number;
+  readonly tokensOut: number;
   /** `completed`, `max_budget_reached`, `timeout`, `cancelled`, `error`, `exit <n>`. */
   readonly reason: string;
 }
@@ -186,6 +192,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   let result = "";
   let costUsd = 0;
   let turns = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
   let reason = "";
   let ok = false;
   let sawResult = false;
@@ -220,6 +228,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       costUsd =
         typeof e["total_cost_usd"] === "number" ? e["total_cost_usd"] : 0;
       turns = typeof e["num_turns"] === "number" ? e["num_turns"] : 0;
+      ({ tokensIn, tokensOut } = tokensOf(e["usage"]));
       const terminal = e["terminal_reason"];
       // Claude Code names the budget ending twice (`error_max_budget_usd`
       // as the subtype, `budget_exhausted` as the terminal reason); the
@@ -293,7 +302,16 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   input.signal.removeEventListener("abort", onAbort);
 
   if (why !== undefined) {
-    return { ok: false, sessionId, result, costUsd, turns, reason: why };
+    return {
+      ok: false,
+      sessionId,
+      result,
+      costUsd,
+      turns,
+      tokensIn,
+      tokensOut,
+      reason: why,
+    };
   }
   if (!sawResult) {
     const tail = stderr.slice(-3).join(" | ");
@@ -303,10 +321,40 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       result: tail,
       costUsd,
       turns,
+      tokensIn,
+      tokensOut,
       reason: `exit ${code}`,
     };
   }
-  return { ok, sessionId, result, costUsd, turns, reason };
+  return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, reason };
+}
+
+/**
+ * The token counts of a result's `usage` object. Input is every token the
+ * model read: `input_tokens + cache_creation_input_tokens +
+ * cache_read_input_tokens`; output is `output_tokens`. A missing or odd
+ * field counts 0, never NaN.
+ */
+export function tokensOf(usage: unknown): {
+  tokensIn: number;
+  tokensOut: number;
+} {
+  if (typeof usage !== "object" || usage === null)
+    return { tokensIn: 0, tokensOut: 0 };
+  const u = usage as Record<string, unknown>;
+  const n = (key: string): number => {
+    const v = u[key];
+    return typeof v === "number" && Number.isFinite(v) && v > 0
+      ? Math.round(v)
+      : 0;
+  };
+  return {
+    tokensIn:
+      n("input_tokens") +
+      n("cache_creation_input_tokens") +
+      n("cache_read_input_tokens"),
+    tokensOut: n("output_tokens"),
+  };
 }
 
 /** The lines a person wants from an assistant turn: its words and its tool calls. */

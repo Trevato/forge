@@ -215,6 +215,7 @@ import {
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
 import { vitals } from "../kernel/vitals.ts";
+import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -3146,6 +3147,24 @@ export function apiRoutes(router: Router<Handler>): void {
     canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)
       ? (r: Run): Run => r
       : (r: Run): Run => ({ ...r, costUsd: 0, turns: 0 });
+
+  // What the crew's runs here spent over a window (`core/usage.ts`):
+  // tokens, cost, wall time and outcome, by subscription, agent and issue.
+  // Spend is the owner's own fact, so a reader who cannot write gets 403.
+  router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const days = usageDays(ctx.url.searchParams.get("days"));
+    if (days === undefined)
+      return apiError(
+        "invalid_days",
+        422,
+        `days is a whole number from 1 to ${USAGE_DAYS_MAX}`,
+      );
+    const report = readUsage(ctx.app, ctx.auth.user, repo, days);
+    if (!report.ok) return forbidden();
+    return json(report.value);
+  });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
     const repo = loadRepo(ctx);
