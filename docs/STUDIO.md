@@ -93,11 +93,23 @@ current about deployments: a deploy run for the app being viewed refetches
 the head card and previews list in place, so a change serving in its
 preview shows up without a reload. **Redeploy** and **Stop** therefore stay
 where they were pressed — the app's page, or a change's — rather than
-leaving for dev's App page or the deploy's run: the card refreshing in
-place is what shows the result, and the flash says what was done. The page
-to return to is the referer, and only when it is this forge's own origin
-(`safeBack`, `src/http/context.ts`), never a form field; with no referer it
-is the app's own studio page. Dev mode keeps its destinations.
+leaving for the deploy's run: the card refreshing in place is what shows
+the result, and the flash says what was done. The page to return to is the
+referer, and only when it is this forge's own origin (`safeBack`,
+`src/http/context.ts`), never a form field; with no referer it is the
+repository's home. Dev mode's Redeploy still hands over to the run.
+
+This page is the app's only page. Dev's App page folded into it (#395):
+`/:owner/:name/app` answers with a redirect here (`appPage`,
+`src/web/pages/apps.ts`), adding `?mode=studio` for a dev browser — dev's
+repo home is the code — and the same not-found as ever for anyone who
+cannot see the app. What that page had and this one lacked were the
+environment controls, so they moved: each row in the previews list carries
+its own **Redeploy** and **Stop** for a writer, beside its state, with its
+host still the link that opens it; and an admin's footer carries
+_Environment settings_, the way to the app's variables, hostname, access
+and domains (`/:owner/:name/settings/app`). The App tab and the app strip's
+button in dev are links to this page.
 
 **How this app runs itself** (`/:owner/:name/settings`, in studio, on an
 app) is that one place: the crew, each with their role in the studio's
@@ -152,7 +164,7 @@ app's `forge.json` declares no `tty` (`docs/APPS.md`, _A terminal for
 every app_). A pull's own preview card shows its own command the same
 way, since a preview answers to a different login than production's. A
 reader sees none of this. Both surfaces call the one function that knows
-the fact, `terminalFor` (`src/actions/apps.ts`), so the dev App page and
+the fact, `terminalFor` (`src/actions/apps.ts`), so the pull's card and
 the studio page never carry two ideas of what the command is.
 
 **The box** is the front door. A sentence becomes an issue — the first line
@@ -306,11 +318,10 @@ a _shelf row_ (`src/web/studio/shelf.ts`): one function turns repositories
 into rows, from grouped reads, so every page that lists apps lists them the
 same way and the home only decides the card around them. **New app** is the
 same form either way (`/apps/new`); once the sentence becomes a repository
-it lands on the app's own page, `/:owner/:name/app` (`appPage`,
-`src/web/pages/apps.ts`) — not this shelf, and not the studio's five-word
-home for it. Its first paint carries the flash saying where it's starting,
-each environment as it comes up, the hostname and terminal, the crew, and
-its recent runs. `/?mode=dev` is the repositories list, and — like
+it lands on the repository's home, `/:owner/:name` — in the studio the
+app's own page, not this shelf; in dev the code, wearing the app strip.
+Its first paint carries the flash saying where it's starting.
+`/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 

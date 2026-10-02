@@ -193,7 +193,7 @@ describe("apps, runs and the crew on the web", () => {
       },
     });
     expect(created.status).toBe(303);
-    expect(created.headers.get("location")).toBe("/alice/hello/app");
+    expect(created.headers.get("location")).toBe("/alice/hello");
     expect(flashOf(created)).toContain(
       `hello is starting at http://hello.${DOMAIN}:${servers.port}`,
     );
@@ -212,7 +212,7 @@ describe("apps, runs and the crew on the web", () => {
     expect(plain.status).toBe(303);
     const plainHome = await bodyOf(alice, "/alice/plain");
     expect(plainHome).not.toContain('class="app-strip"');
-    expect(plainHome).not.toContain('href="/alice/plain/app"');
+    expect(plainHome).not.toContain('href="/alice/plain?mode=studio"');
   });
 
   test("a refused New app keeps what was typed", async () => {
@@ -243,18 +243,24 @@ describe("apps, runs and the crew on the web", () => {
 
   // ---- the app page and the runs ----
 
-  test("the App page shows the environments, the runs, and the buttons a writer gets", async () => {
+  test("dev's old App URL lands on the studio's app page, which has the environment controls a writer gets", async () => {
     const runs = await runsOf(hello);
     expect(runs.length).toBeGreaterThan(0);
-    const html = await bodyOf(alice, "/alice/hello/app");
-    expect(html).toContain("production");
-    expect(html).toContain("Recent runs");
-    expect(html).toContain("Deploy production");
+    // Dev mode's repo home is the code, so the redirect switches over.
+    const old = await web(alice, "/alice/hello/app");
+    expect(old.status).toBe(302);
+    expect(old.headers.get("location")).toBe("/alice/hello?mode=studio");
+    // The code page's strip and the App tab are the same way in.
+    expect(await bodyOf(alice, "/alice/hello")).toContain(
+      'href="/alice/hello?mode=studio"',
+    );
+    // (Its Open link waits for production to be running, #118 — the
+    // dashboard's test above holds that link; this one, the controls.)
+    const html = await bodyOf(alice, "/alice/hello?mode=studio");
     expect(html).toContain('action="/alice/hello/app/production/redeploy"');
-    expect(html).toContain('href="/alice/hello/app/production/open"');
     expect(html).toContain('href="/alice/hello/settings/app"');
     // A reader sees no buttons; bob can read the public repo but not write.
-    const readers = await bodyOf(bob, "/alice/hello/app");
+    const readers = await bodyOf(bob, "/alice/hello?mode=studio");
     expect(readers).not.toContain("/redeploy");
     expect(readers).not.toContain('href="/alice/hello/settings/app"');
   });
@@ -268,7 +274,7 @@ describe("apps, runs and the crew on the web", () => {
       if (runs.every((run) => isTerminal(run.state))) break;
       await Bun.sleep(50);
     }
-    const html = await bodyOf(alice, "/alice/hello/app");
+    const html = await bodyOf(alice, "/alice/hello?mode=studio");
     expect(html).toContain('id="live"');
     expect(html).toContain('data-repo="/alice/hello"');
 
@@ -514,10 +520,10 @@ describe("apps, runs and the crew on the web", () => {
       form: { slug: "plain", access: "private", previewData: "empty" },
     });
     expect(enabled.status).toBe(303);
-    expect(enabled.headers.get("location")).toBe("/alice/plain/app");
+    expect(enabled.headers.get("location")).toBe("/alice/plain?mode=studio");
     expect(getAppByRepo(app.db, plain.id)?.previewData).toBe("empty");
     expect(await bodyOf(alice, "/alice/plain")).toContain(
-      'href="/alice/plain/app"',
+      'href="/alice/plain?mode=studio"',
     );
 
     // Disabling goes through the confirm page, which words itself.
@@ -554,7 +560,7 @@ describe("apps, runs and the crew on the web", () => {
         expect(`${path} → ${response.status}`).toBe(`${path} → 404`);
       }
     }
-    expect((await web(alice, "/alice/secret/app")).status).toBe(200);
+    expect((await web(alice, "/alice/secret/app")).status).toBe(302);
   });
 
   // ---- the crew ----

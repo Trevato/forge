@@ -84,7 +84,9 @@ function previewBadge(env: EnvStatus | undefined): Html {
 /**
  * One open pull's preview, as one row: its host is the click, its state is
  * the badge, and a check still running or a check that failed says so right
- * there — the row never hides a preview that is serving.
+ * there — the row never hides a preview that is serving. A writer also gets
+ * the preview's Redeploy and Stop beside the badge; the row then holds its
+ * own controls, so it is no longer one link — the host is.
  */
 function previewRow(
   base: string,
@@ -92,6 +94,7 @@ function previewRow(
   record: AppRecord,
   pull: Pull,
   env: EnvStatus | undefined,
+  writer: boolean,
 ): Html {
   const href =
     runtime === undefined
@@ -112,6 +115,17 @@ function previewRow(
     const dataNote = previewDataNote(record.previewData, pull.createdAt);
     if (dataNote !== null) bits.push(dataNote);
   }
+  const meta = bits.reduce((a, b) => html`${a} · ${b}`);
+  if (writer && env !== undefined)
+    return row({
+      lead: icon("rocket"),
+      title:
+        host === undefined || href === undefined
+          ? `#${pull.number} ${pull.title}`
+          : html`<a href="${href}" class="mono">${host}</a>`,
+      meta,
+      trail: html`${previewBadge(env)} ${envActions(base, env, writer)}`,
+    });
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
     lead: icon("rocket"),
@@ -119,7 +133,7 @@ function previewRow(
       host === undefined
         ? `#${pull.number} ${pull.title}`
         : html`<span class="mono">${host}</span>`,
-    meta: bits.reduce((a, b) => html`${a} · ${b}`),
+    meta,
     trail: previewBadge(env),
   });
 }
@@ -136,6 +150,7 @@ function previewsPanel(
   record: AppRecord,
   openPulls: readonly Pull[],
   envs: readonly EnvStatus[],
+  writer: boolean,
 ): Html | null {
   if (openPulls.length === 0) return null;
   const byPull = new Map(
@@ -145,7 +160,7 @@ function previewsPanel(
   );
   return listCard(
     openPulls.map((p) =>
-      previewRow(base, runtime, record, p, byPull.get(p.number)),
+      previewRow(base, runtime, record, p, byPull.get(p.number), writer),
     ),
     {
       head: html`${icon("rocket")}
@@ -248,13 +263,13 @@ export function appPanels(
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
   const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
-  const previews = previewsPanel(base, runtime, record, openPulls, envs);
+  const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
+  const previews = previewsPanel(base, runtime, record, openPulls, envs, writer);
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
-  const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
   const tail = productionTail(ctx, repo, production, writer);
-  // The state in one word, and under it the same facts the App page shows —
-  // why it is not up, and the deploy whose log says the rest.
+  // The state in one word, and under it the facts — why it is not up, and
+  // the deploy whose log says the rest.
   const live = envPhrase(production);
   const head = html`<div class="page-head studio-head">
     <div class="stack stack-tight">

@@ -1700,7 +1700,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
     expect(html).toContain("#1 is assigned to bot.");
   });
 
-  test("in dev mode, POST /apps/new redirects to dev's app page, chosen from ctx.mode", async () => {
+  test("in dev mode, POST /apps/new redirects to the repository's home, its strip carrying the URL", async () => {
     const submitted = await fetch(`${base}/apps/new`, {
       method: "POST",
       headers: { cookie: `${cookie}; forge_mode=dev`, origin: base },
@@ -1714,7 +1714,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
       redirect: "manual",
     });
     expect(submitted.status).toBe(303);
-    expect(submitted.headers.get("location")).toBe("/priya/tracker/app");
+    expect(submitted.headers.get("location")).toBe("/priya/tracker");
     const flash = (submitted.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(flash).toStartWith("forge_flash=");
 

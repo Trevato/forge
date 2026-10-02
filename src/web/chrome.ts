@@ -237,11 +237,12 @@ export function scopeHeader(
       });
   }
   // A repository that runs gets an App tab; one that does not has no such
-  // page, and a tab that 404s is a lie about what is there.
+  // page, and a tab that 404s is a lie about what is there. The app's page
+  // is the studio's, so in dev the tab is the link that switches over.
   if (repo !== undefined && isApp && !studio)
     items.push({
       label: "App",
-      href: `${base}/app`,
+      href: `${base}?mode=studio`,
       icon: "rocket",
       current: active === "app",
       shortcut: "g a",

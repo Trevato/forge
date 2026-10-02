@@ -1,9 +1,12 @@
 /**
  * The app in the studio: one page per app, and the front door a person acts
  * from — the box they tell the crew in, what asks them, and Now, one row per
- * thing the crew has in hand in the studio's own words. Money, the crew
- * roster, autonomy and the decision ledger are the owner's facts and render
- * only for a viewer who can write here; a stranger sees the app.
+ * thing the crew has in hand in the studio's own words — with every
+ * environment's controls: production's and each preview's Redeploy and Stop
+ * (`previews.ts`), and the way to the app's environment settings. Dev's old
+ * App URL (`GET /:owner/:name/app`) lands here. Money, the crew roster,
+ * autonomy and the decision ledger are the owner's facts and render only
+ * for a viewer who can write here; a stranger sees the app.
  */
 
 import { audit } from "../../contract/audit.ts";
@@ -13,7 +16,7 @@ import { listCrewRoles } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
 import { listPulls, mergedPullCount } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import {
   agentRunTotals,
   previewLatency,
@@ -406,10 +409,15 @@ export async function studioApp(
           extra: "about",
         },
       );
+  // The rest of the app's environment — its variables, hostname, access and
+  // domains — is the admin's, on the app's settings page.
   const more = html`<p class="muted small">
     <a href="${base}/map">The map</a> ·
     <a href="${tellsHref(base)}">Everything told</a> ·
-    <a href="${changesHref(base)}">Every change</a>
+    <a href="${changesHref(base)}">Every change</a>${when(
+      canAdmin(db, repo, ctx.auth.user),
+      () => html` · <a href="${base}/settings/app">Environment settings</a>`,
+    )}
   </p>`;
 
   const body = html`${repoHeader(ctx, repo, "code", {

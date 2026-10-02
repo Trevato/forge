@@ -86,6 +86,7 @@ import {
   settingsLayout,
 } from "../chrome.ts";
 import { studioCrewSettings } from "../studio/crew.ts";
+import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
@@ -462,7 +463,7 @@ function appSettingsView(
           })}
           ${when(record !== undefined, () =>
             btn("Environments", {
-              href: `${base}/app`,
+              href: appHref(ctx, repo),
               variant: "ghost",
               icon: "rocket",
             }),
@@ -758,7 +759,7 @@ export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
   return flashTo(
     ctx,
     record === undefined
-      ? `${repoBase(repo)}/app`
+      ? appHref(ctx, repo)
       : `${repoBase(repo)}/settings/app`,
     {
       message:

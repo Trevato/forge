@@ -7304,9 +7304,9 @@ describe("every studio page's headings form one outline", () => {
  * to leave the studio — Stop for dev's App page, Redeploy for the deploy's
  * run page. Both now come back to the page the form was pressed on, because
  * the card refreshes itself on the deploy event and staying put shows the
- * result. Dev mode keeps its own destinations, and the page is taken from
- * the referer only when it is this forge's own (`safeBack`), never from the
- * form.
+ * result. Dev mode's Redeploy still hands over to the run, and the page is
+ * taken from the referer only when it is this forge's own (`safeBack`),
+ * never from the form.
  */
 describe("the studio's Stop and Redeploy come back to the page they were pressed on", () => {
   let dataDir: string;
@@ -7511,10 +7511,10 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     ).toBeGreaterThan(0);
   });
 
-  test("dev mode keeps its destinations: Stop to the App page, Redeploy to the run", async () => {
-    const stopped = await press("stop", "dev", `${base}/alice/notes`);
+  test("dev mode: Stop comes back to the page it was pressed on, Redeploy goes to the run", async () => {
+    const stopped = await press("stop", "dev", `${base}/alice/notes/pulls/1`);
     expect(stopped.status).toBe(303);
-    expect(stopped.headers.get("location")).toBe("/alice/notes/app");
+    expect(stopped.headers.get("location")).toBe("/alice/notes/pulls/1");
     expect(flashOf(stopped)).toContain("Stopped production.");
 
     const queued = await press("redeploy", "dev", `${base}/alice/notes`);
@@ -7522,6 +7522,88 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 1 })[0];
     expect(queued.headers.get("location")).toBe(`/alice/notes/runs/${run?.id}`);
     expect(flashOf(queued)).toContain("Redeploying production.");
+  });
+
+  // Issue #395: dev's App page folded into this one. Its URL keeps
+  // answering — a redirect to the studio app page — and the environment
+  // controls it carried (each preview's Redeploy and Stop, the way to the
+  // environment settings) are drawn here instead.
+  test("GET /:owner/:name/app redirects to the studio app page, switching a dev browser over", async () => {
+    const asStudio = await fetch(`${base}/alice/notes/app`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+    expect(asStudio.status).toBe(302);
+    expect(asStudio.headers.get("location")).toBe("/alice/notes");
+
+    const asDev = await fetch(`${base}/alice/notes/app`, {
+      headers: { cookie: `${cookie}; forge_mode=dev` },
+      redirect: "manual",
+    });
+    expect(asDev.status).toBe(302);
+    expect(asDev.headers.get("location")).toBe("/alice/notes?mode=studio");
+    const landed = await fetch(`${base}/alice/notes?mode=studio`, {
+      headers: { cookie: `${cookie}; forge_mode=dev` },
+      redirect: "manual",
+    });
+    expect(landed.status).toBe(200);
+    expect(await landed.text()).toContain('id="app-head"');
+
+    // A public app's page is anyone's; the redirect is too.
+    const anonymous = await fetch(`${base}/alice/notes/app`, {
+      redirect: "manual",
+    });
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get("location")).toBe("/alice/notes");
+  });
+
+  test("GET /:owner/:name/app is still not found for a repository that is not an app, or not there", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const plain = await createRepo(app, alice, {
+      name: "plain-notes",
+      visibility: "public",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    for (const path of ["/alice/plain-notes/app", "/alice/nowhere/app"]) {
+      const response = await fetch(`${base}${path}`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      });
+      expect(`${path} → ${response.status}`).toBe(`${path} → 404`);
+    }
+  });
+
+  test("the studio app page carries each preview's Redeploy and Stop, and the environment settings, for a writer only", async () => {
+    const record = getAppByRepo(app.db, repo.id)!;
+    const env = previewEnv(1);
+    (
+      runtime as unknown as { envs: Map<string, Record<string, unknown>> }
+    ).envs.set(`${record.id}/${env}`, {
+      app: record,
+      env,
+      chain: Promise.resolve(),
+      restarts: [],
+      live: {
+        commitOid: "b".repeat(40),
+        handle: { port: 4322, stop: async () => {} },
+        runId: "fake-preview",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+    const owner = await studioPage();
+    expect(owner).toContain(`action="/alice/notes/app/${env}/redeploy"`);
+    expect(owner).toContain(`action="/alice/notes/app/${env}/stop"`);
+    expect(owner).toContain(`href="/alice/notes/app/${env}/open"`);
+    expect(owner).toContain('href="/alice/notes/settings/app"');
+
+    const stranger = await (
+      await fetch(`${base}/alice/notes`, { redirect: "manual" })
+    ).text();
+    expect(stranger).toContain(`href="/alice/notes/app/${env}/open"`);
+    expect(stranger).not.toContain("/redeploy");
+    expect(stranger).not.toContain("/stop");
+    expect(stranger).not.toContain('href="/alice/notes/settings/app"');
   });
 });
 

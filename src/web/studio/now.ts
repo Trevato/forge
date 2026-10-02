@@ -212,7 +212,7 @@ export async function nowCard(
     const number = envPull(env.env);
     return [
       row({
-        href: `${base}/app`,
+        href: `${base}#app-head`,
         nav: true,
         lead: icon(number === undefined ? "rocket" : "pull"),
         title: number === undefined ? "production" : `preview of #${number}`,
