@@ -3095,6 +3095,122 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(serving).toContain(">live<");
     expect(serving).toContain(link);
   });
+  test("a preview row says how fast it got there in envFacts' own words, links its deploy run, and keeps its link and sentence while deploying or after its tests failed", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/fast",
+      base: repo.defaultBranch,
+      message: "Add F",
+      files: [{ path: "F.md", content: "f\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add F",
+      body: "",
+      baseBranch: repo.defaultBranch,
+      headBranch: "feature/fast",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const env = previewEnv(pull.number);
+    const open = `href="/alice/vault/app/${env}/open"`;
+    const label = `#${pull.number} Add F`;
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    const runLink = `href="/alice/vault/runs/${deployRun.id}"`;
+    // This pull's own row out of the previews panel, so nothing the head
+    // card or another pull's row says can pass for it.
+    const rowOf = (text: string): string => {
+      const panel = text.slice(text.indexOf('id="app-previews"'));
+      const at = panel.indexOf(label);
+      expect(at).toBeGreaterThan(-1);
+      return panel.slice(panel.lastIndexOf("<li>", at), panel.indexOf("</li>", at));
+    };
+
+    claimRun(app.db, deployRun.id);
+    putEnv(env, {
+      deploying: {
+        run: { id: deployRun.id, commitOid: pull.headOid },
+        abort: new AbortController(),
+      },
+    });
+    const deploying = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(deploying).toContain(open);
+    expect(deploying).toContain(runLink);
+    expect(deploying).toContain("deploy in progress");
+    expect(deploying).not.toContain("after the push");
+    expect(deploying).not.toContain("0.0s");
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const servingAt = new Date(Date.parse(createdAt) + 3_400).toISOString();
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        manifest: { tty: null },
+      },
+    });
+    const live = rowOf(await (await get("/alice/vault/app/state", owner)).text());
+    expect(live).toContain(open);
+    expect(live).toContain("live 3.4s after the push");
+    expect(live).toContain(pull.headOid.slice(0, 7));
+    expect(live).toContain(runLink);
+    expect(live).toContain(">live<");
+    // The live client keys its announcement on the meta line's first words.
+    expect(live).toMatch(new RegExp(`class="row-meta">#${pull.number} Add F ·`));
+    // The page's first paint draws the same row.
+    expect(await (await get("/alice/vault", owner)).text()).toContain(
+      "live 3.4s after the push",
+    );
+
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        testsFailed: "2 failing",
+        manifest: { tty: null },
+      },
+    });
+    const red = rowOf(await (await get("/alice/vault/app/state", owner)).text());
+    expect(red).toContain(open);
+    expect(red).toContain(runLink);
+    expect(red).toContain("serving · tests failed: 2 failing");
+    expect(red).toContain("live 3.4s after the push");
+
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        manifest: { tty: null },
+      },
+    });
+    const unmeasured = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(unmeasured).toContain(open);
+    expect(unmeasured).not.toContain("after the");
+    expect(unmeasured).not.toContain("0.0s");
+  });
 });
 
 /**

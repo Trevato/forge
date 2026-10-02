@@ -355,6 +355,43 @@ export interface EnvFactsOptions {
 }
 
 /**
+ * An environment's one line of facts, piece by piece: the commit it runs,
+ * how fast it came up (`live 3.4s after the push`, only once it serves),
+ * how long it has been up, and a link to the deploy that produced it. Each
+ * piece is empty when there is nothing to say. `envFacts` sets them in a
+ * card; `envLine` strings them into a list row — the same words either way.
+ */
+function envLinePieces(base: string, env: EnvStatus): readonly Html[] {
+  return [
+    when(env.commitOid !== "", () =>
+      sha(env.commitOid, `${base}/commit/${env.commitOid}`),
+    ),
+    when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`),
+    when(env.since, (since) => html`<span>up ${time(since)}</span>`),
+    when(
+      env.runId,
+      (id) =>
+        html`<a href="${base}/runs/${id}"
+            >${env.state === "deploying"
+              ? "deploy in progress"
+              : env.note !== undefined
+                ? "verifying tests"
+                : "last deploy"}</a
+          >`,
+    ),
+  ];
+}
+
+/**
+ * `envFacts`' line as the non-empty pieces alone, for a row's meta to join
+ * with its own separator: a row is one line, so it takes the facts without
+ * the card's block box around them.
+ */
+export function envLine(base: string, env: EnvStatus): Html[] {
+  return envLinePieces(base, env).filter((p) => p.text !== "");
+}
+
+/**
  * What an environment is doing, as facts: the commit it runs, how fast it
  * came up, how long it has been up, a link to the deploy that produced it,
  * and — when the deployment has words of its own — its note and its error.
@@ -367,23 +404,12 @@ export function envFacts(
   env: EnvStatus,
   o: EnvFactsOptions = {},
 ): Html {
+  const [commit, served, up, deploy] = envLinePieces(base, env);
   return html`<div class="env-facts">
-      ${when(env.commitOid !== "", () =>
-        sha(env.commitOid, `${base}/commit/${env.commitOid}`),
-      )}
-      ${when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`)}
-      ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
-      ${when(
-        env.runId,
-        (id) =>
-          html`<a href="${base}/runs/${id}"
-            >${env.state === "deploying"
-              ? "deploy in progress"
-              : env.note !== undefined
-                ? "verifying tests"
-                : "last deploy"}</a
-          >`,
-      )}
+      ${commit}
+      ${served}
+      ${up}
+      ${deploy}
     </div>
     ${when(
       o.url === true,

@@ -29,13 +29,13 @@ import {
   dormantNote,
   envActions,
   envFacts,
+  envLine,
   envPhrase,
   icon,
   listCard,
   previewDataNote,
   row,
   terminalLine,
-  time,
 } from "../ui.ts";
 import { lookNow } from "../pages/looks.ts";
 import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
@@ -83,10 +83,17 @@ function previewBadge(env: EnvStatus | undefined): Html {
 
 /**
  * One open pull's preview, as one row: its host is the click, its state is
- * the badge, and a check still running or a check that failed says so right
- * there — the row never hides a preview that is serving. A writer also gets
- * the preview's Redeploy and Stop beside the badge; the row then holds its
- * own controls, so it is no longer one link — the host is.
+ * the badge, and its meta line says what the change page's Preview card
+ * says, in `envLine`'s words — commit, `live Ns after the push`, `up …`,
+ * the deploy run — then any sentence the deployment has of its own. A check
+ * still running or a check that failed says so right there; the row never
+ * hides a preview that is serving.
+ *
+ * Once there is an environment its facts carry links of their own, so the
+ * row is no longer one link — the host is, and `j`/`k` still land on the
+ * row and open it. A writer also gets the preview's Redeploy and Stop
+ * beside the badge. The meta line always starts with `#N title`: the live
+ * client (`live.ts`) keys a row's announcement on it.
  */
 function previewRow(
   base: string,
@@ -105,8 +112,7 @@ function previewRow(
       ? undefined
       : runtime.urlFor(record, previewEnv(pull.number)).replace(/^https?:\/\//, "");
   const bits: Html[] = [html`#${pull.number} ${pull.title}`];
-  if (env?.commitOid) bits.push(html`${env.commitOid.slice(0, 7)}`);
-  if (env?.since) bits.push(html`up ${time(env.since)}`);
+  if (env !== undefined) bits.push(...envLine(base, env));
   const say = env?.error ?? env?.failedDeploy?.error ?? env?.note;
   if (say) bits.push(html`${say}`);
   const asleep = env === undefined ? null : dormantNote(env);
@@ -116,15 +122,18 @@ function previewRow(
     if (dataNote !== null) bits.push(dataNote);
   }
   const meta = bits.reduce((a, b) => html`${a} · ${b}`);
-  if (writer && env !== undefined)
+  if (env !== undefined)
     return row({
+      ...(href === undefined ? {} : { nav: true }),
       lead: icon("rocket"),
       title:
         host === undefined || href === undefined
           ? `#${pull.number} ${pull.title}`
           : html`<a href="${href}" class="mono">${host}</a>`,
       meta,
-      trail: html`${previewBadge(env)} ${envActions(base, env, writer)}`,
+      trail: writer
+        ? html`${previewBadge(env)} ${envActions(base, env, writer)}`
+        : previewBadge(env),
     });
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
