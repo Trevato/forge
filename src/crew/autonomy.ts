@@ -76,6 +76,7 @@ import {
 } from "./dispatch.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { grantedAccounts } from "../core/subscriptions.ts";
+import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
@@ -842,6 +843,36 @@ export function bringUpToDate(
   return agent.user.username;
 }
 
+/** The heads already sent to the reviewer, by pull: one pass per head. */
+const sentToReview = new Map<string, string>();
+
+/**
+ * Whether the review gate lets this green head land. True with no reviewer
+ * on the crew, or with an approval on this head and no change requested.
+ * Otherwise the reviewer is queued once for the head and the pull waits.
+ */
+async function reviewed(app: App, repo: Repo, pull: Pull): Promise<boolean> {
+  const reviewer = listCrewRoles(app.db, repo.id).find(
+    (c) => c.role === "reviewer",
+  )?.agent;
+  if (reviewer === undefined) return true;
+  const seen = reviewSummary(app.db, pull.id, pull.headOid);
+  if (seen.changesRequested > 0) return false;
+  if (seen.approvals > 0) return true;
+  if (sentToReview.get(pull.id) === pull.headOid) return false;
+  if (activeRunFor(app.db, "agent", pull.id) !== undefined) return false;
+  const issue = getIssueById(app.db, pull.id);
+  if (!issue) return false;
+  if (queueAgentRun(app, repo, issue, reviewer, "review") !== undefined) {
+    sentToReview.set(pull.id, pull.headOid);
+    log.info("green; queued for review", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      pull: pull.number,
+    });
+  }
+  return false;
+}
+
 /**
  * Ship on green. An open pull whose head has a passing check and a passing
  * deploy, and nothing failed, lands as the person who turned autonomy on —
@@ -921,10 +952,11 @@ export async function landIfGreen(
     }
     return false;
   }
-  // Ship, or look first: the decider reads the pull against the direction.
-  // A rule ships everything green; the decider is what makes "autonomous"
-  // mean judgement rather than a conveyor belt — and the look is the crew's
-  // own reviewer, not a person. Without a reviewer, it lands.
+  // One gate for every pull, whoever wrote it: when the crew has a
+  // reviewer, a green head is queued for review and waits for an approval
+  // on that very head (a person's counts the same). A push is a new head,
+  // so it starts over. Without a reviewer the pull lands as it always has.
+  if (!(await reviewed(app, repo, pull))) return false;
   // Green and clear of the wall lands. An autonomous repository does not
   // wait on a person; the ledger keeps the landing as the rule it is, once
   // per head, so the week's numbers still add up.

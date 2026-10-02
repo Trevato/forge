@@ -347,17 +347,16 @@ function route(app: App, event: ForgeEvent): void {
         event.kind === "pull.reviewed" &&
         event.payload["state"] === "approved"
       ) {
-        // The reviewer approved: the pull lands now, not at the next sweep.
-        if (reviewerVerdict) {
-          const pull = getPull(app.db, repo.id, number);
-          if (pull)
-            landIfGreen(app, repo, pull).catch((error) =>
-              log.warn("could not land after the review", {
-                pull: number,
-                error: String(error),
-              }),
-            );
-        }
+        // An approval, a person's or the reviewer's: the pull lands now,
+        // not at the next sweep.
+        const pull = getPull(app.db, repo.id, number);
+        if (pull)
+          landIfGreen(app, repo, pull).catch((error) =>
+            log.warn("could not land after the review", {
+              pull: number,
+              error: String(error),
+            }),
+          );
         return;
       }
       const agent = agentFor(app, issue);
