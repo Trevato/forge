@@ -19,6 +19,7 @@ import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
+import { releaseOrphans } from "./core/run_secret.ts";
 import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
@@ -253,15 +254,15 @@ if (ssh)
 // by renewing their leases, so only a lapsed lease is a death. Deploys and
 // checks are failed; agent runs are the crew's to queue again, unless there
 // is no crew here to do it.
-const leaseTimer = setInterval(
-  () =>
-    failAbandonedRuns(
-      app.db,
-      STALE_AFTER_MS,
-      crew === undefined ? undefined : CHECK_KINDS,
-    ),
-  30_000,
-);
+const leaseTimer = setInterval(() => {
+  failAbandonedRuns(
+    app.db,
+    STALE_AFTER_MS,
+    crew === undefined ? undefined : CHECK_KINDS,
+  );
+  // A grant whose run is no longer running is a crash's leftover: close it.
+  releaseOrphans(app.db);
+}, 30_000);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

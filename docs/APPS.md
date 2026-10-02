@@ -265,6 +265,25 @@ and `lastReadAt`. The only read path is `resolveSecrets` in
 sealed under AAD `secret:<scope>:<name>`. Like every sealed row, they sit
 beside the key in the data directory and so in a snapshot.
 
+**A crew run's secrets.** An agent's brief, or an issue body written by someone
+with write access, declares what a run may hold in front-matter at the top:
+
+    ---
+    secrets: CLOUDFLARE_API_TOKEN@api.cloudflare.com, TF_BUCKET_KEY
+    ---
+
+Only declared names are resolved (`crew/grant.ts`); malformed names and names
+that would shadow the run's environment (`FORGE_*`, `GIT_*`, `PATH`, …) are
+refused in the run's log. Values go into the run's env beside `FORGE_TOKEN`,
+and `@host` widens the shell sandbox's egress for that run only. From the
+moment they are opened the values are redacted (plain, base64, URL-encoded)
+from the run log, the agent's last message and every event payload; before
+the forge commits for the agent it scrubs them from the tree, and a branch
+whose commits hold one is not pushed (`crew/leak.ts`). The names held are
+recorded in `run_secret` and shown on the run page; the grant is dropped when
+the run ends, and a sweep closes a crash's. A model that pushes by itself
+cannot be stopped from pushing a value it transformed beyond those encodings.
+
 A process reads its environment once, at start, so setting or removing a
 variable redeploys what reads it, at its current commit, and nothing else:
 a variable for everywhere redeploys production and every open preview, one

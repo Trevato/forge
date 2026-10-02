@@ -19,6 +19,61 @@ export function redactSecrets(text: string): string {
   return text.replace(SECRETS, "[redacted]");
 }
 
+/**
+ * Values that are secret because the forge handed them out, not because
+ * of their shape: a run's granted credentials. Held under a key (the run's
+ * id) for as long as the grant lives; every log line and event payload
+ * passes through `redactHeld` while any are. A value is also matched in
+ * its base64 and URL-encoded forms, which is how a tool most often echoes it.
+ */
+const held = new Map<string, string[]>();
+let heldForms: string[] = [];
+const MIN_HELD = 4;
+
+export const formsOf = (value: string): string[] => [
+  value,
+  Buffer.from(value).toString("base64").replace(/=+$/, ""),
+  encodeURIComponent(value),
+];
+
+const rebuild = (): void => {
+  heldForms = [...new Set([...held.values()].flat())].sort(
+    (a, b) => b.length - a.length,
+  );
+};
+
+/** Start redacting these values everywhere, until `releaseValues(key)`. */
+export function holdValues(key: string, values: readonly string[]): void {
+  held.set(
+    key,
+    values.filter((v) => v.length >= MIN_HELD).flatMap(formsOf),
+  );
+  rebuild();
+}
+
+export function releaseValues(key: string): void {
+  if (held.delete(key)) rebuild();
+}
+
+/** Replace every held value in `text` with a marker. */
+export function redactValues(
+  text: string,
+  values: readonly string[] = heldForms,
+): string {
+  let out = text;
+  for (const value of values)
+    if (value !== "" && out.includes(value)) out = out.split(value).join("[redacted]");
+  return out;
+}
+
+/** Credential shapes and every held value. */
+export function redactHeld(text: string): string {
+  return redactValues(redactSecrets(text));
+}
+
+/** Whether any value is held: the cheap test before walking a payload. */
+export const anyHeld = (): boolean => heldForms.length > 0;
+
 export interface Log {
   debug(message: string, fields?: LogFields): void;
   info(message: string, fields?: LogFields): void;
@@ -114,7 +169,7 @@ export function createLog(scope: string): Log {
         line += ` ${key}=${/[\s"=]/.test(text) ? JSON.stringify(text) : text}`;
       }
     }
-    line = redactSecrets(line);
+    line = redactHeld(line);
     if (level === "error") {
       const body = line.slice(line.indexOf(`[${scope}] `) + scope.length + 3);
       record(scope, body, Date.now());

@@ -19,6 +19,7 @@ import {
 } from "../../actions/runs.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { listHeldSecrets } from "../../core/run_secret.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -366,6 +367,7 @@ export async function runPage(ctx: Ctx): Promise<Response> {
   const duration = durationText(run);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
   const who = actor?.username ?? "agent";
+  const held = listHeldSecrets(ctx.app.db, run.id);
 
   const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
@@ -423,6 +425,17 @@ export async function runPage(ctx: Ctx): Promise<Response> {
       </div>
     </div>
     <p class="run-summary" id="run-summary">${run.summary}</p>
+    ${when(
+      held.length > 0,
+      () =>
+        html`<p class="muted small" id="run-secrets">
+          Secrets held: ${held.map((h) => h.name).join(", ")}${held.every(
+            (h) => h.releasedAt !== null,
+          )
+            ? " (released)"
+            : ""}. Values are never shown.
+        </p>`,
+    )}
     ${when(
       writer && unfinished && run.kind === "agent" && issue === undefined,
       () =>

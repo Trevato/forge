@@ -153,7 +153,21 @@ export function resolveSecrets(
   names: readonly string[],
   who: SecretReader = {},
 ): Record<string, string> {
-  const out: Record<string, string> = {};
+  const scoped = resolveScoped(db, dataDir, bus, names, who);
+  return Object.fromEntries(
+    Object.entries(scoped).map(([name, s]) => [name, s.value]),
+  );
+}
+
+/** `resolveSecrets`, with the scope each value was found at. */
+export function resolveScoped(
+  db: Database,
+  dataDir: string,
+  bus: EventBus,
+  names: readonly string[],
+  who: SecretReader = {},
+): Record<string, { value: string; scope: SecretScope }> {
+  const out: Record<string, { value: string; scope: SecretScope }> = {};
   const ladder: [SecretScope, string][] = [];
   if (who.repo) ladder.push(["repo", who.repo]);
   if (who.org) ladder.push(["org", who.org]);
@@ -187,7 +201,7 @@ export function resolveSecrets(
         actorId: who.actor,
         payload: { name, scope, run: who.run ?? null },
       });
-      out[name] = opened.value;
+      out[name] = { value: opened.value, scope };
       break;
     }
   }

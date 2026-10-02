@@ -7,7 +7,7 @@
 
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
-import { createLog } from "../kernel/log.ts";
+import { anyHeld, createLog, redactValues } from "../kernel/log.ts";
 import { repoVisible } from "./visibility.ts";
 
 const log = createLog("events");
@@ -22,6 +22,22 @@ export interface ForgeEvent {
 }
 
 export type EventListener = (event: ForgeEvent) => void;
+
+/** A payload with every granted secret value taken out of its strings. */
+function scrubPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!anyHeld()) return payload;
+  const walk = (v: unknown): unknown =>
+    typeof v === "string"
+      ? redactValues(v)
+      : Array.isArray(v)
+        ? v.map(walk)
+        : v !== null && typeof v === "object"
+          ? Object.fromEntries(
+              Object.entries(v).map(([k, x]) => [k, walk(x)]),
+            )
+          : v;
+  return walk(payload) as Record<string, unknown>;
+}
 
 export class EventBus {
   private listeners = new Set<EventListener>();
@@ -40,7 +56,7 @@ export class EventBus {
       kind: input.kind,
       repoId: input.repoId ?? null,
       actorId: input.actorId ?? null,
-      payload: input.payload ?? {},
+      payload: scrubPayload(input.payload ?? {}),
       createdAt: new Date().toISOString(),
     };
     this.db

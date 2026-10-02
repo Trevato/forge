@@ -29,7 +29,13 @@ import {
   type Issue,
 } from "../core/issues.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
-import { getForkOf, getRepoById, type Repo } from "../core/repos.ts";
+import {
+  canWrite,
+  getForkOf,
+  getRepoById,
+  type Repo,
+} from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
 import { listReviewComments, listReviews } from "../core/reviews.ts";
 import {
   cancelRun,
@@ -47,7 +53,7 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { createLog } from "../kernel/log.ts";
+import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
@@ -69,6 +75,8 @@ import {
 } from "../core/subscriptions.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
+import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
+import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 
 const log = createLog("crew");
@@ -432,7 +440,27 @@ async function work(
     GIT_COMMITTER_EMAIL: agent.user.email,
   };
 
+  let grant: Grant | undefined;
   try {
+    // The secrets this run declared, for this run only: opened now, held for
+    // redaction from this moment, dropped in the `finally` below — a crash
+    // included.
+    const author = getUserById(app.db, issue.authorId);
+    const declared = parseDeclaration(
+      agent.brief,
+      author !== undefined && canWrite(app.db, repo, author) ? issue.body : "",
+    );
+    grant = grantSecrets(app.db, app.config.dataDir, app.bus, declared, {
+      id: run.id,
+      repoId: repo.id,
+      ownerId: repo.ownerId,
+      actorId: agent.user.id,
+    });
+    for (const why of declared.refused) write(`secret refused: ${why}`);
+    if (grant.names.length > 0)
+      write(`secrets: holding ${grant.names.join(", ")} for this run`);
+    for (const name of grant.missing) write(`secret not set: ${name}`);
+    for (const host of grant.hosts) write(`egress: +${host} for this run`);
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const forkBare = repoDir(
       app.reposRoot,
@@ -584,6 +612,7 @@ async function work(
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
       ...credentialEnv(picked),
+      ...grant.env,
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -597,18 +626,18 @@ async function work(
       dataDir: app.config.dataDir,
       agentName: agent.user.username,
       urls: [options.localUrl, options.forgeUrl],
-      extraHosts: options.allowHosts,
+      extraHosts: [...(options.allowHosts ?? []), ...grant.hosts],
       enforced: options.sandboxEnforced,
     });
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;
-    const invoke = (
+    const invoke = async (
       prompt: string,
       budgetUsd: number,
       resume: string | undefined,
     ) =>
-      runClaude({
+      redactResult(await runClaude({
         binary: options.binary,
         cwd: dir,
         prompt,
@@ -622,7 +651,7 @@ async function work(
         log: write,
         signal,
         onSteer: (send) => steering.set(run.id, send),
-      });
+      }));
     write(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
@@ -781,6 +810,7 @@ async function work(
         ? undefined
         : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
       write,
+      Object.values(grant.env),
     );
     return {
       state: result.ok || landed.pushed ? "ok" : "failed",
@@ -790,6 +820,7 @@ async function work(
       turns: result.turns,
     };
   } finally {
+    grant?.release();
     deleteToken(app.db, agent.user.id, token.id);
   }
 }
@@ -958,7 +989,14 @@ async function landWork(
   message: string,
   note: string | undefined,
   write: (line: string) => void,
+  granted: readonly string[] = [],
 ): Promise<{ pushed: boolean; summary: string }> {
+  // A model may echo a granted value into a file; the tree is scrubbed
+  // before the forge commits it, and the agent's own commits are searched
+  // before anything is pushed.
+  const scrubbed = await scrubTree(dir, granted, env);
+  if (scrubbed.length > 0)
+    write(`scrubbed a granted secret value from ${scrubbed.join(", ")}`);
   // Work left in the tree is committed on the agent's behalf: a proposal a
   // person can read beats an edit nobody sees. The summary says it happened.
   const status = await runGit(["status", "--porcelain"], { cwd: dir, env });
@@ -1003,6 +1041,22 @@ async function landWork(
     const against = remote ?? base;
     const ahead =
       against === undefined ? 1 : await aheadCount(dir, against, local);
+    if (
+      ahead > 0 &&
+      (await historyHolds(
+        dir,
+        against === undefined ? "HEAD" : `${against}..HEAD`,
+        granted,
+        env,
+      ))
+    ) {
+      write("refused: a granted secret value is in the commits; not pushed");
+      return {
+        pushed: false,
+        summary:
+          "refused to push: a secret this run held is in its commits; nothing pushed",
+      };
+    }
     if (ahead > 0) {
       write(
         `pushing ${branch} (${ahead} commit${ahead === 1 ? "" : "s"} the agent did not push)`,
@@ -1082,6 +1136,11 @@ async function landWork(
     pushed: true,
     summary: `opened pull #${opened.value.number}${committedForIt ? ", committing its leftover changes" : ""}`,
   };
+}
+
+/** What the agent said, with every held secret value taken out of it. */
+function redactResult<T extends { result: string }>(r: T): T {
+  return { ...r, result: redactValues(r.result) };
 }
 
 /**
