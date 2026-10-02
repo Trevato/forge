@@ -282,9 +282,10 @@ export function runStateBadge(state: RunState, kind: RunKind = "deploy"): Html {
 }
 
 /** An environment's state: what production, or a preview, is doing now. */
-export function envStateBadge(state: EnvState): Html {
+export function envStateBadge(state: EnvState, dormant = false): Html {
   switch (state) {
     case "stopped":
+      if (dormant) return badge("Asleep", { icon: "clock", variant: "outline" });
       return badge("Stopped", { icon: "square", variant: "outline" });
     case "deploying":
       return badge("Deploying", { icon: "loader", tone: "attn" });
@@ -295,6 +296,17 @@ export function envStateBadge(state: EnvState): Html {
     case "failed":
       return badge("Failed", { icon: "alert", tone: "danger" });
   }
+}
+
+/**
+ * Why a preview is stopped, when it is only asleep: when, and what it was
+ * waiting for. Never a failure's words — nothing broke.
+ */
+export function dormantNote(env: EnvStatus): Html | null {
+  const d = env.dormant;
+  if (d === undefined) return null;
+  return html`asleep ${time(d.since)} — nobody pushed or commented since
+  ${time(d.idleSince)}; its data and pictures are kept`;
 }
 
 /** The tone an environment's state gives a `dot()` — a list's one-glance answer. */
@@ -321,6 +333,7 @@ export function envPhrase(env: EnvStatus | undefined): {
   word: string;
   tone: Tone;
 } {
+  if (env?.dormant !== undefined) return { word: "asleep", tone: "default" };
   if (env === undefined || env.state === "stopped")
     return { word: "not running", tone: "default" };
   if (env.state === "failed") return { word: "not up", tone: "danger" };
@@ -380,6 +393,7 @@ export function envFacts(
         </p>`,
     )}
     ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
+    ${when(dormantNote(env), (note) => html`<p class="muted small" data-dormant>${note}</p>`)}
     ${when(
       env.busy,
       (busy) =>

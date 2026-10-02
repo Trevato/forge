@@ -779,7 +779,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   );
   const head = html`${icon("rocket")}
     <h2>Preview</h2>
-    ${env === undefined ? null : envStateBadge(env.state)}`;
+    ${env === undefined ? null : envStateBadge(env.state, env.dormant !== undefined)}`;
   if (!view.value.serving)
     return card(
       html`<p class="muted small">Nothing is serving apps on this forge.</p>`,
@@ -808,12 +808,16 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
         ),
       )}
       <div class="bar mt">
-        ${btn("Open preview", {
-          href: `${base}/app/${env.env}/open`,
-          size: "sm",
-          variant: "outline",
-          icon: "external",
-        })}
+        ${env.dormant !== undefined && writer
+          ? html`<form method="post" action="${base}/app/${env.env}/redeploy">
+              ${btn("Wake it", { size: "sm", icon: "play" })}
+            </form>`
+          : btn("Open preview", {
+              href: `${base}/app/${env.env}/open`,
+              size: "sm",
+              variant: "outline",
+              icon: "external",
+            })}
       </div>`,
     {
       head,

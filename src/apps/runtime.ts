@@ -94,6 +94,12 @@ export interface RuntimeOptions {
   /** How often the runtime looks for environments to put to sleep. */
   readonly sweepEveryMs?: number | undefined;
   /**
+   * How long a pull may go without a push or a comment before its preview
+   * is stopped (not removed: its row, data and pictures stay) and reads as
+   * asleep until someone asks for it. Unset or 0 keeps every preview warm.
+   */
+  readonly idlePullMs?: number | undefined;
+  /**
    * How long past its idle window a busy environment (`apps/busy.ts`) is
    * left awake before it sleeps anyway — one crew run's length, so an app
    * that only claims to be busy cannot stay up forever.
@@ -177,6 +183,12 @@ export interface EnvStatus {
    * person's words (`BUSY_WORDS`) — set only while the sweep is sparing it.
    */
   readonly busy?: string | undefined;
+  /**
+   * Set while a preview is stopped because its pull went quiet: when it was
+   * stopped, and the last touch (push, comment, wake) it was measured from.
+   * A stopped preview with this set is asleep, never failed.
+   */
+  readonly dormant?: { readonly since: string; readonly idleSince: string } | undefined;
 }
 
 interface Live {
@@ -258,6 +270,10 @@ interface Environment {
   readonly env: EnvName;
   live?: Live | undefined;
   asleep?: Asleep | undefined;
+  /** Stopped for want of a push or comment; asked for, it redeploys. */
+  dormant?:
+    | { since: string; idleSince: string; commitOid: string }
+    | undefined;
   /** One wake at a time; every request that arrives meanwhile waits on it. */
   waking?: Promise<void> | undefined;
   /** When something last came through the proxy for this environment. */
@@ -278,6 +294,14 @@ interface Environment {
   /** Crash restarts in the current window, for backing off. */
   restarts: number[];
 }
+
+/** The deploy reasons that mean a person touched the change. */
+const TOUCH_REASONS: readonly string[] = [
+  "push",
+  "opened",
+  "redeploy",
+  "wake",
+];
 
 const RESTART_WINDOW_MS = 10 * 60_000;
 const RESTART_MAX = 3;
@@ -454,6 +478,19 @@ export class AppsRuntime {
         runId: state.queued.id,
       };
     }
+    if (state.dormant !== undefined) {
+      return {
+        env: state.env,
+        state: "stopped",
+        commitOid: state.dormant.commitOid,
+        url,
+        runId: state.lastRunId,
+        dormant: {
+          since: state.dormant.since,
+          idleSince: state.dormant.idleSince,
+        },
+      };
+    }
     if (state.asleep !== undefined) {
       return {
         env: state.env,
@@ -561,7 +598,15 @@ export class AppsRuntime {
       // deployed: nobody is looking at it this second, and the first who
       // does wakes it warm. Thirty previews starting at once is what a
       // restart used to cost.
-      if (reason === "boot" && this.settleAsleep(record, env, head)) continue;
+      // One idle past the age stays stopped: a restart never wakes it.
+      if (reason === "boot") {
+        const idleSince = this.idleSince(repo, pull, env);
+        if (idleSince !== undefined) {
+          this.hibernateAtBoot(record, env, head, idleSince);
+          continue;
+        }
+        if (this.settleAsleep(record, env, head)) continue;
+      }
       this.requestDeploy(record, repo, env, head, reason);
     }
     // Environments on disk for pulls that are no longer open.
@@ -734,6 +779,7 @@ export class AppsRuntime {
   ): Run | undefined {
     if (this.stopped) return undefined;
     const state = this.envFor(record, env);
+    state.dormant = undefined;
     if (
       (state.live?.commitOid === commitOid ||
         state.asleep?.commitOid === commitOid) &&
@@ -1300,9 +1346,109 @@ export class AppsRuntime {
     return true;
   }
 
+  /**
+   * When a pull was last touched, if that is longer ago than the idle age:
+   * the later of its `updatedAt` (comments, reviews) and the newest deploy
+   * run a person caused — a push, an opening, a press of Redeploy, a wake.
+   * Undefined when the feature is off, the pull was touched within the age,
+   * or someone is deciding it right now (a queued or running run on it).
+   */
+  private idleSince(repo: Repo, pull: Pull, env: EnvName): string | undefined {
+    const age = this.options.idlePullMs ?? 0;
+    if (age <= 0 || pull.state !== "open") return undefined;
+    const now = Date.now();
+    let last = Date.parse(pull.updatedAt);
+    if (now - last < age) return undefined;
+    const runs = listRuns(this.app.db, repo.id, {
+      issueId: pull.id,
+      limit: 50,
+    });
+    if (runs.some((r) => r.state === "queued" || r.state === "running"))
+      return undefined;
+    for (const r of runs) {
+      if (r.kind === "deploy" && r.env === env && TOUCH_REASONS.includes(r.reason))
+        last = Math.max(last, Date.parse(r.createdAt));
+    }
+    return now - last < age ? undefined : new Date(last).toISOString();
+  }
+
+  /** At boot: register a preview idle past the age as stopped, no process. */
+  private hibernateAtBoot(
+    record: AppRecord,
+    env: EnvName,
+    commitOid: string,
+    idleSince: string,
+  ): void {
+    const state = this.envFor(record, env);
+    if (state.live !== undefined || state.deploying !== undefined) return;
+    state.dormant = {
+      since: new Date().toISOString(),
+      idleSince,
+      commitOid,
+    };
+    const built = listRuns(this.app.db, record.repoId, {
+      kind: "deploy",
+      env,
+      limit: 50,
+    }).find((r) => r.state === "ok");
+    state.lastRunId ??= built?.id;
+    log.info("dormant from boot", { app: record.slug, env });
+  }
+
+  /** A dormant preview someone asked for deploys again, the ordinary way. */
+  rouse(record: AppRecord, env: EnvName): void {
+    const state = this.envs.get(key(record.id, env));
+    const dormant = state?.dormant;
+    if (dormant === undefined) return;
+    const repo = getRepoById(this.app.db, record.repoId);
+    if (repo) this.requestDeploy(record, repo, env, dormant.commitOid, "wake");
+  }
+
+  /** Stop the previews whose pulls have gone quiet; keep everything else. */
+  private async hibernate(): Promise<void> {
+    if ((this.options.idlePullMs ?? 0) <= 0) return;
+    for (const state of [...this.envs.values()]) {
+      const number = envPull(state.env);
+      if (
+        number === undefined ||
+        state.dormant !== undefined ||
+        state.deploying !== undefined ||
+        state.queued !== undefined ||
+        state.waking !== undefined ||
+        (state.live === undefined && state.asleep === undefined)
+      )
+        continue;
+      const repo = getRepoById(this.app.db, state.app.repoId);
+      const pull = repo && getPull(this.app.db, repo.id, number);
+      if (!repo || !pull) continue;
+      const idleSince = this.idleSince(repo, pull, state.env);
+      if (idleSince === undefined) continue;
+      const commitOid = state.live?.commitOid ?? state.asleep!.commitOid;
+      const runId = state.live?.runId ?? state.asleep!.runId;
+      await this.stopEnv(state.app, state.env);
+      if (this.stopped || state.live !== undefined || state.queued !== undefined)
+        continue;
+      state.dormant = {
+        since: new Date().toISOString(),
+        idleSince,
+        commitOid,
+      };
+      state.lastError = undefined;
+      state.lastErrorCommitOid = undefined;
+      if (runId !== "")
+        appendRunLog(
+          this.app.config.dataDir,
+          runId,
+          `asleep: nobody pushed to or commented on pull #${number} since ${idleSince}; asking for it, or Redeploy, brings it back`,
+        );
+      log.info("dormant", { app: state.app.slug, env: state.env });
+    }
+  }
+
   /** Stop what nobody has asked for lately, and keep it ready to wake. */
   private async sweep(): Promise<void> {
     if (this.stopped) return;
+    await this.hibernate();
     const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
     const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
     const now = Date.now();

@@ -144,6 +144,9 @@ const apps = appDomain?.ok
       forgeUrl,
       concurrency: positive(process.env.FORGE_APPS_CONCURRENCY, 2),
       busyGraceMs: crewRunMs,
+      // Days a pull may sit untouched before its preview sleeps; 0 keeps
+      // every preview warm.
+      idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, 3) * 86_400_000,
     })
   : undefined;
 await apps?.start();
@@ -221,6 +224,11 @@ const deliveryTimer = setInterval(() => {
 runDelivery(app.db, app.log); // sweep anything queued while we were down
 pruneSessions(app.db);
 pruneTokens(app.db);
+
+function nonNegative(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
 
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);

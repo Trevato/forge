@@ -113,7 +113,9 @@ export function appScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
           ? "asleep; wakes on a request"
           : `asleep since ${ago(env.since)}; wakes on a request`;
       case "stopped":
-        return "stopped";
+        return env.dormant === undefined
+          ? "stopped"
+          : `asleep since ${ago(env.dormant.since)}; nobody touched the change since ${ago(env.dormant.idleSince)}`;
     }
   };
 

@@ -751,6 +751,14 @@ works the crew page says so, in words, before anyone assigns anything.
 
 ### Asleep
 
+A preview whose pull has had no push and no comment for three days is
+stopped and shown as _asleep_ with when and why — its row, data and pictures
+stay. It is not failed, and a restart leaves it stopped. Asking for it (a
+request to its host, or **Wake it** on the change's page) deploys it again
+on the ordinary deploy path. Production, and a pull with a run queued or
+running on it, are never put to sleep this way. `FORGE_PREVIEW_IDLE_DAYS`
+sets the age; `0` keeps every preview warm.
+
 An environment nobody asks for does not keep a process. A preview that has
 served no request for thirty minutes, or production for a day, is stopped
 and marked _asleep_, its checkout kept whole; the next request through the
@@ -890,6 +898,7 @@ one line and a link to the asks screen is posted there (`src/crew/notify.ts`).
 | `FORGE_APPS`              | `1`                             | `0` runs no apps and no crew                      |
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
+| `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
 | `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once                                |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |

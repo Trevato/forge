@@ -26,6 +26,7 @@ import { fragment } from "../layout.ts";
 import {
   badge,
   btn,
+  dormantNote,
   envActions,
   envFacts,
   envPhrase,
@@ -105,6 +106,8 @@ function previewRow(
   if (env?.since) bits.push(html`up ${time(env.since)}`);
   const say = env?.error ?? env?.failedDeploy?.error ?? env?.note;
   if (say) bits.push(html`${say}`);
+  const asleep = env === undefined ? null : dormantNote(env);
+  if (asleep !== null) bits.push(asleep);
   if (env !== undefined) {
     const dataNote = previewDataNote(record.previewData, pull.createdAt);
     if (dataNote !== null) bits.push(dataNote);

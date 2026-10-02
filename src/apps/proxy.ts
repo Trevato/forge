@@ -352,6 +352,10 @@ function admit(
       return err(new Response("not found", { status: 404 }));
     }
   }
+  // A preview stopped for want of attention is asked for: it deploys again
+  // the ordinary way, and this request sees "starting" until it answers.
+  if (runtime.envStatus(target.app, target.env)?.dormant !== undefined)
+    runtime.rouse(target.app, target.env);
   const status = runtime.envStatus(target.app, target.env);
   if (status === undefined || status.port === undefined) {
     return err(unavailable(runtime, target, status));
