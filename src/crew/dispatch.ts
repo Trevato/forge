@@ -74,6 +74,8 @@ export interface CrewHandle {
   /** Whether a usable Claude Code was found at start. */
   readonly ready: boolean;
   readonly detail: string;
+  /** Whether agents' shells are held to the sandbox here, and why not when they are not. */
+  readonly sandbox: { readonly enforced: boolean; readonly reason: string };
   /**
    * Stop. Plain, what is in flight is cut short and its task queued again.
    * Draining — a release's old process, with the new one already taking
@@ -162,6 +164,7 @@ export async function startCrew(
 
   const handle: CrewHandle = {
     ready: detected.ok,
+    sandbox: { enforced: sandbox.ok, reason: sandbox.ok ? "" : sandbox.reason },
     detail: detected.ok ? `Claude Code ${detected.version}` : detected.error,
     stop: async (options = {}) => {
       stopped = true;

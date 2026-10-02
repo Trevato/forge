@@ -295,6 +295,17 @@ Subscriptions, sealed, and grants each to a repository (Settings → Crew) or
 an organization (its page), down to one crew member: a work plan pays for
 the work repositories and nothing else. Two on one grant take turns, and
 one the provider rests hands its runs to the other until the reset.
+**Sandbox.** An agent's shell is held to a policy — the network is the forge
+and the package registry, writes stay in the clone, the forge's data and the
+operator's credentials are unreadable — by bubblewrap and socat on Linux
+(both are in the image). A host that forbids unprivileged user namespaces
+(many container platforms' seccomp profiles) cannot hold it, and the policy is
+then switched off rather than faked. To tell which a deployment is in: the
+boot log carries `agent sandbox not available here` with the reason, Settings →
+Crew shows **Unsandboxed** with it, and every agent run's page says
+"Sandboxed" or "Unsandboxed" from what it was actually started with (runs
+from before this record say nothing).
+
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 

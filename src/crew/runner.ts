@@ -725,6 +725,12 @@ async function work(
     write(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
+    noteRunProgress(app.db, run.id, {
+      sandbox: {
+        enforced: sandbox.enforced,
+        note: options.sandboxNote ?? "",
+      },
+    });
     if (!sandbox.enforced)
       write(
         `sandbox: off here${options.sandboxNote === undefined ? "" : ` — ${options.sandboxNote}`}; the shell runs unrestricted`,

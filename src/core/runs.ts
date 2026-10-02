@@ -71,6 +71,10 @@ export interface Run {
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
   readonly turns: number;
+  /** For an agent run: whether its shell was held to the sandbox; null when unrecorded. */
+  readonly sandboxEnforced: boolean | null;
+  /** Why it was not, when it was not. */
+  readonly sandboxNote: string;
   /** A failed check's own detail, when its output was recognised; null otherwise. */
   readonly checkDetail: CheckDetail | null;
   readonly createdAt: string;
@@ -98,6 +102,8 @@ interface RunRow {
   attempt: number;
   heartbeat_at: string | null;
   turns: number;
+  sandbox_enforced: number | null;
+  sandbox_note: string;
   check_detail: string;
   created_at: string;
   started_at: string | null;
@@ -123,6 +129,9 @@ const toRun = (r: RunRow): Run => ({
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
+  sandboxEnforced:
+    r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
+  sandboxNote: r.sandbox_note,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
@@ -295,11 +304,15 @@ export function noteRunProgress(
     branch?: string | undefined;
     /** The subscription the run works on, once picked. */
     subscriptionId?: string | undefined;
+    /** Whether the shell is held to the sandbox, and why not when it is not. */
+    sandbox?: { enforced: boolean; note: string } | undefined;
   },
 ): void {
   db.query(
     `UPDATE run SET session_id = COALESCE(?2, session_id), cost_usd = COALESCE(?3, cost_usd),
-       branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id)
+       branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id),
+       sandbox_enforced = COALESCE(?6, sandbox_enforced),
+       sandbox_note = COALESCE(?7, sandbox_note)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -307,6 +320,8 @@ export function noteRunProgress(
     progress.costUsd ?? null,
     progress.branch ?? null,
     progress.subscriptionId ?? null,
+    progress.sandbox === undefined ? null : progress.sandbox.enforced ? 1 : 0,
+    progress.sandbox?.note.slice(0, 300) ?? null,
   );
 }
 

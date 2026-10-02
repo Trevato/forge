@@ -93,7 +93,15 @@ export function crewReadiness(ctx: Ctx): Html {
     </p>`;
   return html`<p class="muted small mb">
     ${icon("check")} ${crew.detail} is ready to run the crew.
-  </p>`;
+  </p>
+  ${when(
+    !crew.sandbox.enforced,
+    () => html`<p class="error-note mb" id="crew-unsandboxed">
+      ${icon("alert")} Unsandboxed: agents' shells run unrestricted here
+      (${crew.sandbox.reason}). They can read this forge's data and reach any
+      host.
+    </p>`,
+  )}`;
 }
 
 // ---- the form ----

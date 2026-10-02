@@ -7,7 +7,7 @@
 # nothing to install.
 FROM oven/bun:1.3-debian
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm tini chromium fonts-liberation \
+ && apt-get install -y --no-install-recommends git ca-certificates curl bubblewrap socat nodejs npm tini chromium fonts-liberation \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code \
  && npm cache clean --force

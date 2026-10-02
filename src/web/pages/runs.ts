@@ -39,6 +39,7 @@ import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { studioRuns } from "../studio/lists.ts";
 import { pageTitle, studioRecord } from "../studio/nouns.ts";
+import { sandboxLine } from "../studio/sandbox.ts";
 import { studioRun } from "../studio/run.ts";
 import {
   btn,
@@ -425,6 +426,7 @@ export async function runPage(ctx: Ctx): Promise<Response> {
       </div>
     </div>
     <p class="run-summary" id="run-summary">${run.summary}</p>
+    ${sandboxLine(run)}
     ${when(
       held.length > 0,
       () =>
