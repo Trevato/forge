@@ -323,6 +323,27 @@ holds, where it goes, and the one command that restores it.
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
 
+## Cloud accounts
+
+**Settings → Cloud accounts** (admins) holds provider keys — Cloudflare,
+DigitalOcean, AWS, Azure, Fly, Backblaze — sealed and write-only. Pasting one
+makes the forge check it with read-only calls (listed in the header of
+`src/cloud/providers.ts`) and say what it can see; a key the provider rejects
+is not stored. It is sealed at forge scope as `CLOUD_<PROVIDER>_<NAME>` (secret
+names are capitals, so `cloudflare/main` is `CLOUD_CLOUDFLARE_MAIN`). The page
+lists names, the last check, and which run last opened each key; "Every read"
+lists each open, and a run's page lists the secrets it held. A run gets a key
+by declaring it like any secret. **Write allowed** is off by default: a run
+that adds `writes: yes` to its front-matter and declares a cloud key whose
+switch is off fails with that reason. The switch gates the forge's hand-out,
+not the key — a provider key that can write still can, so paste read-only keys.
+**Audit** reads one account and opens one `[audit]` issue per finding (unattached
+volumes, powered-off droplets, unassociated IPs, never-active zones) with a
+monthly saving estimate, skipping findings already open. It runs in the forge,
+not as a crew run; AWS audits look at us-east-1 only; over-provisioned
+droplets and forgotten DNS records need metrics or resolution and are not
+attempted; Backblaze audits find nothing yet. No dependency was added.
+
 ## Develop
 
 ```sh

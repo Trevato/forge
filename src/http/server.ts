@@ -54,6 +54,14 @@ import {
   backupsTest,
 } from "../web/pages/backups.ts";
 import {
+  cloudAdd,
+  cloudAudit,
+  cloudPage,
+  cloudRemove,
+  cloudVerify,
+  cloudWrite,
+} from "../web/pages/cloud.ts";
+import {
   subscriptionAdd,
   subscriptionDelete,
   subscriptionsPage,
@@ -489,6 +497,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/secrets", secretsPage);
   router.add("POST", "/settings/secrets", secretSet);
   router.add("POST", "/settings/secrets/delete", secretDelete);
+  router.add("GET", "/settings/cloud", cloudPage);
+  router.add("POST", "/settings/cloud", cloudAdd);
+  router.add("POST", "/settings/cloud/verify", cloudVerify);
+  router.add("POST", "/settings/cloud/write", cloudWrite);
+  router.add("POST", "/settings/cloud/audit", cloudAudit);
+  router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);

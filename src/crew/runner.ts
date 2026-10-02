@@ -457,6 +457,14 @@ async function work(
       actorId: agent.user.id,
     });
     for (const why of declared.refused) write(`secret refused: ${why}`);
+    if (grant.writeRefused.length > 0) {
+      const names = grant.writeRefused.join(", ");
+      write(`refused: this run needs writes and ${names} is not write allowed`);
+      return {
+        state: "failed",
+        summary: `refused: ${names} is not write allowed (Settings → Cloud accounts)`,
+      };
+    }
     if (grant.names.length > 0)
       write(`secrets: holding ${grant.names.join(", ")} for this run`);
     for (const name of grant.missing) write(`secret not set: ${name}`);
