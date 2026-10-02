@@ -22,7 +22,7 @@ import {
   HEADROOM_MAX,
   headroomPct,
   setHeadroom,
-  standing,
+  standings,
   type Figure,
   type WindowStanding,
 } from "../../core/standing.ts";
@@ -99,6 +99,11 @@ export function subscriptionsPage(ctx: Ctx): Response {
   const now = new Date();
   const pool = listSubscriptions(ctx.app.db);
   const places = listGrantPlaces(ctx.app.db);
+  const standingOf = standings(
+    ctx.app.db,
+    pool.map((s) => s.id),
+    now,
+  );
 
   const list =
     pool.length === 0
@@ -110,7 +115,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
       : listCard(
           pool.map((s) => {
             const rests = resting(s, now);
-            const st = standing(ctx.app.db, s.id, now);
+            const st = standingOf.get(s.id);
             const by =
               s.createdBy === null
                 ? undefined

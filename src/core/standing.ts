@@ -118,32 +118,6 @@ export function noteLimit(
   );
 }
 
-function limitsOf(
-  db: Database,
-  subscriptionId: string,
-): Map<LimitWindow, Limit> {
-  const rows = db
-    .query<
-      { span: LimitWindow; resets_at: string; observed_at: string; said: string },
-      [string]
-    >(
-      `SELECT span, resets_at, observed_at, said FROM subscription_limit
-       WHERE subscription_id = ?1`,
-    )
-    .all(subscriptionId);
-  return new Map(
-    rows.map((r) => [
-      r.span,
-      {
-        window: r.span,
-        resetsAt: r.resets_at,
-        observedAt: r.observed_at,
-        said: r.said,
-      },
-    ]),
-  );
-}
-
 /** A whole percent 0–90 from text; undefined for anything else. */
 export function headroomPct(text: string): number | undefined {
   if (!/^\d{1,2}$/.test(text.trim())) return undefined;
@@ -196,45 +170,119 @@ export function standing(
   subscriptionId: string,
   now: Date,
 ): Standing | undefined {
-  const pct = getHeadroom(db, subscriptionId);
-  if (pct === undefined) return undefined;
-  const limits = limitsOf(db, subscriptionId);
+  return standings(db, [subscriptionId], now).get(subscriptionId);
+}
+
+const placeholders = (n: number, from = 1): string =>
+  Array.from({ length: n }, (_, i) => `?${i + from}`).join(",");
+
+/**
+ * Several accounts' standing at `now`, keyed by id, in three statements
+ * whatever their number: the headroom, the provider's last words, and one
+ * ledger read from the earliest any of them needs. An unknown id is absent.
+ */
+export function standings(
+  db: Database,
+  subscriptionIds: readonly string[],
+  now: Date,
+): Map<string, Standing> {
+  const ids = [...new Set(subscriptionIds)].slice(0, 400);
+  const out = new Map<string, Standing>();
+  if (ids.length === 0) return out;
+  const pcts = new Map(
+    db
+      .query<{ id: string; headroom_pct: number }, string[]>(
+        `SELECT id, headroom_pct FROM subscription WHERE id IN (${placeholders(ids.length)})`,
+      )
+      .all(...ids)
+      .map((r) => [r.id, r.headroom_pct]),
+  );
+  if (pcts.size === 0) return out;
+  const known = [...pcts.keys()];
+
+  const limits = new Map<string, Map<LimitWindow, Limit>>();
+  for (const r of db
+    .query<
+      {
+        subscription_id: string;
+        span: LimitWindow;
+        resets_at: string;
+        observed_at: string;
+        said: string;
+      },
+      string[]
+    >(
+      `SELECT subscription_id, span, resets_at, observed_at, said FROM subscription_limit
+       WHERE subscription_id IN (${placeholders(known.length)})`,
+    )
+    .all(...known)) {
+    const of = limits.get(r.subscription_id) ?? new Map<LimitWindow, Limit>();
+    of.set(r.span, {
+      window: r.span,
+      resetsAt: r.resets_at,
+      observedAt: r.observed_at,
+      said: r.said,
+    });
+    limits.set(r.subscription_id, of);
+  }
+
   const t = now.getTime();
   // Two weeks back holds every window's chain; a refusal's window is read
   // too, so long as it opened within the last five weeks.
   const floor = t - 5 * WINDOW_MS.week;
-  const since = Math.max(
-    floor,
-    Math.min(
-      t - 2 * WINDOW_MS.week,
-      ...[...limits.values()].map(
-        (l) => Date.parse(l.resetsAt) - WINDOW_MS[l.window],
+  const sinceOf = (id: string): number =>
+    Math.max(
+      floor,
+      Math.min(
+        t - 2 * WINDOW_MS.week,
+        ...[...(limits.get(id)?.values() ?? [])].map(
+          (l) => Date.parse(l.resetsAt) - WINDOW_MS[l.window],
+        ),
       ),
-    ),
-  );
-  const spends: Spend[] = db
+    );
+  const since = new Map(known.map((id) => [id, sinceOf(id)]));
+  const earliest = Math.min(...since.values());
+
+  const spends = new Map<string, Spend[]>(known.map((id) => [id, []]));
+  for (const r of db
     .query<
-      { at: string; wall_ms: number; cost_usd: number; tokens_in: number; tokens_out: number },
-      [string, string]
+      {
+        subscription_id: string;
+        at: string;
+        wall_ms: number;
+        cost_usd: number;
+        tokens_in: number;
+        tokens_out: number;
+      },
+      string[]
     >(
-      `SELECT at, wall_ms, cost_usd, tokens_in, tokens_out FROM usage
-       WHERE subscription_id = ?1 AND at >= ?2`,
+      `SELECT subscription_id, at, wall_ms, cost_usd, tokens_in, tokens_out FROM usage
+       WHERE subscription_id IN (${placeholders(known.length, 2)}) AND at >= ?1`,
     )
-    .all(subscriptionId, iso(since))
-    .map((r) => ({
+    .all(iso(earliest), ...known)) {
+    // Each account reads from its own floor, as if read alone.
+    if (r.at < iso(since.get(r.subscription_id)!)) continue;
+    spends.get(r.subscription_id)!.push({
       start: Date.parse(r.at) - r.wall_ms,
       costUsd: r.cost_usd,
       tokensIn: r.tokens_in,
       tokensOut: r.tokens_out,
-    }))
-    .sort((a, b) => a.start - b.start);
-  return {
-    subscriptionId,
-    headroomPct: pct,
-    windows: WINDOWS.map((w) =>
-      windowStanding(w, limits.get(w), spends, pct, t, since),
-    ),
-  };
+    });
+  }
+
+  for (const id of known) {
+    const pct = pcts.get(id)!;
+    const mine = spends.get(id)!.sort((a, b) => a.start - b.start);
+    const of = limits.get(id);
+    out.set(id, {
+      subscriptionId: id,
+      headroomPct: pct,
+      windows: WINDOWS.map((w) =>
+        windowStanding(w, of?.get(w), mine, pct, t, since.get(id)!),
+      ),
+    });
+  }
+  return out;
 }
 
 function windowStanding(

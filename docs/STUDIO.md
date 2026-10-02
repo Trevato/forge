@@ -374,7 +374,16 @@ changes across your apps, each with the app's production look on a phone.
 **Decided** is the last dozen entries in the decision ledger: which issue
 next, ship or show, try again — the answer, how sure the decider was, and
 what came of it. **Today** is one row per app that runs on its own: spend
-against the ceiling, runs, shipped, and whether it is paused. Every region
+against the ceiling, runs, shipped, and whether it is paused — plus any
+other app the crew spent on this week — and beneath it the efficiency
+signal: spend per shipped change over the last 7 days (the usage ledger's
+`cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped
+query), or "$4.10 spent, nothing shipped" when there is no ratio. A site
+admin also gets a strip of the subscriptions above the regions: each
+account's 5-hour and weekly window — used, left, resets — in the words
+`windowWords` (`studio/words.ts`) gives them, with _inferred_ beside every
+figure the provider did not say (`core/standing.ts`; all the accounts in
+three statements, `standings`). Every region
 is live — it swaps itself when a matching event lands, and the dot in the
 corner says whether the stream is connected. `?apps=a,b` narrows it to some
 apps. Keys: `f` fullscreen, `1`–`4` one region full-bleed, `0` all.

@@ -14,7 +14,7 @@
 import type { App } from "../app.ts";
 import { getIssuesByIds } from "../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../core/repos.ts";
-import { standing, type Standing } from "../core/standing.ts";
+import { standings, type Standing } from "../core/standing.ts";
 import { listGrants, listSubscriptions } from "../core/subscriptions.ts";
 import {
   recentUsage,
@@ -136,9 +136,10 @@ export function readUsage(
     accounts.add(g.subscriptionId);
   for (const row of bySubscription)
     if (row.key !== null && subscriptions.has(row.key)) accounts.add(row.key);
-  const standings = [...accounts]
+  const read = standings(db, [...accounts], now);
+  const standingsOut = [...accounts]
     .flatMap((id) => {
-      const s = standing(db, id, now);
+      const s = read.get(id);
       if (s === undefined) return [];
       const { subscriptionId: _, ...rest } = s;
       return [{ subscription: subscriptions.get(id) ?? id, ...rest }];
@@ -162,6 +163,6 @@ export function readUsage(
       agent: agentName(r.agentId),
       issue: issueNumber(r.issueId),
     })),
-    standing: standings,
+    standing: standingsOut,
   });
 }

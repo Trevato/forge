@@ -1,8 +1,10 @@
 /**
  * The board: a live wall of the crews at work, for a second monitor. Four
  * regions — what is being worked on now, what landed, what the decider
- * decided, and today's spend against each app's ceiling — each a live
- * region that swaps itself when a matching event lands. Nothing on it
+ * decided, and today's spend against each app's ceiling with what a shipped
+ * change cost over the week — each a live region that swaps itself when a
+ * matching event lands. A site admin also gets two strips above them: the
+ * forge's health, and each subscription's windows. Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own.
  */
@@ -14,6 +16,9 @@ import {
   type DecisionKind,
 } from "../../core/decisions.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
+import { efficiencyForRepos } from "../../core/efficiency.ts";
+import { standings, WINDOW_MS } from "../../core/standing.ts";
+import { listSubscriptions } from "../../core/subscriptions.ts";
 import { listApps } from "../../core/apps.ts";
 import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
@@ -34,6 +39,11 @@ import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, icon, time } from "../ui.ts";
 import { voiceFor } from "../studio/voice.ts";
+import {
+  perShippedWords,
+  windowWords,
+  type FigureWords,
+} from "../studio/words.ts";
 import { lookUrl, thumbLook } from "./looks.ts";
 
 // ---- words ----
@@ -175,7 +185,7 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
-    ${forgeStrip(ctx)}
+    ${forgeStrip(ctx)} ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -261,6 +271,70 @@ function forgeStrip(ctx: Ctx): Html | null {
             ? html`<span class="board-forge-need">${need}</span>`
             : html`<a class="board-forge-need" href="${href}">${need}</a>`;
         })}
+  </div>`;
+}
+
+// ---- the subscriptions' windows ----
+
+/** Figures in a row, `inferred` said once when every one is, else on each. */
+function figures(parts: readonly FigureWords[]): Html {
+  const all = parts.every((p) => p.inferred);
+  const tag = html`<i class="board-inferred">inferred</i>`;
+  return html`${parts.map(
+    (p, n) =>
+      html`${n > 0 ? " · " : null}<span
+          >${p.text}${when(!all && p.inferred, () => html` ${tag}`)}</span
+        >`,
+  )}${when(all, () => html` ${tag}`)}`;
+}
+
+/**
+ * Each subscription's 5-hour and weekly window — used, left, resets — for a
+ * site admin only: the pool is theirs (`/settings/subscriptions`). Three
+ * statements however many accounts (`standings`). A live region of its own.
+ */
+function windowsStrip(ctx: Ctx): Html | null {
+  if (!ctx.auth.user?.isAdmin) return null;
+  const db = ctx.app.db;
+  const pool = listSubscriptions(db);
+  if (pool.length === 0) return null;
+  const now = new Date();
+  const all = standings(
+    db,
+    pool.map((s) => s.id),
+    now,
+  );
+  return html`<div
+    class="board-windows"
+    id="windows"
+    data-live="run.*"
+    aria-label="Subscription windows"
+  >
+    ${pool.map((s) => {
+      const st = all.get(s.id);
+      if (st === undefined) return null;
+      return html`<a
+        class="board-sub"
+        href="/settings/subscriptions"
+        data-key="sub:${s.id}"
+      >
+        <span class="board-sub-name">${s.name}</span>
+        ${st.windows.map((w) => {
+          const words = windowWords(w);
+          return html`<span class="board-window" data-window="${w.window}"
+            ><span class="board-window-name">${words.name}</span>
+            ${words.usedPct === null
+              ? null
+              : html`<span class="board-bar"
+                  ><span class="board-fill" data-w="${words.usedPct}"></span
+                ></span>`}
+            <span class="board-window-nums"
+              >${figures([words.used, words.remaining, words.resets])}</span
+            ></span
+          >`;
+        })}
+      </a>`;
+    })}
   </div>`;
 }
 
@@ -479,10 +553,21 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
 
 function today(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
-  const since = startOfTodayUtc(new Date()).toISOString();
-  // Today's spend against the ceiling is the owner's own dashboard.
+  const now = new Date();
+  const since = startOfTodayUtc(now).toISOString();
+  // Spend per shipped change over the weekly window, every app in one read.
+  const week = efficiencyForRepos(
+    db,
+    [...scope.ownerFacts],
+    new Date(now.getTime() - WINDOW_MS.week).toISOString(),
+  );
+  // Today's spend against the ceiling is the owner's own dashboard: each
+  // app that runs on its own, and any other the crew spent on this week.
   const rows = scope.repos
-    .filter((r) => r.autonomy !== "off" && scope.ownerFacts.has(r.id))
+    .filter(
+      (r) =>
+        scope.ownerFacts.has(r.id) && (r.autonomy !== "off" || week.has(r.id)),
+    )
     .map((repo) => {
       const s = autonomyStatus(ctx.app, repo);
       const runs = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
@@ -519,6 +604,9 @@ function today(ctx: Ctx, scope: BoardScope): Html {
             <span><b>${runs}</b> run${runs === 1 ? "" : "s"}</span>
             <span><b>${shipped}</b> shipped</span>
           </span>
+          <span class="board-app-week"
+            >${perShippedWords(week.get(repo.id))} this week</span
+          >
           <span class="board-spend"
             ><span class="board-fill" data-w="${pct(share)}"></span
           ></span>
@@ -642,6 +730,18 @@ ${widths}
 .board-app-nums b { color: var(--fg); font-weight: 600; }
 .board-spend { grid-column: 1 / -1; display: block; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
 .board-app[data-paused="ceiling"] .board-fill { background: var(--attn); }
+
+/* Windows: each subscription's 5-hour and weekly window, admin only. */
+.board-windows { display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 8px var(--pad) 0; font-size: 13px; }
+.board-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--muted-fg); }
+.board-sub:hover { border-color: var(--border-strong); color: var(--muted-fg); }
+.board-sub-name { font-weight: 600; color: var(--fg); }
+.board-window { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.board-window-name { color: var(--faint); }
+.board-window .board-bar { width: 56px; }
+.board-window[data-window] .board-fill[data-w="100"] { background: var(--attn); }
+.board-inferred { font-style: normal; font-size: .85em; color: var(--faint); border: 1px dashed var(--border); border-radius: 4px; padding: 0 4px; }
+.board-app-week { grid-column: 1 / -1; font-size: .875em; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 
 /* Wide: four regions fill the window, each scrolling on its own. */
 @media (min-width: 1100px) {

@@ -12,6 +12,9 @@ import type { Database } from "bun:sqlite";
 import { ancestorsOf } from "../../git/merge.ts";
 import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import type { Efficiency } from "../../core/efficiency.ts";
+import type { WindowStanding } from "../../core/standing.ts";
+import { whenText } from "../../crew/limits.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
 import {
@@ -345,4 +348,69 @@ export function wordBadge(word: Word, id?: string): Html {
     ${id === undefined ? null : html`id="${id}"`}
     >${word === "working" ? icon("loader") : null}${word}</span
   >`;
+}
+
+// ---- what a subscription has left, and what a change costs ----
+
+/** One figure as a person reads it, and whether the forge worked it out
+ * (from the usage ledger) rather than the provider saying it. */
+export interface FigureWords {
+  readonly text: string;
+  readonly inferred: boolean;
+}
+
+/** A subscription's window (`core/standing.ts`) in words: what is used,
+ * what is left, when it resets. Money in US dollars of list price. */
+export interface WindowWords {
+  readonly name: string;
+  readonly used: FigureWords;
+  readonly remaining: FigureWords;
+  readonly resets: FigureWords;
+  /** Whole percent of the cap used, 0–100; null while no cap is known. */
+  readonly usedPct: number | null;
+}
+
+const dollars = (n: number): string => `$${n.toFixed(2)}`;
+
+export function windowWords(w: WindowStanding): WindowWords {
+  const full = w.remaining?.source === "read" && w.remaining.value === 0;
+  const usedPct = full
+    ? 100
+    : w.cap === null || w.cap.value <= 0
+      ? null
+      : Math.max(0, Math.min(100, Math.round((w.used.value / w.cap.value) * 100)));
+  return {
+    name: w.window === "5h" ? "5-hour window" : "weekly window",
+    used: {
+      text: `${dollars(w.used.value)} used`,
+      inferred: w.used.source === "inferred",
+    },
+    remaining:
+      w.remaining === null
+        ? { text: "cap not known yet", inferred: false }
+        : full
+          ? { text: "full", inferred: false }
+          : {
+              text: `${dollars(w.remaining.value)} left`,
+              inferred: w.remaining.source === "inferred",
+            },
+    resets:
+      w.resetsAt === null
+        ? { text: "opens on next use", inferred: false }
+        : {
+            text: `resets ${whenText(new Date(w.resetsAt.value))}`,
+            inferred: w.resetsAt.source === "inferred",
+          },
+    usedPct,
+  };
+}
+
+/** An app's spend per shipped change (`core/efficiency.ts`) in a few words:
+ * `$1.37 per shipped change`, or what is true when there is no ratio. */
+export function perShippedWords(e: Efficiency | undefined): string {
+  if (e === undefined || (e.spentUsd === 0 && e.shipped === 0))
+    return "nothing spent or shipped";
+  if (e.perShippedUsd === null)
+    return `${dollars(e.spentUsd)} spent, nothing shipped`;
+  return `${dollars(e.perShippedUsd)} per shipped change`;
 }
