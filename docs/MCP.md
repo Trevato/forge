@@ -37,6 +37,9 @@ for a tunnel and a forge that sleeps.
 | `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
+| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
+| `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
+| `unlink`       | `{ app, issue, blockedBy }`: the issue stops waiting for it                                       | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.

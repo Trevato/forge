@@ -19,10 +19,16 @@
 
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { addCommentThrough } from "../actions/issues.ts";
+import {
+  dependencyWords,
+  linkIssue,
+  unlinkIssue,
+} from "../actions/dependencies.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { tell, toldWords } from "../actions/tell.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
+import { repoGraph } from "../core/dependencies.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
@@ -37,6 +43,7 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { body, json } from "./respond.ts";
@@ -47,8 +54,7 @@ const SERVER = { name: "forge", version: "1" };
 
 type Args = Record<string, unknown>;
 type Answer =
-  | { ok: true; value: unknown }
-  | { ok: false; error: string; message: string };
+  { ok: true; value: unknown } | { ok: false; error: string; message: string };
 
 const good = (value: unknown): Answer => ({ ok: true, value });
 const bad = (error: string, message: string): Answer => ({
@@ -84,6 +90,25 @@ function repoArg(ctx: Ctx, user: User, args: Args): Repo | Answer {
   return repo !== undefined && canRead(ctx.app.db, repo, user)
     ? repo
     : bad("not_found", "no such app or repository (owner/name)");
+}
+
+const APP_ARG = {
+  type: "string",
+  description: "The app, as owner/name.",
+} as const;
+
+/** The app a plan tool names, under `app`, read like any repository. */
+const planRepo = (ctx: Ctx, user: User, args: Args): Repo | Answer =>
+  repoArg(ctx, user, { repo: args["app"] });
+
+/** The issue a plan tool names by number, in that repository. */
+function issueArg(ctx: Ctx, repo: Repo, args: Args, key: string) {
+  const n = args[key];
+  const issue =
+    typeof n === "number" && Number.isInteger(n) && n > 0
+      ? getIssue(ctx.app.db, repo.id, n)
+      : undefined;
+  return issue ?? bad("no_such_issue", `no issue #${String(n)}`);
 }
 
 const isAnswer = (v: Repo | Answer): v is Answer => "ok" in v;
@@ -417,6 +442,97 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "map",
+    description:
+      "An app's plan: its open issues as ready now, or waiting on others (with what each waits for), the critical path, every edge, and where the crew is. The same data as the map page and /api/v1/map.",
+    inputSchema: {
+      type: "object",
+      properties: { app: APP_ARG },
+      required: ["app"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const graph = repoGraph(ctx.app.db, repo.id);
+      return good(
+        mapJson(
+          repo,
+          graph,
+          marksFor(
+            ctx.app.db,
+            repo.id,
+            graph,
+            listActiveRuns(ctx.app.db, [repo.id]),
+          ),
+        ),
+      );
+    },
+  },
+  {
+    name: "link",
+    description:
+      "Say that an issue waits for another in the same app. Refused when it would make a loop, crosses repositories, or names an issue that does not exist.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: { type: "integer", minimum: 1 },
+        blockedBy: { type: "integer", minimum: 1 },
+      },
+      required: ["app", "issue", "blockedBy"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "issue");
+      if ("ok" in issue) return issue;
+      const blocker = issueArg(ctx, repo, args, "blockedBy");
+      if ("ok" in blocker) return blocker;
+      const linked = linkIssue(ctx.app, user, repo, issue, blocker);
+      return linked.ok
+        ? good({
+            says: `#${issue.number} now waits for #${blocker.number}.`,
+            issue: issue.number,
+            blockedBy: blocker.number,
+          })
+        : bad(
+            linked.error,
+            dependencyWords[linked.error] ??
+              "you need write access to plan here",
+          );
+    },
+  },
+  {
+    name: "unlink",
+    description: "Say that an issue no longer waits for another.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: { type: "integer", minimum: 1 },
+        blockedBy: { type: "integer", minimum: 1 },
+      },
+      required: ["app", "issue", "blockedBy"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "issue");
+      if ("ok" in issue) return issue;
+      const blocker = issueArg(ctx, repo, args, "blockedBy");
+      if ("ok" in blocker) return blocker;
+      const unlinked = unlinkIssue(ctx.app, user, repo, issue, blocker);
+      return unlinked.ok
+        ? good({
+            says: `#${issue.number} no longer waits for #${blocker.number}.`,
+          })
+        : bad(unlinked.error, "you need write access to plan here");
     },
   },
 ];

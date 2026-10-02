@@ -191,7 +191,11 @@ import {
 } from "../actions/crew.ts";
 import { assignIssue } from "../actions/issues.ts";
 import { steerRepoRun } from "../actions/runs.ts";
-import { linkIssue, unlinkIssue } from "../actions/dependencies.ts";
+import {
+  dependencyWords,
+  linkIssue,
+  unlinkIssue,
+} from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
@@ -254,13 +258,6 @@ function publicKey(key: UserKey) {
     lastUsedAt: key.lastUsedAt,
   };
 }
-
-const dependencyWords: Record<string, string> = {
-  self: "an issue cannot wait for itself",
-  cycle: "that would make a loop",
-  cross_repo: "dependencies stay inside one repository",
-  not_an_issue: "only issues can depend on issues",
-};
 
 function withLabels(ctx: Ctx, issue: Issue) {
   return { ...issue, labels: labelsFor(ctx.app.db, issue.id) };

@@ -164,6 +164,9 @@ describe("the forge over MCP", () => {
       "following",
       "take_updates",
       "converge",
+      "map",
+      "link",
+      "unlink",
     ]);
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
@@ -392,6 +395,58 @@ describe("the forge over MCP", () => {
     const stale = await tool(rw, "stop", { repo: "alice/game", run: run.id });
     expect(stale.error).toContain("finished");
     expect(stale.error).toContain("already ended");
+  });
+
+  test("map, link and unlink are the plan's own actions", async () => {
+    const a = (await tool(rw, "tell", { repo: "alice/game", text: "first" }))
+      .value.issue;
+    const b = (await tool(rw, "tell", { repo: "alice/game", text: "second" }))
+      .value.issue;
+    const listed = await call(rw, "tools/list");
+    const hints = Object.fromEntries(
+      listed.body.result.tools.map((t: any) => [
+        t.name,
+        t.annotations.readOnlyHint,
+      ]),
+    );
+    expect([hints.map, hints.link, hints.unlink]).toEqual([true, false, false]);
+
+    expect(
+      (await tool(rw, "link", { app: "alice/game", issue: b, blockedBy: a }))
+        .value.blockedBy,
+    ).toBe(a);
+    const map = (await tool(ro, "map", { app: "alice/game" })).value;
+    expect(map.ready.map((i: any) => i.number)).toContain(a);
+    expect(map.blockedOn.map((i: any) => i.number)).toContain(a);
+    expect(map.issues.find((i: any) => i.number === b).word).toBe("blocked");
+    expect(map.edges).toContainEqual({ issue: b, blockedBy: a });
+
+    // The API's words, for a loop, a stranger issue, and a read token.
+    expect(
+      (await tool(rw, "link", { app: "alice/game", issue: a, blockedBy: b }))
+        .error,
+    ).toBe("cycle: that would make a loop");
+    expect(
+      (await tool(rw, "link", { app: "alice/game", issue: a, blockedBy: 999 }))
+        .error,
+    ).toBe("no_such_issue: no issue #999");
+    expect(
+      (await tool(ro, "link", { app: "alice/game", issue: a, blockedBy: b }))
+        .error,
+    ).toContain("forbidden");
+    // A private app is no such app to someone who cannot read it.
+    expect((await tool(bobRw, "map", { app: "alice/game" })).error).toContain(
+      "not_found",
+    );
+    expect(
+      (await tool(bobRw, "link", { app: "alice/game", issue: b, blockedBy: a }))
+        .error,
+    ).toContain("not_found");
+
+    await tool(rw, "unlink", { app: "alice/game", issue: b, blockedBy: a });
+    const after = (await tool(ro, "map", { app: "alice/game" })).value;
+    expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
+    expect(after.ready.map((i: any) => i.number)).toContain(b);
   });
 
   test("a browser session is not a way in, even signed in", async () => {

@@ -18,6 +18,14 @@ import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { AccessError } from "./access.ts";
 
+/** What a refused link says, in the words the API and the MCP share. */
+export const dependencyWords: Record<string, string> = {
+  self: "an issue cannot wait for itself",
+  cycle: "that would make a loop",
+  cross_repo: "dependencies stay inside one repository",
+  not_an_issue: "only issues can depend on issues",
+};
+
 function requirePlanner(
   app: App,
   actor: User | undefined,
