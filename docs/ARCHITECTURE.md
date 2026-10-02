@@ -486,6 +486,16 @@ budget, a deadline. Containment is the forge's, not the agent's; the agent
 is trusted to work, and the forge is built so that trust costs at most one
 run.
 
+## The forge's standing
+
+`GET /api/v1/health` (`kernel/vitals.ts`) answers a site admin, by session or
+any token scope, with `{ ok, needs, disk, memory, queue, stuck, apps, at }`;
+everyone else gets a 404. `needs` is one sentence per thing off: disk under
+10% free on the `FORGE_DATA` volume, a run running with a lapsed lease (or
+past six hours), a queue whose oldest run has waited over thirty minutes.
+It is a fixed handful of queries however many runs and apps exist, measured
+per request and never cached. `/healthz` stays the orchestrator's answer.
+
 ## Search, and where semantic search would go
 
 Search (`core/search.ts`, `actions/search.ts`, `GET /api/v1/search`) holds no

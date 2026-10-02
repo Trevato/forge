@@ -213,6 +213,7 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
+import { vitals } from "../kernel/vitals.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -2678,6 +2679,19 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   // ---- apps, runs, and the crew (docs/APPS.md) ----
+
+  // How the forge itself is: a site admin's to read, and nobody else's to
+  // know exists — a 404, never the numbers.
+  router.add("GET", "/api/v1/health", (ctx) => {
+    if (!ctx.auth.user?.isAdmin) return notFound();
+    const runtime = appsRuntime(ctx.app);
+    const envs = runtime
+      ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
+      : [];
+    return json(
+      vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs }),
+    );
+  });
 
   router.add("GET", "/api/v1/apps", (ctx) => {
     const records = listApps(ctx.app.db);

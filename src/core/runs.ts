@@ -789,3 +789,40 @@ export function listActiveRuns(
     .all(...unique.slice(0, 400))
     .map(toRun);
 }
+
+/** What is waiting to start, by kind: one grouped query, however many runs there are. */
+export function queueDepth(
+  db: Database,
+  now = Date.now(),
+): { kind: RunKind; queued: number; oldest: string }[] {
+  return db
+    .query<{ kind: RunKind; queued: number; oldest: string }, [string]>(
+      `SELECT kind, COUNT(*) AS queued, MIN(created_at) AS oldest
+       FROM run
+       WHERE state = 'queued' AND (not_before IS NULL OR not_before <= ?1)
+       GROUP BY kind`,
+    )
+    .all(new Date(now).toISOString());
+}
+
+/** Every running run with the repository and issue number it is about, in one query. */
+export function listRunning(
+  db: Database,
+): { run: Run; repo: string; issue: number | null }[] {
+  const rows = db
+    .query<RunRow & { slug: string; issue_number: number | null }, []>(
+      `SELECT run.*, user.username || '/' || repo.name AS slug,
+              issue.number AS issue_number
+       FROM run
+       JOIN repo ON repo.id = run.repo_id
+       JOIN user ON user.id = repo.owner_id
+       LEFT JOIN issue ON issue.id = run.issue_id
+       WHERE run.state = 'running'`,
+    )
+    .all();
+  return rows.map((r) => ({
+    run: toRun(r),
+    repo: r.slug,
+    issue: r.issue_number,
+  }));
+}
