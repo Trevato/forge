@@ -140,6 +140,14 @@ const toEvent = (r: EventRow): ForgeEvent => ({
   createdAt: r.created_at,
 });
 
+/** One event by id, or undefined. No access check: the caller owes one. */
+export function getEvent(db: Database, eventId: string): ForgeEvent | undefined {
+  const row = db
+    .query<EventRow, [string]>("SELECT * FROM event WHERE id = ?1")
+    .get(eventId);
+  return row ? toEvent(row) : undefined;
+}
+
 export function listEvents(
   db: Database,
   options: ListEventsOptions = {},

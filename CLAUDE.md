@@ -136,6 +136,9 @@ src/
               page says it in), asks, leans, previews, shelf (an app as one
               row, for any page that lists apps), home, app, change, tell,
               run, lists, actions, style (the page sheet, assembled)
+  feed/       a viewer's feed (docs/FEED.md): items (candidates read through
+              the access every page uses), affinity (decayed counts), rank,
+              feed (filter, page, cursor)
   ssh/        the SSH server: transport (kex/ciphers), auth (publickey),
               channels (session only), keys, wire — zero deps, no forwarding
   tui/        the terminal UI. term/ is the transport boundary (`Terminal`);

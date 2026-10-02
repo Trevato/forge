@@ -233,16 +233,39 @@ function askCandidatesFor(
 export function askLinesFor(
   db: Database,
   user: User,
-): { id: string; line: string }[] {
+): {
+  id: string;
+  line: string;
+  kind: DecisionKind;
+  repoId: string;
+  /** The pull's number, for the asks that are about one. */
+  number?: number;
+}[] {
   const repos = listReposVisibleTo(db, user, { limit: 200 });
   return askCandidatesFor(db, user, repos).map((c) => {
     const repo = `${c.repo.name}`;
+    const about = { kind: c.kind, repoId: c.repo.id };
     if (c.kind === "paused")
-      return { id: `paused:${c.repo.id}`, line: `${repo} is paused at its ceiling` };
+      return {
+        ...about,
+        id: `paused:${c.repo.id}`,
+        line: `${repo} is paused at its ceiling`,
+      };
     const title = c.pull?.title ?? "";
+    const number = c.pull!.number;
     return c.kind === "stopped"
-      ? { id: `stopped:${c.pull!.id}`, line: `${repo}: the crew stopped on "${title}"` }
-      : { id: `look:${c.pull!.id}`, line: `${repo}: "${title}" is green, waiting for your look` };
+      ? {
+          ...about,
+          number,
+          id: `stopped:${c.pull!.id}`,
+          line: `${repo}: the crew stopped on "${title}"`,
+        }
+      : {
+          ...about,
+          number,
+          id: `look:${c.pull!.id}`,
+          line: `${repo}: "${title}" is green, waiting for your look`,
+        };
   });
 }
 

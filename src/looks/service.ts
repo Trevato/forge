@@ -360,6 +360,12 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     // of heads before it have nothing left to say.
     if (allOk)
       remove(deleteLooks(app.db, item.appId, item.env, item.commitOid));
+    if (allOk)
+      app.bus.append({
+        kind: "look.taken",
+        repoId: record.repoId,
+        payload: { env: item.env, commitOid: item.commitOid },
+      });
   }
 
   /** An environment is gone: so are its pictures, waiting or taken. */

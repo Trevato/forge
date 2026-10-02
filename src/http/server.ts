@@ -254,6 +254,7 @@ import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
+import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import {
   cookieValue,
@@ -871,6 +872,7 @@ export function buildRouter(): Router<Handler> {
 export function buildApiRouter(): Router<Handler> {
   const router = new Router<Handler>();
   apiRoutes(router);
+  feedRoutes(router);
   return router;
 }
 

@@ -282,3 +282,21 @@ export function decisionStats(
     ...k,
   }));
 }
+
+/** A decision whose outcome is known, newest outcome first, for these repositories. */
+export function listDecidedIn(
+  db: Database,
+  repoIds: readonly string[],
+  limit = 50,
+): Decision[] {
+  if (repoIds.length === 0) return [];
+  const marks = repoIds.map((_, n) => `?${n + 2}`).join(",");
+  return db
+    .query<Row, (string | number)[]>(
+      `SELECT * FROM decision
+       WHERE outcome IS NOT NULL AND kind != 'lean' AND repo_id IN (${marks})
+       ORDER BY outcome_at DESC, id DESC LIMIT ?1`,
+    )
+    .all(limit, ...repoIds)
+    .map(toDecision);
+}
