@@ -3,7 +3,7 @@
  * card — a pull the crew stopped on, a green pull waiting for a look, or a
  * repository parked at its ceiling — read from the same tables the rest of
  * the forge reads, with the same access the owner has. This module owns the
- * card, the row, the panel of them and the bulk bar; every button here posts
+ * card, the row and the panel of them; every button here posts
  * to the route a person could have posted to by hand (`actions.ts`).
  */
 

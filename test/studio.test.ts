@@ -54,7 +54,7 @@ import {
   runWord,
   servingHistory,
   type WordCtx,
-} from "../src/web/pages/studio.ts";
+} from "../src/web/studio/words.ts";
 import { servedPhrase } from "../src/web/ui.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { appendRunLog } from "../src/runs/log.ts";

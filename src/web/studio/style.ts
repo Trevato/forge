@@ -8,8 +8,7 @@
  * `components` layer, last, which is where an inline block's rules used to
  * win from: nothing else in the sheet styles a `.studio-*` selector, and the
  * few rules that reach a shared class (`.badge`, `.row-lead`, `.env-facts`)
- * set properties those components do not. `bulkCss` is not written here at
- * all: it is derived from the same table the bulk route enforces (`asks.ts`).
+ * set properties those components do not.
  *
  * `shell` and `rail` hold rules nothing in this directory draws any more,
  * and `rows` all but two of them. They are kept exactly as they were because

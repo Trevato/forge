@@ -135,7 +135,7 @@ src/
               pages/{site,repo,issues,pulls,pull,thread,commits,refs,search,
               org,account,settings}, and studio/ — the app-as-the-unit
               surface, one module per concept: words (the vocabulary every
-              page says it in), asks, leans, previews, shelf (an app as one
+              page says it in), asks, previews, shelf (an app as one
               row, for any page that lists apps), home, app, change, tell,
               run, lists, actions, style (the page sheet, assembled)
   feed/       a viewer's feed (docs/FEED.md): items (candidates read through
