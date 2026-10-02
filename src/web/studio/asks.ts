@@ -10,7 +10,8 @@
 import type { Database } from "bun:sqlite";
 import { previewEnv } from "../../apps/data.ts";
 import { crewForRepos } from "../../core/agents.ts";
-import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision } from "../../core/decisions.ts";
 import {
   listComments,
@@ -35,6 +36,7 @@ import type { User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
+import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
@@ -388,4 +390,44 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
     href: `${base}/settings/autonomy`,
     size: "sm",
   })}`;
+}
+
+/**
+ * What the forge itself needs, for a site admin: each sentence of the
+ * health answer (`/api/v1/health`) as one ask. Anyone else gets none — the
+ * forge's standing is the admin's to read and nobody else's to know about.
+ */
+export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
+  if (!user?.isAdmin) return [];
+  const runtime = appsRuntime(ctx.app);
+  const envs = runtime
+    ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
+    : [];
+  return vitals({
+    db: ctx.app.db,
+    dataDir: ctx.app.config.dataDir,
+    envs,
+  }).needs;
+}
+
+/**
+ * How many things ask the viewer: the one number the studio header and the
+ * asks page both show. It counts the same candidates the cards are made
+ * from (`askCandidatesFor`) plus the forge's own needs, so the two cannot
+ * disagree.
+ */
+export function askCountFor(ctx: Ctx, user: User | undefined): number {
+  if (!user) return 0;
+  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
+  return (
+    askCandidatesFor(ctx.app.db, user, repos).length +
+    forgeNeedsFor(ctx, user).length
+  );
+}
+
+/** The single sentence the asks page leads with, and the dashboard links with. */
+export function askSentence(count: number): string {
+  return count === 0
+    ? "All fine"
+    : `${count} ${count === 1 ? "thing needs" : "things need"} you`;
 }

@@ -39,6 +39,7 @@ import {
 } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
+import { askCountFor, askSentence } from "../studio/asks.ts";
 import { studioHome } from "../studio/home.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
@@ -397,56 +398,19 @@ const threadPath = (repo: Repo, issue: Issue): string =>
   `/${repo.ownerName}/${repo.name}/${issue.kind === "pull" ? "pulls" : "issues"}/${issue.number}`;
 
 /**
- * Open pulls the crew opened, in repositories the viewer can write — the
- * ones waiting on a review only a person can give. Visibility is in the
- * query; write access is checked once per distinct repository here. The
- * check beside each is the latest deploy of that pull, one grouped read.
+ * Needs you: one line that links to `/asks`, where the single list of what
+ * asks the viewer lives (`studio/asks.ts` decides what counts). Absent when
+ * nothing asks — a card saying "nothing" is a zero drawn.
  */
 function needsYouCard(ctx: Ctx, user: User): Html | undefined {
-  const db = ctx.app.db;
-  const pulls = listOpenAgentPullsVisibleTo(db, user, 25);
-  if (pulls.length === 0) return undefined;
-  const repos = getReposByIds(
-    db,
-    pulls.map((pull) => pull.repoId),
-  );
-  // Write access for every repository at once — one query, like visibility.
-  const mayWrite = writableRepoIds(db, user, [...repos.keys()]);
-  const writable = new Map<string, Repo>();
-  for (const repo of repos.values())
-    if (mayWrite.has(repo.id)) writable.set(repo.id, repo);
-  const mine = pulls.filter((pull) => writable.has(pull.repoId)).slice(0, 10);
-  if (mine.length === 0) return undefined;
-  const checks = latestRunsForIssues(
-    db,
-    mine.map((pull) => pull.id),
-  );
-  return listCard(
-    mine.map((pull) => {
-      const repo = writable.get(pull.repoId)!;
-      const check = checks.get(pull.id);
-      return row({
-        href: threadPath(repo, pull),
-        nav: true,
-        state: "open",
-        lead: icon("pull"),
-        title: pull.title,
-        titleAttr: pull.title,
-        meta: html`${repo.ownerName}/${repo.name} #${pull.number} ·
-        ${userTag(pull.authorName)} opened ${time(pull.createdAt)}`,
-        trail: html`${check === undefined
-          ? html`<span class="badge verdict-stale"
-              >${icon("clock")}No checks</span
-            >`
-          : runStateBadge(check.state, check.kind)}`,
-      });
-    }),
+  const count = askCountFor(ctx, user);
+  if (count === 0) return undefined;
+  return card(
+    html`<a href="/asks">${askSentence(count)}</a>`,
     {
       head: html`${icon("eye")}
         <h2>Needs you</h2>
-        <span class="muted small"
-          >pull requests from the crew, waiting on a review</span
-        >`,
+        <span class="muted small">decisions, and the forge's own health</span>`,
     },
   );
 }

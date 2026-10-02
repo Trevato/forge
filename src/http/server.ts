@@ -105,6 +105,7 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { asksPage } from "../web/studio/asks_page.ts";
 import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
@@ -412,6 +413,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/mode", modeSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
+  // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
+  router.add("GET", "/asks", asksPage);
   // The big view: the whole forge as one keyboard-first frame.
   router.add("GET", "/big", bigPage);
   router.add("GET", "/search", searchPage);

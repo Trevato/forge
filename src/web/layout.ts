@@ -7,7 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
-import { appsOf } from "./studio/asks.ts";
+import { appsOf, askCountFor } from "./studio/asks.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
@@ -165,6 +165,22 @@ function modeToggle(ctx: Ctx): Html {
   </span>`;
 }
 
+/**
+ * Studio only: the way to `/asks`, with how many things ask the viewer — the
+ * very count the page leads with (`askCountFor`). Quiet when nothing does.
+ */
+function asksLink(ctx: Ctx): Html {
+  if (!ctx.auth.user || ctx.mode !== "studio") return html``;
+  const count = askCountFor(ctx, ctx.auth.user);
+  return html`<a
+    class="btn"
+    data-size="sm"
+    href="/asks"
+    title="${count === 0 ? "All fine" : `${count} need you`}"
+    >Asks${count === 0 ? null : pill(count, "accent")}</a
+  >`;
+}
+
 function newMenu(): Html {
   const items: MenuItem[] = [
     { label: "New app", href: "/apps/new", icon: "rocket" },
@@ -273,13 +289,13 @@ const STATIC_PALETTE_DEV: PaletteItem[] = [
 /**
  * The studio's own verbs: no "New repository" or "New organization" — dev's
  * own way of making one, which would land a studio reader on dev's own form
- * unannounced. "Asks you" goes to the home, where the asks panel lives.
+ * unannounced. "Asks you" goes to `/asks`, the one screen of what needs the viewer.
  */
 const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/", c: "Go to" },
+  { t: "Asks you", h: "/asks", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },
@@ -430,7 +446,7 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${modeToggle(
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(ctx)}${modeToggle(
           ctx,
         )}${themeMenu(theme)}
         ${user

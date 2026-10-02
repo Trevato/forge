@@ -280,6 +280,19 @@ page exactly as it always has, deep links and all. Nothing here reads a
 diff or a blob: the page costs a handful of small queries whatever the
 change's size, unlike the page it links to.
 
+## The asks
+
+`/asks` (`asksPage`, `src/web/studio/asks_page.ts`) is the one screen for
+"is everything fine?". It leads with one sentence — _All fine_ when nothing
+asks the viewer, otherwise _N things need you_ — then the decision cards
+(a pull the crew stopped on, a green pull waiting for a look, an app parked
+at its ceiling), and, for a site admin only, one card per sentence of the
+forge's health (`needs` in `/api/v1/health`). What counts as an ask is
+defined once, in `src/web/studio/asks.ts`: the header's **Asks** count, the
+page, the dashboard's _Needs you_ link and the phone notifier all read it,
+so the numbers agree. It is server-rendered and every button is a form post,
+so it works without JavaScript.
+
 ## The home
 
 `/` in the studio: what is on you (issues and pulls a person assigned to
