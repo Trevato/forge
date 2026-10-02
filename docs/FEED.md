@@ -75,3 +75,31 @@ a card, and paging past the first 20.
 - Not done: steering a run offline (a plain form post, needs the network),
   updating the kept `/` from live swaps (it is the page as last navigated),
   swipes (no swipe UI yet), push, and anything native.
+
+## Sharing (`src/feed/share.ts`, `core/shares.ts`)
+
+`POST /api/v1/share` `{ item, to? }` (`rw`, same-origin for sessions) and the
+MCP tool `share` are one verb. `to` is up to 10 usernames. The sender must
+see the item (it is looked up in the sender's own feed sources); the answer
+is `{ sent: [{ to, outcome }] }`, outcome one of `delivered queued steered
+told duplicate skipped unreachable`. A name that does not exist and one who
+may not see the item are both `unreachable`.
+
+- **No target:** the app's crew and owners (an org's writers and admins);
+  only if none of those is someone else, the people who pinned the app
+  (inside the org when an org owns it). A named target is always added.
+- **No widening:** a recipient must `canRead` the repository and have the
+  very item among their own candidates, or they are unreachable.
+- **An agent** is steered (a comment on the change, when the item is one) or
+  told (an issue routed to a builder) through the existing actions, as the
+  sender, so the sender's own rights apply.
+- **A person** gets a `share:` feed item with the reason "shared by X: …",
+  boosted by `3 × sender weight`; it replaces the plain item. Their mute of
+  the app makes the share `skipped`; dismissing the item hides the share.
+- **Budget:** 5 delivered a day per person. More are queued, delivered
+  best-weighted first as room frees (checked on each feed read), and dropped
+  after 48 hours; a waiting share's worth falls linearly with its age.
+- **Dedupe:** one share per item per recipient, ever.
+- **Sender weight:** `2·(opens+1)/(shares+2)` over 90 days of delivered
+  shares to people, clamped 0.2–2; an open is the recipient's `opened` of the
+  item or its share. A sender nobody opens sinks, a trusted one rises.

@@ -11,6 +11,7 @@ import {
   isInteractionKind,
   recordInteraction,
 } from "../core/interactions.ts";
+import { share, RECIPIENTS_MAX } from "../feed/share.ts";
 import { canRead, getRepo, getRepoById } from "../core/repos.ts";
 import {
   FEED_LIMIT_MAX,
@@ -119,4 +120,38 @@ export function feedRoutes(router: Router<Handler>): void {
       return apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
     return json({ issue: told.value.issue.number }, 201);
   });
+
+  router.add("POST", "/api/v1/share", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const itemId = str(input.item);
+    if (!ITEM_ID.test(itemId))
+      return apiError("invalid_item", 422, "item is a feed item id");
+    const to = parseTargets(input.to);
+    if (to === undefined)
+      return apiError(
+        "invalid_target",
+        422,
+        `to is up to ${RECIPIENTS_MAX} usernames`,
+      );
+    const made = await share(ctx.app, ctx.auth.user!, itemId, to);
+    if (!made.ok) return notFound();
+    return json({ sent: made.value.sent }, 201);
+  });
+}
+
+/** `to` as a list of usernames: absent, one, or a few; anything else is no. */
+export function parseTargets(raw: unknown): string[] | undefined {
+  if (raw === undefined || raw === null) return [];
+  const list = Array.isArray(raw) ? raw : [raw];
+  if (list.length > RECIPIENTS_MAX) return undefined;
+  const out: string[] = [];
+  for (const v of list) {
+    if (typeof v !== "string") return undefined;
+    const name = v.trim().replace(/^@/, "");
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,38}$/.test(name)) return undefined;
+    out.push(name);
+  }
+  return out;
 }

@@ -8,9 +8,11 @@
 
 import type { Database } from "bun:sqlite";
 import { dismissedItems, mutedRepos } from "../core/interactions.ts";
-import type { User } from "../core/users.ts";
 import { affinityFor } from "./affinity.ts";
-import { candidatesFor } from "./items.ts";
+import { canRead, getRepoById } from "../core/repos.ts";
+import { deliveredFor, drainQueue, senderWeight } from "../core/shares.ts";
+import { getUserById, type User } from "../core/users.ts";
+import { candidatesFor, type Candidate } from "./items.ts";
 import { rank, type FeedItem } from "./rank.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
@@ -37,7 +39,15 @@ export function readFeed(
   const limit = Math.min(options.limit ?? FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX);
   const muted = mutedRepos(db, viewer.id);
   const dismissed = dismissedItems(db, viewer.id);
-  const candidates = candidatesFor(db, viewer, now).filter(
+  drainQueue(db, viewer.id, now);
+  const shared = sharedCandidates(db, viewer, now).filter(
+    (c) => !dismissed.has(c.itemId),
+  );
+  const boosted = new Set(shared.map((c) => c.itemId));
+  const candidates = [
+    ...candidatesFor(db, viewer, now).filter((c) => !boosted.has(c.id)),
+    ...shared,
+  ].filter(
     (c) => !dismissed.has(c.id) && (c.kind === "ask" || !muted.has(c.repoId)),
   );
   let ranked = rank(candidates, affinityFor(db, viewer, now), now);
@@ -56,4 +66,39 @@ export function readFeed(
     next_cursor:
       ranked.length > limit && last !== undefined ? cursorOf(last) : null,
   };
+}
+
+export const SHARE_BOOST = 3;
+
+/**
+ * What others shared with the viewer, as candidates that carry the item's
+ * own words, boosted by the sender's weight. A repository the viewer can
+ * no longer read says nothing. The shared item replaces the plain one.
+ */
+function sharedCandidates(
+  db: Database,
+  viewer: User,
+  now: number,
+): (Candidate & { itemId: string })[] {
+  const out: (Candidate & { itemId: string })[] = [];
+  for (const s of deliveredFor(db, viewer.id, now)) {
+    const repo = getRepoById(db, s.repoId);
+    const sender = getUserById(db, s.senderId);
+    if (!repo || !sender || !canRead(db, repo, viewer)) continue;
+    out.push({
+      id: `share:${s.id}`,
+      itemId: s.itemId,
+      kind: s.kind as Candidate["kind"],
+      repoId: repo.id,
+      app: `${repo.ownerName}/${repo.name}`,
+      actorId: sender.id,
+      actor: sender.username,
+      at: s.deliveredAt ?? s.createdAt,
+      link: s.link,
+      what: s.what,
+      urgency: SHARE_BOOST * senderWeight(db, sender.id, now),
+      said: `shared by ${sender.username}: ${s.what}`,
+    });
+  }
+  return out;
 }

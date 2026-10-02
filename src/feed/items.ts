@@ -38,6 +38,8 @@ export interface Candidate {
   readonly what: string;
   /** 0 for news; an ask or a failure is more. */
   readonly urgency: number;
+  /** When set, the sentence as it is: a share says who shared it. */
+  readonly said?: string;
 }
 
 export const EVENT_WINDOW = 300;

@@ -92,7 +92,9 @@ export function rank(
     const urgency = c.urgency;
     const base = urgency + affinity + recency;
     const reason =
-      urgency >= Math.max(affinity, recency)
+      c.said !== undefined
+        ? c.said
+        : urgency >= Math.max(affinity, recency)
         ? c.what
         : affinity >= recency
           ? affinityReason(c, app, actor, now)

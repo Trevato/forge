@@ -27,6 +27,9 @@ import {
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { tell, toldWords } from "../actions/tell.ts";
+import { ITEM_ID } from "../core/interactions.ts";
+import { share } from "../feed/share.ts";
+import { parseTargets } from "./feed.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
 import { repoGraph } from "../core/dependencies.ts";
@@ -172,6 +175,34 @@ const TOOLS: readonly Tool[] = [
         issue: told.value.issue.number,
         page: `${ctx.url.origin}/${repo.ownerName}/${repo.name}/issues/${told.value.issue.number}`,
       });
+    },
+  },
+  {
+    name: "share",
+    description:
+      "Share a feed item with whoever needs to know. With no `to` it goes to the app's crew and owners, else to those who follow the app. Nobody is shown what they could not already see; an agent is told or steered, a person gets it boosted in their feed, and each person has a daily budget.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "A feed item id, like event:01J…" },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: 10,
+          description: "Usernames, people or agents.",
+        },
+      },
+      required: ["item"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const item = str(args["item"]);
+      const to = parseTargets(args["to"]);
+      if (!ITEM_ID.test(item) || to === undefined)
+        return bad("invalid", "item is a feed item id; to is up to 10 usernames");
+      const made = await share(ctx.app, user, item, to);
+      if (!made.ok) return bad("not_found", "no such item");
+      return good({ sent: made.value.sent });
     },
   },
   {
