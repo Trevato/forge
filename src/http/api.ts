@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
@@ -2986,6 +2987,53 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.auth.user,
       repo,
       ctx.params.id ?? "",
+    );
+    if (!removed.ok) return respondAccess(removed.error, 422);
+    return json({}, 200);
+  });
+
+  // Forge-level secrets: a sealed, write-only slot for the operator's own
+  // credentials. Admins only; the list is names and timestamps, never a
+  // value. `ref` names the owner: an org's name, or a repository's
+  // `owner/name`; the forge scope takes none.
+  router.add("GET", "/api/v1/secrets/:scope", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const listed = listSecrets(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.scope ?? "",
+      ctx.url.searchParams.get("ref") ?? "",
+    );
+    if (!listed.ok) return respondAccess(listed.error, 422);
+    return json({ items: listed.value, next_cursor: null });
+  });
+
+  router.add("PUT", "/api/v1/secrets/:scope/:name", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const set = putSecret(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.scope ?? "",
+      str(input.ref),
+      ctx.params.name ?? "",
+      str(input.value),
+    );
+    if (!set.ok) return respondAccess(set.error, 422);
+    return json(set.value);
+  });
+
+  router.add("DELETE", "/api/v1/secrets/:scope/:name", (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const removed = removeSecret(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.scope ?? "",
+      ctx.url.searchParams.get("ref") ?? "",
+      ctx.params.name ?? "",
     );
     if (!removed.ok) return respondAccess(removed.error, 422);
     return json({}, 200);

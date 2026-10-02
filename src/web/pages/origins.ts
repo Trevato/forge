@@ -69,7 +69,8 @@ export type AccountSection =
   | "origins"
   | "crew"
   | "subscriptions"
-  | "backups";
+  | "backups"
+  | "secrets";
 
 /**
  * The settings sidebar, with Origins on it. Kept here so the account pages
@@ -95,6 +96,12 @@ export function accountSections(
             href: "/settings/subscriptions",
             icon: "key" as const,
             current: current === "subscriptions",
+          },
+          {
+            label: "Secrets",
+            href: "/settings/secrets",
+            icon: "lock" as const,
+            current: current === "secrets",
           },
           {
             label: "Backups",

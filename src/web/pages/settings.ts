@@ -108,6 +108,7 @@ import {
   timeAgo,
   userLink,
 } from "../ui.ts";
+import { secretsSection } from "./secrets.ts";
 import { crewReadiness } from "./crew.ts";
 import { grantsSection, saveGrants } from "./subscriptions.ts";
 
@@ -324,7 +325,14 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     </form>`,
     { head: html`<h2>General</h2>` },
   );
-  return settingsPageResponse(ctx, repo, "general", "Settings", body);
+  const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
+  return settingsPageResponse(
+    ctx,
+    repo,
+    "general",
+    "Settings",
+    html`${body}${secrets ? html`<div class="mt">${secrets}</div>` : null}`,
+  );
 }
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {

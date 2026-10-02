@@ -45,6 +45,7 @@ import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
+import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import { backupsNow, backupsPage } from "../web/pages/backups.ts";
 import {
   subscriptionAdd,
@@ -469,6 +470,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
   router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
   router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
+  router.add("GET", "/settings/secrets", secretsPage);
+  router.add("POST", "/settings/secrets", secretSet);
+  router.add("POST", "/settings/secrets/delete", secretDelete);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("GET", "/settings/crew", crewPage);

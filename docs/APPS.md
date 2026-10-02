@@ -251,6 +251,20 @@ each scope, and where two apply the narrower one wins: a test key for
 previews, the live one for production, and neither process ever holds the
 other's. Every preview is one scope, whichever pull it serves.
 
+### Forge secrets
+
+A credential the forge itself needs (a DNS token to spawn forges, a bucket
+key for tofu state) is not an app's variable and never enters one. A forge
+admin seals it under **Settings → Secrets**, or on an organization's page or
+a repository's settings, or with `PUT /api/v1/secrets/:scope/:name`
+(`{ "value", "ref" }`; `ref` is an org name or `owner/name`; scope is `forge`,
+`org` or `repo`). Values are write-only; the list carries names, `updatedAt`
+and `lastReadAt`. The only read path is `resolveSecrets` in
+`core/secret_store.ts`: the narrowest scope wins, and each open appends a
+`secret.read` event (actor, run, name, scope — never the value). Rows are
+sealed under AAD `secret:<scope>:<name>`. Like every sealed row, they sit
+beside the key in the data directory and so in a snapshot.
+
 A process reads its environment once, at start, so setting or removing a
 variable redeploys what reads it, at its current commit, and nothing else:
 a variable for everywhere redeploys production and every open preview, one

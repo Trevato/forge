@@ -36,6 +36,7 @@ import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
+import { secretsSection } from "./secrets.ts";
 import { agentsOnForge, grantsSection, saveGrants } from "./subscriptions.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
@@ -336,9 +337,15 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
             title: "Subscriptions for every repository here",
           })}
         </div>`,
-    )}`;
+    )}
+    ${isOrg ? orgSecrets(ctx, owner.username) : null}`;
 
   return page({ ctx, title: owner.username, body });
+}
+
+function orgSecrets(ctx: Ctx, name: string): Html | null {
+  const secrets = secretsSection(ctx, "org", name);
+  return secrets ? html`<div class="mt">${secrets}</div>` : null;
 }
 
 // POST /:owner/-/subscriptions

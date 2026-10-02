@@ -27,6 +27,7 @@ export function eventAudience(kind: string): EventAudience {
     kind.startsWith("app.env_") ||
     kind.startsWith("app.domain.") ||
     kind.startsWith("prompt.") ||
+    kind.startsWith("secret.") ||
     kind === "repo.settings_updated"
   )
     return "admins";
