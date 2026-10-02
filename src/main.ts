@@ -25,6 +25,7 @@ import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
+import { startNotifier } from "./crew/notify.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 
@@ -190,6 +191,8 @@ const crew = appsOn
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
 const prompts = startPromptRoutine(app, { client: graphInstagram() });
+// What newly asks a person reaches the phone they chose (docs/APPS.md).
+const notifier = startNotifier(app, { forgeUrl });
 
 // The webhook delivery worker: poll the outbox for due deliveries. The event
 // row is the source of truth, so a missed tick only delays delivery, never
@@ -276,6 +279,7 @@ function shutdown(): void {
   clearInterval(leaseTimer);
   Promise.all([
     prompts.stop(),
+    notifier.stop(),
     crew?.stop({ drain: true }),
     apps?.stop(),
     checks?.stop(),

@@ -7,6 +7,7 @@
  * to the route a person could have posted to by hand (`actions.ts`).
  */
 
+import type { Database } from "bun:sqlite";
 import { previewEnv } from "../../apps/data.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
@@ -100,12 +101,12 @@ export interface Decision {
 }
 
 /** When a person last spoke on a conversation, or its start. */
-function lastHumanWord(ctx: Ctx, issue: Issue, agentName: string): string {
+function lastHumanWord(db: Database, issue: Issue, agentName: string): string {
   let latest = issue.createdAt;
-  for (const c of listComments(ctx.app.db, issue.id))
+  for (const c of listComments(db, issue.id))
     if (c.authorName !== agentName && c.createdAt > latest)
       latest = c.createdAt;
-  for (const r of listReviews(ctx.app.db, issue.id))
+  for (const r of listReviews(db, issue.id))
     if (r.authorName !== agentName && r.createdAt > latest)
       latest = r.createdAt;
   return latest;
@@ -141,10 +142,12 @@ interface AskCandidate {
  * each (`spentTodayForRepos`, `crewForRepos`), not `autonomyStatus` per
  * repository.
  */
-function askCandidatesFor(ctx: Ctx, allRepos: readonly Repo[]): AskCandidate[] {
-  const db = ctx.app.db;
+function askCandidatesFor(
+  db: Database,
+  user: User | undefined,
+  allRepos: readonly Repo[],
+): AskCandidate[] {
   const out: AskCandidate[] = [];
-  const user = ctx.auth.user;
   if (!user) return out;
   // Shipping, closing and the day's ceiling are the owner's own decisions —
   // a reader who cannot write here is never asked to make one, and never
@@ -172,7 +175,7 @@ function askCandidatesFor(ctx: Ctx, allRepos: readonly Repo[]): AskCandidate[] {
       // own machinery — a person's own failing pull never accrues tries,
       // so it never earns a "stopped" card; it just stays waiting.
       if (!issue.authorIsAgent) continue;
-      const since = lastHumanWord(ctx, issue, who);
+      const since = lastHumanWord(db, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
       const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
       // A repository on its own parks what it cannot finish and moves on;
@@ -220,9 +223,30 @@ function askCandidatesFor(ctx: Ctx, allRepos: readonly Repo[]): AskCandidate[] {
   return out;
 }
 
+/**
+ * What asks `user` right now, as a stable id and one plain line each — the
+ * panel's own candidates (same visibility, same bounds), without the
+ * pictures. What the phone's notifier compares from one moment to the next.
+ */
+export function askLinesFor(
+  db: Database,
+  user: User,
+): { id: string; line: string }[] {
+  const repos = listReposVisibleTo(db, user, { limit: 200 });
+  return askCandidatesFor(db, user, repos).map((c) => {
+    const repo = `${c.repo.name}`;
+    if (c.kind === "paused")
+      return { id: `paused:${c.repo.id}`, line: `${repo} is paused at its ceiling` };
+    const title = c.pull?.title ?? "";
+    return c.kind === "stopped"
+      ? { id: `stopped:${c.pull!.id}`, line: `${repo}: the crew stopped on "${title}"` }
+      : { id: `look:${c.pull!.id}`, line: `${repo}: "${title}" is green, waiting for your look` };
+  });
+}
+
 export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
   const db = ctx.app.db;
-  const candidates = askCandidatesFor(ctx, allRepos);
+  const candidates = askCandidatesFor(db, ctx.auth.user, allRepos);
   // The pictures, in one read: a green pull's row leads with its preview.
   const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
   const records = appsForRepos(db, repoIds);

@@ -17,6 +17,12 @@ import {
   deleteToken,
   updateProfile,
 } from "../../actions/users.ts";
+import {
+  NOTIFY_ERRORS,
+  notifyHost,
+  notifyUrlOf,
+  setNotifyUrl,
+} from "../../crew/notify.ts";
 import { listKeys } from "../../core/keys.ts";
 import { listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -75,6 +81,30 @@ interface ProfileForm {
   errors?: { displayName?: string; email?: string };
 }
 
+function notifyView(ctx: Ctx, error?: string): Html {
+  const host = notifyHost(notifyUrlOf(ctx.app.db, ctx.auth.user!.id));
+  return card(
+    html`<form method="post" action="/settings/notify">
+      ${when(error, (m) => html`<p class="error-note">${m}</p>`)}
+      ${uiField({
+        label: "Notify URL",
+        name: "url",
+        type: "url",
+        autocomplete: "off",
+        placeholder: host === undefined ? "https://ntfy.sh/your-topic" : "••••••••",
+        hint:
+          host === undefined
+            ? "When something newly needs you, one line and a link is posted here. https: only; leave it empty to turn it off."
+            : `Sending to ${host}. The rest of the address stays hidden; paste a new one to replace it, or save it empty to turn it off.`,
+      })}
+      <div class="form-actions">
+        ${btn("Save notify URL", { variant: "primary" })}
+      </div>
+    </form>`,
+    { head: html`<h3>Phone notifications</h3>` },
+  );
+}
+
 function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
   return card(
@@ -126,11 +156,36 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    profileView(ctx, {
+    html`${profileView(ctx, {
       displayName: ctx.auth.user.displayName,
       email: ctx.auth.user.email,
-    }),
+    })}${notifyView(ctx)}`,
   );
+}
+
+// POST /settings/notify
+export async function notifyUpdate(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const saved = setNotifyUrl(ctx.app.db, ctx.auth.user.id, field(form, "url"));
+  if (!saved.ok)
+    return accountShell(
+      ctx,
+      "profile",
+      "Settings",
+      html`${profileView(ctx, {
+        displayName: ctx.auth.user.displayName,
+        email: ctx.auth.user.email,
+      })}${notifyView(ctx, NOTIFY_ERRORS[saved.error])}`,
+      422,
+    );
+  // The notifier starts from what asks now, so only what comes after is new.
+  ctx.app.bus.append({ kind: "account.notify_set", actorId: ctx.auth.user.id });
+  return flashTo(ctx, "/settings", {
+    message:
+      saved.value === "set" ? "Notify URL saved." : "Notifications turned off.",
+  });
 }
 
 // POST /settings

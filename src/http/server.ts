@@ -203,6 +203,7 @@ import {
 } from "../web/pages/org.ts";
 import {
   accountPage,
+  notifyUpdate,
   accountUpdate,
   keyCreate,
   keyDelete,
@@ -457,6 +458,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/runs/:id", runRedirect);
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
+  router.add("POST", "/settings/notify", notifyUpdate);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
   router.add("GET", "/settings/tokens", tokensPage);

@@ -790,6 +790,28 @@ of your own:
 issue; it is for the repository's admins, like everything else about its
 settings.
 
+## Something that needs you reaches your phone
+
+Under Settings → Profile a person may set one **notify URL**: an `https:`
+address that takes a POST of plain text (an [ntfy](https://ntfy.sh) topic
+does). When the forge's events change what asks them — a pull the crew
+stopped on, a green pull waiting for a look, a repository at its ceiling —
+one line and a link to the asks screen is posted there (`src/crew/notify.ts`).
+
+- *New only.* What asks a person is read as that person, the way the asks
+  panel reads it, so a private repository's titles never go to someone who
+  cannot read it. An ask is told once; it is new again only after it went
+  away and came back. A restart, or saving the URL, starts from what asks now.
+- *Bounded.* Ten an hour per person. A failing endpoint pauses that person's
+  notifications for a minute, doubling to an hour; what could not be sent is
+  dropped, never retried or queued. Nothing blocks the event stream.
+- *The URL is a secret* (a topic name is a password). It is `https:` only,
+  without credentials, at most 200 characters, and refuses loopback, private,
+  link-local, `.local`, `.internal` and bare hosts. The name is resolved and
+  judged again at send time and redirects are not followed. It is kept in the
+  user's settings, never logged, and the account page shows only its host.
+- Not here yet: a health problem for an admin has no event to ride.
+
 ## Configuration
 
 | variable                  | default                         | meaning                                           |
