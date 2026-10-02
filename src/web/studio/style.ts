@@ -89,6 +89,8 @@ const rail = part(/* css */ `
 .studio-crew li span { opacity: .85; }
 `);
 
+import { feedCss } from "./feed_style.ts";
+
 export const studioCss = `@layer components {\n${[
   shell,
   tellBox,
@@ -98,4 +100,5 @@ export const studioCss = `@layer components {\n${[
   rows,
   rowActions,
   rail,
+  part(feedCss),
 ].join("\n\n")}\n}`;

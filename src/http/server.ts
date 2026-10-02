@@ -106,6 +106,7 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
+import { liveFeedFragment } from "../web/studio/feed.ts";
 import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
@@ -446,6 +447,7 @@ export function buildRouter(): Router<Handler> {
   // fetches a region and not the page. Literal, above /:owner.
   router.add("GET", "/live/apps", liveAppsFragment);
   router.add("GET", "/live/on-you", liveOnYouFragment);
+  router.add("GET", "/live/feed", liveFeedFragment);
   // Whether a hostname is an app's verified domain — what Caddy's
   // `on_demand_tls { ask … }` asks before it fetches a certificate for a
   // name it has never seen (docs/EXTRACT.md). 200 says yes, 404 says no,

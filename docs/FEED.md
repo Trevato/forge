@@ -1,7 +1,7 @@
 # The feed
 
 A per-viewer read model of what happened on the forge, ranked, each item with
-one sentence saying why it is there. Data only: there is no page yet.
+one sentence saying why it is there.
 
 `GET /api/v1/feed?limit=&cursor=` → `{ items, next_cursor }`, for the signed-in
 viewer only. An item is `{ id, kind, app, actor, at, link, reason, score }`;
@@ -41,3 +41,14 @@ Muting hides an app's items except asks: what waits on a person is never
 muted away. Dismissing hides one item. The cursor is `score|id` of the last
 item; the feed is recomputed per request and resumes by id (or by score if
 that item has gone).
+
+## The page (`src/web/studio/feed.ts`)
+
+`/` for a signed-in viewer renders the first 20 items as cards above the shelf,
+server-side, and `/live/feed` answers the same region for the live-regions
+client (etag, 304). A card: the reason as a link into the thing, Steer (run
+cards, posts to the run's `steer`) or Tell the crew (everything else, posts to
+the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
+Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.
+Not yet: the `choose` deck card (nothing in the feed produces one), stop from
+a card, and paging past the first 20.

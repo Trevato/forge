@@ -21,6 +21,7 @@ import { onYouCard } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
+import { feedJs, feedRegion } from "./feed.ts";
 
 /**
  * The home in the studio: your apps as a shelf of
@@ -147,6 +148,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ${costLine}
     <div class="dash">
       <div class="dash-main stack">
+        ${feedRegion(user, ctx)}
         ${appsRegion(apps)}
       </div>
       <aside class="dash-rail stack">
@@ -157,6 +159,6 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ctx,
     title: "Studio",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}`,
   });
 }
