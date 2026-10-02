@@ -214,8 +214,28 @@ describe("the studio", () => {
     // The bytes the home rendered before the row moved into its own
     // module, escaped so no formatter can reflow them.
     expect(shelfRow).toBe(
-      '<li>\n    <a href="/alice/notes" class="row"\n  \n  data-nav tabindex="-1"><span class="row-lead"><span\n    class="dot"\n    \n  ></span></span>\n    <span class="row-main">\n      <span\n        class="row-title"\n        title="a place for notes"\n        >notes</span\n      >\n      <span class="row-meta">a place for notes · <span class="muted">quiet — tell the crew something</span></span>\n    </span>\n    <span class="row-trail">\n        <span class="badge" data-tone="default">not running</span></span></a>\n  </li>',
+      '<li>\n    <a href="/alice/notes" class="row"\n  \n  data-nav tabindex="-1"><span class="row-lead"><span\n    class="dot"\n    \n  ></span></span>\n    <span class="row-main">\n      <span\n        class="row-title"\n        title="a place for notes"\n        >notes</span\n      >\n      <span class="row-meta"><span class="shelf-meta"\n          ><span class="shelf-desc">a place for notes</span><span class="shelf-facts"\n            >· <span class="muted">quiet — tell the crew something</span></span\n          ></span\n        ></span>\n    </span>\n    <span class="row-trail">\n        <span class="badge" data-tone="default">not running</span></span></a>\n  </li>',
     );
+  });
+
+  test("a 400-character description is one clamped line on the row, whole in its title, and the facts keep their own span (#69)", async () => {
+    const long = "paragraph ".repeat(40).trim();
+    expect(long.length).toBeGreaterThanOrEqual(399);
+    app.db.run("UPDATE repo SET description = ?1 WHERE id = ?2", [long, repo.id]);
+    try {
+      const home = await (await get("/")).text();
+      const at = home.indexOf('href="/alice/notes"');
+      const shelfRow = home.slice(home.lastIndexOf("<li>", at), home.indexOf("</li>", at));
+      expect(shelfRow).toContain(`title="${long}"`);
+      expect(shelfRow).toContain(`<span class="shelf-desc">${long}</span>`);
+      expect(shelfRow).toContain('class="shelf-facts"');
+      // The facts sit outside the description, so it cannot push them out.
+      expect(shelfRow.indexOf('class="shelf-facts"')).toBeGreaterThan(
+        shelfRow.indexOf("</span>", shelfRow.indexOf('class="shelf-desc"')),
+      );
+    } finally {
+      app.db.run("UPDATE repo SET description = ?1 WHERE id = ?2", ["a place for notes", repo.id]);
+    }
   });
 
   test("an app's home is the app in the studio, and the code in dev", async () => {
@@ -1548,6 +1568,7 @@ describe("the studio", () => {
     const erinHome = await (await erinGet("/")).text();
     expect(erinHome).toContain("No apps yet");
     expect(erinHome).toContain('href="/apps/new"');
+    expect(erinHome).toContain('href="/?mode=dev"');
     expect(erinHome).not.toContain('href="/alice/lighthouse"');
     expect(erinHome).not.toContain("tell the crew something");
 

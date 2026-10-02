@@ -266,9 +266,13 @@ export async function shelfRows(
         lead: dot(tone),
         title,
         titleAttr: repo.description || repo.name,
-        meta: html`${repo.description
-          ? html`${repo.description} · `
-          : null}${happening}`,
+        meta: html`<span class="shelf-meta"
+          >${repo.description
+            ? html`<span class="shelf-desc">${repo.description}</span>`
+            : null}<span class="shelf-facts"
+            >${repo.description ? "· " : null}${happening}</span
+          ></span
+        >`,
         trail: raw(
           `\n        <span class="badge" data-tone="${tone}">${escapeHtml(live.word)}</span>`,
         ),

@@ -64,7 +64,11 @@ async function shelf(
           icon: "rocket",
           title: "No apps yet",
           note: "Make one, tell the crew what it is, and watch it come up.",
-          action: btn("New app", { href: "/apps/new", variant: "primary" }),
+          action: html`${btn("New app", {
+              href: "/apps/new",
+              variant: "primary",
+            })}
+            ${btn("Repositories", { href: "/?mode=dev" })}`,
         })
       : listCard(appRows, {
           head: html`${icon("rocket")}
@@ -239,7 +243,9 @@ export function studioDoor(ctx: Ctx): Response {
       <span class="app-tile-body">
         <span class="app-tile-name">${repo.name}</span>
         ${repo.description !== ""
-          ? html`<span class="app-tile-desc truncate"
+          ? html`<span
+              class="app-tile-desc truncate"
+              title="${repo.description}"
               >${repo.description}</span
             >`
           : null}
