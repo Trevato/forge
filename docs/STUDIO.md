@@ -369,14 +369,17 @@ everything the viewer may see) and works like this:
 Run logs and the crew's transcript stream line by line over their own
 `?follow=1` answers; they are the streamed part of a page, not a region.
 
-Signed out, `/` in the studio is a stranger's front door, not the dev
-pitch: a shelf of the public apps actually serving — name, one line of
-description, live state, and production's own picture, linking straight to
-the app. Sign in and Create an account stay one click away; `/?mode=dev`
-still renders the dev landing, and switches this browser to dev, same as
-the toggle. A forge with no public apps yet —
-most people's first visit — falls back to that same dev landing rather
-than showing an empty shelf.
+Signed out, `/` is a stranger's front door in either mode — the studio's
+door, never a git pitch (`studioDoor` in `studio/home.ts`). It is a shelf of
+the public apps a signed-out reader can see, the live ones first — name, one
+line of description, live state, and production's own picture, linking
+straight to the app — read from the apps themselves (`listPublicApps`), so
+no number of plain repositories crowds an app off it. Sign in and Create an
+account stay one click away, with the forge's ssh command beneath them when
+the terminal is on. A forge with nothing public up yet — most people's first
+visit — shows the same door with an empty shelf that says so. `/?mode=dev`
+answers a stranger with the same door; the repositories are a signed-in
+person's dev home.
 
 ## The board
 

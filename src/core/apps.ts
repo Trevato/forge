@@ -139,6 +139,22 @@ export function listApps(db: Database): AppRecord[] {
   return db.query<AppRow, []>("SELECT * FROM app ORDER BY id").all().map(toApp);
 }
 
+/**
+ * The apps whose repository is public — what any reader, signed in or not,
+ * may see — newest first, at most `limit`. One query over the apps
+ * themselves, so a forge with many plain repositories never crowds an app
+ * out of the window.
+ */
+export function listPublicApps(db: Database, limit: number): AppRecord[] {
+  return db
+    .query<AppRow, [number]>(
+      `SELECT app.* FROM app JOIN repo ON repo.id = app.repo_id
+       WHERE repo.visibility = 'public' ORDER BY app.id DESC LIMIT ?1`,
+    )
+    .all(limit)
+    .map(toApp);
+}
+
 /** The apps among these repositories, keyed by repo id — one query. */
 export function appsForRepos(
   db: Database,

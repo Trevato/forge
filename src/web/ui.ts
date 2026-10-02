@@ -544,7 +544,7 @@ export function labelCss(labels: Iterable<LabelLike | string>): string {
  * a column of rows lines up.
  *
  * This is the only place a count gets drawn, which is what makes a repository
- * row on the dashboard, a profile, the landing page, the search results and
+ * row on the dashboard, a profile, the search results and
  * the origin picker all say the same thing in the same shape.
  */
 export function counts(

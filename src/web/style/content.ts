@@ -340,14 +340,8 @@ form.inline { display: inline; margin-left: auto; }
 .hero-terminal .mono { font-size: 15px; }
 .terminal-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 .hero .bar { justify-content: center; }
-.hero-points {
-  display: grid; gap: 12px; margin-top: 40px; text-align: left;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-.hero-points .card-body { font-size: 13px; color: var(--muted-fg); }
-.hero-points strong { display: block; color: var(--fg); font-size: 14px; margin-bottom: 3px; }
 
-/* The studio's front door: the public apps that are serving, as pictures. */
+/* The studio's front door: the public apps, live first, as pictures. */
 .app-shelf {
   display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -370,7 +364,7 @@ form.inline { display: inline; margin-left: auto; }
    *content*, so a column with a long unbreakable line pushes the page wider
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
-.dash > *, .split > *, .repo-layout > *, .hero-points > * { min-width: 0; }
+.dash > *, .split > *, .repo-layout > * { min-width: 0; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }

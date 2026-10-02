@@ -236,7 +236,7 @@ a.sha:hover { color: var(--accent); }
 /* Cards stacked in normal flow space themselves. Inside a container that
    already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
-:is(.stack, .hero-points, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
+:is(.stack, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);

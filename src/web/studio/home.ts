@@ -4,31 +4,32 @@
  * beside it what is happening right now across all of them, and what a
  * person put on you. Built from the same rows and cards as the rest of the
  * forge, from grouped reads only, so the page does not get slower as the
- * apps grow.
+ * apps grow. A stranger gets the door instead: the public apps, live first.
  */
 
+import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
 import { crewForRepos } from "../../core/agents.ts";
-import type { Repo } from "../../core/repos.ts";
+import { listPublicApps } from "../../core/apps.ts";
+import { DEFAULT_PAGE, LOOK_SIZES, looksForApps } from "../../core/looks.ts";
+import { getReposByIds, type Repo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
+import { edgeLoginUrl } from "../../http/edge.ts";
+import { sshCommand } from "../../ssh/command.ts";
+import { repoBase } from "../chrome.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
-import { btn, empty, icon, listCard, row } from "../ui.ts";
+import { btn, empty, envStateBadge, icon, listCard } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
+import { lookUrl, pictured } from "../pages/looks.ts";
 import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
 import { feedJs, feedNote, feedRegion } from "./feed.ts";
 
-/**
- * The home in the studio: your apps as a shelf of
- * rows — and beside it what is happening right now across all of them, and
- * what a person put on you. Built from the same rows and cards as the rest
- * of the forge, so it reads as the forge.
- */
 /** The events that can change a row on the shelf. */
 const APPS_LIVE =
   "app.serving,app.stopped,run.queued,run.started,run.finished,pull.opened,pull.closed,pull.merged";
@@ -162,4 +163,128 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}`,
   });
+}
+
+/** How many public apps the door reads, and how many tiles it shows. */
+const DOOR_READ = 200;
+const DOOR_TILES = 24;
+
+/** Live first: what answers now, then what wakes on a visit, then the rest. */
+const LIVENESS: Record<EnvState, number> = {
+  running: 0,
+  asleep: 1,
+  deploying: 2,
+  failed: 3,
+  stopped: 4,
+};
+
+/**
+ * The studio's door for a stranger: the public apps as a shelf of
+ * pictures, name and one clamped line, live first — and when nothing
+ * public is up yet, an empty shelf that says so, never a git pitch. A
+ * signed-out reader gets this whatever the mode: dev has no home of its
+ * own for someone with nothing to show them.
+ *
+ * Three grouped reads carry the whole shelf (the apps, their repositories,
+ * their looks), and a repository's runtime state is a map lookup
+ * (`AppsRuntime.status`), not a process call — so this never gets slower
+ * as the forge grows apps, the one page anonymous traffic actually hits.
+ */
+export function studioDoor(ctx: Ctx): Response {
+  const db = ctx.app.db;
+  const records = listPublicApps(db, DOOR_READ);
+  const repos = getReposByIds(
+    db,
+    records.map((r) => r.repoId),
+  );
+  const runtime = appsRuntime(ctx.app);
+  const apps = records.flatMap((record) => {
+    const repo = repos.get(record.repoId);
+    if (repo === undefined) return [];
+    const production = (
+      runtime === undefined ? [] : runtime.status(record)
+    ).find((env) => env.env === "production");
+    return [{ record, repo, state: production?.state ?? "stopped" }];
+  });
+  // `sort` is stable: newest first within each liveness.
+  const shown = apps
+    .sort((a, b) => LIVENESS[a.state] - LIVENESS[b.state])
+    .slice(0, DOOR_TILES);
+  const looks = looksForApps(
+    db,
+    shown.map((a) => a.record.id),
+  );
+  const tiles = shown.map(({ record, repo, state }) => {
+    const ofApp = looks.filter(
+      (l) =>
+        l.appId === record.id &&
+        l.env === "production" &&
+        l.page === DEFAULT_PAGE,
+    );
+    const look = pictured(ofApp, "thumb") ?? pictured(ofApp, "desktop");
+    const base = repoBase(repo);
+    return html`<a class="app-tile" href="${base}">
+      ${look
+        ? html`<img
+            class="app-tile-look"
+            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+            width="${LOOK_SIZES[look.kind].width}"
+            height="${LOOK_SIZES[look.kind].height}"
+            alt=""
+            loading="lazy"
+          />`
+        : html`<span class="app-tile-blank" aria-hidden="true"
+            >${icon("rocket")}</span
+          >`}
+      <span class="app-tile-body">
+        <span class="app-tile-name">${repo.name}</span>
+        ${repo.description !== ""
+          ? html`<span class="app-tile-desc truncate"
+              >${repo.description}</span
+            >`
+          : null}
+        ${envStateBadge(state)}
+      </span>
+    </a>`;
+  });
+
+  const body = html`<section class="hero">
+      <h1>Apps, live.</h1>
+      <p>A software forge that builds and serves its own apps.</p>
+      <div class="bar">
+        ${ctx.app.config.edgeToken === undefined
+          ? html`${btn("Create an account", {
+              href: "/signup",
+              variant: "primary",
+              size: "lg",
+            })}
+            ${btn("Sign in", { href: "/signin", size: "lg" })}`
+          : btn("Sign in", {
+              href: edgeLoginUrl("/"),
+              variant: "primary",
+              size: "lg",
+            })}
+      </div>
+      ${when(
+        sshCommand(ctx.app),
+        (ssh) =>
+          html`<p class="hero-terminal">
+            <code class="mono">${ssh}</code>
+            <span class="muted"
+              >the whole forge in your terminal — your key is your
+              identity</span
+            >
+          </p>`,
+      )}
+    </section>
+    ${tiles.length > 0
+      ? html`<div class="mt app-shelf">${tiles}</div>`
+      : html`<div class="mt">
+          ${empty({
+            icon: "rocket",
+            title: "Nothing public is up yet",
+            note: "Apps made public here show up on this shelf once they run.",
+          })}
+        </div>`}`;
+  return page({ ctx, title: "forge", body });
 }

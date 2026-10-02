@@ -1355,13 +1355,16 @@ describe("the studio", () => {
     );
     expect(publicLook.status).toBe(200);
 
-    // `?mode=dev` still renders the dev landing, unchanged, for a stranger.
+    // `?mode=dev` answers a stranger with the same door: the dev landing
+    // folded into it (#396).
     const dev = await (
       await fetch(`${base}/?mode=dev`, {
         headers: { cookie: "forge_mode=studio" },
       })
     ).text();
-    expect(dev).toContain("Your code, your machine");
+    expect(dev).toContain("<h1>Apps, live.</h1>");
+    expect(dev).toContain("a lighthouse in the fog");
+    expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
   });
 
   test("the front door's tile is the thumb, not the full desktop picture, when both exist (#287)", async () => {
@@ -1563,17 +1566,116 @@ describe("the studio", () => {
     expect(aliceApps).toContain('href="/alice/lighthouse"');
   });
 
-  test("a forge with no public apps falls back to the dev landing, signed out in studio", async () => {
+  test("a forge with no public apps opens on the studio's door with an empty shelf, never dev's git pitch — at every old landing URL (#396)", async () => {
     const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-empty-"));
     const app2 = createApp({ dataDir: dataDir2, port: 0 });
     const servers2 = await serve(app2);
     try {
-      const body = await (
-        await fetch(`${servers2.url}/`, {
-          headers: { cookie: "forge_mode=studio" },
-        })
-      ).text();
-      expect(body).toContain("Your code, your machine");
+      // A public repository that is not an app is not on the shelf.
+      const owner = await createUser(app2.db, {
+        username: "olga",
+        email: "olga@forge.local",
+        password: "a-good-passphrase",
+      });
+      if (!owner.ok) throw new Error(owner.error);
+      const plain = await createRepo(app2, owner.value, {
+        name: "just-code",
+        visibility: "public",
+      });
+      if (!plain.ok) throw new Error(String(plain.error));
+      // The landing's old addresses: the default, each mode's cookie, and
+      // the `?mode=dev` escape hatch.
+      for (const [path, cookie] of [
+        ["/", ""],
+        ["/", "forge_mode=studio"],
+        ["/", "forge_mode=dev"],
+        ["/?mode=dev", ""],
+        ["/?mode=studio", "forge_mode=dev"],
+      ] as const) {
+        const response = await fetch(`${servers2.url}${path}`, {
+          headers: { cookie },
+          redirect: "manual",
+        });
+        expect(response.status).toBe(200);
+        const body = await response.text();
+        expect(body).toContain("<h1>Apps, live.</h1>");
+        expect(body).toContain("Nothing public is up yet");
+        expect(body).toContain('href="/signup"');
+        expect(body).toContain('href="/signin"');
+        expect(body).not.toContain("<h1>Your code, your machine.</h1>");
+        expect(body).not.toContain("Public repositories");
+        expect(body).not.toContain(`href="/olga/just-code"`);
+      }
+    } finally {
+      servers2.stop();
+      app2.close();
+      await rm(dataDir2, { recursive: true, force: true });
+    }
+  });
+
+  test("the door reads public apps, not a window of the newest repositories, and puts the live ones first (#288)", async () => {
+    const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-door-"));
+    const app2 = createApp({ dataDir: dataDir2, port: 0 });
+    const servers2 = await serve(app2);
+    try {
+      const made = await createUser(app2.db, {
+        username: "pia",
+        email: "pia@forge.local",
+        password: "a-good-passphrase",
+      });
+      if (!made.ok) throw new Error(made.error);
+      const pia = made.value;
+      const appOf = async (name: string) => {
+        const created = await createRepo(app2, pia, {
+          name,
+          visibility: "public",
+        });
+        if (!created.ok) throw new Error(String(created.error));
+        const enabled = await enableApp(app2, pia, created.value, {
+          slug: name,
+        });
+        if (!enabled.ok) throw new Error(String(enabled.error));
+        return getAppByRepo(app2.db, created.value.id)!;
+      };
+      const older = await appOf("older");
+      await appOf("quiet");
+      // More public plain repositories than the old window held, all newer
+      // than the apps.
+      for (let n = 0; n < 25; n++) {
+        const r = await createRepo(app2, pia, {
+          name: `plain-${n}`,
+          visibility: "public",
+        });
+        if (!r.ok) throw new Error(String(r.error));
+      }
+      // `older` is serving, `quiet` is not: live first, though older. A
+      // runtime registered for this forge, never started, answers with
+      // the stubbed states.
+      new AppsRuntime(app2, {
+        domain: "studio-door.test",
+        scheme: "http",
+        publicPort: servers2.port,
+        forgeUrl: servers2.url,
+      });
+      const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
+        (record: AppRecord): EnvStatus[] =>
+          [
+            {
+              env: "production",
+              state: record.id === older.id ? "running" : "stopped",
+            } as EnvStatus,
+          ],
+      );
+      try {
+        const body = await (await fetch(`${servers2.url}/`)).text();
+        const at = (name: string) => body.indexOf(`href="/pia/${name}"`);
+        expect(at("older")).toBeGreaterThan(-1);
+        expect(at("quiet")).toBeGreaterThan(-1);
+        expect(at("older")).toBeLessThan(at("quiet"));
+        expect(body).not.toContain('href="/pia/plain-0"');
+      } finally {
+        status.mockRestore();
+      }
     } finally {
       servers2.stop();
       app2.close();
