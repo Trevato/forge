@@ -14,7 +14,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { outboxJs } from "../src/web/outbox.ts";
-import { swSource } from "../src/web/sw.ts";
+import { serviceWorker, swSource } from "../src/web/sw.ts";
 
 type Send = (url: string, init: any) => Promise<{ status: number }>;
 const make = new Function(`${outboxJs}; return forgeOutbox;`)() as (
@@ -147,6 +147,10 @@ describe("the service worker and the server", () => {
     expect(res.headers.get("content-type")).toContain("javascript");
     expect(res.headers.get("service-worker-allowed")).toBe("/");
     expect(res.headers.get("cache-control")).toBe("no-cache");
+    // the worker's CSP is its own: it must let the worker fetch same-origin
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain("default-src 'none'");
     expect(() => new Function(swSource)).not.toThrow();
     expect(swSource).toContain("stale");
   });
@@ -228,4 +232,71 @@ describe("the service worker and the server", () => {
       .query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'open'")
       .get()!.id;
   }
+});
+
+describe("the worker never turns a restart into a browser error", () => {
+  const boot = (kill = false) => {
+    const handlers: Record<string, (e: any) => void> = {};
+    const store = new Map<string, Response>();
+    const cache = {
+      put: async (k: any, v: Response) => void store.set(typeof k === "string" ? k : new URL(k.url).pathname, v),
+    };
+    const self = {
+      addEventListener: (n: string, f: any) => (handlers[n] = f),
+      skipWaiting() {},
+      clients: { claim: async () => {} },
+    };
+    const caches = {
+      open: async () => cache,
+      match: async (k: any) => store.get(typeof k === "string" ? k : new URL(k.url).pathname)?.clone(),
+      keys: async () => [],
+      delete: async () => true,
+    };
+    const down = async () => {
+      throw new TypeError("connection refused");
+    };
+    new Function("self", "caches", "fetch", "location", swSource)(self, caches, down, new URL("http://x"));
+    return { handlers, store };
+  };
+  const navigate = async (h: any, path: string) => {
+    let out: Promise<Response> | undefined;
+    h.fetch({
+      request: { method: "GET", mode: "navigate", url: `http://x${path}` },
+      respondWith: (p: Promise<Response>) => (out = p),
+    });
+    return out!;
+  };
+
+  test("server stopped, nothing kept: a navigation gets the offline page", async () => {
+    const { handlers } = boot();
+    const res = await navigate(handlers, "/");
+    expect(res.type).not.toBe("error");
+    expect(res.status).toBe(503);
+    const html = await res.text();
+    expect(html).toContain("restarting");
+    expect(html).toContain('http-equiv="refresh"');
+    expect((await navigate(handlers, "/some/page")).status).toBe(503);
+  });
+
+  test("the offline page is cached at install; a kept home is served stale", async () => {
+    const { handlers, store } = boot();
+    let done: Promise<unknown> | undefined;
+    handlers.install!({ waitUntil: (p: Promise<unknown>) => (done = p) });
+    await done;
+    expect(store.has("/__offline")).toBe(true);
+    store.set("/", new Response('<main data-stale="0">hi</main>'));
+    const res = await navigate(handlers, "/");
+    expect(await res.text()).toContain('data-stale="1"');
+  });
+
+  test("the kill switch serves a self-unregistering worker", async () => {
+    process.env.FORGE_SW_KILL = "1";
+    try {
+      const body = await serviceWorker().text();
+      expect(body).toContain("unregister");
+      expect(body).not.toContain("fetch");
+    } finally {
+      delete process.env.FORGE_SW_KILL;
+    }
+  });
 });

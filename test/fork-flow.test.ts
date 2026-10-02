@@ -6,7 +6,8 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
-import { settled } from "../src/origins/jobs.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
+import { getJob, settled } from "../src/origins/jobs.ts";
 import {
   mirrorAndWait,
   newFakeState,
@@ -788,17 +789,28 @@ describe("the fork flow", () => {
       push: false,
       admin: false,
     });
+    // Making the repository is two requests; the retry must not fire between
+    // them and fetch it empty, so it waits longer than the seed can take.
+    const found = firstFetchRetry.ms;
+    firstFetchRetry.ms = [8_000];
     const started = await api(`/api/v1/user/origins/${forgejoOrigin}/mirror`, {
       method: "POST",
       body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
     });
     expect(started.status).toBe(202);
-    // Seeded well inside the first retry's own wait (`firstFetchRetry.ms`,
-    // `src/origins/mirror.ts`, 2s by default): the immediate first fetch
-    // still finds nothing and fails, same as it would on a slower machine,
-    // but the retry has margin to spare rather than racing it.
-    setTimeout(() => void seedUpstream("late"), 300);
+    // Seeded only once the first pass has moved past its fetch (it found
+    // nothing and is waiting to try again, `firstFetchRetry` in
+    // `src/origins/mirror.ts`): seeding on a timer could land mid-fetch on a
+    // slow machine and be fetched half-made.
+    const jobId = ((await started.clone().json()) as { job: { id: string } }).job.id;
+    for (let i = 0; i < 400; i++) {
+      const stage = getJob(jobId)?.stage;
+      if (stage !== "creating" && stage !== "fetching") break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await seedUpstream("late");
     const job = await mirrorAndWait(started);
+    firstFetchRetry.ms = found;
     expect(job?.stage).toBe("done");
     expect(job?.repo?.name).toBe("late");
     const branches = await read<{ name: string }[]>(
