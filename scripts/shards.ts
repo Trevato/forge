@@ -36,7 +36,9 @@ export function shardCount(
 
 /**
  * Splits `files` into at most `n` disjoint, non-empty slices that together
- * hold every file once. Heaviest file first onto the lightest slice, so a
+ * hold every file once. `weight` is how long a file is expected to take
+ * ({@link weigher}). Heaviest file first onto the lightest slice (LPT:
+ * the longest shard is at most 4/3 of the best possible), so a
  * big file does not share a shard with other big ones; ties break on the
  * file's place in the list, so the same input always gives the same split.
  * Each slice keeps the list's own order.
@@ -72,6 +74,108 @@ export function splitFiles(
     .map((slice) =>
       slice.items.sort((a, b) => a.index - b.index).map((item) => item.file),
     );
+}
+
+/** How a test file is named: the same rule `scripts/test-shards.ts` uses. */
+export const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
+
+/** A sane bound on one entry of the times table: a day, in seconds. */
+const TIME_MAX = 86_400;
+
+/**
+ * Seconds per byte when the table says nothing about any file in the list:
+ * about what this suite showed when the table was first recorded (a 40 kB
+ * file of forge-booting tests runs for tens of seconds). Only the ratio
+ * between fallback files matters then, so the constant's exact value does
+ * not change the split; it only has to be in the right range beside
+ * measured seconds.
+ */
+export const SECONDS_PER_BYTE_DEFAULT = 1 / 2_000;
+
+/**
+ * Reads `scripts/test-times.json`: one object, test file path to the
+ * seconds it took alone, e.g. `{ "test/crew.test.ts": 50.1 }`. Anything
+ * else — not JSON, not an object, a key that is not a test file, a value
+ * that is not a finite number from 0 to a day — refuses the whole table,
+ * so a half-trusted table never steers the split.
+ */
+export function parseTimes(
+  text: string,
+): { ok: true; value: Map<string, number> } | { ok: false; error: string } {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "not JSON" };
+  }
+  if (typeof data !== "object" || data === null || Array.isArray(data))
+    return { ok: false, error: "not an object of file to seconds" };
+  const times = new Map<string, number>();
+  for (const [file, seconds] of Object.entries(data)) {
+    if (!TEST_FILE.test(file) || file.length > 512)
+      return { ok: false, error: `${JSON.stringify(file)} is not a test file` };
+    if (
+      typeof seconds !== "number" ||
+      !Number.isFinite(seconds) ||
+      seconds < 0 ||
+      seconds > TIME_MAX
+    )
+      return {
+        ok: false,
+        error: `${file}: ${JSON.stringify(seconds)} is not seconds from 0 to ${TIME_MAX}`,
+      };
+    times.set(normalise(file), seconds);
+  }
+  return { ok: true, value: times };
+}
+
+/** `./test/a.test.ts` and `test/a.test.ts` are the same file. */
+function normalise(file: string): string {
+  return file.startsWith("./") ? file.slice(2) : file;
+}
+
+/**
+ * How long each file is expected to take, in seconds: its measured time
+ * from the table when there is one, else its size in bytes scaled to
+ * seconds. The scale is fitted on the files that have both (total
+ * measured seconds ÷ their total bytes), so a new file is weighed like
+ * its neighbours; with none, {@link SECONDS_PER_BYTE_DEFAULT}. A pure
+ * function of the list, the sizes and the table: the same three always
+ * give the same weights, so the same split.
+ */
+export function weigher(
+  files: readonly string[],
+  bytes: ReadonlyMap<string, number>,
+  times: ReadonlyMap<string, number>,
+): (file: string) => number {
+  let seconds = 0;
+  let size = 0;
+  for (const file of files) {
+    const measured = times.get(normalise(file));
+    const b = bytes.get(file);
+    if (measured === undefined || b === undefined) continue;
+    seconds += measured;
+    size += b;
+  }
+  const perByte =
+    seconds > 0 && size > 0 ? seconds / size : SECONDS_PER_BYTE_DEFAULT;
+  return (file) =>
+    times.get(normalise(file)) ?? (bytes.get(file) ?? 0) * perByte;
+}
+
+/**
+ * The table as it is checked in: keys sorted, seconds to one decimal, one
+ * file per line, so a refresh reads as a small diff.
+ */
+export function formatTimes(times: ReadonlyMap<string, number>): string {
+  const entries = [...times]
+    .map(([file, seconds]) => [normalise(file), seconds] as const)
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const lines = entries.map(
+    ([file, seconds]) =>
+      `  ${JSON.stringify(file)}: ${Math.round(seconds * 10) / 10}`,
+  );
+  return lines.length === 0 ? "{}\n" : `{\n${lines.join(",\n")}\n}\n`;
 }
 
 /** One shard, finished: what it ran, how it exited, everything it printed. */

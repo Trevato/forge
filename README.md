@@ -368,6 +368,7 @@ attempted; Backblaze audits find nothing yet. No dependency was added.
 bun test              # protocol-level + adversarial suite
 bun x tsc --noEmit    # zero type errors is the standard
 bun run check         # exactly what the forge runs against every push
+bun run check:record  # the same, and rewrites scripts/test-times.json
 ```
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
@@ -377,8 +378,26 @@ test files named in `check.run` as parallel `bun test` shards
 and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
-across how many files, in how long. Every file is independent (its own forge,
-its own database, port 0), so a test that fails only beside another is a bug
+across how many files, in how long, then the slowest and fastest shard.
+
+Files go to shards by how long they take, not how big they are: longest
+first onto the least-loaded shard, weighed from `scripts/test-times.json`
+(file → seconds, from one recorded run). A file the table does not name
+weighs its bytes at the table's own seconds-per-byte. If the table is
+malformed, the log says it was refused and the split falls back to bytes.
+A stale table only makes the split less even; it never drops a file.
+Refresh it with one command after adding a slow test file, or when the
+log's slowest shard is well over 1.5× its fastest:
+
+```sh
+bun run check:record  # the gate's own command, with test-shards.ts --record
+```
+
+`--record` runs each file as its own `bun test`, with as many running at
+once as the gate runs shards. It rewrites the table only when every file
+is green. Files it did not run keep their old times.
+
+Every file is independent (its own forge, its own database, port 0), so a test that fails only beside another is a bug
 in that test. Two things it will not do:
 
 - **It never borrows your git configuration.** A test drives a real `git`

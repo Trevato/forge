@@ -6,6 +6,11 @@
  * way that is true is if there is exactly one copy of the command: this
  * reads it from the manifest and hands it to `/bin/sh -c`, which is what
  * `apps/process.ts` does with an app's check on the deploy side.
+ *
+ * `--record` runs the same string with `scripts/test-shards.ts --record`
+ * in place of `scripts/test-shards.ts`, which rewrites
+ * `scripts/test-times.json` from this run, so the file list still lives
+ * only in `forge.json`.
  */
 
 const manifest = (await Bun.file(
@@ -18,7 +23,15 @@ if (typeof command !== "string" || command.trim() === "") {
   process.exit(2);
 }
 
-const proc = Bun.spawn(["/bin/sh", "-c", command], {
+const SHARDS = "scripts/test-shards.ts ";
+const record = process.argv.slice(2).includes("--record");
+if (record && command.split(SHARDS).length !== 2) {
+  console.error("--record: check.run must run scripts/test-shards.ts once");
+  process.exit(2);
+}
+const run = record ? command.replace(SHARDS, `${SHARDS}--record `) : command;
+
+const proc = Bun.spawn(["/bin/sh", "-c", run], {
   cwd: new URL("..", import.meta.url).pathname,
   stdio: ["inherit", "inherit", "inherit"],
 });
