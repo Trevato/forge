@@ -38,7 +38,7 @@ for a tunnel and a forge that sleeps.
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
 | `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
-| `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue; a writer's |        |
+| `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
 | `unlink`       | `{ app, issue, blockedBy }`: the issue stops waiting for it                                       | yes    |
 | `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |

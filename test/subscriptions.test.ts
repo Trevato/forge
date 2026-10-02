@@ -1,3 +1,4 @@
+import { getHeadroom } from "../src/core/standing.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -505,6 +506,36 @@ describe("the pages", () => {
     expect(html).toContain("@acme");
   });
 
+  test("an admin keeps a share of each window for people, and sees each window", async () => {
+    const work = listSubscriptions(app.db)[0]!;
+    let html = await get("/settings/subscriptions");
+    expect(html).toContain(`action="/settings/subscriptions/${work.id}/headroom"`);
+    expect(html).toContain("5-hour: ~$0.00 used · opens on next use");
+    const kept = await post(`/settings/subscriptions/${work.id}/headroom`, {
+      headroom: "25",
+    });
+    expect(kept.status).toBe(303);
+    expect(getHeadroom(app.db, work.id)).toBe(25);
+    for (const bad of ["91", "-5", "ten", ""]) {
+      const refused = await post(`/settings/subscriptions/${work.id}/headroom`, {
+        headroom: bad,
+      });
+      expect(refused.status).toBe(303);
+    }
+    expect(getHeadroom(app.db, work.id)).toBe(25);
+    html = await get("/settings/subscriptions");
+    expect(html).toContain('value="25"');
+    // Without the page's own origin, nothing changes.
+    const forged = await fetch(`${base}/settings/subscriptions/${work.id}/headroom`, {
+      method: "POST",
+      headers: { cookie, origin: "https://elsewhere.example" },
+      body: new URLSearchParams({ headroom: "0" }),
+      redirect: "manual",
+    });
+    expect(forged.status).toBe(403);
+    expect(getHeadroom(app.db, work.id)).toBe(25);
+  });
+
   test("nobody but an admin reaches the pool", async () => {
     const signed = await fetch(`${base}/signup`, {
       method: "POST",
@@ -528,5 +559,14 @@ describe("the pages", () => {
     });
     expect(posted.status).toBe(404);
     expect(listSubscriptions(app.db)).toHaveLength(1);
+    const work = listSubscriptions(app.db)[0]!;
+    const headroom = await fetch(`${base}/settings/subscriptions/${work.id}/headroom`, {
+      method: "POST",
+      headers: { cookie: guest, origin: base },
+      body: new URLSearchParams({ headroom: "0" }),
+      redirect: "manual",
+    });
+    expect(headroom.status).toBe(404);
+    expect(getHeadroom(app.db, work.id)).toBe(25);
   });
 });

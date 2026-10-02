@@ -6,7 +6,7 @@
     "ready": 90
   },
   "check": {
-    "run": "bun x tsc --noEmit && bun scripts/test-shards.ts --timeout 60000 test/crew.test.ts test/crew-wrapup.test.ts test/crew-limits.test.ts test/crew-sandbox.test.ts test/steer.test.ts test/landing.test.ts test/decide.test.ts test/ledger.test.ts test/checks.test.ts test/dependencies.test.ts test/autonomy.test.ts test/studio.test.ts test/studio-words.test.ts test/forks.test.ts test/fork-flow.test.ts test/cross-repo-pull.test.ts test/pulls.test.ts test/apps.test.ts test/apps-adversarial.test.ts test/apps-busy.test.ts test/web.test.ts test/git-trust.test.ts test/helpers.test.ts test/shards.test.ts test/migrate.test.ts test/vitals.test.ts test/asks.test.ts test/feed.test.ts test/feed-page.test.ts test/offline.test.ts test/share.test.ts test/cloud.test.ts test/run-secrets.test.ts test/forge-cloudflare.test.ts test/usage.test.ts",
+    "run": "bun x tsc --noEmit && bun scripts/test-shards.ts --timeout 60000 test/crew.test.ts test/crew-wrapup.test.ts test/crew-limits.test.ts test/crew-sandbox.test.ts test/steer.test.ts test/landing.test.ts test/decide.test.ts test/ledger.test.ts test/checks.test.ts test/dependencies.test.ts test/autonomy.test.ts test/studio.test.ts test/studio-words.test.ts test/forks.test.ts test/fork-flow.test.ts test/cross-repo-pull.test.ts test/pulls.test.ts test/apps.test.ts test/apps-adversarial.test.ts test/apps-busy.test.ts test/web.test.ts test/git-trust.test.ts test/helpers.test.ts test/shards.test.ts test/migrate.test.ts test/vitals.test.ts test/asks.test.ts test/feed.test.ts test/feed-page.test.ts test/offline.test.ts test/share.test.ts test/cloud.test.ts test/run-secrets.test.ts test/forge-cloudflare.test.ts test/usage.test.ts test/standing.test.ts",
     "timeout": 1800
   }
 }

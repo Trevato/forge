@@ -685,6 +685,18 @@ it named none). The run that starts then resumes the same session in that
 clone and is told to carry on. A task is paused at most six times before
 the forge stops waiting on it.
 
+Each subscription keeps a _standing_ (`core/standing.ts`): where it is in
+its 5-hour and weekly windows — started, resets, cap, used, remaining, in
+US dollars of list price. When the provider turns a run away, the window
+it named and its reset are kept as _read_; everything else is _inferred_
+from the usage ledger — a window opens at the first run after the last one
+closed, and the cap is what the crew had spent when the provider last
+called the window full (a person's own use is not in the ledger, so it is
+a floor). An operator keeps a share of every window for people
+(Settings → Subscriptions, 0–90%); `crewRemaining` is what is left after
+it. Both read on `GET /api/v1/repos/:owner/:name/usage` and the MCP
+`usage` tool, under `standing`.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools

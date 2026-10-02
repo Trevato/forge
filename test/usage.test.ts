@@ -428,6 +428,25 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(body.recent[0].subscription).toBe("work");
     expect(JSON.stringify(body)).not.toContain(KEY);
 
+    // Each account's standing rides along. The personal plan's week is full
+    // on the provider's word, until the reset it named; the work key's
+    // windows are inferred from the one run it paid for.
+    expect(body.standing.map((s: any) => s.subscription)).toEqual([
+      "personal",
+      "work",
+    ]);
+    const [mine, theirs] = body.standing;
+    const week = mine.windows.find((w: any) => w.window === "week");
+    expect(week.resetsAt.source).toBe("read");
+    expect(week.resetsAt.value.slice(5, 16)).toBe("09-26T21:00");
+    expect(week.remaining).toEqual({ value: 0, source: "read" });
+    expect(week.said).toContain("weekly limit");
+    const session = theirs.windows.find((w: any) => w.window === "5h");
+    expect(session.used).toEqual({ value: 0.0375, source: "inferred" });
+    expect(session.startsAt.source).toBe("inferred");
+    expect(session.cap).toBeNull();
+    expect(session.tokensIn).toBe(32_120);
+
     // A window that is not 1–90 days is refused, not guessed at.
     const bad = await fetch(`${url}?days=365`, {
       headers: { authorization: `Bearer ${owner}` },
@@ -465,6 +484,10 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     const told = await mcp(owner, { repo: "alice/garden", days: 7 });
     const value = JSON.parse(told.result.content[0].text);
     expect(value.total).toEqual(body.total);
+    expect(value.standing.map((s: any) => s.subscription)).toEqual([
+      "personal",
+      "work",
+    ]);
     const no = await mcp(reader, { repo: "alice/garden" });
     expect(no.result.isError).toBe(true);
     expect(no.result.content[0].text).toContain("forbidden");

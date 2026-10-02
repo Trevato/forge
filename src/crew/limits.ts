@@ -5,6 +5,7 @@
  * it will listen; the person who asked never has to press anything.
  */
 
+import type { LimitWindow } from "../core/standing.ts";
 import type { ClaudeOutcome } from "./claude.ts";
 
 /** How many times one task may be paused before the forge gives up on it. */
@@ -53,11 +54,35 @@ const MONTHS = [
  * Anything else waits the default.
  */
 export function resumeAt(message: string, now: Date): Date {
-  const match =
-    /resets?\s+(?:at\s+)?(?:([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i.exec(
-      message,
-    );
-  if (match === null) return new Date(now.getTime() + DEFAULT_WAIT_MS);
+  const at = resetOf(message, now);
+  if (at === undefined) return new Date(now.getTime() + DEFAULT_WAIT_MS);
+  return new Date(at.getTime() + SLACK_MS);
+}
+
+/**
+ * Which window the provider said is full, and the instant it resets — read
+ * from its own words, or undefined when it named no time. The week is named
+ * (`weekly limit`) or dated (`resets Sep 26 at 9pm`); a bare clock time is
+ * the 5-hour session window. No slack is added: this is the provider's time.
+ */
+export function limitOf(
+  message: string,
+  now: Date,
+): { window: LimitWindow; resetsAt: Date } | undefined {
+  const match = RESET.exec(message);
+  const resetsAt = resetOf(message, now);
+  if (match === null || resetsAt === undefined) return undefined;
+  const weekly = match[1] !== undefined || /\bweek(?:ly)?\b/i.test(message);
+  return { window: weekly ? "week" : "5h", resetsAt };
+}
+
+const RESET =
+  /resets?\s+(?:at\s+)?(?:([a-z]{3,9})\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i;
+
+/** The reset instant a message names, exactly; undefined when it names none. */
+function resetOf(message: string, now: Date): Date | undefined {
+  const match = RESET.exec(message);
+  if (match === null) return undefined;
   const [, monthName, day, h, m, meridiem, zone] = match;
   const hour = (Number(h) % 12) + (meridiem!.toLowerCase() === "pm" ? 12 : 0);
   const minute = Number(m ?? "0");
@@ -69,9 +94,7 @@ export function resumeAt(message: string, now: Date): Date {
     monthName !== undefined && month >= 0
       ? { month: month + 1, day: Number(day) }
       : undefined;
-  const at = nextWallTime(now, hour, minute, zone!, date);
-  if (at === undefined) return new Date(now.getTime() + DEFAULT_WAIT_MS);
-  return new Date(at.getTime() + SLACK_MS);
+  return nextWallTime(now, hour, minute, zone!, date);
 }
 
 /** `12:04 UTC` — how a resume time reads on a card. */

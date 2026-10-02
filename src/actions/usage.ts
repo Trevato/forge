@@ -5,12 +5,17 @@
  * the predicate the run pages use for cost), so a reader who cannot write
  * the repository is refused. The API route and the MCP `usage` tool both
  * answer from here, so they never disagree.
+ *
+ * With it, each account's standing (`core/standing.ts`): where it is in its
+ * 5-hour and weekly windows, account-wide. The accounts shown are those
+ * granted here or on the owner, and those that paid for a run here.
  */
 
 import type { App } from "../app.ts";
 import { getIssuesByIds } from "../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../core/repos.ts";
-import { listSubscriptions } from "../core/subscriptions.ts";
+import { standing, type Standing } from "../core/standing.ts";
+import { listGrants, listSubscriptions } from "../core/subscriptions.ts";
 import {
   recentUsage,
   usageTotals,
@@ -55,6 +60,10 @@ export interface UsageReport {
     readonly subscription: string | null;
     readonly agent: string | null;
     readonly issue: number | null;
+  })[];
+  /** Each account this app spends: its windows, now, every figure read or inferred. */
+  readonly standing: readonly (Omit<Standing, "subscriptionId"> & {
+    readonly subscription: string;
   })[];
 }
 
@@ -121,6 +130,21 @@ export function readUsage(
     ZERO,
   );
 
+  // Granted at the repository or its owner, any agent, or spent here.
+  const accounts = new Set<string>();
+  for (const g of [...listGrants(db, repo.id), ...listGrants(db, repo.ownerId)])
+    accounts.add(g.subscriptionId);
+  for (const row of bySubscription)
+    if (row.key !== null && subscriptions.has(row.key)) accounts.add(row.key);
+  const standings = [...accounts]
+    .flatMap((id) => {
+      const s = standing(db, id, now);
+      if (s === undefined) return [];
+      const { subscriptionId: _, ...rest } = s;
+      return [{ subscription: subscriptions.get(id) ?? id, ...rest }];
+    })
+    .sort((a, b) => a.subscription.localeCompare(b.subscription));
+
   return ok({
     app: `${repo.ownerName}/${repo.name}`,
     days,
@@ -138,5 +162,6 @@ export function readUsage(
       agent: agentName(r.agentId),
       issue: issueNumber(r.issueId),
     })),
+    standing: standings,
   });
 }

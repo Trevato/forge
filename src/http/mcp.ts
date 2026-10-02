@@ -513,7 +513,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "usage",
     description:
-      "What the crew's runs on an app spent over the last days (1–90, default 7): tokens in and out, cost in US dollars, wall time and outcome, by subscription, agent and issue, with the newest runs. The same data as /api/v1/repos/:owner/:name/usage; refused unless you can write the app.",
+      "What the crew's runs on an app spent over the last days (1–90, default 7): tokens in and out, cost in US dollars, wall time and outcome, by subscription, agent and issue, with the newest runs, and each account's standing in its 5-hour and weekly windows (cap, used, remaining, resets at — each figure read from the provider or inferred from the ledger). The same data as /api/v1/repos/:owner/:name/usage; refused unless you can write the app.",
     inputSchema: {
       type: "object",
       properties: {

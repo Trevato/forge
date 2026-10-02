@@ -67,7 +67,14 @@ import {
 } from "./brief.ts";
 import { policyBrief } from "../contract/audit.ts";
 import { BUDGET_REACHED, runClaude, type ClaudeOutcome } from "./claude.ts";
-import { isRateLimited, MAX_PAUSES, resumeAt, whenText } from "./limits.ts";
+import {
+  isRateLimited,
+  limitOf,
+  MAX_PAUSES,
+  resumeAt,
+  whenText,
+} from "./limits.ts";
+import { noteLimit } from "../core/standing.ts";
 import {
   pickSubscription,
   restSubscription,
@@ -755,7 +762,18 @@ async function work(
       // The account rests until the provider's time; another on the same
       // grant, if one is awake, takes the run straight away.
       if (picked.kind === "ready") {
-        const until = resumeAt(result.result, new Date());
+        const now = new Date();
+        const until = resumeAt(result.result, now);
+        // Which window is full and when it resets, in the provider's own
+        // words, for the account's standing (`core/standing.ts`).
+        const limit = limitOf(result.result, now);
+        if (limit !== undefined)
+          noteLimit(app.db, picked.subscription.id, {
+            window: limit.window,
+            resetsAt: limit.resetsAt.toISOString(),
+            observedAt: now.toISOString(),
+            said,
+          });
         restSubscription(
           app.db,
           picked.subscription.id,

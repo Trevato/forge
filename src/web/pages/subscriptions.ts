@@ -18,6 +18,14 @@ import {
   wakeSubscription,
   type Subscription,
 } from "../../core/subscriptions.ts";
+import {
+  HEADROOM_MAX,
+  headroomPct,
+  setHeadroom,
+  standing,
+  type Figure,
+  type WindowStanding,
+} from "../../core/standing.ts";
 import { getUserById } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -50,6 +58,23 @@ function requireAdmin(ctx: Ctx): Response | undefined {
 
 const kindText = (s: Subscription): string =>
   s.kind === "oauth" ? "Claude subscription" : "API key";
+
+const usd = (n: number): string => `$${n.toFixed(2)}`;
+const mark = (f: Figure<unknown>): string => (f.source === "read" ? "" : "~");
+
+/** `5-hour: ~$3.20 used of ~$10.00 · resets 12:04 UTC` — one window, plainly. */
+function windowText(w: WindowStanding): string {
+  const name = w.window === "5h" ? "5-hour" : "weekly";
+  const used = `${mark(w.used)}${usd(w.used.value)} used`;
+  const of = w.cap === null ? "" : ` of ${mark(w.cap)}${usd(w.cap.value)}`;
+  const full =
+    w.remaining?.source === "read" && w.remaining.value === 0 ? " · full" : "";
+  const resets =
+    w.resetsAt === null
+      ? " · opens on next use"
+      : ` · resets ${w.resetsAt.source === "read" ? "" : "~"}${whenText(new Date(w.resetsAt.value))}`;
+  return `${name}: ${used}${of}${full}${resets}`;
+}
 
 const resting = (s: Subscription, now: Date): boolean =>
   s.restingUntil !== null && s.restingUntil > now.toISOString();
@@ -85,6 +110,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
       : listCard(
           pool.map((s) => {
             const rests = resting(s, now);
+            const st = standing(ctx.app.db, s.id, now);
             const by =
               s.createdBy === null
                 ? undefined
@@ -108,8 +134,36 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 : html`last used ${timeAgo(s.lastUsedAt)}`}${when(
                 rests && s.restingSaid !== "",
                 () => html` · ${s.restingSaid}`,
+              )}${when(
+                st !== undefined,
+                () =>
+                  html`<br />${st!.windows.map(windowText).join(" · ")}`,
               )}`,
               trail: html`${when(
+                st !== undefined,
+                () =>
+                  html`<form
+                    class="headroom row-actions"
+                    method="post"
+                    action="${POOL}/${s.id}/headroom"
+                  >
+                    <label for="h-${s.id}" class="small muted"
+                      >kept for people, %</label
+                    >
+                    <input
+                      class="input"
+                      id="h-${s.id}"
+                      name="headroom"
+                      type="number"
+                      min="0"
+                      max="${HEADROOM_MAX}"
+                      step="1"
+                      value="${st!.headroomPct}"
+                    />
+                    ${btn("Keep", { size: "sm" })}
+                  </form>`,
+              )}
+              ${when(
                 rests,
                 () =>
                   html`<form
@@ -202,6 +256,16 @@ export function subscriptionsPage(ctx: Ctx): Response {
   return shell(
     ctx,
     html`${list}
+      ${when(
+        pool.length > 0,
+        () =>
+          html`<p class="muted small mt">
+            Windows in US dollars of list price. A figure marked ~ is inferred
+            from what the crew's runs spent; the rest the provider said. The
+            cap is learned the first time the provider calls a window full,
+            and the share kept for people is never spent by the crew.
+          </p>`,
+      )}
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,
   );
@@ -263,6 +327,30 @@ export async function subscriptionWake(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   wakeSubscription(ctx.app.db, ctx.params.id ?? "");
   return flashTo(ctx, POOL, { message: "In use again." });
+}
+
+// POST /settings/subscriptions/:id/headroom
+export async function subscriptionHeadroom(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const pct = headroomPct(field(form, "headroom"));
+  if (pct === undefined)
+    return flashTo(ctx, POOL, {
+      tone: "danger",
+      message: `Headroom is a whole percent from 0 to ${HEADROOM_MAX}.`,
+    });
+  const saved = setHeadroom(ctx.app.db, ctx.params.id ?? "", pct);
+  return flashTo(
+    ctx,
+    POOL,
+    saved
+      ? {
+          message: `The crew now leaves ${pct}% of each window for people.`,
+        }
+      : { tone: "danger", message: "No such subscription." },
+  );
 }
 
 // ---- grants, on a repository's Crew settings and an organization's page ----

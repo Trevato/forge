@@ -294,6 +294,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .grants th[scope="row"] { text-align: left; font-weight: 500; white-space: nowrap; }
 .grants input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
 .grants-foot { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
+/* A subscription's headroom for people: a small number beside its windows. */
+.headroom { display: flex; align-items: center; gap: 6px; }
+.headroom .input { width: 5em; }
 .backups-now { margin-top: 12px; }
 .backups-error { display: flex; align-items: center; gap: 8px; color: var(--danger); }
 .backups-restore { margin: 8px 0 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }

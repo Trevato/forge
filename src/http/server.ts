@@ -65,6 +65,7 @@ import {
   subscriptionAdd,
   subscriptionDelete,
   subscriptionsPage,
+  subscriptionHeadroom,
   subscriptionWake,
 } from "../web/pages/subscriptions.ts";
 import {
@@ -494,6 +495,11 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
   router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
   router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
+  router.add(
+    "POST",
+    "/settings/subscriptions/:id/headroom",
+    subscriptionHeadroom,
+  );
   router.add("GET", "/settings/secrets", secretsPage);
   router.add("POST", "/settings/secrets", secretSet);
   router.add("POST", "/settings/secrets/delete", secretDelete);
