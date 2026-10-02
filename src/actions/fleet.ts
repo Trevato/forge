@@ -1,0 +1,427 @@
+/**
+ * Fleet operations: one action over every row a query selects. A dry run
+ * answers with the plan — each row, its value before and after, and the
+ * rows refused with the reason. Applying plans again from scratch (the
+ * world may have moved since the preview), writes each row through the
+ * platform's own action, and keeps the receipt: an `operation` row, a
+ * result per row, and one `fleet.operated` event. A reversible operation
+ * can be undone once, as a new operation that writes each row's value
+ * from before — only where the row still holds what this one left.
+ *
+ * Who may: every row is the actor's to change only if they administer its
+ * repository; the rest are listed as refused, never silently dropped. A
+ * row the actor cannot read is not selected at all. An agent may preview
+ * but never apply: a mass change is a person's call.
+ */
+
+import type { App } from "../app.ts";
+import {
+  claimUndo,
+  getOperation,
+  listOperations,
+  recordOperation,
+  releaseUndo,
+  settleUndo,
+  type FleetValue,
+  type Operation,
+  type OperationRow,
+} from "../core/fleet_ops.ts";
+import { blockerNumbersFor } from "../core/dependencies.ts";
+import {
+  getIssuesByIds,
+  labelsForIssues,
+  listLabels,
+} from "../core/issues.ts";
+import { canAdmin, getReposByIds, type Repo } from "../core/repos.ts";
+import { getRunsByIds } from "../core/runs.ts";
+import type { User } from "../core/users.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import {
+  parseQuery,
+  selectRows,
+  type FleetKind,
+} from "../fleet/selection.ts";
+import { VERBS, type Target, type Verb } from "../fleet/verbs.ts";
+
+export interface FleetError {
+  readonly code:
+    | "unauthorized"
+    | "forbidden"
+    | "not_found"
+    | "bad_query"
+    | "too_many"
+    | "bad_action"
+    | "not_reversible"
+    | "already_undone";
+  readonly message: string;
+}
+
+export type PlannedOutcome = "change" | "unchanged" | "refused";
+
+export interface PlannedRow extends Omit<OperationRow, "outcome"> {
+  readonly outcome: PlannedOutcome;
+}
+
+export interface Plan {
+  readonly query: string;
+  readonly kind: FleetKind;
+  readonly verb: string;
+  readonly value: FleetValue;
+  readonly reversible: boolean;
+  readonly rows: readonly PlannedRow[];
+  readonly counts: Readonly<Record<PlannedOutcome, number>>;
+}
+
+const fail = (code: FleetError["code"], message: string) =>
+  err<FleetError>({ code, message });
+
+const same = (a: FleetValue, b: FleetValue): boolean =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+const shown = (value: FleetValue): string =>
+  value === null
+    ? "nothing"
+    : Array.isArray(value)
+      ? `[${value.join(", ")}]`
+      : String(value);
+
+/** Read `{ verb, value }` (or a bare verb) against the query's kind. */
+function parseAction(
+  app: App,
+  kind: FleetKind,
+  raw: unknown,
+): Result<{ name: string; verb: Verb; value: FleetValue }, FleetError> {
+  const input =
+    typeof raw === "string"
+      ? { verb: raw }
+      : typeof raw === "object" && raw !== null
+        ? (raw as Record<string, unknown>)
+        : {};
+  const name = typeof input.verb === "string" ? input.verb : "";
+  const verb = Object.hasOwn(VERBS, name) ? VERBS[name] : undefined;
+  if (verb === undefined || verb.kind !== kind) {
+    const verbs = Object.keys(VERBS).filter((v) => VERBS[v]!.kind === kind);
+    return fail("bad_action", `a ${kind} takes ${verbs.join(", ")}`);
+  }
+  const value = verb.parse(app, input.value ?? null);
+  if (!value.ok) return fail("bad_action", value.error);
+  return ok({ name, verb, value: value.value });
+}
+
+/** Every selected row with what any verb reads, in a few grouped queries. */
+function loadTargets(
+  app: App,
+  kind: FleetKind,
+  ids: readonly string[],
+): Target[] {
+  if (kind === "repo") {
+    const repos = getReposByIds(app.db, ids);
+    return ids.flatMap((id) => {
+      const repo = repos.get(id);
+      return repo ? [{ id, repo, label: repoName(repo) }] : [];
+    });
+  }
+  if (kind === "run") {
+    const runs = getRunsByIds(app.db, ids);
+    const repos = getReposByIds(
+      app.db,
+      [...runs.values()].map((r) => r.repoId),
+    );
+    return ids.flatMap((id) => {
+      const run = runs.get(id);
+      const repo = run && repos.get(run.repoId);
+      return run && repo
+        ? [{ id, repo, run, label: `${repoName(repo)} ${run.kind} run ${id}` }]
+        : [];
+    });
+  }
+  const issues = getIssuesByIds(app.db, ids);
+  const repos = getReposByIds(
+    app.db,
+    [...issues.values()].map((i) => i.repoId),
+  );
+  const labels = labelsForIssues(app.db, ids);
+  const blockers = blockerNumbersFor(app.db, ids);
+  const repoLabels = new Map<string, string[]>();
+  for (const repoId of repos.keys())
+    repoLabels.set(
+      repoId,
+      listLabels(app.db, repoId).map((l) => l.name),
+    );
+  return ids.flatMap((id) => {
+    const issue = issues.get(id);
+    const repo = issue && repos.get(issue.repoId);
+    if (!issue || !repo) return [];
+    return [
+      {
+        id,
+        repo,
+        issue,
+        label: `${repoName(repo)}#${issue.number}`,
+        labels: (labels.get(id) ?? [])
+          .map((l) => l.name)
+          .sort((a, b) => a.localeCompare(b)),
+        blockers: blockers.get(id) ?? [],
+        repoLabels: repoLabels.get(repo.id) ?? [],
+      },
+    ];
+  });
+}
+
+const repoName = (repo: Repo): string => `${repo.ownerName}/${repo.name}`;
+
+/** Whether `actor` administers a row's repository, asked once per repository. */
+function adminOf(app: App, actor: User): (repo: Repo) => boolean {
+  const known = new Map<string, boolean>();
+  return (repo) => {
+    let yes = known.get(repo.id);
+    if (yes === undefined) {
+      yes = canAdmin(app.db, repo, actor);
+      known.set(repo.id, yes);
+    }
+    return yes;
+  };
+}
+
+/**
+ * One row's plan. `expect`, for an undo, is what the row must still hold:
+ * a row someone changed since is theirs now, and is left alone.
+ */
+function planRow(
+  app: App,
+  admin: (repo: Repo) => boolean,
+  verb: Verb,
+  target: Target,
+  after: (before: FleetValue) => FleetValue,
+  expect?: FleetValue,
+): PlannedRow {
+  const before = verb.read(target);
+  const row = {
+    targetId: target.id,
+    repoId: target.repo.id,
+    label: target.label,
+    before,
+    after: after(before),
+  };
+  const refused = (reason: string): PlannedRow => ({
+    ...row,
+    outcome: "refused",
+    reason,
+  });
+  if (!admin(target.repo))
+    return refused(`you are not an admin of ${repoName(target.repo)}`);
+  if (expect !== undefined && !same(before, expect))
+    return refused(`changed since: it is ${shown(before)} now`);
+  if (same(row.before, row.after))
+    return { ...row, outcome: "unchanged", reason: "already so" };
+  const why = verb.refuse(app, target, row.after);
+  return why === undefined
+    ? { ...row, outcome: "change", reason: "" }
+    : refused(why);
+}
+
+function counted(rows: readonly PlannedRow[]): Plan["counts"] {
+  const counts = { change: 0, unchanged: 0, refused: 0 };
+  for (const row of rows) counts[row.outcome] += 1;
+  return counts;
+}
+
+function makePlan(
+  app: App,
+  actor: User | undefined,
+  query: string,
+  action: unknown,
+): Result<Plan & { verbOf: Verb; targets: Map<string, Target> }, FleetError> {
+  if (!actor) return fail("unauthorized", "sign in to act on the fleet");
+  const parsed = parseQuery(query);
+  if (!parsed.ok) return err(parsed.error);
+  const act = parseAction(app, parsed.value.kind, action);
+  if (!act.ok) return act;
+  const ids = selectRows(app.db, actor, parsed.value);
+  if (!ids.ok) return err(ids.error);
+  const targets = loadTargets(app, parsed.value.kind, ids.value);
+  const admin = adminOf(app, actor);
+  const { verb, value } = act.value;
+  const rows = targets.map((t) =>
+    planRow(app, admin, verb, t, (before) => verb.next(before, value)),
+  );
+  return ok({
+    query: query.trim(),
+    kind: parsed.value.kind,
+    verb: act.value.name,
+    value,
+    reversible: verb.reversible,
+    rows,
+    counts: counted(rows),
+    verbOf: verb,
+    targets: new Map(targets.map((t) => [t.id, t])),
+  });
+}
+
+/** The dry run: what applying would do to each row, and nothing done. */
+export function previewFleetOp(
+  app: App,
+  actor: User | undefined,
+  query: string,
+  action: unknown,
+): Result<Plan, FleetError> {
+  const plan = makePlan(app, actor, query, action);
+  if (!plan.ok) return plan;
+  const { verbOf: _verb, targets: _targets, ...shape } = plan.value;
+  return ok(shape);
+}
+
+/** Write each planned change, in order; the rows as they ended. */
+async function carryOut(
+  app: App,
+  actor: User,
+  verb: Verb,
+  rows: readonly PlannedRow[],
+  targets: Map<string, Target>,
+): Promise<OperationRow[]> {
+  const out: OperationRow[] = [];
+  for (const row of rows) {
+    const target = targets.get(row.targetId);
+    if (row.outcome !== "change" || target === undefined) {
+      out.push({ ...row, outcome: row.outcome === "change" ? "failed" : row.outcome });
+      continue;
+    }
+    const why = await verb.write(app, actor, target, row.after);
+    out.push(
+      why === undefined
+        ? { ...row, outcome: "ok", reason: "" }
+        : { ...row, outcome: "failed", reason: why },
+    );
+  }
+  return out;
+}
+
+function announce(app: App, op: Operation): void {
+  const counts = { ok: 0, failed: 0, refused: 0, unchanged: 0 };
+  for (const row of op.rows) counts[row.outcome] += 1;
+  app.bus.append({
+    kind: "fleet.operated",
+    actorId: op.actorId,
+    payload: {
+      operation: op.id,
+      query: op.query,
+      verb: op.verb,
+      undoOf: op.undoOf,
+      ...counts,
+    },
+  });
+}
+
+function requirePerson(
+  actor: User | undefined,
+): Result<User, FleetError> {
+  if (!actor) return fail("unauthorized", "sign in to act on the fleet");
+  if (actor.kind === "agent")
+    return fail("forbidden", "a fleet operation is a person's call");
+  return ok(actor);
+}
+
+/** Apply: plan again, write every row that may change, keep the receipt. */
+export async function applyFleetOp(
+  app: App,
+  actor: User | undefined,
+  query: string,
+  action: unknown,
+): Promise<Result<Operation, FleetError>> {
+  const person = requirePerson(actor);
+  if (!person.ok) return person;
+  const plan = makePlan(app, person.value, query, action);
+  if (!plan.ok) return plan;
+  const { verbOf, targets, rows } = plan.value;
+  const done = await carryOut(app, person.value, verbOf, rows, targets);
+  const op = recordOperation(app.db, {
+    actorId: person.value.id,
+    query: plan.value.query,
+    kind: plan.value.kind,
+    verb: plan.value.verb,
+    value: plan.value.value,
+    reversible: plan.value.reversible,
+    undoOf: null,
+    rows: done,
+  });
+  announce(app, op);
+  return ok(op);
+}
+
+/**
+ * Undo: every row this operation changed goes back to its value from
+ * before, if it still holds the value this operation left. Once per
+ * operation; the undo is an operation of its own, with its own receipt.
+ */
+export async function undoFleetOp(
+  app: App,
+  actor: User | undefined,
+  operationId: string,
+): Promise<Result<Operation, FleetError>> {
+  const person = requirePerson(actor);
+  if (!person.ok) return person;
+  const found = getFleetOp(app, person.value, operationId);
+  if (!found.ok) return found;
+  const op = found.value;
+  const verb = Object.hasOwn(VERBS, op.verb) ? VERBS[op.verb] : undefined;
+  if (!op.reversible || verb === undefined)
+    return fail("not_reversible", `${op.verb} cannot be undone`);
+  if (!claimUndo(app.db, op.id))
+    return fail("already_undone", "this operation was undone already");
+  let undone: Operation | undefined;
+  try {
+    const changed = op.rows.filter((r) => r.outcome === "ok");
+    const targets = loadTargets(
+      app,
+      op.kind,
+      changed.map((r) => r.targetId),
+    );
+    const byId = new Map(targets.map((t) => [t.id, t]));
+    const admin = adminOf(app, person.value);
+    const rows = changed.map((r): PlannedRow => {
+      const target = byId.get(r.targetId);
+      if (target === undefined)
+        return { ...r, before: r.after, after: r.before, outcome: "refused", reason: "it is gone" };
+      return planRow(app, admin, verb, target, () => r.before, r.after);
+    });
+    const done = await carryOut(app, person.value, verb, rows, byId);
+    undone = recordOperation(app.db, {
+      actorId: person.value.id,
+      query: op.query,
+      kind: op.kind,
+      verb: op.verb,
+      value: op.value,
+      reversible: true,
+      undoOf: op.id,
+      rows: done,
+    });
+    settleUndo(app.db, op.id, undone.id);
+    announce(app, undone);
+    return ok(undone);
+  } finally {
+    if (undone === undefined) releaseUndo(app.db, op.id);
+  }
+}
+
+/** A receipt, for the person who acted or a site admin; anyone else gets `not_found`. */
+export function getFleetOp(
+  app: App,
+  actor: User | undefined,
+  operationId: string,
+): Result<Operation, FleetError> {
+  const op = getOperation(app.db, operationId);
+  if (!op || !actor || (op.actorId !== actor.id && !actor.isAdmin))
+    return fail("not_found", "no such operation here");
+  return ok(op);
+}
+
+/** The actor's own operations, newest first, without their rows. */
+export function listFleetOps(
+  app: App,
+  actor: User | undefined,
+  limit: number,
+  before?: string,
+): Result<Operation[], FleetError> {
+  if (!actor) return fail("unauthorized", "sign in to see your operations");
+  return ok(listOperations(app.db, actor.id, limit, before));
+}

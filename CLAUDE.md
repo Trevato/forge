@@ -157,6 +157,11 @@ src/
               proxy (Host routing, signed grants for private apps), scaffold
               (the app a new app starts as), tty (`ssh <slug>@forge`: the
               app's own terminal on a pty)
+  fleet/      one action over many rows (docs/FLEET.md): selection (the
+              query line → row ids, only what the viewer reads), verbs (each
+              action as read/next/refuse/write over one row, writing through
+              actions/); actions/fleet.ts plans, applies, keeps the receipt
+              (core/fleet_ops.ts) and undoes
   runs/       log (one file per run, appended live, tailed by listeners)
   crew/       agents as child processes: brief (the system + task prompts:
               the golden path, written down), claude (the headless adapter:

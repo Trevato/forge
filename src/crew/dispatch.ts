@@ -820,7 +820,7 @@ function resumeLater(app: App, run: Run, pause: Pause): void {
 }
 
 /** The still-open task a run was about, and the reason to queue it under again. */
-function taskOf(
+export function taskOf(
   app: App,
   run: Run,
 ): { issue: Issue; repo: Repo; agent: Agent; reason: RunReason } | undefined {

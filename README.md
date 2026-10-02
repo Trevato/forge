@@ -331,6 +331,9 @@ crosses.
 `docs/FOLLOWING.md` is a fork that keeps up with its parent: where it
 stands, taking updates, and the crew's part when both sides moved.
 
+`docs/FLEET.md` is one change across many repositories, runs or issues: a
+query, a dry-run plan of every row before → after, a receipt, and undo.
+
 `docs/MCP.md` is the forge as a connector, and `docs/STANDARDS.md` is what
 it answers by default: `.well-known`, feeds, cards, the manifest.
 

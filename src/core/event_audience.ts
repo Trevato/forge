@@ -31,7 +31,9 @@ export function eventAudience(kind: string): EventAudience {
     kind === "repo.settings_updated"
   )
     return "admins";
-  if (kind === "repo.pinned" || kind === "repo.unpinned") return "actor";
+  // A fleet operation spans repositories; its receipt is its actor's.
+  if (kind === "repo.pinned" || kind === "repo.unpinned" || kind.startsWith("fleet."))
+    return "actor";
   return "readers";
 }
 

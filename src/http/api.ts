@@ -229,6 +229,14 @@ import {
   type SourceError,
 } from "../view/source.ts";
 import { eventStream } from "./sse.ts";
+import {
+  applyFleetOp,
+  getFleetOp,
+  listFleetOps,
+  previewFleetOp,
+  undoFleetOp,
+  type FleetError,
+} from "../actions/fleet.ts";
 import { sessionCookie } from "../web/pages/site.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
@@ -249,6 +257,17 @@ import {
 import type { Router } from "./router.ts";
 
 // ---- shapes ----
+
+/** A fleet refusal: the access codes keep their fixed shapes. */
+function respondFleet(error: FleetError): Response {
+  if (error.code === "not_found") return notFound();
+  if (error.code === "unauthorized") return unauthorized();
+  return apiError(
+    error.code,
+    error.code === "forbidden" ? 403 : error.code === "already_undone" ? 409 : 422,
+    error.message,
+  );
+}
 
 function publicKey(key: UserKey) {
   return {
@@ -2629,6 +2648,57 @@ export function apiRoutes(router: Router<Handler>): void {
     const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
     if (!synced.ok) return respondAccess(synced.error, 404);
     return json(synced.value);
+  });
+
+  // ── fleet operations — one action over every row a query selects ─────
+  //
+  // A dry run (the default) answers with the plan and changes nothing; it
+  // needs only a read credential. Applying and undoing change what an
+  // admin changes, so they take an admin token — and every row is still
+  // checked against the actor's admin of its repository.
+
+  router.add("POST", "/api/v1/fleet/ops", async (ctx) => {
+    const input = await body(ctx.request);
+    const dryRun = input.dryRun !== false;
+    const denied = requireScope(ctx, dryRun ? "ro" : "admin");
+    if (denied) return denied;
+    const query = str(input.query);
+    if (dryRun) {
+      const plan = previewFleetOp(ctx.app, ctx.auth.user, query, input.action);
+      if (!plan.ok) return respondFleet(plan.error);
+      return json({ dryRun: true, ...plan.value });
+    }
+    const op = await applyFleetOp(ctx.app, ctx.auth.user, query, input.action);
+    if (!op.ok) return respondFleet(op.error);
+    return json({ dryRun: false, ...op.value }, 201);
+  });
+
+  router.add("GET", "/api/v1/fleet/ops", (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    const q = ctx.url.searchParams;
+    const limit = pageLimit(q.has("limit") ? Number(q.get("limit")) : undefined);
+    const ops = listFleetOps(
+      ctx.app,
+      ctx.auth.user,
+      limit,
+      q.get("cursor") ?? undefined,
+    );
+    if (!ops.ok) return respondFleet(ops.error);
+    return json(paged(ops.value, limit, (op) => op.id));
+  });
+
+  router.add("GET", "/api/v1/fleet/ops/:id", (ctx) => {
+    const op = getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!op.ok) return respondFleet(op.error);
+    return json(op.value);
+  });
+
+  router.add("POST", "/api/v1/fleet/ops/:id/undo", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const op = await undoFleetOp(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!op.ok) return respondFleet(op.error);
+    return json(op.value, 201);
   });
 
   // ── pins ─────────────────────────────────────────────────────────────
