@@ -167,6 +167,7 @@ describe("the forge over MCP", () => {
       "map",
       "link",
       "unlink",
+      "plan",
     ]);
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
@@ -447,6 +448,53 @@ describe("the forge over MCP", () => {
     const after = (await tool(ro, "map", { app: "alice/game" })).value;
     expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
     expect(after.ready.map((i: any) => i.number)).toContain(b);
+  });
+
+  test("plan opens linked issues all or none", async () => {
+    const issues = [
+      { key: "a", title: "First" },
+      { key: "b", title: "Second", body: "two" },
+      { key: "c", title: "Third", blockedBy: ["a", "b"] },
+    ];
+    const done = (await tool(rw, "plan", { app: "alice/game", issues })).value;
+    const n = Object.fromEntries(
+      done.opened.map((o: any) => [o.key, o.number]),
+    );
+    expect(done.ready).toEqual(expect.arrayContaining([n.a, n.b]));
+    expect(done.ready).not.toContain(n.c);
+    const map = (await tool(ro, "map", { app: "alice/game" })).value;
+    expect(map.edges).toContainEqual({ issue: n.c, blockedBy: n.a });
+    expect(map.edges).toContainEqual({ issue: n.c, blockedBy: n.b });
+
+    const count = async () =>
+      (await tool(ro, "map", { app: "alice/game" })).value.issues.length;
+    const before = await count();
+    const loop = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: [
+        { key: "x", title: "X", blockedBy: ["y"] },
+        { key: "y", title: "Y", blockedBy: ["x"] },
+      ],
+    });
+    expect(loop.error).toContain("cycle");
+    const unknown = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: [{ key: "x", title: "X", blockedBy: ["nope"] }],
+    });
+    expect(unknown.error).toContain('"nope"');
+    const many = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: Array.from({ length: 13 }, (_, i) => ({
+        key: `k${i}`,
+        title: "t",
+      })),
+    });
+    expect(many.error).toContain("too_many");
+    expect(await count()).toBe(before);
+
+    expect(
+      (await tool(ro, "plan", { app: "alice/game", issues })).error,
+    ).toContain("forbidden");
   });
 
   test("a browser session is not a way in, even signed in", async () => {

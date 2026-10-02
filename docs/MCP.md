@@ -40,6 +40,7 @@ for a tunnel and a forge that sleeps.
 | `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
 | `unlink`       | `{ app, issue, blockedBy }`: the issue stops waiting for it                                       | yes    |
+| `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.
@@ -61,3 +62,27 @@ does not speak yet; that is the next step here, and it changes nothing above
 person pastes.
 
 `src/http/mcp.ts`, `src/actions/tell.ts`, `test/mcp.test.ts`.
+
+## `plan`
+
+Opens several small issues and their links in one transaction. Each item is
+`{ key, title, body?, blockedBy? }`; `blockedBy` lists keys of the same call or
+numbers of issues already open. A loop, an unknown key, an unknown number, an
+over-long title or body, or more than 12 items refuses the whole plan, naming
+the item, and nothing is opened. Issues belong to the token's owner and emit
+the same events as opening and linking one by one. It needs an `rw` token.
+
+```json
+{ "app": "alice/game", "issues": [
+  { "key": "board", "title": "Draw the board", "body": "8x8 grid" },
+  { "key": "moves", "title": "Legal moves" },
+  { "key": "play",  "title": "Play a game", "blockedBy": ["board", "moves"] } ] }
+```
+
+answers
+
+```json
+{ "says": "Opened 3 issues: board is #7, moves is #8, play is #9.",
+  "opened": [{ "key": "board", "number": 7 }, { "key": "moves", "number": 8 }, { "key": "play", "number": 9 }],
+  "ready": [7, 8] }
+```

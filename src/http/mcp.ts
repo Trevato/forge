@@ -24,6 +24,7 @@ import {
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
+import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { tell, toldWords } from "../actions/tell.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -533,6 +534,54 @@ const TOOLS: readonly Tool[] = [
             says: `#${issue.number} no longer waits for #${blocker.number}.`,
           })
         : bad(unlinked.error, "you need write access to plan here");
+    },
+  },
+  {
+    name: "plan",
+    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, and what is ready now.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issues: {
+          type: "array",
+          minItems: 1,
+          maxItems: PLAN_MAX,
+          items: {
+            type: "object",
+            properties: {
+              key: {
+                type: "string",
+                description: "A short name for this item, unique in the plan.",
+              },
+              title: { type: "string" },
+              body: { type: "string" },
+              blockedBy: {
+                type: "array",
+                items: { type: ["string", "integer"] },
+                description: "Keys in this plan, or numbers of open issues.",
+              },
+            },
+            required: ["key", "title"],
+          },
+        },
+      },
+      required: ["app", "issues"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const items = parsePlan(args["issues"]);
+      if (!items.ok) return bad(items.error.error, items.error.message);
+      const planned = openPlan(ctx.app, user, repo, items.value);
+      if (!planned.ok) return bad(planned.error.error, planned.error.message);
+      const { opened, ready } = planned.value;
+      return good({
+        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.`,
+        opened,
+        ready,
+      });
     },
   },
 ];
