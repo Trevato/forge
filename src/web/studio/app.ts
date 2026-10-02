@@ -43,7 +43,7 @@ import {
 import { changesHref, tellsHref } from "./nouns.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { appPanels } from "./previews.ts";
-import { servingHistory, type WordCtx } from "./words.ts";
+import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -400,7 +400,8 @@ export async function studioApp(
                         : autonomy.paused}
                     </dd>`
                 : null}
-            </dl>`,
+            </dl>
+            ${when(crew.length === 0, () => noCrewLine(`${base}/settings`))}`,
         {
           head: html`${icon("play")}
             <h2>On its own</h2>

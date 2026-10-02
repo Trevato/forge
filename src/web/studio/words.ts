@@ -27,6 +27,20 @@ import {
 import { html, type Html } from "../html.ts";
 import { icon } from "../ui.ts";
 
+/**
+ * The empty crew, said once: the shelf's stuck tell, the app page's autonomy
+ * card and the settings card all take it from here.
+ */
+export const NOBODY_ON_CREW = "nobody on the crew";
+
+/** The quiet line under a mode nothing can honour yet. `href` is the crew panel. */
+export function noCrewLine(href: string): Html {
+  return html`<p class="muted small">
+    Mode is a promise with ${NOBODY_ON_CREW} to keep it.
+    <a href="${href}">Put someone on the crew</a>.
+  </p>`;
+}
+
 export type Word =
   | "working"
   | "look"

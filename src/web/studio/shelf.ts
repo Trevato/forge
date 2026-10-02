@@ -49,6 +49,7 @@ import {
   type ProductionFact,
   type ServingHistory,
   type WordCtx,
+  NOBODY_ON_CREW,
 } from "./words.ts";
 
 /** Reads the caller has already made, so the shelf does not make them again. */
@@ -237,7 +238,7 @@ export async function shelfRows(
         word === undefined
           ? stuck.has(repo.id)
             ? html`<span class="muted"
-                >told — nobody on the crew to take it</span
+                >told — ${NOBODY_ON_CREW} to take it</span
               >`
             : canTell
               ? html`<span class="muted">quiet — tell the crew something</span>`

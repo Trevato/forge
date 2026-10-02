@@ -50,6 +50,7 @@ import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
+  NOBODY_ON_CREW,
   pullWord,
   runWord,
   servingHistory,
@@ -5361,6 +5362,43 @@ describe("a stranger sees the app, not the owner's books", () => {
       body: new URLSearchParams(body),
       redirect: "manual",
     });
+
+  test("an autonomous app with nobody on its crew says so beside the mode, and stops saying it once a builder joins", async () => {
+    const made = await createRepo(app, alice, { name: "lamp", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const lamp = made.value;
+    const seeded = await commitToBranch(app, alice, lamp, {
+      message: "Start",
+      files: [{ path: "README.md", content: "lamp\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, lamp, { slug: "lamp" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const on = await updateRepoSettings(app, alice, lamp, {
+      autonomy: "autonomous",
+      autonomyDirection: "",
+      autonomyCeilingUsd: 5,
+      autonomySlots: 1,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+
+    const empty = await (await get("/alice/lamp", ownerCookie)).text();
+    expect(empty).toContain("Autonomous");
+    expect(empty).toContain("nobody on the crew");
+    expect(empty).toContain('href="/alice/lamp/settings">Put someone on the crew');
+    // The shelf's stuck word and this card share one phrase.
+    expect(NOBODY_ON_CREW).toBe("nobody on the crew");
+
+    const crewed = await (await get("/alice/beacon", ownerCookie)).text();
+    expect(crewed).not.toContain("nobody on the crew");
+
+    const agent = await createAgent(app, alice, { username: "wick" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    expect(addToCrew(app, alice, lamp, "wick").ok).toBe(true);
+    const joined = await (await get("/alice/lamp", ownerCookie)).text();
+    expect(joined).not.toContain("nobody on the crew");
+  });
 
   test("the studio's settings page renders the crew and the ceiling for a writer, with the same numbers the app page shows", async () => {
     const owner = await (
