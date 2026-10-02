@@ -1,0 +1,254 @@
+/**
+ * Spawn: make the child a plan describes. A new forge instance placed by the
+ * placement seam, an org in it, the chosen apps as repositories with their
+ * whole history, the crew's briefs, and one `parent.json` pointing back —
+ * the upstream URL and nothing secret. Owner-only, same-origin, and the plan
+ * is validated again here: the dry-run is a preview, never a permit.
+ *
+ * Everything the copy writes lives under the child's own data directory
+ * (`<data>/children/<bodyId>`). The parent keeps one ledger line per child
+ * (`<data>/spawn/<name>.json`) written before the first copy, so a retry
+ * finds the half-made child and resumes it — every step below is
+ * idempotent — and a finished one is answered, not made twice.
+ */
+
+import { mkdir, rename } from "node:fs/promises";
+import { join } from "node:path";
+import { createApp, type App } from "../app.ts";
+import { getAgentByName, createAgentRow, updateAgent, BRIEF_MAX } from "../core/agents.ts";
+import { createOrg, getOrg } from "../core/orgs.ts";
+import { canRead, createRepo, getRepo } from "../core/repos.ts";
+import { createUser, getUserByName, type User } from "../core/users.ts";
+import { runGit } from "../git/env.ts";
+import { repoDir } from "../git/repos.ts";
+import { sha256 } from "../kernel/hash.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import { crossOrigin } from "../http/context.ts";
+import type { Placement } from "../spawn/placement.ts";
+import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
+import { requireUser } from "./access.ts";
+
+export interface Spawned {
+  readonly name: string;
+  readonly org: string;
+  readonly url: string;
+  readonly bodyId: string;
+  /** True when this call found the child already made and changed nothing. */
+  readonly existed: boolean;
+}
+
+export type SpawnError =
+  | { readonly kind: "unauthorized" | "forbidden" | "cross_origin" }
+  | { readonly kind: "invalid"; readonly field: string; readonly reason: string }
+  | { readonly kind: "refused"; readonly reason: string; readonly message: string }
+  | { readonly kind: "exists"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string };
+
+export interface SpawnDeps {
+  readonly placement: Placement;
+  /** The request that asked, for the same-origin check on this mutation. */
+  readonly request: Request;
+  readonly url: URL;
+}
+
+interface Ledger {
+  readonly name: string;
+  readonly bodyId: string;
+  readonly url: string;
+  readonly planHash: string;
+  done: boolean;
+}
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+const inFlight = new Set<string>();
+
+const fail = (message: string) => err<SpawnError>({ kind: "failed", message });
+
+export const childDirOf = (app: App, bodyId: string): string =>
+  join(app.config.dataDir, "children", bodyId);
+const ledgerPath = (app: App, name: string): string =>
+  join(app.config.dataDir, "spawn", `${name}.json`);
+
+async function readLedger(app: App, name: string): Promise<Ledger | undefined> {
+  const file = Bun.file(ledgerPath(app, name));
+  if (!(await file.exists())) return undefined;
+  try {
+    return (await file.json()) as Ledger;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeLedger(app: App, ledger: Ledger): Promise<void> {
+  await mkdir(join(app.config.dataDir, "spawn"), { recursive: true });
+  const path = ledgerPath(app, ledger.name);
+  await Bun.write(`${path}.tmp`, JSON.stringify(ledger));
+  await rename(`${path}.tmp`, path);
+}
+
+export async function spawnForge(
+  app: App,
+  actor: User | undefined,
+  input: SpawnInput,
+  source: SpawnSource,
+  deps: SpawnDeps,
+): Promise<Result<Spawned, SpawnError>> {
+  if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
+  const user = requireUser(actor);
+  if (!user.ok) return err({ kind: "unauthorized" });
+  if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const owner = user.value;
+
+  // The dry-run is not trusted: the plan is made again, here.
+  const planned = planSpawn(input, source);
+  if (!planned.ok) return err({ kind: "invalid", ...planned.error });
+  const plan = planned.value;
+
+  const names = new Set<string>();
+  for (const a of plan.apps) {
+    const name = a.ref.split("/")[1]!;
+    if (names.has(name.toLowerCase()))
+      return err({ kind: "invalid", field: "apps", reason: `two apps are named ${name}` });
+    names.add(name.toLowerCase());
+    const [o, n] = a.ref.split("/") as [string, string];
+    const repo = getRepo(app.db, o, n);
+    if (!repo || !canRead(app.db, repo, owner))
+      return err({ kind: "invalid", field: "apps", reason: `${a.ref} is not readable by you` });
+  }
+  for (const b of plan.briefs) {
+    if (b.text.length > BRIEF_MAX)
+      return err({ kind: "invalid", field: "briefs", reason: `a brief is at most ${BRIEF_MAX} characters` });
+  }
+
+  if (inFlight.has(plan.name)) return err({ kind: "exists", message: "that child is being made" });
+  inFlight.add(plan.name);
+  try {
+    return await make(app, owner, plan, deps);
+  } finally {
+    inFlight.delete(plan.name);
+  }
+}
+
+async function make(
+  app: App,
+  owner: User,
+  plan: SpawnPlan,
+  deps: SpawnDeps,
+): Promise<Result<Spawned, SpawnError>> {
+  const planHash = sha256(JSON.stringify(plan));
+  let ledger = await readLedger(app, plan.name);
+  if (ledger) {
+    if (ledger.planHash !== planHash)
+      return err({ kind: "exists", message: `a different child named ${plan.name} already exists` });
+    if (ledger.done)
+      return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
+  } else {
+    const placed = await deps.placement.place(plan);
+    if (!placed.ok) return err({ kind: "refused", ...placed.error });
+    if (!SAFE_ID.test(placed.value.bodyId)) {
+      await deps.placement.retire(placed.value.bodyId);
+      return fail("placement returned an unusable body id");
+    }
+    ledger = { name: plan.name, bodyId: placed.value.bodyId, url: placed.value.url, planHash, done: false };
+    await writeLedger(app, ledger);
+  }
+
+  const copied = await copyInto(app, owner, plan, ledger);
+  if (!copied.ok) return fail(copied.error);
+
+  ledger.done = true;
+  await writeLedger(app, ledger);
+  app.bus.append({
+    kind: "forge.spawned",
+    actorId: owner.id,
+    payload: { name: plan.name, org: plan.org, url: ledger.url, apps: plan.apps.map((a) => a.ref) },
+  });
+  return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: false });
+}
+
+/** Every step skips what is already there, so a resumed child is finished, not doubled. */
+async function copyInto(
+  app: App,
+  owner: User,
+  plan: SpawnPlan,
+  ledger: Ledger,
+): Promise<Result<void, string>> {
+  const dir = childDirOf(app, ledger.bodyId);
+  await mkdir(dir, { recursive: true });
+  const child = createApp({ dataDir: dir });
+  try {
+    // The founder is a name only: no password, no email worth mailing. The
+    // child's first boot hands the account to a person (#422).
+    const founder =
+      getUserByName(child.db, owner.username) ??
+      (await (async () => {
+        const made = await createUser(child.db, {
+          username: owner.username,
+          email: `${owner.username}@spawn.forge.invalid`,
+        });
+        return made.ok ? made.value : undefined;
+      })());
+    if (!founder) return err("could not make the child's founder");
+
+    let org = getOrg(child.db, plan.org);
+    if (!org) {
+      const made = createOrg(child.db, plan.org, founder.id);
+      if (!made.ok) return err(`could not make org ${plan.org}: ${made.error}`);
+      org = made.value;
+    }
+
+    for (const a of plan.apps) {
+      const [o, n] = a.ref.split("/") as [string, string];
+      const parent = getRepo(app.db, o, n);
+      if (!parent) return err(`${a.ref} is gone`);
+      let repo = getRepo(child.db, org.username, n);
+      if (!repo) {
+        const made = await createRepo(child.db, child.reposRoot, {
+          ownerId: org.id,
+          name: n,
+          visibility: parent.visibility,
+          description: parent.description,
+          defaultBranch: parent.defaultBranch,
+        });
+        if (!made.ok) return err(`could not make ${a.ref}: ${made.error}`);
+        repo = made.value;
+      }
+      // Branches and tags with every commit behind them; re-running only tops up.
+      const fetched = await runGit(
+        [
+          "fetch",
+          "--no-write-fetch-head",
+          repoDir(app.reposRoot, o, n),
+          "+refs/heads/*:refs/heads/*",
+          "+refs/tags/*:refs/tags/*",
+        ],
+        { cwd: repoDir(child.reposRoot, org.username, n), timeoutMs: 600_000 },
+      );
+      if (!fetched.ok) return err(`could not copy ${a.ref}: ${fetched.error.stderr}`);
+    }
+
+    for (const b of plan.briefs) {
+      const existing = getAgentByName(child.db, b.agent);
+      if (existing) {
+        updateAgent(child.db, existing.user.id, { brief: b.text });
+        continue;
+      }
+      const made = await createUser(child.db, {
+        username: b.agent,
+        email: `${b.agent}@agents.spawn.forge.invalid`,
+        agent: true,
+      });
+      if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
+      createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });
+    }
+
+    const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
+    await Bun.write(
+      join(dir, "parent.json"),
+      JSON.stringify({ upstream, name: plan.name, org: plan.org }),
+    );
+    return ok();
+  } finally {
+    child.close();
+  }
+}
