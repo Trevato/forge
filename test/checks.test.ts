@@ -15,18 +15,26 @@ import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
 import {
   pickNext,
+  requeueAbandonedChecks,
   startChecks,
   STARVATION_MS,
   type ChecksHandle,
 } from "../src/checks/service.ts";
 import {
   cancelRun,
+  CHECK_RESTART_LIMIT,
   checksForHead,
+  claimRun,
   createRun,
   getRun,
   listRuns,
+  REQUEUED_SUMMARY,
   type Run,
 } from "../src/core/runs.ts";
+import type { Pull } from "../src/core/pulls.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { STALE_AFTER_MS } from "../src/runs/lease.ts";
+import { pullWord, servingHistory } from "../src/web/studio/words.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -566,4 +574,145 @@ describe("checks", () => {
     expect(done.reason).toBe("boot");
     expect(done.state).toBe("ok");
   }, 60_000);
+});
+
+describe("a check its forge died under", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let repo: Repo;
+  let pull: Pull;
+  let stale: string;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-checks-abandoned-"));
+    app = createApp({ dataDir, port: 0 });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, { name: "lib" });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# lib\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const first = await commitToBranch(app, alice, repo, {
+      branch: "feature",
+      message: "First",
+      files: [{ path: "A.md", content: "a\n" }],
+    });
+    if (!first.ok) throw new Error(JSON.stringify(first.error));
+    stale = first.value.commitOid;
+    const second = await commitToBranch(app, alice, repo, {
+      branch: "feature",
+      message: "Second",
+      files: [{ path: "B.md", content: "b\n" }],
+    });
+    if (!second.ok) throw new Error(JSON.stringify(second.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Feature",
+      baseBranch: "main",
+      headBranch: "feature",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    pull = opened.value;
+  });
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  /** A check that was running when its forge died: claimed, lease long lapsed. */
+  const abandoned = (commitOid: string, attempt = 0): Run => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      env: `pull-${pull.number}`,
+      commitOid,
+      reason: "push",
+      issueId: pull.id,
+      attempt,
+    });
+    claimRun(app.db, run.id);
+    app.db
+      .query("UPDATE run SET heartbeat_at = ?2 WHERE id = ?1")
+      .run(run.id, new Date(Date.now() - STALE_AFTER_MS - 1_000).toISOString());
+    return getRun(app.db, run.id)!;
+  };
+
+  const word = () =>
+    pullWord(
+      {
+        db: app.db,
+        dir: repoDir(app.reposRoot, repo.ownerName, repo.name),
+        runtime: undefined,
+        record: undefined,
+        history: servingHistory(),
+      },
+      pull,
+    );
+
+  const queuedFor = (commitOid: string): Run[] =>
+    listRuns(app.db, repo.id, { kind: "check", limit: 50 }).filter(
+      (r) => r.commitOid === commitOid && r.state === "queued",
+    );
+
+  test("a check for the head of an open pull is queued again, attempt + 1, and the change reads working", async () => {
+    const run = abandoned(pull.headOid);
+    expect((await word()).word).toBe("working");
+    expect(requeueAbandonedChecks(app, STALE_AFTER_MS)).toBe(1);
+    // A second forge sweeping the same lapse finds nothing left to move.
+    expect(requeueAbandonedChecks(app, STALE_AFTER_MS)).toBe(0);
+    const cut = getRun(app.db, run.id)!;
+    expect(cut.state).toBe("cancelled");
+    expect(cut.summary).toBe(REQUEUED_SUMMARY);
+    const again = queuedFor(pull.headOid);
+    expect(again).toHaveLength(1);
+    expect(again[0]!.attempt).toBe(1);
+    expect(again[0]!.issueId).toBe(pull.id);
+    expect(again[0]!.env).toBe(`pull-${pull.number}`);
+    expect(await word()).toEqual({ word: "working", note: "queued to check" });
+    cancelRun(app.db, again[0]!.id);
+  });
+
+  test("a check whose lease is still held is left alone", () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      issueId: pull.id,
+    });
+    claimRun(app.db, run.id);
+    expect(requeueAbandonedChecks(app, STALE_AFTER_MS)).toBe(0);
+    expect(getRun(app.db, run.id)?.state).toBe("running");
+    cancelRun(app.db, run.id);
+  });
+
+  test("at the ceiling the check fails once, saying the forge kept going away", async () => {
+    const run = abandoned(pull.headOid, CHECK_RESTART_LIMIT);
+    expect(requeueAbandonedChecks(app, STALE_AFTER_MS)).toBe(1);
+    const failed = getRun(app.db, run.id)!;
+    expect(failed.state).toBe("failed");
+    expect(failed.summary).toContain("the forge kept going away under this check");
+    expect(queuedFor(pull.headOid)).toHaveLength(0);
+    expect((await word()).word).toBe("stopped");
+  });
+
+  test("a check for a commit that no longer heads an open pull is cancelled, not queued again", () => {
+    const run = abandoned(stale);
+    expect(requeueAbandonedChecks(app, STALE_AFTER_MS)).toBe(1);
+    const cut = getRun(app.db, run.id)!;
+    expect(cut.state).toBe("cancelled");
+    expect(cut.summary).toContain("no longer heads an open pull");
+    expect(queuedFor(stale)).toHaveLength(0);
+  });
 });

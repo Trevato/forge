@@ -23,6 +23,7 @@ import { resolveAppEnv } from "../core/app_env.ts";
 import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
+import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
@@ -30,7 +31,6 @@ import {
   listRuns,
   claimRun,
   createRun,
-  CHECK_KINDS,
   failAbandonedRuns,
   finishRun,
   markServing,
@@ -515,14 +515,13 @@ export class AppsRuntime {
 
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
-    // Deploys and checks: an agent run the last forge left is the crew's,
+    // Deploys are failed; a check the last forge left is queued again while
+    // its commit still heads an open pull; an agent run is the crew's,
     // which queues it again rather than failing it.
-    const abandoned = failAbandonedRuns(
-      this.app.db,
-      STALE_AFTER_MS,
-      CHECK_KINDS,
-    );
-    if (abandoned > 0) log.info("failed abandoned runs", { count: abandoned });
+    const abandoned =
+      failAbandonedRuns(this.app.db, STALE_AFTER_MS, ["deploy"]) +
+      requeueAbandonedChecks(this.app, STALE_AFTER_MS);
+    if (abandoned > 0) log.info("settled abandoned runs", { count: abandoned });
     this.unsubscribe = this.app.bus.subscribe((event) => {
       // Never let an event handler's rejection reach the bus.
       this.onEvent(event).catch((error) =>

@@ -376,6 +376,129 @@ export function failAbandonedRuns(
     .run(cutoff, JSON.stringify(kinds)).changes;
 }
 
+/** What a check the forge's own restart cut off says as it is queued again. */
+export const REQUEUED_SUMMARY = "interrupted by a restart; queued again";
+
+/**
+ * How many times one check may be cut off by its forge going away and be
+ * queued again. Past it the check fails once, saying so: a check that kills
+ * its forge must not loop forever.
+ */
+export const CHECK_RESTART_LIMIT = 3;
+
+/**
+ * Cancel a check the forge's own going-away cut off and queue the same
+ * check again, `attempt + 1` — the one way a check is retried, from a
+ * graceful stop or a lapsed lease alike. Only a run still `running` is
+ * moved, and `lapsedBefore`, when given, must still be true of its lease:
+ * the UPDATE's WHERE is what decides between two forges, so only one of
+ * them ever queues the retry. Returns the cancelled run and its retry, or
+ * undefined when another worker got there first.
+ */
+export function requeueCheck(
+  db: Database,
+  runId: string,
+  lapsedBefore?: string,
+): { cancelled: Run; again: Run } | undefined {
+  return db.transaction(() => {
+    const changes = db
+      .query(
+        `UPDATE run SET state = 'cancelled', summary = ?2,
+           finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = ?1 AND kind = 'check' AND state = 'running'
+           AND (?3 IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ?3)`,
+      )
+      .run(runId, REQUEUED_SUMMARY, lapsedBefore ?? null).changes;
+    if (changes === 0) return undefined;
+    const cancelled = getRun(db, runId)!;
+    const again = createRun(db, {
+      repoId: cancelled.repoId,
+      kind: "check",
+      env: cancelled.env,
+      commitOid: cancelled.commitOid,
+      reason: cancelled.reason,
+      attempt: cancelled.attempt + 1,
+      ...(cancelled.issueId === null ? {} : { issueId: cancelled.issueId }),
+      ...(cancelled.actorId === null ? {} : { actorId: cancelled.actorId }),
+    });
+    return { cancelled, again };
+  })();
+}
+
+/** What a sweep of abandoned checks did, run by run. */
+export interface AbandonedChecks {
+  /** Cancelled and queued again: the cancelled run and its retry. */
+  readonly requeued: readonly { cancelled: Run; again: Run }[];
+  /** Past `CHECK_RESTART_LIMIT`: failed once, saying the forge kept dying. */
+  readonly failed: readonly Run[];
+  /** No longer any open pull's head: cancelled, not retried. */
+  readonly cancelled: readonly Run[];
+}
+
+/**
+ * Checks whose lease lapsed — their forge died under them, which is never
+ * the commit's fault. One whose commit is still the head of an open pull is
+ * queued again (`requeueCheck`) until `CHECK_RESTART_LIMIT`, then failed
+ * once with a summary that says why; one whose commit no longer heads any
+ * open pull is cancelled and says so. Every move is a compare-and-swap on
+ * the lapsed lease, so two forges sweeping at once move each run once.
+ */
+export function sweepAbandonedChecks(
+  db: Database,
+  staleMs: number,
+): AbandonedChecks {
+  const cutoff = new Date(Date.now() - staleMs).toISOString();
+  const rows = db
+    .query<RunRow & { live: number }, [string]>(
+      `SELECT run.*, EXISTS (
+           SELECT 1 FROM pull JOIN issue ON issue.id = pull.issue_id
+            WHERE pull.issue_id = run.issue_id AND issue.state = 'open'
+              AND pull.merged_at IS NULL AND pull.head_oid = run.commit_oid
+         ) AS live
+         FROM run
+        WHERE kind = 'check' AND state = 'running'
+          AND (heartbeat_at IS NULL OR heartbeat_at < ?1)`,
+    )
+    .all(cutoff);
+  const out = {
+    requeued: [] as { cancelled: Run; again: Run }[],
+    failed: [] as Run[],
+    cancelled: [] as Run[],
+  };
+  const settle = (runId: string, state: string, summary: string) =>
+    db
+      .query(
+        `UPDATE run SET state = ?2, summary = ?3,
+           finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = ?1 AND state = 'running'
+           AND (heartbeat_at IS NULL OR heartbeat_at < ?4)`,
+      )
+      .run(runId, state, summary, cutoff).changes > 0
+      ? getRun(db, runId)
+      : undefined;
+  for (const row of rows) {
+    if (row.live === 0) {
+      const done = settle(
+        row.id,
+        "cancelled",
+        "the forge went away, and this commit no longer heads an open pull",
+      );
+      if (done) out.cancelled.push(done);
+    } else if (row.attempt >= CHECK_RESTART_LIMIT) {
+      const done = settle(
+        row.id,
+        "failed",
+        `the forge kept going away under this check (${row.attempt + 1} times); not trying again`,
+      );
+      if (done) out.failed.push(done);
+    } else {
+      const moved = requeueCheck(db, row.id, cutoff);
+      if (moved) out.requeued.push(moved);
+    }
+  }
+  return out;
+}
+
 /** Whether a running run's lease has lapsed. */
 export function leaseLapsed(
   run: Run,

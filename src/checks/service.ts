@@ -25,6 +25,9 @@ import {
   createRun,
   finishRun,
   listActive,
+  requeueCheck,
+  REQUEUED_SUMMARY,
+  sweepAbandonedChecks,
   type Run,
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
@@ -100,6 +103,29 @@ export function pickNext(
   }
   if (now - Date.parse(oldest.createdAt) >= STARVATION_MS) return oldest;
   return newest;
+}
+
+/**
+ * Settle the checks a dead forge left running, and say so on the bus: a
+ * check whose commit still heads an open pull is queued again for whichever
+ * checks service is up to run, so the change keeps reading *working*.
+ * Called on boot and on the way by whichever forge is alive. A cancelled
+ * check is not announced, as a superseded one is not: `run.finished` reads
+ * as a verdict on the change, and the forge dying is none.
+ */
+export function requeueAbandonedChecks(app: App, staleMs: number): number {
+  const swept = sweepAbandonedChecks(app.db, staleMs);
+  for (const { cancelled, again } of swept.requeued) {
+    appendRunLog(app.config.dataDir, cancelled.id, REQUEUED_SUMMARY);
+    announceRun(app, again, again.actorId ?? undefined);
+  }
+  for (const run of swept.cancelled)
+    appendRunLog(app.config.dataDir, run.id, run.summary);
+  for (const run of swept.failed) {
+    appendRunLog(app.config.dataDir, run.id, run.summary);
+    announceRun(app, run);
+  }
+  return swept.requeued.length + swept.failed.length + swept.cancelled.length;
 }
 
 /** Where a check's checkout lives while it runs. */
@@ -264,20 +290,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       if (!outcome.ok && stopped && signal.aborted) {
         // Cut off by this forge stopping, not by the check: the same check
         // goes back on the queue, and the forge that carries on runs it.
-        const why = "interrupted by a restart; queued again";
-        cancelRun(app.db, run.id, why);
-        write(why);
-        const again = createRun(app.db, {
-          repoId: run.repoId,
-          kind: "check",
-          env: run.env,
-          commitOid: run.commitOid,
-          reason: run.reason,
-          attempt: run.attempt + 1,
-          ...(run.issueId === null ? {} : { issueId: run.issueId }),
-          ...(run.actorId === null ? {} : { actorId: run.actorId }),
-        });
-        announceRun(app, again, run.actorId ?? undefined);
+        const moved = requeueCheck(app.db, run.id);
+        if (!moved) return;
+        write(REQUEUED_SUMMARY);
+        announceRun(app, moved.again, run.actorId ?? undefined);
         return;
       }
       const seconds = Math.round((Date.now() - started) / 1000);

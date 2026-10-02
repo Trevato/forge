@@ -14,13 +14,13 @@ import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
-import { startChecks } from "./checks/service.ts";
+import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { releaseOrphans } from "./core/run_secret.ts";
-import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
+import { failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
@@ -272,15 +272,17 @@ if (ssh)
 
 // A run whose forge died is noticed by whichever forge is up, on boot and
 // on the way: an old process finishing beside a new one keeps its runs alive
-// by renewing their leases, so only a lapsed lease is a death. Deploys and
-// checks are failed; agent runs are the crew's to queue again, unless there
-// is no crew here to do it.
+// by renewing their leases, so only a lapsed lease is a death. Deploys are
+// failed; checks are queued again while their commit heads an open pull;
+// agent runs are the crew's to queue again, unless there is no crew here to
+// do it.
 const leaseTimer = setInterval(() => {
   failAbandonedRuns(
     app.db,
     STALE_AFTER_MS,
-    crew === undefined ? undefined : CHECK_KINDS,
+    crew === undefined ? ["deploy", "agent"] : ["deploy"],
   );
+  requeueAbandonedChecks(app, STALE_AFTER_MS);
   // A grant whose run is no longer running is a crash's leftover: close it.
   releaseOrphans(app.db);
 }, 30_000);
