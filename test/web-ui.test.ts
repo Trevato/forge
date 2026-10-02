@@ -541,9 +541,8 @@ describe("web ui", () => {
     ).text();
     expect(wildcard).not.toContain("needs a label");
 
-    // `mode=dev`: the studio's own `/search` is over apps, changes and
-    // tells (see `studioSearchPage`), never a plain repository — `proj` is
-    // dev's box to find, the same escape hatch `searchPage` documents.
+    // `mode=dev`: dev's face of the one `/search` (`searchPage`), the one
+    // that names a repository as one.
     const whole = await (
       await fetch(`${base}/search?q=proj&mode=dev`, {
         headers: { cookie: owner },

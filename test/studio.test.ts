@@ -6950,6 +6950,51 @@ describe("finding things in the studio: /search", () => {
     expect(html).toContain("Repositories");
     expect(html).toContain("Issues and pull requests");
   });
+
+  // #397, carrying #241's rule: the one search finds every repository the
+  // viewer can see, not only apps — and a tell on it links where it lives.
+  test("a repository that is not an app is found by its name and its description, and stays its owner's alone", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "project-notes",
+      visibility: "private",
+      description: "notes about a project",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const told = openIssue(app, alice, plain.value, {
+      title: "Sort the project notes",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+
+    const byName = mainOf(await (await asAlice("/search?q=notes")).text());
+    expect(byName).toContain('href="/alice/project-notes"');
+    expect(byName).toContain(
+      `href="/alice/project-notes/issues/${told.value.number}"`,
+    );
+    expect(byName).not.toContain("Nothing matched");
+    const byDescription = mainOf(
+      await (await asAlice("/search?q=about+a+project")).text(),
+    );
+    expect(byDescription).toContain('href="/alice/project-notes"');
+
+    const stranger = mainOf(await (await anonymous("/search?q=notes")).text());
+    expect(stranger).not.toContain("project-notes");
+  });
+
+  test("the studio face leaves the code to dev, one link away, and ?mode=dev rides every link and the form", async () => {
+    const studio = mainOf(await (await asAlice("/search?q=chess")).text());
+    expect(studio).not.toContain('id="code"');
+    expect(studio).toContain("/search?q=chess&amp;kind=code&amp;mode=dev");
+    // A hand-written kind=code in the studio is its everything, not an error.
+    const code = await asAlice("/search?q=chess&kind=code");
+    expect(code.status).toBe(200);
+    expect(mainOf(await code.text())).toContain('id="repos"');
+
+    const dev = mainOf(await (await asAlice("/search?q=chess&mode=dev")).text());
+    expect(dev).toContain('id="code"');
+    expect(dev).toContain('name="mode" value="dev"');
+    expect(dev).toContain("/search?q=chess&amp;kind=repos&amp;mode=dev");
+  });
 });
 
 /**

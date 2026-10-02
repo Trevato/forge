@@ -1,8 +1,10 @@
 /**
  * Finding things, and confirming the things you cannot take back.
  *
- * `/search` is the no-JavaScript twin of the command palette: one query box
- * over the repositories and issues the viewer may see. `/-/confirm` is the
+ * `/search` is the one search, in either face, and it needs no script: one
+ * query box over every repository and conversation the viewer may see. The
+ * studio face says it in the studio's nouns — apps, tells, changes — and
+ * leaves the code to dev's face, one link away. `/-/confirm` is the
  * second, deliberate step every destructive POST passes through — and the
  * only page in the product that knows which routes are dangerous, so a
  * crafted link can neither invent reassuring words nor aim at an endpoint
@@ -10,9 +12,12 @@
  */
 
 import { search } from "../../actions/search.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canWrite, getRepo } from "../../core/repos.ts";
 import {
+  cleanQuery,
   searchKind,
   type CodeHit,
   type IssueHit,
@@ -26,11 +31,13 @@ import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { page } from "../layout.ts";
 import { browseBase } from "../scope.ts";
-import { studioSearchPage } from "../studio/search.ts";
+import { appsOf } from "../studio/asks.ts";
+import { changeHref, tellHref } from "../studio/nouns.ts";
 import {
   badge,
   btn,
   card,
+  dot,
   empty,
   field as formField,
   listCard,
@@ -39,16 +46,54 @@ import {
   seg,
   stateBadge,
   time,
+  type Tone,
 } from "../ui.ts";
 
 // ---- search ----
 
+/** What was asked, and in which face — everything a link back needs. */
+interface Asked {
+  readonly query: string;
+  readonly kind: SearchKind;
+  readonly live: boolean;
+  /** The studio's face: its nouns, and no code. */
+  readonly studio: boolean;
+  /** `?mode=dev` from a studio browser, kept on every link and the form. */
+  readonly escape: boolean;
+}
+
+/** The apps among what the viewer can see, by id and by `owner/name`. One
+ * read for the whole page, never one per row. */
+interface Apps {
+  readonly byId: ReadonlyMap<string, AppRecord>;
+  readonly names: ReadonlySet<string>;
+}
+
+const NO_APPS: Apps = { byId: new Map(), names: new Set() };
+
+const privateBadge = (yes: boolean): Html =>
+  when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
+
+/** Whether an app is live. No query — `runtime.status` reads what is
+ * already in memory. */
+function appState(ctx: Ctx, record: AppRecord): { tone: Tone; word: string } {
+  const runtime = appsRuntime(ctx.app);
+  const envs = runtime === undefined ? [] : runtime.status(record);
+  const state = envs.find((e) => e.env === "production")?.state ?? "stopped";
+  const tone: Tone =
+    state === "running" ? "success" : state === "failed" ? "danger" : "default";
+  const word =
+    state === "running" ? "live" : state === "stopped" ? "not running" : state;
+  return { tone, word };
+}
+
 /**
- * One repository hit, ours or an origin's. The where-dot is the same glyph
- * the repository pages use, so "this is somewhere else" reads the same in a
- * result list as it does on the page you land on.
+ * One repository hit, ours or an origin's. In dev the where-dot is the same
+ * glyph the repository pages use, so "this is somewhere else" reads the same
+ * in a result list as it does on the page you land on; in the studio an app
+ * says whether it is live instead.
  */
-function repoHitRow(hit: RepoHit): Html {
+function repoHitRow(ctx: Ctx, a: Asked, apps: Apps, hit: RepoHit): Html {
   const counts = repoCounts({
     openIssues: hit.openIssues,
     openPulls: hit.openPulls,
@@ -56,19 +101,29 @@ function repoHitRow(hit: RepoHit): Html {
       ? { issuesIncludePulls: hit.openIssuesIncludingPulls }
       : {}),
   });
+  const description =
+    hit.description === "" ? null : html` · ${hit.description}`;
   if (hit.source === "local") {
+    const name = `${hit.owner}/${hit.name}`;
+    const record = apps.byId.get(hit.id);
+    const live = record === undefined ? undefined : appState(ctx, record);
     return row({
-      href: `/${hit.owner}/${hit.name}`,
+      href: `/${name}`,
       nav: true,
-      lead: icon("repo"),
-      title: `${hit.owner}/${hit.name}`,
-      titleAttr: `${hit.owner}/${hit.name}`,
-      meta: html`<span class="where-place" data-state="reading"
-          ><span class="where-dot" aria-hidden="true">●</span>workbench</span
-        >${hit.description === "" ? null : html` · ${hit.description}`}`,
-      trail: html`${counts}${when(hit.visibility === "private", () =>
-        badge("Private", { icon: "lock", variant: "secondary" }),
-      )}`,
+      lead: live === undefined ? icon("repo") : dot(live.tone),
+      title: name,
+      titleAttr: hit.description || name,
+      meta: a.studio
+        ? hit.description === ""
+          ? html`<span class="muted">No description</span>`
+          : html`${hit.description}`
+        : html`<span class="where-place" data-state="reading"
+              ><span class="where-dot" aria-hidden="true">●</span
+              >workbench</span
+            >${description}`,
+      trail: html`${a.studio
+        ? when(live, (l) => badge(l.word, { tone: l.tone }))
+        : counts}${privateBadge(hit.visibility === "private")}`,
     });
   }
   const mirror = hit.mirroredAs;
@@ -94,25 +149,35 @@ function repoHitRow(hit: RepoHit): Html {
         >${mirror === null
           ? "not mirrored here"
           : `mirrored as ${mirror.owner}/${mirror.name}`}</span
-      >${hit.description === "" ? null : html` · ${hit.description}`}`,
-    trail: html`${counts}${when(hit.private, () =>
-      badge("Private", { icon: "lock", variant: "secondary" }),
-    )}`,
+      >${description}`,
+    trail: html`${counts}${privateBadge(hit.private)}`,
   });
 }
 
+/** Where a conversation here lives: the studio's noun on an app, so a
+ * person is never handed two addresses for one thing; dev's otherwise. */
+function localIssueHref(
+  a: Asked,
+  apps: Apps,
+  hit: IssueHit & { source: "local" },
+): string {
+  const base = `/${hit.repo.owner}/${hit.repo.name}`;
+  if (a.studio && apps.names.has(`${hit.repo.owner}/${hit.repo.name}`))
+    return hit.kind === "issue"
+      ? tellHref(base, hit.number)
+      : changeHref(base, hit.number);
+  return `${base}/${hit.kind === "issue" ? "issues" : "pulls"}/${hit.number}`;
+}
+
 /** One conversation hit. An origin's own goes out to the origin. */
-function issueHitRow(hit: IssueHit): Html {
-  const segment = hit.kind === "issue" ? "issues" : "pulls";
+function issueHitRow(a: Asked, apps: Apps, hit: IssueHit): Html {
   const where =
     hit.source === "local"
       ? `${hit.repo.owner}/${hit.repo.name}`
       : hit.fullName;
   return row({
     href:
-      hit.source === "local"
-        ? `/${hit.repo.owner}/${hit.repo.name}/${segment}/${hit.number}`
-        : hit.htmlUrl,
+      hit.source === "local" ? localIssueHref(a, apps, hit) : hit.htmlUrl,
     nav: true,
     lead: icon(hit.kind === "issue" ? "issue" : "pull"),
     title: hit.title,
@@ -170,80 +235,118 @@ function codeHitRow(hit: CodeHit, query: string): Html {
   </li>`;
 }
 
-const KINDS: { value: SearchKind; label: string }[] = [
-  { value: "all", label: "Everything" },
-  { value: "repos", label: "Repositories" },
-  { value: "issues", label: "Issues & pulls" },
-  { value: "code", label: "Code" },
-];
+/** Each kind in each face's words: [kind, chip, heading, nothing found].
+ * The studio has no code row — that search is dev's. */
+type Words = readonly [SearchKind, string, string, string];
+const WORDS: { studio: readonly Words[]; dev: readonly Words[] } = {
+  studio: [
+    ["all", "Everything", "", ""],
+    ["repos", "Apps", "Apps", "No app matches"],
+    [
+      "issues",
+      "Tells & changes",
+      "Tells and changes",
+      "No tell or change matches",
+    ],
+  ],
+  dev: [
+    ["all", "Everything", "", ""],
+    ["repos", "Repositories", "Repositories", "No repository matches"],
+    [
+      "issues",
+      "Issues & pulls",
+      "Issues and pull requests",
+      "No issue or pull request matches",
+    ],
+    ["code", "Code", "Code", "No line of code matches"],
+  ],
+};
 
-function searchHref(query: string, kind: SearchKind, live: boolean): string {
-  const params = new URLSearchParams({ q: query });
+function searchHref(
+  a: Asked,
+  over: { kind?: SearchKind; live?: boolean; escape?: boolean } = {},
+): string {
+  const kind = over.kind ?? a.kind;
+  const params = new URLSearchParams({ q: a.query });
   if (kind !== "all") params.set("kind", kind);
-  if (live) params.set("live", "1");
+  if (over.live ?? a.live) params.set("live", "1");
+  if (over.escape ?? a.escape) params.set("mode", "dev");
   return `/search?${params.toString()}`;
 }
 
 function section(
-  title: string,
-  kind: SearchKind,
+  a: Asked,
+  [kind, , title, emptyText]: Words,
   rows: Html[],
-  o: {
-    truncated: boolean;
-    emptyIcon: Parameters<typeof icon>[0];
-    emptyText: string;
-    query: string;
-    live: boolean;
-  },
+  truncated: boolean,
 ): Html {
+  const emptyIcon =
+    kind === "repos" ? "repo" : kind === "issues" ? "issue" : "code";
   return html`<h2 class="mt" id="${kind}">
       ${title}${rows.length === 0
         ? null
         : html` <span class="muted small num"
-            >${rows.length}${o.truncated ? "+" : ""}</span
+            >${rows.length}${truncated ? "+" : ""}</span
           >`}
     </h2>
     ${rows.length === 0
       ? html`<p class="no-hits muted small">
-          ${icon(o.emptyIcon)}<span>${o.emptyText}</span>
+          ${icon(emptyIcon)}<span>${emptyText}</span>
         </p>`
       : listCard(rows)}
     ${when(
-      o.truncated,
+      truncated,
       () =>
         html`<p class="muted small mt">
           More matched than fit here.
-          <a href="${searchHref(o.query, kind, o.live)}"
+          <a href="${searchHref(a, { kind })}"
             >Show only ${title.toLowerCase()}</a
           >.
         </p>`,
     )}`;
 }
 
+/** The same `search()` the API and the palette call, so the sources can
+ * never disagree between surfaces. The studio leaves the code to dev, so
+ * its "everything" is the two cheap asks, never a grep. */
+async function find(ctx: Ctx, a: Asked): Promise<SearchResults> {
+  const ask = (kind: SearchKind) =>
+    search(ctx.app, ctx.auth.user, { q: a.query, kind, live: a.live });
+  if (!a.studio || a.kind !== "all") return ask(a.kind);
+  const [repos, issues] = await Promise.all([ask("repos"), ask("issues")]);
+  return {
+    repos: repos.repos,
+    issues: issues.issues,
+    code: [],
+    truncated: { ...issues.truncated, repos: repos.truncated.repos },
+  };
+}
+
 /**
- * GET /search — the whole forge, in one box.
+ * GET /search — everything the viewer can see, in one box, with no script.
  *
- * It is the no-JavaScript twin of the palette and the only search that is
- * always right: the same `search()` action the API and the palette call, so
- * the four sources (repositories here, repositories cached from every origin,
- * conversations, and the code itself) can never disagree between surfaces.
+ * The face follows the mode, like every other page: the studio's nouns in
+ * the studio, dev's (and dev's code search) in dev, and `?mode=dev` is the
+ * one-off way to dev's face without switching the browser. Either way it
+ * is the same visibility, so a signed-out reader sees exactly the public
+ * repositories a signed-out reader would anywhere else.
  *
  * `live=1` is opt-in and stays opt-in: it spends a round trip on every
  * connected origin, which is not a thing to do on every keystroke.
  */
 export async function searchPage(ctx: Ctx): Promise<Response> {
-  // In the studio a search is over apps, changes and tells, in the studio's
-  // own words — the same rule every other studio page follows. `?mode=dev`
-  // is the one-off way to dev's box without switching the browser.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
-  if (studio) return studioSearchPage(ctx);
-
   const params = ctx.url.searchParams;
-  const query = (params.get("q") ?? "").trim();
-  const kind = searchKind(params.get("kind"));
-  const live = params.get("live") === "1";
-  const hasOrigins = ctx.auth.user !== undefined;
+  const escape = params.get("mode") === "dev";
+  const studio = ctx.mode === "studio" && !escape;
+  const asked = searchKind(params.get("kind"));
+  const a: Asked = {
+    query: cleanQuery(params.get("q") ?? ""),
+    kind: studio && asked === "code" ? "all" : asked,
+    live: params.get("live") === "1",
+    studio,
+    escape,
+  };
+  const words = studio ? WORDS.studio : WORDS.dev;
 
   const form = html`<form
     class="filters"
@@ -255,63 +358,75 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       class="input search"
       type="search"
       name="q"
-      value="${query}"
-      placeholder="Search repositories, issues and code"
+      value="${a.query}"
+      placeholder="${studio
+        ? "Search your apps, changes and tells"
+        : "Search repositories, issues and code"}"
       aria-label="Search"
       autofocus
       data-search-input
     />
     ${when(
-      kind !== "all",
-      () => html`<input type="hidden" name="kind" value="${kind}" />`,
+      a.kind !== "all",
+      () => html`<input type="hidden" name="kind" value="${a.kind}" />`,
     )}
-    ${when(live, () => html`<input type="hidden" name="live" value="1" />`)}
+    ${when(a.live, () => html`<input type="hidden" name="live" value="1" />`)}
+    ${when(
+      escape,
+      () => html`<input type="hidden" name="mode" value="dev" />`,
+    )}
     <button class="btn" data-variant="primary" data-size="sm" type="submit">
       Search
     </button>
   </form>`;
 
-  if (query === "") {
+  if (a.query === "") {
     return page({
       ctx,
       title: "Search",
       body: html`${pageHead("Search")} ${form}
       ${empty({
         icon: "search",
-        title: "Search this forge",
-        note: "Repository names, issue and pull-request titles, and the code itself — across everything you can see, here and on every origin you have connected.",
+        title: studio ? "Search your studio" : "Search this forge",
+        note: studio
+          ? "An app's name or description, or a word from what was told or changed."
+          : "Repository names, issue and pull-request titles, and the code itself — across everything you can see, here and on every origin you have connected.",
       })}`,
     });
   }
 
-  const found: SearchResults = await search(ctx.app, ctx.auth.user, {
-    q: query,
-    kind,
-    live,
-  });
+  const found = await find(ctx, a);
+  let apps = NO_APPS;
+  if (studio) {
+    const seen = appsOf(ctx, ctx.auth.user);
+    apps = {
+      byId: seen.records,
+      names: new Set(seen.repos.map((r) => `${r.ownerName}/${r.name}`)),
+    };
+  }
 
   const chips = seg(
-    KINDS.map((k) => ({
-      label: k.label,
-      href: searchHref(query, k.value, live),
-      current: k.value === kind,
+    words.map(([kind, label]) => ({
+      label,
+      href: searchHref(a, { kind }),
+      current: kind === a.kind,
     })),
   );
 
   const liveToggle = when(
-    hasOrigins,
+    ctx.auth.user !== undefined,
     () =>
       html`<p class="live-toggle small">
         ${icon("globe")}
-        ${live
+        ${a.live
           ? html`<span
               >Asking every connected origin's own search, live.
-              <a href="${searchHref(query, kind, false)}">Use the cache</a
+              <a href="${searchHref(a, { live: false })}">Use the cache</a
               >.</span
             >`
           : html`<span
               >Origins are searched from the cache.
-              <a href="${searchHref(query, kind, true)}"
+              <a href="${searchHref(a, { live: true })}"
                 >Search live on origins</a
               >
               — a round trip to each connected origin, so it costs a
@@ -320,48 +435,40 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       </p>`,
   );
 
-  const wants = (which: SearchKind) => kind === "all" || kind === which;
+  const rows: Record<SearchKind, () => [Html[], boolean]> = {
+    all: () => [[], false],
+    repos: () => [
+      found.repos.map((hit) => repoHitRow(ctx, a, apps, hit)),
+      found.truncated.repos,
+    ],
+    issues: () => [
+      found.issues.map((hit) => issueHitRow(a, apps, hit)),
+      found.truncated.issues,
+    ],
+    code: () => [
+      found.code.map((hit) => codeHitRow(hit, a.query)),
+      found.truncated.code,
+    ],
+  };
 
-  const body = html`${pageHead(html`Results for “${query}”`)} ${form} ${chips}
-  ${liveToggle}
-  ${when(wants("repos"), () =>
-    section("Repositories", "repos", found.repos.map(repoHitRow), {
-      truncated: found.truncated.repos,
-      emptyIcon: "repo",
-      emptyText: "No repository matches",
-      query,
-      live,
-    }),
-  )}
-  ${when(wants("issues"), () =>
-    section(
-      "Issues and pull requests",
-      "issues",
-      found.issues.map(issueHitRow),
-      {
-        truncated: found.truncated.issues,
-        emptyIcon: "issue",
-        emptyText: "No issue or pull request matches",
-        query,
-        live,
-      },
-    ),
-  )}
-  ${when(wants("code"), () =>
-    section(
-      "Code",
-      "code",
-      found.code.map((hit) => codeHitRow(hit, query)),
-      {
-        truncated: found.truncated.code,
-        emptyIcon: "code",
-        emptyText: "No line of code matches",
-        query,
-        live,
-      },
-    ),
+  const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
+  ${chips} ${liveToggle}
+  ${words
+    .filter(
+      ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
+    )
+    .map((w) => section(a, w, ...rows[w[0]]()))}
+  ${when(
+    studio,
+    () =>
+      html`<p class="muted small mt">
+        ${icon("code")} Looking for a line of code?
+        <a href="${searchHref(a, { kind: "code", escape: true })}"
+          >Search the code</a
+        >.
+      </p>`,
   )}`;
-  return page({ ctx, title: `Search · ${query}`, body });
+  return page({ ctx, title: `Search · ${a.query}`, body });
 }
 
 // ---- confirmation ----

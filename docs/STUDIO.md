@@ -10,11 +10,15 @@ whichever way its reader sees.
 Finding something never leaves the page you're on. `/` focuses the search
 box in the top bar, unless a field already has focus; `Cmd/Ctrl-K` opens the
 command palette from anywhere, a field included. The box takes its query to
-`/search` (`studioSearchPage`, `src/web/studio/search.ts`): apps first,
-matched by name, owner or description, then every change and tell whose
-title mentions the word, each saying which app it's on — the same
-visibility as the rest of the studio, so a signed-out reader sees only the
-public apps a signed-out reader would. The palette starts from a short local
+`/search` (`searchPage`, `src/web/pages/search.ts`), the one search in
+both faces, server-rendered with no script: every repository the viewer
+can see, matched by name or description, an app saying whether it is live,
+then every tell and change whose title mentions the word, each saying
+which app it's on and linked by the studio's noun — the same `search()`
+the API and the palette ask, so a signed-out reader sees only what a
+signed-out reader would anywhere. The studio's face leaves code to dev's:
+it says _Search the code_, a link to the same page with `?mode=dev`, which
+keeps that face on every link and the form until the reader leaves. The palette starts from a short local
 index — your own apps, then places and actions like Home, Apps, Map, New
 app — and past two characters asks that very same search, folding its apps,
 changes and tells in under their own headings (`rankPalette`,
