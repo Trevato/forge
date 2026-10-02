@@ -3,6 +3,7 @@
  * are the signed-in viewer's own — there is no way to ask for another's.
  */
 
+import { tellCrew } from "../actions/crew.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { getEvent } from "../core/events.ts";
 import {
@@ -96,5 +97,26 @@ export function feedRoutes(router: Router<Handler>): void {
       actorId,
     });
     return json({ id: made.id }, 201);
+  });
+
+  // A tell from a card, as JSON, so the outbox can replay it by key.
+  router.add("POST", "/api/v1/feed/tells", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const viewer = ctx.auth.user!;
+    const input = await body(ctx.request);
+    const text = str(input.text).trim();
+    if (text === "" || text.length > 2000)
+      return apiError("invalid_text", 422, "text is 1 to 2000 characters");
+    const [owner, name, extra] = str(input.app).split("/");
+    const repo =
+      owner && name && extra === undefined
+        ? getRepo(ctx.app.db, owner, name)
+        : undefined;
+    if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
+    const told = await tellCrew(ctx.app, viewer, repo, text);
+    if (!told.ok)
+      return apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
+    return json({ issue: told.value.issue.number }, 201);
   });
 }

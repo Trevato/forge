@@ -52,3 +52,26 @@ the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
 Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.
 Not yet: the `choose` deck card (nothing in the feed produces one), stop from
 a card, and paging past the first 20.
+
+## Offline (`src/web/sw.ts`, `outbox.ts`)
+
+- `/sw.js` (root scope, `no-cache`) keeps `/` network-first and serves the
+  kept copy when the network fails, with `data-stale="1"` so the note above the
+  feed says "Offline: this feed is from 12 min ago". The stylesheet, `/assets/*`
+  and icons are cache-first. Nothing else is touched: the API, `/events`,
+  `/live/*` and every POST go to the network. Signing out clears the cache and
+  the outbox.
+- Dismiss, mute, open and tell from a card go into an outbox in
+  `localStorage` (200 at most), each with an `Idempotency-Key` made when it is
+  queued, and are flushed on open, on `online` and after each add. No Background
+  Sync (Safari has none). Entries leave on any 2xx or a final 4xx; a network
+  error, 5xx, 408, 429 or 401 keeps them in order.
+- Browser sessions now honour `Idempotency-Key` on `/api/v1/` mutations, scoped
+  to the person (as tokens' are to the token): a replay returns the first
+  answer. `POST /api/v1/feed/tells { app, text }` is the JSON tell the outbox
+  sends.
+- The live client reopens `/events?since=<last id>` when the browser gives up
+  on the stream, and on `online`, and refreshes every region once.
+- Not done: steering a run offline (a plain form post, needs the network),
+  updating the kept `/` from live swaps (it is the page as last navigated),
+  swipes (no swipe UI yet), push, and anything native.

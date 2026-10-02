@@ -2119,12 +2119,28 @@ export const liveRegionsJs = /* js */ `
     });
     Object.keys(groups).forEach(function (src) { pull(src, groups[src]); });
   }
-  var source = new EventSource('/events');
+  var source = null;
+  var since = '';
+  var retry = null;
   // The stream's own state, for a page that shows whether it is connected.
   function state(s) { document.dispatchEvent(new CustomEvent('forge:live', { detail: { state: s } })); }
-  source.addEventListener('open', function () { state('open'); });
-  source.addEventListener('error', function () { state('reconnecting'); });
-  source.addEventListener('forge', function (event) {
+  // The browser resumes a dropped stream by itself, from the last id it
+  // saw. When it gives up (CLOSED: a long offline, a sleeping laptop) we
+  // open a new one ourselves, from that same id: nothing is replayed twice
+  // and nothing in between is lost.
+  function connect() {
+    if (retry) { clearTimeout(retry); retry = null; }
+    if (source) source.close();
+    source = since ? new EventSource('/events?since=' + encodeURIComponent(since)) : new EventSource('/events');
+    source.addEventListener('open', function () { state('open'); });
+    source.addEventListener('error', function () {
+      state('reconnecting');
+      if (source.readyState === 2 && retry === null) retry = setTimeout(connect, 3000);
+    });
+    source.addEventListener('forge', onForge);
+  }
+  function onForge(event) {
+    if (event.lastEventId) since = event.lastEventId;
     var data;
     try { data = JSON.parse(event.data); } catch (err) { return; }
     document.dispatchEvent(new CustomEvent('forge:event', { detail: data }));
@@ -2138,6 +2154,14 @@ export const liveRegionsJs = /* js */ `
     // after the first, never more often than every MIN_GAP.
     if (hit && timer === null)
       timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
+  }
+  connect();
+  // Back online: reconnect from the last id and look at every region once,
+  // in case the replay window no longer reaches back that far.
+  window.addEventListener('online', function () {
+    connect();
+    Array.prototype.forEach.call(document.querySelectorAll('[data-live]'), function (r) { if (r.id) due[r.id] = true; });
+    if (timer === null) timer = setTimeout(refresh, 300);
   });
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && Object.keys(due).length > 0 && timer === null) timer = setTimeout(refresh, 100);

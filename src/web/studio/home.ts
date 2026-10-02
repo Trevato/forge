@@ -21,7 +21,7 @@ import { onYouCard } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
-import { feedJs, feedRegion } from "./feed.ts";
+import { feedJs, feedNote, feedRegion } from "./feed.ts";
 
 /**
  * The home in the studio: your apps as a shelf of
@@ -148,6 +148,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ${costLine}
     <div class="dash">
       <div class="dash-main stack">
+        ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}
       </div>

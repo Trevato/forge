@@ -113,6 +113,7 @@ import {
 } from "../web/studio/actions.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
+import { serviceWorker } from "../web/sw.ts";
 import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
@@ -411,6 +412,9 @@ export function buildRouter(): Router<Handler> {
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
   });
+  // The service worker: root scope needs a root path, and it must never be
+  // cached by the browser's HTTP cache or an update would wait a day.
+  router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
@@ -1425,10 +1429,15 @@ async function answerGet(
       mode,
     });
 
+  // A signed-in browser's outbox replays by key too (web/outbox.ts): the
+  // key is scoped to the person, like a token's is to the token.
+  const replayAs =
+    credential ??
+    (auth.via === "session" && auth.user ? `user:${auth.user.id}` : undefined);
   const response =
-    credential === undefined
+    replayAs === undefined
       ? await invoke(request)
-      : await withIdempotency(app, request, url, credential, invoke);
+      : await withIdempotency(app, request, url, replayAs, invoke);
   return withRateHeaders(
     withModeCookie(response, modeOverride, url.protocol === "https:"),
     verdict,

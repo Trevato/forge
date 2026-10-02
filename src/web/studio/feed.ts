@@ -13,6 +13,7 @@ import { readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
+import { outboxJs } from "../outbox.ts";
 import { btn, empty } from "../ui.ts";
 
 /** Events that can change what the feed says. */
@@ -62,6 +63,22 @@ export function feedCard(item: FeedItem): Html {
   </article>`;
 }
 
+/**
+ * One line above the feed, empty unless there is something to say: the feed
+ * on screen is old (the service worker served it with no network), or acts
+ * are waiting in the outbox. The script fills it; `hidden` until then.
+ */
+export function feedNote(): Html {
+  return html`<p
+    id="feed-note"
+    class="feed-note small muted"
+    role="status"
+    data-rendered="${String(Date.now())}"
+    data-stale="0"
+    hidden
+  ></p>`;
+}
+
 /** The region: cards, or one line saying there is nothing to do. */
 export function feedRegion(user: User, ctx: Ctx): Html {
   const { items } = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE });
@@ -95,15 +112,43 @@ export function liveFeedFragment(ctx: Ctx): Response {
  * Interactions go to the feed API, same-origin with the session cookie.
  */
 export const feedJs = /* js */ `
+${outboxJs}
 (function () {
   var feed = document.getElementById('live-feed');
   if (!feed || typeof fetch === 'undefined') return;
-  function send(card, kind, keepalive) {
-    var body = { item: card.getAttribute('data-item'), kind: kind, app: card.getAttribute('data-app') };
-    return fetch('/api/v1/feed/interactions', {
-      method: 'POST', credentials: 'same-origin', keepalive: !!keepalive,
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
-    });
+  var note = document.getElementById('feed-note');
+  var outbox = null;
+  try { outbox = forgeOutbox(window.localStorage, function (u, o) { return fetch(u, o); }); } catch (e) {}
+  function ago(ms) {
+    var m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    var h = Math.round(m / 60);
+    return h < 48 ? h + ' h ago' : Math.round(h / 24) + ' days ago';
+  }
+  function paint() {
+    if (!note) return;
+    var parts = [];
+    if (note && note.getAttribute('data-stale') === '1')
+      parts.push('Offline: this feed is from ' + ago(Number(note.getAttribute('data-rendered'))) + '.');
+    var n = outbox ? outbox.size() : 0;
+    if (n > 0) parts.push(n + (n === 1 ? ' act is' : ' acts are') + ' waiting to send.');
+    note.textContent = parts.join(' ');
+    note.hidden = parts.length === 0;
+  }
+  function flush() {
+    if (!outbox) return;
+    outbox.flush().then(paint);
+  }
+  function queue(url, payload) {
+    if (!outbox) return false;
+    outbox.add(url, payload);
+    paint();
+    flush();
+    return true;
+  }
+  function send(card, kind) {
+    return queue('/api/v1/feed/interactions', { item: card.getAttribute('data-item'), kind: kind, app: card.getAttribute('data-app') });
   }
   function gone(card) {
     var cards = Array.prototype.slice.call(feed.querySelectorAll('.fcard'));
@@ -111,15 +156,29 @@ export const feedJs = /* js */ `
     card.hidden = true;
     if (next) next.focus();
   }
-  function act(card, kind) {
-    send(card, kind).then(function (r) { if (r.ok) gone(card); }, function () {});
-  }
+  // Acting is instant: the card goes, the act is kept and sent.
+  function act(card, kind) { if (send(card, kind)) gone(card); }
   feed.addEventListener('click', function (e) {
     var t = e.target && e.target.closest ? e.target.closest('[data-feed],[data-feed-open]') : null;
     var card = t && t.closest('.fcard');
     if (!card) return;
-    if (t.hasAttribute('data-feed-open')) { send(card, 'opened', true).catch(function () {}); return; }
+    if (t.hasAttribute('data-feed-open')) { send(card, 'opened'); return; }
     act(card, t.getAttribute('data-feed'));
+  });
+  // A tell is kept and sent the same way; a steer needs the run, so it
+  // stays an ordinary post and waits for the network.
+  feed.addEventListener('submit', function (e) {
+    var form = e.target;
+    var card = form.closest && form.closest('.fcard');
+    var box = form.elements && form.elements.text;
+    if (!card || !box || !/\\/tell$/.test(form.getAttribute('action') || '')) return;
+    var text = box.value.trim();
+    if (!text) return;
+    if (!queue('/api/v1/feed/tells', { app: card.getAttribute('data-app'), text: text })) return;
+    e.preventDefault();
+    box.value = '';
+    var d = form.closest('details');
+    if (d) d.open = false;
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -128,5 +187,20 @@ export const feedJs = /* js */ `
     e.preventDefault();
     act(a, 'dismissed');
   });
+  window.addEventListener('online', function () {
+    flush();
+    // The page on screen came from the cache: the real one is back.
+    if (note && note.getAttribute('data-stale') === '1') location.reload();
+  });
+  // Signing out forgets the last feed and anything not yet sent.
+  document.addEventListener('submit', function (e) {
+    if (e.target && e.target.getAttribute && e.target.getAttribute('action') === '/logout') {
+      if (outbox) outbox.clear();
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage('clear');
+    }
+  });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function () {});
+  paint();
+  flush();
 })();
 `;
