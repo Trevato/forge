@@ -26,7 +26,8 @@ import { installHooks } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import { keyOf, SNAPSHOT_PREFIX, type Manifest } from "./snapshot.ts";
 import { unwrapKey, WRAPPED_KEY } from "./wrap.ts";
-import { dirStore, s3FromEnv, s3Store, type Store } from "./store.ts";
+import { resolveDestination } from "./destination.ts";
+import type { Store } from "./store.ts";
 
 export interface Restored {
   readonly manifest: Manifest;
@@ -162,9 +163,9 @@ if (import.meta.main) {
     );
     process.exit(2);
   }
-  const dir = process.env["FORGE_SNAPSHOT_DIR"]?.trim();
-  const s3 = s3FromEnv();
-  const store = dir ? dirStore(dir) : s3 ? s3Store(s3) : undefined;
+  // A restore starts from an empty directory, so nothing is sealed yet: the
+  // same resolver answers from the environment alone.
+  const store = resolveDestination()?.store;
   if (store === undefined) {
     // CLI message on stderr for the person at the terminal.
     console.error(

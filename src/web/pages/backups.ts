@@ -8,11 +8,18 @@
  * and a stopped forge, and a person at a terminal is the one who has both.
  */
 
+import {
+  forgetDestination,
+  saveDestination,
+  testDestination,
+  type DestinationInput,
+} from "../../actions/destination.ts";
+import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
-import { readForm } from "../form.ts";
+import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import { btn, card, empty, fileSize, icon, time } from "../ui.ts";
@@ -81,14 +88,15 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const svc = snapshotsOf(ctx.app);
-  if (svc === undefined)
+  const form = destinationCard(ctx);
+  if (svc === undefined || svc.store === undefined)
     return shell(
       ctx,
-      empty({
+      html`${empty({
         icon: "download",
         title: "No snapshots are taken",
-        note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Restart with one set and a snapshot is taken every night at 08:00 UTC.",
-      }),
+        note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.",
+      })}${form}`,
     );
   // The store is somewhere else; a listing that fails is a sentence on the
   // page, never a page that fails.
@@ -185,8 +193,143 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
                 ${restore}`,
             },
           )
-    }`,
+    }
+    ${form}`,
   );
+}
+
+const SOURCE: Record<string, string> = {
+  sealed: "sealed in this forge (set here)",
+  dir: "the directory named by FORGE_SNAPSHOT_DIR",
+  env: "the host's S3_* environment variables",
+};
+
+/** The destination form: which one is in effect, and the write-only way to change it. */
+function destinationCard(ctx: Ctx): Html {
+  const dest = resolveDestination({
+    db: ctx.app.db,
+    dataDir: ctx.app.config.dataDir,
+    bus: ctx.app.bus,
+  });
+  const set = sealedSet(ctx.app.db);
+  const mark = (name: string): string =>
+    set.includes(name) ? "set — leave blank to keep" : "";
+  const input = (
+    name: string,
+    label: string,
+    sealed: string,
+    opts: { type?: string; placeholder?: string } = {},
+  ): Html =>
+    html`<label class="field"
+      ><span>${label}</span
+      ><input
+        name="${name}"
+        type="${opts.type ?? "text"}"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="${mark(sealed) || opts.placeholder || ""}"
+    /></label>`;
+  return card(
+    html`<p>
+        In effect:
+        <strong
+          >${dest ? SOURCE[dest.source] : "nothing — no snapshots are taken"}</strong
+        >. A destination sealed here wins over the environment; clear it and the
+        environment's, if any, takes over. Keys are sealed and never shown
+        again.
+      </p>
+      <form method="post" action="/settings/backups/destination" class="stack">
+        ${input("endpoint", "Endpoint", "SNAPSHOT_S3_ENDPOINT", {
+          placeholder: "https://s3.example.com",
+        })}
+        ${input("bucket", "Bucket", "SNAPSHOT_S3_BUCKET")}
+        ${input("region", "Region (optional)", "SNAPSHOT_S3_REGION", {
+          placeholder: "auto",
+        })}
+        ${input("access_key", "Access key", "SNAPSHOT_S3_ACCESS_KEY")}
+        ${input("secret_key", "Secret key", "SNAPSHOT_S3_SECRET_KEY", {
+          type: "password",
+        })}
+        <div class="row-actions">
+          ${btn("Seal destination", {
+            type: "submit",
+            variant: "primary",
+            icon: "lock",
+          })}
+          <button class="btn" type="submit" formaction="/settings/backups/test">
+            Test connection
+          </button>
+          <button
+            class="btn"
+            type="submit"
+            formaction="/settings/backups/clear"
+            formnovalidate
+          >
+            Clear sealed destination
+          </button>
+        </div>
+      </form>`,
+    {
+      head: html`${icon("lock")}
+        <h2>Destination</h2>`,
+    },
+  );
+}
+
+function destinationInput(form: Form): DestinationInput {
+  return {
+    endpoint: field(form, "endpoint").trim(),
+    bucket: field(form, "bucket").trim(),
+    region: field(form, "region").trim(),
+    accessKey: field(form, "access_key").trim(),
+    secretKey: field(form, "secret_key").trim(),
+  };
+}
+
+/** POST /settings/backups/destination — seal the destination. */
+export async function backupsDestination(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const saved = saveDestination(ctx.app, ctx.auth.user, destinationInput(form));
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    saved.ok
+      ? { message: saved.value }
+      : { tone: "danger", message: saved.error },
+  );
+}
+
+/** POST /settings/backups/test — list the bucket, say what came of it. */
+export async function backupsTest(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const said = await testDestination(
+    ctx.app,
+    ctx.auth.user,
+    destinationInput(form),
+  );
+  const message = said.ok ? said.value : "Not found.";
+  return flashTo(ctx, "/settings/backups", {
+    tone: message.startsWith("Reached") ? "success" : "danger",
+    message,
+  });
+}
+
+/** POST /settings/backups/clear — forget the sealed destination. */
+export async function backupsClear(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  forgetDestination(ctx.app, ctx.auth.user);
+  return flashTo(ctx, "/settings/backups", {
+    message: "The sealed destination is cleared.",
+  });
 }
 
 /** POST /settings/backups/now — take a snapshot, and say what came of it. */

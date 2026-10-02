@@ -57,6 +57,13 @@ Delete the old ones from the bucket if the bucket is not trusted.
   in the pod (`S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`,
   `S3_REGION`). The platform's own lanes mirror the bucket off the machine.
 - Anywhere else, `FORGE_SNAPSHOT_DIR=/some/dir`.
+- Or your own bucket, set on the Backups page (endpoint, bucket, region,
+  access key, secret key): sealed as forge-level secrets
+  (`SNAPSHOT_S3_*`), write-only, with a test button that lists the bucket.
+  Precedence: sealed, then `FORGE_SNAPSHOT_DIR`, then `S3_*`; the page says
+  which is in effect. A restore into an empty directory has nothing sealed
+  yet, so it reads the environment: keep `S3_*` or `FORGE_SNAPSHOT_DIR`
+  at hand for it.
 - Given neither, no snapshots are taken, and the Backups page says so
   instead of showing an empty list that looks like a clean bill.
 

@@ -46,7 +46,13 @@ import { followingSubmit } from "../web/pages/following.ts";
 import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
-import { backupsNow, backupsPage } from "../web/pages/backups.ts";
+import {
+  backupsClear,
+  backupsDestination,
+  backupsNow,
+  backupsPage,
+  backupsTest,
+} from "../web/pages/backups.ts";
 import {
   subscriptionAdd,
   subscriptionDelete,
@@ -481,6 +487,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/secrets/delete", secretDelete);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
+  router.add("POST", "/settings/backups/destination", backupsDestination);
+  router.add("POST", "/settings/backups/test", backupsTest);
+  router.add("POST", "/settings/backups/clear", backupsClear);
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);

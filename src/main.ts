@@ -18,7 +18,7 @@ import { startChecks } from "./checks/service.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
-import { dirStore, s3FromEnv, s3Store } from "./snapshot/store.ts";
+import { resolveDestination } from "./snapshot/destination.ts";
 import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
@@ -159,26 +159,24 @@ const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
-// The snapshot: everything that cannot be rebuilt, nightly, to the bucket the
-// platform gave this app (`S3_*`) or to a directory (`FORGE_SNAPSHOT_DIR`).
-// A forge given neither takes none, and its settings page says so.
+// The snapshot: everything that cannot be rebuilt, nightly, to what an
+// operator sealed on the Backups page, else the platform's (`S3_*`) or a
+// directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
 const VERSION =
   ((await import("../package.json")) as { version?: string }).version ?? "0";
-const snapshotDir = process.env["FORGE_SNAPSHOT_DIR"]?.trim();
-const s3 = s3FromEnv();
-const snapshotPassphrase =
-  process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined;
-const snapshots = snapshotDir
-  ? startSnapshots(app, dirStore(snapshotDir), {
-      version: VERSION,
-      passphrase: snapshotPassphrase,
-    })
-  : s3
-    ? startSnapshots(app, s3Store(s3), {
-        version: VERSION,
-        passphrase: snapshotPassphrase,
-      })
-    : undefined;
+const snapshots = startSnapshots(
+  app,
+  () =>
+    resolveDestination({
+      db: app.db,
+      dataDir: app.config.dataDir,
+      bus: app.bus,
+    })?.store,
+  {
+    version: VERSION,
+    passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
+  },
+);
 const crew = appsOn
   ? await startCrew(app, {
       forgeUrl,
@@ -294,7 +292,7 @@ function shutdown(): void {
     checks?.stop(),
     looks?.stop(),
     probes?.stop(),
-    snapshots?.stop(),
+    snapshots.stop(),
   ])
     .catch(() => {})
     .then(() => {
