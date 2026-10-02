@@ -78,7 +78,7 @@ test("a site admin with a read-only token gets the shape; others get a 404", asy
   expect(res.status).toBe(200);
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
-    ["apps", "at", "disk", "memory", "needs", "ok", "queue", "stuck"].sort(),
+    ["apps", "at", "disk", "errors", "memory", "needs", "ok", "queue", "stuck"].sort(),
   );
   expect(v.disk.totalBytes).toBeGreaterThan(0);
   expect(v.memory.rssBytes).toBeGreaterThan(0);
@@ -138,4 +138,36 @@ test("the number of queries does not grow with runs", () => {
   }
   expect(count()).toBe(before);
   expect(before).toBe(2);
+});
+
+test("errors are counted, bounded, redacted, and a burst is said", async () => {
+  const { createLog, clearErrors, recentErrors, ERROR_RING } = await import(
+    "../src/kernel/log.ts"
+  );
+  const { ERROR_BURST } = await import("../src/kernel/vitals.ts");
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    clearErrors();
+    const log = createLog("probe");
+    log.error("upstream refused", { token: "ghp_abcdefghijklmnop1234567890" });
+    const v = (await (await health(admin)).json()) as ReturnType<typeof vitals>;
+    expect(v.errors.lastHour).toBe(1);
+    expect(v.errors.latest[0]!.scope).toBe("probe");
+    const text = JSON.stringify(v);
+    expect(text).toContain("[redacted]");
+    expect(text).not.toContain("ghp_abcdefghijklmnop1234567890");
+    expect(v.needs.some((n) => n.includes("errors in the last hour"))).toBe(false);
+
+    for (let i = 0; i < ERROR_RING + 50; i++) log.error(`boom ${i}`);
+    const seen = recentErrors(1000);
+    expect(seen.latest.length).toBe(ERROR_RING);
+    expect(seen.lastHour).toBe(ERROR_RING + 51);
+    expect(seen.lastHour).toBeGreaterThanOrEqual(ERROR_BURST);
+    expect(vitals({ db: app.db, dataDir }).needs.some((n) => n.includes("errors in the last hour"))).toBe(true);
+    expect(vitals({ db: app.db, dataDir, now: Date.now() + 2 * 3_600_000 }).errors.lastHour).toBe(0);
+  } finally {
+    console.error = orig;
+    clearErrors();
+  }
 });

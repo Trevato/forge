@@ -40,6 +40,7 @@ const username = flag("user");
 const user =
   username === undefined ? undefined : getUserByName(forge.db, username);
 if (username !== undefined && user === undefined) {
+  // CLI message on stderr for the person at the terminal.
   console.error(`forge: no such user: ${username}`);
   process.exit(1);
 }

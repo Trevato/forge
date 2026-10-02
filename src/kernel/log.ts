@@ -47,6 +47,62 @@ export function logLevel(): LogLevel {
   return threshold;
 }
 
+/** The most recent error lines kept in memory; older ones fall off. */
+export const ERROR_RING = 100;
+const HOUR_MS = 3_600_000;
+const MINUTE_MS = 60_000;
+
+export interface ErrorLine {
+  readonly at: string;
+  readonly scope: string;
+  readonly message: string;
+}
+
+const ring: ErrorLine[] = [];
+/** scope → minute bucket → count: an hour of counts in at most 61 buckets per scope. */
+const buckets = new Map<string, Map<number, number>>();
+
+function prune(now: number): void {
+  const floor = Math.floor((now - HOUR_MS) / MINUTE_MS);
+  for (const [scope, minutes] of buckets) {
+    for (const minute of minutes.keys()) if (minute <= floor) minutes.delete(minute);
+    if (minutes.size === 0) buckets.delete(scope);
+  }
+}
+
+function record(scope: string, message: string, now: number): void {
+  ring.push({ at: new Date(now).toISOString(), scope, message });
+  if (ring.length > ERROR_RING) ring.splice(0, ring.length - ERROR_RING);
+  prune(now);
+  const minutes = buckets.get(scope) ?? new Map<number, number>();
+  const minute = Math.floor(now / MINUTE_MS);
+  minutes.set(minute, (minutes.get(minute) ?? 0) + 1);
+  buckets.set(scope, minutes);
+}
+
+/** Errors in the last hour, in total and per scope, and the newest lines first. */
+export function recentErrors(
+  limit = 5,
+  now = Date.now(),
+): { lastHour: number; byScope: Record<string, number>; latest: ErrorLine[] } {
+  prune(now);
+  const byScope: Record<string, number> = {};
+  let lastHour = 0;
+  for (const [scope, minutes] of buckets) {
+    let n = 0;
+    for (const c of minutes.values()) n += c;
+    byScope[scope] = n;
+    lastHour += n;
+  }
+  return { lastHour, byScope, latest: ring.slice(-limit).reverse() };
+}
+
+/** Forget everything kept. For tests. */
+export function clearErrors(): void {
+  ring.length = 0;
+  buckets.clear();
+}
+
 export function createLog(scope: string): Log {
   const emit = (level: LogLevel, message: string, fields?: LogFields) => {
     if (order[level] < order[threshold]) return;
@@ -59,6 +115,10 @@ export function createLog(scope: string): Log {
       }
     }
     line = redactSecrets(line);
+    if (level === "error") {
+      const body = line.slice(line.indexOf(`[${scope}] `) + scope.length + 3);
+      record(scope, body, Date.now());
+    }
     console[level === "debug" ? "log" : level](line);
   };
   return {

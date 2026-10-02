@@ -34,6 +34,7 @@ import { pruneTokens } from "./core/tokens.ts";
 if (process.argv[2] === "hook") {
   const name = process.argv[3];
   if (!isHookName(name)) {
+    // CLI message on stderr for the person at the terminal.
     console.error(`forge: unknown hook ${name}`);
     process.exit(1);
   }

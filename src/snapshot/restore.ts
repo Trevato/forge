@@ -95,6 +95,7 @@ export async function restoreSnapshot(
 if (import.meta.main) {
   const [name, dataDir] = process.argv.slice(2);
   if (!name || !dataDir) {
+    // CLI usage on stderr for the person at the terminal, not a forge event.
     console.error(
       "usage: bun run src/snapshot/restore.ts <snapshot-name> <data-dir>",
     );
@@ -104,6 +105,7 @@ if (import.meta.main) {
   const s3 = s3FromEnv();
   const store = dir ? dirStore(dir) : s3 ? s3Store(s3) : undefined;
   if (store === undefined) {
+    // CLI message on stderr for the person at the terminal.
     console.error(
       "no store: set S3_* as the forge has them, or FORGE_SNAPSHOT_DIR",
     );

@@ -9,11 +9,14 @@
 import type { Database } from "bun:sqlite";
 import { statfsSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
+import { recentErrors, type ErrorLine } from "./log.ts";
 import { leaseLapsed, listRunning, queueDepth } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
+/** This many error lines in an hour is a burst worth saying. */
+export const ERROR_BURST = 20;
 /** A run still running this long after it started is stuck even if it breathes. */
 export const NO_PROGRESS_MS = 6 * 3_600_000;
 /** A run that has waited this long to start is a queue that is not moving. */
@@ -41,6 +44,7 @@ export interface Vitals {
     since: string;
   }[];
   readonly apps: { serving: number; asleep: number; previews: number };
+  readonly errors: { lastHour: number; latest: ErrorLine[] };
   readonly at: string;
 }
 
@@ -99,6 +103,12 @@ export function vitals(input: VitalsInput): Vitals {
     else if (e.state === "running") apps.serving++;
   }
 
+  const seen = recentErrors(5, now);
+  if (seen.lastHour >= ERROR_BURST)
+    needs.push(
+      `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
+    );
+
   return {
     ok: needs.length === 0,
     needs,
@@ -111,6 +121,7 @@ export function vitals(input: VitalsInput): Vitals {
     queue,
     stuck,
     apps,
+    errors: { lastHour: seen.lastHour, latest: seen.latest },
     at: new Date(now).toISOString(),
   };
 }
