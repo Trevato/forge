@@ -7,7 +7,13 @@
  * restore refuses what it must.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +36,10 @@ import {
   snapshotName,
   takeSnapshot,
 } from "../src/snapshot/snapshot.ts";
+import { unwrapKey, wrapKey } from "../src/snapshot/wrap.ts";
 import { dirStore } from "../src/snapshot/store.ts";
+
+const PASS = "correct horse battery staple";
 
 describe("a forge back from a snapshot", () => {
   let root: string;
@@ -110,6 +119,7 @@ describe("a forge back from a snapshot", () => {
         dataDir: app.config.dataDir,
         reposRoot: app.reposRoot,
         version: "t",
+        passphrase: PASS,
       },
       store(),
       new Date("2026-09-22T08:00:00Z"),
@@ -119,7 +129,18 @@ describe("a forge back from a snapshot", () => {
     expect(manifest.apps).toBe(1);
     const paths = manifest.files.map((f) => f.path);
     expect(paths).toContain("forge.db");
-    expect(paths).toContain("secret.key");
+    // The raw key never reaches the store; only its wrapped form does.
+    expect(paths).not.toContain("secret.key");
+    expect(paths).toContain("secret.key.wrapped");
+    expect(manifest.key).toBe("wrapped");
+    const rawKey = readFileSync(join(app.config.dataDir, "secret.key"));
+    for (const f of paths)
+      if (f !== "forge.db" && !f.includes("/"))
+        expect(
+          readFileSync(
+            join(root, "store", "snapshots", manifest.name, f),
+          ).includes(rawKey),
+        ).toBe(false);
     expect(paths).toContain("repos/alice/notes.bundle");
     expect(paths).not.toContain("repos/alice/empty.bundle");
     expect(paths).toContain("runs/r1.log");
@@ -160,8 +181,12 @@ describe("a forge back from a snapshot", () => {
 
   test("restored into an empty directory, a forge booted there is the same forge", async () => {
     const back = join(root, "back");
-    const done = await restoreSnapshot(store(), "2026-09-22T08-00-00Z", back);
+    const done = await restoreSnapshot(store(), "2026-09-22T08-00-00Z", back, {
+      passphrase: PASS,
+    });
     expect(done.repos).toBe(1);
+    expect(done.key).toBe("restored");
+    expect(done.sealedMissing).toEqual([]);
     const restored = createApp({ dataDir: back, port: 0 });
     try {
       expect(getUserByName(restored.db, "alice")?.id).toBe(alice.id);
@@ -199,6 +224,62 @@ describe("a forge back from a snapshot", () => {
     } finally {
       restored.close();
     }
+  });
+
+  test("without the passphrase repos restore and sealed values are reported by name", async () => {
+    const back = join(root, "back-nokey");
+    const done = await restoreSnapshot(store(), "2026-09-22T08-00-00Z", back);
+    expect(done.key).toBe("missing");
+    expect(done.sealedMissing).toEqual(["SECRET_WORD (app notes)"]);
+    expect(existsSync(join(back, "secret.key.wrapped"))).toBe(false);
+    const restored = createApp({ dataDir: back, port: 0 });
+    try {
+      expect(getRepo(restored.db, "alice", "notes")).toBeDefined();
+      const record = getAppByRepo(
+        restored.db,
+        getRepo(restored.db, "alice", "notes")!.id,
+      )!;
+      const env = resolveAppEnv(restored.db, back, record.id, "production");
+      expect(env["SECRET_WORD"]).toBeUndefined();
+    } finally {
+      restored.close();
+    }
+  });
+
+  test("a wrong passphrase refuses the restore and writes nothing", async () => {
+    const back = join(root, "back-wrong");
+    await expect(
+      restoreSnapshot(store(), "2026-09-22T08-00-00Z", back, {
+        passphrase: "not the one",
+      }),
+    ).rejects.toThrow("passphrase");
+    expect(existsSync(back)).toBe(false);
+  });
+
+  test("a snapshot taken without a passphrase carries no key at all", async () => {
+    const s = dirStore(join(root, "store-nokey"));
+    const m = await takeSnapshot(
+      {
+        db: app.db,
+        dataDir: app.config.dataDir,
+        reposRoot: app.reposRoot,
+        version: "t",
+      },
+      s,
+      new Date("2026-09-23T08:00:00Z"),
+    );
+    expect(m.key).toBe("none");
+    expect(m.files.some((f) => f.path.startsWith("secret.key"))).toBe(false);
+  });
+
+  test("wrapping round-trips and fails closed", () => {
+    const key = Buffer.alloc(32, 7);
+    const w = wrapKey(key, "pw");
+    expect(w.includes(key.toString("base64url"))).toBe(false);
+    expect(unwrapKey(w, "pw")?.equals(key)).toBe(true);
+    expect(unwrapKey(w, "pW")).toBeUndefined();
+    expect(unwrapKey("{}", "pw")).toBeUndefined();
+    expect(unwrapKey("not json", "pw")).toBeUndefined();
   });
 
   test("a restore refuses a full directory and an unknown snapshot", async () => {
@@ -279,6 +360,11 @@ describe("a forge back from a snapshot", () => {
         ).text();
         expect(listed).toContain("2026-09-22T08-00-00Z");
         expect(listed).toContain("Snapshot now");
+        // Off by default: the page says no key travels, and what that costs.
+        expect(listed).toContain("Snapshots carry no key");
+        expect(listed.replace(/\s+/g, " ")).toContain(
+          "The last snapshot carried a wrapped key",
+        );
         expect(listed).toContain(
           "bun run src/snapshot/restore.ts 2026-09-22T08-00-00Z",
         );
@@ -294,6 +380,23 @@ describe("a forge back from a snapshot", () => {
         expect((await svc.list()).length).toBeGreaterThanOrEqual(2);
       } finally {
         await svc.stop();
+      }
+      const wrapping = startSnapshots(app, dirStore(join(root, "store")), {
+        version: "t",
+        nightly: false,
+        passphrase: PASS,
+      });
+      try {
+        const on = await (
+          await fetch(`${servers.url}/settings/backups`, {
+            headers: { cookie },
+          })
+        ).text();
+        expect(on).toContain("FORGE_SNAPSHOT_PASSPHRASE");
+        expect(on.replace(/\s+/g, " ")).toContain("every sealed value");
+        expect(on).not.toContain("Snapshots carry no key");
+      } finally {
+        await wrapping.stop();
       }
       // A stranger and a plain user see nothing here.
       expect(

@@ -29,12 +29,16 @@ turned off, with what each move costs and what it gives up.
    recipe with no network story. Install the four binaries; make
    `/var/lib/forge` and a user that owns it.
 2. **Restore, don't migrate.** The nightly snapshot holds everything that
-   cannot be rebuilt — the database, `secret.key`, every repository, every
-   app's production data, the crew's logs. On the new box, with the same
-   `S3_*` variables:
-   `bun run src/snapshot/restore.ts <snapshot> /var/lib/forge`
-   The restore sets the key's mode; sessions, tokens, sealed variables and
-   sealed subscriptions all keep working because the key travelled.
+   cannot be rebuilt — the database, every repository, every app's
+   production data, the crew's logs — and the forge's key only wrapped under
+   the operator's passphrase. On the new box, with the same `S3_*` variables
+   and the passphrase the old forge ran with:
+   `FORGE_SNAPSHOT_PASSPHRASE=… bun run src/snapshot/restore.ts <snapshot> /var/lib/forge`
+   The restore unwraps the key and sets its mode; sealed variables, secrets
+   and sealed subscriptions keep working. The passphrase lives in the forge's
+   environment and with the operator — keep a copy outside the bucket. Without
+   it repositories and issues restore, and every sealed value is listed by
+   name as lost and must be set again (`docs/SNAPSHOT.md`).
 3. **Run it as a service.** A systemd unit: `ExecStart=bun run src/main.ts`
    from a checkout at `/opt/forge`, `FORGE_URL=https://forge.example`,
    `FORGE_APP_DOMAIN=forge.example`, `FORGE_DATA=/var/lib/forge`, the crew

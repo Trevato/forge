@@ -8,6 +8,7 @@
  * and a stopped forge, and a person at a terminal is the one who has both.
  */
 
+import { keyOf } from "../../snapshot/snapshot.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -36,6 +37,46 @@ function shell(ctx: Ctx, body: Html): Response {
   });
 }
 
+/**
+ * Whether the key travels, said before anyone relies on it. The passphrase
+ * is the only way back to sealed values from a bucket; lose it and they
+ * are lost.
+ */
+function keyNote(
+  wraps: boolean,
+  newest:
+    | Awaited<
+        ReturnType<NonNullable<ReturnType<typeof snapshotsOf>>["list"]>
+      >[number]
+    | undefined,
+): Html {
+  const carried = newest === undefined ? undefined : keyOf(newest);
+  const last =
+    carried === undefined
+      ? ""
+      : carried === "wrapped"
+        ? " The last snapshot carried a wrapped key."
+        : carried === "raw"
+          ? " The last snapshot carried the key unwrapped, as older snapshots did; take a new one."
+          : " The last snapshot carried no key.";
+  return wraps
+    ? html`<p>
+        ${icon("check")} The key is wrapped under
+        <code>FORGE_SNAPSHOT_PASSPHRASE</code> and travels with each
+        snapshot.${last} Keep that passphrase somewhere other than this bucket:
+        without it a restore brings back repositories and issues, but every
+        sealed value (secrets, app variables, origin tokens) is lost and must be
+        set again.
+      </p>`
+    : html`<p class="backups-error">
+        ${icon("alert")} Snapshots carry no key: the bucket never holds key and
+        data together, and a restore will bring back repositories and issues but
+        not sealed values, which must be set again.${last} To carry the key
+        wrapped, set <code>FORGE_SNAPSHOT_PASSPHRASE</code> and restart — and
+        keep the passphrase elsewhere, because losing it loses those values.
+      </p>`;
+}
+
 export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
@@ -61,8 +102,7 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
   }
   const restore = snapshots[0]
     ? html`<pre class="backups-restore">
-bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre
-      >`
+bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
   return shell(
     ctx,
@@ -73,6 +113,7 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre
           crew's logs — to <code>${svc.store.where}</code>, and keeps the newest
           fourteen.
         </p>
+        ${keyNote(svc.wraps, snapshots[0])}
         ${when(
           last.error,
           (error) =>
@@ -100,47 +141,51 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre
           <h2>Where and when</h2>`,
       },
     )}
-    ${snapshots.length === 0
-      ? empty({
-          icon: "clock",
-          title: "None yet",
-          note: "The first is taken tonight, or now with the button above.",
-        })
-      : card(
-          html`<ul class="list">
-            ${snapshots.map(
-              (m) =>
-                html`<li>
-                  <div class="row">
-                    <span class="row-lead">${icon("download")}</span>
-                    <span class="row-main">
-                      <span class="row-title">${m.name}</span>
-                      <span class="row-meta"
-                        >${time(m.finishedAt)} · forge ${m.version} ·
-                        ${m.repos === 1
-                          ? "one repository"
-                          : `${m.repos} repositories`},
-                        ${m.apps === 1 ? "one app" : `${m.apps} apps`},
-                        ${m.files.length} files</span
-                      >
-                    </span>
-                    <span class="row-trail muted">${fileSize(m.bytes)}</span>
-                  </div>
-                </li>`,
-            )}
-          </ul>`,
-          {
-            pad: false,
-            head: html`${icon("history")}
-              <h2>Snapshots</h2>`,
-            foot: html`<span class="muted small"
-                >To restore, stop a forge, point it at an empty data directory,
-                and run this with the same S3_* variables or
-                FORGE_SNAPSHOT_DIR:</span
-              >
-              ${restore}`,
-          },
-        )}`,
+    ${
+      snapshots.length === 0
+        ? empty({
+            icon: "clock",
+            title: "None yet",
+            note: "The first is taken tonight, or now with the button above.",
+          })
+        : card(
+            html`<ul class="list">
+              ${snapshots.map(
+                (m) =>
+                  html`<li>
+                    <div class="row">
+                      <span class="row-lead">${icon("download")}</span>
+                      <span class="row-main">
+                        <span class="row-title">${m.name}</span>
+                        <span class="row-meta"
+                          >${time(m.finishedAt)} · forge ${m.version} ·
+                          ${
+                            m.repos === 1
+                              ? "one repository"
+                              : `${m.repos} repositories`
+                          },
+                          ${m.apps === 1 ? "one app" : `${m.apps} apps`},
+                          ${m.files.length} files</span
+                        >
+                      </span>
+                      <span class="row-trail muted">${fileSize(m.bytes)}</span>
+                    </div>
+                  </li>`,
+              )}
+            </ul>`,
+            {
+              pad: false,
+              head: html`${icon("history")}
+                <h2>Snapshots</h2>`,
+              foot: html`<span class="muted small"
+                  >To restore, stop a forge, point it at an empty data
+                  directory, and run this with the same S3_* variables or
+                  FORGE_SNAPSHOT_DIR:</span
+                >
+                ${restore}`,
+            },
+          )
+    }`,
   );
 }
 

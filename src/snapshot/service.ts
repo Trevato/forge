@@ -26,6 +26,8 @@ const NIGHTLY_HOUR_UTC = 8;
 
 export interface SnapshotsHandle {
   readonly store: Store;
+  /** Whether snapshots carry the key, wrapped under a passphrase. */
+  readonly wraps: boolean;
   /** Take one now; waits for any in flight. */
   readonly now: () => Promise<Manifest>;
   /** The newest first, from the store. */
@@ -49,7 +51,11 @@ export function untilNightly(now = Date.now()): number {
 export function startSnapshots(
   app: App,
   store: Store,
-  options: { readonly version: string; readonly nightly?: boolean } = {
+  options: {
+    readonly version: string;
+    readonly nightly?: boolean;
+    readonly passphrase?: string | undefined;
+  } = {
     version: "0",
   },
 ): SnapshotsHandle {
@@ -65,6 +71,7 @@ export function startSnapshots(
           dataDir: app.config.dataDir,
           reposRoot: app.reposRoot,
           version: options.version,
+          passphrase: options.passphrase,
         },
         store,
       );
@@ -98,6 +105,7 @@ export function startSnapshots(
 
   const handle: SnapshotsHandle = {
     store,
+    wraps: !!options.passphrase,
     now: take,
     list: () => listSnapshots(store),
     last: () => last,
@@ -109,6 +117,10 @@ export function startSnapshots(
     },
   };
   handles.set(app, handle);
-  log.info("snapshots on", { where: store.where, keep: KEEP });
+  log.info("snapshots on", {
+    where: store.where,
+    keep: KEEP,
+    key: options.passphrase ? "wrapped" : "none",
+  });
   return handle;
 }

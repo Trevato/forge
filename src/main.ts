@@ -166,10 +166,18 @@ const VERSION =
   ((await import("../package.json")) as { version?: string }).version ?? "0";
 const snapshotDir = process.env["FORGE_SNAPSHOT_DIR"]?.trim();
 const s3 = s3FromEnv();
+const snapshotPassphrase =
+  process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined;
 const snapshots = snapshotDir
-  ? startSnapshots(app, dirStore(snapshotDir), { version: VERSION })
+  ? startSnapshots(app, dirStore(snapshotDir), {
+      version: VERSION,
+      passphrase: snapshotPassphrase,
+    })
   : s3
-    ? startSnapshots(app, s3Store(s3), { version: VERSION })
+    ? startSnapshots(app, s3Store(s3), {
+        version: VERSION,
+        passphrase: snapshotPassphrase,
+      })
     : undefined;
 const crew = appsOn
   ? await startCrew(app, {
