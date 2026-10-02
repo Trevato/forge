@@ -181,6 +181,8 @@ The forge starts the app with:
 | `FORGE_APP_PULL`   | the pull number, on a preview                                            |
 | `FORGE_APP_SSH`    | the exact `ssh …` that opens this environment's terminal, when SSH is on |
 | `FORGE_URL`        | the forge's own base URL                                                 |
+| `FORGE_API_URL`    | the forge's JSON API, `FORGE_URL` + `/api/v1`                            |
+| `FORGE_TOKEN`      | a read-only token of the repository owner's, this process's alone        |
 
 That last one is for the app to call the forge back on, not to run the forge
 software itself — a shell that already has it set (a crew workspace does)
@@ -188,7 +190,31 @@ will make a locally-run forge refuse browser form posts as cross-site; see
 `README.md`'s "Run it".
 
 A terminal session (`tty`) gets the same variables plus `FORGE_APP_TTY=1`
-and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
+and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest
+— but no `FORGE_TOKEN`: a guest at the keyboard is not the owner.
+
+### Live UI into the forge
+
+`FORGE_TOKEN` is how a page an agent builds inside an app reads the forge
+it runs on: `POST $FORGE_URL/mcp` (`now`, `map`, `apps`, `usage` — every tool that
+does not write), the JSON API, and `GET $FORGE_URL/events`, the live stream
+of everything the owner may see, with `Authorization: Bearer $FORGE_TOKEN`.
+`examples/forge-live` is the worked example, and the acceptance test
+(`test/apps-token.test.ts`) deploys it.
+
+The token (`src/apps/token.ts`) is minted when a process starts — a deploy,
+a crash restart, a wake — and revoked when that process stops for any
+reason: replaced by the next deploy, asleep, stopped, torn down. It is
+named `app:<slug>/<env>` among the owner's tokens and expires a day out;
+the runtime's sweep pushes that forward while the process runs, so a forge
+that dies without revoking it leaves a token that stops working by itself.
+
+It is read-only on purpose. An app's pages are served to whoever its
+`access` lets in, and a token that could act would let every one of them
+act as the owner. Keep the token on the app's server — relay what a page
+needs, never the token or the raw events — and keep a page that shows the
+owner's forge behind `access: private` unless that is meant to be public.
+Steering the crew (`say`, `tell`) stays the person's own act, on the forge.
 
 An app that keeps its state under `FORGE_APP_DATA` gets production and
 preview data for free. The scaffold does exactly that with `bun:sqlite`.

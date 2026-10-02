@@ -1,0 +1,7 @@
+{
+  "app": {
+    "run": "bun run server.ts",
+    "install": "",
+    "health": "/healthz"
+  }
+}

@@ -20,6 +20,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
+import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
@@ -197,6 +198,8 @@ interface Live {
   readonly createdAt?: string | undefined;
   /** The deploy run's own start — the reference the deploy log measures from. */
   readonly deployStartedAt?: string | null | undefined;
+  /** This process's forge token (`apps/token.ts`), revoked when it stops. */
+  readonly tokenId?: string | undefined;
 }
 
 /**
@@ -516,7 +519,10 @@ export class AppsRuntime {
       state.deploying?.abort.abort();
       if (state.queued)
         cancelRun(this.app.db, state.queued.id, STOPPED_SUMMARY);
-      if (state.live) stops.push(state.live.handle.stop());
+      if (state.live) {
+        revokeAppToken(this.app.db, state.live.tokenId);
+        stops.push(state.live.handle.stop());
+      }
       // Abort only cancels the step in flight; the `execute()` continuation
       // chained onto `state.chain` still runs afterwards to record the
       // outcome (`finishRun`, `announceRun`). Wait for it too, or it can
@@ -880,6 +886,7 @@ export class AppsRuntime {
       write(
         `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
       );
+      revokeAppToken(this.app.db, previous.tokenId);
       await previous.handle.stop();
       if (previous.dir !== live.dir)
         rmSync(previous.dir, { recursive: true, force: true });
@@ -992,6 +999,14 @@ export class AppsRuntime {
     else if (seeded === "empty" && state.env !== "production")
       write("data: starting empty");
 
+    // The process's own credential; every way out of here without a
+    // process to hold it revokes it.
+    const token = mintAppToken(
+      this.app.db,
+      repo.ownerId,
+      state.app.slug,
+      state.env,
+    );
     const startInput: Omit<StartInput, "signal"> = {
       dir,
       dataDir,
@@ -1010,10 +1025,19 @@ export class AppsRuntime {
         state.app.id,
         state.env,
       ),
+      forgeToken: token.token,
       log: write,
       warm,
     };
-    let started = await startProcess({ ...startInput, signal });
+    const start = async (): ReturnType<typeof startProcess> => {
+      try {
+        return await startProcess({ ...startInput, signal });
+      } catch (error) {
+        revokeAppToken(this.app.db, token.id);
+        throw error;
+      }
+    };
+    let started = await start();
 
     // The one retry this deploy gets: a preview seeded from production whose
     // process died before it ever answered — schema ahead of what this build
@@ -1030,8 +1054,9 @@ export class AppsRuntime {
         "the copied data was not usable by this build; the preview is starting on empty data",
       );
       reseedEmpty(this.app.config.dataDir, state.app.id, state.env);
-      started = await startProcess({ ...startInput, signal });
+      started = await start();
       if (!started.ok) {
+        revokeAppToken(this.app.db, token.id);
         rmSync(dir, { recursive: true, force: true });
         return {
           ok: false,
@@ -1039,6 +1064,7 @@ export class AppsRuntime {
         };
       }
     } else if (!started.ok) {
+      revokeAppToken(this.app.db, token.id);
       rmSync(dir, { recursive: true, force: true });
       return {
         ok: false,
@@ -1054,6 +1080,7 @@ export class AppsRuntime {
         runId: run.id,
         since: new Date().toISOString(),
         manifest: manifest.value,
+        tokenId: token.id,
       },
       tested: started.value.tested,
     };
@@ -1081,6 +1108,7 @@ export class AppsRuntime {
       .then((code) => {
         if (this.stopped || state.live !== live) return; // replaced or stopped on purpose
         state.live = undefined;
+        revokeAppToken(this.app.db, live.tokenId);
         state.lastError = `exited with code ${code}`;
         appendRunLog(
           this.app.config.dataDir,
@@ -1162,6 +1190,7 @@ export class AppsRuntime {
           appendRunLog(this.app.config.dataDir, asleep.runId, line);
       };
       write("waking: a request came");
+      const token = mintAppToken(this.app.db, repo.ownerId, record.slug, env);
       const started = await startProcess({
         dir: asleep.dir,
         dataDir: envDataDir(this.app.config.dataDir, record.id, env),
@@ -1178,10 +1207,16 @@ export class AppsRuntime {
           record.id,
           env,
         ),
+        forgeToken: token.token,
         log: write,
         signal: new AbortController().signal,
         warm: true,
+      }).catch((error: unknown) => {
+        revokeAppToken(this.app.db, token.id);
+        throw error;
       });
+      if (state.asleep !== asleep || !started.ok)
+        revokeAppToken(this.app.db, token.id);
       if (state.asleep !== asleep) {
         // Replaced while waking — a deploy landed. What we started is spare.
         if (started.ok) await started.value.handle.stop();
@@ -1202,6 +1237,7 @@ export class AppsRuntime {
         since: now,
         manifest: asleep.manifest,
         servingAt: now,
+        tokenId: token.id,
       };
       state.asleep = undefined;
       state.live = live;
@@ -1272,6 +1308,9 @@ export class AppsRuntime {
     const now = Date.now();
     for (const state of this.envs.values()) {
       const live = state.live;
+      // Still running: its credential is still wanted for another window.
+      if (live?.tokenId !== undefined)
+        renewAppToken(this.app.db, live.tokenId, now);
       const spared = state.keptAwake;
       state.keptAwake = undefined;
       if (
@@ -1316,6 +1355,7 @@ export class AppsRuntime {
             : `asleep: still busy ${Math.round(grace / 60_000)} minutes past its idle window, which is as long as busy keeps an app awake; the next request wakes it`,
         );
       log.info("asleep", { app: state.app.slug, env: state.env });
+      revokeAppToken(this.app.db, live.tokenId);
       await live.handle.stop();
     }
   }
@@ -1337,6 +1377,7 @@ export class AppsRuntime {
       // after its pull closed, checkout, cloned data and all.
       const live = state.live;
       state.live = undefined;
+      revokeAppToken(this.app.db, live?.tokenId);
       if (live) await live.handle.stop();
     }
     removeEnv(this.app.config.dataDir, record.id, env);
@@ -1361,6 +1402,7 @@ export class AppsRuntime {
     const live = state.live;
     state.live = undefined;
     state.asleep = undefined;
+    revokeAppToken(this.app.db, live?.tokenId);
     if (live) await live.handle.stop();
   }
 }

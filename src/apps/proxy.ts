@@ -485,7 +485,7 @@ export async function proxyApp(
  * busy: held from its first byte until it ends, fails, or the browser
  * goes away.
  */
-function held(
+export function held(
   runtime: AppsRuntime,
   target: AppTarget,
   body: ReadableStream<Uint8Array>,
@@ -500,9 +500,17 @@ function held(
           release();
           controller.close();
         } else controller.enqueue(value);
-      } catch (error) {
+      } catch {
+        // The app went away under it — replaced by a deploy, asleep,
+        // stopped. For an event stream that is its end, not an error to
+        // raise into a connection nobody may be reading: the browser's
+        // EventSource reconnects to whatever serves now.
         release();
-        controller.error(error);
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
       }
     },
     cancel(reason) {

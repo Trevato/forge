@@ -13,6 +13,7 @@
 import type { AppManifest } from "./manifest.ts";
 import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
+import { forgeApiUrl } from "./token.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { stripForgeDirs } from "../runs/paths.ts";
@@ -40,6 +41,8 @@ export interface StartInput {
   readonly ssh?: string | undefined;
   /** The operator's variables for this app (`core/app_env.ts`). */
   readonly vars?: Record<string, string> | undefined;
+  /** The process's read-only credential into the forge (`apps/token.ts`). */
+  readonly forgeToken?: string | undefined;
   readonly log: (line: string) => void;
   /** Aborting cancels whatever step is in flight and fails the start. */
   readonly signal: AbortSignal;
@@ -106,6 +109,8 @@ export function appEnv(input: {
   ssh?: string | undefined;
   /** The operator's variables: an admin password, an API key. */
   vars?: Record<string, string> | undefined;
+  /** A read-only forge token for this process (`apps/token.ts`). */
+  forgeToken?: string | undefined;
 }): Record<string, string> {
   const pull = envPull(input.env);
   // The operator's variables go underneath everything the forge names, so
@@ -123,7 +128,13 @@ export function appEnv(input: {
       FORGE_APP_URL: input.url,
       FORGE_APP_COMMIT: input.commitOid,
       FORGE_URL: input.forgeUrl,
+      FORGE_API_URL: forgeApiUrl(input.forgeUrl),
       FORGE_APP_IDENTITY_KEY: input.identityKey,
+      // Read-only, the owner's, gone when this process is: what a page
+      // inside the app reads the forge with. Never sent to a browser.
+      ...(input.forgeToken === undefined
+        ? {}
+        : { FORGE_TOKEN: input.forgeToken }),
       ...(pull === undefined ? {} : { FORGE_APP_PULL: String(pull) }),
       // Printed verbatim by an app that tells people how to reach its
       // terminal; a guessed form (`you@app.host`) reaches the forge instead.
@@ -315,6 +326,7 @@ export async function startProcess(
       identityKey: input.identityKey,
       ssh: input.ssh,
       vars: input.vars,
+      forgeToken: input.forgeToken,
     }),
     stdin: "ignore",
     stdout: "pipe",
