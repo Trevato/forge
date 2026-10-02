@@ -200,13 +200,6 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(bobRw, "audit", { repo: "alice/game" })).error,
     ).toContain("not_found");
-    // Knocking needs write access, and an app with a contract to compare with.
-    expect((await tool(ro, "probe", { repo: "alice/game" })).error).toContain(
-      "forbidden",
-    );
-    expect((await tool(rw, "probe", { repo: "alice/game" })).error).toMatch(
-      /not_an_app|no_contract/,
-    );
   });
 
   test("a read token may read and not act", async () => {
@@ -351,6 +344,54 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(bobRw, "converge", { repo: "bob/open" })).value.kind,
     ).toBe("no_crew");
+  });
+
+  test("probe only reads, yet needs the access the page needs", async () => {
+    const listed = await call(ro, "tools/list");
+    const hints = Object.fromEntries(
+      listed.body.result.tools.map((t: any) => [
+        t.name,
+        t.annotations.readOnlyHint,
+      ]),
+    );
+    expect(hints["probe"]).toBe(true);
+    expect(hints["stop"]).toBe(false);
+    // A repo the token may read, with nothing to compare with: it gets as far
+    // as the app and its contract, read token or not.
+    for (const token of [rw, ro])
+      expect(
+        (await tool(token, "probe", { repo: "alice/game" })).error,
+      ).toMatch(/not_an_app|no_contract/);
+    // One it may not read is no such repository.
+    expect(
+      (await tool(bobRw, "probe", { repo: "alice/game" })).error,
+    ).toContain("not_found");
+    expect(
+      (await tool(rw, "probe", { repo: "alice/nothing" })).error,
+    ).toContain("not_found");
+  });
+
+  test("stop takes a run id from now, and refuses a stale or foreign one", async () => {
+    const run = createRun(app.db, {
+      repoId: game.id,
+      kind: "agent",
+      actorId: alice.id,
+      reason: "assigned",
+    });
+    expect(
+      (await tool(ro, "stop", { repo: "alice/game", run: run.id })).error,
+    ).toContain("forbidden");
+    expect(
+      (await tool(bobRw, "stop", { repo: "alice/game", run: run.id })).error,
+    ).toContain("not_found");
+    expect(
+      (await tool(rw, "stop", { repo: "alice/game", run: "nosuchrun" })).error,
+    ).toContain("not_found");
+    const stopped = await tool(rw, "stop", { repo: "alice/game", run: run.id });
+    expect(stopped.value.says).toBe(`Stopped run ${run.id}.`);
+    const stale = await tool(rw, "stop", { repo: "alice/game", run: run.id });
+    expect(stale.error).toContain("finished");
+    expect(stale.error).toContain("already ended");
   });
 
   test("a browser session is not a way in, even signed in", async () => {

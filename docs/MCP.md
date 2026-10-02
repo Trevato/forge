@@ -20,20 +20,23 @@ for a tunnel and a forge that sleeps.
   cross-site page could ride, and this door has no page. An `ro` token reads;
   an `rw` token acts; the tools say which they are (`readOnlyHint`).
 - **What you may not do on a page you may not do here.** A private app is
-  "no such app" to someone who cannot read it; stopping a run is a writer's.
+  "no such app" to someone who cannot read it; stopping a run, and knocking
+  on an app with `probe`, are a writer's.
 
 ## Tools
 
-| tool           | does                                                                                   | writes |
-| -------------- | -------------------------------------------------------------------------------------- | ------ |
-| `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working |        |
-| `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick | yes    |
-| `say`          | speak on an issue or a pull; a working builder hears it as its next step               | yes    |
-| `now`          | what the crew is doing right now: who, on what, since when, at what cost               |        |
-| `stop`         | stop one run by its id from `now`                                                      | yes    |
-| `following`    | where a fork stands against what it follows, and what the crew is doing about it       |        |
-| `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused      | yes    |
-| `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull   | yes    |
+| tool           | does                                                                                              | writes |
+| -------------- | ------------------------------------------------------------------------------------------------- | ------ |
+| `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working            |        |
+| `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
+| `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
+| `now`          | what the crew is doing right now: who, on what, since when, at what cost                          |        |
+| `stop`         | stop one run by its id from `now`                                                                 | yes    |
+| `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door             |        |
+| `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
+| `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
+| `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
+| `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
 to relay as it is.

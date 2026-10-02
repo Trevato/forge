@@ -294,7 +294,7 @@ const TOOLS: readonly Tool[] = [
       properties: { repo: REPO_ARG },
       required: ["repo"],
     },
-    writes: true,
+    writes: false,
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
