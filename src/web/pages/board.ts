@@ -13,6 +13,9 @@ import {
   type Decision,
   type DecisionKind,
 } from "../../core/decisions.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import { listApps } from "../../core/apps.ts";
+import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import { listPulls, mergedPullsForRepos, type Pull } from "../../core/pulls.ts";
@@ -172,6 +175,7 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
+    ${forgeStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -215,6 +219,49 @@ function region(
           ${rows}
         </ul>`}
   </section>`;
+}
+
+// ---- the forge ----
+
+/** Where a need can be acted on, when it can: a stuck run's page. */
+function needHref(need: string, v: Vitals): string | undefined {
+  if (/ stuck\.$/.test(need) && v.stuck[0] !== undefined)
+    return `/${v.stuck[0].repo}/runs/${v.stuck[0].runId}`;
+  return undefined;
+}
+
+/**
+ * The forge's health as one line, for a site admin only: *All fine*, or
+ * each thing that needs them. A live region of its own; nobody else gets
+ * the element or pays for the reads.
+ */
+function forgeStrip(ctx: Ctx): Html | null {
+  if (!ctx.auth.user?.isAdmin) return null;
+  const app = ctx.app;
+  const runtime = appsRuntime(app);
+  const v = vitals({
+    db: app.db,
+    dataDir: app.config.dataDir,
+    envs: runtime
+      ? listApps(app.db).flatMap((record) => runtime.status(record))
+      : [],
+  });
+  return html`<div
+    class="board-forge"
+    id="forge"
+    data-live="run.*,app.*"
+    data-ok="${v.ok ? "yes" : "no"}"
+    role="status"
+  >
+    ${v.ok
+      ? html`<span class="board-forge-ok">All fine</span>`
+      : v.needs.map((need) => {
+          const href = needHref(need, v);
+          return href === undefined
+            ? html`<span class="board-forge-need">${need}</span>`
+            : html`<a class="board-forge-need" href="${href}">${need}</a>`;
+        })}
+  </div>`;
 }
 
 // ---- working now ----
@@ -519,6 +566,9 @@ export const boardCss = /* css */ `
 .board-live[data-state="open"] .board-dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
 .board-live[data-state="reconnecting"] .board-dot { background: var(--attn); }
 .board-clock { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted-fg); min-width: 5ch; text-align: right; }
+.board-forge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 28px; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); }
+.board-forge[data-ok="no"] { color: var(--attn); }
+a.board-forge-need { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .board-grid { flex: 1; display: grid; gap: var(--pad); padding: 12px var(--pad) var(--pad); min-height: 0; }
 .board-region { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .board-h {

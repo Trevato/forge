@@ -280,3 +280,79 @@ describe("the board", () => {
     expect(home).toContain("Board");
   });
 });
+
+describe("the board's forge strip", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let admin: User;
+  let cookies: Record<string, string> = {};
+
+  async function signIn(name: string): Promise<string> {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: name,
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  }
+  const board = async (who: string) =>
+    (
+      await fetch(`${servers.url}/board`, {
+        headers: { cookie: cookies[who]! },
+      })
+    ).text();
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-board-strip-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    for (const [username, adminIfFirst] of [
+      ["root", true],
+      ["bob", false],
+    ] as const) {
+      const u = await createUser(app.db, {
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+        adminIfFirst,
+      });
+      if (!u.ok) throw new Error(u.error);
+      if (username === "root") admin = u.value;
+      cookies[username] = await signIn(username);
+    }
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("an admin reads All fine; a stuck run becomes a linked sentence; a non-admin sees nothing", async () => {
+    const fine = await board("root");
+    expect(fine).toMatch(/id="forge"\s+data-live="run\.\*,app\.\*"/);
+    expect(fine).toContain("All fine");
+
+    const made = await createRepo(app, admin, { name: "stuck" });
+    if (!made.ok) throw new Error(String(made.error));
+    const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+    claimRun(app.db, run.id);
+    // Its last heartbeat is long past: the lease has lapsed.
+    app.db
+      .query("UPDATE run SET heartbeat_at = ?1 WHERE id = ?2")
+      .run("2020-01-01T00:00:00.000Z", run.id);
+    const stuck = await board("root");
+    expect(stuck).not.toContain("All fine");
+    expect(stuck).toContain("1 run is stuck.");
+    expect(stuck).toContain(`href="/root/stuck/runs/${run.id}"`);
+
+    const other = await board("bob");
+    expect(other).not.toContain('id="forge"');
+    expect(other).not.toContain("All fine");
+    expect(other).not.toContain("stuck.");
+  });
+});
