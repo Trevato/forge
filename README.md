@@ -31,7 +31,7 @@ feeling on a foundation sized for one person.
 
 ```sh
 bun install          # dev-only: types + tsc, no runtime deps
-bun run src/main.ts  # web on :3000, ssh on :2222
+bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
 ```
 
 If your shell already has `FORGE_URL` set — a crew workspace sets it to the

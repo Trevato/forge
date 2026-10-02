@@ -11,7 +11,7 @@ import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
 import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
-import { serveForgeSsh } from "./tui/ssh.ts";
+import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { startChecks } from "./checks/service.ts";
@@ -101,8 +101,15 @@ const app = createApp({
 
 await reconcile(app);
 const servers = await serve(app);
-const ssh =
-  sshPort > 0 ? await serveForgeSsh(app, { port: sshPort }) : undefined;
+const sshStarted =
+  sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;
+if (sshStarted && !sshStarted.ok)
+  app.log.warn("ssh is off: the terminal could not start", {
+    port: sshPort,
+    reason: sshStarted.error.message,
+    code: (sshStarted.error as { code?: string }).code,
+  });
+const ssh = sshStarted?.ok ? sshStarted.value : undefined;
 
 // Apps and the crew (docs/APPS.md). Both are on unless FORGE_APPS=0: an app
 // is served by Host on the same port, and the crew runs agents as child

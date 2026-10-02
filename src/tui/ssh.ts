@@ -20,6 +20,7 @@ import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import { parseGitCommand, runGitService } from "../git/smart-ssh.ts";
 import { serveSsh, type SshServer, type SshSession } from "../ssh/server.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import { createForgeApp } from "./forge.ts";
 import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import type { Terminal } from "./term/terminal.ts";
@@ -277,4 +278,20 @@ export async function serveForgeSsh(
   forge.config.sshPort = server.port;
   forge.config.sshHostKey = server.hostKey.fingerprint;
   return server;
+}
+
+/**
+ * `serveForgeSsh` as a value: the terminal is optional, the forge is not. A
+ * port that will not bind (or any other failure starting the listener) comes
+ * back as an Err the boot logs once, and the web keeps serving.
+ */
+export async function startForgeSsh(
+  forge: Forge,
+  options: ForgeSshOptions,
+): Promise<Result<SshServer, Error>> {
+  try {
+    return ok(await serveForgeSsh(forge, options));
+  } catch (cause) {
+    return err(cause instanceof Error ? cause : new Error(String(cause)));
+  }
 }
