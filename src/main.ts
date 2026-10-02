@@ -124,6 +124,9 @@ const appDomain = appsOn
 if (appDomain?.ok === false) app.log.error(appDomain.reason);
 if (appDomain?.ok === true && appDomain.note !== undefined)
   app.log.warn(appDomain.note);
+// One crew run's length: what a run takes, and how long past its idle
+// window an app busy with one is left awake.
+const crewRunMs = positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000;
 const apps = appDomain?.ok
   ? new AppsRuntime(app, {
       domain: appDomain.domain,
@@ -136,6 +139,7 @@ const apps = appDomain?.ok
           : Number(publicUrl.port),
       forgeUrl,
       concurrency: positive(process.env.FORGE_APPS_CONCURRENCY, 2),
+      busyGraceMs: crewRunMs,
     })
   : undefined;
 await apps?.start();
@@ -172,7 +176,7 @@ const crew = appsOn
       binary: process.env.FORGE_CLAUDE ?? "claude",
       concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, hosted ? 1 : 2),
       budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
-      runTimeoutMs: positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000,
+      runTimeoutMs: crewRunMs,
       allowHosts: (process.env.FORGE_CREW_ALLOW_HOSTS ?? "")
         .split(",")
         .map((h) => h.trim())

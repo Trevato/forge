@@ -380,6 +380,13 @@ export function envFacts(
         </p>`,
     )}
     ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
+    ${when(
+      env.busy,
+      (busy) =>
+        html`<p class="muted small" data-busy>
+          ${busy}; kept awake past its idle window
+        </p>`,
+    )}
     ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
     ${when(
       env.failedDeploy,

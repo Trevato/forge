@@ -690,6 +690,15 @@ and every preview comes back asleep until someone looks. A restart used to
 mean thirty installs and test suites at once; now it means starting what
 people are using.
 
+Quiet is not the same as idle. Before it sleeps an environment the sweep
+asks whether it is _busy_ (`apps/busy.ts`): a child process of the app's
+still alive — a build, a crew run inside a hosted forge — or a websocket or
+event stream the proxy holds open to it. A busy environment is left awake,
+the app page and the Now card say _busy_ and why, and its deploy log says
+it was kept awake. Busy buys one crew run's length past the idle window
+(`FORGE_CREW_TIMEOUT_MIN`, 45 minutes by default) and no more, so an app
+that keeps a child forever still rests.
+
 ### Subscriptions
 
 One token in the environment is one account for the whole forge. An admin

@@ -44,6 +44,7 @@ import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { primaryDomain } from "../core/domains.ts";
+import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
@@ -92,6 +93,12 @@ export interface RuntimeOptions {
   /** How often the runtime looks for environments to put to sleep. */
   readonly sweepEveryMs?: number | undefined;
   /**
+   * How long past its idle window a busy environment (`apps/busy.ts`) is
+   * left awake before it sleeps anyway — one crew run's length, so an app
+   * that only claims to be busy cannot stay up forever.
+   */
+  readonly busyGraceMs?: number | undefined;
+  /**
    * What a domain check asks: the system resolver unless a test hands in
    * its own, so proving `app.example.com` needs no network in a test.
    */
@@ -107,6 +114,7 @@ export type EnvState =
 
 const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
 const SWEEP_EVERY_MS = 60_000;
+const BUSY_GRACE_MS = 45 * 60_000;
 
 export interface EnvStatus {
   readonly env: EnvName;
@@ -163,6 +171,11 @@ export interface EnvStatus {
         readonly error: string;
       }
     | undefined;
+  /**
+   * Why a running environment is still awake past its idle window, in a
+   * person's words (`BUSY_WORDS`) — set only while the sweep is sparing it.
+   */
+  readonly busy?: string | undefined;
 }
 
 interface Live {
@@ -246,6 +259,10 @@ interface Environment {
   waking?: Promise<void> | undefined;
   /** When something last came through the proxy for this environment. */
   lastRequestAt?: number | undefined;
+  /** Streams the proxy holds open to it: websockets, event streams. */
+  openStreams: number;
+  /** Why the last sweep spared it, while it still is. */
+  keptAwake?: BusyReason | undefined;
   /** The deploy in flight, if one is. */
   deploying?: { run: Run; abort: AbortController } | undefined;
   /** The next deploy, waiting its turn; replaced by a newer request. */
@@ -416,6 +433,9 @@ export class AppsRuntime {
           ? {}
           : { error: `serving · tests failed: ${state.live.testsFailed}` }),
         ...(failedDeploy === undefined ? {} : { failedDeploy }),
+        ...(state.keptAwake === undefined
+          ? {}
+          : { busy: BUSY_WORDS[state.keptAwake] }),
       };
     }
     // Nothing is live and nothing is in flight yet, but a deploy already
@@ -758,7 +778,13 @@ export class AppsRuntime {
     const k = key(record.id, env);
     let state = this.envs.get(k);
     if (state === undefined) {
-      state = { app: record, env, chain: Promise.resolve(), restarts: [] };
+      state = {
+        app: record,
+        env,
+        chain: Promise.resolve(),
+        restarts: [],
+        openStreams: 0,
+      };
       this.envs.set(k, state);
     }
     return state;
@@ -1094,7 +1120,26 @@ export class AppsRuntime {
   /** Something came through the proxy: the environment is wanted. */
   touch(record: AppRecord, env: EnvName): void {
     const state = this.envs.get(key(record.id, env));
-    if (state !== undefined) state.lastRequestAt = Date.now();
+    if (state === undefined) return;
+    state.lastRequestAt = Date.now();
+    state.keptAwake = undefined;
+  }
+
+  /**
+   * A stream through the proxy opened: the environment is busy until the
+   * returned release is called — once; a second call does nothing.
+   */
+  holdStream(record: AppRecord, env: EnvName): () => void {
+    const state = this.envs.get(key(record.id, env));
+    if (state === undefined) return () => {};
+    state.openStreams++;
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      state.openStreams--;
+      state.lastRequestAt = Date.now();
+    };
   }
 
   /**
@@ -1223,9 +1268,12 @@ export class AppsRuntime {
   private async sweep(): Promise<void> {
     if (this.stopped) return;
     const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
+    const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
     const now = Date.now();
     for (const state of this.envs.values()) {
       const live = state.live;
+      const spared = state.keptAwake;
+      state.keptAwake = undefined;
       if (
         live === undefined ||
         state.deploying !== undefined ||
@@ -1237,6 +1285,20 @@ export class AppsRuntime {
         state.env === "production" ? after.production : after.preview;
       const last = state.lastRequestAt ?? Date.parse(live.since);
       if (now - last < limit) continue;
+      // Idle by the clock; asked whether it is mid-work, and spared while
+      // it is — but only for one grace past the window, never forever.
+      const busy = busyReason(live.handle.pid, state.openStreams);
+      const overdue = now - last - limit >= grace;
+      if (busy !== undefined && !overdue) {
+        if (spared !== busy && live.runId !== "")
+          appendRunLog(
+            this.app.config.dataDir,
+            live.runId,
+            `kept awake: ${BUSY_WORDS[busy]}`,
+          );
+        state.keptAwake = busy;
+        continue;
+      }
       state.live = undefined;
       state.asleep = {
         commitOid: live.commitOid,
@@ -1249,7 +1311,9 @@ export class AppsRuntime {
         appendRunLog(
           this.app.config.dataDir,
           live.runId,
-          `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`,
+          busy === undefined
+            ? `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`
+            : `asleep: still busy ${Math.round(grace / 60_000)} minutes past its idle window, which is as long as busy keeps an app awake; the next request wakes it`,
         );
       log.info("asleep", { app: state.app.slug, env: state.env });
       await live.handle.stop();

@@ -7,6 +7,7 @@
  * a repaint (`layout.fragment`, `client.liveRegionsJs`).
  */
 
+import { envPull } from "../../apps/data.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -21,7 +22,7 @@ import { readRunLogTail } from "../../runs/log.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
-import { avatar, btn, card, icon, listCard, row, time } from "../ui.ts";
+import { avatar, badge, btn, card, icon, listCard, row, time } from "../ui.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
@@ -204,7 +205,25 @@ export async function nowCard(
       runRows.push(html`<li class="log-tail-row">${activeTail}</li>`);
   }
 
+  // An environment the sleep sweep is sparing because it is mid-work:
+  // that is something going on in the app, and the reason it is awake.
+  const busyRows = (wordCtx.runtime?.status(record) ?? []).flatMap((env) => {
+    if (env.busy === undefined) return [];
+    const number = envPull(env.env);
+    return [
+      row({
+        href: `${base}/app`,
+        nav: true,
+        lead: icon(number === undefined ? "rocket" : "pull"),
+        title: number === undefined ? "production" : `preview of #${number}`,
+        meta: html`${env.busy}; kept awake past its idle window`,
+        trail: badge("busy", { icon: "activity", tone: "attn" }),
+      }),
+    ];
+  });
+
   const nowRows: Html[] = [
+    ...busyRows,
     ...(await Promise.all(
       openPulls.map(async (p) => {
         const { word, note } = await pullWord(wordCtx, p);

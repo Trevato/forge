@@ -465,10 +465,50 @@ export async function proxyApp(
   }
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: out,
+  const eventStream =
+    response.body !== null &&
+    (response.headers.get("content-type") ?? "")
+      .toLowerCase()
+      .startsWith("text/event-stream");
+  return new Response(
+    eventStream ? held(runtime, target, response.body!) : response.body,
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: out,
+    },
+  );
+}
+
+/**
+ * An event stream, passed through untouched while it keeps the environment
+ * busy: held from its first byte until it ends, fails, or the browser
+ * goes away.
+ */
+function held(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  body: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const release = runtime.holdStream(target.app, target.env);
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      release();
+      return reader.cancel(reason);
+    },
   });
 }
 
@@ -543,6 +583,12 @@ async function proxyWebSocket(
     return unavailable(runtime, target, status, opened.error);
   }
   const upstream = opened.value;
+  // Open, the socket keeps the environment busy; its close — from either
+  // side, or a failed upgrade below — lets it rest again.
+  upstream.addEventListener(
+    "close",
+    runtime.holdStream(target.app, target.env),
+  );
   const upgraded = server.upgrade(request, {
     data: { upstream },
     // The app's choice of subprotocol is what the browser hears; without
