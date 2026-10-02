@@ -88,6 +88,28 @@ const rail = part(/* css */ `
 .studio-crew li span { opacity: .85; }
 `);
 
+/** The phone: one document, narrower. Each rule belongs to a component above
+ * and only ever applies at 600px and under, so nothing changes on a desktop. */
+const phone = part(/* css */ `
+@media (max-width: 600px) {
+  .studio-head { flex-wrap: wrap; }
+  .studio-head h1 { flex: 1 1 100%; flex-wrap: wrap; overflow-wrap: anywhere; }
+  .studio-head .env-facts { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+  .studio-head form, .studio-head form .btn { flex: 1 1 auto; }
+  .studio-tell .bar { flex-wrap: wrap; }
+  .studio-tell .bar .btn, .studio-ask-actions .btn { min-height: 44px; }
+  .fcard-head .btn, .fcard-form .btn { min-height: 44px; }
+  .fcard-head { flex-direction: column; align-items: stretch; }
+  .fcard-head .badge, .fcard-head .fcard-app { align-self: flex-start; }
+  .studio-ask-actions { display: flex; flex-direction: column; align-items: stretch; white-space: normal; width: 100%; }
+  .studio-list li { grid-template-columns: 18px minmax(0, 1fr); row-gap: 2px; }
+  .studio-list li > :nth-child(n+3) { grid-column: 2; }
+  .studio-word { white-space: normal; }
+  .studio .row-meta, .studio-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
+  .studio-tell textarea, .studio-tell .input { font-size: 16px; }
+}
+`);
+
 import { feedCss } from "./feed_style.ts";
 
 export const studioCss = `@layer components {\n${[
@@ -100,4 +122,5 @@ export const studioCss = `@layer components {\n${[
   rowActions,
   rail,
   part(feedCss),
+  phone,
 ].join("\n\n")}\n}`;
