@@ -7,6 +7,10 @@
  * forge's health, and each subscription's windows. Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own.
+ *
+ * `?wall` is its one wall mode, for a screen across the room that nobody
+ * touches: the same regions in larger type, without the key hints or a
+ * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
@@ -36,7 +40,7 @@ import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
-import { page } from "../layout.ts";
+import { page, redirect } from "../layout.ts";
 import { avatar, icon, time } from "../ui.ts";
 import { voiceFor } from "../studio/voice.ts";
 import {
@@ -89,7 +93,7 @@ const pct = (n: number): number =>
   Math.max(0, Math.min(100, Math.round(n * 100)));
 
 /** The apps on the board: every one the viewer can see, or the named few. */
-export interface BoardScope {
+interface BoardScope {
   readonly repos: readonly Repo[];
   readonly ids: readonly string[];
   readonly byId: ReadonlyMap<string, Repo>;
@@ -100,12 +104,12 @@ export interface BoardScope {
   readonly ownerFacts: ReadonlySet<string>;
 }
 
-/** The scope for some app repositories: the board's, or the big view's. */
-export function boardScope(ctx: Ctx, repos: readonly Repo[]): BoardScope {
-  const records = appsForRepos(
-    ctx.app.db,
-    repos.map((r) => r.id),
-  );
+/** The scope for some repositories: the ones among them that are apps. */
+function boardScope(
+  ctx: Ctx,
+  repos: readonly Repo[],
+  records: ReadonlyMap<string, AppRecord>,
+): BoardScope {
   const kept = repos.filter((r) => records.has(r.id));
   return {
     repos: kept,
@@ -120,22 +124,9 @@ export function boardScope(ctx: Ctx, repos: readonly Repo[]): BoardScope {
   };
 }
 
-/** The four regions, for a page that frames them its own way. */
-export function boardRegions(
-  ctx: Ctx,
-  scope: BoardScope,
-): { working: Html; landed: Html; decided: Html; today: Html } {
-  return {
-    working: working(ctx, scope),
-    landed: landed(ctx, scope),
-    decided: decided(ctx, scope),
-    today: today(ctx, scope),
-  };
-}
-
 // ---- the page ----
 
-/** GET /board — signed in; every app the viewer can see, or `?apps=` some. */
+/** GET /board — signed in; every app the viewer can see, or `?apps=` some; `?wall` for the wall mode. */
 export function boardPage(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
@@ -155,21 +146,24 @@ export function boardPage(ctx: Ctx): Response {
     ctx,
     visible.filter(
       (r) =>
-        records.has(r.id) &&
-        (wanted.size === 0 ||
-          wanted.has(r.name.toLowerCase()) ||
-          wanted.has(`${r.ownerName}/${r.name}`.toLowerCase())),
+        wanted.size === 0 ||
+        wanted.has(r.name.toLowerCase()) ||
+        wanted.has(`${r.ownerName}/${r.name}`.toLowerCase()),
     ),
+    records,
   );
   const repos = scope.repos;
+  const wall = ctx.url.searchParams.has("wall");
 
-  const body = html`<div class="board">
+  const body = html`<div class="board" ${wall ? html`data-wall=""` : null}>
     <header class="board-top">
       <a class="board-brand" href="/"><span class="mark"></span>forge</a>
       <span class="board-scope"
-        >${repos.length === 1
-          ? repos[0]!.name
-          : `${repos.length} app${repos.length === 1 ? "" : "s"}`}</span
+        >${
+          repos.length === 1
+            ? repos[0]!.name
+            : `${repos.length} app${repos.length === 1 ? "" : "s"}`
+        }</span
       >
       <span class="spacer"></span>
       <span class="board-keys" aria-hidden="true"
@@ -223,12 +217,32 @@ function region(
         () => html`<span class="board-count">${rows.length}</span>`,
       )}
     </h2>
-    ${rows.length === 0
-      ? html`<p class="board-quiet">${quiet}</p>`
-      : html`<ul class="board-list">
-          ${rows}
-        </ul>`}
+    ${
+      rows.length === 0
+        ? html`<p class="board-quiet">${quiet}</p>`
+        : html`<ul class="board-list">
+            ${rows}
+          </ul>`
+    }
   </section>`;
+}
+
+/** An app's address as the big view wrote it: `owner/name`, nothing else. */
+const APP_SLUG = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * GET /big — the big view, folded into the board. Every address it had
+ * (`?app=`, `&list=`, `?run=`, `?view=board|map`) lands on the wall mode;
+ * an app it named stays the scope, as `?apps=`. The board decides what the
+ * viewer may see, so this reads nothing and says nothing about what exists.
+ */
+export function bigRedirect(ctx: Ctx): Response {
+  const app = ctx.url.searchParams.get("app") ?? "";
+  return redirect(
+    APP_SLUG.test(app)
+      ? `/board?apps=${encodeURIComponent(app)}&wall`
+      : "/board?wall",
+  );
 }
 
 // ---- the forge ----
@@ -263,14 +277,16 @@ function forgeStrip(ctx: Ctx): Html | null {
     data-ok="${v.ok ? "yes" : "no"}"
     role="status"
   >
-    ${v.ok
-      ? html`<span class="board-forge-ok">All fine</span>`
-      : v.needs.map((need) => {
-          const href = needHref(need, v);
-          return href === undefined
-            ? html`<span class="board-forge-need">${need}</span>`
-            : html`<a class="board-forge-need" href="${href}">${need}</a>`;
-        })}
+    ${
+      v.ok
+        ? html`<span class="board-forge-ok">All fine</span>`
+        : v.needs.map((need) => {
+            const href = needHref(need, v);
+            return href === undefined
+              ? html`<span class="board-forge-need">${need}</span>`
+              : html`<a class="board-forge-need" href="${href}">${need}</a>`;
+          })
+    }
   </div>`;
 }
 
@@ -323,11 +339,13 @@ function windowsStrip(ctx: Ctx): Html | null {
           const words = windowWords(w);
           return html`<span class="board-window" data-window="${w.window}"
             ><span class="board-window-name">${words.name}</span>
-            ${words.usedPct === null
-              ? null
-              : html`<span class="board-bar"
-                  ><span class="board-fill" data-w="${words.usedPct}"></span
-                ></span>`}
+            ${
+              words.usedPct === null
+                ? null
+                : html`<span class="board-bar"
+                    ><span class="board-fill" data-w="${words.usedPct}"></span
+                  ></span>`
+            }
             <span class="board-window-nums"
               >${figures([words.used, words.remaining, words.resets])}</span
             ></span
@@ -389,9 +407,9 @@ function working(ctx: Ctx, scope: BoardScope): Html {
         <span class="board-run-meta">
           <span class="board-state">${word}</span>
           <span
-            >${word === "paused"
-              ? "resumes soon"
-              : reasonWords(run.reason)}</span
+            >${
+              word === "paused" ? "resumes soon" : reasonWords(run.reason)
+            }</span
           >
           ${when(
             run.costUsd > 0 && scope.ownerFacts.has(repo.id),
@@ -456,15 +474,17 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
         href="${repoBase(repo)}/pulls/${pull.number}"
       >
         <span class="board-thumb"
-          >${picture === undefined
-            ? icon("merge")
-            : html`<img
-                src="${picture}"
-                width="34"
-                height="46"
-                alt=""
-                loading="lazy"
-              />`}</span
+          >${
+            picture === undefined
+              ? icon("merge")
+              : html`<img
+                  src="${picture}"
+                  width="34"
+                  height="46"
+                  alt=""
+                  loading="lazy"
+                />`
+          }</span
         >
         <span class="board-landed-title">${pull.title}</span>
         <span class="board-when">${time(pull.mergedAt ?? pull.createdAt)}</span>
@@ -770,6 +790,10 @@ ${widths}
 }
 /* One region, full bleed. */
 .board[data-focus] .board-region { display: none; }
+/* The wall mode: read from across the room, and nobody at the keys. */
+.board[data-wall] { font-size: 20px; cursor: none; }
+.board[data-wall] .board-keys { display: none; }
+@media (min-width: 1600px) { .board[data-wall] { font-size: 23px; } }
 .board[data-focus="working"] #working, .board[data-focus="landed"] #landed,
 .board[data-focus="decided"] #decided, .board[data-focus="today"] #today { display: flex; }
 }

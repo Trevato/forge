@@ -157,8 +157,7 @@ import {
   runsList,
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
-import { boardPage } from "../web/pages/board.ts";
-import { bigPage } from "../web/pages/big.ts";
+import { bigRedirect, boardPage } from "../web/pages/board.ts";
 import {
   agentCreate,
   agentDelete,
@@ -436,8 +435,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
-  // The big view: the whole forge as one keyboard-first frame.
-  router.add("GET", "/big", bigPage);
+  // The big view, folded into the board: every old address lands on its wall mode.
+  router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
   // The JS-free half of every destructive action. Two literal segments, so it
   // is registered before /:owner/:name can claim the shape.

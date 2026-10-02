@@ -387,6 +387,10 @@ three statements, `standings`). Every region
 is live — it swaps itself when a matching event lands, and the dot in the
 corner says whether the stream is connected. `?apps=a,b` narrows it to some
 apps. Keys: `f` fullscreen, `1`–`4` one region full-bleed, `0` all.
+`?wall` is its one wall mode, for a screen across the room that nobody
+touches: the same regions in larger type, no key hints, no pointer. The
+old big view folded into it — `/big` and every address it had land on
+`/board?wall`, keeping `?app=owner/name` as the board's `?apps=`.
 Everything links somewhere; nothing needs a click. The board is a wall for
 apps you can write to: a public app someone else owns can still appear in
 it (`listReposVisibleTo` includes every public repo), but its cost, and

@@ -2045,8 +2045,8 @@ export const liveRegionsJs = /* js */ `
       var mine = document.getElementById(id);
       var theirs = fresh.getElementById(id);
       if (!mine || !theirs) return;
-      // A card mid-action (the big view marks it data-busy while its post
-      // is in flight) is never pulled out from under the click; the next
+      // A region mid-action (something in it marked data-busy while its
+      // post is in flight) is never pulled out from under the click; the next
       // matching event tries the swap again.
       if (mine.querySelector('[data-busy]')) return;
       var active = document.activeElement;

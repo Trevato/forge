@@ -1,6 +1,7 @@
 /**
  * The board: a live wall of the crews at work. Signed in, four live
  * regions; a run in flight and a merged pull on it; `?apps=` narrows it;
+ * `?wall` is its wall mode, where every old `/big` address lands;
  * anonymous is sent to sign in.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -278,6 +279,52 @@ describe("the board", () => {
     ).text();
     expect(home).toContain('href="/board"');
     expect(home).toContain("Board");
+  });
+
+  test("?wall is the wall mode: the same live regions, marked for the far screen", async () => {
+    const plain = await (await get("/board")).text();
+    expect(plain).not.toContain("data-wall");
+    const res = await get("/board?apps=alice/notes&wall");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toMatch(/<div class="board"\s+data-wall="">/);
+    expect(html).toMatch(/id="working"\s+data-live="run\.\*"/);
+    expect(html).toMatch(/class="board-scope"\s*>notes</);
+  });
+
+  // The big view's every address, each its own test: all land on the wall mode.
+  const oldRoutes: [string, string][] = [
+    ["/big", "/board?wall"],
+    ["/big?view=board", "/board?wall"],
+    ["/big?view=map", "/board?wall"],
+    ["/big?app=alice/notes", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice%2Fnotes&list=runs", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice/notes&list=issues", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice/notes&list=pulls", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice/notes&list=map", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?run=0123456789abcdef", "/board?wall"],
+    // An address that was never an app keeps no scope.
+    ["/big?app=../../etc", "/board?wall"],
+    ["/big?app=%22%3E%3Cscript%3E", "/board?wall"],
+  ];
+  for (const [from, to] of oldRoutes)
+    test(`${from} lands on ${to}`, async () => {
+      const res = await get(from);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(to);
+      const landed = await get(to);
+      expect(landed.status).toBe(200);
+      expect(await landed.text()).toContain("data-wall");
+    });
+
+  test("anonymous at /big reaches the sign-in by way of the wall", async () => {
+    const res = await fetch(`${base}/big?app=alice/notes`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/board?apps=alice%2Fnotes&wall");
+    const next = await fetch(`${base}/board?wall`, { redirect: "manual" });
+    expect(next.headers.get("location")).toMatch(/^\/signin\?next=/);
   });
 });
 
