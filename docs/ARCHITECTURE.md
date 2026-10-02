@@ -486,6 +486,32 @@ budget, a deadline. Containment is the forge's, not the agent's; the agent
 is trusted to work, and the forge is built so that trust costs at most one
 run.
 
+## Where a child body runs
+
+`spawn/placement.ts` is the seam: spawn builds a `SpawnPlan` and hands it to
+a `Placement` — `place(plan) -> { url, bodyId }` and `retire(bodyId)` — and
+never learns where the child runs. Both return a `Result`; refusals carry a
+reason (`children`, `depth`, `exists`, `unknown`). `retire` is idempotent.
+
+The one implementation today is `hostedPlacement`: the child is an app inside
+the parent at `https://<name>.<host>`, with no SSH and one agent at a time.
+Limits: `MAX_CHILDREN` (5) hosted children per forge and `MAX_DEPTH` (2)
+levels of nesting, so a child cannot spawn without bound. Bodies are held
+behind a `BodyStore`; the default is in memory, and persisting it under
+`FORGE_APP_DATA` is left to the wiring that calls spawn.
+
+An external placement (Cloudflare Worker + container, Fly, metal — chosen by
+spike #339) implements the same interface and must provide:
+
+- **create**: `place`, returning the child's URL and a stable `bodyId`;
+  enforcing the same child and depth limits, or stricter.
+- **health**: a way to tell whether a body is up (to be added to the
+  interface when the first external module needs it).
+- **retire**: tear the body down and release everything it held.
+- **bucket and credential per child**: its own storage bucket and its own
+  credential, never shared with the parent or siblings, created in `place`
+  and revoked in `retire`; credentials never appear in a plan or a log.
+
 ## The forge's standing
 
 `GET /api/v1/health` (`kernel/vitals.ts`) answers a site admin, by session or
