@@ -606,3 +606,40 @@ describe("the slot count is the rule the loop enforces", () => {
     expect(await driveRepo(app, fresh())).toBe("full");
   });
 });
+
+describe("the crew in a preview", () => {
+  test("crewOffInPreview holds off only for preview, unless turned back on", async () => {
+    const { crewOffInPreview } = await import("../src/crew/preview.ts");
+    expect(crewOffInPreview({ FORGE_APP_ENV: "preview" })).toBe(true);
+    expect(crewOffInPreview({ FORGE_APP_ENV: "production" })).toBe(false);
+    expect(crewOffInPreview({})).toBe(false);
+    expect(
+      crewOffInPreview({ FORGE_APP_ENV: "preview", FORGE_CREW_IN_PREVIEW: "1" }),
+    ).toBe(false);
+  });
+
+  test("an autonomy tick is a no-op in a preview", async () => {
+    const { autonomyTick } = await import("../src/crew/autonomy.ts");
+    const dir = await mkdtemp(join(tmpdir(), "forge-prev-"));
+    const app = await createApp({ dataDir: dir } as Parameters<typeof createApp>[0]);
+    let touched = 0;
+    const real = app.db.query.bind(app.db);
+    (app.db as { query: unknown }).query = (...a: unknown[]) => {
+      touched++;
+      return (real as (...x: unknown[]) => unknown)(...a);
+    };
+    const before = process.env.FORGE_APP_ENV;
+    process.env.FORGE_APP_ENV = "preview";
+    try {
+      await autonomyTick(app);
+      expect(touched).toBe(0);
+      delete process.env.FORGE_APP_ENV;
+      await autonomyTick(app);
+      expect(touched).toBeGreaterThan(0);
+    } finally {
+      if (before === undefined) delete process.env.FORGE_APP_ENV;
+      else process.env.FORGE_APP_ENV = before;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

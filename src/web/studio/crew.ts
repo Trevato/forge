@@ -21,6 +21,7 @@ import { CREW_ROLES, listCrewRoles, type CrewRole } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
+import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
@@ -169,8 +170,12 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
 
 function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
   const status = repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
-  const state =
-    status === undefined
+  const state = crewOffInPreview()
+    ? html`<p class="muted small">
+        The crew is off in a preview: nothing here plans, picks or runs an
+        agent. Set <code>FORGE_CREW_IN_PREVIEW=1</code> to turn it on.
+      </p>`
+    : status === undefined
       ? html`<p class="muted small">
           Off. Every run starts because a person assigned, commented, or a
           check failed.

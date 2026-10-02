@@ -266,6 +266,11 @@ no `claude` on `PATH` — either way **Pick for me** stops being offered and
 
 ## The crew
 
+In a preview (`FORGE_APP_ENV=preview`, which the platform sets) the crew is
+off: no autonomy tick, no dispatch, no spend; checks still run and everything
+can still be read. The boot log and the studio's crew card say so. Set
+`FORGE_CREW_IN_PREVIEW=1` to run it anyway.
+
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
 An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a

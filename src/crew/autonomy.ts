@@ -78,6 +78,7 @@ import { grantedAccounts } from "../core/subscriptions.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { createLog } from "../kernel/log.ts";
+import { crewOffInPreview } from "./preview.ts";
 
 const log = createLog("autonomy");
 
@@ -650,6 +651,7 @@ function ensureDirectionIssue(
 
 /** Every repository that runs on its own, one turn each. */
 export async function autonomyTick(app: App, now = new Date()): Promise<void> {
+  if (crewOffInPreview()) return;
   for (const repo of listAutonomousRepos(app.db)) {
     try {
       await sweepGreen(app, repo);

@@ -24,6 +24,7 @@ import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
+import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { startNotifier } from "./crew/notify.ts";
@@ -178,7 +179,12 @@ const snapshots = startSnapshots(
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );
-const crew = appsOn
+const crewHeldOff = crewOffInPreview();
+if (appsOn && crewHeldOff)
+  app.log.info(CREW_OFF_IN_PREVIEW, {
+    why: "FORGE_APP_ENV=preview; set FORGE_CREW_IN_PREVIEW=1 to run it",
+  });
+const crew = appsOn && !crewHeldOff
   ? await startCrew(app, {
       forgeUrl,
       localUrl: servers.url,
