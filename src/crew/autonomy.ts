@@ -74,6 +74,9 @@ import {
   queueAgentRun,
 } from "./dispatch.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { grantedAccounts } from "../core/subscriptions.ts";
+import { standing } from "../core/standing.ts";
+import { pace, type Pace } from "./pacing.ts";
 import { createLog } from "../kernel/log.ts";
 
 const log = createLog("autonomy");
@@ -260,7 +263,32 @@ export function autonomyStatus(
   };
 }
 
-export type Drove = "off" | "paused" | "full" | "picked" | "planned" | "idle";
+/** What a run costs here on average lately; a dollar before there is a history. */
+function meanRunUsd(db: App["db"], repoId: string): number {
+  return (
+    db
+      .query<{ m: number | null }, [string]>(
+        `SELECT AVG(cost_usd) AS m FROM (
+           SELECT cost_usd FROM run WHERE repo_id = ?1 AND kind = 'agent'
+             AND state IN ('ok','failed') AND cost_usd > 0
+           ORDER BY created_at DESC LIMIT 20)`,
+      )
+      .get(repoId)?.m ?? 1
+  );
+}
+
+/** The crew's pace here: the operator's slots, held to what the windows have left. */
+export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
+  const accounts = grantedAccounts(app.db, repo.id, repo.ownerId).flatMap(
+    (a) => {
+      const s = standing(app.db, a.id, now);
+      return s === undefined ? [] : [{ name: a.name, standing: s }];
+    },
+  );
+  return pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
+}
+
+export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "idle";
 
 /**
  * One turn of the loop for one repository. Returns what it did, for the
@@ -286,7 +314,11 @@ export async function driveRepo(
     crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
   );
   const slotted = slottedRuns(active, crew);
-  if (slotted.length >= repo.autonomySlots) {
+  // Slots follow the subscriptions' remaining windows, never past the
+  // operator's; at a wall nothing new starts until the reset.
+  const paced = repoPace(app, repo, now);
+  if (paced.slots === 0 && slotted.length === 0) return "waiting";
+  if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map.
     if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
     return "full";

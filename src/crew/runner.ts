@@ -75,6 +75,7 @@ import {
   whenText,
 } from "./limits.ts";
 import { noteLimit } from "../core/standing.ts";
+import { pauseReason } from "./pacing.ts";
 import {
   pickSubscription,
   restSubscription,
@@ -795,7 +796,7 @@ async function work(
           );
           return {
             state: "paused",
-            summary: `paused: ${said}; ${next.subscription.name} takes over`,
+            summary: `paused: ${pauseReason(picked.subscription.name, limit, said)}; ${next.subscription.name} takes over`,
             resumeAt: new Date().toISOString(),
             sessionId: result.sessionId,
             costUsd: result.costUsd,
@@ -806,7 +807,7 @@ async function work(
         const at = resumeAt(result.result, new Date());
         return {
           state: "paused",
-          summary: `paused: ${said}; resumes ${whenText(at)}`,
+          summary: `paused: ${pauseReason(picked.kind === "ready" ? picked.subscription.name : undefined, limitOf(result.result, new Date()), said)}; resumes ${whenText(at)}`,
           resumeAt: at.toISOString(),
           sessionId: result.sessionId,
           costUsd: result.costUsd,

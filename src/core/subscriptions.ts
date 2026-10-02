@@ -405,3 +405,24 @@ export function pickSubscription(
     token: opened.value,
   };
 }
+
+/**
+ * The accounts the crew on a repository works on, for pacing: the
+ * repository's own grants if it has any, else its owner's — whichever
+ * agent they name. Empty when none is granted (the forge's own token).
+ */
+export function grantedAccounts(
+  db: Database,
+  repoId: string,
+  ownerId: string,
+): { id: string; name: string }[] {
+  const rows = db
+    .query<{ id: string; name: string; scope_id: string }, [string, string]>(
+      `SELECT DISTINCT s.id, s.name, g.scope_id
+       FROM subscription_grant g JOIN subscription s ON s.id = g.subscription_id
+       WHERE g.scope_id IN (?1, ?2) ORDER BY s.name COLLATE NOCASE`,
+    )
+    .all(repoId, ownerId);
+  const own = rows.filter((r) => r.scope_id === repoId);
+  return (own.length > 0 ? own : rows).map((r) => ({ id: r.id, name: r.name }));
+}

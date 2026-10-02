@@ -339,6 +339,16 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(refused).toBeDefined();
     expect(refused.state).toBe("cancelled");
     expect(refused.summary).toContain("work takes over");
+    // The refused run named the real reason, not a generic pause.
+    expect(refused.summary).toMatch(/personal's (weekly|5-hour) window is full until \d\d:\d\d UTC/);
+    // Stickiness: the run never changed account mid-flight; the successor did.
+    const first = app.db
+      .query<{ subscription_id: string | null }, [string]>(
+        "SELECT subscription_id FROM run WHERE id = ?1",
+      )
+      .get(refused.id)!;
+    expect(first.subscription_id).toBe(personal.value.id);
+    expect(done.id).not.toBe(refused.id);
     const spent = app.db
       .query<
         { subscription_id: string | null },

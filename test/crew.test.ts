@@ -479,7 +479,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       (r) => r.issueId === issue.value.id && r.attempt === 0,
     );
     expect(paused.state).toBe("cancelled");
-    expect(paused.summary).toMatch(/^paused: You.ve hit your session limit/);
+    expect(paused.summary).toMatch(/^paused: the 5-hour window is full until 07:20 UTC; resumes 07:21 UTC/);
     expect(paused.summary).toContain("resumes 07:21 UTC");
     expect(paused.sessionId).toBe("fake-1");
     // Nothing landed: no branch pushed, no pull.
