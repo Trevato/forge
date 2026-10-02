@@ -603,10 +603,9 @@ something you can click" is the whole claim.
 
 ### 6·0a. The dashboard's panes
 
-`Apps` (only when there are any; `a` opens the apps screen regardless),
 `Repositories`, `Recent activity`, `On you`, `On your machine`,
-`Organizations`. Each is
-a pane with its own cursor: `tab` / `shift+tab` cycles, the focused one wears
+`Organizations`. What is running is the studio's question, on the web; the
+terminal's dashboard is the code and the conversations. Each is a pane with its own cursor: `tab` / `shift+tab` cycles, the focused one wears
 the accent frame, `j`/`k` move inside it and `enter` opens what it is pointing
 at — an activity row opens **the issue, pull or repository it is about**, a
 pin opens its repository, an organization opens its page. `d` on a pinned row
@@ -1050,50 +1049,35 @@ there is no lifecycle to get wrong. A burst is coalesced into one refresh.
 
 ---
 
-### 6g. Apps, runs and the crew
+### 6g. Apps, runs and the crew, where the terminal still shows them
 
-The terminal's half of §5c. `:apps`, `:new app`, `:runs` and `:app` (on a
-repository) and `:crew` (admins) reach everything from the palette.
+The terminal's half of §5c is deliberately small: running an app and
+managing the crew are the studio's (`docs/STUDIO.md`), and the terminal has
+no apps, app, runs, run or crew screen and no palette entry for one. What
+remains is where the work is reviewed:
 
-- **Apps** — every app you can see: a state dot and word, the production URL,
-  the preview count. `enter` opens the app; `n` is New app as a flow of
-  prompts (name, a sentence, visibility, an agent when any exist) that lands on
-  the repository with a toast naming the URL and the agent.
-- **App** — environments production-first, then previews by pull number, each
-  with state, commit, since, and on failure the error in words. `o` opens the
-  environment through `openEnvUrl` (an OSC 8 link plus an OSC 52 copy, with the
-  honest toast over SSH); `enter` opens its run's log; `r` redeploys, `s` stops
-  behind a confirm; `l` lists the runs. Live on the repository's `run.*` and
-  `app.*` events.
-- **Runs** and **Run** — the list names each run's conversation (`#n title`)
-  through one grouped read; the run screen subscribes to the log before it
-  reads it (both synchronous, so no line is missed or doubled), follows the
-  tail until you scroll, `G` re-follows, `x` cancels for writers.
 - **Pull** — a preview line when the repository is an app (`O` opens it,
   `P` opens production beside it: comparing the two is the review), a
   checks row in the merge box and a _waiting on checks_ state with the refusal
   in words on `m`, `a` to assign (nobody, people, then the crew with the bot
   glyph on a Nerd Font), and a Crew tab of the agent runs about it.
-- **Dashboard** — `o` on the Apps pane opens the app under the cursor in a
-  browser, through the same grant a private app needs; `t` opens its
-  terminal right here.
-- **`t` anywhere an app is** (the dashboard's Apps pane, the apps list, an
-  environment on the app screen, `T` for a pull's preview) suspends the UI
-  and runs the app's `tty` on the same pty — one connection, two programs in
-  turn, exactly as `$FORGE_EDITOR` runs — and the UI returns when it exits.
-  Every refusal (not running, no `tty`, private to a guest) is a toast in
-  the same words the ssh front door uses.
+- **`T` on a pull's preview** suspends the UI and runs the app's `tty` on
+  the same pty — one connection, two programs in turn, exactly as
+  `$FORGE_EDITOR` runs — and the UI returns when it exits. Every refusal
+  (not running, no `tty`, private to a guest) is a toast in the same words
+  the ssh front door uses.
 - **Issue** — `a` to assign; a Crew card when an agent has runs, `tab` moves
-  focus to it and `enter` opens the run.
+  focus to it.
+- **A run** is a row (`screens/runlist.ts`): state dot and word, who, why,
+  the summary. `enter` on one hands over its web page,
+  `/:owner/:name/runs/:id`, where the live log, cancel and steer are — as a
+  link when the forge knows its public URL, as the path otherwise.
 - **Settings** — the App tab (enable with slug, access and preview data; edit;
   `D` to stop running as an app behind a confirm), `C` for require checks on
   General, the Crew tab (`a` adds an agent from the forge's, `d` removes).
-- **Crew** (admins, from Account with `c`) — the roster with model and budget,
-  and the first line says whether Claude Code can run at all. `n` creates
-  through five prompts, `enter` edits a field, `d` retires behind a confirm.
 
-A guest, or a non-admin at the crew screen, is told so in words; nothing here
-is a way around the actions' answers.
+A guest is told so in words; nothing here is a way around the actions'
+answers.
 
 ## 7. Two rules that are security boundaries
 

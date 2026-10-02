@@ -1,13 +1,15 @@
 /**
- * Apps, runs and the crew, through the terminal (docs/APPS.md).
+ * Apps, runs and the crew, as the terminal still shows them (docs/APPS.md):
+ * inside an issue, a pull and a repository's settings. The apps, app, runs,
+ * run and crew screens are gone — the studio on the web is where an app is
+ * run and a crew is managed — and the tests at the end prove no key or
+ * palette entry still reaches for them.
  *
  * One real forge with a real `AppsRuntime`, driven headlessly. The app under
  * test is deliberately *not* an app — a README and nothing else — so every
  * deploy fails in milliseconds with the one sentence the runtime writes for
  * that, and the screens are asserted on the honest words they must carry:
- * "failed" beside its reason, never "failed" alone. The live half is real
- * too: a line appended to a run's log lands on the run screen through the
- * in-process listener, and an event on the bus redraws the app.
+ * "failed" beside its reason, never "failed" alone.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -25,10 +27,9 @@ import {
 } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import { getAgentByName, type Agent } from "../src/core/agents.ts";
-import { getAppByRepo } from "../src/core/apps.ts";
-import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
-import { getRepo, getRepoById, type Repo } from "../src/core/repos.ts";
+import type { Agent } from "../src/core/agents.ts";
+import { getIssue, type Issue } from "../src/core/issues.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
 import {
   claimRun,
   createRun,
@@ -36,14 +37,13 @@ import {
   listRuns,
   type Run,
 } from "../src/core/runs.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { appendRunLog } from "../src/runs/log.ts";
 import type { App, Screen } from "../src/tui/app/app.ts";
-import { createForgeApp } from "../src/tui/forge.ts";
+import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { issueScreen } from "../src/tui/screens/issue.ts";
-import { runsScreen } from "../src/tui/screens/runs.ts";
 import { pullScreen } from "../src/tui/screens/pull.ts";
 import { settingsScreen } from "../src/tui/screens/settings.ts";
 import { local } from "../src/tui/screens/where.ts";
@@ -257,69 +257,6 @@ describe("terminal: apps, runs and the crew", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the apps screen: every app, its production state in words, its URL", async () => {
-    const h = boot(forge, identityFor(alice));
-    try {
-      await h.press("a");
-      await h.until("alice/site");
-      const text = h.text();
-      expect(text).toContain("failed");
-      expect(text).toContain(`http://site.${DOMAIN}:${servers.port}`);
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
-  test("the app screen: the environment, its error, the log, the runs", async () => {
-    const h = boot(forge, identityFor(alice));
-    try {
-      await h.press("a");
-      await h.until("alice/site");
-      await h.press("enter");
-      await h.until("production");
-      // The failure is a sentence, on the row and in the panel.
-      expect(h.text()).toContain(`failed: ${NOT_AN_APP}`);
-      expect(h.text()).toContain("slug site");
-
-      // `enter` opens the deploy's log; the last line is the reason.
-      await h.press("enter");
-      await h.until("deploy production of alice/site");
-      expect(h.text()).toContain(`failed: ${NOT_AN_APP}`);
-      expect(h.text()).toContain("deploy production");
-
-      // A line written to the log now lands on screen without a keypress:
-      // the subscription was taken before the file was read.
-      appendRunLog(dataDir, productionRun.id, "a fresh line from the test");
-      await h.until("a fresh line from the test");
-
-      // Back on the app screen, `l` lists every run of the repository.
-      await h.press("esc");
-      await h.until("slug site");
-      await h.press("l");
-      await h.until("deploy production");
-      expect(h.text()).toContain("failed");
-      expect(h.text()).toContain(NOT_AN_APP);
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
-  test("the run screen refuses nothing quietly: a finished run cannot be cancelled", async () => {
-    const h = boot(forge, identityFor(alice));
-    try {
-      await h.press("a");
-      await h.until("alice/site");
-      await h.press("enter", "enter");
-      await h.until("deploy production of alice/site");
-      // `x` is disabled on a finished run: the key does nothing and the help
-      // bar says so rather than offering a cancel that would be refused.
-      await h.press("x");
-      expect(h.text()).not.toContain("Cancel this run");
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
   test("assign: nobody, the people who can read it, then the crew with its mark", async () => {
     const h = boot(forge, identityFor(alice));
     try {
@@ -346,7 +283,8 @@ describe("terminal: apps, runs and the crew", () => {
       // The head line names the assignee and says what it is.
       expect(h.text()).toContain("assigned to robo (agent)");
 
-      // The crew's work on the issue is a card; `enter` from it opens the run.
+      // The crew's work on the issue is a card; `enter` from it hands over
+      // the run's web page, where its log lives.
       const run = createRun(forge.db, {
         repoId: site.id,
         kind: "agent",
@@ -366,16 +304,7 @@ describe("terminal: apps, runs and the crew", () => {
       expect(h.text()).toContain("opened pull #2 with the melody");
       expect(h.text()).toContain("$0.42");
       await h.press("tab", "enter");
-      await h.until("agent robo");
-      expect(h.text()).toContain("cloning alice/site");
-      expect(h.text()).toContain("opened pull #2 with the melody");
-
-      // The repository's runs list names the conversation each run is
-      // about, from one grouped read; inside the issue that would only
-      // repeat the page, so the card above did not.
-      await h.push((s, ctx) => runsScreen(s, ctx, site));
-      await h.until(`agent robo · #${issue.number} Make the site sing`);
-      expect(h.text()).toContain("deploy production");
+      await h.until(`/alice/site/runs/${run.id}`);
     } finally {
       h.stop();
     }
@@ -506,64 +435,7 @@ describe("terminal: apps, runs and the crew", () => {
     }
   }, 30_000);
 
-  test("the crew screen: the roster, a new agent, and retiring one", async () => {
-    const h = boot(forge, identityFor(alice));
-    try {
-      await h.press("A");
-      await h.until("Account");
-      await h.press("c");
-      await h.until("robo");
-      expect(h.text()).toContain("sonnet");
-      expect(h.text()).toContain("I write small, careful patches.");
-      // No crew was started for this forge, and the screen says so.
-      expect(h.text()).toContain("the crew is not running on this forge");
-
-      await h.press("n");
-      await h.until("Username");
-      await h.type("pixel");
-      await h.press("enter");
-      await h.until("Display name");
-      await h.press("enter");
-      await h.until("Model");
-      await h.press("enter");
-      await h.until("Brief");
-      await h.press("enter");
-      await h.until("Budget per run");
-      await h.type("2.5");
-      await h.press("enter");
-      await h.until("pixel is on the crew");
-      expect(h.text()).toContain("$2.50/run");
-      expect(getAgentByName(forge.db, "pixel")?.budgetUsd).toBe(2.5);
-
-      await h.select("pixel");
-      await h.press("d");
-      await h.until("Retire pixel");
-      await h.press("right", "enter");
-      await h.until("pixel retired");
-      expect(getAgentByName(forge.db, "pixel")).toBeUndefined();
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
-  test("a non-admin cannot reach the crew's verbs", async () => {
-    const bob = (await import("../src/core/users.ts")).getUserByName(
-      forge.db,
-      "bob",
-    )!;
-    const h = boot(forge, identityFor(bob));
-    try {
-      await h.press("A");
-      await h.until("Account");
-      expect(h.text()).not.toContain("crew");
-      await h.press("c");
-      expect(h.text()).not.toContain("Crew");
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
-  test("the dashboard: an Apps pane and an On you pane, both enterable", async () => {
+  test("the dashboard: an On you pane, enterable, and no Apps pane", async () => {
     const mine = openIssue(forge, alice, site, {
       title: "Tune the drums",
       body: "",
@@ -575,13 +447,9 @@ describe("terminal: apps, runs and the crew", () => {
 
     const h = boot(forge, identityFor(alice));
     try {
-      await h.until("Apps");
-      expect(h.text()).toContain("On you");
+      await h.until("On you");
       expect(h.text()).toContain("Tune the drums");
-      // The apps pane is first in the tab order, one step back from repos.
-      await h.press("shift+tab", "enter");
-      await h.until("slug site");
-      await h.press("esc");
+      expect(h.text()).not.toContain("Apps");
       // repos → activity → on you.
       await h.press("tab", "tab", "enter");
       await h.until("assigned to alice");
@@ -591,75 +459,52 @@ describe("terminal: apps, runs and the crew", () => {
     }
   }, 30_000);
 
-  test("T on the app screen: tell the crew, and the free builder takes it", async () => {
+  test("the removed screens are unreachable: no palette entry, no dashboard or account key", async () => {
     const h = boot(forge, identityFor(alice));
     try {
-      await h.press("a");
-      await h.until("alice/site");
-      await h.press("enter");
-      await h.until("slug site");
-      await h.press("T");
-      await h.until("Tell the crew");
-      await h.type("Make the header pop");
-      await h.press("enter");
-      await h.until("robo is on it");
-      const told = listIssues(forge.db, site.id, { state: "all" }).find(
-        (i) => i.title === "Make the header pop",
-      );
-      expect(told?.assigneeId).toBe(robo.user.id);
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
+      await h.until("On you");
+      // alice is the site admin, so the crew entry would have been there.
+      const ids = forgeCommands(h.session)(h.app.ctx).map((c) => c.id);
+      for (const gone of ["apps", "app", "runs", "new-app", "crew"])
+        expect(ids).not.toContain(gone);
+      expect(ids).toContain("repo");
+      expect(ids).toContain("pulls");
 
-  test("N on the dashboard reaches New app directly, with no detour through Apps", async () => {
-    const h = boot(forge, identityFor(alice));
-    try {
-      await h.until("Apps");
-      await h.press("N");
-      await h.until("New app");
+      const before = h.text();
+      expect(before).not.toContain("new app");
+      for (const key of ["a", "N", "t"]) {
+        await h.press(key);
+        expect(h.text()).toBe(before);
+      }
+
+      await h.press("A");
+      await h.until("Account");
+      expect(h.text()).not.toContain("crew");
+      const account = h.text();
+      await h.press("c");
+      expect(h.text()).toBe(account);
+
+      // What stays first-class is one key away: the workspace opens on the
+      // repository, its tree and its README.
       await h.press("esc");
-      // Esc discarded the flow: the dashboard is back underneath it.
-      await h.until("Apps");
+      await h.until("On you");
+      await h.select("alice/site");
+      await h.press("enter");
+      await h.until("README.md");
     } finally {
       h.stop();
     }
   }, 30_000);
 
-  // Last on purpose: it starts a real deploy of the scaffold in the
-  // background, and nothing after it should have to share the machine.
-  test("new app, the golden path: a name, a sentence, who sees it, who works on it", async () => {
-    const h = boot(forge, identityFor(alice));
+  test("a non-admin's account screen names no crew either", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    const h = boot(forge, identityFor(bob));
     try {
-      await h.press("a");
-      await h.until("alice/site");
-      await h.press("n");
-      await h.until("New app");
-      await h.type("notes");
-      await h.press("enter");
-      await h.until("What should notes do?");
-      await h.type("A place for notes");
-      await h.press("enter");
-      await h.until("Who may see it?");
-      await h.press("enter");
-      await h.until("Who works on it?");
-      await h.select("robo");
-      await h.press("enter");
-      // The toast names the URL and the agent; the repository opens beneath.
-      await h.until(
-        `notes: starting at http://notes.${DOMAIN}:${servers.port}`,
-      );
-      expect(h.text()).toContain("robo is on #1");
-      const repo = getRepo(forge.db, "alice", "notes");
-      expect(repo).toBeDefined();
-      if (repo === undefined) return;
-      expect(repo.visibility).toBe("private");
-      expect(getAppByRepo(forge.db, repo.id)?.slug).toBe("notes");
-      const first = getIssue(forge.db, repo.id, 1);
-      expect(first?.title).toBe("Build notes");
-      expect(first?.assigneeId).toBe(robo.user.id);
+      await h.press("A");
+      await h.until("Account");
+      expect(h.text()).not.toContain("crew");
     } finally {
       h.stop();
     }
-  }, 60_000);
+  }, 30_000);
 });

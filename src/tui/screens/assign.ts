@@ -13,6 +13,7 @@
  */
 
 import { listCrew } from "../../actions/crew.ts";
+import type { Agent } from "../../core/agents.ts";
 import { assignIssue } from "../../actions/issues.ts";
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
@@ -20,8 +21,27 @@ import { getUserById, listPeople, type User } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
 import type { Session } from "../session.ts";
-import { agentPick } from "./apps.ts";
-import { errorText, pickerScreen, type PickItem } from "./common.ts";
+import {
+  errorText,
+  metaOf,
+  pickerScreen,
+  type PickItem,
+} from "./common.ts";
+
+/** An agent as a picker row: the bot mark where the font has one. */
+export function agentPick(
+  agent: Agent,
+  set: IconSet,
+): { id: string; label: string; hint: string } {
+  return {
+    id: agent.user.username,
+    label:
+      set === "nerd"
+        ? `${icon("bot", set)} ${agent.user.username}`
+        : agent.user.username,
+    hint: metaOf("agent", agent.model === "" ? "" : agent.model),
+  };
+}
 
 /**
  * ` · assigned to robo` after the opener. An agent wears the bot mark where

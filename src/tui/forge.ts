@@ -19,8 +19,6 @@ import { fileIcon, icon, type IconName } from "./ui/icons.ts";
 import type { SessionOpts, Terminal } from "./term/terminal.ts";
 import { Session, type TuiIdentity } from "./session.ts";
 import { accountScreen } from "./screens/account.ts";
-import { appScreen } from "./screens/app.ts";
-import { appsScreen, newAppFlow } from "./screens/apps.ts";
 import {
   ISSUE_MARK,
   ORIGIN_MARK,
@@ -28,9 +26,7 @@ import {
   errorText,
   promptScreen,
 } from "./screens/common.ts";
-import { crewScreen } from "./screens/crew.ts";
 import { issueScreen } from "./screens/issue.ts";
-import { runsScreen } from "./screens/runs.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
@@ -73,16 +69,6 @@ const REPO_VERBS: readonly {
   },
   { id: "new-issue", title: "New issue", open: newIssueScreen },
   { id: "new-pull", title: "New pull request", open: newPullScreen },
-  {
-    id: "runs",
-    title: "Runs in a repository",
-    open: (f, ctx, repo) => runsScreen(f, ctx, repo),
-  },
-  {
-    id: "app",
-    title: "Open an app",
-    open: (f, ctx, repo) => appScreen(f, ctx, repo),
-  },
   { id: "settings", title: "Repository settings", open: settingsScreen },
 ];
 
@@ -104,12 +90,6 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         id: "explore",
         title: "Explore repositories",
         run: () => ctx.push(exploreScreen(session, ctx)),
-      },
-      {
-        id: "apps",
-        title: "Apps",
-        hint: "what is running",
-        run: () => ctx.push(appsScreen(session, ctx)),
       },
       {
         id: "profile",
@@ -164,26 +144,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
     if (session.signedIn)
       commands.push(
         {
-          id: "new-app",
-          title: "New app",
-          hint: "a repository that runs",
-          // The flow is modals over whatever is on the stack; the palette
-          // closed already, so they draw over the screen beneath it.
-          run: () => newAppFlow(session, ctx, blank("New app")),
-        },
-        {
           id: "account",
           title: "Account settings",
           run: () => ctx.push(accountScreen(session, ctx)),
         },
       );
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "crew",
-        title: "Crew",
-        hint: "the agents on this forge",
-        run: () => ctx.push(crewScreen(session, ctx)),
-      });
     commands.push({
       id: "quit",
       title: "Quit",

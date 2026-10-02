@@ -1,8 +1,8 @@
 /**
- * Runs, as rows: the list a repository keeps, and the vocabulary every other
- * screen borrows to show one — a pull's checks, an issue's crew activity, an
- * environment's last deploy. One place decides what "failed" looks like so
- * it looks the same everywhere.
+ * Runs, as rows: the vocabulary a screen borrows to show one — a pull's
+ * checks, an issue's crew activity. One place decides what "failed" looks
+ * like so it looks the same everywhere. A run's live log is a web page
+ * (`/:owner/:name/runs/:id`); `openRunLog` hands its address over.
  *
  * A run row says four things in order: its state (a dot in the tone and the
  * word), what it was (`deploy production`, `agent robo`), why (the reason),
@@ -11,29 +11,25 @@
  * the summary that says what failed.
  */
 
-import { listRepoRuns } from "../../actions/runs.ts";
 import { getIssuesByIds, type Issue } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Run, RunState } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import type { Ctx, Screen } from "../app/app.ts";
-import { binding } from "../app/keys.ts";
+import type { Ctx } from "../app/app.ts";
 import type { Rect, Screen as Surface } from "../term/screen.ts";
 import type { Tokens } from "../ui/theme.ts";
 import { icon, type IconSet } from "../ui/icons.ts";
-import { emptyState, type Tone } from "../ui/widgets.ts";
+import type { Tone } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
 import {
   ListState,
   drawList,
-  errorText,
   hitList,
-  live,
   metaOf,
+  openLink,
   relTime,
   type ListRow,
 } from "./common.ts";
-import { runScreen } from "./run.ts";
 
 /** The tone a run's state wears — the same reading on every surface. */
 export function runTone(state: RunState): Tone | undefined {
@@ -54,13 +50,6 @@ export function runTone(state: RunState): Tone | undefined {
 /** Whether the dot is hollow: nothing has happened yet, or nothing will. */
 export const runHollow = (state: RunState): boolean =>
   state === "queued" || state === "cancelled";
-
-/** The event kinds a run passes through; what a live run list listens for. */
-export const RUN_EVENTS: readonly string[] = [
-  "run.queued",
-  "run.started",
-  "run.finished",
-];
 
 /** `deploy production`, `deploy pull #4`, `agent robo`. */
 export function runTitle(
@@ -198,66 +187,22 @@ export class RunList {
   }
 }
 
-/** Every run of one repository, newest first, live. */
-export function runsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
-  const list = new RunList(f, { nameIssues: true });
-  let failed: string | undefined;
-
-  const reload = (): void => {
-    const read = listRepoRuns(f.app, f.user, repo, { limit: 100 });
-    if (!read.ok) {
-      failed = errorText(read.error);
-      ctx.invalidate();
-      return;
-    }
-    failed = undefined;
-    list.set(read.value);
-    ctx.invalidate();
-  };
-
-  const open = (run: Run | undefined): void => {
-    if (run !== undefined) ctx.push(runScreen(f, ctx, repo, run.id));
-  };
-
-  const screen: Screen = {
-    title: `${repo.ownerName}/${repo.name} · runs`,
-    keys: [
-      binding(["j", "k"], "move"),
-      binding(["enter"], "open the log"),
-      binding(["r"], "refresh"),
-    ],
-    load(signal) {
-      live(f, signal, { repoId: repo.id, kinds: RUN_EVENTS }, reload);
-      reload();
-      return Promise.resolve();
-    },
-    render(area, s) {
-      const c = ctx.theme.c;
-      if (failed !== undefined) {
-        emptyState(s, area, c, { title: failed });
-        return;
-      }
-      if (list.runs.length === 0) {
-        emptyState(s, area, c, {
-          title: "No runs yet",
-          body: "A deploy or an agent working here will appear as a run.",
-        });
-        return;
-      }
-      list.render(s, area, c, ctx, true, open);
-    },
-    key(e) {
-      if (list.state.key(e, list.runs.length)) return true;
-      if (e.key === "enter") {
-        open(list.selected);
-        return true;
-      }
-      if (e.key === "r") {
-        reload();
-        return true;
-      }
-      return false;
-    },
-  };
-  return screen;
+/**
+ * `enter` on a run: its log, cancel and steer live on the web page, so the
+ * terminal hands over the address. With no public URL configured the path
+ * is still the answer, said as one.
+ */
+export function openRunLog(
+  f: Session,
+  ctx: Ctx,
+  repo: Repo,
+  run: Run,
+): void {
+  const path = `/${repo.ownerName}/${repo.name}/runs/${run.id}`;
+  const base = f.app.config.url;
+  if (base === undefined) {
+    ctx.toast(`the run's log is on the web at ${path}`, "attn");
+    return;
+  }
+  openLink(ctx, `${base.replace(/\/+$/, "")}${path}`);
 }

@@ -18,10 +18,11 @@ import { parseAppLogin } from "../src/apps/tty.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import type { SshServer } from "../src/ssh/server.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
-import { appsScreen } from "../src/tui/screens/apps.ts";
+import { openAppTerminal } from "../src/tui/screens/apptty.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { getAppBySlug } from "../src/core/apps.ts";
@@ -216,7 +217,7 @@ describe.skipIf(NO_OPENSSH)("a terminal for every app, over ssh", () => {
     expect(code).toBe(1);
   }, 30_000);
 
-  test("t in the forge's own terminal runs the app's terminal on the same pty, then comes back", async () => {
+  test("the forge's own terminal runs an app's terminal on the same pty, then comes back", async () => {
     const terminal = headlessTerminal(100, 30, "xterm-256color");
     const { app: tui, session } = createForgeApp(
       app,
@@ -230,21 +231,11 @@ describe.skipIf(NO_OPENSSH)("a terminal for every app, over ssh", () => {
     );
     tui.start();
     await settleApp(tui);
-    tui.ctx.push(appsScreen(session, tui.ctx));
-    await settleApp(tui);
-    // Narrow the list to `hello` so the cursor is on it, then `t`.
-    for (const key of ["/", "h", "e", "l", "l", "o", "enter"]) {
-      tui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
-      await settleApp(tui);
-    }
+    // What a pull's `T` does for its preview, here for production: the
+    // dashboard steps aside for the app's own terminal.
     terminal.takeOutput();
-    tui.dispatch({
-      type: "key",
-      key: "t",
-      ctrl: false,
-      alt: false,
-      shift: false,
-    });
+    const hello = getRepo(app.db, "alice", "hello")!;
+    const ran = openAppTerminal(session, tui.ctx, hello, "production");
     const deadline = Date.now() + 10_000;
     while (!terminal.output().includes("j/k move") && Date.now() < deadline)
       await Bun.sleep(50);
@@ -254,11 +245,15 @@ describe.skipIf(NO_OPENSSH)("a terminal for every app, over ssh", () => {
     // …and `q` ends it, which is when the forge's UI comes back.
     terminal.feed("q");
     const back = Date.now() + 10_000;
-    while (!tui.screen.toText().includes("filter apps") && Date.now() < back) {
+    await ran;
+    while (
+      !tui.screen.toText().includes("filter repositories") &&
+      Date.now() < back
+    ) {
       await Bun.sleep(50);
       await settleApp(tui);
     }
-    expect(tui.screen.toText()).toContain("hello");
+    expect(tui.screen.toText()).toContain("alice/hello");
     tui.stop();
   }, 40_000);
 

@@ -38,7 +38,6 @@ import {
   ago,
   runAsync,
 } from "./common.ts";
-import { crewScreen } from "./crew.ts";
 
 const TABS = ["Profile", "Tokens", "SSH keys"] as const;
 
@@ -58,29 +57,23 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
   const screen: Screen = {
     title: "Account",
     get keys() {
-      // The crew is a forge admin's to manage, so the key is only there for
-      // one — a non-admin would land on a screen that says no to everything.
-      const crew = f.user?.isAdmin === true ? [binding(["c"], "crew")] : [];
       if (tab === 0)
         return [
           binding(["tab"], "next tab"),
           binding(["d"], "display name"),
           binding(["e"], "email"),
           binding(["p"], "password"),
-          ...crew,
         ];
       if (tab === 1)
         return [
           binding(["tab"], "next tab"),
           binding(["n"], "new token"),
           binding(["D"], "revoke"),
-          ...crew,
         ];
       return [
         binding(["tab"], "next tab"),
         binding(["n"], "add key"),
         binding(["D"], "delete key"),
-        ...crew,
       ];
     },
     load() {
@@ -100,7 +93,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           ["username", f.user.username],
           ["display name", f.user.displayName || "(none)"],
           ["email", f.user.email],
-          ["role", f.user.isAdmin ? "site admin — c manages the crew" : "user"],
+          ["role", f.user.isAdmin ? "site admin" : "user"],
           ["joined", ago(f.user.createdAt)],
         ]);
         return;
@@ -142,10 +135,6 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
       if (e.key === "tab") {
         tab = (tab + 1) % TABS.length;
         state.index = 0;
-        return true;
-      }
-      if (e.key === "c" && f.user?.isAdmin === true) {
-        ctx.push(crewScreen(f, ctx));
         return true;
       }
       if (tab === 0) return profileKey(e);

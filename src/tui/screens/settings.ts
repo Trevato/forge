@@ -51,7 +51,7 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { labelChip, tabs } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { agentPick } from "./apps.ts";
+import { agentPick } from "./assign.ts";
 import {
   ListState,
   confirmScreen,
@@ -65,7 +65,6 @@ import {
   promptScreen,
   runAsync,
 } from "./common.ts";
-import { budgetText } from "./crew.ts";
 import { refPickerScreen } from "./refs.ts";
 import { local } from "./where.ts";
 
@@ -77,6 +76,11 @@ const TABS = [
   "Crew",
   "Danger",
 ] as const;
+
+/** `$5.00/run`, or the forge's default said as such. */
+function budgetText(budgetUsd: number): string {
+  return budgetUsd > 0 ? `$${budgetUsd.toFixed(2)}/run` : "default budget";
+}
 
 export function settingsScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let current = repo;

@@ -56,23 +56,12 @@ import {
   errorText,
   hitList,
   live,
-  openLink,
   relTime,
   runAsync,
   type ListRow,
 } from "./common.ts";
-import { openEnvUrl } from "../../actions/apps.ts";
-import { openAppTerminal } from "./apptty.ts";
 import { describeEvent, type FeedLine } from "./activity.ts";
 import { accountScreen } from "./account.ts";
-import { appScreen } from "./app.ts";
-import {
-  appRow,
-  appsScreen,
-  listVisibleApps,
-  newAppFlow,
-  type AppItem,
-} from "./apps.ts";
 import { exploreScreen } from "./explore.ts";
 import { issueScreen } from "./issue.ts";
 import { newRepoScreen } from "./newrepo.ts";
@@ -83,14 +72,13 @@ import { local } from "./where.ts";
 import { signInScreen } from "./signin.ts";
 
 /**
- * The six things a dashboard is about. Order is the `tab` order: apps first
- * because "what is running" is the question a person drops in to answer,
- * then the repositories, then what happened, then what is waiting on you.
+ * The five things a dashboard is about. Order is the `tab` order: the
+ * repositories, then what happened, then what is waiting on you. What is
+ * running is the studio's question, on the web.
  */
-type PaneId = "apps" | "repos" | "activity" | "onyou" | "machine" | "orgs";
+type PaneId = "repos" | "activity" | "onyou" | "machine" | "orgs";
 
 const TITLES: Readonly<Record<PaneId, string>> = {
-  apps: "Apps",
   repos: "Repositories",
   activity: "Recent activity",
   onyou: "On you",
@@ -104,14 +92,8 @@ interface OnYouItem {
   readonly repo: Repo;
 }
 
-/** The apps card shows this many before it scrolls. */
-const APPS_ROWS = 5;
-/** The apps card is drawn only when the repositories keep at least this. */
-const REPOS_MIN_ROWS = 6;
-
 /** The `tab` order, whichever of these the frame had room for. */
 const ORDER: readonly PaneId[] = [
-  "apps",
   "repos",
   "activity",
   "onyou",
@@ -125,12 +107,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let orgs: string[] = [];
   let pins: Pin[] = [];
   let pinned = new Set<string>();
-  let apps: AppItem[] = [];
   let onYou: OnYouItem[] = [];
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
-    apps: new ListState(),
     repos: new ListState(),
     activity: new ListState(),
     onyou: new ListState(),
@@ -145,10 +125,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pins = f.user ? listPins(f.db, f.user.id) : [];
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     const all = listReposVisibleTo(f.db, f.user, { limit: 200 });
-    // The apps are among the rows just listed: one grouped read, no second
-    // listing. Every visible app is shown, not only "yours" — what is
-    // running is the question, whoever owns it.
-    apps = listVisibleApps(f, all);
     onYou = assignedToMe();
     // "Yours" is ownership plus the orgs you are on a team of; everything
     // else lives in Explore, one key away.
@@ -204,26 +180,22 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * frame decides, not a rule repeated here: at two columns everything is
    * up; narrower, the activity feed stacks under the repositories and the
    * three small cards wait for a wider window; shorter still, the
-   * repositories have the whole body. The apps card is only there when there
-   * is an app and the repositories keep their rows — an empty card saying so
-   * would take the rows they need, and `a` opens the apps screen regardless.
+   * repositories have the whole body.
    */
   let drawn: ReadonlySet<PaneId> = new Set<PaneId>(["repos"]);
   const panes = (): PaneId[] => ORDER.filter((pane) => drawn.has(pane));
 
   const at = (pane: PaneId): ListState => cursors[pane];
   const size = (pane: PaneId): number =>
-    pane === "apps"
-      ? apps.length
-      : pane === "repos"
-        ? shown().length
-        : pane === "activity"
-          ? feed.length
-          : pane === "onyou"
-            ? onYou.length
-            : pane === "machine"
-              ? pins.length
-              : orgs.length;
+    pane === "repos"
+      ? shown().length
+      : pane === "activity"
+        ? feed.length
+        : pane === "onyou"
+          ? onYou.length
+          : pane === "machine"
+            ? pins.length
+            : orgs.length;
 
   const cycle = (step: number): void => {
     const list = panes();
@@ -294,10 +266,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
   };
 
-  const openApp = (item: AppItem | undefined): void => {
-    if (item !== undefined) ctx.push(appScreen(f, ctx, item.repo));
-  };
-
   const openAssigned = (item: OnYouItem | undefined): void => {
     if (item === undefined) return;
     const src = local(f, item.repo);
@@ -310,8 +278,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   /** `enter` on whatever the focused pane's cursor is on. */
   const openHere = (): void => {
-    if (focus === "apps") openApp(apps[at("apps").index]);
-    else if (focus === "repos") openRepo(shown()[at("repos").index]);
+    if (focus === "repos") openRepo(shown()[at("repos").index]);
     else if (focus === "activity") openEvent(feed[at("activity").index]);
     else if (focus === "onyou") openAssigned(onYou[at("onyou").index]);
     else if (focus === "machine") openPin(pins[at("machine").index]);
@@ -329,16 +296,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["j", "k"], "move"),
         binding(["enter"], "open"),
         binding(["/"], "filter"),
-        binding(["a"], "apps"),
-        binding(["o"], "open in browser", { disabled: focus !== "apps" }),
-        binding(["t"], "terminal", { disabled: focus !== "apps" }),
         binding(["e"], "explore"),
         binding(["p"], "pin", { disabled: !f.signedIn }),
         binding(["d"], "unpin", {
           disabled: focus !== "machine" || pins.length === 0,
         }),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
-        binding(["N"], "new app", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
         binding(["r"], "refresh"),
@@ -346,8 +309,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     },
     load(signal) {
       // Anything anyone does anywhere the viewer can see lands here: the
-      // repo list, the counts beside it, the activity feed, the apps and
-      // what is on you are all functions of the outbox, so one subscription
+      // repo list, the counts beside it, the activity feed and what is on
+      // you are all functions of the outbox, so one subscription
       // refreshes all of them. (Run events carry a repo id, so they pass the
       // same filter as everything else.)
       live(f, signal, {}, reload);
@@ -361,29 +324,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         main: fill(3),
         aside: fill(2),
       });
-      const appsCard = Math.min(apps.length, APPS_ROWS) + 2;
-      const appsH =
-        apps.length > 0 && main.h - appsCard - 1 >= REPOS_MIN_ROWS
-          ? appsCard
-          : 0;
       // Decide what is on screen before drawing any of it: the focus ring is
       // painted by the draws, and a window that just shrank may have taken
       // the focused pane away, in which case the cursor lands on the
       // repositories, which are always there.
       const here = new Set<PaneId>(["repos"]);
-      if (appsH > 0) here.add("apps");
       if (aside !== undefined) here.add("activity");
       if (aside !== undefined && !stacked && f.signedIn)
         here.add("onyou").add("machine").add("orgs");
       drawn = here;
       if (!here.has(focus)) focus = "repos";
 
-      const [appsArea, box, list] = split(main, "v", [
-        len(appsH),
-        len(1),
-        fill(1),
-      ]);
-      if (appsH > 0) drawApps(s, appsArea!, c, set);
+      const [box, list] = split(main, "v", [len(1), fill(1)]);
       ctx.setCursor(filter.render(s, box!, c, "filter repositories"));
       drawRepos(s, list!, c, set);
       if (aside === undefined) return;
@@ -421,26 +373,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ctx.push(exploreScreen(f, ctx));
         return true;
       }
-      if (e.key === "a") {
-        ctx.push(appsScreen(f, ctx));
-        return true;
-      }
-      // Production, one key from the dashboard: through `openEnvUrl`, so a
-      // private app's grant rides along.
-      if (e.key === "o" && focus === "apps") {
-        const item = apps[at("apps").index];
-        if (!item) return true;
-        const url = openEnvUrl(f.app, f.user, item.repo, "production");
-        if (url.ok) openLink(ctx, url.value);
-        else ctx.toast(errorText(url.error), "danger");
-        return true;
-      }
-      // The app's own terminal, on this very pty: the UI steps aside.
-      if (e.key === "t" && focus === "apps") {
-        const item = apps[at("apps").index];
-        if (item) void openAppTerminal(f, ctx, item.repo, "production");
-        return true;
-      }
       if (e.key === "d" && focus === "machine") {
         unpin(pins[at("machine").index]);
         return true;
@@ -461,10 +393,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }
       if (e.key === "n" && f.signedIn) {
         ctx.push(newRepoScreen(f, ctx));
-        return true;
-      }
-      if (e.key === "N" && f.signedIn) {
-        newAppFlow(f, ctx, screen);
         return true;
       }
       if (e.key === "A" && f.user) {
@@ -488,32 +416,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   };
 
   // ---- the panes ----
-
-  /** What is running: every app, its production state, and its URL. */
-  function drawApps(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
-    const on = focus === "apps";
-    const inner = card(s, r, c, {
-      title: `${icon("terminal", set)} ${TITLES.apps}`,
-      focused: on,
-    });
-    drawList(
-      s,
-      inner,
-      c,
-      at("apps"),
-      apps.map((item) => appRow(item, set)),
-      on,
-    );
-    hitList(ctx, inner, at("apps"), apps.length, {
-      select: () => {
-        focus = "apps";
-      },
-      open: (index) => {
-        focus = "apps";
-        openApp(apps[index]);
-      },
-    });
-  }
 
   /** The inbox: what is assigned to this account, across every repository. */
   function drawOnYou(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
@@ -563,7 +465,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       emptyState(s, r, c, {
         title: f.signedIn ? "No repositories yet" : "Nothing public yet",
         body: f.signedIn
-          ? "Press N for a new app, n for a plain repository, or e to explore."
+          ? "Press n for a new repository, or e to explore."
           : "Press s to sign in, or e to explore.",
       });
       return;
