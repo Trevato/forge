@@ -8,7 +8,9 @@ turned off, with what each move costs and what it gives up.
 
 ## What a host owes the forge
 
-- **Binaries**: `bun`, `git`, `claude` (the crew), `chromium` (the look).
+- **Binaries**: `bun`, `git`, `claude` (the crew), `chromium` (the look), and
+  `tofu` where a run spawns another forge (`infra/forge-cloudflare`,
+  `docs/SPIKE-CLOUDFLARE.md`).
 - **A name and a wildcard**: `forge.example` for the forge, `*.forge.example`
   for the apps it serves (`FORGE_APP_DOMAIN`). One wildcard certificate
   covers them; the forge speaks plain HTTP on `:3000` and expects a proxy in
