@@ -523,6 +523,12 @@ describe("prompts from Instagram", () => {
     });
     expect("token" in item).toBe(false);
     sourceId = item.id;
+    // The API stamps the real date; the story is told on the test's clock.
+    app.db
+      .query(
+        "UPDATE prompt_source SET token_refreshed_at = ?2, created_at = ?2 WHERE id = ?1",
+      )
+      .run(sourceId, "2026-09-28T14:00:00.000Z");
 
     // Sealed in the row, opened only by its own id, absent from every listing.
     const row = app.db
