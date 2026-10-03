@@ -114,7 +114,7 @@ export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
 export type LineKind = "tool" | "forge" | "say" | "you";
 
 const FORGE_LINE =
-  /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+  /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\$ |session |the session|interrupted|passed in|install |test |start |ready |process |timing: )/;
 
 export function lineKind(line: string): LineKind {
   if (line.startsWith("→ ")) return "tool";

@@ -837,6 +837,33 @@ describe("git process limits and timeouts", () => {
     expect(order).toEqual([1, 2, 3]);
   });
 
+  test("a `first` waiter goes ahead of the others, and FIFO among its own kind", async () => {
+    const gate = new Gate(1);
+    const order: string[] = [];
+    const held = await gate.acquire();
+    const waiters = (
+      [
+        ["preview-1", false],
+        ["production-a", true],
+        ["preview-2", false],
+        ["production-b", true],
+      ] as const
+    ).map(async ([name, first]) => {
+      const release = await gate.acquire({ first });
+      order.push(name);
+      release();
+    });
+    held();
+    await Promise.all(waiters);
+    expect(order).toEqual([
+      "production-a",
+      "production-b",
+      "preview-1",
+      "preview-2",
+    ]);
+    expect(gate.stats().active).toBe(0);
+  });
+
   test("concurrent git reads never exceed the process cap", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-gate-"));
     try {

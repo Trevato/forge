@@ -428,25 +428,10 @@ describe("checks", () => {
   });
 
   test("when a slot frees, the newest of several queued checks runs first", async () => {
-    // A slow check on its own environment holds the only slot.
-    const held = await commitToBranch(app, alice, repo, {
-      branch: "order-hold",
-      message: "Hold the slot",
-      files: [
-        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
-      ],
-    });
-    if (!held.ok) throw new Error(JSON.stringify(held.error));
-    const holder = await checks.request(
-      repo,
-      "order-hold",
-      held.value.commitOid,
-      "push",
-    );
-    expect(holder).toBeDefined();
-
-    // Three more, on three environments so none supersedes another, queue
-    // behind it — oldest requested first.
+    // Three checks, on three environments so none supersedes another. Their
+    // commits are written before the slot is taken: written after, on a
+    // loaded machine they can outlast the holder, and the oldest then finds
+    // the slot free instead of queueing.
     const oldest = await commitToBranch(app, alice, repo, {
       branch: "order-a",
       message: "A",
@@ -465,6 +450,24 @@ describe("checks", () => {
       files: [{ path: "forge.json", content: checkJson("test -f OK.md") }],
     });
     if (!newest.ok) throw new Error(JSON.stringify(newest.error));
+
+    // A slow check on its own environment holds the only slot, and the
+    // three queue behind it — oldest requested first.
+    const held = await commitToBranch(app, alice, repo, {
+      branch: "order-hold",
+      message: "Hold the slot",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
+      ],
+    });
+    if (!held.ok) throw new Error(JSON.stringify(held.error));
+    const holder = await checks.request(
+      repo,
+      "order-hold",
+      held.value.commitOid,
+      "push",
+    );
+    expect(holder).toBeDefined();
 
     const oldestRun = await checks.request(
       repo,

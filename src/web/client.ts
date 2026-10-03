@@ -187,7 +187,7 @@ const elapsedTickJs = /* js */ `
 `;
 
 const logLineJs = /* js */ `
-  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process |timing: )/;
   function line(kind, speaker, fill) {
     var el = document.createElement('div');
     el.className = 'ln ln-' + kind;

@@ -91,6 +91,13 @@ around it. None is advisory.
    line stays measured from `startedAt` and says `after the deploy
 started`; a deploy no push asked for — a redeploy someone pressed, a
    boot reconcile — is worded the same way and never claims a push.
+   Where that time went is in the log too, step by step
+   (`apps/timing.ts`): a `timing:` line before the process starts splits
+   the wait for a permit (`turn`), reading the manifest, the checkout, the
+   data and the setup, and one after it answers says how long the process
+   took and when it first said anything. A restart brings every app's
+   production back before any preview, and a production deploy waiting
+   for a permit goes ahead of the previews waiting for one.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
    visibility), and it is set apart from the repository's own: the code can

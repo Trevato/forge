@@ -17,6 +17,7 @@ import { forgeApiUrl } from "./token.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { stripForgeDirs } from "../runs/paths.ts";
+import { seconds } from "./timing.ts";
 
 export interface ProcessHandle {
   readonly pid: number;
@@ -314,6 +315,8 @@ export async function startProcess(
 
   const port = freePort();
   log(`$ ${manifest.run}  (PORT=${port})`);
+  const spawnedAt = Date.now();
+  let firstOutputAt: number | undefined;
   const proc = Bun.spawn(["/bin/sh", "-c", `exec ${manifest.run}`], {
     cwd: input.dir,
     env: appEnv({
@@ -335,6 +338,7 @@ export async function startProcess(
   // Output is pumped for the life of the process, not just the start.
   const recent: string[] = [];
   const remember = (raw: string): void => {
+    firstOutputAt ??= Date.now();
     const line = stripForgeDirs([input.dir, input.dataDir], raw);
     recent.push(line);
     if (recent.length > 20) recent.shift();
@@ -381,6 +385,12 @@ export async function startProcess(
     });
   }
   log(`ready: ${input.url}`);
+  // How the process's own share of the start divides: the time until it
+  // first said anything (the runtime loading the app, the app's own boot
+  // work) and the time until its health path answered.
+  log(
+    `timing: answered ${seconds(Date.now() - spawnedAt)} after the process was started${firstOutputAt === undefined ? "" : ` — its first output after ${seconds(firstOutputAt - spawnedAt)}`}`,
+  );
   return ok({ handle, tested });
 }
 

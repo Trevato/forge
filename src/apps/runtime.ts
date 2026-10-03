@@ -47,6 +47,7 @@ import { appendRunLog } from "../runs/log.ts";
 import { primaryDomain } from "../core/domains.ts";
 import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
+import { seconds, Stopwatch } from "./timing.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
@@ -224,8 +225,7 @@ const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
 
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {
-  const ms = Math.max(0, Date.parse(toIso) - Date.parse(fromIso));
-  return `${(ms / 1000).toFixed(1)}s`;
+  return seconds(Date.parse(toIso) - Date.parse(fromIso));
 }
 
 /**
@@ -531,13 +531,20 @@ export class AppsRuntime {
         }),
       );
     });
+    // Every app's production first, then every app's previews: deploys
+    // take the gate in the order they are asked for, and the environment a
+    // person actually visits must never come back behind someone's preview.
     const known = new Set<string>();
+    const present: { record: AppRecord; repo: Repo }[] = [];
     for (const record of listApps(this.app.db)) {
       known.add(record.id);
       const repo = getRepoById(this.app.db, record.repoId);
-      if (!repo) continue;
-      await this.reconcileApp(record, repo, "boot");
+      if (repo) present.push({ record, repo });
     }
+    for (const { record, repo } of present)
+      await this.reconcileApp(record, repo, "boot", "production");
+    for (const { record, repo } of present)
+      await this.reconcileApp(record, repo, "boot", "preview");
     this.pruneDirs(known);
     this.sweeper = setInterval(
       () => void this.sweep(),
@@ -591,8 +598,9 @@ export class AppsRuntime {
     })) {
       const env = previewEnv(pull.number);
       open.add(env);
+      if (only === "production") continue;
       const head = await this.pullHead(dir, pull);
-      if (head === undefined || only === "production") continue;
+      if (head === undefined) continue;
       // A preview the forge built in an earlier life comes back asleep, not
       // deployed: nobody is looking at it this second, and the first who
       // does wakes it warm. Thirty previews starting at once is what a
@@ -859,10 +867,21 @@ export class AppsRuntime {
       `deploy ${state.env} of ${repo.ownerName}/${repo.name} at ${run.commitOid.slice(0, 7)} (${run.reason})`,
     );
 
+    // The clock starts at the claim, the instant the log calls "the deploy
+    // started"; the first lap is the wait for a permit. Production goes
+    // ahead of previews waiting for one: it is the environment a person
+    // actually visits.
+    const clock = new Stopwatch();
     // A deploy that throws is a failed run, never a fallen forge: the chain
     // this runs on would otherwise reject unhandled and take the process.
     const outcome = await this.gate
-      .run(() => this.bringUp(state, repo, run, write, abort.signal))
+      .run(
+        () => {
+          clock.lap("turn");
+          return this.bringUp(state, repo, run, write, abort.signal, clock);
+        },
+        { first: state.env === "production" },
+      )
       .catch((error: unknown) => ({
         ok: false as const,
         error: `deploy failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -994,6 +1013,7 @@ export class AppsRuntime {
     run: Run,
     write: (line: string) => void,
     signal: AbortSignal,
+    clock: Stopwatch,
   ): Promise<
     | { ok: true; value: Live; tested: Promise<Result<void, string>> }
     | { ok: false; error: string }
@@ -1004,6 +1024,7 @@ export class AppsRuntime {
       readFileAt(bare, run.commitOid, "package.json"),
     ]);
     const manifest = parseManifest(forgeJson, packageJson);
+    clock.lap("manifest");
     if (!manifest.ok) {
       return {
         ok: false,
@@ -1027,6 +1048,7 @@ export class AppsRuntime {
       const exported = await exportTree(bare, run.commitOid, dir);
       if (!exported.ok) return { ok: false, error: exported.error };
     }
+    clock.lap(warm ? "checkout (warm)" : "checkout");
 
     const seeded = ensureEnvData(
       this.app.config.dataDir,
@@ -1043,6 +1065,7 @@ export class AppsRuntime {
       write(`data: ${seeded} from production`);
     else if (seeded === "empty" && state.env !== "production")
       write("data: starting empty");
+    clock.lap("data");
 
     // The process's own credential; every way out of here without a
     // process to hold it revokes it.
@@ -1074,6 +1097,8 @@ export class AppsRuntime {
       log: write,
       warm,
     };
+    clock.lap("setup");
+    write(clock.line("starting the process"));
     const start = async (): ReturnType<typeof startProcess> => {
       try {
         return await startProcess({ ...startInput, signal });
