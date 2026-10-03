@@ -7,7 +7,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
 import { firstFetchRetry } from "../src/origins/mirror.ts";
-import { getJob, settled } from "../src/origins/jobs.ts";
+import { settled } from "../src/origins/jobs.ts";
 import {
   mirrorAndWait,
   newFakeState,
@@ -789,28 +789,36 @@ describe("the fork flow", () => {
       push: false,
       admin: false,
     });
-    // Making the repository is two requests; the retry must not fire between
-    // them and fetch it empty, so it waits longer than the seed can take.
-    const found = firstFetchRetry.ms;
-    firstFetchRetry.ms = [8_000];
-    const started = await api(`/api/v1/user/origins/${forgejoOrigin}/mirror`, {
-      method: "POST",
-      body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
-    });
-    expect(started.status).toBe(202);
-    // Seeded only once the first pass has moved past its fetch (it found
-    // nothing and is waiting to try again, `firstFetchRetry` in
-    // `src/origins/mirror.ts`): seeding on a timer could land mid-fetch on a
-    // slow machine and be fetched half-made.
-    const jobId = ((await started.clone().json()) as { job: { id: string } }).job.id;
-    for (let i = 0; i < 400; i++) {
-      const stage = getJob(jobId)?.stage;
-      if (stage !== "creating" && stage !== "fetching") break;
-      await new Promise((r) => setTimeout(r, 25));
+    // The first fetch must find nothing and the retry must find the whole
+    // repository. Making it is two requests (create, then commit), so a
+    // retry on a timer can land between them and fetch it empty, and a
+    // test that polls for "the first fetch has failed" can miss the
+    // moment (#541). Instead the retry's wait *is* the seeding: the first
+    // fetch runs before anything exists, and the second only once both
+    // requests have answered.
+    const found = { ...firstFetchRetry };
+    let seeded = 0;
+    firstFetchRetry.ms = [0];
+    firstFetchRetry.wait = async () => {
+      seeded++;
+      await seedUpstream("late");
+    };
+    let job: Awaited<ReturnType<typeof mirrorAndWait>>;
+    try {
+      const started = await api(
+        `/api/v1/user/origins/${forgejoOrigin}/mirror`,
+        {
+          method: "POST",
+          body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
+        },
+      );
+      expect(started.status).toBe(202);
+      job = await mirrorAndWait(started);
+    } finally {
+      Object.assign(firstFetchRetry, found);
     }
-    await seedUpstream("late");
-    const job = await mirrorAndWait(started);
-    firstFetchRetry.ms = found;
+    // Tried twice: once before the repository existed, once after.
+    expect(seeded).toBe(1);
     expect(job?.stage).toBe("done");
     expect(job?.repo?.name).toBe("late");
     const branches = await read<{ name: string }[]>(
