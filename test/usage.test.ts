@@ -271,6 +271,8 @@ describe("the ledger", () => {
       costUsd: 0,
       wallMs: 3,
       outcome: "ok",
+      // Unsaid, a run is a build.
+      kind: "build",
     });
     expect(
       app.db

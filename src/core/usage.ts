@@ -2,7 +2,9 @@
  * Usage — the ledger of what each agent run spent: tokens in and out, the
  * provider's reported cost, wall time and outcome, attributed to the
  * subscription it ran on, the app (repository), the agent and the issue.
- * One row per run, written once as the run ends (`crew/runner.ts`); the
+ * One row per run (`crew/runner.ts`): written as `running` each time the
+ * session reports its spend, then replaced by its ending — so the totals
+ * move while the run works, and the run is never counted twice. The
  * governor reads it to pace the crew, the board to show efficiency.
  *
  * Units, stated once:
@@ -20,22 +22,37 @@
 import type { Database } from "bun:sqlite";
 
 /** How a run ended, as far as spend is concerned. */
-export type UsageOutcome = "ok" | "failed" | "paused";
-export const USAGE_OUTCOMES: readonly UsageOutcome[] = ["ok", "failed", "paused"];
+export type UsageOutcome = "ok" | "failed" | "paused" | "running";
+export const USAGE_OUTCOMES: readonly UsageOutcome[] = [
+  "ok",
+  "failed",
+  "paused",
+  "running",
+];
+
+/**
+ * What a run was for: `build` (an issue or a pull's feedback), `plan` (a
+ * planner drawing the map), `review` (a pull read), `check` (a failed
+ * check put right).
+ */
+export type UsageKind = "build" | "plan" | "review" | "check";
+export const USAGE_KINDS: readonly UsageKind[] = ["build", "plan", "review", "check"];
 
 export interface UsageEntry {
   readonly runId: string;
   readonly repoId: string;
   readonly issueId: string | null;
   readonly agentId: string | null;
-  /** The account the run worked on; null is the forge's own token. */
+  /** The account the run worked on (`PLATFORM` the forge's own token); null on lines that predate it. */
   readonly subscriptionId: string | null;
+  /** What the run was for; `build` when unsaid. */
+  readonly kind?: UsageKind | undefined;
   readonly tokensIn: number;
   readonly tokensOut: number;
   readonly costUsd: number;
   readonly wallMs: number;
   readonly outcome: UsageOutcome;
-  /** When the run ended (ISO 8601, UTC). */
+  /** When the run ended, or last reported while `running` (ISO 8601, UTC). */
   readonly at: string;
 }
 
@@ -54,8 +71,8 @@ export function recordUsage(db: Database, entry: UsageEntry): void {
   db.query(
     `INSERT OR REPLACE INTO usage
        (run_id, repo_id, issue_id, agent_id, subscription_id,
-        tokens_in, tokens_out, cost_usd, wall_ms, outcome, at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+        tokens_in, tokens_out, cost_usd, wall_ms, outcome, at, kind)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
   ).run(
     entry.runId,
     entry.repoId,
@@ -68,6 +85,7 @@ export function recordUsage(db: Database, entry: UsageEntry): void {
     whole(entry.wallMs),
     entry.outcome,
     entry.at,
+    USAGE_KINDS.includes(entry.kind ?? "build") ? (entry.kind ?? "build") : "build",
   );
 }
 
@@ -77,6 +95,7 @@ interface UsageRow {
   issue_id: string | null;
   agent_id: string | null;
   subscription_id: string | null;
+  kind: UsageKind;
   tokens_in: number;
   tokens_out: number;
   cost_usd: number;
@@ -91,6 +110,7 @@ const toEntry = (r: UsageRow): UsageEntry => ({
   issueId: r.issue_id,
   agentId: r.agent_id,
   subscriptionId: r.subscription_id,
+  kind: r.kind,
   tokensIn: r.tokens_in,
   tokensOut: r.tokens_out,
   costUsd: r.cost_usd,
@@ -107,18 +127,20 @@ export function getUsage(db: Database, runId: string): UsageEntry | undefined {
 }
 
 /** What the ledger can be summed by. Each maps to one fixed column. */
-export type UsageBy = "subscription" | "repo" | "agent" | "issue";
+export type UsageBy = "subscription" | "repo" | "agent" | "issue" | "kind";
 export const USAGE_BY: readonly UsageBy[] = [
   "subscription",
   "repo",
   "agent",
   "issue",
+  "kind",
 ];
 const COLUMN: Readonly<Record<UsageBy, string>> = {
   subscription: "subscription_id",
   repo: "repo_id",
   agent: "agent_id",
   issue: "issue_id",
+  kind: "kind",
 };
 
 export interface UsageTotals {
@@ -139,6 +161,8 @@ export interface UsageFilter {
   readonly since: string;
   /** Only this repository's runs, when given. */
   readonly repoId?: string | undefined;
+  /** Rows at or before this instant (ISO 8601), when given. */
+  readonly until?: string | undefined;
 }
 
 /**
@@ -165,7 +189,7 @@ export function usageTotals(
         cost_usd: number;
         wall_ms: number;
       },
-      [string, string | null]
+      [string, string | null, string | null]
     >(
       `SELECT ${column} AS key,
               COUNT(*) AS runs,
@@ -177,11 +201,11 @@ export function usageTotals(
               SUM(cost_usd) AS cost_usd,
               SUM(wall_ms) AS wall_ms
          FROM usage
-        WHERE at >= ?1 AND (?2 IS NULL OR repo_id = ?2)
+        WHERE at >= ?1 AND (?2 IS NULL OR repo_id = ?2) AND (?3 IS NULL OR at <= ?3)
         GROUP BY ${column}
         ORDER BY cost_usd DESC, runs DESC, key`,
     )
-    .all(filter.since, filter.repoId ?? null);
+    .all(filter.since, filter.repoId ?? null, filter.until ?? null);
   return rows.map((r) => ({
     key: r.key,
     runs: r.runs,
@@ -208,5 +232,26 @@ export function recentUsage(
         ORDER BY at DESC, run_id DESC LIMIT ?3`,
     )
     .all(filter.since, filter.repoId ?? null, Math.min(Math.max(limit, 1), 200))
+    .map(toEntry);
+}
+
+/** The costliest ledger lines since an instant, most spent first, bounded. */
+export function topUsage(
+  db: Database,
+  filter: UsageFilter,
+  limit: number,
+): UsageEntry[] {
+  return db
+    .query<UsageRow, [string, string | null, number, string | null]>(
+      `SELECT * FROM usage
+        WHERE at >= ?1 AND (?2 IS NULL OR repo_id = ?2) AND (?4 IS NULL OR at <= ?4)
+        ORDER BY cost_usd DESC, tokens_in + tokens_out DESC, run_id LIMIT ?3`,
+    )
+    .all(
+      filter.since,
+      filter.repoId ?? null,
+      Math.min(Math.max(limit, 1), 200),
+      filter.until ?? null,
+    )
     .map(toEntry);
 }

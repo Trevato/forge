@@ -36,6 +36,19 @@ export interface ClaudeInput {
    * send after the session ended returns false.
    */
   readonly onSteer?: ((send: (text: string) => boolean) => void) | undefined;
+  /**
+   * The session's spend so far, each time it reports some: tokens as each
+   * assistant message's `usage` arrives, the cost once the result names it
+   * (Claude Code reports `total_cost_usd` only at the end). Running totals
+   * for this invocation, never deltas.
+   */
+  readonly onUsage?: ((spent: Spent) => void) | undefined;
+}
+
+export interface Spent {
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+  readonly costUsd: number;
 }
 
 export interface ClaudeOutcome {
@@ -197,6 +210,9 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   let reason = "";
   let ok = false;
   let sawResult = false;
+  // A message's usage repeats on every content block of it, growing; the
+  // last word per message id is the message's spend.
+  const perMessage = new Map<string, { tokensIn: number; tokensOut: number }>();
 
   const onLine = (line: string): void => {
     if (line.trim() === "") return;
@@ -219,6 +235,21 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     }
     if (type === "assistant") {
       for (const text of assistantLines(e, input.cwd)) input.log(text);
+      const message = e["message"];
+      if (input.onUsage && typeof message === "object" && message !== null) {
+        const m = message as Record<string, unknown>;
+        if (typeof m["usage"] === "object" && m["usage"] !== null) {
+          const key = typeof m["id"] === "string" ? m["id"] : `#${perMessage.size}`;
+          perMessage.set(key, tokensOf(m["usage"]));
+          let tokensIn = 0;
+          let tokensOut = 0;
+          for (const t of perMessage.values()) {
+            tokensIn += t.tokensIn;
+            tokensOut += t.tokensOut;
+          }
+          input.onUsage({ tokensIn, tokensOut, costUsd: 0 });
+        }
+      }
       return;
     }
     if (type === "result") {
@@ -229,6 +260,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
         typeof e["total_cost_usd"] === "number" ? e["total_cost_usd"] : 0;
       turns = typeof e["num_turns"] === "number" ? e["num_turns"] : 0;
       ({ tokensIn, tokensOut } = tokensOf(e["usage"]));
+      input.onUsage?.({ tokensIn, tokensOut, costUsd });
       const terminal = e["terminal_reason"];
       // Claude Code names the budget ending twice (`error_max_budget_usd`
       // as the subtype, `budget_exhausted` as the terminal reason); the

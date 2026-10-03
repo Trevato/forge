@@ -15,7 +15,13 @@ import type { App } from "../app.ts";
 import { getIssuesByIds } from "../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../core/repos.ts";
 import { standings, type Standing } from "../core/standing.ts";
-import { listGrants, listSubscriptions } from "../core/subscriptions.ts";
+import {
+  grantedAccounts,
+  listCredentials,
+  listGrants,
+  PLATFORM,
+} from "../core/subscriptions.ts";
+import { readSpend, type Spend } from "./spend.ts";
 import {
   recentUsage,
   usageTotals,
@@ -49,7 +55,7 @@ export interface UsageReport {
   readonly since: string;
   /** Every run in the window, summed; zeros when there were none. */
   readonly total: Omit<UsageTotals, "key">;
-  /** By account; `subscription: null` is the forge's own token. */
+  /** By credential; `platform (env)` is the forge's own token. */
   readonly bySubscription: readonly Named<"subscription">[];
   readonly byAgent: readonly Named<"agent">[];
   /** By issue number; `issue: null` is a run about no issue. */
@@ -65,6 +71,8 @@ export interface UsageReport {
   readonly standing: readonly (Omit<Standing, "subscriptionId"> & {
     readonly subscription: string;
   })[];
+  /** The last 5 hours, today and the week, broken down, with the top runs. */
+  readonly spend: Spend;
 }
 
 const ZERO: Omit<UsageTotals, "key"> = {
@@ -99,7 +107,7 @@ export function readUsage(
 
   // Names, each looked up once for the whole report.
   const subscriptions = new Map(
-    listSubscriptions(db).map((s) => [s.id, s.name]),
+    listCredentials(db).map((s) => [s.id, s.name]),
   );
   const agentIds = new Set<string>();
   const issueIds = new Set<string>();
@@ -110,7 +118,7 @@ export function readUsage(
   const agents = getUsersByIds(db, [...agentIds]);
   const issues = getIssuesByIds(db, [...issueIds]);
   const subscriptionName = (id: string | null): string | null =>
-    id === null ? null : (subscriptions.get(id) ?? "a removed subscription");
+    subscriptions.get(id ?? PLATFORM) ?? "a removed subscription";
   const agentName = (id: string | null): string | null =>
     id === null ? null : (agents.get(id)?.username ?? "a removed agent");
   const issueNumber = (id: string | null): number | null =>
@@ -134,8 +142,11 @@ export function readUsage(
   const accounts = new Set<string>();
   for (const g of [...listGrants(db, repo.id), ...listGrants(db, repo.ownerId)])
     accounts.add(g.subscriptionId);
+  // Nothing granted: the crew here works on the platform's token.
+  if (grantedAccounts(db, repo.id, repo.ownerId).length === 0)
+    accounts.add(PLATFORM);
   for (const row of bySubscription)
-    if (row.key !== null && subscriptions.has(row.key)) accounts.add(row.key);
+    if (subscriptions.has(row.key ?? PLATFORM)) accounts.add(row.key ?? PLATFORM);
   const read = standings(db, [...accounts], now);
   const standingsOut = [...accounts]
     .flatMap((id) => {
@@ -164,5 +175,6 @@ export function readUsage(
       issue: issueNumber(r.issueId),
     })),
     standing: standingsOut,
+    spend: readSpend(app, now, repo.id),
   });
 }

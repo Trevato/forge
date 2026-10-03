@@ -78,10 +78,15 @@ import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
   pickSubscription,
+  PLATFORM,
   restSubscription,
   type Pick,
 } from "../core/subscriptions.ts";
-import { recordUsage, type UsageOutcome } from "../core/usage.ts";
+import {
+  recordUsage,
+  type UsageKind,
+  type UsageOutcome,
+} from "../core/usage.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
@@ -212,7 +217,14 @@ export async function executeAgentRun(
     appendRunLog(app.config.dataDir, run.id, line);
   announceRun(app, claimed);
   const started = Date.now();
-  const meter: Meter = { tokensIn: 0, tokensOut: 0, subscriptionId: null };
+  const meter: Meter = {
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+    subscriptionId: null,
+    kind: usageKind(app, claimed),
+    reportedAt: 0,
+  };
   let outcome: Outcome;
   try {
     outcome = await work(app, claimed, options, write, controller.signal, meter);
@@ -358,7 +370,70 @@ type Outcome =
 interface Meter {
   tokensIn: number;
   tokensOut: number;
+  /** US dollars reported by invocations that have ended. */
+  costUsd: number;
   subscriptionId: string | null;
+  kind: UsageKind;
+  /** When a `running` line was last written (epoch ms); 0 for never. */
+  reportedAt: number;
+}
+
+/** What a run is for, as the ledger sums it: its reason, or its agent's role. */
+function usageKind(app: App, run: Run): UsageKind {
+  if (run.reason === "review") return "review";
+  if (run.reason === "check_failed") return "check";
+  if (
+    run.actorId !== null &&
+    crewRole(app.db, run.repoId, run.actorId) === "planner"
+  )
+    return "plan";
+  return "build";
+}
+
+/** How often a running session's spend is written and announced, at most. */
+const LIVE_MS = 2_000;
+
+/**
+ * A running session's spend so far, as its `running` line in the ledger,
+ * and a `usage.delta` on the outbox so the board and the Subscriptions page
+ * move within seconds. At most once per `LIVE_MS` unless `force`; the
+ * event carries only the run's id — spend is the owner's fact, and a
+ * reader who may see it reads it from the page.
+ */
+function meterLive(
+  app: App,
+  run: Run,
+  meter: Meter,
+  live: { tokensIn: number; tokensOut: number; costUsd: number },
+  started: number,
+  force: boolean,
+): void {
+  const now = Date.now();
+  if (!force && now - meter.reportedAt < LIVE_MS) return;
+  meter.reportedAt = now;
+  try {
+    recordUsage(app.db, {
+      runId: run.id,
+      repoId: run.repoId,
+      issueId: run.issueId,
+      agentId: run.actorId,
+      subscriptionId: meter.subscriptionId,
+      kind: meter.kind,
+      tokensIn: live.tokensIn,
+      tokensOut: live.tokensOut,
+      costUsd: live.costUsd,
+      wallMs: now - started,
+      outcome: "running",
+      at: new Date(now).toISOString(),
+    });
+    app.bus.append({
+      kind: "usage.delta",
+      repoId: run.repoId,
+      payload: { runId: run.id },
+    });
+  } catch (error) {
+    log.warn("live usage not recorded", { run: run.id, error: String(error) });
+  }
 }
 
 /** The run's line in the usage ledger (`core/usage.ts`), written once it ends. */
@@ -380,6 +455,7 @@ function meterUsage(
     issueId: run.issueId,
     agentId: run.actorId,
     subscriptionId: meter.subscriptionId,
+    kind: meter.kind,
     tokensIn: meter.tokensIn,
     tokensOut: meter.tokensOut,
     costUsd: outcome.costUsd ?? 0,
@@ -669,7 +745,12 @@ async function work(
         subscriptionId: picked.subscription.id,
       });
       meter.subscriptionId = picked.subscription.id;
+    } else {
+      write("subscription: platform (env)");
+      noteRunProgress(app.db, run.id, { subscriptionId: PLATFORM });
+      meter.subscriptionId = PLATFORM;
     }
+    const started = Date.now();
     const env: Record<string, string> = {
       ...gitAuth,
       ...identity,
@@ -716,10 +797,24 @@ async function work(
         log: write,
         signal,
         onSteer: (send) => steering.set(run.id, send),
+        onUsage: (so) =>
+          meterLive(
+            app,
+            run,
+            meter,
+            {
+              tokensIn: meter.tokensIn + so.tokensIn,
+              tokensOut: meter.tokensOut + so.tokensOut,
+              costUsd: meter.costUsd + so.costUsd,
+            },
+            started,
+            so.costUsd > 0,
+          ),
         }),
       );
       meter.tokensIn += spent.tokensIn;
       meter.tokensOut += spent.tokensOut;
+      meter.costUsd += spent.costUsd;
       return spent;
     };
     write(
@@ -808,6 +903,18 @@ async function work(
             costUsd: result.costUsd,
           };
         }
+      } else {
+        // The platform's token is not rested — nothing else would take the
+        // run — but its window is noted, so its standing reads true.
+        const now = new Date();
+        const limit = limitOf(result.result, now);
+        if (limit !== undefined)
+          noteLimit(app.db, PLATFORM, {
+            window: limit.window,
+            resetsAt: limit.resetsAt.toISOString(),
+            observedAt: now.toISOString(),
+            said,
+          });
       }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());

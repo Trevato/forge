@@ -203,7 +203,9 @@ describe("apps that are busy", () => {
     "an app whose child is still working survives the sweep, then sleeps once it is done",
     async () => {
       await freshlyAwake();
-      expect(await (await viaHost("/work?s=2")).text()).toBe("working");
+      // Five seconds of work: long enough that a loaded machine still checks
+      // while the child is busy (two seconds raced the check under load).
+      expect(await (await viaHost("/work?s=5")).text()).toBe("working");
       // Well past the idle window, and still up: it was asked, and it is busy.
       await Bun.sleep(WINDOW + 700);
       expect(production().state).toBe("running");

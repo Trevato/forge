@@ -12,8 +12,11 @@ import {
   EVERYONE,
   listGrantPlaces,
   listGrants,
+  listCredentials,
   listSubscriptions,
   NAME_MAX,
+  PLATFORM,
+  scopesOf,
   setGrants,
   wakeSubscription,
   type Subscription,
@@ -47,6 +50,9 @@ import {
 } from "../ui.ts";
 import { whenText } from "../../crew/limits.ts";
 import { accountSections } from "./origins.ts";
+import { readSpend } from "../../actions/spend.ts";
+import { liveRegionsJs } from "../client.ts";
+import { spendView } from "./spend.ts";
 
 const POOL = "/settings/subscriptions";
 
@@ -57,7 +63,11 @@ function requireAdmin(ctx: Ctx): Response | undefined {
 }
 
 const kindText = (s: Subscription): string =>
-  s.kind === "oauth" ? "Claude subscription" : "API key";
+  s.id === PLATFORM
+    ? "The forge's own token, from its environment"
+    : s.kind === "oauth"
+      ? "Claude subscription"
+      : "API key";
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 const mark = (f: Figure<unknown>): string => (f.source === "read" ? "" : "~");
@@ -89,6 +99,7 @@ function shell(ctx: Ctx, body: Html): Response {
         body,
         "Account settings",
       )}`,
+    scriptJs: liveRegionsJs,
   });
 }
 
@@ -97,14 +108,30 @@ export function subscriptionsPage(ctx: Ctx): Response {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const now = new Date();
-  const pool = listSubscriptions(ctx.app.db);
+  const pool = listCredentials(ctx.app.db);
   const places = listGrantPlaces(ctx.app.db);
+  const scopes = scopesOf(ctx.app.db);
+  const scopeText = (s: Subscription): string =>
+    s.id === PLATFORM
+      ? "the crew's: every app no subscription is granted to"
+      : scopes.has(s.id)
+        ? `for ${scopes.get(s.id)!.join(", ")}`
+        : "not offered to the crew — granted nowhere";
   const standingOf = standings(
     ctx.app.db,
     pool.map((s) => s.id),
     now,
   );
 
+  const sealed = pool.filter((s) => s.id !== PLATFORM);
+  const none =
+    sealed.length > 0
+      ? null
+      : empty({
+          icon: "key",
+          title: "The crew works on the forge's own token",
+          note: "Add a subscription here and grant it to a repository or an organization; its runs spend that account instead. One granted nowhere is never offered to the crew.",
+        });
   const list =
     pool.length === 0
       ? empty({
@@ -129,8 +156,9 @@ export function subscriptionsPage(ctx: Ctx): Response {
                   icon: "clock",
                 }),
               )}`,
-              meta: html`${kindText(s)} · added
-              ${time(s.createdAt)}${by
+              meta: html`${kindText(s)} · ${scopeText(s)}${s.id === PLATFORM
+                ? null
+                : html` · added ${time(s.createdAt)}`}${by
                 ? html` by ${userLink(by.username)}`
                 : null}
               ·
@@ -179,11 +207,13 @@ export function subscriptionsPage(ctx: Ctx): Response {
                     ${btn("Use again now", { size: "sm", icon: "play" })}
                   </form>`,
               )}
-              ${confirmAction({
-                action: `${POOL}/${s.id}/delete`,
-                verb: "Remove",
-                size: "sm",
-              })}`,
+              ${when(s.id !== PLATFORM, () =>
+                confirmAction({
+                  action: `${POOL}/${s.id}/delete`,
+                  verb: "Remove",
+                  size: "sm",
+                }),
+              )}`,
             });
           }),
         );
@@ -260,7 +290,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
 
   return shell(
     ctx,
-    html`${list}
+    html`${list} ${none === null ? null : html`<div class="mt">${none}</div>`}
       ${when(
         pool.length > 0,
         () =>
@@ -271,6 +301,18 @@ export function subscriptionsPage(ctx: Ctx): Response {
             and the share kept for people is never spent by the crew.
           </p>`,
       )}
+      <div class="mt" id="spend" data-live="run.*,usage.*">
+        ${card(
+          html`<details id="spend-detail" open>
+            <summary>By credential, app, agent, issue and run kind</summary>
+            ${spendView(readSpend(ctx.app, now))}
+          </details>`,
+          {
+            head: html`${icon("clock")}
+              <h2>Spend</h2>`,
+          },
+        )}
+      </div>
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,
   );

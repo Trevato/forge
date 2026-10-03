@@ -22,7 +22,14 @@ import {
 import { appsRuntime } from "../../apps/runtime.ts";
 import { efficiencyForRepos } from "../../core/efficiency.ts";
 import { standings, WINDOW_MS } from "../../core/standing.ts";
-import { listSubscriptions } from "../../core/subscriptions.ts";
+import {
+  listCredentials,
+  PLATFORM,
+  scopesOf,
+  type Subscription,
+} from "../../core/subscriptions.ts";
+import { readSpend } from "../../actions/spend.ts";
+import { spendView } from "./spend.ts";
 import { listApps } from "../../core/apps.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { vitals, type Vitals } from "../../kernel/vitals.ts";
@@ -315,14 +322,18 @@ function figures(parts: readonly FigureWords[]): Html {
 }
 
 /**
- * Each subscription's 5-hour and weekly window — used, left, resets — for a
- * site admin only: the pool is theirs (`/settings/subscriptions`). Three
- * statements however many accounts (`standings`). A live region of its own.
+ * Each credential's 5-hour and weekly window — used, left, resets — and the
+ * crew's spend broken down, for a site admin only: the pool is theirs
+ * (`/settings/subscriptions`). The platform's token leads: it is the crew's.
+ * Then the accounts with a scope, then those with none — a person's own
+ * plan, never offered to the crew, its numbers kept apart so they never
+ * read as idle crew capacity. A fixed number of statements however many
+ * accounts (`standings`, `scopesOf`). A live region of its own.
  */
 function windowsStrip(ctx: Ctx): Html | null {
   if (!ctx.auth.user?.isAdmin) return null;
   const db = ctx.app.db;
-  const pool = listSubscriptions(db);
+  const pool = listCredentials(db);
   if (pool.length === 0) return null;
   const now = new Date();
   const all = standings(
@@ -330,39 +341,66 @@ function windowsStrip(ctx: Ctx): Html | null {
     pool.map((s) => s.id),
     now,
   );
+  const scopes = scopesOf(db);
+  const scopeWords = (id: string): string =>
+    id === PLATFORM
+      ? "every app no subscription is granted to"
+      : (scopes.get(id) ?? []).join(", ");
+  const card = (s: Subscription): Html | null => {
+    const st = all.get(s.id);
+    if (st === undefined) return null;
+    return html`<a
+      class="board-sub"
+      href="/settings/subscriptions"
+      data-key="sub:${s.id}"
+    >
+      <span class="board-sub-name">${s.name}</span>
+      ${st.windows.map((w) => {
+        const words = windowWords(w);
+        return html`<span class="board-window" data-window="${w.window}"
+          ><span class="board-window-name">${words.name}</span>
+          ${
+            words.usedPct === null
+              ? null
+              : html`<span class="board-bar"
+                  ><span class="board-fill" data-w="${words.usedPct}"></span
+                ></span>`
+          }
+          <span class="board-window-nums"
+            >${figures([words.used, words.remaining, words.resets])}</span
+          ></span
+        >`;
+      })}
+      ${when(
+        scopeWords(s.id) !== "",
+        () => html`<span class="board-sub-scope">for ${scopeWords(s.id)}</span>`,
+      )}
+    </a>`;
+  };
+  const crew = pool.filter((s) => s.id === PLATFORM || scopes.has(s.id));
+  const apart = pool.filter((s) => s.id !== PLATFORM && !scopes.has(s.id));
   return html`<div
     class="board-windows"
     id="windows"
-    data-live="run.*"
+    data-live="run.*,usage.*"
     aria-label="Subscription windows"
   >
-    ${pool.map((s) => {
-      const st = all.get(s.id);
-      if (st === undefined) return null;
-      return html`<a
-        class="board-sub"
-        href="/settings/subscriptions"
-        data-key="sub:${s.id}"
-      >
-        <span class="board-sub-name">${s.name}</span>
-        ${st.windows.map((w) => {
-          const words = windowWords(w);
-          return html`<span class="board-window" data-window="${w.window}"
-            ><span class="board-window-name">${words.name}</span>
-            ${
-              words.usedPct === null
-                ? null
-                : html`<span class="board-bar"
-                    ><span class="board-fill" data-w="${words.usedPct}"></span
-                  ></span>`
-            }
-            <span class="board-window-nums"
-              >${figures([words.used, words.remaining, words.resets])}</span
-            ></span
-          >`;
-        })}
-      </a>`;
-    })}
+    <div class="board-subs" data-group="crew">
+      <span class="board-group">The crew's</span>${crew.map(card)}
+    </div>
+    ${when(
+      apart.length > 0,
+      () =>
+        html`<div class="board-subs" data-group="apart">
+          <span class="board-group">Not offered to the crew</span>${apart.map(
+            card,
+          )}
+        </div>`,
+    )}
+    <details class="board-spend-detail" id="spend-detail">
+      <summary>Spend by credential, app, agent, issue and kind</summary>
+      ${spendView(readSpend(ctx.app, now))}
+    </details>
   </div>`;
 }
 
@@ -766,6 +804,15 @@ ${widths}
 .board-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--muted-fg); }
 .board-sub:hover { border-color: var(--border-strong); color: var(--muted-fg); }
 .board-sub-name { font-weight: 600; color: var(--fg); }
+.board-subs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.board-group { font-size: .85em; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.board-subs[data-group="apart"] .board-sub { border-style: dashed; }
+.board-sub-scope { color: var(--faint); }
+.board-spend-detail { flex-basis: 100%; }
+.board-spend-detail summary { cursor: pointer; color: var(--muted-fg); }
+.spend-table { margin-top: 8px; }
+.spend-table caption { text-align: left; color: var(--muted-fg); }
+.spend-totals { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; }
 .board-window { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
 .board-window-name { color: var(--faint); }
 .board-window .board-bar { width: 56px; }

@@ -15,6 +15,13 @@
  *
  * A token is opened only for the run's environment, never listed and never
  * shown again once added.
+ *
+ * The forge's own token is a subscription too: the row `PLATFORM`, shown as
+ * `platform (env)`, with no sealed token — its credential is the forge's
+ * environment. It is never granted; it is what a run gets when no grant
+ * reaches it, and the ledger and the windows count it like any other. The
+ * grants are each sealed account's scope, an allow-list: an account with
+ * none is never offered to the crew (a person's own plan, kept apart).
  */
 
 import type { Database } from "bun:sqlite";
@@ -51,6 +58,9 @@ interface Row {
 
 export const NAME_MAX = 40;
 const TOKEN_MAX = 512;
+
+/** The forge's own token, from its environment: a row with no sealed token. */
+export const PLATFORM = "platform";
 
 /** Every crew member at a scope, as the grant's `agent_id`. */
 export const EVERYONE = "";
@@ -149,10 +159,20 @@ export function listSubscriptions(db: Database): Subscription[] {
   return db
     .query<Row, []>(
       `SELECT id, name, kind, resting_until, resting_said, last_used_at, created_by, created_at
-       FROM subscription ORDER BY name COLLATE NOCASE`,
+       FROM subscription WHERE id <> 'platform' ORDER BY name COLLATE NOCASE`,
     )
     .all()
     .map(toSubscription);
+}
+
+/**
+ * Every credential a run can use: the platform's first, then the sealed
+ * pool. `listSubscriptions` is the pool alone — what can be granted,
+ * removed or given a token.
+ */
+export function listCredentials(db: Database): Subscription[] {
+  const platform = getSubscription(db, PLATFORM);
+  return [...(platform === undefined ? [] : [platform]), ...listSubscriptions(db)];
 }
 
 /** Its grants go with it; runs that used it keep the id as history. */
@@ -161,8 +181,9 @@ export function deleteSubscription(
   subscriptionId: string,
 ): boolean {
   return (
-    db.query("DELETE FROM subscription WHERE id = ?1").run(subscriptionId)
-      .changes > 0
+    db
+      .query("DELETE FROM subscription WHERE id = ?1 AND id <> 'platform'")
+      .run(subscriptionId).changes > 0
   );
 }
 
@@ -262,6 +283,20 @@ export function setGrants(
   })();
 }
 
+/**
+ * Where each sealed account may be used, by id: `owner/name` for a
+ * repository, `@org` for an organization, with ` (agent)` when the grant
+ * names one. An account absent here has an empty scope.
+ */
+export function scopesOf(db: Database): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const g of listGrantPlaceRows(db)) {
+    const at = g.agent === undefined ? g.place : `${g.place} (${g.agent})`;
+    out.set(g.subscriptionId, [...(out.get(g.subscriptionId) ?? []), at]);
+  }
+  return out;
+}
+
 export interface GrantPlace {
   readonly subscription: string;
   /** `owner/name` for a repository, `@org` for an organization. */
@@ -273,9 +308,16 @@ export interface GrantPlace {
 
 /** Every grant with its names on, for the page that says where each goes. */
 export function listGrantPlaces(db: Database): GrantPlace[] {
+  return listGrantPlaceRows(db).map(({ subscriptionId: _, ...g }) => g);
+}
+
+function listGrantPlaceRows(
+  db: Database,
+): (GrantPlace & { subscriptionId: string })[] {
   return db
     .query<
       {
+        subscription_id: string;
         subscription: string;
         agent: string | null;
         repo_name: string | null;
@@ -284,7 +326,7 @@ export function listGrantPlaces(db: Database): GrantPlace[] {
       },
       []
     >(
-      `SELECT s.name AS subscription, a.username AS agent,
+      `SELECT s.id AS subscription_id, s.name AS subscription, a.username AS agent,
               r.name AS repo_name, ro.username AS repo_owner, o.username AS org
        FROM subscription_grant g
        JOIN subscription s ON s.id = g.subscription_id
@@ -296,6 +338,7 @@ export function listGrantPlaces(db: Database): GrantPlace[] {
     )
     .all()
     .map((r) => ({
+      subscriptionId: r.subscription_id,
       subscription: r.subscription,
       place:
         r.repo_name !== null
@@ -316,7 +359,7 @@ export function listGrantPlaces(db: Database): GrantPlace[] {
 // ---- the pick ----
 
 export type Pick =
-  /** No grant reaches this run: the forge's own token, from its environment. */
+  /** No grant reaches this run: the forge's own token, `PLATFORM`, from its environment. */
   | { readonly kind: "env" }
   | {
       readonly kind: "ready";
@@ -359,7 +402,7 @@ export function pickSubscription(
       `SELECT g.scope_id, g.agent_id, s.id, s.name, s.kind, s.token_enc, s.resting_until,
               s.resting_said, s.last_used_at, s.created_by, s.created_at
        FROM subscription_grant g JOIN subscription s ON s.id = g.subscription_id
-       WHERE g.scope_id IN (?1, ?2) AND g.agent_id IN (?3, '')
+       WHERE g.scope_id IN (?1, ?2) AND g.agent_id IN (?3, '') AND s.id <> 'platform'
        ORDER BY (g.scope_id = ?1) DESC, (g.agent_id = ?3) DESC,
                 s.last_used_at IS NOT NULL, s.last_used_at, s.name COLLATE NOCASE`,
     )
@@ -420,7 +463,8 @@ export function grantedAccounts(
     .query<{ id: string; name: string; scope_id: string }, [string, string]>(
       `SELECT DISTINCT s.id, s.name, g.scope_id
        FROM subscription_grant g JOIN subscription s ON s.id = g.subscription_id
-       WHERE g.scope_id IN (?1, ?2) ORDER BY s.name COLLATE NOCASE`,
+       WHERE g.scope_id IN (?1, ?2) AND s.id <> 'platform'
+       ORDER BY s.name COLLATE NOCASE`,
     )
     .all(repoId, ownerId);
   const own = rows.filter((r) => r.scope_id === repoId);

@@ -2052,7 +2052,10 @@ export const liveRegionsJs = /* js */ `
       var active = document.activeElement;
       if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
       if (same(mine.innerHTML, theirs.innerHTML)) return;
+      // A disclosure the reader opened stays open across the swap.
+      var opened = Array.prototype.map.call(mine.querySelectorAll('details[id][open]'), function (d) { return d.id; });
       mine.innerHTML = theirs.innerHTML;
+      opened.forEach(function (i) { var d = document.getElementById(i); if (d) d.open = true; });
       Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
       mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
     });
