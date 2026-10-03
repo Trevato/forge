@@ -14,7 +14,13 @@ import {
   removeTeamMember,
   OWNERS_TEAM,
 } from "../src/core/orgs.ts";
-import { canRead, canWrite, canAdmin } from "../src/core/repos.ts";
+import {
+  canRead,
+  canSeeOwnerFacts,
+  canWrite,
+  canAdmin,
+  ownerFactRepoIds,
+} from "../src/core/repos.ts";
 import { createRepo, getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -117,6 +123,54 @@ describe("org & team core", () => {
     // Admin: only founder (Owners/admin team).
     expect(canAdmin(app.db, repo.value, founder)).toBe(true);
     expect(canAdmin(app.db, repo.value, dev)).toBe(false);
+  });
+
+  test("ownerFactRepoIds answers canSeeOwnerFacts for many repos in one query", async () => {
+    const founder = getUserByName(app.db, "founder")!;
+    const dev = getUserByName(app.db, "dev")!;
+    const reader = getUserByName(app.db, "reader")!;
+    const outsider = getUserByName(app.db, "outsider")!;
+    const org = getOrg(app.db, "acme")!;
+    const made = await Promise.all([
+      createRepo(app.db, app.reposRoot, {
+        ownerId: org.id,
+        name: "facts-public",
+        visibility: "public",
+      }),
+      createRepo(app.db, app.reposRoot, {
+        ownerId: dev.id,
+        name: "facts-own",
+        visibility: "private",
+      }),
+      createRepo(app.db, app.reposRoot, {
+        ownerId: outsider.id,
+        name: "facts-other",
+        visibility: "public",
+      }),
+    ]);
+    const repos = [getRepo(app.db, "acme", "svc")!];
+    for (const r of made) if (r.ok) repos.push(r.value);
+    expect(repos.length).toBe(4);
+
+    for (const user of [founder, dev, reader, outsider, undefined]) {
+      let queries = 0;
+      const original = app.db.query.bind(app.db);
+      (app.db as unknown as { query: unknown }).query = (sql: string) => {
+        queries++;
+        return original(sql);
+      };
+      let batched: Set<string>;
+      try {
+        batched = ownerFactRepoIds(app.db, repos, user);
+      } finally {
+        (app.db as unknown as { query: unknown }).query = original;
+      }
+      expect(queries).toBeLessThanOrEqual(1);
+      const oneByOne = repos
+        .filter((r) => canSeeOwnerFacts(app.db, r, user))
+        .map((r) => r.id);
+      expect([...batched].sort()).toEqual(oneByOne.sort());
+    }
   });
 
   test("the Owners team can't be emptied", async () => {

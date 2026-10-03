@@ -29,7 +29,7 @@ import { appsForRepos } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
 import { reposWithUnclaimedTell } from "../../core/issues.ts";
 import { openPullsForRepos } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { ownerFactRepoIds, type Repo } from "../../core/repos.ts";
 import {
   getRunsByIds,
   isTerminal,
@@ -119,9 +119,7 @@ export async function shelfRows(
   // A public app you can only read appears here too, but who is on its
   // crew is its owner's fact, not yours to see — same predicate as the
   // app's own page.
-  const ownerFacts = new Set(
-    repos.filter((r) => canSeeOwnerFacts(db, r, user)).map((r) => r.id),
-  );
+  const ownerFacts = ownerFactRepoIds(db, repos, user);
   // One read for the newest run of every app, one for who ran them: the
   // shelf must not get slower as the apps grow.
   const latestRuns = latestAgentRunsForRepos(

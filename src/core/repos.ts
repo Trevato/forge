@@ -21,7 +21,12 @@ import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
 import { REPO_VISIBLE, REPO_WRITABLE } from "./visibility.ts";
-import { accessAllows, orgAccess, type Access } from "./orgs.ts";
+import {
+  accessAllows,
+  orgAccess,
+  orgAccessByOrg,
+  type Access,
+} from "./orgs.ts";
 import { getUserById, type User } from "./users.ts";
 
 const log = createLog("repos");
@@ -659,6 +664,32 @@ export function canSeeOwnerFacts(
   user: User | undefined,
 ): boolean {
   return canWrite(db, repo, user);
+}
+
+/**
+ * `canSeeOwnerFacts` for many repositories at once: the ids of those whose
+ * owner facts the user may see. The same rules as `canWrite` — owner, site
+ * admin, or a write/admin team in the owning org (no crew grant, unlike
+ * `REPO_WRITABLE`) — answered from one read of the user's teams, so a list
+ * does not pay a user lookup and a permission query per row.
+ */
+export function ownerFactRepoIds(
+  db: Database,
+  repos: readonly Repo[],
+  user: User | undefined,
+): Set<string> {
+  const out = new Set<string>();
+  if (user === undefined) return out;
+  const orgs = user.isAdmin
+    ? new Map<string, Access>()
+    : orgAccessByOrg(db, user);
+  for (const repo of repos)
+    if (
+      personalOrDirect(repo, user) ||
+      accessAllows(orgs.get(repo.ownerId) ?? "none", "write")
+    )
+      out.add(repo.id);
+  return out;
 }
 
 /**

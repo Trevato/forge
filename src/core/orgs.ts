@@ -248,6 +248,31 @@ export function orgAccess(
   return best;
 }
 
+/**
+ * `orgAccess` for every org the user is on a team in, in one query: the
+ * lists that must ask "may this viewer write here" of many org-owned repos
+ * at once read this map instead of calling `orgAccess` per row. Site admins
+ * are the caller's to short-circuit; an org missing from the map is "none".
+ */
+export function orgAccessByOrg(
+  db: Database,
+  user: User | undefined,
+): Map<string, Access> {
+  const out = new Map<string, Access>();
+  if (!user) return out;
+  const rows = db
+    .query<{ org_id: string; permission: Permission }, [string]>(
+      `SELECT team.org_id, team.permission FROM team
+       JOIN team_member ON team_member.team_id = team.id
+       WHERE team_member.user_id = ?1`,
+    )
+    .all(user.id);
+  for (const row of rows)
+    if (rank[row.permission] > rank[out.get(row.org_id) ?? "none"])
+      out.set(row.org_id, row.permission);
+  return out;
+}
+
 export function isOrgMember(
   db: Database,
   orgId: string,

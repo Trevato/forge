@@ -37,8 +37,8 @@ import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
 import {
-  canSeeOwnerFacts,
   listReposVisibleTo,
+  ownerFactRepoIds,
   type Repo,
 } from "../../core/repos.ts";
 import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
@@ -124,11 +124,7 @@ function boardScope(
     ids: kept.map((r) => r.id),
     byId: new Map(kept.map((r) => [r.id, r])),
     records,
-    ownerFacts: new Set(
-      kept
-        .filter((r) => canSeeOwnerFacts(ctx.app.db, r, ctx.auth.user))
-        .map((r) => r.id),
-    ),
+    ownerFacts: ownerFactRepoIds(ctx.app.db, kept, ctx.auth.user),
   };
 }
 

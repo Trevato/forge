@@ -22,9 +22,9 @@ import {
 import { looksForApps } from "../../core/looks.ts";
 import { joinMany, type Pull } from "../../core/pulls.ts";
 import {
-  canSeeOwnerFacts,
   listReposVisibleTo,
   listReposWritableTo,
+  ownerFactRepoIds,
   type Repo,
 } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
@@ -159,7 +159,8 @@ function askCandidatesFor(
   // Shipping, closing and the day's ceiling are the owner's own decisions —
   // a reader who cannot write here is never asked to make one, and never
   // sees the dollar figure a "paused" card would otherwise carry.
-  const repos = allRepos.filter((r) => canSeeOwnerFacts(db, r, user));
+  const ownerFacts = ownerFactRepoIds(db, allRepos, user);
+  const repos = allRepos.filter((r) => ownerFacts.has(r.id));
   const byId = new Map(repos.map((r) => [r.id, r]));
   const pulls = listOpenPullsVisibleTo(db, user, 50).filter((p) =>
     byId.has(p.repoId),
