@@ -235,6 +235,87 @@ export function recentUsage(
     .map(toEntry);
 }
 
+/** The width of one bucket in `usageBuckets`: a UTC hour or a UTC day. */
+export type UsageUnit = "hour" | "day";
+
+/**
+ * How many leading characters of an ISO 8601 UTC instant name its bucket:
+ * `2026-10-02T14` is the hour 14:00–14:59 UTC, `2026-10-02` the day. Every
+ * `at` is written by `toISOString()`, so the prefix is exact — no float
+ * arithmetic on julian days deciding which side of a boundary a run lands.
+ */
+const PREFIX: Readonly<Record<UsageUnit, number>> = { hour: 13, day: 10 };
+
+export interface UsageBucket {
+  readonly repoId: string;
+  /** The bucket's ISO prefix: `YYYY-MM-DDTHH` for an hour, `YYYY-MM-DD` for a day. */
+  readonly bucket: string;
+  readonly runs: number;
+  readonly failed: number;
+  readonly costUsd: number;
+}
+
+/**
+ * The ledger summed per repository per UTC hour or day since an instant, for
+ * these repositories only — the fleet graph's one read (`actions/fleet-graph.ts`).
+ * Runs are counted when they end, because that is when a run's line is
+ * written. An empty list of repositories reads nothing.
+ */
+export function usageBuckets(
+  db: Database,
+  repoIds: readonly string[],
+  since: string,
+  unit: UsageUnit,
+): UsageBucket[] {
+  const unique = [...new Set(repoIds)];
+  const out: UsageBucket[] = [];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        {
+          repo_id: string;
+          bucket: string;
+          runs: number;
+          failed: number;
+          cost_usd: number;
+        },
+        [string, number, ...string[]]
+      >(
+        `SELECT repo_id, substr(at, 1, ?2) AS bucket,
+                COUNT(*) AS runs,
+                SUM(outcome = 'failed') AS failed,
+                SUM(cost_usd) AS cost_usd
+           FROM usage
+          WHERE at >= ?1
+            AND repo_id IN (${batch.map((_, n) => `?${n + 3}`).join(",")})
+          GROUP BY repo_id, bucket
+          ORDER BY bucket, repo_id`,
+      )
+      .all(since, PREFIX[unit], ...batch);
+    for (const r of rows)
+      out.push({
+        repoId: r.repo_id,
+        bucket: r.bucket,
+        runs: r.runs,
+        failed: r.failed,
+        costUsd: r.cost_usd,
+      });
+  }
+  return out;
+}
+
+/** Every repository with a line in the ledger since an instant, by id. */
+export function reposWithUsage(db: Database, since: string): string[] {
+  return db
+    .query<{ repo_id: string }, [string]>(
+      "SELECT DISTINCT repo_id FROM usage WHERE at >= ?1",
+    )
+    .all(since)
+    .map((r) => r.repo_id);
+}
+
 /** The costliest ledger lines since an instant, most spent first, bounded. */
 export function topUsage(
   db: Database,

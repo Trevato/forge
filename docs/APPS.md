@@ -730,6 +730,19 @@ a floor). An operator keeps a share of every window for people
 it. Both read on `GET /api/v1/repos/:owner/:name/usage` and the MCP
 `usage` tool, under `standing`.
 
+Across repositories, the _fleet graph_ (`GET /fleet/graph`) draws a
+selection's spend and runs from the same ledger: the last 24 hours by UTC
+hour and the last 14 days by UTC day, stacked per repository, with the
+numbers as a table beside it. The selection is `?repo=owner/name`,
+repeated; absent, it is every repository you can write that spent in the
+last 14 days. A run counts in the bucket it ended in. Past eight
+repositories the smallest spenders share one grey series, "N others".
+The page redraws every 30 seconds while it is open, and at once on a
+`forge:fleet-op` event, so an operation's effect shows within a minute.
+The same numbers are `GET /fleet/graph.csv` and `GET /api/v1/fleet/graph`;
+spend is the owner's fact, so a repository you cannot write is dropped
+and counted with the names that do not exist, never told apart.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools

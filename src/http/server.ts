@@ -164,6 +164,11 @@ import {
 import { lookImage } from "../web/pages/looks.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
 import {
+  fleetGraphCsv,
+  fleetGraphLive,
+  fleetGraphPage,
+} from "../web/pages/fleet-graph.ts";
+import {
   agentCreate,
   agentDelete,
   agentPage,
@@ -458,6 +463,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
+  // A selection's spend and runs over time; literal, above /:owner.
+  router.add("GET", "/fleet/graph", fleetGraphPage);
+  router.add("GET", "/fleet/graph/live", fleetGraphLive);
+  router.add("GET", "/fleet/graph.csv", fleetGraphCsv);
   // Live regions' own addresses (docs/STUDIO.md, "Live regions"): the
   // home's shelf and its "On you" card answer for themselves, so an event
   // fetches a region and not the page. Literal, above /:owner.

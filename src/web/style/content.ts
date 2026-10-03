@@ -298,6 +298,34 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
 .backups-now { margin-top: 12px; }
+/* The fleet graph: a selection's spend and runs, hour by hour and day by day.
+   Series colours are Okabe–Ito (told apart with common colour-vision
+   deficiencies); the eighth, the folded "others", is grey. */
+.fleet-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.fleet-pick input { flex: 1 1 24em; min-width: 0; font-family: var(--mono); font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.fleet-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 12px; padding: 0; list-style: none; font-size: 13px; }
+.fleet-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.fleet-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; vertical-align: middle; flex: none; }
+.fleet-windows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; margin: 0 0 16px; }
+.fleet-window { margin: 0; }
+.fleet-window figcaption { font-size: 13px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.fleet-svg { display: block; width: 100%; height: auto; aspect-ratio: 600 / 230; }
+.fleet-grid line { stroke: var(--border); stroke-width: 1; }
+.fleet-ticks text { fill: var(--muted-fg); font-size: 10px; text-anchor: end; font-family: var(--mono); }
+.fleet-axis text { fill: var(--muted-fg); font-size: 10px; text-anchor: middle; font-family: var(--mono); }
+.fleet-panel-name text { fill: var(--faint); font-size: 10px; }
+.fleet-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.fleet-table th[scope="row"] { font-weight: 500; white-space: nowrap; text-align: left; }
+.fleet-assume { margin-top: 8px; }
+.fg-s0 { fill: #0072b2; color: #0072b2; }
+.fg-s1 { fill: #e69f00; color: #e69f00; }
+.fg-s2 { fill: #009e73; color: #009e73; }
+.fg-s3 { fill: #cc79a7; color: #cc79a7; }
+.fg-s4 { fill: #56b4e9; color: #56b4e9; }
+.fg-s5 { fill: #d55e00; color: #d55e00; }
+.fg-s6 { fill: #c9b800; color: #c9b800; }
+.fg-s7 { fill: #8a8a8a; color: #8a8a8a; }
+@media print { .fleet-pick { display: none; } }
 .backups-error { display: flex; align-items: center; gap: 8px; color: var(--danger); }
 .backups-restore { margin: 8px 0 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 /* The records a domain waits on: type, name, value — as a zone file reads. */

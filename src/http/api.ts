@@ -223,6 +223,7 @@ import {
 import { resolveOid } from "../git/merge.ts";
 import { vitals } from "../kernel/vitals.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
+import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -3303,6 +3304,16 @@ export function apiRoutes(router: Router<Handler>): void {
     const report = readUsage(ctx.app, ctx.auth.user, repo, days);
     if (!report.ok) return forbidden();
     return json(report.value);
+  });
+
+  // The fleet graph's numbers (`actions/fleet-graph.ts`): spend and runs
+  // per repository by UTC hour (24 h) and day (14 d), for `?repo=owner/name`
+  // repeated, or every repository the caller may write that spent lately.
+  router.add("GET", "/api/v1/fleet/graph", (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    const asked = fleetSelection(ctx.url.searchParams.getAll("repo"));
+    if (!asked.ok) return apiError("invalid_selection", 422, asked.error);
+    return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
