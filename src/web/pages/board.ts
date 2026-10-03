@@ -50,7 +50,7 @@ import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
-import { avatar, icon, time } from "../ui.ts";
+import { avatar, icon, time, tokenCount } from "../ui.ts";
 import { voiceFor } from "../studio/voice.ts";
 import {
   perShippedWords,
@@ -384,7 +384,10 @@ function windowsStrip(ctx: Ctx): Html | null {
                 ></span>`
           }
           <span class="board-window-nums"
-            >${figures([words.used, words.remaining, words.resets])}</span
+            >${figures([words.used, words.remaining, words.resets])}${when(
+              w.tokensIn + w.tokensOut > 0,
+              () => html` · ${tokenCount(w.tokensIn + w.tokensOut, "counted")}`,
+            )}</span
           ></span
         >`;
       })}

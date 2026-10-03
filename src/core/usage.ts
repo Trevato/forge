@@ -126,6 +126,34 @@ export function getUsage(db: Database, runId: string): UsageEntry | undefined {
   return row ? toEntry(row) : undefined;
 }
 
+/**
+ * Everything the runs on one issue or pull spent, over all time, or
+ * `undefined` when none has landed in the ledger. One aggregate over the
+ * table: the ledger is a row per run, small beside the run table itself.
+ */
+export function issueUsage(
+  db: Database,
+  issueId: string,
+): { runs: number; tokensIn: number; tokensOut: number; costUsd: number } | undefined {
+  const row = db
+    .query<
+      { runs: number; tokens_in: number; tokens_out: number; cost_usd: number },
+      [string]
+    >(
+      `SELECT COUNT(*) AS runs, SUM(tokens_in) AS tokens_in,
+              SUM(tokens_out) AS tokens_out, SUM(cost_usd) AS cost_usd
+         FROM usage WHERE issue_id = ?1`,
+    )
+    .get(issueId);
+  if (!row || row.runs === 0) return undefined;
+  return {
+    runs: row.runs,
+    tokensIn: row.tokens_in,
+    tokensOut: row.tokens_out,
+    costUsd: row.cost_usd,
+  };
+}
+
 /** What the ledger can be summed by. Each maps to one fixed column. */
 export type UsageBy = "subscription" | "repo" | "agent" | "issue" | "kind";
 export const USAGE_BY: readonly UsageBy[] = [

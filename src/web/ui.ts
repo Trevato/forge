@@ -13,6 +13,13 @@
 import type { EnvState, EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
+import {
+  estimateTokens,
+  formatTokens,
+  textKind,
+  tokenNote,
+  type TokenBasis,
+} from "../kernel/tokens-format.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
 
@@ -112,6 +119,29 @@ export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * A token count as a size: `~1.2k tok`, with the tokenizer and whether it is
+ * an estimate in the tooltip (`kernel/tokens-format.ts`). Only ever placed
+ * beside a byte size, a cost or a percentage — never as a badge of its own.
+ */
+export function tokenCount(
+  n: number,
+  basis: TokenBasis,
+  kind?: "prose" | "code" | "data",
+): Html {
+  return html`<span class="tok" title="${tokenNote(n, basis, kind)}"
+    >${formatTokens(n, basis)}</span
+  >`;
+}
+
+/** A file's byte size and, when it is text, its estimated tokens beside it. */
+export function sizeWithTokens(bytes: number, path: string): Html {
+  const tokens = estimateTokens(bytes, path);
+  return tokens === undefined
+    ? html`${fileSize(bytes)}`
+    : html`${fileSize(bytes)} · ${tokenCount(tokens, "estimated", textKind(path))}`;
 }
 
 // ---- buttons ----

@@ -28,6 +28,7 @@ import {
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
+import { estimateTokens } from "../../kernel/tokens-format.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import { json, notFound } from "../../http/respond.ts";
 import type { Blob, RepoSource } from "../../view/source.ts";
@@ -57,6 +58,8 @@ import {
   card,
   empty,
   fileSize,
+  sizeWithTokens,
+  tokenCount,
   icon,
   iconBtn,
   listCard,
@@ -328,14 +331,41 @@ export function treeListing(
             entry.size >= 0,
             () =>
               html`<span class="row-trail muted small num"
-                >${fileSize(entry.size)}</span
+                >${sizeWithTokens(entry.size, target)}</span
               >`,
           )}
         </a>
       </li>`,
     );
   }
-  return listCard(rows);
+  return html`${listCard(rows)}${directoryTotal(entries)}`;
+}
+
+/**
+ * What the files at this level weigh together: bytes and estimated tokens,
+ * the two summed over the same files. Subdirectories carry no size in a
+ * tree listing (`git ls-tree -l` gives `-`), so they are not in it — the
+ * line says "here" and the tooltip says why. Binary files add bytes but no
+ * tokens. Nothing when there are no files.
+ */
+export function directoryTotal(entries: readonly TreeEntry[]): Html {
+  let files = 0;
+  let bytes = 0;
+  let tokens = 0;
+  for (const entry of entries) {
+    if (entry.type !== "blob" || entry.size < 0) continue;
+    files += 1;
+    bytes += entry.size;
+    tokens += estimateTokens(entry.size, entry.name) ?? 0;
+  }
+  if (files === 0) return html``;
+  return html`<p
+    class="muted small num tree-total"
+    title="Files at this level only; subdirectories are not counted"
+  >
+    ${files.toLocaleString("en-US")} file${files === 1 ? "" : "s"} here ·
+    ${fileSize(bytes)} · ${tokenCount(tokens, "estimated")}
+  </p>`;
 }
 
 /**
@@ -763,7 +793,8 @@ export function renderBlob(
     view === "rendered" && o.blob.kind === "text"
       ? renderedMarkdown(o.blob)
       : blobBody(base, o.ref, o.path, o.blob);
-  const sizeText = o.blob.kind === "too_large" ? "" : fileSize(o.blob.size);
+  const sizeText =
+    o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
     <div class="path-head">

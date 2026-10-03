@@ -35,7 +35,12 @@ import {
   userLink,
 } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
-import { costText, durationText, reasonWords } from "../pages/runs.ts";
+import {
+  costText,
+  durationText,
+  reasonWords,
+  workSpent,
+} from "../pages/runs.ts";
 import { composer, conversation, originGlyph } from "../pages/thread.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import {
@@ -267,6 +272,7 @@ export async function studioTell(
             >${icon("external")}view on origin</a
           >`,
       )}
+      ${workSpent(ctx, repo, issue.id)}
       ${issue.assigneeName !== null
         ? html`<span
             >${when(issue.assigneeIsAgent, () => icon("bot"))}

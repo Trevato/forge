@@ -61,7 +61,7 @@ import {
   threadContext,
   threadFragment,
 } from "./thread.ts";
-import { crewActivityCard } from "./runs.ts";
+import { crewActivityCard, workSpent } from "./runs.ts";
 import { studioTells } from "../studio/lists.ts";
 import {
   PAGE_TITLES,
@@ -540,6 +540,7 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
               >${icon("external")}view on origin</a
             >`,
         )}
+        ${workSpent(ctx, repo, issue.id)}
       </div>
     </div>
     <div class="split">

@@ -31,6 +31,7 @@ import {
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
 import { pullState } from "../pages/pulls.ts";
+import { workSpent } from "../pages/runs.ts";
 import { composer, conversation, originGlyph } from "../pages/thread.ts";
 import {
   decisionActions,
@@ -165,6 +166,7 @@ export async function studioPull(
             >${icon("external")}view on origin</a
           >`,
       )}
+      ${workSpent(ctx, repo, pull.id)}
     </div>
   </div>`;
 

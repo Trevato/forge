@@ -93,6 +93,16 @@ Rules:
   and descriptions.
 - **Truncation is honest**: one line, ellipsis, and a `title` with the whole
   string. Never a fade-out mask — masks lie about whether there is more.
+- **A token count is shown where a byte size is shown, never as a badge on
+  its own.** Tokens are a unit, like KB: they sit beside a file's size, a
+  directory's total, a run's cost or a window's dollars and percentage, so
+  the context intuition grows next to the storage and money ones. One
+  formatter (`kernel/tokens-format.ts`, rendered by `tokenCount()` /
+  `sizeWithTokens()` in `web/ui.ts`) writes them all: `850 tok`, `1.2k tok`,
+  `48k tok`, `1.1M tok`. A count the provider reported is bare; an estimate
+  (bytes ÷ a stated bytes-per-token ratio for prose, code or data) carries a
+  `~`, and every count's `title` says which tokenizer and whether it is an
+  estimate. A binary file has no token count — no number beats a wrong one.
 
 ---
 
@@ -1123,3 +1133,5 @@ deletes a repository.
 9. Nothing inside a linked row is itself a link.
 10. Any control that only works with a script carries `js-only`, so a page
     without JavaScript never shows a dead button.
+11. Every token count sits beside a byte size, a cost or a percentage, and
+    goes through `tokenCount()` — never a hand-written `k`.

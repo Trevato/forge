@@ -27,7 +27,12 @@ import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, icon } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
-import { costText, durationText, runTitle } from "../pages/runs.ts";
+import {
+  costText,
+  durationText,
+  runTitle,
+  runTokens,
+} from "../pages/runs.ts";
 import { sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
@@ -136,6 +141,7 @@ export async function studioRun(
               ${run.costUsd > 0 ? null : html`hidden`}
               >${costText(run.costUsd)} spent</span
             >
+            ${runTokens(db, run)}
             <span
               class="num"
               id="run-turns"

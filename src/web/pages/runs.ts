@@ -11,6 +11,7 @@
  * id, so the redirect itself says nothing about what exists.
  */
 
+import type { Database } from "bun:sqlite";
 import {
   cancelRepoRun,
   listRepoRuns,
@@ -18,9 +19,16 @@ import {
   steerRepoRun,
 } from "../../actions/runs.ts";
 import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
-import { canRead, canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import {
+  canRead,
+  canSeeOwnerFacts,
+  canWrite,
+  getRepoById,
+  type Repo,
+} from "../../core/repos.ts";
 import { listHeldSecrets } from "../../core/run_secret.ts";
 import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
+import { getUsage, issueUsage } from "../../core/usage.ts";
 import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -52,6 +60,7 @@ import {
   seg,
   sha,
   time,
+  tokenCount,
 } from "../ui.ts";
 
 // ---- words ----
@@ -104,6 +113,38 @@ export const reasonWords = (reason: string): string =>
 
 /** Dollars, two places — a run's spend is a small number read at a glance. */
 export const costText = (usd: number): string => `$${usd.toFixed(2)}`;
+
+/**
+ * What the crew's runs on one issue or pull spent altogether: the cost and,
+ * beside it, the tokens read and written (`core/usage.ts` `issueUsage`).
+ * The owner's facts, like a run's cost — nothing for a reader who cannot
+ * write here, and nothing before a run has landed in the ledger.
+ */
+export function workSpent(ctx: Ctx, repo: Repo, issueId: string): Html {
+  if (!canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)) return html``;
+  const used = issueUsage(ctx.app.db, issueId);
+  if (used === undefined) return html``;
+  return html`<span class="num" id="work-spent"
+    >${used.runs} run${used.runs === 1 ? "" : "s"} ·
+    ${costText(used.costUsd)} · ${tokenCount(used.tokensIn, "counted")} in ·
+    ${tokenCount(used.tokensOut, "counted")} out</span
+  >`;
+}
+
+/**
+ * What a finished agent run read and wrote, in tokens, from the usage ledger
+ * (`core/usage.ts`) — counted by the provider, so no tilde. Placed beside the
+ * cost, never alone; nothing until the ledger has the run, or when it spent
+ * nothing.
+ */
+export function runTokens(db: Database, run: Run): Html {
+  const used = run.kind === "agent" ? getUsage(db, run.id) : undefined;
+  if (used === undefined || used.tokensIn + used.tokensOut === 0) return html``;
+  return html`<span class="num" id="run-tokens"
+    >${tokenCount(used.tokensIn, "counted")} in ·
+    ${tokenCount(used.tokensOut, "counted")} out</span
+  >`;
+}
 
 /**
  * What kind of line a run wrote: a tool the agent reached for (`→ Bash …`),
@@ -408,6 +449,9 @@ export async function runPage(ctx: Ctx): Promise<Response> {
         <span class="num" id="run-cost" ${run.costUsd > 0 ? null : html`hidden`}
           >${costText(run.costUsd)} spent</span
         >
+        ${when(canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user), () =>
+          runTokens(ctx.app.db, run),
+        )}
         <span class="num" id="run-turns" ${run.turns > 0 ? null : html`hidden`}
           >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
         >

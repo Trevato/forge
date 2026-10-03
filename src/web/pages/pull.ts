@@ -96,7 +96,7 @@ import {
 import { previewCard } from "./apps.ts";
 import { lookCard } from "./looks.ts";
 import { pullState } from "./pulls.ts";
-import { crewActivityCard } from "./runs.ts";
+import { crewActivityCard, workSpent } from "./runs.ts";
 import { studioPull } from "../studio/change.ts";
 import { studioRecord } from "../studio/nouns.ts";
 
@@ -834,6 +834,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
               >${icon("external")}view on origin</a
             >`,
         )}
+        ${workSpent(ctx, repo, pull.id)}
         <span class="mono">${pull.headBranch} → ${pull.baseBranch}</span>
         ${badge(`${status.ahead} commit${status.ahead === 1 ? "" : "s"}`, {
           variant: "secondary",

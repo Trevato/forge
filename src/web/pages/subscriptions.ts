@@ -46,6 +46,7 @@ import {
   row,
   time,
   timeAgo,
+  tokenCount,
   userLink,
 } from "../ui.ts";
 import { whenText } from "../../crew/limits.ts";
@@ -72,18 +73,34 @@ const kindText = (s: Subscription): string =>
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 const mark = (f: Figure<unknown>): string => (f.source === "read" ? "" : "~");
 
-/** `5-hour: ~$3.20 used of ~$10.00 · resets 12:04 UTC` — one window, plainly. */
-function windowText(w: WindowStanding): string {
+/**
+ * `5-hour: ~$3.20 used of ~$10.00 (32%) · 1.2M tok · resets 12:04 UTC` — one
+ * window, plainly: the dollars, the share of the cap when it is known, and
+ * beside them the tokens the crew's runs read and wrote in it, so the money
+ * and the context intuitions meet in one line.
+ */
+function windowText(w: WindowStanding): Html {
   const name = w.window === "5h" ? "5-hour" : "weekly";
   const used = `${mark(w.used)}${usd(w.used.value)} used`;
-  const of = w.cap === null ? "" : ` of ${mark(w.cap)}${usd(w.cap.value)}`;
+  const of =
+    w.cap === null
+      ? ""
+      : ` of ${mark(w.cap)}${usd(w.cap.value)}${
+          w.cap.value > 0
+            ? ` (${Math.min(100, Math.round((w.used.value / w.cap.value) * 100))}%)`
+            : ""
+        }`;
   const full =
     w.remaining?.source === "read" && w.remaining.value === 0 ? " · full" : "";
   const resets =
     w.resetsAt === null
       ? " · opens on next use"
       : ` · resets ${w.resetsAt.source === "read" ? "" : "~"}${whenText(new Date(w.resetsAt.value))}`;
-  return `${name}: ${used}${of}${full}${resets}`;
+  const tokens = w.tokensIn + w.tokensOut;
+  return html`${name}: ${used}${of}${when(
+    tokens > 0,
+    () => html` · ${tokenCount(tokens, "counted")}`,
+  )}${full}${resets}`;
 }
 
 const resting = (s: Subscription, now: Date): boolean =>
@@ -170,7 +187,9 @@ export function subscriptionsPage(ctx: Ctx): Response {
               )}${when(
                 st !== undefined,
                 () =>
-                  html`<br />${st!.windows.map(windowText).join(" · ")}`,
+                  html`<br />${st!.windows.map((w, i) =>
+                    i === 0 ? windowText(w) : html` · ${windowText(w)}`,
+                  )}`,
               )}`,
               trail: html`${when(
                 st !== undefined,
@@ -298,7 +317,9 @@ export function subscriptionsPage(ctx: Ctx): Response {
             Windows in US dollars of list price. A figure marked ~ is inferred
             from what the crew's runs spent; the rest the provider said. The
             cap is learned the first time the provider calls a window full,
-            and the share kept for people is never spent by the crew.
+            and the share kept for people is never spent by the crew. Tokens
+            are what the crew's runs read and wrote in the window, counted by
+            Claude's tokenizer.
           </p>`,
       )}
       <div class="mt" id="spend" data-live="run.*,usage.*">
