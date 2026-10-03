@@ -14,7 +14,11 @@ export const BREAKER_WINDOW_MS = 60 * 60_000;
 export const BREAKER_NOTE =
   "Parked by the crew: the last three runs here failed or were declined within an hour, so nothing more starts until a person says what to try.";
 
-/** Whether the issue's newest runs are all failures inside the window and no person has spoken since. */
+/**
+ * Whether the issue's newest runs are all failures inside the window and no
+ * person has spoken since. An interrupted run (`interrupted.ts`) is not one
+ * of them: the provider's outage is not the issue's failure.
+ */
 export function breakerTripped(
   db: Database,
   issueId: string,
@@ -23,6 +27,7 @@ export function breakerTripped(
   const runs = db
     .query<{ state: string; created_at: string }, [string, number]>(
       `SELECT state, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+         AND summary NOT LIKE 'interrupted: %'
        ORDER BY created_at DESC LIMIT ?2`,
     )
     .all(issueId, BREAKER_RUNS);

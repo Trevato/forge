@@ -54,6 +54,7 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
+import { struckOut } from "../../crew/parks.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
@@ -432,27 +433,6 @@ export function crewMarks(runs: readonly Run[]): Map<string, RunState> {
   return marks;
 }
 
-/** Issues whose latest comment is the crew parking them. */
-function parkedIds(db: Database, issueIds: readonly string[]): Set<string> {
-  const out = new Set<string>();
-  const CHUNK = 400;
-  for (let i = 0; i < issueIds.length; i += CHUNK) {
-    const batch = issueIds.slice(i, i + CHUNK);
-    const marks = batch.map((_, n) => `?${n + 1}`).join(",");
-    const rows = db
-      .query<{ id: string }, string[]>(
-        `SELECT c.issue_id AS id FROM comment c
-           JOIN (SELECT issue_id, MAX(created_at) AS at FROM comment
-                 WHERE issue_id IN (${marks}) GROUP BY issue_id) last
-             ON last.issue_id = c.issue_id AND last.at = c.created_at
-         WHERE c.body LIKE 'Parked by the crew%'`,
-      )
-      .all(...batch);
-    for (const row of rows) out.add(row.id);
-  }
-  return out;
-}
-
 /** The marks for one repository's graph: three reads, all bounded. */
 export function marksFor(
   db: Database,
@@ -467,7 +447,7 @@ export function marksFor(
     if (id !== undefined) waiting.add(id);
   }
   const open = graph.issues.filter((i) => i.state === "open").map((i) => i.id);
-  return { crew: crewMarks(runs), waiting, parked: parkedIds(db, open) };
+  return { crew: crewMarks(runs), waiting, parked: struckOut(db, open) };
 }
 
 export const NO_MARKS: Marks = {

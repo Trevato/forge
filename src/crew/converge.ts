@@ -30,6 +30,7 @@ import { activeRunFor, listRuns } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { parkedCount } from "./autonomy.ts";
+import { PARK_STRIKES } from "./parks.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { pickBuilder } from "./route.ts";
 
@@ -97,7 +98,7 @@ export function convergeState(
     )?.agent;
     return { kind: "working", issue, agent };
   }
-  if (parkedCount(app, issue.id) >= 2) return { kind: "parked", issue };
+  if (parkedCount(app, issue.id) >= PARK_STRIKES) return { kind: "parked", issue };
   return { kind: "working", issue, agent: undefined };
 }
 

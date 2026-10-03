@@ -48,6 +48,7 @@ import {
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { studioRecord } from "../studio/nouns.ts";
+import { interruptionsOn } from "../../crew/interrupted.ts";
 
 /**
  * The four ways a write can fail *because of the origin*, in words.
@@ -166,6 +167,22 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
   return entries;
 }
 
+/**
+ * The crew's runs here that the provider or a restart cut short, each as
+ * its own line: `interrupted: provider limit, resumes 02:00 UTC`. Not a
+ * park and not a comment — a comment on an assigned issue starts a run.
+ */
+function interruptionEntries(ctx: Ctx, issue: Issue): Entry[] {
+  return interruptionsOn(ctx.app.db, issue.id).map((run) => ({
+    at: run.at,
+    node: tlEvent({
+      icon: "clock",
+      tone: "attn",
+      body: html`<span>the crew's run was ${run.summary}</span> ${time(run.at)}`,
+    }),
+  }));
+}
+
 export interface ConversationOptions {
   /** The verb on the opening card ("opened this", "wants to merge …"). */
   openVerb: Html | string;
@@ -201,6 +218,7 @@ export function conversation(
     }),
   }));
   entries.push(...stateEvents(ctx, repo, issue));
+  entries.push(...interruptionEntries(ctx, issue));
   entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 

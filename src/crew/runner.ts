@@ -74,6 +74,7 @@ import {
   resumeAt,
   whenText,
 } from "./limits.ts";
+import { interruptedSummary } from "./interrupted.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
@@ -255,14 +256,18 @@ export async function executeAgentRun(
     if (paused) announceRun(app, paused);
     return { resumeAt: outcome.resumeAt, attempt: run.attempt + 1 };
   }
+  // A run the provider or a restart cut short says so, and when it goes
+  // on: interrupted, never a park (`interrupted.ts`).
+  const summary =
+    outcome.state === "failed"
+      ? interruptedSummary(outcome.summary, outcome.resumesAt)
+      : outcome.summary;
   write(
-    outcome.state === "ok"
-      ? `done: ${outcome.summary}`
-      : `failed: ${outcome.summary}`,
+    outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`,
   );
   const done = finishRun(app.db, run.id, {
     state: outcome.state,
-    summary: outcome.summary,
+    summary,
     sessionId: outcome.sessionId,
     costUsd: outcome.costUsd,
     turns: outcome.turns,
@@ -349,6 +354,8 @@ type Outcome =
   | {
       readonly state: "ok" | "failed";
       readonly summary: string;
+      /** When a run the provider cut short can go on (`interrupted.ts`). */
+      readonly resumesAt?: Date | undefined;
       readonly sessionId?: string | undefined;
       readonly costUsd?: number | undefined;
       readonly turns?: number | undefined;
@@ -737,6 +744,7 @@ async function work(
       return {
         state: "failed",
         summary: `every subscription this repository may use is resting (${picked.said})`,
+        resumesAt: new Date(picked.until),
       };
     }
     if (picked.kind === "ready") {
@@ -857,6 +865,7 @@ async function work(
     // The provider's refusal, not the agent's failure: the run pauses with
     // its clone and session as they are, and goes on when the limit lifts.
     // A limit that never lifts is not waited on forever.
+    let limitLifts: Date | undefined;
     if (isRateLimited(result) && !signal.aborted) {
       const said = (
         result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
@@ -927,6 +936,7 @@ async function work(
         };
       }
       write(`paused ${MAX_PAUSES} times already; not waiting again`);
+      limitLifts = resumeAt(result.result, new Date());
     }
 
     // The reserve: the same session gets one more turn, to land what exists
@@ -1004,6 +1014,7 @@ async function work(
     return {
       state: result.ok || landed.pushed ? "ok" : "failed",
       summary: landed.summary + (result.ok ? "" : ` (${result.reason})`),
+      resumesAt: limitLifts,
       sessionId: result.sessionId,
       costUsd: result.costUsd,
       turns: result.turns,

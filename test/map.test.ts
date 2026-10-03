@@ -207,13 +207,17 @@ describe("the map, per app and across the forge", () => {
     });
     return { repo: made.value, issues };
   };
+  // Struck out: parked twice since anyone re-planned it, the rule that
+  // stops dispatch (`crew/parks.ts`).
   const park = (by: User, issue: Issue): void => {
-    const said = addComment(app.db, {
-      issueId: issue.id,
-      authorId: by.id,
-      body: "Parked by the crew: the check stayed red past its tries.",
-    });
-    if (!said.ok) throw new Error(said.error);
+    for (let n = 0; n < 2; n++) {
+      const said = addComment(app.db, {
+        issueId: issue.id,
+        authorId: by.id,
+        body: "Parked by the crew: the check stayed red past its tries.",
+      });
+      if (!said.ok) throw new Error(said.error);
+    }
   };
 
   beforeAll(async () => {

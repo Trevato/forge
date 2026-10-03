@@ -81,6 +81,8 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
+import { interruptionOf } from "./interrupted.ts";
+import { parkedCount as countParks, PARK_STRIKES } from "./parks.ts";
 import { createLog } from "../kernel/log.ts";
 import { crewOffInPreview } from "./preview.ts";
 
@@ -343,7 +345,7 @@ export async function driveRepo(
       !proposed.has(r.issue.number) &&
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
       !stalled(app, r.issue) &&
-      parkedCount(app, r.issue.id) < 2,
+      parkedCount(app, r.issue.id) < PARK_STRIKES,
   );
   const next = await nextOf(app, repo, ready);
   if (next !== undefined) {
@@ -479,6 +481,10 @@ function stalled(app: App, issue: Issue): boolean {
   if (last === null || last === undefined) return false;
   if (last.state === "queued" || last.state === "running") return true;
   if (/opened pull #|updated pull #/.test(last.summary)) return false;
+  // Cut short by the provider or a restart: nobody tried it, so the clock
+  // tries again (`interrupted.ts`).
+  if (last.state === "failed" && interruptionOf(last.summary) !== undefined)
+    return false;
   // A word since then — a person's, or the planner's when it re-planned
   // a parked issue — is what un-stalls it.
   const spoken = app.db
@@ -532,15 +538,9 @@ export function parkForBreaker(
   });
 }
 
-/** How many times the crew has parked work on this issue. */
+/** How many times the crew has parked this issue since a person or the planner last spoke (`parks.ts`). */
 export function parkedCount(app: App, issueId: string): number {
-  const row = app.db
-    .query<
-      { n: number },
-      [string]
-    >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND body LIKE 'Parked by the crew%'")
-    .get(issueId);
-  return row?.n ?? 0;
+  return countParks(app.db, issueId);
 }
 
 /**
@@ -569,7 +569,9 @@ export function parkIssue(
 /**
  * After a builder's run on an issue ends without a pull to show for it —
  * declined, out of budget, or simply nothing pushed — the issue is parked
- * rather than left stalled: one fresh try later, then the planner's.
+ * rather than left stalled: one fresh try later, then the planner's. A run
+ * the provider or a restart cut short is interrupted, not parked: no note,
+ * no strike.
  */
 export function settleAgentRun(
   app: App,
@@ -594,6 +596,7 @@ export function settleAgentRun(
   }
   if (run.reason === "review") return false;
   if (/opened pull #|updated pull #/.test(run.summary)) return false;
+  if (interruptionOf(run.summary) !== undefined) return false;
   const issue = getIssueById(app.db, run.issueId);
   if (!issue || issue.kind !== "issue" || issue.state !== "open") return false;
   if (issue.id === repo.directionIssueId) return false;
