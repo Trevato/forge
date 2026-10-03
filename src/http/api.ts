@@ -63,6 +63,8 @@ import {
   refreshPullHead,
   resolveReviewThread,
   submitReview,
+  MAX_REVIEW_LINES,
+  type ReviewInput,
 } from "../actions/pulls.ts";
 import { search } from "../actions/search.ts";
 import {
@@ -556,6 +558,31 @@ function editFailure(error: { kind: string } & Record<string, unknown>) {
  * The files of an edit, out of a JSON body. `content: null` deletes; a
  * `base64` encoding is how a client sends bytes that are not text.
  */
+/**
+ * How a line comment is anchored, said the same way by every refusal of
+ * one — the sentence a reviewer reads to send it right the second time.
+ */
+const ANCHOR_FORMAT =
+  'An anchor is {"path": a file in the pull\'s diff, "line": its line number, "side": "new" (the head\'s numbering, for added or kept lines) or "old" (the base\'s, for removed lines)}; the line must be inside one of the diff\'s hunks: in `@@ -a,b +c,d @@` the hunk\'s first line is c on the new side and a on the old. GET …/pulls/N returns the diff.';
+
+/** A review's line comments as the API was sent them; undefined when they are not a list of objects. */
+function reviewLines(raw: unknown): ReviewInput[] | undefined {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw) || raw.length > MAX_REVIEW_LINES) return undefined;
+  const out: ReviewInput[] = [];
+  for (const row of raw) {
+    if (typeof row !== "object" || row === null) return undefined;
+    const r = row as Record<string, unknown>;
+    out.push({
+      path: str(r.path),
+      line: Number(r.line),
+      side: r.side === "old" ? "old" : "new",
+      body: str(r.body),
+    });
+  }
+  return out;
+}
+
 function editFilesFrom(raw: unknown): EditFile[] {
   if (!Array.isArray(raw)) return [];
   const files: EditFile[] = [];
@@ -2100,7 +2127,18 @@ export function apiRoutes(router: Router<Handler>): void {
           side,
         },
       );
-      if (!added.ok) return respondAccess(added.error, 422);
+      if (!added.ok) {
+        // A verdict sent here is the call this route most often gets wrong.
+        if (added.error === "bad_anchor" && input.state !== undefined)
+          return apiError(
+            "bad_anchor",
+            422,
+            `this route takes one line comment; a verdict goes to …/review-states as {"state","body","comments"}. ${ANCHOR_FORMAT}`,
+          );
+        if (added.error === "bad_anchor")
+          return apiError("bad_anchor", 422, ANCHOR_FORMAT);
+        return respondAccess(added.error, 422);
+      }
       return json(added.value, 201);
     },
   );
@@ -2135,12 +2173,19 @@ export function apiRoutes(router: Router<Handler>): void {
           422,
           "a review is approved, changes_requested, or commented",
         );
+      const comments = reviewLines(input.comments);
+      if (comments === undefined)
+        return apiError(
+          "invalid_comments",
+          422,
+          `comments is a list of {"path","line","side","body"}. ${ANCHOR_FORMAT}`,
+        );
       const submitted = await submitReview(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.pull,
-        { state, body: str(input.body) },
+        { state, body: str(input.body), comments },
       );
       if (!submitted.ok) {
         if (submitted.error === "self_review")
@@ -2148,6 +2193,18 @@ export function apiRoutes(router: Router<Handler>): void {
             "self_review",
             422,
             "you cannot approve your own pull request",
+          );
+        if (submitted.error === "bad_anchor")
+          return apiError(
+            "bad_anchor",
+            422,
+            `nothing was posted: a comment's anchor is not in the diff. ${ANCHOR_FORMAT}`,
+          );
+        if (submitted.error === "too_many_lines")
+          return apiError(
+            "too_many_lines",
+            422,
+            `a review carries at most ${MAX_REVIEW_LINES} line comments`,
           );
         return originAware(submitted.error, 422);
       }

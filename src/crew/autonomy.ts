@@ -85,6 +85,7 @@ import { interruptionOf } from "./interrupted.ts";
 import { parkedCount as countParks, PARK_STRIKES } from "./parks.ts";
 import { createLog } from "../kernel/log.ts";
 import { crewOffInPreview } from "./preview.ts";
+import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 
 const log = createLog("autonomy");
 
@@ -597,6 +598,7 @@ export function settleAgentRun(
   if (run.reason === "review") return false;
   if (/opened pull #|updated pull #/.test(run.summary)) return false;
   if (interruptionOf(run.summary) !== undefined) return false;
+  if (answeredWithoutChange(app, repo, run)) return true;
   const issue = getIssueById(app.db, run.issueId);
   if (!issue || issue.kind !== "issue" || issue.state !== "open") return false;
   if (issue.id === repo.directionIssueId) return false;
@@ -610,6 +612,33 @@ export function settleAgentRun(
     repo,
     issue,
     `the run ended without a pull: ${run.summary || run.state}`,
+  );
+}
+
+/**
+ * A builder's run on its pull that ended without a push while the crew's
+ * reviewer still asks for changes on the head: the request was not
+ * answered, and nothing will answer it. The pull is parked rather than
+ * left waiting on a verdict that will not move.
+ */
+function answeredWithoutChange(
+  app: App,
+  repo: Repo,
+  run: { readonly issueId: string; readonly reason: string; readonly actorId: string | null },
+): boolean {
+  if (run.reason !== "feedback" || run.actorId === null) return false;
+  if (crewRole(app.db, repo.id, run.actorId) !== "builder") return false;
+  const issue = getIssueById(app.db, run.issueId);
+  if (!issue || issue.kind !== "pull" || issue.state !== "open") return false;
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (!pull || pull.mergedAt !== null) return false;
+  if (reviewSummary(app.db, pull.id, pull.headOid).changesRequested === 0)
+    return false;
+  return parkPull(
+    app,
+    repo,
+    pull,
+    "the reviewer asked for changes and the builder's run ended without pushing any",
   );
 }
 
@@ -740,6 +769,13 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
       });
     }
   }
+  // Review is not autonomy's alone: an agent's green pull is read by the
+  // crew's reviewer in every repository that has one.
+  try {
+    await sweepReviews(app);
+  } catch (error) {
+    log.error("review sweep failed", { error: String(error) });
+  }
 }
 
 /**
@@ -847,34 +883,24 @@ export function bringUpToDate(
   return agent.user.username;
 }
 
-/** The heads already sent to the reviewer, by pull: one pass per head. */
-const sentToReview = new Map<string, string>();
-
 /**
- * Whether the review gate lets this green head land. True with no reviewer
- * on the crew, or with an approval on this head and no change requested.
- * Otherwise the reviewer is queued once for the head and the pull waits.
+ * Whether the review gate lets this green head land: `pass` with no
+ * reviewer on the crew, or with an approval on this head and no change
+ * requested; `hold` while the review is out or changes are asked for; and
+ * `lapsed` when the reviewer was asked twice and never answered — the pull
+ * lands without it, and says so (`crew/review.ts`).
  */
-async function reviewed(app: App, repo: Repo, pull: Pull): Promise<boolean> {
-  const reviewer = listCrewRoles(app.db, repo.id).find(
-    (c) => c.role === "reviewer",
-  )?.agent;
-  if (reviewer === undefined) return true;
+async function reviewed(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+): Promise<"pass" | "hold" | "lapsed"> {
+  if (reviewersOf(app.db, repo.id).length === 0) return "pass";
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
-  if (seen.changesRequested > 0) return false;
-  if (seen.approvals > 0) return true;
-  if (sentToReview.get(pull.id) === pull.headOid) return false;
-  if (activeRunFor(app.db, "agent", pull.id) !== undefined) return false;
-  const issue = getIssueById(app.db, pull.id);
-  if (!issue) return false;
-  if (queueAgentRun(app, repo, issue, reviewer, "review") !== undefined) {
-    sentToReview.set(pull.id, pull.headOid);
-    log.info("green; queued for review", {
-      repo: `${repo.ownerName}/${repo.name}`,
-      pull: pull.number,
-    });
-  }
-  return false;
+  if (seen.changesRequested > 0) return "hold";
+  if (seen.approvals > 0) return "pass";
+  const stage = await sendToReview(app, repo, pull);
+  return stage === "lapsed" ? "lapsed" : stage === "none" ? "pass" : "hold";
 }
 
 /**
@@ -968,8 +994,10 @@ export async function landIfGreen(
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
   // on that very head (a person's counts the same). A push is a new head,
-  // so it starts over. Without a reviewer the pull lands as it always has.
-  if (!(await reviewed(app, repo, pull))) return false;
+  // so it starts over. Without a reviewer the pull lands as it always has,
+  // and so does one whose review lapsed.
+  const review = await reviewed(app, repo, pull);
+  if (review === "hold") return false;
   // Green and clear of the wall lands. An autonomous repository does not
   // wait on a person; the ledger keeps the landing as the rule it is, once
   // per head, so the week's numbers still add up.
@@ -986,7 +1014,10 @@ export async function landIfGreen(
       kind: "land",
       repoId: repo.id,
       issueId: pull.id,
-      state: { head: pull.headOid },
+      state:
+        review === "lapsed"
+          ? { head: pull.headOid, review: "lapsed" }
+          : { head: pull.headOid },
       answer: "ship",
       p: 1,
       by: "rule",
@@ -1010,6 +1041,19 @@ export async function landIfGreen(
   }
   conflicted.delete(pull.id);
   resolveOpen(app.db, pull.id, "land", "shipped");
+  // Said once it has landed, so the note wakes no builder: the review was
+  // asked for and never came.
+  if (review === "lapsed") {
+    const landed = getIssueById(app.db, pull.id);
+    if (landed)
+      addComment(
+        app,
+        by,
+        repo,
+        landed,
+        "Landed on green without a review: the crew's reviewer was asked twice and posted no verdict.",
+      );
+  }
   for (const number of closesFromBody(pull.body)) {
     const closed = getIssue(app.db, repo.id, number);
     if (closed) resolveOpen(app.db, closed.id, "next", "shipped");

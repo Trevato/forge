@@ -36,7 +36,11 @@ import {
   type Repo,
 } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
-import { listReviewComments, listReviews } from "../core/reviews.ts";
+import {
+  listReviewComments,
+  listReviews,
+  type Review,
+} from "../core/reviews.ts";
 import {
   cancelRun,
   checkSummary,
@@ -197,6 +201,29 @@ export function wrapUpReserve(budgetUsd: number): number {
     Math.max(budgetUsd * RESERVE, RESERVE_FLOOR_USD),
     budgetUsd / 2,
   );
+}
+
+/**
+ * How a review run ends, read from the verdicts on the pull: `ok` when the
+ * reviewer passed one since the run began, or stands by one on the head it
+ * was given (the same verdict sent again is the one already there);
+ * `failed` when it did neither. A reviewer pushes nothing by design, so
+ * what it pushed never decides it.
+ */
+export function settleReview(
+  reviews: readonly Review[],
+  reviewerId: string,
+  since: string,
+  headOid: string,
+): { state: "ok" | "failed"; summary: string } {
+  const verdict = reviews.findLast(
+    (r) =>
+      r.authorId === reviewerId &&
+      (r.createdAt >= since || r.commitOid === headOid),
+  );
+  return verdict === undefined
+    ? { state: "failed", summary: "reviewed: no verdict was posted" }
+    : { state: "ok", summary: `reviewed: ${verdict.state.replace("_", " ")}` };
 }
 
 /**
@@ -489,6 +516,7 @@ async function work(
   signal: AbortSignal,
   meter: Meter,
 ): Promise<Outcome> {
+  const began = new Date().toISOString();
   const repo = getRepoById(app.db, run.repoId);
   const issue =
     run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
@@ -657,7 +685,12 @@ async function work(
       isApp: record !== undefined,
       previewUrl,
       policy,
-      resuming: previous?.sessionId !== undefined && previous.sessionId !== "",
+      // A review reads one head afresh: a resumed session would carry an
+      // older head's diff and preview into the verdict on this one.
+      resuming:
+        !reviewing &&
+        previous?.sessionId !== undefined &&
+        previous.sessionId !== "",
       role: crewRole(app.db, repo.id, agent.user.id),
     };
     const failedCheck =
@@ -984,6 +1017,25 @@ async function work(
       return {
         state: "failed",
         summary: `declined: ${(why.split("\n")[0] ?? "").slice(0, 200)}`,
+        sessionId: result.sessionId,
+        costUsd: result.costUsd,
+        turns: result.turns,
+      };
+    }
+
+    // A reviewer's work is its verdict, posted through the API; it pushes
+    // nothing and has nothing to land. The run is judged by whether the
+    // verdict is there, not by what the session said about itself.
+    if (reviewing && pull !== undefined) {
+      const settled = settleReview(
+        listReviews(app.db, pull.id),
+        agent.user.id,
+        began,
+        pull.headOid,
+      );
+      write(settled.summary);
+      return {
+        ...settled,
         sessionId: result.sessionId,
         costUsd: result.costUsd,
         turns: result.turns,

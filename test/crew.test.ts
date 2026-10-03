@@ -30,7 +30,8 @@ import {
 } from "../src/crew/dispatch.ts";
 import { workdirFor } from "../src/crew/runner.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
-import { getAgentByName } from "../src/core/agents.ts";
+import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { listReviews } from "../src/core/reviews.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
@@ -118,6 +119,12 @@ fi
 if grep -q DECLINE-ME "${promptFile}"; then
   echo "half-done edit" > SHOULD-NOT-LAND.md
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
+  exit 0
+fi
+if grep -q "You are the reviewer on this crew" "${promptFile}"; then
+  path=$(grep -o 'api/v1/repos/[^"\\]*/review-states' "${promptFile}" | head -1)
+  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "\${FORGE_URL%/}/$path" -d '{"state":"changes_requested","body":"Name the fence."}' > "${dataDir}/review.out"
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"Reviewed.","total_cost_usd":0.004,"num_turns":1,"session_id":"fake-3","terminal_reason":"completed"}'
   exit 0
 fi
 if grep -q "The check on your pull" "${promptFile}"; then echo "daffodils" >> CREW.md; fi
@@ -596,4 +603,47 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     );
     expect(passed.summary).toMatch(/^check passed/);
   }, 120_000);
+
+  test("a reviewer's run that posts its verdict is ok, though it pushes nothing", async () => {
+    const made = await createAgent(app, alice, { username: "rev" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, repo, "rev").ok).toBe(true);
+    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "fence",
+      base: "main",
+      message: "A fence",
+      files: [{ path: "FENCE.md", content: "a fence\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "A fence",
+      baseBranch: "main",
+      headBranch: "fence",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const issue = getIssue(app.db, repo.id, opened.value.number)!;
+    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
+
+    const run = await settled(
+      (r) => r.reason === "review" && r.issueId === issue.id,
+    );
+    expect(run.state).toBe("ok");
+    expect(run.summary).toBe("reviewed: changes requested");
+    expect(
+      listReviews(app.db, issue.id).map((r) => [r.authorId, r.state]),
+    ).toEqual([[made.value.user.id, "changes_requested"]]);
+    // Nothing pushed and nothing said on the pull: the verdict is the word.
+    expect(listComments(app.db, issue.id)).toHaveLength(0);
+
+    // A second pass reads afresh: no earlier session carries an older
+    // head into it, and the same verdict again is not a second review.
+    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
+    const again = await settled(
+      (r) => r.reason === "review" && r.issueId === issue.id && r.id !== run.id,
+    );
+    expect(again.state).toBe("ok");
+    expect(readFileSync(argsFile, "utf8")).not.toContain("--resume");
+    expect(listReviews(app.db, issue.id)).toHaveLength(1);
+  }, 60_000);
 });

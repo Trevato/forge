@@ -11,7 +11,11 @@ import type { Agent, CrewRole } from "../core/agents.ts";
 import type { Comment, Issue } from "../core/issues.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
-import type { Review, ReviewComment } from "../core/reviews.ts";
+import {
+  REVIEW_ROUNDS,
+  type Review,
+  type ReviewComment,
+} from "../core/reviews.ts";
 
 export type RunReason =
   | "assigned"
@@ -197,7 +201,7 @@ function taskBody(input: TaskInput): string {
   if (input.reason === "review") {
     const pull = input.pull;
     out.push(
-      `You are the reviewer on this crew. Pull #${issue.number} — "${issue.title}" — is green and would land on its own; the crew's decider wants a second pair of eyes first, because it may be large, off the direction, or touch money, sign-in, data, or what people see first.`,
+      `You are the reviewer on this crew. Pull #${issue.number} — "${issue.title}" — is green; every pull the crew writes is read by a reviewer before it lands, and this one is yours.`,
       "",
       `The direction of this repository: ${input.repo.autonomyDirection.trim() || "(none written)"}`,
       "",
@@ -206,7 +210,7 @@ function taskBody(input: TaskInput): string {
       ...(input.previewUrl === undefined
         ? []
         : [
-            `- The preview is at ${input.previewUrl}. Use it as a person would: curl its pages, try the doors it offers.`,
+            `- This pull's preview, at this head, is at ${input.previewUrl}. Use it as a person would: curl its pages, try the doors it offers. Judge this preview only — another pull's preview is not this change.`,
           ]),
       ...(input.looks !== undefined && input.looks.length > 0
         ? [
@@ -227,9 +231,10 @@ function taskBody(input: TaskInput): string {
             "- The contract: every action asks `permit` and none compares roles by hand; a new door has its row in `src/contract.test.ts`; and no cell in `contract.json` is loosened unless the issue asked for exactly that — a loosened cell is a wall a person crosses, so a pull that loosens one without being asked is a change request, whatever else it does well.",
           ]),
       "",
-      "Then submit exactly one review through the forge's API and stop:",
-      `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/pulls/${issue.number}/reviews" -d '{"state":"approved","body":"..."}'`,
-      `Approve when it does what the direction asks, works in the preview, and looks right. Otherwise use "changes_requested" with a body a builder can act on: what does not work, and the one thing to fix first, concrete. You get two rounds of changes on a pull; after that it lands as it is, so if something is left, open an issue for it with the API instead. One review, then stop; your last message is not read by anyone.`,
+      "Then submit exactly one review through the forge's API — the verdict and its line comments in one call — and stop:",
+      `  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/pulls/${issue.number}/review-states" -d '{"state":"approved","body":"...","comments":[{"path":"src/x.ts","line":12,"side":"new","body":"..."}]}'`,
+      `"comments" is optional. Each anchors to a line of the diff below: "path" is the file, "side" is "new" for an added or kept line (numbered as in the head) or "old" for a removed one (numbered as in the base), and "line" counts from the hunk header — in \`@@ -a,b +c,d @@\` the hunk's first line is c on the new side. If the API answers \`bad_anchor\`, nothing was posted: read its message, fix the anchors, and send the review once more; if it is refused again, send it without "comments" and put those points in the body.`,
+      `Approve when it does what the direction asks, works in the preview, and looks right. Otherwise use "changes_requested" with a body a builder can act on: what does not work, and the one thing to fix first, concrete. You get ${REVIEW_ROUNDS} rounds of changes on a pull; after that it lands as it is, so if something is left, open an issue for it with the API instead. One review, then stop; your last message is not read by anyone.`,
       "",
       "The change:",
       "```diff",

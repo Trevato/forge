@@ -134,11 +134,25 @@ asked, under **Settings → Autonomy**:
   about a green pull reaches a person: first, a pull that no longer merges
   because `main` moved under it sends its agent one run (`conflict`, naming
   the files) to merge `main` into the branch, one waiting at a time, up to
-  the same limit a failing check has; then the decider reads the pull
-  against the direction and either lands it or hands it to the crew's
-  _reviewer_ (`review` run: the diff, the preview, the pictures the forge
-  took), whose approval lands it and whose change request goes back to the
-  builder as feedback; a crew with no reviewer lands it. Nothing waits for a
+  the same limit a failing check has; then the green head goes to the
+  crew's _reviewer_ (`review` run: the diff, the preview, the pictures the
+  forge took), whose approval lands it and whose change request goes back
+  to the builder as feedback; a crew with no reviewer lands it. With two
+  reviewers, a change to sign-in, tokens, secrets, the sandbox or the HTTP
+  edge goes to the one whose brief says it reads for security, and every
+  other change to the other (`crew/review.ts`). Every green pull an agent
+  wrote is sent this way in any repository with a reviewer, autonomous or
+  not; a review run is `ok` when it posted a verdict, since a reviewer
+  pushes nothing. A review that does not come back — the run ends without
+  a verdict, or is still out after 20 minutes — is sent once more; after
+  the second, or an hour green with no verdict however the runs went, the
+  review has lapsed and the pull lands on green with a note saying so. A
+  missing reviewer never holds a pull silently. An agent's verdict stands
+  only while the agent is a reviewer on the crew, and the reviewer gets two
+  rounds of changes on a pull — a round is a head it asked changes on;
+  past them its request is advice. A builder's run that answers a change
+  request without pushing parks the pull. A review run never resumes an
+  earlier session, and the same verdict sent twice on one head is one. Nothing waits for a
   person: a pull whose check stays red past its tries, or whose branch
   could not be brought up to date, is _parked_ — closed with the reason,
   its issue put back on the map unassigned with the same note — and the

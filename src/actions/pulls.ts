@@ -13,6 +13,7 @@ import {
   type BodyError,
   type Issue,
   getIssue,
+  MAX_BODY,
   setIssueState as setIssueStateCore,
 } from "../core/issues.ts";
 import {
@@ -38,6 +39,7 @@ import {
   hashLine,
   isReviewState,
   listReviewComments,
+  listReviews,
   resolveThread,
   submitReview as recordReview,
   threadComments,
@@ -246,29 +248,70 @@ export async function addReview(
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (pull.repoId !== repo.id) return err("not_found");
-  if (!Number.isInteger(input.line) || input.line < 1) return err("bad_anchor");
+  const anchored = await anchorLines(app, repo, pull, [input]);
+  if (!anchored.ok) return anchored;
+  return postLine(app, pull, user.value, anchored.value[0]!);
+}
+
+/** A line comment, with the head and line content it was anchored to. */
+interface AnchoredLine extends ReviewInput {
+  readonly commitOid: string;
+  readonly lineHash: string;
+}
+
+/**
+ * Each line comment anchored to the pull's current diff, or the first
+ * reason one cannot be: a body that is empty or too long, or an anchor
+ * that is not a row of the diff. All or none, so a review never lands
+ * with half its comments.
+ */
+async function anchorLines(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  lines: readonly ReviewInput[],
+): Promise<Result<AnchoredLine[], BodyError | "bad_anchor">> {
   const { status, diff } = await pullDiff(
     repoDir(app.reposRoot, repo.ownerName, repo.name),
     pull,
   );
-  const content = anchorContent(diff, input.path, input.side, input.line);
-  if (content === undefined) return err("bad_anchor");
+  const out: AnchoredLine[] = [];
+  for (const line of lines) {
+    if (!Number.isInteger(line.line) || line.line < 1)
+      return err("bad_anchor");
+    const content = anchorContent(diff, line.path, line.side, line.line);
+    if (content === undefined) return err("bad_anchor");
+    const body = line.body.trim();
+    if (body === "") return err("empty_body");
+    if (body.length > MAX_BODY) return err("body_too_long");
+    out.push({ ...line, commitOid: status.headOid, lineHash: hashLine(content) });
+  }
+  return ok(out);
+}
+
+/** Record one anchored line comment and say so on the outbox. */
+function postLine(
+  app: App,
+  pull: Pull,
+  user: User,
+  line: AnchoredLine,
+): Result<ReviewComment, BodyError> {
   const added = addReviewComment(app.db, {
     pullId: pull.id,
-    authorId: user.value.id,
-    body: input.body,
-    path: input.path,
-    line: input.line,
-    side: input.side,
-    commitOid: status.headOid,
-    lineHash: hashLine(content),
+    authorId: user.id,
+    body: line.body,
+    path: line.path,
+    line: line.line,
+    side: line.side,
+    commitOid: line.commitOid,
+    lineHash: line.lineHash,
   });
   if (!added.ok) return added;
   app.bus.append({
     kind: "pull.reviewed",
-    repoId: repo.id,
-    actorId: user.value.id,
-    payload: { number: pull.number, path: input.path, line: input.line },
+    repoId: pull.repoId,
+    actorId: user.id,
+    payload: { number: pull.number, path: line.path, line: line.line },
   });
   return added;
 }
@@ -391,11 +434,20 @@ export type SubmitReviewActionError =
   | "body_too_long"
   | "invalid_state"
   /** You cannot approve your own change. */
-  | "self_review";
+  | "self_review"
+  | "empty_body"
+  /** A line comment's anchor is not a row of the pull's current diff. */
+  | "bad_anchor"
+  | "too_many_lines";
+
+/** The most line comments one review may carry. */
+export const MAX_REVIEW_LINES = 50;
 
 export interface SubmitReviewInput {
   readonly state: ReviewState;
   readonly body?: string;
+  /** Line comments posted with the verdict, all or none. */
+  readonly comments?: readonly ReviewInput[];
 }
 
 /**
@@ -438,6 +490,13 @@ export async function submitReview(
   )
     return err("forbidden");
 
+  const lines = input.comments ?? [];
+  if (lines.length > MAX_REVIEW_LINES) return err("too_many_lines");
+  // Every anchor is checked before anything is written: a review with one
+  // wrong line posts nothing, and the reviewer can fix it and send it again.
+  const anchored = await anchorLines(app, repo, pull, lines);
+  if (!anchored.ok) return anchored;
+
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const status = await pullStatus(dir, pull);
 
@@ -461,12 +520,33 @@ export async function submitReview(
       actorId: user.id,
       payload: { number: pull.number, state: input.state, via: "origin" },
     });
+    // Line comments stay here, as `addReview`'s always have on a mirror.
+    for (const line of anchored.value) postLine(app, pull, user, line);
     const stored = getReviewByRemoteId(app.db, pull.id, sent.value.remoteId);
     return stored ? ok(stored) : err("origin_refused");
   }
 
   if (input.state === "approved" && pull.authorId === user.id)
     return err("self_review");
+
+  // The same verdict again on the same head — a retried call, a run that
+  // sent it twice — is the one already there, not a second review.
+  const again = listReviews(app.db, pull.id).findLast(
+    (r) => r.authorId === user.id,
+  );
+  if (
+    again !== undefined &&
+    again.commitOid === status.headOid &&
+    again.state === input.state &&
+    again.body.trim() === (input.body ?? "").trim()
+  )
+    return ok(again);
+
+  // The lines first, so whoever the verdict wakes reads them with it.
+  for (const line of anchored.value) {
+    const posted = postLine(app, pull, user, line);
+    if (!posted.ok) return posted;
+  }
 
   const recorded = recordReview(app.db, {
     issueId: pull.id,

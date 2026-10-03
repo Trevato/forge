@@ -25,6 +25,7 @@ import { resolveOpen } from "../core/decisions.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
+import { greenHead, sendToReview } from "./review.ts";
 import {
   activeRunFor,
   hasQueuedRun,
@@ -336,9 +337,12 @@ function route(app: App, event: ForgeEvent): void {
       if (!actor) return;
       // Agents talking is not feedback — except the crew's reviewer passing
       // a verdict on a pull, which is exactly what a person's review is.
+      // Its line comments ride along with the verdict; the verdict alone
+      // wakes the builder, once.
       const reviewerVerdict =
         actor.kind === "agent" &&
         event.kind === "pull.reviewed" &&
+        typeof event.payload["state"] === "string" &&
         crewRole(app.db, repo.id, actor.id) === "reviewer";
       if (actor.kind === "agent" && !reviewerVerdict) return;
       const issue = getIssue(app.db, repo.id, number);
@@ -413,11 +417,21 @@ function route(app: App, event: ForgeEvent): void {
         "retry",
         event.payload["state"] === "ok" ? "green" : "red",
       );
-      // Green, in a repository that ships on green: land it.
+      // Green: an agent's pull goes to the crew's reviewer, and in a
+      // repository that ships on green it lands (behind that review).
       if (event.payload["state"] === "ok") {
-        if (repo.autonomy !== "autonomous") return;
         const pull = getPull(app.db, repo.id, issue.number);
         if (!pull) return;
+        if (repo.autonomy !== "autonomous") {
+          if (pull.authorIsAgent && greenHead(app.db, pull))
+            sendToReview(app, repo, pull).catch((error) =>
+              log.error("sending to review failed", {
+                pull: issue.number,
+                error: String(error),
+              }),
+            );
+          return;
+        }
         landIfGreen(app, repo, pull).catch((error) =>
           log.error("landing on green failed", {
             pull: issue.number,

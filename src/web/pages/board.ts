@@ -21,6 +21,7 @@ import {
 } from "../../core/decisions.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { efficiencyForRepos } from "../../core/efficiency.ts";
+import { reviewStats, type ReviewStats } from "../../core/review-stats.ts";
 import { standings, WINDOW_MS } from "../../core/standing.ts";
 import {
   listCredentials,
@@ -95,6 +96,26 @@ const KIND_WORDS: Record<DecisionKind, string> = {
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
+
+/** A wait, in the unit a person reads it in. */
+function waitWords(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
+}
+
+/** How review is keeping up on one app today, or null when there is nothing to say. */
+function reviewWords(stats: ReviewStats): string | null {
+  const parts: string[] = [];
+  if (stats.awaiting > 0) parts.push(`${stats.awaiting} awaiting review`);
+  if (stats.latencyMs !== null)
+    parts.push(`${waitWords(stats.latencyMs)} from green to a verdict`);
+  if (stats.byReviewer.length > 0)
+    parts.push(
+      stats.byReviewer.map((r) => `${r.name} ${r.count}`).join(", "),
+    );
+  return parts.length === 0 ? null : parts.join(" · ");
+}
 
 /** A whole percentage, for the width rules in `boardCss`. */
 const pct = (n: number): number =>
@@ -643,6 +664,7 @@ function today(ctx: Ctx, scope: BoardScope): Html {
         limit: 100,
       }).filter((p) => p.mergedAt !== null && p.mergedAt >= since).length;
       const share = s.ceilingUsd > 0 ? s.spentTodayUsd / s.ceilingUsd : 0;
+      const review = reviewWords(reviewStats(db, repo.id, since));
       const note =
         s.paused === "ceiling"
           ? "at its ceiling until 00:00 UTC"
@@ -672,6 +694,12 @@ function today(ctx: Ctx, scope: BoardScope): Html {
           <span class="board-app-week"
             >${perShippedWords(week.get(repo.id))} this week</span
           >
+          ${when(
+            review !== null,
+            () => html`<span class="board-app-week board-app-review"
+              >${review}</span
+            >`,
+          )}
           <span class="board-spend"
             ><span class="board-fill" data-w="${pct(share)}"></span
           ></span>

@@ -21,7 +21,8 @@ import { recordDecision } from "../src/core/decisions.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { updateRepoSettings, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun } from "../src/core/runs.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -275,6 +276,47 @@ describe("the board", () => {
     const byOwner = await (await get("/board?apps=alice/notes")).text();
     expect(byOwner).toContain("Make the notes page load");
     expect(byOwner).not.toContain("on the cart");
+  });
+
+  test("review on an app's card: pulls awaiting it, the wait for a verdict, verdicts per reviewer", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, notes, {
+      branch: "feature/review-me",
+      base: "main",
+      message: "Review me",
+      files: [{ path: "REVIEW.md", content: "review me\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, notes, {
+      title: "Review me",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/review-me",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const check = createRun(app.db, {
+      repoId: notes.id,
+      kind: "check",
+      issueId: opened.value.id,
+      env: `pull-${opened.value.number}`,
+      commitOid: opened.value.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+    expect(await (await get("/board")).text()).toContain("1 awaiting review");
+
+    const juniper = await createAgent(app, alice, { username: "juniper" });
+    if (!juniper.ok) throw new Error(String(juniper.error));
+    submitReview(app.db, {
+      issueId: opened.value.id,
+      authorId: juniper.value.user.id,
+      state: "changes_requested",
+      commitOid: opened.value.headOid,
+    });
+    const html = await (await get("/board")).text();
+    expect(html).not.toContain("awaiting review");
+    expect(html).toMatch(/\d+m from green to a verdict · juniper 1/);
   });
 
   test("the home's shelf opens the board", async () => {

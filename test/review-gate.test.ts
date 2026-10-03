@@ -13,11 +13,16 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import { submitReview } from "../src/core/reviews.ts";
+import { listComments } from "../src/core/issues.ts";
+import {
+  REVIEW_ROUNDS,
+  reviewSummary,
+  submitReview,
+} from "../src/core/reviews.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
-import { landIfGreen } from "../src/crew/autonomy.ts";
+import { landIfGreen, settleAgentRun } from "../src/crew/autonomy.ts";
 
 describe("the review gate", () => {
   let dataDir: string;
@@ -158,6 +163,31 @@ describe("the review gate", () => {
     });
   }
 
+  test("a reviewer asked twice who never answers does not hold the pull: it lands, and says so", async () => {
+    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    const pull = await greenPull(mason, "unanswered");
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    const ended = () => {
+      for (const run of reviewRuns(pull).filter((r) => r.state === "queued")) {
+        claimRun(app.db, run.id);
+        finishRun(app.db, run.id, {
+          state: "failed",
+          summary: "reviewed: no verdict was posted",
+        });
+      }
+    };
+    ended();
+    // Back with nothing: sent once more.
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    expect(reviewRuns(pull)).toHaveLength(2);
+    ended();
+    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+    expect(reviewRuns(pull)).toHaveLength(2);
+    expect(
+      listComments(app.db, pull.id).map((c) => c.body).join("\n"),
+    ).toContain("without a review");
+  });
+
   test("a change requested on the head holds the pull", async () => {
     setCrewRole(app.db, repo.id, quill.id, "reviewer");
     const pull = await greenPull(alice, "contested");
@@ -169,5 +199,84 @@ describe("the review gate", () => {
     });
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     expect(getPull(app.db, repo.id, pull.number)?.mergedAt).toBeNull();
+  });
+
+  const askChanges = (pull: Pull, by: User) =>
+    submitReview(app.db, {
+      issueId: pull.id,
+      authorId: by.id,
+      state: "changes_requested",
+      commitOid: pull.headOid,
+    });
+
+  /** Push one more commit to the pull's branch and pass its check. */
+  async function pushTo(pull: Pull, name: string): Promise<Pull> {
+    const pushed = await commitToBranch(app, alice, repo, {
+      branch: pull.headBranch,
+      base: "main",
+      message: name,
+      files: [{ path: `${name}.ts`, content: `export const x = "${name}";\n` }],
+    });
+    if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+    return passCheck(getPull(app.db, repo.id, pull.number)!);
+  }
+
+  test("a reviewer taken off the crew no longer holds the pulls it judged", async () => {
+    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    const pull = await greenPull(mason, "judged");
+    askChanges(pull, quill);
+    expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(1);
+    setCrewRole(app.db, repo.id, quill.id, "builder");
+    expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(0);
+    // A person's request is the person's, whatever their crew.
+    askChanges(pull, alice);
+    expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(1);
+  });
+
+  test(`the reviewer gets ${REVIEW_ROUNDS} rounds of changes; a third is advice and the pull lands`, async () => {
+    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    let pull = await greenPull(mason, "rounds");
+    askChanges(pull, quill);
+    // Asked twice on one head is still one round.
+    askChanges(pull, quill);
+    pull = await pushTo(pull, "rounds-2");
+    askChanges(pull, quill);
+    expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(1);
+    pull = await pushTo(pull, "rounds-3");
+    askChanges(pull, quill);
+    expect(reviewSummary(app.db, pull.id, pull.headOid).changesRequested).toBe(0);
+    approve(pull, alice);
+    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+  });
+
+  test("a builder's run that answers a change request without pushing parks the pull", async () => {
+    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    setCrewRole(app.db, repo.id, mason.id, "builder");
+    const pull = await greenPull(mason, "unmoved");
+    askChanges(pull, quill);
+    expect(
+      settleAgentRun(app, fresh(), {
+        issueId: pull.id,
+        state: "ok",
+        summary: "no changes pushed: I think it is fine",
+        reason: "feedback",
+        actorId: mason.id,
+      }),
+    ).toBe(true);
+    expect(getPull(app.db, repo.id, pull.number)?.state).toBe("closed");
+
+    // One that pushed is answering, and is left alone.
+    const moved = await greenPull(mason, "moved");
+    askChanges(moved, quill);
+    expect(
+      settleAgentRun(app, fresh(), {
+        issueId: moved.id,
+        state: "ok",
+        summary: `updated pull #${moved.number} (abc1234)`,
+        reason: "feedback",
+        actorId: mason.id,
+      }),
+    ).toBe(false);
+    expect(getPull(app.db, repo.id, moved.number)?.state).toBe("open");
   });
 });
