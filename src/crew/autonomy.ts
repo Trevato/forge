@@ -36,6 +36,7 @@ import {
   latestDecision,
   recordDecision,
   resolveOpen,
+  stopStands,
 } from "../core/decisions.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
@@ -64,9 +65,9 @@ import {
 import {
   activeRunFor,
   automaticRunsSince,
-  checksForHead,
   listActive,
   type Run,
+  verdictForHead,
 } from "../core/runs.ts";
 import {
   agentFor,
@@ -889,9 +890,18 @@ export async function landIfGreen(
   if (pull.state !== "open" || pull.mergedAt !== null) return false;
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return false;
-  const checks = checksForHead(app.db, pull.id, pull.headOid);
+  // The newest run of each kind is what the head says: a red that a re-run
+  // on the same commit has since turned green is history.
+  const checks = verdictForHead(app.db, pull.id, pull.headOid);
   if (checks.length === 0) return false;
   if (checks.some((c) => c.state !== "ok")) return false;
+  // A stop the crew took on a red check ends with the green after it; a
+  // person's stop waits for a person.
+  const greenAt = checks
+    .map((c) => c.finishedAt ?? "")
+    .reduce((a, b) => (a > b ? a : b), "");
+  if (stopStands(latestDecision(app.db, pull.id, "retry"), greenAt))
+    return false;
   // Conflicts first: a pull that no longer merges is the crew's to bring
   // up to date, before anyone is asked whether it should land. A conflict
   // is remembered by the two tips it was between: until one of them moves

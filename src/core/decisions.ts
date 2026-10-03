@@ -126,6 +126,27 @@ export function latestDecision(
   return row ? toDecision(row) : undefined;
 }
 
+/**
+ * Whether a `retry` decision still stops its pull. The crew's stop is its
+ * answer to a red check (the check is in what it saw), so a check that
+ * passes afterwards — a re-run on the same head, or a newer head — is the
+ * end of it: the ledger's `green` outcome, or a green verdict finished
+ * after it was taken (`greenAt`). Any other stop is a person's, and only a
+ * person lifts it.
+ */
+export function stopStands(
+  decision: Decision | undefined,
+  greenAt?: string | undefined,
+): boolean {
+  if (decision?.kind !== "retry" || decision.answer !== "stop") return false;
+  const state = decision.state;
+  const aboutACheck =
+    typeof state === "object" && state !== null && "check" in state;
+  if (!aboutACheck) return true;
+  if (decision.outcome === "green") return false;
+  return greenAt === undefined || greenAt <= decision.createdAt;
+}
+
 /** What came of the newest unresolved decision of this kind about an issue. */
 export function resolveOpen(
   db: Database,

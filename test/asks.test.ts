@@ -12,7 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { recordDecision } from "../src/core/decisions.ts";
+import { recordDecision, resolveOpen } from "../src/core/decisions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
@@ -160,5 +160,59 @@ describe("the asks page", () => {
     const other = await get(bob, "/asks");
     expect(other).not.toContain("queue has waited");
     expect(sentence(other)).toBe("All fine");
+  });
+
+  test("a stop the crew took on a red check is no card once a check on that head passes", async () => {
+    const aliceUser = getUserByName(app.db, "alice")!;
+    const bot = getUserByName(app.db, "bot")!;
+    await commitToBranch(app, aliceUser, repo, {
+      branch: "bot/2-flaky",
+      base: "main",
+      message: "Bot work, unlucky",
+      files: [{ path: "FLAKY.md", content: "flaky\n" }],
+    });
+    const opened = await openPull(app, bot, repo, {
+      title: "Bot met a flaky runner",
+      body: "",
+      baseBranch: "main",
+      headBranch: "bot/2-flaky",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const check = (state: "ok" | "failed") => {
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: pull.id,
+        env: `pull-${pull.number}`,
+        commitOid: pull.headOid,
+        reason: "retry",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state, summary: state });
+    };
+    check("failed");
+    recordDecision(app.db, {
+      kind: "retry",
+      repoId: repo.id,
+      issueId: pull.id,
+      state: { check: { kind: "check", summary: "red" } },
+      answer: "stop",
+      p: 0.8,
+      by: "decider",
+      ms: 1,
+    });
+    const card = `id="ask-stopped:${pull.id}"`;
+    expect(await get(alice, "/asks")).toContain(card);
+    // The re-run passes: the stop is answered, and the pull is green.
+    check("ok");
+    resolveOpen(app.db, pull.id, "retry", "green");
+    const green = await get(alice, "/asks");
+    expect(green).not.toContain(card);
+    expect(green).toContain(`id="ask-look:${pull.id}"`);
+    // Red again, before anything new is decided: the old stop is spent, and
+    // the crew's tries are what the card is counted from.
+    check("failed");
+    expect(await get(alice, "/asks")).not.toContain(card);
   });
 });

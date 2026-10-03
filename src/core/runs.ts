@@ -627,6 +627,24 @@ export function checksForHead(
     .map(toRun);
 }
 
+/**
+ * What this head says now: the newest run of each kind (and environment)
+ * at it. A re-run on the same commit supersedes the red it was run for, so
+ * "does this head pass" is whether every row here is `ok`.
+ */
+export function verdictForHead(
+  db: Database,
+  issueId: string,
+  headOid: string,
+): Run[] {
+  const newest = new Map<string, Run>();
+  for (const run of checksForHead(db, issueId, headOid)) {
+    const key = `${run.kind}:${run.env}`;
+    if (!newest.has(key)) newest.set(key, run);
+  }
+  return [...newest.values()];
+}
+
 export interface CheckSummary {
   /** `ok` when the latest deploy of this head succeeded; `none` when there is none. */
   readonly state: RunState | "none";

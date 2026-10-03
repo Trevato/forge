@@ -12,7 +12,7 @@ import { previewEnv } from "../../apps/data.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
-import { latestDecision } from "../../core/decisions.ts";
+import { latestDecision, stopStands } from "../../core/decisions.ts";
 import {
   getIssueById,
   listComments,
@@ -184,7 +184,7 @@ function askCandidatesFor(
       if (!issue.authorIsAgent) continue;
       const since = lastHumanWord(db, issue, who);
       const tries = automaticRunsSince(db, issue.id, since);
-      const stopped = latestDecision(db, issue.id, "retry")?.answer === "stop";
+      const stopped = stopStands(latestDecision(db, issue.id, "retry"));
       // A repository on its own parks what it cannot finish and moves on;
       // only an assisted one stops here for a person.
       if (

@@ -19,6 +19,11 @@ import {
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
+import {
+  latestDecision,
+  recordDecision,
+  resolveOpen,
+} from "../src/core/decisions.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
@@ -384,6 +389,95 @@ describe("a repository on its own", () => {
     expect(
       getIssue(app.db, repo.id, stuck.value.number)!.assigneeId,
     ).toBeNull();
+  });
+
+  test("a stop on red ends with the green after it: the pull lands on the next tick; a person's stop stays", async () => {
+    app.db
+      .query("UPDATE repo SET autonomy = 'autonomous' WHERE id = ?1")
+      .run(repo.id);
+    const proposed = async (name: string) => {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: `scout/${name}`,
+        base: "main",
+        message: name,
+        files: [{ path: `${name}.ts`, content: `export const ${name} = 1;\n` }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, scout, repo, {
+        title: name,
+        baseBranch: "main",
+        headBranch: `scout/${name}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      return opened.value;
+    };
+    const check = (
+      pull: { id: string; number: number },
+      head: string,
+      state: "ok" | "failed",
+    ) => {
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: pull.id,
+        env: `pull-${pull.number}`,
+        commitOid: head,
+        reason: "retry",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state, summary: state });
+      // What dispatch does with every check's result.
+      resolveOpen(app.db, pull.id, "retry", state === "ok" ? "green" : "red");
+    };
+    const stop = (pull: { id: string }, state: unknown, by: string) =>
+      recordDecision(app.db, {
+        kind: "retry",
+        repoId: repo.id,
+        issueId: pull.id,
+        state,
+        answer: "stop",
+        p: 0.9,
+        by,
+        ms: 1,
+      });
+    const crewSaw = { check: { kind: "check", summary: "check failed" } };
+    const merged = (n: number) => getPull(app.db, repo.id, n)!.mergedAt !== null;
+
+    // The same head, run again: the red it was run for is history.
+    const rerun = await proposed("gravity");
+    check(rerun, rerun.headOid, "failed");
+    stop(rerun, crewSaw, "decider");
+    expect(await sweepGreen(app, fresh())).toBe(0);
+    check(rerun, rerun.headOid, "ok");
+    expect(latestDecision(app.db, rerun.id, "retry")?.outcome).toBe("green");
+    expect(await sweepGreen(app, fresh())).toBe(1);
+    expect(merged(rerun.number)).toBe(true);
+
+    // Red on the re-run too, then a newer head that passes.
+    const pushed = await proposed("friction");
+    check(pushed, pushed.headOid, "failed");
+    stop(pushed, crewSaw, "decider");
+    check(pushed, pushed.headOid, "failed");
+    const again = await commitToBranch(app, alice, repo, {
+      branch: "scout/friction",
+      message: "friction, fixed",
+      files: [{ path: "friction.ts", content: "export const friction = 2;\n" }],
+    });
+    if (!again.ok) throw new Error(JSON.stringify(again.error));
+    const newer = getPull(app.db, repo.id, pushed.number)!;
+    expect(newer.headOid).not.toBe(pushed.headOid);
+    check(newer, newer.headOid, "ok");
+    expect(await sweepGreen(app, fresh())).toBe(1);
+    expect(merged(pushed.number)).toBe(true);
+
+    // A stop that is not the crew's answer to a check is a person's: green
+    // does not lift it.
+    const held = await proposed("drag");
+    check(held, held.headOid, "failed");
+    stop(held, "hold this one for me", "alice");
+    check(held, held.headOid, "ok");
+    expect(await sweepGreen(app, fresh())).toBe(0);
+    expect(merged(held.number)).toBe(false);
   });
 
   test("the builder pick is one fixed-choice function", () => {
