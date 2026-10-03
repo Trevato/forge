@@ -9,6 +9,7 @@ import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
 import {
   addDependency,
+  confirmDependency,
   removeDependency,
   type DependencyError,
 } from "../core/dependencies.ts";
@@ -77,6 +78,32 @@ export function unlinkIssue(
     kind: "issue.unblocked",
     repoId: repo.id,
     actorId: who.value.id,
+    payload: { number: issue.number, blockedBy: blocker.number },
+  });
+  return ok(undefined);
+}
+
+/**
+ * A person says `issue` may go ahead although `blocker` closed as dropped or
+ * split. Writers only: the crew parked it, and the crew may not unpark itself.
+ */
+export function confirmIssue(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  blocker: Issue,
+): Result<void, AccessError> {
+  if (!canRead(app.db, repo, actor)) return err("not_found");
+  if (!actor) return err("unauthorized");
+  if (!canWrite(app.db, repo, actor) || isCrew(app.db, repo.id, actor.id))
+    return err("forbidden");
+  if (issue.repoId !== repo.id) return err("not_found");
+  if (!confirmDependency(app.db, issue.id, blocker.id)) return ok(undefined);
+  app.bus.append({
+    kind: "issue.confirmed",
+    repoId: repo.id,
+    actorId: actor.id,
     payload: { number: issue.number, blockedBy: blocker.number },
   });
   return ok(undefined);

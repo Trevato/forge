@@ -197,6 +197,7 @@ import {
   dependencyWords,
   linkIssue,
   unlinkIssue,
+  confirmIssue,
 } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
@@ -206,7 +207,12 @@ import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import type { Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
-import { listAssignedTo } from "../core/issues.ts";
+import {
+  CLOSE_REASONS,
+  listAssignedTo,
+  type CloseReason,
+} from "../core/issues.ts";
+import type { Closing } from "../actions/issues.ts";
 import {
   checksForHead,
   getRun,
@@ -457,6 +463,12 @@ function sourceFailure(error: SourceError): Response {
  * worth retrying against.
  */
 function originAware(error: string, status = 422): Response {
+  if (error === "invalid_reason")
+    return apiError(
+      "invalid_reason",
+      422,
+      "a reason is done, dropped, or split (with `into`: the issues it became); only an issue closing takes one",
+    );
   if (error === "mirrored")
     return apiError(
       "mirrored",
@@ -482,6 +494,30 @@ function originAware(error: string, status = 422): Response {
       "the origin refused this change; nothing was changed here either",
     );
   return respondAccess(error, status);
+}
+
+/**
+ * `reason` and `into` of a close request, or undefined when they are not
+ * the shapes they must be (a bad reason word, `into` not a list of numbers).
+ */
+function closingFrom(input: Record<string, unknown>): Closing | undefined {
+  const reason = input.reason;
+  if (reason !== undefined && !CLOSE_REASONS.includes(reason as CloseReason))
+    return undefined;
+  let into: number[] | undefined;
+  if (input.into !== undefined) {
+    if (
+      !Array.isArray(input.into) ||
+      input.into.length > 50 ||
+      !input.into.every((n) => Number.isInteger(n) && n > 0)
+    )
+      return undefined;
+    into = input.into as number[];
+  }
+  return {
+    ...(reason === undefined ? {} : { reason: reason as CloseReason }),
+    ...(into === undefined ? {} : { into }),
+  };
 }
 
 /**
@@ -1695,6 +1731,7 @@ export function apiRoutes(router: Router<Handler>): void {
         number: i.number,
         title: i.title,
         state: i.state,
+        ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
       });
       return json({
         blockedBy: deps.blockedBy.map(brief),
@@ -1766,6 +1803,33 @@ export function apiRoutes(router: Router<Handler>): void {
       return new Response(null, { status: 204 });
     },
   );
+  // A person confirms an edge whose blocker closed dropped or split: the
+  // plan still holds, so the dependent is no longer parked on it.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/issues/:number/dependencies/:blocker/confirm",
+    (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadIssue(ctx);
+      if ("error" in found) return found.error;
+      const number = positiveInt(ctx.params.blocker);
+      const blocker =
+        number === undefined
+          ? undefined
+          : getIssue(ctx.app.db, found.repo.id, number);
+      if (!blocker) return notFound();
+      const confirmed = confirmIssue(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.issue,
+        blocker,
+      );
+      if (!confirmed.ok) return respondAccess(confirmed.error, 422);
+      return new Response(null, { status: 204 });
+    },
+  );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
@@ -1821,12 +1885,15 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = str(input.state);
       if (wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
+      const closing = closingFrom(input);
+      if (closing === undefined) return json({ error: "invalid_reason" }, 422);
       const changed = await setIssueStateThrough(
         ctx.app,
         ctx.auth.user,
         found.repo,
         found.issue,
         wanted,
+        closing,
       );
       if (!changed.ok) return originAware(changed.error, 409);
       return json(withLabels(ctx, changed.value));

@@ -49,6 +49,7 @@ function paperIssue(n: number, state: "open" | "closed" = "open"): Issue {
     createdAt: `2026-01-01T00:00:${String(n).padStart(2, "0")}Z`,
     updatedAt: "2026-01-01T00:00:00Z",
     closedAt: null,
+    closeReason: null,
     originAuthor: null,
     originUrl: null,
     assigneeId: null,
@@ -66,6 +67,7 @@ function paperGraph(n: number, edges: [number, number][]): Graph {
       issueId: `i${issue}`,
       blockedById: `i${blockedBy}`,
     })),
+    held: [],
   };
 }
 

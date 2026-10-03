@@ -20,9 +20,11 @@
 
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
+import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
   addComment as insertComment,
   createIssue,
+  getIssue,
   getIssueById,
   getLabel,
   labelsFor,
@@ -30,6 +32,7 @@ import {
   setAssignee,
   setIssueLabels as writeLabels,
   setIssueState as writeState,
+  type CloseReason,
   type Comment,
   type Issue,
   type IssueState,
@@ -170,7 +173,11 @@ export function setIssueState(
   repo: Repo,
   issue: Issue,
   state: IssueState,
-): Result<Issue, AccessError | "already_merged" | MirrorError> {
+  closing: Closing = {},
+): Result<
+  Issue,
+  AccessError | "already_merged" | MirrorError | "invalid_reason"
+> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
@@ -184,15 +191,44 @@ export function setIssueState(
     getPull(app.db, repo.id, issue.number)?.mergedAt != null
   )
     return err("already_merged");
-  const changed = writeState(app.db, issue.id, state);
+  const reason = state === "closed" ? (closing.reason ?? "done") : undefined;
+  const children: Issue[] = [];
+  if (closing.reason !== undefined || closing.into !== undefined) {
+    // A reason is how an issue closes; a pull or a reopen has none.
+    if (state !== "closed" || issue.kind !== "issue")
+      return err("invalid_reason");
+    if (reason === "split") {
+      for (const number of closing.into ?? []) {
+        const child = getIssue(app.db, repo.id, number);
+        if (!child || child.kind !== "issue" || child.id === issue.id)
+          return err("invalid_reason");
+        if (!children.some((c) => c.id === child.id)) children.push(child);
+      }
+      if (children.length === 0) return err("invalid_reason");
+    } else if (closing.into !== undefined) return err("invalid_reason");
+  }
+  const changed = writeState(app.db, issue.id, state, reason);
   if (!changed) return ok(getIssueById(app.db, issue.id) ?? issue);
+  if (children.length > 0)
+    moveBlockersToChildren(app.db, issue, children, user.value.id);
   app.bus.append({
     kind: `${issue.kind}.${state === "closed" ? "closed" : "reopened"}`,
     repoId: repo.id,
     actorId: user.value.id,
-    payload: { number: issue.number },
+    payload: {
+      number: issue.number,
+      ...(issue.kind === "issue" && reason !== undefined ? { reason } : {}),
+      ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
+    },
   });
   return ok(changed);
+}
+
+/** How an issue closes: done unless said otherwise; split names its children. */
+export interface Closing {
+  readonly reason?: CloseReason;
+  /** Issue numbers a split issue became. */
+  readonly into?: readonly number[];
 }
 
 /**
@@ -333,14 +369,17 @@ export async function setIssueStateThrough(
   repo: Repo,
   issue: Issue,
   state: IssueState,
-): Promise<Result<Issue, ThroughError<AccessError | "already_merged">>> {
+  closing: Closing = {},
+): Promise<
+  Result<Issue, ThroughError<AccessError | "already_merged" | "invalid_reason">>
+> {
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
   const through = writeThroughFor(app, user.value, repo);
   if (!through.ok) return through;
   if (through.value === undefined)
-    return setIssueState(app, actor, repo, issue, state);
+    return setIssueState(app, actor, repo, issue, state, closing);
 
   // Same "author or writer" rule as a native issue: mirroring is not a
   // permission bypass, and the origin will have its own opinion too.

@@ -10,7 +10,7 @@
 
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getIssuesByIds, type Issue } from "./issues.ts";
+import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
 
@@ -56,6 +56,45 @@ export function removeDependency(
       )
       .run(issueId, blockedById).changes > 0
   );
+}
+
+/**
+ * A person says the plan still holds: `issue` may go ahead although its
+ * blocker closed as dropped or split. Returns whether an edge was changed.
+ */
+export function confirmDependency(
+  db: Database,
+  issueId: string,
+  blockedById: string,
+): boolean {
+  return (
+    db
+      .query(
+        `UPDATE issue_dependency SET confirmed = 1
+         WHERE issue_id = ?1 AND blocked_by_id = ?2 AND confirmed = 0`,
+      )
+      .run(issueId, blockedById).changes > 0
+  );
+}
+
+/**
+ * `parent` was split into `children`: what it waited for, they wait for, and
+ * it waits for nothing. A child that would close a loop is left out of that
+ * edge. Returns how many edges were moved.
+ */
+export function moveBlockersToChildren(
+  db: Database,
+  parent: Issue,
+  children: readonly Issue[],
+  actorId: string | undefined,
+): number {
+  const blockers = getIssuesByIds(db, blockerIds(db, parent.id));
+  let moved = 0;
+  for (const blocker of blockers.values())
+    for (const child of children)
+      if (addDependency(db, child, blocker, actorId).ok) moved++;
+  db.query("DELETE FROM issue_dependency WHERE issue_id = ?1").run(parent.id);
+  return moved;
 }
 
 /** Whether `from` is blocked, directly or through others, by `to`. */
@@ -136,10 +175,22 @@ export function dependenciesOf(
 
 // ---- the graph of one repository ----
 
+/** An open issue held by a blocker that closed without being done. */
+export interface Held {
+  readonly issueId: string;
+  readonly blockedById: string;
+  readonly reason: Exclude<CloseReason, "done">;
+}
+
 export interface Graph {
   /** Every issue of kind `issue` that is open or on an edge. */
   readonly issues: Issue[];
   readonly edges: Edge[];
+  /**
+   * Edges whose blocker closed as dropped or split and that no person has
+   * confirmed or relinked: closing frees only what was done.
+   */
+  readonly held: Held[];
 }
 
 const GRAPH_MAX = 400;
@@ -152,6 +203,20 @@ export function repoGraph(db: Database, repoId: string): Graph {
     )
     .all(repoId)
     .map((r) => ({ issueId: r.issue_id, blockedById: r.blocked_by_id }));
+  const heldRows = db
+    .query<
+      { issue_id: string; blocked_by_id: string; reason: Held["reason"] },
+      [string]
+    >(
+      `SELECT d.issue_id, d.blocked_by_id, b.close_reason AS reason
+         FROM issue_dependency d
+         JOIN issue i ON i.id = d.issue_id AND i.state = 'open'
+         JOIN issue b ON b.id = d.blocked_by_id AND b.state = 'closed'
+        WHERE i.repo_id = ?1 AND d.confirmed = 0
+          AND b.close_reason IN ('dropped','split')
+        ORDER BY b.number`,
+    )
+    .all(repoId);
   const open = db
     .query<{ id: string }, [string, number]>(
       `SELECT id FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
@@ -173,6 +238,11 @@ export function repoGraph(db: Database, repoId: string): Graph {
     edges: edges.filter(
       (e) => present.has(e.issueId) && present.has(e.blockedById),
     ),
+    held: heldRows.map((r) => ({
+      issueId: r.issue_id,
+      blockedById: r.blocked_by_id,
+      reason: r.reason,
+    })),
   };
 }
 
@@ -259,8 +329,12 @@ export function readyNow(graph: Graph): Ranked[] {
   const open = openIds(graph);
   const holds = holdsUpMap(graph, open);
   const waits = waitsForMap(graph, open);
+  const held = new Set(graph.held.map((h) => h.issueId));
   return graph.issues
-    .filter((i) => open.has(i.id) && (waits.get(i.id)?.size ?? 0) === 0)
+    .filter(
+      (i) =>
+        open.has(i.id) && !held.has(i.id) && (waits.get(i.id)?.size ?? 0) === 0,
+    )
     .map((issue) => ({
       issue,
       holdsUp: holds.get(issue.id)?.size ?? 0,

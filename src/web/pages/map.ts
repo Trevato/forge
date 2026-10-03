@@ -416,8 +416,10 @@ export interface Marks {
   readonly crew: Map<string, RunState>;
   /** Open issues an open pull would close: proposed, not landed. */
   readonly waiting: Set<string>;
-  /** Issues whose last word is the crew parking them. */
+  /** Issues whose last word is the crew parking them, or whose blocker closed unfinished. */
   readonly parked: Set<string>;
+  /** Why an issue is parked on a closed blocker, by issue id: "#4 was dropped". */
+  readonly why: Map<string, string>;
 }
 
 /**
@@ -447,13 +449,23 @@ export function marksFor(
     if (id !== undefined) waiting.add(id);
   }
   const open = graph.issues.filter((i) => i.state === "open").map((i) => i.id);
-  return { crew: crewMarks(runs), waiting, parked: struckOut(db, open) };
+  const parked = struckOut(db, open);
+  const why = new Map<string, string>();
+  const numbers = new Map(graph.issues.map((i) => [i.id, i.number]));
+  for (const h of graph.held) {
+    parked.add(h.issueId);
+    const note = `#${numbers.get(h.blockedById)} was ${h.reason === "split" ? "split" : "dropped"}`;
+    const had = why.get(h.issueId);
+    why.set(h.issueId, had === undefined ? note : `${had}; ${note}`);
+  }
+  return { crew: crewMarks(runs), waiting, parked, why };
 }
 
 export const NO_MARKS: Marks = {
   crew: new Map(),
   waiting: new Set(),
   parked: new Set(),
+  why: new Map(),
 };
 
 /**
@@ -593,7 +605,7 @@ function node(
     ${run ? html`data-run="${run}"` : null}
     href="${issueHref(base, n.issue.number)}"
   >
-    <title>${number} ${n.issue.title} — ${word}</title>
+    <title>${number} ${n.issue.title} — ${word}${emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
     ${word === "working"
       ? html`<rect
           class="map-breath"
@@ -1278,6 +1290,10 @@ export function mapJson(
     state: i.state,
     assignee: i.assigneeName,
     word: wordFor(i, readySet, marks),
+    ...(i.state === "closed" && i.closeReason !== null
+      ? { closeReason: i.closeReason }
+      : {}),
+    ...(marks.why.has(i.id) ? { parkedBecause: marks.why.get(i.id) } : {}),
   });
   return {
     repo: { owner: repo.ownerName, name: repo.name },

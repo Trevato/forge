@@ -9,7 +9,11 @@
  */
 
 import { listCrew } from "../../actions/crew.ts";
-import { linkIssue, unlinkIssue } from "../../actions/dependencies.ts";
+import {
+  confirmIssue,
+  linkIssue,
+  unlinkIssue,
+} from "../../actions/dependencies.ts";
 import { dependenciesOf } from "../../core/dependencies.ts";
 import { isCrew } from "../../core/agents.ts";
 import {
@@ -18,7 +22,13 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { listEvents } from "../../core/events.ts";
-import type { Issue, Label } from "../../core/issues.ts";
+import {
+  CLOSE_REASONS,
+  type CloseReason,
+  type Issue,
+  type Label,
+} from "../../core/issues.ts";
+import type { Closing } from "../../actions/issues.ts";
 import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { inlineIcons, type IconName as Glyph } from "../icons.ts";
@@ -311,6 +321,8 @@ export interface ComposerOptions {
   /** Where close/reopen POSTs; omitted hides those buttons. */
   stateAction?: string;
   state: "open" | "closed";
+  /** Offer why an issue closes: done, dropped, or split into others. */
+  reasons?: boolean;
   /** A merged pull can never reopen. */
   locked?: boolean;
   /** What the close button calls the thing here — dev's own noun
@@ -343,6 +355,22 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
             name="state"
             value="${o.state === "open" ? "closed" : "open"}"
           />
+          ${
+            o.reasons && o.state === "open"
+              ? html`<select name="reason" aria-label="Why it closes">
+                    <option value="done">done</option>
+                    <option value="dropped">dropped</option>
+                    <option value="split">split into…</option>
+                  </select>
+                  <input
+                    class="input"
+                    name="into"
+                    inputmode="numeric"
+                    placeholder="split into #, #"
+                    aria-label="Issue numbers it was split into"
+                  />`
+              : null
+          }
         </form>`
       : null;
   const closeButton =
@@ -597,6 +625,28 @@ export async function stateSubmit(
 
   const wanted = field(form, "state") === "closed" ? "closed" : "open";
   const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const why = field(form, "reason");
+  const intoText = field(form, "into").trim();
+  const into = intoText
+    .split(/[\s,]+/)
+    .filter((t) => t !== "")
+    .map((t) => Number(t.replace(/^#/, "")));
+  if (
+    (why !== "" && !CLOSE_REASONS.includes(why as CloseReason)) ||
+    into.length > 50 ||
+    !into.every((n) => Number.isInteger(n) && n > 0)
+  )
+    return flashOrJson(ctx, dest, {
+      tone: "danger",
+      message: "Close as done, dropped, or split into issue numbers.",
+    });
+  const closing: Closing =
+    wanted === "closed" && kind === "issue" && why !== ""
+      ? {
+          reason: why as CloseReason,
+          ...(why === "split" ? { into } : {}),
+        }
+      : {};
   // The `…Through` twin: identical on a native repo, and on a mirror it
   // closes the issue at the origin first and reflects what came back.
   const changed = await setIssueStateThrough(
@@ -605,6 +655,7 @@ export async function stateSubmit(
     found.repo,
     found.issue,
     wanted,
+    closing,
   );
   if (!changed.ok) {
     // The same noun the redirect target is about to render with
@@ -696,6 +747,19 @@ export function dependenciesCard(
             ${icon(i.state === "closed" ? "issueClosed" : "issue")}
             <a href="${base}/issues/${i.number}">${i.title}</a>
             <span class="muted small">#${i.number}</span>
+            ${i.closeReason === "dropped" || i.closeReason === "split"
+              ? html`<span class="muted small">${i.closeReason}</span>`
+              : null}
+            ${removable &&
+            mayEdit &&
+            (i.closeReason === "dropped" || i.closeReason === "split")
+              ? html`<form method="post" action="${action}" class="inline">
+                  <input type="hidden" name="confirm" value="${i.number}" />
+                  <button class="btn btn-ghost btn-xs" type="submit">
+                    Still holds
+                  </button>
+                </form>`
+              : null}
             ${removable && mayEdit
               ? html`<form method="post" action="${action}" class="inline">
                   <input type="hidden" name="unlink" value="${i.number}" />
@@ -759,7 +823,13 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
   const unlink = field(form, "unlink").trim();
-  const raw = unlink !== "" ? unlink : field(form, "blockedBy").trim();
+  const confirm = field(form, "confirm").trim();
+  const raw =
+    unlink !== ""
+      ? unlink
+      : confirm !== ""
+        ? confirm
+        : field(form, "blockedBy").trim();
   const number = Number(raw.replace(/^#/, ""));
   const other =
     Number.isInteger(number) && number > 0
@@ -773,7 +843,9 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
   const result =
     unlink !== ""
       ? unlinkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other)
-      : linkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other);
+      : confirm !== ""
+        ? confirmIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other)
+        : linkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other);
   if (!result.ok) {
     const words: Record<string, string> = {
       self: "An issue cannot wait for itself.",
@@ -789,8 +861,10 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
   }
   return flashTo(ctx, dest, {
     message:
-      unlink !== ""
-        ? `#${found.issue.number} no longer waits for #${other.number}.`
-        : `#${found.issue.number} waits for #${other.number}.`,
+      confirm !== ""
+        ? `#${found.issue.number} may go ahead without #${other.number}.`
+        : unlink !== ""
+          ? `#${found.issue.number} no longer waits for #${other.number}.`
+          : `#${found.issue.number} waits for #${other.number}.`,
   });
 }

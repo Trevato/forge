@@ -550,6 +550,7 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
           stateAction: `${thread}/state`,
           state: issue.state,
           closeLabel: "Close issue",
+          reasons: true,
         })}
       </div>
       <aside>

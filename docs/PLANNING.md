@@ -22,6 +22,7 @@ _Holds up 3_, with each issue linked and a field to add one. Over the API:
 GET    /api/v1/repos/:owner/:name/issues/:n/dependencies   → { blockedBy, blocks }
 POST   /api/v1/repos/:owner/:name/issues/:n/dependencies   { "blockedBy": m }
 DELETE /api/v1/repos/:owner/:name/issues/:n/dependencies/:m
+POST   /api/v1/repos/:owner/:name/issues/:n/dependencies/:m/confirm
 ```
 
 A refused link says why: `self`, `cycle`, `cross_repo`, `not_an_issue`.
@@ -263,3 +264,15 @@ material: whether the decider beats the rule is a query, not an opinion.
 Every answer a decider gives is a log line — `decided by=typesafe ms=270
 answers=builder=mason@0.99 size=tiny@0.58 …` — so what it said and how
 long it took are always in the forge's log.
+
+## Closing takes a reason
+
+`PATCH …/issues/:n { "state": "closed", "reason": "done"|"dropped"|"split", "into": [m, …] }`.
+No reason means done. Done frees what waited. Dropped or split closes the
+issue but holds its dependents as _parked_, the map saying why ("#4 was
+dropped"), until a writer relinks them or confirms the edge
+(`POST …/dependencies/:m/confirm`, the page's "Still holds"); the crew may
+not confirm its own plan. Split also moves the parent's blocked-by edges to
+the issues named in `into` (a child that would make a loop is skipped), and
+the parent waits for nothing. Reopening clears the reason. Closes that
+predate reasons count as done.
