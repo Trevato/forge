@@ -45,6 +45,18 @@ import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { primaryDomain } from "../core/domains.ts";
+import {
+  beatAwake,
+  closeAllAwake,
+  closeAwake,
+  closeOrphans,
+  lastStorageAt,
+  openAwake,
+  recordStorage,
+  SAMPLE_SPAN_MS,
+  type Placement,
+} from "../core/meter.ts";
+import { dirBytes } from "./bytes.ts";
 import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
 import { seconds, Stopwatch } from "./timing.ts";
@@ -111,6 +123,10 @@ export interface RuntimeOptions {
    * its own, so proving `app.example.com` needs no network in a test.
    */
   readonly dns?: DomainResolver | undefined;
+  /** Where this forge's processes run, as the meter records it. @default "owned" */
+  readonly placement?: Placement | undefined;
+  /** How often storage is sampled for the meter. @default one hour */
+  readonly storageEveryMs?: number | undefined;
 }
 
 export type EnvState =
@@ -522,6 +538,9 @@ export class AppsRuntime {
       failAbandonedRuns(this.app.db, STALE_AFTER_MS, ["deploy"]) +
       requeueAbandonedChecks(this.app, STALE_AFTER_MS);
     if (abandoned > 0) log.info("settled abandoned runs", { count: abandoned });
+    // An awake interval the last forge left open ends at its last heartbeat.
+    const orphans = this.metered(() => closeOrphans(this.app.db));
+    if (orphans) log.info("closed open meter intervals", { count: orphans });
     this.unsubscribe = this.app.bus.subscribe((event) => {
       // Never let an event handler's rejection reach the bus.
       this.onEvent(event).catch((error) =>
@@ -546,6 +565,7 @@ export class AppsRuntime {
     for (const { record, repo } of present)
       await this.reconcileApp(record, repo, "boot", "preview");
     this.pruneDirs(known);
+    await this.sampleStorage();
     this.sweeper = setInterval(
       () => void this.sweep(),
       this.options.sweepEveryMs ?? SWEEP_EVERY_MS,
@@ -573,6 +593,7 @@ export class AppsRuntime {
       stops.push(state.chain.catch(() => {}));
     }
     await Promise.all(stops);
+    this.metered(() => closeAllAwake(this.app.db, new Date().toISOString()));
     runtimes.delete(this.app);
   }
 
@@ -940,6 +961,7 @@ export class AppsRuntime {
       deployStartedAt,
     };
     state.live = live;
+    this.awake(state, servingAt);
     state.asleep = undefined;
     state.lastRequestAt = Date.now();
     state.lastError = undefined;
@@ -1178,6 +1200,7 @@ export class AppsRuntime {
       .then((code) => {
         if (this.stopped || state.live !== live) return; // replaced or stopped on purpose
         state.live = undefined;
+        this.resting(state);
         revokeAppToken(this.app.db, live.tokenId);
         state.lastError = `exited with code ${code}`;
         appendRunLog(
@@ -1311,6 +1334,7 @@ export class AppsRuntime {
       };
       state.asleep = undefined;
       state.live = live;
+      this.awake(state, now);
       state.lastRequestAt = Date.now();
       this.watch(state, repo, live);
       write("awake");
@@ -1476,6 +1500,7 @@ export class AppsRuntime {
     const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
     const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
     const now = Date.now();
+    this.metered(() => beatAwake(this.app.db, new Date(now).toISOString()));
     for (const state of this.envs.values()) {
       const live = state.live;
       // Still running: its credential is still wanted for another window.
@@ -1509,6 +1534,7 @@ export class AppsRuntime {
         continue;
       }
       state.live = undefined;
+      this.resting(state, now);
       state.asleep = {
         commitOid: live.commitOid,
         dir: live.dir,
@@ -1527,6 +1553,88 @@ export class AppsRuntime {
       log.info("asleep", { app: state.app.slug, env: state.env });
       revokeAppToken(this.app.db, live.tokenId);
       await live.handle.stop();
+    }
+    await this.sampleStorage();
+  }
+
+  // ---- the meter ----
+
+  /**
+   * Run one write to the meter. What an app used is worth recording, never
+   * worth taking a deploy, a sleep or a shutdown down with it.
+   */
+  private metered<T>(write: () => T): T | undefined {
+    try {
+      return write();
+    } catch (error) {
+      log.error("meter write failed", { error: String(error) });
+      return undefined;
+    }
+  }
+
+  /** The environment began serving: its awake interval opens, if not open. */
+  private awake(state: Environment, at: string): void {
+    this.metered(() =>
+      openAwake(this.app.db, {
+        repoId: state.app.repoId,
+        env: state.env,
+        placement: this.options.placement ?? "owned",
+        at,
+      }),
+    );
+  }
+
+  /** The environment stopped serving: its awake interval closes. */
+  private resting(state: Environment, at: number = Date.now()): void {
+    this.metered(() =>
+      closeAwake(this.app.db, {
+        repoId: state.app.repoId,
+        env: state.env,
+        at: new Date(at).toISOString(),
+      }),
+    );
+  }
+
+  private sampling = false;
+
+  /**
+   * Once per `storageEveryMs`: the bytes of each app's `FORGE_APP_DATA`,
+   * every environment summed, and of its bare repository.
+   */
+  private async sampleStorage(): Promise<void> {
+    if (this.stopped || this.sampling) return;
+    const every = this.options.storageEveryMs ?? SAMPLE_SPAN_MS;
+    const last = this.metered(() => lastStorageAt(this.app.db));
+    if (last !== undefined && Date.now() - Date.parse(last) < every) return;
+    this.sampling = true;
+    try {
+      const at = new Date().toISOString();
+      for (const record of listApps(this.app.db)) {
+        const repo = getRepoById(this.app.db, record.repoId);
+        if (!repo) continue;
+        let dataBytes = 0;
+        const root = join(appsRoot(this.app.config.dataDir), record.id);
+        if (existsSync(root))
+          for (const name of readdirSync(root))
+            if (isEnvName(name))
+              dataBytes += await dirBytes(
+                envDataDir(this.app.config.dataDir, record.id, name),
+              );
+        const repoBytes = await dirBytes(
+          repoDir(this.app.reposRoot, repo.ownerName, repo.name),
+        );
+        if (this.stopped) return;
+        this.metered(() =>
+          recordStorage(this.app.db, {
+            repoId: record.repoId,
+            dataBytes,
+            repoBytes,
+            at,
+          }),
+        );
+      }
+    } finally {
+      this.sampling = false;
     }
   }
 
@@ -1547,6 +1655,7 @@ export class AppsRuntime {
       // after its pull closed, checkout, cloned data and all.
       const live = state.live;
       state.live = undefined;
+      this.resting(state);
       revokeAppToken(this.app.db, live?.tokenId);
       if (live) await live.handle.stop();
     }
@@ -1571,6 +1680,7 @@ export class AppsRuntime {
     await state.chain.catch(() => {});
     const live = state.live;
     state.live = undefined;
+    this.resting(state);
     state.asleep = undefined;
     revokeAppToken(this.app.db, live?.tokenId);
     if (live) await live.handle.stop();

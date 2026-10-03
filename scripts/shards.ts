@@ -79,6 +79,34 @@ export function splitFiles(
 /** How a test file is named: the same rule `scripts/test-shards.ts` uses. */
 export const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 
+/** A test's short name after `--`: `crew-wrapup` is `test/crew-wrapup.test.ts`. */
+const TEST_NAME = /^[a-z0-9][a-z0-9-]{0,99}$/;
+
+/**
+ * Splits `scripts/test-shards.ts`'s arguments into `bun test` flags and
+ * test files. Before `--`, an argument naming a test file is a file and
+ * anything else a flag; after it, every argument is a short name under
+ * `test/` (`crew` is `test/crew.test.ts`), which keeps `forge.json`'s
+ * `check.run` under the manifest's 1000-character bound.
+ */
+export function splitArgs(
+  args: readonly string[],
+):
+  | { ok: true; flags: string[]; files: string[] }
+  | { ok: false; error: string } {
+  const at = args.indexOf("--");
+  const head = at === -1 ? args : args.slice(0, at);
+  const names = at === -1 ? [] : args.slice(at + 1);
+  const flags = head.filter((arg) => !TEST_FILE.test(arg));
+  const files = head.filter((arg) => TEST_FILE.test(arg));
+  for (const name of names) {
+    if (!TEST_NAME.test(name))
+      return { ok: false, error: `${JSON.stringify(name)} is not a test name` };
+    files.push(`test/${name}.test.ts`);
+  }
+  return { ok: true, flags, files };
+}
+
 /** A sane bound on one entry of the times table: a day, in seconds. */
 const TIME_MAX = 86_400;
 

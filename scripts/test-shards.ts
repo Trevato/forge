@@ -3,6 +3,7 @@
  *
  *   bun scripts/test-shards.ts [bun test flags…] test/a.test.ts test/b.test.ts …
  *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
+ *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
  *
  * The files come from the command line, so `forge.json`'s `check.run`
  * stays the one place that names them. Each shard is its own `bun test`
@@ -21,10 +22,10 @@
 import { availableParallelism } from "node:os";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
 import {
-  TEST_FILE,
   formatTimes,
   parseTimes,
   shardCount,
+  splitArgs,
   splitFiles,
   tally,
   weigher,
@@ -36,8 +37,12 @@ const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 const argv = process.argv.slice(2);
 const record = argv.includes("--record");
 const args = argv.filter((arg) => arg !== "--record");
-const files = args.filter((arg) => TEST_FILE.test(arg));
-const flags = args.filter((arg) => !TEST_FILE.test(arg));
+const split = splitArgs(args);
+if (!split.ok) {
+  console.error(`test-shards: ${split.error}`);
+  process.exit(2);
+}
+const { files, flags } = split;
 
 if (files.length === 0) {
   console.error("test-shards: name the test files to run");

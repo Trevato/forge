@@ -11,11 +11,13 @@ import {
   formatTimes,
   parseTimes,
   shardCount,
+  splitArgs,
   splitFiles,
   tally,
   weigher,
   type ShardResult,
 } from "../scripts/shards.ts";
+import { parseCheck } from "../src/apps/manifest.ts";
 
 const files = Array.from({ length: 23 }, (_, i) => `test/f${i}.test.ts`);
 
@@ -269,5 +271,43 @@ describe("tally", () => {
     expect(ending.lines).toContain(
       "shard 2 exited 1 without naming a test: b c",
     );
+  });
+});
+
+describe("splitArgs", () => {
+  test("after --, a bare name is a file under test/", () => {
+    expect(
+      splitArgs(["--timeout", "60000", "test/x.test.ts", "--", "crew", "fork-flow"]),
+    ).toEqual({
+      ok: true,
+      flags: ["--timeout", "60000"],
+      files: ["test/x.test.ts", "test/crew.test.ts", "test/fork-flow.test.ts"],
+    });
+    expect(splitArgs(["--bail", "test/a.test.ts"])).toEqual({
+      ok: true,
+      flags: ["--bail"],
+      files: ["test/a.test.ts"],
+    });
+  });
+
+  test("a name that could leave test/ or is not a name is refused", () => {
+    for (const name of ["../src/x", "a/b", "", "-x", "Crew", "a.test.ts"])
+      expect(splitArgs(["--", name]).ok).toBe(false);
+  });
+
+  test("forge.json's check fits the manifest and names only files that exist", async () => {
+    const text = readFileSync(new URL("../forge.json", import.meta.url), "utf8");
+    // The forge's own reading of the manifest, which is what refused it.
+    const check = parseCheck(text, undefined);
+    expect(check.ok).toBe(true);
+    if (!check.ok || check.value === undefined) throw new Error("no check");
+    const run = check.value.run;
+    const args = run.slice(run.indexOf("scripts/test-shards.ts ") + 23).split(" ");
+    const split = splitArgs(args);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    expect(split.files.length).toBeGreaterThan(0);
+    for (const file of split.files)
+      expect(await Bun.file(new URL(`../${file}`, import.meta.url)).exists()).toBe(true);
   });
 });

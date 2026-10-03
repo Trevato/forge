@@ -785,6 +785,22 @@ it was kept awake. Busy buys one crew run's length past the idle window
 (`FORGE_CREW_TIMEOUT_MIN`, 45 minutes by default) and no more, so an app
 that keeps a child forever still rests.
 
+### The meter
+
+Awake and asleep are also what an app costs, so the runtime writes them
+down (`core/meter.ts`). Every stretch an environment serves is one row in
+`meter` — repository, environment, placement (`owned` or `cloud`), started,
+ended — opened when a deploy or a wake starts serving (a redeploy keeps the
+same row open) and closed when it sleeps, stops, crashes, is torn down or
+the forge shuts down. Each sweep is a heartbeat on the open rows; a row the
+last forge left open is closed at boot at its last heartbeat, never left
+running. Once an hour the runtime samples each app's bytes — every
+environment's `FORGE_APP_DATA` and its bare repository, files only, links
+not followed (`apps/bytes.ts`) — into `storage`. `usageBetween` reads both
+for a `[from, to)` range: awake seconds per app (by placement too) and
+GB-hours, bytes × hours / 1e9, each sample standing for the hour after it
+or until the next one.
+
 ### Subscriptions
 
 One token in the environment is one account for the whole forge. An admin
