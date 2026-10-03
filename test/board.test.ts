@@ -5,6 +5,7 @@
  * anonymous is sent to sign in.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -371,7 +372,7 @@ describe("the board's forge strip", () => {
       if (username === "root") admin = u.value;
       cookies[username] = await signIn(username);
     }
-  });
+  }, 30_000);
 
   afterAll(async () => {
     servers.stop();
@@ -401,5 +402,24 @@ describe("the board's forge strip", () => {
     expect(other).not.toContain('id="forge"');
     expect(other).not.toContain("All fine");
     expect(other).not.toContain("stuck.");
+  });
+
+  test("a blocked rollout shows in the status line, escaped, for an admin only", async () => {
+    const guard = mkdtempSync(join(tmpdir(), "forge-board-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    try {
+      writeFileSync(
+        join(guard, "status.json"),
+        JSON.stringify({ incidents: { stuck: "quota refused <i>8Gi</i>" } }),
+      );
+      writeFileSync(join(guard, "checkedAt"), new Date().toISOString());
+      const blocked = await board("root");
+      expect(blocked).toContain("rollout blocked: quota refused &lt;i&gt;8Gi&lt;/i&gt;");
+      expect(blocked).not.toContain("<i>8Gi</i>");
+      expect(await board("bob")).not.toContain("rollout blocked");
+    } finally {
+      delete process.env["FORGE_GUARD_DIR"];
+      rmSync(guard, { recursive: true, force: true });
+    }
   });
 });

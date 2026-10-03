@@ -125,6 +125,9 @@ spec:
             - name: plat-ca
               mountPath: /etc/plat-ca
               readOnly: true
+            - name: forge-guard
+              mountPath: /etc/forge-guard
+              readOnly: true
           # `/` answers 200 for anyone; it is the landing page. Boot reconciles
           # the index from git first, which grows with the number of repos.
           startupProbe:
@@ -148,4 +151,9 @@ spec:
         - name: plat-ca
           secret:
             secretName: plat-local-ca-tls
+        # The watchdog's view of the platform; absent is fine.
+        - name: forge-guard
+          configMap:
+            name: forge-guard
+            optional: true
             optional: true

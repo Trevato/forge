@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { forgeHealth } from "../kernel/guard.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
@@ -2752,17 +2753,18 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ---- apps, runs, and the crew (docs/APPS.md) ----
 
-  // How the forge itself is: a site admin's to read, and nobody else's to
-  // know exists — a 404, never the numbers.
+  // How the forge is, and the platform's word on its rollout: anyone may
+  // read it (a monitor has no account). A site admin also gets the forge's
+  // own vitals alongside, `ok` being both.
   router.add("GET", "/api/v1/health", (ctx) => {
-    if (!ctx.auth.user?.isAdmin) return notFound();
+    const forge = forgeHealth();
+    if (!ctx.auth.user?.isAdmin) return json(forge);
     const runtime = appsRuntime(ctx.app);
     const envs = runtime
       ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
       : [];
-    return json(
-      vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs }),
-    );
+    const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
+    return json({ ...v, ...forge, ok: forge.ok && v.ok });
   });
 
   router.add("GET", "/api/v1/apps", (ctx) => {

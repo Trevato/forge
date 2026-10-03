@@ -73,18 +73,27 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("a site admin with a read-only token gets the shape; others get a 404", async () => {
+test("a site admin with a read-only token gets the shape; others get the short one", async () => {
   const res = await health(admin);
   expect(res.status).toBe(200);
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
-    ["apps", "at", "disk", "errors", "memory", "needs", "ok", "queue", "stuck"].sort(),
+    [
+      "apps", "at", "checkedAt", "disk", "draining", "errors", "incidents",
+      "memory", "needs", "ok", "queue", "rollout", "stale", "stuck", "version",
+    ].sort(),
   );
   expect(v.disk.totalBytes).toBeGreaterThan(0);
   expect(v.memory.rssBytes).toBeGreaterThan(0);
   expect(v.apps).toEqual({ serving: 0, asleep: 0, previews: 0 });
-  expect((await health(plain)).status).toBe(404);
-  expect((await health()).status).toBe(404);
+  // Everyone else gets the platform's short shape, never the numbers.
+  for (const token of [plain, undefined]) {
+    const res = await health(token);
+    expect(res.status).toBe(200);
+    const short = (await res.json()) as Record<string, unknown>;
+    expect(short["disk"]).toBeUndefined();
+    expect(short["rollout"]).toBeDefined();
+  }
   expect((await fetch(servers.url + "/healthz")).status).toBe(200);
 });
 

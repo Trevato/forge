@@ -514,9 +514,14 @@ spike #339) implements the same interface and must provide:
 
 ## The forge's standing
 
-`GET /api/v1/health` (`kernel/vitals.ts`) answers a site admin, by session or
-any token scope, with `{ ok, needs, disk, memory, queue, stuck, apps, at }`;
-everyone else gets a 404. `needs` is one sentence per thing off: disk under
+`GET /api/v1/health` answers anyone with `{ ok, version, draining, rollout:
+{ state: ok|blocked|held, reason }, incidents, stale, checkedAt }` — the
+platform's word, read from the read-only `forge-guard` ConfigMap mounted at
+`FORGE_GUARD_DIR` (default `/etc/forge-guard`, `kernel/guard.ts`): a `stuck`
+incident blocks, `held` holds, a view older than ten minutes is stale. A
+site admin, by session or any token scope, also gets `{ needs, disk, memory,
+queue, stuck, apps, at }` (`kernel/vitals.ts`), and the board shows
+`rollout blocked: <reason>` in its status line. `needs` is one sentence per thing off: disk under
 10% free on the `FORGE_DATA` volume, a run running with a lapsed lease (or
 past six hours), a queue whose oldest run has waited over thirty minutes.
 It is a fixed handful of queries however many runs and apps exist, measured

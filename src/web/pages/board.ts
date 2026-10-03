@@ -24,6 +24,7 @@ import { efficiencyForRepos } from "../../core/efficiency.ts";
 import { standings, WINDOW_MS } from "../../core/standing.ts";
 import { listSubscriptions } from "../../core/subscriptions.ts";
 import { listApps } from "../../core/apps.ts";
+import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
@@ -270,15 +271,24 @@ function forgeStrip(ctx: Ctx): Html | null {
       ? listApps(app.db).flatMap((record) => runtime.status(record))
       : [],
   });
+  const fh = forgeHealth();
+  const rollout = rolloutLine(fh);
+  const others = fh.incidents.filter(
+    (i) => i.key !== "stuck" && i.key !== "held",
+  );
+  const ok = v.ok && fh.ok;
   return html`<div
     class="board-forge"
     id="forge"
     data-live="run.*,app.*"
-    data-ok="${v.ok ? "yes" : "no"}"
+    data-ok="${ok ? "yes" : "no"}"
+    data-rollout="${fh.rollout.state}"
     role="status"
   >
+    ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
+    ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
     ${
-      v.ok
+      ok
         ? html`<span class="board-forge-ok">All fine</span>`
         : v.needs.map((need) => {
             const href = needHref(need, v);
