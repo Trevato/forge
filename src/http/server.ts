@@ -27,8 +27,13 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { css } from "../web/style.ts";
-import { assetResponse, highlightAsset } from "../web/asset.ts";
+import {
+  assetResponse,
+  highlightAsset,
+  stylesheetAsset,
+  stylesheetRedirect,
+  stylesheetResponse,
+} from "../web/asset.ts";
 import { isThemeName } from "../design/themes.ts";
 import {
   home,
@@ -384,27 +389,20 @@ const gitChallenge = () =>
 
 // ---- the public server ----
 
-const CSS_ETAG = `"${sha256(css).slice(0, 16)}"`;
-
-function stylesheet(ctx: Ctx): Response {
-  if (ctx.request.headers.get("if-none-match") === CSS_ETAG) {
-    return new Response(null, { status: 304, headers: { etag: CSS_ETAG } });
-  }
-  return new Response(css, {
-    headers: {
-      "content-type": "text/css; charset=utf-8",
-      etag: CSS_ETAG,
-      "cache-control": "public, max-age=300",
-    },
-  });
-}
-
 export function buildRouter(): Router<Handler> {
   const router = new Router<Handler>();
 
   // Literal-prefix routes come before parameterized repo routes; the router
-  // matches in insertion order.
-  router.add("GET", "/assets/forge.css", stylesheet);
+  // matches in insertion order. The stylesheet and the highlighter bundle are
+  // both content-addressed: a stale hash is a 404 rather than a redirect, the
+  // page that asked for it names the hash it was built with, so a miss means
+  // an old tab, and an old tab should reload. The unhashed name stays only as
+  // a short-lived redirect for pages rendered before the hash existed.
+  router.add("GET", "/assets/:name.css", (ctx) => {
+    if (ctx.params.name === "forge") return stylesheetRedirect();
+    if (ctx.params.name !== stylesheetAsset().name) return notFound();
+    return stylesheetResponse();
+  });
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
   router.add("GET", "/.well-known/change-password", changePassword);

@@ -1,3 +1,4 @@
+import { stylesheetAsset } from "../src/web/asset.ts";
 /**
  * The studio: apps as the unit, three verbs, and a switch to dev. The same
  * URLs answer in both modes; the cookie decides which face they show.
@@ -302,11 +303,13 @@ describe("the studio", () => {
     // for this request (label colors) is allowed one.
     for (const path of ["/", "/alice/notes", "/apps"]) {
       const html = await (await get(path)).text();
-      expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
+      expect(html).toContain(
+        `<link rel="stylesheet" href="${stylesheetAsset().path}"`,
+      );
       expect(html).not.toContain("<style");
     }
 
-    const sheet = await fetch(`${base}/assets/forge.css`);
+    const sheet = await fetch(`${base}${stylesheetAsset().path}`);
     expect(sheet.headers.get("content-type")).toContain("text/css");
     const css = await sheet.text();
     expect(css).toContain(".studio-tell textarea");

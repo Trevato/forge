@@ -1,3 +1,4 @@
+import { stylesheetAsset } from "../src/web/asset.ts";
 /**
  * The board: a live wall of the crews at work. Signed in, four live
  * regions; a run in flight and a merged pull on it; `?apps=` narrows it;
@@ -143,7 +144,9 @@ describe("the board", () => {
     // A wall left open all day fetches its 13 KB of rules once, with the rest
     // of the design, instead of carrying them inline on every reload.
     expect(html).not.toContain("<style");
-    expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
+    expect(html).toContain(
+        `<link rel="stylesheet" href="${stylesheetAsset().path}"`,
+      );
     // A viewer who chose a theme keeps it.
     const paper = await (
       await get("/board", { cookie: `${cookie}; forge_theme=paper` })

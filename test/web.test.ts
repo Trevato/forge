@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { health } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { stylesheetAsset, stylesheetRedirect } from "../src/web/asset.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
 import {
   icon,
@@ -16,6 +17,25 @@ import { renderMarkdown } from "../src/web/markdown.ts";
 import { highlightAsset } from "../src/web/asset.ts";
 import { securityFloor } from "../src/http/respond.ts";
 import { THEME_NAMES } from "../src/design/themes.ts";
+import { sha256 } from "../src/kernel/hash.ts";
+import { css } from "../src/web/style.ts";
+
+describe("stylesheet asset", () => {
+  test("its path is a hash over the css, so changing the css moves it", () => {
+    const expected = `/assets/forge-${sha256(css).slice(0, 16)}.css`;
+    expect(stylesheetAsset().path).toBe(expected);
+    expect(stylesheetAsset().path).not.toBe(
+      `/assets/forge-${sha256(css + " ").slice(0, 16)}.css`,
+    );
+  });
+
+  test("the old unhashed path redirects to the current sheet", async () => {
+    const res = stylesheetRedirect();
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(stylesheetAsset().path);
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+  });
+});
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 describe("html template", () => {
@@ -362,14 +382,26 @@ describe("web pages end to end", () => {
     expect(text).toContain("function openModal(");
   });
 
-  test("stylesheet is served with an etag", async () => {
-    const first = await fetch(`${base}/assets/forge.css`);
-    expect(first.headers.get("content-type")).toContain("text/css");
-    const etag = first.headers.get("etag")!;
-    const second = await fetch(`${base}/assets/forge.css`, {
-      headers: { "if-none-match": etag },
-    });
-    expect(second.status).toBe(304);
+  test("stylesheet is content-addressed and immutable, at the path the page names", async () => {
+    const homeText = await (await fetch(base, { headers: { cookie } })).text();
+    const match = homeText.match(/href="(\/assets\/forge-[0-9a-f]+\.css)"/);
+    expect(match).not.toBeNull();
+    const path = match![1]!;
+    expect(
+      (await fetch(base, { headers: { cookie } })).headers.get("cache-control"),
+    ).toBe("no-cache");
+
+    const response = await fetch(`${base}${path}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/css");
+    expect(response.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+
+    // A stale hash — an old tab's cached URL after a deploy — is a 404, not
+    // a redirect, the same rule the highlighter bundle already follows.
+    const stale = await fetch(`${base}/assets/forge-0000000000000000.css`);
+    expect(stale.status).toBe(404);
   });
 
   test("new repo via the form, empty state renders", async () => {
@@ -532,7 +564,9 @@ describe("themes", () => {
   });
 
   test("stylesheet carries every premade theme", async () => {
-    const css = await (await fetch(`${base}/assets/forge.css`)).text();
+    const css = await (
+      await fetch(`${base}${stylesheetAsset().path}`)
+    ).text();
     for (const name of THEME_NAMES) {
       expect(css).toContain(`:root[data-theme="${name}"]`);
       expect(css).toContain(`.swatch[data-t="${name}"]`);
@@ -766,8 +800,9 @@ describe("the security floor is on every response", () => {
     expect(((await typo.json()) as { error: string }).error).toBe("no_route");
     expectFloor("no_route json", typo);
 
-    const stylesheet = await fetch(`${base}/assets/forge.css`);
+    const stylesheet = await fetch(`${base}${stylesheetAsset().path}`);
     expect(stylesheet.status).toBe(200);
+    expect(stylesheet.headers.get("cache-control")).toContain("immutable");
     expectFloor("stylesheet", stylesheet);
 
     const built = await fetch(`${base}${asset!.path}`);

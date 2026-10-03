@@ -21,6 +21,7 @@ import {
   THEMES,
   type ThemeName,
 } from "../design/themes.ts";
+import { stylesheetAsset } from "./asset.ts";
 import { shellJs } from "./client.ts";
 import {
   clearFlashCookie,
@@ -596,7 +597,7 @@ export function page(options: PageOptions, status = 200): Response {
           rel="icon"
           href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
         />
-        <link rel="stylesheet" href="/assets/forge.css" />
+        <link rel="stylesheet" href="${stylesheetAsset().path}" />
         ${when(
           options.scriptAsset,
           (src) => html`<script type="module" src="${src}"></script>`,
@@ -619,6 +620,9 @@ export function page(options: PageOptions, status = 200): Response {
     "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
+    // Markup is revalidated every time; only the hashed assets it names are
+    // cached, so no cache can pair new HTML with an old stylesheet.
+    "cache-control": "no-cache",
   });
   // A flash is shown exactly once: rendering it is also what clears it.
   if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
