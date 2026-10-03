@@ -35,7 +35,7 @@ import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { listPulls, mergedPullsForRepos, type Pull } from "../../core/pulls.ts";
+import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
 import {
   canSeeOwnerFacts,
   listReposVisibleTo,
@@ -515,6 +515,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
       { name: pull.authorName, isAgent: pull.authorIsAgent },
       scope.ownerFacts.has(repo.id),
     );
+    const told = toldBy(db, pull);
     return html`<li>
       <a
         class="board-card board-landed"
@@ -536,7 +537,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
         >
         <span class="board-landed-title">${pull.title}</span>
         <span class="board-when">${time(pull.mergedAt ?? pull.createdAt)}</span>
-        <span class="board-landed-meta">${repo.name} · ${author}</span>
+        <span class="board-landed-meta">${repo.name} · ${author}${told === null ? "" : html` · told by ${told}`}</span>
       </a>
     </li>`;
   });

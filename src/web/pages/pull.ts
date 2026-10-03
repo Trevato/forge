@@ -24,7 +24,7 @@ import {
   type PullReviewStatus,
   type PullStatus,
 } from "../../core/pulls.ts";
-import { getPull } from "../../core/pulls.ts";
+import { getPull, toldBy } from "../../core/pulls.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
@@ -822,7 +822,11 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
             ? originTag(pull.originAuthor, originGlyph(repo))
             : userLink(pull.authorName)}
           opened this ${time(pull.createdAt)}</span
-        >
+        >${when(
+          toldBy(ctx.app.db, pull),
+          (who) =>
+            html`<span class="told-by">in answer to ${userLink(who)}</span>`,
+        )}
         ${when(
           pull.originUrl,
           (url) =>

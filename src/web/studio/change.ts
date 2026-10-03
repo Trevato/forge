@@ -9,7 +9,7 @@
 
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
-import { pullStatus, revertOf, type Pull } from "../../core/pulls.ts";
+import { pullStatus, revertOf, toldBy, type Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { checkSummary } from "../../core/runs.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -153,7 +153,11 @@ export async function studioPull(
           ? originTag(pull.originAuthor, originGlyph(repo))
           : userLink(pull.authorName)}
         opened this ${time(pull.createdAt)}</span
-      >
+      >${when(
+        toldBy(ctx.app.db, pull),
+        (who) =>
+          html`<span class="told-by">in answer to ${userLink(who)}</span>`,
+      )}
       ${when(
         pull.originUrl,
         (url) =>

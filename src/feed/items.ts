@@ -10,7 +10,7 @@ import type { Database } from "bun:sqlite";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
-import { getPull } from "../core/pulls.ts";
+import { getPull, toldBy } from "../core/pulls.ts";
 import {
   canSeeOwnerFacts,
   getReposByIds,
@@ -148,8 +148,14 @@ function fromEvent(
   };
   const p = e.payload;
   const number = typeof p["number"] === "number" ? p["number"] : undefined;
-  const title =
-    number === undefined ? "" : (getPull(db, repo.id, number)?.title ?? "");
+  const pull = number === undefined ? undefined : getPull(db, repo.id, number);
+  const title = pull?.title ?? "";
+  const told = pull === undefined ? null : toldBy(db, pull);
+  const toldParts = [
+    ...(told === null ? [] : [`told by ${told}`]),
+    ...(pull?.authorIsAgent ? [`by ${pull.authorName}`] : []),
+  ].join(", ");
+  const toldWords = toldParts === "" ? "" : ` (${toldParts})`;
   const change = number === undefined ? base(repo) : `${base(repo)}/changes/${number}`;
   switch (e.kind) {
     case "run.finished": {
@@ -174,9 +180,9 @@ function fromEvent(
       };
     }
     case "pull.opened":
-      return { ...common, kind: "pull", link: change, what: `a change was opened${title ? `: ${clip(title)}` : ""}` };
+      return { ...common, kind: "pull", link: change, what: `a change was opened${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.merged":
-      return { ...common, kind: "pull", link: change, what: `a change shipped${title ? `: ${clip(title)}` : ""}` };
+      return { ...common, kind: "pull", link: change, what: `a change shipped${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.reviewed":
       return { ...common, kind: "pull", link: change, what: `a change was reviewed${title ? `: ${clip(title)}` : ""}` };
     case "look.taken":

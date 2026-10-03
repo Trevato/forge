@@ -17,6 +17,8 @@ import {
 } from "../core/issues.ts";
 import {
   closesFromBody,
+  landingTrailers,
+  toldBy,
   createPull,
   getPull,
   mergePull as landPull,
@@ -47,7 +49,7 @@ import {
   type Side,
   type ThreadState,
 } from "../core/reviews.ts";
-import type { User } from "../core/users.ts";
+import { getUserById, getUserByName, type User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
 import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
@@ -294,6 +296,33 @@ export async function mergePull(
   // A fork may have pushed since the pull opened; merge what is being
   // proposed now, not the snapshot taken when it was.
   await refreshPullHead(app, repo, pull);
+  const lander = {
+    name: writer.value.displayName || writer.value.username,
+    email: writer.value.email,
+  };
+  // The agent that wrote the change is the commit's author; the person who
+  // asked is named in `Requested-by`, the person who landed it in
+  // `Co-authored-by`.
+  const writtenBy = getUserById(app.db, pull.authorId);
+  const agentAuthor =
+    writtenBy?.kind === "agent"
+      ? {
+          name: writtenBy.displayName || writtenBy.username,
+          email: writtenBy.email,
+        }
+      : undefined;
+  const asked = toldBy(app.db, pull);
+  const requester =
+    asked === null ? undefined : getUserByName(app.db, asked);
+  const trailers = landingTrailers(
+    requester
+      ? {
+          name: requester.displayName || requester.username,
+          email: requester.email,
+        }
+      : null,
+    lander,
+  );
   const merged = await landPull(
     app.db,
     repoDir(app.reposRoot, repo.ownerName, repo.name),
@@ -305,15 +334,14 @@ export async function mergePull(
         requireChecks: repo.requireChecks,
       },
       strategy,
-      message:
+      message: `${
         strategy === "squash"
           ? `${pull.title} (#${pull.number})`
-          : `Merge pull request #${pull.number} from ${pull.headBranch}\n\n${pull.title}`,
+          : `Merge pull request #${pull.number} from ${pull.headBranch}\n\n${pull.title}`
+      }\n\n${trailers}`,
       actorId: writer.value.id,
-      author: {
-        name: writer.value.displayName || writer.value.username,
-        email: writer.value.email,
-      },
+      author: agentAuthor ?? lander,
+      committer: lander,
     },
   );
   if (!merged.ok) return merged;

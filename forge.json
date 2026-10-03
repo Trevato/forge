@@ -6,7 +6,7 @@
     "ready": 90
   },
   "check": {
-    "run": "bun x tsc --noEmit && bun scripts/test-shards.ts --timeout 60000 -- crew crew-wrapup crew-limits crew-parks crew-sandbox steer session-settle landing decide ledger checks dependencies autonomy studio studio-words forks fork-flow cross-repo-pull pulls apps apps-adversarial apps-busy apps-token web git-trust helpers shards migrate vitals guard asks feed feed-page offline share cloud run-secrets forge-cloudflare usage credentials standing board-windows spawn-plan spawn web-apps fleet-ops meter",
+    "run": "bun x tsc --noEmit && bun scripts/test-shards.ts --timeout 60000 -- crew crew-wrapup crew-limits crew-parks crew-sandbox steer session-settle landing decide ledger checks dependencies autonomy studio studio-words forks fork-flow cross-repo-pull pulls apps apps-adversarial apps-busy apps-token web git-trust helpers shards migrate vitals guard asks feed feed-page offline share cloud run-secrets forge-cloudflare usage credentials standing board-windows spawn-plan spawn web-apps fleet-ops meter told-by",
     "timeout": 1800
   }
 }

@@ -598,6 +598,8 @@ export async function mergePull(
     message: string;
     actorId: string;
     author: { name: string; email: string };
+    /** Who commits it, when the author is the agent that wrote the change. */
+    committer?: { name: string; email: string };
     /** The review gate. Absent means no review policy applies. */
     gate?: ReviewGate;
   },
@@ -625,6 +627,7 @@ export async function mergePull(
     strategy: input.strategy,
     message: input.message,
     author: input.author,
+    ...(input.committer === undefined ? {} : { committer: input.committer }),
   });
   if (!landed.ok) return landed;
 
@@ -678,4 +681,40 @@ export function openPullsClosing(
     for (const n of closesFromBody(pull.body))
       if (!out.has(n)) out.set(n, pull);
   return out;
+}
+
+/**
+ * The person whose words a pull answers: the author of the issue it closes
+ * (or continues), when that is a person. Derived from the body and the issue
+ * on every read — no column to drift. Null when it closes nothing, or only
+ * work an agent filed.
+ */
+export function toldBy(db: Database, pull: Pull): string | null {
+  for (const n of closesFromBody(pull.body)) {
+    const issue = getIssue(db, pull.repoId, n);
+    if (issue && !issue.authorIsAgent && issue.originAuthor === null)
+      return issue.authorName;
+  }
+  return null;
+}
+
+/** A trailer value is one line: no control bytes, no angle brackets. */
+function oneLine(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f<>]/g, "").trim();
+}
+
+/**
+ * The trailers a landed change carries: who asked (`Requested-by`) and who
+ * landed it (`Co-authored-by`), the agent being the commit's author.
+ */
+export function landingTrailers(
+  requester: { name: string; email: string } | null,
+  lander: { name: string; email: string },
+): string {
+  const line = (key: string, who: { name: string; email: string }) =>
+    `${key}: ${oneLine(who.name)} <${oneLine(who.email)}>`;
+  return [
+    ...(requester ? [line("Requested-by", requester)] : []),
+    line("Co-authored-by", lander),
+  ].join("\n");
 }
