@@ -149,7 +149,7 @@ describe("the look", () => {
     });
     await runtime.start();
     looks = startLooks(app, { localUrl: servers.url, capture: fake });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: PASSWORD,
@@ -157,7 +157,7 @@ describe("the look", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: PASSWORD,

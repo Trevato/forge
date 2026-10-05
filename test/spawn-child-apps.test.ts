@@ -27,6 +27,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { emailVerified } from "../src/core/verify.ts";
 
 quietLogs();
 
@@ -45,7 +46,7 @@ describe("a spawned child's apps", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-child-apps-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
-    const made = await createUser(parent.db, {
+    const made = await createUser(parent.db, { trusted: true,
       username: "alice",
       email: "a@x.invalid",
       isAdmin: true,
@@ -77,7 +78,7 @@ describe("a spawned child's apps", () => {
       });
       if (!c.ok) throw new Error("commit");
       if (name === "bakery") {
-        const atlas = await createUser(parent.db, {
+        const atlas = await createUser(parent.db, { trusted: true,
           username: "atlas",
           email: "atlas@a.invalid",
           agent: true,
@@ -184,7 +185,7 @@ describe("a spawned child's apps", () => {
     const anonymous = await (await fetch(`${servers.url}/marias/bakery`)).text();
     expect(anonymous).toContain("bakery");
     expect(anonymous).not.toContain("The crew has no model key yet");
-    const reader = await createUser(child.db, {
+    const reader = await createUser(child.db, { trusted: true,
       username: "reader",
       email: "reader@x.test",
       password: "a-long-reader-passphrase",
@@ -209,18 +210,13 @@ describe("a spawned child's apps", () => {
   });
 
   test("first boot registers apps as the founder, an account with no verified email", () => {
-    // The founder is the spawner's name only: a placeholder address, no
-    // password, and no email check of any kind. Registering the apps at
-    // first boot must not depend on a check it can never pass (#710).
+    // The founder is the spawner's name only: a placeholder address and no
+    // password. Registering the apps at first boot must not depend on a
+    // check it can never pass (#710): the spawn vouches for the founder, so
+    // its email is proven from the start.
     const founder = getUserByName(child.db, "alice")!;
     expect(founder.email.endsWith("@spawn.forge.invalid")).toBe(true);
-    const checks = child.db
-      .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_check'")
-      .get();
-    if (checks !== null)
-      expect(
-        child.db.query("SELECT COUNT(*) AS n FROM email_check WHERE user_id = ?1").get(founder.id),
-      ).toEqual({ n: 0 });
+    expect(emailVerified(child.db, founder.id)).toBe(true);
     expect(getAppByRepo(child.db, getRepo(child.db, "marias", "bakery")!.id)).toBeDefined();
   });
 

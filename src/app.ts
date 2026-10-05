@@ -4,6 +4,7 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
 import { mkdirSync } from "node:fs";
@@ -69,6 +70,14 @@ export interface ForgeConfig {
    * meant. Undefined is no forge-wide ceiling.
    */
   crewCeilingUsd?: number;
+  /**
+   * Where mail goes out: SMTP submission (`FORGE_SMTP_URL`, `FORGE_MAIL_FROM`).
+   * Undefined is a forge that sends no mail; a newcomer's email then waits
+   * for the owner's word.
+   */
+  mail?: MailConfig;
+  /** Stand-in for `mail` in tests: receives each message instead of SMTP. */
+  mailer?: Mailer;
   /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that

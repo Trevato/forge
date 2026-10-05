@@ -22,14 +22,10 @@ import {
 import { asksAnswer } from "../web/studio/asks.ts";
 import {
   applyAsksBulk,
-  isAsksOperation,
+  undoAsksBulk,
   previewAsksBulk,
 } from "../actions/asks_bulk.ts";
-import {
-  getFleetOp,
-  undoFleetOp,
-  type FleetError,
-} from "../actions/fleet.ts";
+import type { FleetError } from "../actions/fleet.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import {
@@ -100,9 +96,7 @@ export function feedRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/asks/bulk/:id/undo", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
-    const found = getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!);
-    if (!found.ok || !isAsksOperation(found.value)) return notFound();
-    const op = await undoFleetOp(ctx.app, ctx.auth.user, found.value.id);
+    const op = await undoAsksBulk(ctx.app, ctx.auth.user, ctx.params.id!);
     if (!op.ok) return bulkError(op.error);
     return json(op.value, 201);
   });

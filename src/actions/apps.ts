@@ -6,6 +6,7 @@
  * the repository may look at it and open its environments.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { appsRuntime, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
@@ -75,9 +76,11 @@ export function enableApp(
   actor: User | undefined,
   repo: Repo,
   input: AppSettingsInput = {},
-): Result<AppRecord, "not_found" | CreateAppError> {
+): Result<AppRecord, "not_found" | CreateAppError | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  const proven = requireVerified(app, admin.value);
+  if (!proven.ok) return proven;
   const created = insertApp(app.db, {
     repoId: repo.id,
     slug: input.slug ?? slugFor(repo.name),
@@ -276,9 +279,11 @@ export async function newApp(
   app: App,
   actor: User | undefined,
   input: NewAppInput,
-): Promise<Result<NewAppResult, NewAppError>> {
+): Promise<Result<NewAppResult, NewAppError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const agent =
     input.agent === undefined || input.agent === ""
       ? undefined
@@ -508,10 +513,12 @@ export async function redeployEnv(
   repo: Repo,
   env: string,
 ): Promise<
-  Result<Run | undefined, AccessError | EnvError | "nothing_to_deploy">
+  Result<Run | undefined, AccessError | EnvError | "nothing_to_deploy" | "unverified">
 > {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  const proven = requireVerified(app, writer.value);
+  if (!proven.ok) return proven;
   const record = getAppByRepo(app.db, repo.id);
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");
