@@ -45,6 +45,7 @@ import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
 import { feedJs, feedNote, feedRegion } from "./feed.ts";
 import { crewKeyNote } from "./crew.ts";
+import { everydayCard } from "../pages/everyday.ts";
 
 /** The events that can change a row on the shelf. */
 const APPS_LIVE =
@@ -169,7 +170,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   });
 
   const body = html`<h1 class="sr-only">Studio</h1>
-    ${costLine}
+    ${everydayCard(ctx, user)} ${costLine}
     <div class="dash">
       <div class="dash-main stack">
         <div class="bar feed-head">

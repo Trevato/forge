@@ -51,7 +51,6 @@ export function askForEveryday(db: Database, user: User | undefined): boolean {
     user !== undefined &&
     user.isAdmin &&
     user.kind === "user" &&
-    !user.isAgent &&
     everydayOf(db, user) === undefined &&
     adminOf(db, user) === undefined &&
     !keptAdmin(db, user)
