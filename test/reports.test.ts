@@ -13,6 +13,7 @@ import { acceptedBody } from "../src/actions/reports.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { OUTSIDE_TITLE, outsideTitle } from "../src/core/reports.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -380,5 +381,47 @@ describe("reports from outside", () => {
     const res = await report("alice/game", { title: "one more" });
     expect(res.status).toBe(429);
     expect(((await res.json()) as any).error).toBe("queue_full");
+  });
+});
+
+describe("the title of an issue made from a report", () => {
+  test("opens with the marker, whatever the words", () => {
+    expect(OUTSIDE_TITLE).toBe("From outside: ");
+    expect(outsideTitle("The game is down")).toEqual({
+      ok: true,
+      value: "From outside: The game is down",
+    });
+  });
+
+  test("a marker already there, the reporter's or one typed back in, is not doubled and cannot stand in for the words", () => {
+    for (const typed of [
+      "From outside: The game is down",
+      "from OUTSIDE:   The game is down",
+      "From outside: from outside:From outside: The game is down",
+      "  From outside:\tThe game\n is down ",
+    ])
+      expect(outsideTitle(typed)).toEqual({
+        ok: true,
+        value: "From outside: The game is down",
+      });
+    for (const empty of [
+      "",
+      "   ",
+      "From outside:",
+      "from outside: From outside: ",
+    ])
+      expect(outsideTitle(empty)).toEqual({ ok: false, error: "empty_title" });
+  });
+
+  test("is text only and capped like a report's title", () => {
+    expect(outsideTitle("Up\u202Eside\u0007 down")).toEqual({
+      ok: true,
+      value: "From outside: Upside down",
+    });
+    expect(outsideTitle("x".repeat(200)).ok).toBe(true);
+    expect(outsideTitle("x".repeat(201))).toEqual({
+      ok: false,
+      error: "title_too_long",
+    });
   });
 });
