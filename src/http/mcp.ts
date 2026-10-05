@@ -42,6 +42,7 @@ import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
+import { pillarView } from "../core/pillars.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
@@ -847,6 +848,7 @@ const TOOLS: readonly Tool[] = [
             graph,
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
+          pillarView(ctx.app.db, repo),
         ),
       );
     },

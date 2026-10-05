@@ -25,6 +25,7 @@ import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
+  idleFurniture,
   levelAndFlow,
   readyNow,
   repoGraph,
@@ -65,6 +66,15 @@ import {
   READER_SUGGESTION,
 } from "../../crew/direct.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
+import {
+  isStructural,
+  LATER,
+  NO_PILLAR,
+  PILLAR_DAYS,
+  PLAN_OWN,
+  pillarView,
+  type PillarView,
+} from "../../core/pillars.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
 const devIssueHref = (base: string, number: number): string =>
@@ -480,6 +490,12 @@ export function marksFor(
     parked.add(id);
     why.set(id, READER_SUGGESTION);
   }
+  // An umbrella or the gate with nothing open in front of it is not ready:
+  // it is a person's to close.
+  for (const issue of idleFurniture(graph)) {
+    parked.add(issue.id);
+    why.set(issue.id, PLAN_OWN);
+  }
   for (const h of graph.held) {
     parked.add(h.issueId);
     const note = `#${numbers.get(h.blockedById)} was ${h.reason === "split" ? "split" : "dropped"}`;
@@ -865,6 +881,106 @@ function rankedList(
   </section>`;
 }
 
+/** One pillar's open work on the map: how much, and how much of it can move. */
+export interface PillarRow {
+  /** The pillar's name; null is the work that names none. */
+  readonly name: string | null;
+  /** The umbrella's number, for a pillar. */
+  readonly umbrella?: number;
+  readonly open: number;
+  readonly ready: number;
+  readonly blocked: number;
+  /** For no pillar: the issues themselves, to be filed. */
+  readonly issues?: readonly Issue[];
+}
+
+/**
+ * The open issues counted by pillar: every pillar in order, then the work
+ * that names none, when there is any. The plan's own furniture — the
+ * umbrellas, the gate, the direction — is not work and is not counted.
+ */
+export function pillarRows(
+  repo: Repo,
+  graph: Graph,
+  ready: Set<string>,
+  marks: Marks,
+  view: PillarView,
+): PillarRow[] {
+  const tally = new Map<
+    string | null,
+    { open: number; ready: number; blocked: number }
+  >(view.names.map((name) => [name, { open: 0, ready: 0, blocked: 0 }]));
+  const umbrella = new Map<string, number>(
+    view.set.pillars.map((p) => [p.name, p.umbrella.number]),
+  );
+  if (view.set.later !== undefined) umbrella.set(LATER, view.set.later.number);
+  const loose: Issue[] = [];
+  for (const issue of graph.issues) {
+    if (issue.state !== "open" || isStructural(view.set, issue.id)) continue;
+    if (issue.id === repo.directionIssueId) continue;
+    const name = view.of.get(issue.id) ?? null;
+    const row = tally.get(name) ?? { open: 0, ready: 0, blocked: 0 };
+    const word = wordFor(issue, ready, marks);
+    row.open++;
+    if (word === "ready") row.ready++;
+    if (word === "blocked") row.blocked++;
+    tally.set(name, row);
+    if (name === null) loose.push(issue);
+  }
+  return [
+    ...view.names.map((name) => ({
+      name,
+      ...(umbrella.has(name) ? { umbrella: umbrella.get(name)! } : {}),
+      ...tally.get(name)!,
+    })),
+    ...(loose.length === 0
+      ? []
+      : [{ name: null, ...tally.get(null)!, issues: loose }]),
+  ];
+}
+
+/** Where a pillar's issues are: the list, narrowed to its label. */
+export const pillarHref = (base: string, name: string): string =>
+  `${base}/issues?label=${encodeURIComponent(name)}`;
+
+/**
+ * The map by pillar: is the crew building what was asked. One row a
+ * pillar — a link to its issues — with what is open, ready and blocked;
+ * then the issues that name no pillar, each a link, since they are the
+ * ones to file.
+ */
+function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
+  const base = repoBase(repo);
+  const counts = (r: PillarRow): string =>
+    r.open === 0
+      ? "nothing open"
+      : `${r.open} open · ${r.ready} ready · ${r.blocked} blocked`;
+  return html`<section class="map-list map-pillars" id="map-pillars">
+    <h2>By pillar</h2>
+    <ul>
+      ${rows.map((r) =>
+        r.name === null
+          ? html`<li data-pillar="">
+              <b>${NO_PILLAR}</b>
+              <span class="muted small"
+                >${counts(r)}:
+                ${(r.issues ?? []).slice(0, 8).map(
+                  (i) =>
+                    html`<a href="${base}/issues/${i.number}" title="${i.title}"
+                        >#${i.number}</a
+                      >${" "}`,
+                )}${(r.issues ?? []).length > 8 ? "…" : ""}</span
+              >
+            </li>`
+          : html`<li data-pillar="${r.name}">
+              <a href="${pillarHref(base, r.name)}">${r.name}</a>
+              <span class="muted small">${counts(r)}</span>
+            </li>`,
+      )}
+    </ul>
+  </section>`;
+}
+
 function chart(points: DayPoint[]): Html {
   const w = 300;
   const h = 84;
@@ -998,6 +1114,7 @@ export const mapCss = /* css */ `
 .map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
+.map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; }
 .map-chart { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
 .map-level { fill: none; stroke: var(--accent); stroke-width: 1.5; }
 .map-flow { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
@@ -1236,6 +1353,7 @@ export function mapPage(ctx: Ctx): Response {
   const counts = countWords(
     graph.issues.map((i) => wordFor(i, readySet, marks)),
   );
+  const pillars = pillarView(db, repo);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -1261,6 +1379,9 @@ export function mapPage(ctx: Ctx): Response {
         ${placed.nodes.length === 0 ? null : countsLine(counts)}
       </div>
       <aside>
+        ${pillars === undefined
+          ? null
+          : pillarList(repo, pillarRows(repo, graph, readySet, marks, pillars))}
         ${graph.issues.length === 0
           ? null
           : rankedList(
@@ -1320,6 +1441,7 @@ export function mapJson(
   repo: Repo,
   graph: Graph,
   marks: Marks = NO_MARKS,
+  pillars?: PillarView,
 ): Record<string, unknown> {
   const ready = readyNow(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
@@ -1329,6 +1451,7 @@ export function mapJson(
     state: i.state,
     assignee: i.assigneeName,
     word: wordFor(i, readySet, marks),
+    ...(pillars === undefined ? {} : { pillar: pillars.of.get(i.id) ?? null }),
     ...(i.state === "closed" && i.closeReason !== null
       ? { closeReason: i.closeReason }
       : {}),
@@ -1359,6 +1482,22 @@ export function mapJson(
       const b = graph.issues.find((i) => i.id === e.blockedById);
       return { issue: a?.number, blockedBy: b?.number };
     }),
+    // For a repository with pillars: its open work by pillar (`pillar` null
+    // is the work that names none), and what merged this week by pillar.
+    ...(pillars === undefined
+      ? {}
+      : {
+          pillars: pillarRows(repo, graph, readySet, marks, pillars).map(
+            (r) => ({
+              pillar: r.name,
+              ...(r.umbrella === undefined ? {} : { umbrella: r.umbrella }),
+              open: r.open,
+              ready: r.ready,
+              blocked: r.blocked,
+            }),
+          ),
+          mergedByPillar: { days: PILLAR_DAYS, counts: pillars.merged },
+        }),
   };
 }
 

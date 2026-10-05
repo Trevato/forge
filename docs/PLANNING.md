@@ -139,6 +139,46 @@ link each issue it opens under its pillar or behind the gate, and the MCP
 `plan` tool refuses an item that says neither. A repository with no
 umbrella issues has no pillars, and plans as it always did.
 
+The umbrellas, the Later umbrella and the gate are the plan's own, not
+work. None of them is ever _ready_, so the crew never picks one and the map
+never lists one under _Ready now_; one with nothing open in front of it
+reads _parked_, "the plan's own: a person closes it, the crew never picks
+it". An agent does not close one, whatever access it holds, and a merged
+pull does not either, whatever its body says it closes: a person who writes
+the repository closes an umbrella when its pillar is done, and closing the
+gate opens everything behind it.
+
+Membership is direct: an issue the umbrella itself waits for. Under two
+umbrellas an issue serves the first, and a pillar outranks _Later_, which
+is what waits behind the gate or stands under the Later umbrella.
+Umbrellas and the gate are the plan's furniture: one umbrella waiting for
+another is an order between pillars, not membership.
+
+**What a person sees** (#610). `core/pillars.ts` is the one reader of all
+this; three surfaces show what it reads.
+
+- **The label.** An issue carries the label of the pillar it serves —
+  `Later` for deferred work — made the first time it is needed, and no
+  other pillar's. `actions/pillars.ts` writes it where the edges change (a
+  link or an unlink, a `plan`, a split, where each umbrella that waited for
+  the whole now waits for its parts) and at boot for what was linked
+  before. The label only says what the edges say: it is never read back,
+  and one set by hand does not survive the next boot. That holds for a
+  label the repository already had under a pillar's name: at boot it is
+  taken off every issue that does not serve that pillar. A mirrored
+  repository's labels are its origin's, so none is written there.
+- **The map by pillar.** Beside the drawing, _By pillar_ lists each pillar
+  and _Later_ — a link to its issues, the list narrowed to its label — with
+  what is open, ready and blocked, then _no pillar_ with the issues that
+  serve none, each a link, since they are the ones to file. In the data
+  every issue carries `pillar` (null for none), `pillars` is the same
+  rows, and `mergedByPillar` is `{ days: 7, counts: [{ pillar, merged }] }`:
+  the pulls merged in the last 7 days, each counted under the pillar of the
+  first issue it closes that serves one.
+- **The board by pillar.** _Landed_ leads with the same seven days for
+  each app that has pillars: every pillar and its count, zero or not, each
+  a link to its issues.
+
 ## A repository on its own
 
 A repository has one setting for how much the crew does without being
