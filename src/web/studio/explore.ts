@@ -2,7 +2,8 @@
  * `/explore` (#607): the apps, people and forges the viewer can see, ranked
  * by real numbers and shown with them, narrowed in one line that lives in
  * the URL (`?q=kind:app sort:forks garden`). Every app row says "Make it
- * yours" (#606): a plan of the copy, then the app as theirs. Decided in `actions/explore.ts`; this page only draws it.
+ * yours" (#606): a plan of the copy, then the app as theirs. Decided in
+ * `actions/explore.ts`; this page only draws it.
  */
 
 import {
