@@ -28,7 +28,8 @@ import {
 } from "../src/core/front.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { claimRun, createRun } from "../src/core/runs.ts";
+import { createIssue } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -247,7 +248,7 @@ describe("the front page", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("signals come from the database: awake hours, merged pulls and production deploys in 30 days, forks", async () => {
+  test("signals come from the database: awake hours and merged pulls in 30 days, the last merge, and forks by people, not agents", async () => {
     const { repo } = await make(admin, "signal");
     const fork = await createRepo(app, other, {
       name: "signal-fork",
@@ -257,24 +258,45 @@ describe("the front page", () => {
     app.db
       .query(`UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2`)
       .run(repo.id, fork.value.id);
+    // An agent's working fork is how the crew builds, not a fork.
+    const agentFork = await createRepo(app, member, {
+      name: "signal-agent-fork",
+      visibility: "public",
+    });
+    if (!agentFork.ok) throw new Error(String(agentFork.error));
+    app.db.query(`UPDATE user SET is_agent = 1 WHERE id = ?1`).run(member.id);
+    app.db
+      .query(`UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2`)
+      .run(repo.id, agentFork.value.id);
     app.db
       .query(
         `INSERT INTO meter (repo_id, env, placement, started_at, beat_at, ended_at)
          VALUES (?1, 'production', 'owned', ?2, ?3, ?3)`,
       )
       .run(repo.id, "2026-10-04T10:00:00.000Z", "2026-10-04T13:00:00.000Z");
-    const deploy = createRun(app.db, {
-      repoId: repo.id,
-      kind: "deploy",
-      env: "production",
-    });
-    claimRun(app.db, deploy.id);
-    finishRun(app.db, deploy.id, { state: "ok", summary: "" });
+    const merged = (at: string) => {
+      const made = createIssue(app.db, {
+        repoId: repo.id,
+        authorId: admin.id,
+        title: `a change at ${at}`,
+        kind: "pull",
+      });
+      if (!made.ok) throw new Error(made.error);
+      app.db
+        .query(
+          `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at)
+           VALUES (?1, 'main', ?2, '', '', ?3)`,
+        )
+        .run(made.value.id, `b-${at}`, at);
+    };
+    merged("2026-10-03T09:00:00.000Z");
+    merged("2026-08-01T09:00:00.000Z"); // outside the window: not a ship now
     const signals = frontSignals(app.db, [repo.id], NOW).get(repo.id)!;
     expect(signals.forks).toBe(1);
     expect(signals.awakeHours).toBeCloseTo(3, 5);
-    expect(signals.shippedAt).not.toBeNull();
-    expect(signals.ships).toBe(0);
+    expect(signals.ships).toBe(1);
+    expect(signals.shippedAt).toBe("2026-10-03T09:00:00.000Z");
+    app.db.query(`UPDATE user SET is_agent = 0 WHERE id = ?1`).run(member.id);
     app.db.query(`DELETE FROM app WHERE repo_id = ?1`).run(repo.id);
   });
 
@@ -323,6 +345,10 @@ describe("the front page", () => {
     states.set(down.record.id, "failed");
     await make(admin, "bare", { picture: false });
     await make(admin, "hush", { visibility: "private" });
+    // A public repository whose app only signed-in readers may open: a
+    // stranger would meet a sign-in page, so it is not offered to them.
+    const gated = await make(admin, "gated");
+    app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(gated.record.id);
     forgetFrontScores(app);
     const body = await door();
     // The most-forked app is featured — a stranger's, ahead of the owner's.
@@ -334,6 +360,7 @@ describe("the front page", () => {
     expect(body).not.toContain('href="/owner/down"');
     expect(body).not.toContain('href="/owner/bare"');
     expect(body).not.toContain("hush");
+    expect(body).not.toContain('href="/owner/gated"');
     // The shelf's tiles are the stranger's picture, at the thumb's size.
     expect(body).toContain('width="640"');
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;

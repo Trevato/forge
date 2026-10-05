@@ -421,7 +421,8 @@ form.inline { display: inline; margin-left: auto; }
   overflow: hidden; background: var(--card);
 }
 .front-featured-look img { display: block; width: 100%; height: auto; background: var(--muted); }
-.front-featured-body { display: grid; align-content: center; gap: 8px; padding: 20px 24px; }
+.front-featured-body { display: grid; align-content: center; gap: 8px; padding: 20px 24px; min-width: 0; }
+.front-featured-body > * { min-width: 0; }
 .front-featured-body h2 { font-size: 20px; letter-spacing: -0.02em; }
 .front-featured-body h2 a { color: inherit; text-decoration: none; }
 .front-featured-body p { color: var(--muted-fg); text-wrap: pretty; }
@@ -432,13 +433,20 @@ form.inline { display: inline; margin-left: auto; }
   animation: run-pulse 1.6s ease-in-out infinite;
 }
 .front-issues { display: grid; gap: 4px; font-size: 13.5px; list-style: none; padding: 0; margin: 0; }
+.front-issues li { min-width: 0; }
 .front-issues a { color: inherit; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .front-more { text-align: center; }
 .front-admin { max-width: 1040px; margin-inline: auto; }
 .front-pick { gap: 8px; }
 .front-pick form.inline { margin-left: 0; }
-.front-pin-any { padding: 12px 16px; }
+.front-pin-any { padding: 12px 16px; flex-wrap: nowrap; }
+.front-pin-any .input { flex: 1; min-width: 0; }
 .front-controls .small { padding: 0 16px 14px; }
+@media (max-width: 520px) {
+  /* Two to a row on a phone: a few live apps in one screen, not a scroll. */
+  .app-shelf { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app-tile-body { padding: 8px 10px; }
+}
 @media (max-width: 720px) {
   .front-featured { grid-template-columns: 1fr; }
   .front-featured-body { padding: 16px; }

@@ -18,7 +18,7 @@ import {
 } from "../../actions/front.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
-import { type Repo } from "../../core/repos.ts";
+import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -287,6 +287,11 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
       ${btn(label, { size: "sm" })}
     </form>`;
   const name = (e: FrontEntry) => `${e.repo.ownerName}/${e.repo.name}`;
+  const shownToStrangers = (full: string): boolean => {
+    const [owner = "", repoName = ""] = full.split("/");
+    const repo = getRepo(ctx.app.db, owner, repoName);
+    return repo !== undefined && canRead(ctx.app.db, repo, undefined);
+  };
   const unpinnedShown = [
     ...(front.featured !== undefined && !front.featured.pinned ? [front.featured] : []),
     ...front.shelf.filter((e) => !e.pinned),
@@ -300,7 +305,7 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
     html`<ul class="list">
         ${picks.pinned.map((repo, at) =>
           row(
-            `${at + 1}. ${repo}`,
+            `${at + 1}. ${repo}${shownToStrangers(repo) ? "" : " (private: shown once public)"}`,
             html`${when(at > 0, () => act("up", repo, "Up"))}
             ${when(at < picks.pinned.length - 1, () => act("down", repo, "Down"))}
             ${act("unpin", repo, "Unpin")}`,

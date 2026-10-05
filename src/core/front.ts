@@ -54,9 +54,15 @@ export interface FrontSignals {
   readonly awakeHours: number;
   /** Pulls merged, last 30 days. */
   readonly ships: number;
-  /** Repositories forked from it. */
+  /**
+   * Repositories a person forked from it — not an agent's working fork,
+   * which is how the crew builds, not someone making it theirs.
+   */
   readonly forks: number;
-  /** The last green production deploy, or null. */
+  /**
+   * The last pull merged, ever, or null: a ship. A deploy is not one — a
+   * forge redeploys everything when it boots.
+   */
   readonly shippedAt: string | null;
 }
 
@@ -100,34 +106,27 @@ export function frontSignals(
   for (const r of awake) merge(r.repo_id, { awakeHours: Math.max(0, r.hours) });
 
   const ships = db
-    .query<{ repo_id: string; n: number }, string[]>(
-      `SELECT issue.repo_id AS repo_id, COUNT(*) AS n
+    .query<{ repo_id: string; n: number; last: string | null }, string[]>(
+      `SELECT issue.repo_id AS repo_id,
+         SUM(pull.merged_at >= ?1 AND pull.merged_at < ?2) AS n,
+         MAX(pull.merged_at) AS last
        FROM pull JOIN issue ON issue.id = pull.issue_id
-       WHERE pull.merged_at >= ?1 AND pull.merged_at < ?2
-         AND issue.repo_id IN (${list(2)})
+       WHERE pull.merged_at IS NOT NULL AND issue.repo_id IN (${list(2)})
        GROUP BY issue.repo_id`,
     )
     .all(since, clock, ...ids);
-  for (const r of ships) merge(r.repo_id, { ships: r.n });
+  for (const r of ships)
+    merge(r.repo_id, { ships: r.n, shippedAt: r.last });
 
   const forks = db
     .query<{ parent: string; n: number }, string[]>(
-      `SELECT fork_parent_id AS parent, COUNT(*) AS n FROM repo
-       WHERE fork_parent_id IN (${list(0)})
-       GROUP BY fork_parent_id`,
+      `SELECT repo.fork_parent_id AS parent, COUNT(*) AS n
+       FROM repo JOIN user ON user.id = repo.owner_id
+       WHERE user.is_agent = 0 AND repo.fork_parent_id IN (${list(0)})
+       GROUP BY repo.fork_parent_id`,
     )
     .all(...ids);
   for (const r of forks) merge(r.parent, { forks: r.n });
-
-  const shipped = db
-    .query<{ repo_id: string; at: string }, string[]>(
-      `SELECT repo_id, MAX(finished_at) AS at FROM run
-       WHERE kind = 'deploy' AND env = 'production' AND state = 'ok'
-         AND finished_at IS NOT NULL AND repo_id IN (${list(0)})
-       GROUP BY repo_id`,
-    )
-    .all(...ids);
-  for (const r of shipped) merge(r.repo_id, { shippedAt: r.at });
 
   return out;
 }

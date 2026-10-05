@@ -12,8 +12,8 @@
  * - Featured: the first pinned repository a stranger can read; with none,
  *   the best-ranked app. Shown with the crew at work on it right now.
  * - The shelf: pinned apps in the admin's order, then the public apps by
- *   score (`rankFront`), live or waking ones only, and only those with a
- *   picture — an app without one waits for the looks sweep, never shown as
+ *   score (`rankFront`) — those a stranger can open, live or waking, and
+ *   only those with a picture — an app without one waits for the looks sweep, never shown as
  *   an empty box. Hidden ones never.
  */
 
@@ -144,8 +144,10 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
       record === undefined || runtime === undefined
         ? undefined
         : runtime.status(record).find((env) => env.env === "production");
+    // An app open only to signed-in readers shows a stranger a sign-in
+    // page: there is no picture of it worth showing them.
     const thumb =
-      record === undefined
+      record === undefined || record.access !== "public"
         ? undefined
         : looks.find(
             (l) =>
