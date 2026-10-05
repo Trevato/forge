@@ -292,7 +292,11 @@ import {
   setAppMembersThrough,
   type AppMembersError,
 } from "../actions/app_members.ts";
-
+import {
+  explore,
+  exploreLine,
+  parseExploreQuery,
+} from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
@@ -3285,6 +3289,15 @@ export function apiRoutes(router: Router<Handler>): void {
       : [];
     const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
     return json({ ...v, ...forge, ok: forge.ok && v.ok });
+  });
+
+  // Explore (#607): the rows /explore shows, for the same one line.
+  router.add("GET", "/api/v1/explore", async (ctx) => {
+    const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+    return json({
+      query: exploreLine(query),
+      items: await explore(ctx.app, ctx.auth.user, query),
+    });
   });
 
   // The front page (#686): what a stranger is shown, for anyone; a site

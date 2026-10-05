@@ -151,6 +151,7 @@ import {
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
+import { explorePage } from "../web/studio/explore.ts";
 import {
   frontUpdate,
   liveAppsFragment,
@@ -481,6 +482,8 @@ export function buildRouter(): Router<Handler> {
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
   router.add("GET", "/front", studioDoor);
+  // Apps and people ranked by real numbers, narrowed in one line (#607).
+  router.add("GET", "/explore", explorePage);
   router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
