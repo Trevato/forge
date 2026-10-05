@@ -6,6 +6,7 @@
  * the repository may look at it and open its environments.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { appsRuntime, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
@@ -76,9 +77,11 @@ export function enableApp(
   actor: User | undefined,
   repo: Repo,
   input: AppSettingsInput = {},
-): Result<AppRecord, "not_found" | CreateAppError> {
+): Result<AppRecord, "not_found" | CreateAppError | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  const proven = requireVerified(app, admin.value);
+  if (!proven.ok) return proven;
   const created = insertApp(app.db, {
     repoId: repo.id,
     slug: input.slug ?? slugFor(repo.name),
@@ -277,9 +280,11 @@ export async function newApp(
   app: App,
   actor: User | undefined,
   input: NewAppInput,
-): Promise<Result<NewAppResult, NewAppError>> {
+): Promise<Result<NewAppResult, NewAppError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const agent =
     input.agent === undefined || input.agent === ""
       ? undefined
@@ -471,15 +476,25 @@ export function openEnvUrl(
   /** The hostname the visitor asked for, when it is one of this app's. */
   host?: string,
 ): Result<string, EnvError | "unauthorized"> {
-  const reader = requireReader(app, actor, repo);
-  if (!reader.ok) return reader;
   const record = getAppByRepo(app.db, repo.id);
+  // A person a private app names may enter it without reading the
+  // repository (#752); everyone else needs to read it first.
+  const named =
+    record !== undefined &&
+    record.access === "private" &&
+    actor !== undefined &&
+    canEnterApp(app.db, repo, record, actor);
+  if (!named) {
+    const reader = requireReader(app, actor, repo);
+    if (!reader.ok) return reader;
+  }
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");
-  // A private app is for its writers and crew; anyone else who can read the
-  // repository gets the answer a stranger gets, and nobody is told why.
+  // A private app is for its writers, its crew and the people it names;
+  // anyone else who can read the repository gets the answer a stranger
+  // gets, and nobody is told why.
   if (record.access === "private" && actor !== undefined)
-    if (!canEnterApp(app.db, repo, record.access, actor))
+    if (!canEnterApp(app.db, repo, record, actor))
       return err("not_found");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
@@ -508,10 +523,12 @@ export async function redeployEnv(
   repo: Repo,
   env: string,
 ): Promise<
-  Result<Run | undefined, AccessError | EnvError | "nothing_to_deploy">
+  Result<Run | undefined, AccessError | EnvError | "nothing_to_deploy" | "unverified">
 > {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  const proven = requireVerified(app, writer.value);
+  if (!proven.ok) return proven;
   const record = getAppByRepo(app.db, repo.id);
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");

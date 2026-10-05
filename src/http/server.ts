@@ -6,6 +6,7 @@
  */
 
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import { defect } from "../kernel/error.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
@@ -46,6 +47,7 @@ import {
   signinSubmit,
   signupPage,
   signupSubmit,
+  verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
@@ -72,6 +74,7 @@ import {
   subscriptionAdd,
   subscriptionDelete,
   subscriptionsPage,
+  subscriptionBudget,
   subscriptionHeadroom,
   subscriptionWake,
 } from "../web/pages/subscriptions.ts";
@@ -201,6 +204,7 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appMembersUpdate,
   appDomainAdd,
   appDomainCheck,
   appDomainDelete,
@@ -250,6 +254,7 @@ import {
   keyDelete,
   keysPage,
   passwordPage,
+  resendVerifyLink,
   passwordUpdate,
   tokenCreate,
   tokenDelete,
@@ -296,7 +301,8 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { clientAddress, notePeer } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { parseCidrs } from "../kernel/cidr.ts";
 import {
   reportAcceptSubmit,
   reportDismissSubmit,
@@ -467,6 +473,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
@@ -532,6 +539,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
   router.add("POST", "/settings/notify", notifyUpdate);
+  router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
   router.add("GET", "/settings/tokens", tokensPage);
@@ -547,6 +555,7 @@ export function buildRouter(): Router<Handler> {
     "/settings/subscriptions/:id/headroom",
     subscriptionHeadroom,
   );
+  router.add("POST", "/settings/subscriptions/:id/budget", subscriptionBudget);
   router.add("GET", "/settings/secrets", secretsPage);
   router.add("POST", "/settings/secrets", secretSet);
   router.add("POST", "/settings/secrets/delete", secretDelete);
@@ -906,6 +915,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
   router.add("POST", "/:owner/:name/settings/app/env", appEnvSet);
   router.add(
     "POST",
@@ -1133,12 +1143,16 @@ async function withIdempotency(
   // exactly one thing that can be hashed.
   const raw = await request.text();
   const fingerprint = requestFingerprint(request.method, url.pathname, raw);
-  const replay = (): Request =>
-    new Request(request.url, {
+  const replay = (): Request => {
+    const again = new Request(request.url, {
       method: request.method,
       headers: request.headers,
       ...(raw === "" ? {} : { body: raw }),
     });
+    // The replay is the same caller: limits and the audit still see them.
+    carryPeer(request, again);
+    return again;
+  };
 
   const stored = lookupIdempotent(app.db, credential, key);
   if (stored !== undefined) {
@@ -1394,6 +1408,16 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // Who may say who the client is (\`http/peer.ts\`), settled once.
+  const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
+  if (!proxies.ok)
+    defect("config.trusted_proxies", `not an address or range: ${proxies.error}`);
+  const trust: ProxyTrust = {
+    proxies: proxies.value,
+    ...(app.config.clientIpHeader === undefined
+      ? {}
+      : { header: app.config.clientIpHeader }),
+  };
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
@@ -1415,7 +1439,7 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
-      notePeer(request, server.requestIP(request)?.address);
+      notePeer(request, server.requestIP(request)?.address, trust);
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
       return securityFloor(

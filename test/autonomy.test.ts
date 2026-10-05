@@ -85,7 +85,7 @@ describe("a repository on its own", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-autonomy-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -627,7 +627,7 @@ describe("the slot count is the rule the loop enforces", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-slots-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

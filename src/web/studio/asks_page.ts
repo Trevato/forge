@@ -9,11 +9,11 @@
 
 import {
   applyAsksBulk,
-  isAsksOperation,
+  ownAsksOperation,
+  undoAsksBulk,
   previewAsksBulk,
   type Skipped,
 } from "../../actions/asks_bulk.ts";
-import { getFleetOp, undoFleetOp } from "../../actions/fleet.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
@@ -27,6 +27,7 @@ import {
   askRows,
   askSentence,
   ASK_WORDS,
+  ROW_PLURAL,
   decisionActions,
   decisionForm,
   decisionsFor,
@@ -107,12 +108,10 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
 }
 
 /** What a collapsed row says it holds. */
-const rowHead = (kind: Decision["kind"], n: number): string =>
-  kind === "parked"
-    ? `${n} issues parked after three failed runs`
-    : kind === "stopped"
-      ? `The crew stopped on ${n} changes`
-      : `${n} green changes wait for your look`;
+const rowHead = (kind: Decision["kind"], n: number): string => {
+  const line = ROW_PLURAL[kind](n);
+  return `${line.charAt(0).toUpperCase()}${line.slice(1)}`;
+};
 
 /** One card for one kind in one repository: a line per ask, each with its own actions. */
 function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
@@ -284,9 +283,8 @@ const nothingDone = (message: string): AsksTop => ({
 
 /** The receipt of a bulk action on asks, for the person who acted; nothing for anyone else. */
 function receiptTop(ctx: Ctx, opId: string): AsksTop | undefined {
-  const found = getFleetOp(ctx.app, ctx.auth.user, opId);
-  if (!found.ok || !isAsksOperation(found.value)) return undefined;
-  const op = found.value;
+  const op = ownAsksOperation(ctx.app, ctx.auth.user, opId);
+  if (op === undefined) return undefined;
   const verb = VERB_WORDS[op.verb] ?? op.verb;
   const done = op.rows.filter((r) => r.outcome === "ok").length;
   const head = op.undoOf === null ? `${verb}: ${done} done` : `${verb} undone: ${done}`;
@@ -341,9 +339,10 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const found = getFleetOp(ctx.app, ctx.auth.user, ctx.params.id ?? "");
-  if (!found.ok || !isAsksOperation(found.value)) return notFoundPage(ctx);
-  const op = await undoFleetOp(ctx.app, ctx.auth.user, found.value.id);
-  if (!op.ok) return asksScreen(ctx, nothingDone(op.error.message));
+  const op = await undoAsksBulk(ctx.app, ctx.auth.user, ctx.params.id ?? "");
+  if (!op.ok)
+    return op.error.code === "not_found"
+      ? notFoundPage(ctx)
+      : asksScreen(ctx, nothingDone(op.error.message));
   return redirect(`/asks?op=${op.value.id}#asks-bulk-result`);
 }

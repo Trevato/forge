@@ -18,6 +18,7 @@
  * one.
  */
 
+import { killTree, openCell } from "./contain.ts";
 import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { identityKey } from "./proxy.ts";
@@ -121,8 +122,9 @@ export async function runAppTty(
     return err({ refusal: "not_found", detail: "" });
   if (target.app.access === "private" && user === undefined)
     return err({ refusal: "private", detail: "" });
-  // A private app's terminal is its writers' and crew's, as the app is.
-  if (!canEnterApp(forge.db, repo, target.app.access, user))
+  // A private app's terminal is its writers' and crew's: a person the app
+  // names may enter the app, not its terminal (#752).
+  if (!canEnterApp(forge.db, repo, target.app, user, { named: false }))
     return err({ refusal: "not_found", detail: "" });
   if (host.term === undefined) return err({ refusal: "no_pty", detail: "" });
   const runtime = appsRuntime(forge);
@@ -174,11 +176,16 @@ export async function runAppTty(
   env["FORGE_APP_USER_ID"] = user?.id ?? "";
   env["FORGE_APP_USER_ROLE"] =
     user === undefined ? "" : canWrite(forge.db, repo, user) ? "admin" : "user";
-  const proc = Bun.spawn(["/bin/sh", "-c", `exec ${live.tty}`], {
+  // The terminal is held exactly as the app is (`apps/contain.ts`).
+  const cell = live.cell === undefined ? undefined : openCell(live.cell);
+  const command = `exec ${live.tty}`;
+  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
     terminal,
-    env,
+    env: cell?.env(env) ?? env,
     cwd: live.dir,
   });
+  void proc.exited.then(() => cell?.close());
+  cell?.watch(proc.pid, () => killTree(proc.pid));
   forge.log.info("app terminal opened", {
     app: target.app.slug,
     env: target.env,

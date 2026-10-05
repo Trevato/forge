@@ -112,7 +112,7 @@ describe("what you asked for", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asked-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -120,7 +120,7 @@ describe("what you asked for", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -194,6 +194,21 @@ describe("what you asked for", () => {
 
   test("an agent's issue is not an ask", () => {
     expect(states()["Refactor the watering module"]).toBeUndefined();
+  });
+
+  test("the counts, made in SQL, agree with the list kind by kind", () => {
+    const all = askedIn(app.db, [repo], { show: "all", limit: ASKED_LIMIT });
+    expect(askedCounts(app.db, [repo])).toEqual({
+      asked: all.length,
+      shipped: all.filter((a) => a.state === "shipped").length,
+      unshipped: all.filter((a) => a.state === "waiting" || a.state === "building").length,
+      flagged: all.filter((a) => a.flagged).length,
+    });
+    expect(askedCounts(app.db, [])).toEqual({ asked: 0, shipped: 0, unshipped: 0, flagged: 0 });
+    // The fixture holds every state, so the agreement is not a run of zeros.
+    expect(new Set(all.map((a) => a.state))).toEqual(
+      new Set(["waiting", "building", "shipped", "closed"]),
+    );
   });
 
   test("by default: nothing merged yet, oldest first; newest first on request", () => {
@@ -417,7 +432,7 @@ describe("an old ask says what exists for it", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asked-old-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -563,7 +578,7 @@ describe("a repository with more asks than one read", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asked-many-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

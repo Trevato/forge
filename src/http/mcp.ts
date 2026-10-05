@@ -56,7 +56,12 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
-import { DIRECTION_NOTE } from "../crew/direct.ts";
+import {
+  DIRECTION_NOTE,
+  directionNote,
+  OUTSIDERS_NOTE,
+} from "../crew/direct.ts";
+import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
@@ -68,11 +73,16 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+} from "../actions/app_members.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
-import { clientAddress } from "./peer.ts";
+import { manifestFor } from "../actions/here.ts";
+import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
@@ -172,6 +182,33 @@ const TOOLS: readonly Tool[] = [
           };
         }),
       );
+    },
+  },
+  {
+    name: "here",
+    description:
+      "What you can do on a forge page, as who you are: what it is, and each action open to you with its HTTP route and MCP tool. Give the page's URL or path.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", maxLength: 2000 } },
+      required: ["url"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const raw = str(args["url"]);
+      const parsed = URL.parse(raw, ctx.url.origin);
+      if (parsed === null || parsed.origin !== ctx.url.origin)
+        return bad("not_found", "not a page of this forge");
+      const found = manifestFor(
+        ctx.app,
+        user,
+        ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+        ctx.url.origin,
+        parsed.pathname,
+      );
+      return found.ok
+        ? good(found.value)
+        : bad("not_found", "no such page here, or it is not visible to you");
     },
   },
   {
@@ -275,20 +312,21 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). With preview (the default) nothing changes: the answer is each row's before and after and the rows refused with why. With preview false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Every row is checked against your admin of its app.",
+      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
         items: { type: "array", items: { type: "string" }, maxItems: 100 },
-        preview: { type: "boolean" },
+        dryRun: { type: "boolean" },
       },
       required: ["action", "items"],
     },
     writes: true,
+    dryByDefault: true,
     async run(ctx, user, args) {
       const answer =
-        args["preview"] === false
+        args["dryRun"] === false
           ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
           : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
@@ -399,6 +437,8 @@ const TOOLS: readonly Tool[] = [
         audited.map((a) => ({
           app: `${a.repo.ownerName}/${a.repo.name}`,
           commit: a.oid ?? null,
+          // Who may direct the crew is part of who can do what here.
+          crewOutsiders: a.repo.crewOutsiders,
           standing: a.standing.kind,
           ...(a.standing.kind === "unsound"
             ? { problems: a.standing.problems }
@@ -416,6 +456,45 @@ const TOOLS: readonly Tool[] = [
               : {}),
         })),
       );
+    },
+  },
+  {
+    name: "outsiders",
+    description:
+      "Whether people who cannot write an app may direct its crew (start or steer a run by speaking): the owner's \"outsiders may trigger the crew\" switch, off by default. Without `on`, says which way it is set. With `on`, it plans — `dryRun` is true unless you say false — and only an admin of the app, with an admin token and never as an agent, sets it. Each change is recorded in the app's activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        on: { type: "boolean" },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to set it.",
+        },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      if (typeof args["on"] !== "boolean")
+        return good({ on: repo.crewOutsiders, says: directionNote(repo) });
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "setting who directs the crew needs an admin token");
+      const set = await setCrewOutsiders(ctx.app, user, repo, args["on"], dryRun);
+      if (!set.ok)
+        return bad("forbidden", "only an admin of this app sets who directs its crew");
+      return good({
+        ...set.value,
+        says: dryRun
+          ? `This is the plan; nothing changed. Outsiders ${set.value.was ? "may" : "may not"} trigger the crew now; send dryRun: false to ${set.value.on ? "let them" : "stop them"}.`
+          : set.value.on
+            ? OUTSIDERS_NOTE
+            : DIRECTION_NOTE,
+      });
     },
   },
   {
@@ -631,6 +710,44 @@ const TOOLS: readonly Tool[] = [
       if (spec !== null && repos.length === 0)
         return bad("not_found", "no such app or repository you can write (owner/name)");
       return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
+    },
+  },
+  {
+    name: "app_members",
+    description:
+      "The people a private app names: they may enter the app and its previews, and nothing else (no code, no crew, no settings, no terminal). Without `members`, the list. With `members` (usernames; the whole list), the change it would make; with dryRun false, made — by a person who can write the repository, never an agent, with an admin-scope token. Removing a name ends that person's way in at once. The same as the app's settings page and /api/v1/repos/:owner/:name/app/members.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const members = args["members"];
+      const answer = (
+        result: ReturnType<typeof readAppMembers> | ReturnType<typeof setAppMembersThrough>,
+      ): Answer =>
+        result.ok
+          ? good(result.value)
+          : result.error.kind === "invalid"
+            ? bad("invalid", result.error.message)
+            : result.error.kind === "forbidden"
+              ? bad("forbidden", "the people an app names are its writers' to choose")
+              : bad("not_found", "no such app or repository (owner/name)");
+      if (members === undefined) return answer(readAppMembers(ctx.app, user, repo));
+      if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
+        return bad("invalid", "members is a list of usernames");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing who may enter an app needs an admin-scope token");
+      return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
     },
   },
   {
@@ -1010,7 +1127,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
       body: typeof args["body"] === "string" ? args["body"] : "",
       page: typeof args["page"] === "string" ? args["page"] : "",
     },
-    clientAddress(ctx.request),
+    clientBucket(ctx.request),
   );
   if (!filed.ok) {
     const e = filed.error;
