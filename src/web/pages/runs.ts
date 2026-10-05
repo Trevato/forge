@@ -18,47 +18,29 @@ import {
   runLog,
   steerRepoRun,
 } from "../../actions/runs.ts";
-import { getIssueById, getIssuesByIds, type Issue } from "../../core/issues.ts";
+import { getIssuesByIds, type Issue } from "../../core/issues.ts";
 import {
   canRead,
   canSeeOwnerFacts,
-  canWrite,
   getRepoById,
   type Repo,
 } from "../../core/repos.ts";
-import { listHeldSecrets } from "../../core/run_secret.ts";
-import { getRun, isTerminal, type Run, type RunKind } from "../../core/runs.ts";
+import { getRun, type Run, type RunKind } from "../../core/runs.ts";
 import { getUsage, issueUsage } from "../../core/usage.ts";
-import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
+import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import {
-  crumbsFor,
-  loadRepo,
-  notFoundPage,
-  repoBase,
-  repoHeader,
-  repoPalette,
-  signInFirst,
-} from "../chrome.ts";
-import { runLogJs } from "../client.ts";
+import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { liveClientJs, liveMount } from "../live.ts";
-import { studioRuns } from "../studio/lists.ts";
-import { pageTitle, studioRecord } from "../studio/nouns.ts";
-import { sandboxLine } from "../studio/sandbox.ts";
-import { studioRun } from "../studio/run.ts";
+import { runsListPage } from "../studio/lists.ts";
+import { runView } from "../studio/run.ts";
 import {
-  btn,
   empty,
   icon,
   listCard,
-  pager,
   row,
   runStateBadge,
-  seg,
-  sha,
   time,
   tokenCount,
 } from "../ui.ts";
@@ -299,308 +281,25 @@ export function crewActivityCard(ctx: Ctx, repo: Repo, issue: Issue): Html {
   );
 }
 
-// ---- the list ----
+// ---- the list and one run ----
 
-const PER_PAGE = 30;
-
-// GET /:owner/:name/runs
+// GET /:owner/:name/runs — every run, in the studio's own words, for every
+// repository and every viewer (`runsListPage`, `studio/lists.ts`).
 export async function runsList(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  // In the studio "every run" is the run list in the studio's own words —
-  // the same rule `runPage` follows for one run. `?mode=dev` is the
-  // one-off way to dev's list without switching the browser.
-  const record = studioRecord(ctx, repo);
-  if (record !== undefined) return await studioRuns(ctx, repo, record);
-  const base = repoBase(repo);
-  const q = ctx.url.searchParams;
-  const kindRaw = q.get("kind");
-  const kind: RunKind | undefined =
-    kindRaw === "deploy" || kindRaw === "agent" || kindRaw === "check"
-      ? kindRaw
-      : undefined;
-  const cursor = q.get("cursor") ?? "";
-
-  const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
-    kind,
-    cursor: cursor === "" ? undefined : cursor,
-    limit: PER_PAGE + 1,
-  });
-  if (!listed.ok) return notFoundPage(ctx);
-  const shown = listed.value.slice(0, PER_PAGE);
-  const last = shown[shown.length - 1];
-  const more = listed.value.length > PER_PAGE && last !== undefined;
-  const actors = actorsFor(ctx, shown);
-  const issues = issuesFor(ctx, shown);
-
-  const href = (which: RunKind | undefined, next?: string): string => {
-    const p = new URLSearchParams();
-    if (which !== undefined) p.set("kind", which);
-    if (next !== undefined) p.set("cursor", next);
-    const text = p.toString();
-    return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
-  };
-
-  const list =
-    shown.length === 0
-      ? empty({
-          icon: "activity",
-          title:
-            kind === "agent"
-              ? "No agent runs yet"
-              : kind === "deploy"
-                ? "No deploys yet"
-                : kind === "check"
-                  ? "No checks yet"
-                  : "No runs yet",
-          note: "A run is a deploy of an environment, a check of a commit, or an agent working an issue. Each one keeps its log here.",
-        })
-      : listCard(shown.map((run) => runRow(base, run, actors, issues)));
-
-  const body = html`${repoHeader(ctx, repo, "app", { compact: true })}
-    <div class="filters mt">
-      ${seg([
-        { label: "All", href: href(undefined), current: kind === undefined },
-        { label: "Deploys", href: href("deploy"), current: kind === "deploy" },
-        { label: "Checks", href: href("check"), current: kind === "check" },
-        { label: "Crew", href: href("agent"), current: kind === "agent" },
-      ])}
-    </div>
-    ${list}
-    ${pager({
-      ...(cursor !== "" ? { prev: href(kind) } : {}),
-      ...(more && last ? { next: href(kind, last.id) } : {}),
-    })}
-    ${liveMount({ repo: base })}`;
-
-  return page({
-    ctx,
-    title: pageTitle("runs", repo, false),
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body,
-    scriptJs: liveClientJs,
-  });
+  return await runsListPage(ctx, repo);
 }
 
-// ---- one run ----
-
-// GET /:owner/:name/runs/:id
+// GET /:owner/:name/runs/:id — one run, for every repository and every
+// viewer (`runView`, `studio/run.ts`). Readable exactly when the log is.
 export async function runPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   if (!found.ok) return notFoundPage(ctx);
   const { run, lines, truncated } = found.value;
-  // In the studio, working is a run: who is on it, the tell it came from,
-  // what it has cost, and the box to steer it — the same rule `repoHome`
-  // and `pullPage` follow. `?mode=dev` on the URL is the escape hatch to
-  // the transcript dev already renders, resolved once for `ctx.mode`.
-  if (studioRecord(ctx, repo) !== undefined)
-    return await studioRun(ctx, repo, run, lines, truncated);
-  const base = repoBase(repo);
-  const actor =
-    run.actorId === null ? undefined : getUserById(ctx.app.db, run.actorId);
-  const issue =
-    run.issueId === null ? undefined : getIssueById(ctx.app.db, run.issueId);
-  const title = runTitle(run, actor?.username, issue);
-  const unfinished = !isTerminal(run.state);
-  const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
-  const duration = durationText(run);
-  const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
-  const who = actor?.username ?? "agent";
-  const held = listHeldSecrets(ctx.app.db, run.id);
-
-  const body = html`${repoHeader(ctx, repo, "app", {
-      compact: true,
-      ownTitle: true,
-    })}
-    <div class="issue-head">
-      <h1>${title}</h1>
-      <div class="issue-meta">
-        <span id="run-state" data-kind="${run.kind}"
-          >${runStateBadge(run.state, run.kind)}</span
-        >
-        <span
-          >${run.kind === "agent"
-            ? "agent run"
-            : run.kind === "check"
-              ? "check"
-              : "deploy"}
-          · ${reasonWords(run.reason)}</span
-        >
-        ${when(run.commitOid !== "", () =>
-          sha(run.commitOid, `${base}/commit/${run.commitOid}`),
-        )}
-        ${when(
-          run.kind === "agent" && run.branch !== "",
-          () => html`<span class="mono">${run.branch}</span>`,
-        )}
-        ${when(
-          issue,
-          (i) =>
-            html`<a
-              href="${base}/${i.kind === "pull"
-                ? "pulls"
-                : "issues"}/${i.number}"
-              >#${i.number} ${i.title}</a
-            >`,
-        )}
-        <span class="num" id="run-cost" ${run.costUsd > 0 ? null : html`hidden`}
-          >${costText(run.costUsd)} spent</span
-        >
-        ${when(canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user), () =>
-          runTokens(ctx.app.db, run),
-        )}
-        <span class="num" id="run-turns" ${run.turns > 0 ? null : html`hidden`}
-          >${run.turns} turn${run.turns === 1 ? "" : "s"}</span
-        >
-        <span>queued ${time(run.createdAt)}</span>
-        ${when(
-          duration,
-          (d) =>
-            html`<span
-              class="num"
-              id="run-elapsed"
-              data-started="${run.startedAt ?? ""}"
-              data-finished="${run.finishedAt ?? ""}"
-              >${run.finishedAt === null ? "running for" : "took"} ${d}</span
-            >`,
-        )}
-      </div>
-    </div>
-    <p class="run-summary" id="run-summary">${run.summary}</p>
-    ${sandboxLine(run)}
-    ${when(
-      held.length > 0,
-      () =>
-        html`<p class="muted small" id="run-secrets">
-          Secrets held: ${held.map((h) => h.name).join(", ")}${held.every(
-            (h) => h.releasedAt !== null,
-          )
-            ? " (released)"
-            : ""}. Values are never shown.
-        </p>`,
-    )}
-    ${when(
-      writer && unfinished && run.kind === "agent" && issue === undefined,
-      () =>
-        html`<div class="run-actions" id="run-cancel">
-          <form method="post" action="${base}/runs/${run.id}/cancel">
-            ${btn("Stop", { size: "sm", variant: "outline", icon: "square" })}
-          </form>
-        </div>`,
-    )}
-    ${when(
-      writer && unfinished && run.kind !== "agent",
-      () =>
-        html`<div class="run-actions" id="run-cancel">
-          <form method="post" action="${base}/runs/${run.id}/cancel">
-            ${btn("Cancel run", {
-              size: "sm",
-              variant: "outline",
-              icon: "square",
-            })}
-          </form>
-        </div>`,
-    )}
-    ${when(
-      truncated,
-      () =>
-        html`<p class="muted small mb">
-          Showing the last 512 KB of the log; the file on disk has the rest.
-        </p>`,
-    )}
-    ${when(
-      lines.length === 0,
-      () =>
-        html`<p class="muted small" id="run-empty">
-          Nothing has been logged yet.
-        </p>`,
-    )}
-    <div class="run-live" id="run-live" data-state="${run.state}">
-      <div
-        class="run-log"
-        id="run-log"
-        data-who="${who}"
-        ${unfinished ? html`data-stream="${stream}"` : null}
-      >
-        ${lines.map((l) => logLine(l, who))}
-        ${when(
-          run.state === "running",
-          () =>
-            html`<div class="ln ln-pulse" id="run-pulse">
-              <span class="who">${who}</span
-              ><span class="txt"><i></i><i></i><i></i></span>
-            </div>`,
-        )}
-        <button type="button" class="run-jump" id="run-jump" hidden>
-          newer below
-        </button>
-      </div>
-      ${when(
-        writer && run.kind === "agent" && issue !== undefined,
-        () =>
-          html`<form
-            class="run-steer"
-            id="run-steer"
-            method="post"
-            action="${base}/runs/${run.id}/steer"
-            data-api="/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/steer"
-            data-running="${run.state === "running" ? "1" : "0"}"
-          >
-            <label class="sr-only" for="steer-text"
-              >Say something to ${who}</label
-            >
-            <textarea
-              class="input"
-              id="steer-text"
-              name="text"
-              rows="1"
-              required
-              placeholder="${run.state === "running"
-                ? `Steer ${who} — it hears you at its next step`
-                : `Tell ${who} for its next run`}"
-            ></textarea>
-            <div class="bar">
-              <span class="muted small" id="run-steer-note"
-                >${run.state === "running"
-                  ? "Heard after the step it is on. Enter sends; every word is kept in the log."
-                  : "The run is over; this goes on the conversation and starts a run."}</span
-              >
-              <span class="spacer"></span>
-              ${when(
-                unfinished,
-                () =>
-                  html`<button
-                    type="submit"
-                    class="btn"
-                    data-size="sm"
-                    data-variant="outline"
-                    id="run-stop"
-                    formaction="${base}/runs/${run.id}/cancel"
-                    formnovalidate
-                  >
-                    ${run.state === "running" ? "Stop" : "Cancel"}
-                  </button>`,
-              )}
-              ${btn("Send", { size: "sm", variant: "primary", type: "submit" })}
-            </div>
-          </form>`,
-      )}
-    </div>`;
-
-  return page({
-    ctx,
-    title: `${title} · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body,
-    scriptJs: runLogJs,
-    // The no-script half of a live log: while the run is going, the page
-    // refreshes itself; the script above removes this the moment it runs.
-    ...(unfinished ? { refresh: { seconds: 5 } } : {}),
-  });
+  return await runView(ctx, repo, run, lines, truncated);
 }
 
 // POST /:owner/:name/runs/:id/steer  { text }

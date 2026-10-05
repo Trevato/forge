@@ -320,6 +320,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
+/* On a phone an account's controls go under its name, not over it. */
+@media (max-width: 640px) {
+  .row:has(.headroom) { flex-wrap: wrap; }
+  .row:has(.headroom) .row-trail { flex-basis: 100%; flex-wrap: wrap; }
+}
 .backups-now { margin-top: 12px; }
 /* The fleet graph: a selection's spend and runs, hour by hour and day by day.
    Series colours are Okabe–Ito (told apart with common colour-vision

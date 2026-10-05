@@ -10,7 +10,7 @@
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
-import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import {
   labelsForIssues,
   listIssues,
@@ -497,24 +497,53 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   });
 }
 
+/** Which runs a list shows: the crew's by default, or the deploys or the
+ * checks that `?kind=` asks for — the narrowing dev's list offered, kept
+ * so a link written to it keeps meaning what it said. */
+type RunsKind = "agent" | "deploy" | "check";
+
+function readRunsKind(ctx: Ctx): RunsKind {
+  const raw = ctx.url.searchParams.get("kind");
+  return raw === "deploy" || raw === "check" ? raw : "agent";
+}
+
+/** The runs list's own address with a word, a kind and a cursor. */
+function runsHref(
+  base: string,
+  kind: RunsKind,
+  word: WordFilter | undefined,
+  cursor?: string,
+): string {
+  const params = new URLSearchParams();
+  if (kind !== "agent") params.set("kind", kind);
+  if (word !== undefined) params.set("word", word);
+  if (cursor !== undefined) params.set("cursor", cursor);
+  const text = params.toString();
+  return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
+}
+
+const RUNS_KIND_WORDS: Record<RunsKind, string> = {
+  agent: "the crew's runs",
+  deploy: "deploys",
+  check: "checks",
+};
+
 /**
- * GET /:owner/:name/runs in the studio: every run, one row per run in its
- * studio word — who ran it, when it last moved, and the transcript as the
- * row's own link. `?word=` narrows it; `?mode=dev` reads dev's list,
- * unchanged.
+ * GET /:owner/:name/runs: every run, for every repository and every viewer,
+ * one row per run in its studio word — who ran it, when it last moved, and
+ * the transcript as the row's own link. The crew's runs by default;
+ * `?kind=deploy|check` reads the deploys or the checks instead, from one
+ * quiet line under the list. `?word=` narrows any of them.
  */
-export async function studioRuns(
-  ctx: Ctx,
-  repo: Repo,
-  record: AppRecord,
-): Promise<Response> {
+export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const filter = readWordFilter(ctx);
+  const kind = readRunsKind(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
 
   const fetched = listRuns(db, repo.id, {
-    kind: "agent",
+    kind,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
@@ -522,7 +551,7 @@ export async function studioRuns(
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
-    record,
+    record: getAppByRepo(db, repo.id),
     history: servingHistory(),
   };
   const actors = actorsFor(ctx, fetched);
@@ -537,7 +566,13 @@ export async function studioRuns(
       ? empty({
           icon: "bot",
           title: "Nothing here",
-          note: emptyNote(filter, "No run", "Nothing open. A run is one go the crew takes at a job; each one shows up here."),
+          note: emptyNote(
+            filter,
+            "No run",
+            kind === "agent"
+              ? "Nothing open. A run is one go the crew takes at a job; each one shows up here."
+              : `Nothing open. Every ${kind === "deploy" ? "deploy" : "check"} shows up here while it runs.`,
+          ),
         })
       : listCard(
           rows.map(({ run, info }) => {
@@ -548,33 +583,43 @@ export async function studioRuns(
             return row({
               href: `${base}/runs/${run.id}`,
               nav: true,
-              lead: avatar(who),
+              lead:
+                run.kind === "agent"
+                  ? avatar(who)
+                  : icon(run.kind === "check" ? "check" : "rocket"),
               title: runTitleFrom(run, actors, issues),
-              meta: html`${who} · ${info.note} ·
-              ${time(run.finishedAt ?? run.createdAt)}`,
+              meta: html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
+              · ${time(run.finishedAt ?? run.createdAt)}`,
               trail: wordBadge(info.word),
             });
           }),
         );
   const last = fetched[fetched.length - 1];
+  const others = (["agent", "deploy", "check"] as const).filter(
+    (k) => k !== kind,
+  );
 
   const body = html`${repoHeader(ctx, repo, "app", { compact: true })}
     <div class="mt">
       ${wordFilterBar(
-        (word) => (word ? `${base}/runs?word=${word}` : `${base}/runs`),
+        (word) => runsHref(base, kind, word),
         filter,
         filter === undefined,
       )}
       ${list}
       ${pager(
         fetched.length === LIST_PAGE && last !== undefined
-          ? { next: pagedHref(`${base}/runs`, filter, last.id) }
+          ? { next: runsHref(base, kind, filter, last.id) }
           : {},
       )}
     </div>
     <p class="muted small mt">
-      <a href="${base}/runs?mode=dev">${icon("code")}See dev's list</a> —
-      deploys and checks alongside the crew's runs, dev's own way.
+      Also ${others.map(
+        (k, i) =>
+          html`${i > 0 ? " · " : ""}<a href="${runsHref(base, k, undefined)}"
+              >${RUNS_KIND_WORDS[k]}</a
+            >`,
+      )}
     </p>
     ${liveMount({ repo: base })}`;
 

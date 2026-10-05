@@ -1215,4 +1215,21 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
   `,
+  // 48 — an account the owner suspended or removed (#660). Columns are added,
+  // never a table rebuilt: a rebuild would drop any trigger on \`user\`.
+  `
+  ALTER TABLE user ADD COLUMN suspended_at TEXT;
+  ALTER TABLE user ADD COLUMN removed_at TEXT;
+  `,
+  // 49 — a whole-life budget on a sealed account, in dollars (#601): the
+  // most its runs may ever spend, summed from the run ledger. Null is none.
+  // A spawned child's starter key carries one, so the spawner's money ends
+  // where they said. A locked budget was set by whoever made this forge:
+  // its admin cannot raise it, only stop using the account.
+  `
+  ALTER TABLE subscription ADD COLUMN budget_usd REAL
+    CHECK (budget_usd IS NULL OR budget_usd > 0);
+  ALTER TABLE subscription ADD COLUMN budget_locked INTEGER NOT NULL DEFAULT 0
+    CHECK (budget_locked IN (0, 1));
+  `,
 ];

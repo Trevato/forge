@@ -8,6 +8,8 @@
 import { listAgents, type Agent } from "../../core/agents.ts";
 import {
   addSubscription,
+  BUDGET_MAX_USD,
+  budgetsOf,
   deleteSubscription,
   EVERYONE,
   listGrantPlaces,
@@ -17,6 +19,7 @@ import {
   NAME_MAX,
   PLATFORM,
   scopesOf,
+  setBudget,
   setGrants,
   wakeSubscription,
   type Subscription,
@@ -134,6 +137,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
       : scopes.has(s.id)
         ? `for ${scopes.get(s.id)!.join(", ")}`
         : "not offered to the crew — granted nowhere";
+  const budgets = budgetsOf(ctx.app.db);
   const standingOf = standings(
     ctx.app.db,
     pool.map((s) => s.id),
@@ -160,6 +164,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
           pool.map((s) => {
             const rests = resting(s, now);
             const st = standingOf.get(s.id);
+            const budget = budgets.get(s.id);
             const by =
               s.createdBy === null
                 ? undefined
@@ -184,6 +189,15 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 : html`last used ${timeAgo(s.lastUsedAt)}`}${when(
                 rests && s.restingSaid !== "",
                 () => html` · ${s.restingSaid}`,
+              )}${when(
+                budget?.budgetUsd != null,
+                () =>
+                  html`<br /><span class="budget-line"
+                      >spent ${dollars(budget!.spentUsd)} of a
+                      ${dollars(budget!.budgetUsd!)} budget${budget!.locked
+                        ? " set by whoever made this forge; add your own key to spend more"
+                        : ""}</span
+                    >`,
               )}${when(
                 st !== undefined,
                 () =>
@@ -213,6 +227,31 @@ export function subscriptionsPage(ctx: Ctx): Response {
                       value="${st!.headroomPct}"
                     />
                     ${btn("Keep", { size: "sm" })}
+                  </form>`,
+              )}
+              ${when(
+                s.id !== PLATFORM && budget?.locked !== true,
+                () =>
+                  html`<form
+                    class="headroom row-actions"
+                    method="post"
+                    action="${POOL}/${s.id}/budget"
+                  >
+                    <label for="b-${s.id}" class="small muted"
+                      >budget, $</label
+                    >
+                    <input
+                      class="input"
+                      id="b-${s.id}"
+                      name="budget"
+                      type="number"
+                      min="1"
+                      max="${BUDGET_MAX_USD}"
+                      step="1"
+                      placeholder="none"
+                      value="${budget?.budgetUsd ?? ""}"
+                    />
+                    ${btn("Set", { size: "sm" })}
                   </form>`,
               )}
               ${when(
@@ -396,6 +435,32 @@ export async function subscriptionWake(ctx: Ctx): Promise<Response> {
   wakeSubscription(ctx.app.db, ctx.params.id ?? "");
   return flashTo(ctx, POOL, { message: "In use again." });
 }
+
+// POST /settings/subscriptions/:id/budget — the account's whole-life
+// budget in dollars; empty clears it.
+export async function subscriptionBudget(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  if (budgetsOf(ctx.app.db).get(ctx.params.id ?? "")?.locked)
+    return flashTo(ctx, POOL, {
+      tone: "danger",
+      message: "This budget was set by whoever made this forge, and is not raised from here. Add your own key to spend more.",
+    });
+  const raw = field(form, "budget").trim();
+  const usd = raw === "" ? null : Number(raw);
+  const saved = usd !== null && !Number.isFinite(usd) ? false : setBudget(ctx.app.db, ctx.params.id ?? "", usd);
+  return flashTo(
+    ctx,
+    POOL,
+    saved
+      ? { message: usd === null ? "No budget: this account spends until you stop it." : `Budget set: ${dollars(usd)} in all.` }
+      : { tone: "danger", message: `A budget is dollars from 1 to ${BUDGET_MAX_USD}, or empty for none.` },
+  );
+}
+
+const dollars = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
 
 // POST /settings/subscriptions/:id/headroom
 export async function subscriptionHeadroom(ctx: Ctx): Promise<Response> {

@@ -68,6 +68,7 @@ export type AccountSection =
   | "keys"
   | "origins"
   | "crew"
+  | "accounts"
   | "subscriptions"
   | "backups"
   | "secrets"
@@ -86,6 +87,12 @@ export function accountSections(
   return [
     ...(o.admin
       ? [
+          {
+            label: "Accounts",
+            href: "/settings/accounts",
+            icon: "users" as const,
+            current: current === "accounts",
+          },
           {
             label: "Crew",
             href: "/settings/crew",
