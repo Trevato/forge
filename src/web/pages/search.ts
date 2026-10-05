@@ -228,10 +228,10 @@ function codeHitRow(hit: CodeHit, query: string): Html {
 /** Each kind's words: [kind, chip, heading, nothing found]. */
 type Words = readonly [SearchKind, string, string, string];
 const WORDS: readonly Words[] = [
-  ["all", "Everything", "", ""],
+  ["all", "All", "", ""],
   [
     "repos",
-    "Apps & repositories",
+    "Apps & repos",
     "Apps and repositories",
     "No app or repository matches",
   ],
@@ -405,7 +405,8 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   };
 
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
-  ${chips} ${liveToggle}
+  <div class="filters">${chips}</div>
+  ${liveToggle}
   ${WORDS
     .filter(
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
