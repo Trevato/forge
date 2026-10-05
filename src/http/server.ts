@@ -46,6 +46,7 @@ import {
   signinSubmit,
   signupPage,
   signupSubmit,
+  verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
@@ -202,6 +203,7 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appMembersUpdate,
   appDomainAdd,
   appDomainCheck,
   appDomainDelete,
@@ -251,6 +253,7 @@ import {
   keyDelete,
   keysPage,
   passwordPage,
+  resendVerifyLink,
   passwordUpdate,
   tokenCreate,
   tokenDelete,
@@ -468,6 +471,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
@@ -533,6 +537,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
   router.add("POST", "/settings/notify", notifyUpdate);
+  router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
   router.add("GET", "/settings/tokens", tokensPage);
@@ -908,6 +913,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
   router.add("POST", "/:owner/:name/settings/app/env", appEnvSet);
   router.add(
     "POST",

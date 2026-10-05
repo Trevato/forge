@@ -221,7 +221,7 @@ describe("the front page", () => {
     servers = await serve(app);
     base = servers.url;
     const user = async (username: string) => {
-      const made = await createUser(app.db, {
+      const made = await createUser(app.db, { trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

@@ -26,7 +26,7 @@ import {
   setIssueLabels,
 } from "../src/actions/issues.ts";
 import { createLabel, createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
+import { signUpProven as signUp } from "./helpers/verified.ts";
 import {
   commentCounts,
   countComments,

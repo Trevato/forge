@@ -20,6 +20,7 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { isAppMember } from "./app_members.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
 import { REPO_VISIBLE, REPO_WRITABLE } from "./visibility.ts";
 import {
@@ -28,7 +29,7 @@ import {
   orgAccessByOrg,
   type Access,
 } from "./orgs.ts";
-import { getUserById, type User } from "./users.ts";
+import { getUserById, isActive, type User } from "./users.ts";
 
 const log = createLog("repos");
 
@@ -693,16 +694,26 @@ export function canWrite(
  * Who may enter an app, its previews and its terminal. A public app is open
  * to anyone. A private one answers to the people who can write the
  * repository and to its crew — never to everyone who can read it, so making
- * a repository public changes nobody's way into its app (#620).
+ * a repository public changes nobody's way into its app (#620) — and to the
+ * people it names (#752), who may enter it and its previews and nothing
+ * else: not its terminal (`named: false`), not its code, not its crew.
  */
 export function canEnterApp(
   db: Database,
   repo: Repo,
-  access: "public" | "private",
+  app: { readonly id: string; readonly access: "public" | "private" },
   user: User | undefined,
+  { named = true }: { named?: boolean } = {},
 ): boolean {
-  if (access === "public") return true;
-  return canWrite(db, repo, user) || onCrew(db, repo, user);
+  if (app.access === "public") return true;
+  if (canWrite(db, repo, user) || onCrew(db, repo, user)) return true;
+  return (
+    named &&
+    user !== undefined &&
+    user.kind === "user" &&
+    isActive(user) &&
+    isAppMember(db, app.id, user.id)
+  );
 }
 
 /**

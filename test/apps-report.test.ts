@@ -40,7 +40,7 @@ describe("a public app links to Report a problem", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
