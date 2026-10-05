@@ -18,6 +18,7 @@ import {
   type ShardResult,
 } from "../scripts/shards.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
+import { GATE } from "../scripts/gate.ts";
 
 const files = Array.from({ length: 23 }, (_, i) => `test/f${i}.test.ts`);
 
@@ -295,7 +296,7 @@ describe("splitArgs", () => {
       expect(splitArgs(["--", name]).ok).toBe(false);
   });
 
-  test("forge.json's check fits the manifest and names only files that exist", async () => {
+  test("forge.json's check fits the manifest and runs only files that exist", async () => {
     const text = readFileSync(new URL("../forge.json", import.meta.url), "utf8");
     // The forge's own reading of the manifest, which is what refused it.
     const check = parseCheck(text, undefined);
@@ -306,8 +307,9 @@ describe("splitArgs", () => {
     const split = splitArgs(args);
     expect(split.ok).toBe(true);
     if (!split.ok) return;
-    expect(split.files.length).toBeGreaterThan(0);
-    for (const file of split.files)
+    const files = [...(split.flags.includes("--gate") ? GATE : []), ...split.files];
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files)
       expect(await Bun.file(new URL(`../${file}`, import.meta.url)).exists()).toBe(true);
   });
 });

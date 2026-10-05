@@ -1,12 +1,14 @@
 /**
  * `bun test`, over the named files, in parallel shards.
  *
+ *   bun scripts/test-shards.ts [bun test flags…] --gate
  *   bun scripts/test-shards.ts [bun test flags…] test/a.test.ts test/b.test.ts …
  *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
  *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
  *
- * The files come from the command line, so `forge.json`'s `check.run`
- * stays the one place that names them. Each shard is its own `bun test`
+ * `--gate` runs the files `scripts/gate.ts` admits, which is how
+ * `forge.json`'s `check.run` names them; files on the command line are for
+ * running a slice by hand. Each shard is its own `bun test`
  * over a disjoint slice (`scripts/shards.ts` decides the slices); a
  * shard's output is written through whole when it finishes, so the log
  * reads one shard at a time, and the tail names every failing test from
@@ -31,21 +33,24 @@ import {
   weigher,
   type ShardResult,
 } from "./shards.ts";
+import { GATE } from "./gate.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 
 const argv = process.argv.slice(2);
 const record = argv.includes("--record");
-const args = argv.filter((arg) => arg !== "--record");
+const gate = argv.includes("--gate");
+const args = argv.filter((arg) => arg !== "--record" && arg !== "--gate");
 const split = splitArgs(args);
 if (!split.ok) {
   console.error(`test-shards: ${split.error}`);
   process.exit(2);
 }
-const { files, flags } = split;
+const flags = split.flags;
+const files = [...(gate ? GATE : []), ...split.files];
 
 if (files.length === 0) {
-  console.error("test-shards: name the test files to run");
+  console.error("test-shards: name the test files to run, or --gate");
   process.exit(2);
 }
 // A file that is not there would be a filter matching nothing to `bun

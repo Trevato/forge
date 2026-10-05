@@ -10,7 +10,7 @@
  * `--record` runs the same string with `scripts/test-shards.ts --record`
  * in place of `scripts/test-shards.ts`, which rewrites
  * `scripts/test-times.json` from this run, so the file list still lives
- * only in `forge.json`.
+ * only in `scripts/gate.ts`.
  */
 
 const manifest = (await Bun.file(

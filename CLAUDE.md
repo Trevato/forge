@@ -74,6 +74,9 @@ bun run src/main.ts   # boots on :3000, data in ./data
   the reason is printed so a skip is never read as a pass.
 - **`bun run check` is the gate**, and it reads its command from
   `forge.json`, so what you see is exactly what the push will be judged by.
+  It runs the files in `GATE` (`scripts/gate.ts`), not the whole suite; every
+  other test file is in `EXCLUDED` with its reason and owning issue. Add a new
+  test file to `GATE`, or the check goes red.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.

@@ -376,7 +376,7 @@ bun run check:record  # the same, and rewrites scripts/test-times.json
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
 it says here is what the deploy will say. It type-checks once, then runs the
-test files named in `check.run` as parallel `bun test` shards
+test files `scripts/gate.ts` lists in `GATE` as parallel `bun test` shards
 (`scripts/test-shards.ts`): one per CPU the process may use, at most eight,
 and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
@@ -413,6 +413,13 @@ in that test. Two things it will not do:
   tests need `ssh` and `ssh-keygen`; without them the log says `SKIPPING:`
   and names the tool (`test/helpers/tools.ts`). Install OpenSSH and they run
   again — the skip is conditional on the binary, never on anything else.
+
+Every `test/*.test.ts` is either in `GATE` or in `EXCLUDED` with a one-line
+reason and the issue that owns admitting it; `test/check-list.test.ts` goes
+red on a file in neither, in both, or named without existing, so a new test
+file never sits outside the gate silently. A file joins the gate by moving
+from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
+proof it passes.
 
 ## Shape
 
