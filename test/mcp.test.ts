@@ -177,6 +177,7 @@ describe("the forge over MCP", () => {
       "usage",
       "link",
       "unlink",
+      "hold",
       "plan",
       "report",
     ]);

@@ -84,6 +84,8 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { holdPull, releasePull } from "../actions/holds.ts";
+import { getHold, type Hold } from "../core/holds.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -902,6 +904,13 @@ function loadIssue(ctx: Ctx): Found<{ issue: Issue }> {
   if ("error" in found) return found;
   return found.issue.kind === "issue" ? found : { error: notFound() };
 }
+
+/** A hold as the API says it: who, why and since when. */
+const holdJson = (hold: Hold) => ({
+  by: hold.heldByName,
+  why: hold.why,
+  at: hold.heldAt,
+});
 
 function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
   const repo = loadRepo(ctx);
@@ -2313,7 +2322,13 @@ export function apiRoutes(router: Router<Handler>): void {
       found.pull,
       { db: ctx.app.db, requireReview: found.repo.requireReview },
     );
-    return json({ ...withLabels(ctx, found.pull), status, diff });
+    const hold = getHold(ctx.app.db, found.pull.id);
+    return json({
+      ...withLabels(ctx, found.pull),
+      status,
+      diff,
+      hold: hold === undefined ? null : holdJson(hold),
+    });
   });
 
   router.add(
@@ -2339,6 +2354,49 @@ export function apiRoutes(router: Router<Handler>): void {
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
       );
+    },
+  );
+
+  // Hold a pull, or let it go (`actions/holds.ts`): a person who writes the
+  // repository says "not this one yet", and no rule sends it to review or
+  // lands it until it is released. A person's own merge is untouched.
+  router.add(
+    "PUT",
+    "/api/v1/repos/:owner/:name/pulls/:number/hold",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const held = holdPull(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        str(input.why),
+      );
+      if (!held.ok)
+        return respondAccess(held.error, held.error === "not_open" ? 409 : 422);
+      return json({ held: true, hold: holdJson(held.value) });
+    },
+  );
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/pulls/:number/hold",
+    (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const released = releasePull(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+      );
+      if (!released.ok) return respondAccess(released.error, 422);
+      return json({ held: false, released: released.value });
     },
   );
 
