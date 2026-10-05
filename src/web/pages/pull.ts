@@ -736,7 +736,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
         ${crewActivityCard(ctx, repo, pull)}
       </aside>
     </div>
-    ${renderDiff(diff, diffOptions)} ${liveMount({ repo: base })}`;
+    <div class="mt">${renderDiff(diff, diffOptions)}</div>
+    ${liveMount({ repo: base })}`;
 
   return page({
     ctx,
