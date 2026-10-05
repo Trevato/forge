@@ -141,7 +141,7 @@ describe("fork at the origin, and propose a change through it", () => {
     const made = await fetch(`${upServers.url}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: PASSWORD,
         name: "t",
@@ -578,7 +578,7 @@ describe("verdicts, threads, and the gate they open", () => {
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: PASSWORD,
         name: "t",

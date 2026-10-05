@@ -58,7 +58,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: "cross-repo-pass",
         name: "c",

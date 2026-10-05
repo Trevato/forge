@@ -142,6 +142,7 @@ import {
   releaseSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
@@ -557,6 +558,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
+  // The everyday account: an admin's daily account, apart from admin (#596).
+  router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);

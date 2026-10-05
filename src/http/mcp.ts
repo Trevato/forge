@@ -93,6 +93,7 @@ import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { everydayOf } from "../core/everyday.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const SERVER = { name: "forge", version: "1" };
@@ -1090,6 +1091,20 @@ const TOOLS: readonly Tool[] = [
   },
 ];
 
+/**
+ * Said to an MCP client whose token belongs to a site admin (#596): it acts
+ * as admin, and the person's everyday account is where daily work belongs.
+ */
+function adminNote(ctx: Ctx, user: User): string {
+  if (!user.isAdmin) return "";
+  const daily = everydayOf(ctx.app.db, user);
+  return ` Note: this token belongs to ${user.username}, the forge's admin, so what you do here acts as admin.${
+    daily === undefined
+      ? " Daily work belongs on an everyday account, apart from admin."
+      : ` Daily work belongs on ${daily.username}, their everyday account.`
+  }`;
+}
+
 function rpcOne(
   ctx: Ctx,
   user: User,
@@ -1123,8 +1138,7 @@ function rpcOne(
           : PROTOCOLS[0],
         capabilities: { tools: {} },
         serverInfo: SERVER,
-        instructions:
-          "This is a person's forge: their apps, and the crew that builds them. `tell` and `say` are how they direct it. Keep what you relay short — three sentences and the real options.",
+        instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
       });
     }
     case "ping":
