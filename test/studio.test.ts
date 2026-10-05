@@ -1481,7 +1481,7 @@ describe("the studio", () => {
     }
   });
 
-  test("clicking your own name in the studio lands on /:owner, which leads with your apps on the shelf and New app as the primary action; dev mode is unchanged, and a stranger never sees a private one", async () => {
+  test("clicking your own name lands on /:owner, which leads with your apps on the shelf and New app as the primary action, in every mode; a stranger never sees a private one", async () => {
     const studio = await (await get("/alice")).text();
     expect(studio).toContain("<h2>Apps</h2>");
     expect(studio).toContain('href="/alice/notes"');
@@ -1494,9 +1494,10 @@ describe("the studio", () => {
     const dev = await (
       await get("/alice", { cookie: `${cookie}; forge_mode=dev` })
     ).text();
-    expect(dev).not.toContain("<h2>Apps</h2>");
-    expect(dev).not.toContain('href="/apps/new?owner=alice"');
-    expect(dev).not.toContain("not running");
+    // One owner page (#633): the cookie changes nothing.
+    expect(dev).toContain("<h2>Apps</h2>");
+    expect(dev).toContain('href="/apps/new?owner=alice"');
+    expect(dev).toContain("not running");
 
     const carol = await createUser(app.db, {
       username: "carol",
@@ -1523,7 +1524,8 @@ describe("the studio", () => {
       })
     ).text();
     expect(stranger).not.toContain('href="/alice/notes"');
-    expect(stranger).toContain("No apps yet");
+    // Nothing to see is shown as nothing: no empty apps card for a visitor.
+    expect(stranger).not.toContain("No apps yet");
     expect(stranger).not.toContain('href="/apps/new?owner=alice"');
   });
 
@@ -1965,7 +1967,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   const occurrences = (haystack: string, needle: string): number =>
     haystack.split(needle).length - 1;
 
-  test("a person with one app and one plain repository renders each once in the studio, and both together in one list in dev mode", async () => {
+  test("a person with one app and one plain repository renders each once, in every mode; one with no app shows a visitor no apps card at all", async () => {
     const dan = await createUser(app.db, {
       username: "dan",
       email: "dan@forge.local",
@@ -2021,8 +2023,32 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     ).text();
     expect(occurrences(dev, 'href="/dan/beacon"')).toBe(1);
     expect(occurrences(dev, 'href="/dan/scratch"')).toBe(1);
-    expect(dev).not.toContain("<h2>Apps</h2>");
-    expect(dev).not.toContain("<h2>Other repositories</h2>");
+    expect(dev).toContain("<h2>Apps</h2>");
+    expect(dev).toContain("<h2>Other repositories</h2>");
+
+    // Someone with repositories and no app: a visitor is not shown an empty
+    // apps card, and the list is simply their repositories.
+    const gus = await createUser(app.db, {
+      username: "gus",
+      email: "gus@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!gus.ok) throw new Error(gus.error);
+    const plainOnly = await createRepo(app, gus.value, {
+      name: "notebook",
+      visibility: "public",
+      description: "",
+    });
+    if (!plainOnly.ok) throw new Error(String(plainOnly.error));
+    const visit = await (
+      await fetch(`${base}/gus`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(visit).not.toContain("No apps yet");
+    expect(visit).toContain("<h2>Repositories</h2>");
+    expect(visit).toContain('href="/gus/notebook"');
   });
 
   test("an owner whose only repository is an app reads the empty list below as no other repositories, not as a bug", async () => {
