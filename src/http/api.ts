@@ -267,6 +267,17 @@ import {
   unauthorized,
 } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { clientAddress } from "./peer.ts";
+import {
+  acceptReport,
+  dismissReport,
+  fileReport,
+  waitingReports,
+} from "../actions/reports.ts";
+import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+
+/** What a refused report is told: the shape that would have been taken. */
+const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
 
 // ---- shapes ----
 
@@ -1748,6 +1759,101 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!created.ok) return originAware(created.error);
     return json(withLabels(ctx, created.value), 201);
   });
+
+  // ── reports from outside — no account, a person decides ──────────────
+
+  router.add("POST", "/api/v1/repos/:owner/:name/reports", async (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const filed = fileReport(
+      ctx.app,
+      repo,
+      { title: str(input.title), body: str(input.body), page: str(input.page) },
+      clientAddress(ctx.request),
+    );
+    if (!filed.ok) {
+      const refusal = filed.error;
+      if (refusal.error === "not_found") return notFound();
+      if (refusal.error === "rate_limited")
+        return json(
+          { error: "rate_limited", message: "too many reports; wait and send again" },
+          429,
+          { "retry-after": String(refusal.retryAfter) },
+        );
+      if (refusal.error === "queue_full")
+        return apiError(
+          "queue_full",
+          429,
+          "this repository has many reports waiting; try again later",
+        );
+      return apiError(refusal.error, 422, REPORT_HINT);
+    }
+    return json(
+      {
+        id: filed.value.id,
+        state: filed.value.state,
+        message:
+          "Received. A person who maintains this repository will read it; nothing acts on it before they do.",
+      },
+      202,
+    );
+  });
+
+  router.add("GET", "/api/v1/repos/:owner/:name/reports", (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
+    if (!waiting.ok) return respondAccess(waiting.error, 403);
+    return json({
+      items: waiting.value.map((r) => ({ ...r, from: "outside" })),
+    });
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/reports/:id/accept",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const accepted = await acceptReport(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.id ?? "",
+      );
+      if (!accepted.ok)
+        return accepted.error === "decided"
+          ? apiError("decided", 409, "this report was already decided")
+          : originAware(accepted.error);
+      return json(withLabels(ctx, accepted.value), 201);
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/reports/:id/dismiss",
+    (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const dismissed = dismissReport(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.id ?? "",
+      );
+      if (!dismissed.ok)
+        return dismissed.error === "decided"
+          ? apiError("decided", 409, "this report was already decided")
+          : respondAccess(dismissed.error, 403);
+      return json({ id: ctx.params.id, state: "dismissed" });
+    },
+  );
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
     const found = loadIssue(ctx);
