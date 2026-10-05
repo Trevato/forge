@@ -8,6 +8,7 @@
  * enforce. Auth routes (sign in / up) pass no scope.
  */
 
+import { BODY_MAX, readBounded } from "../http/limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import { crossOrigin, type Ctx } from "../http/context.ts";
 
@@ -16,6 +17,8 @@ export type Form = Awaited<ReturnType<Request["formData"]>>;
 export async function readForm(
   ctx: Ctx,
   minScope?: TokenScope,
+  /** The most bytes this form may be; a form a stranger posts wants less. */
+  max: number = BODY_MAX,
 ): Promise<Form | Response> {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
@@ -27,15 +30,21 @@ export async function readForm(
       return new Response("forbidden", { status: 403 });
     }
   }
+  // Counted as it arrives (\`http/limits.ts\`), then parsed as what it says
+  // it is — urlencoded or multipart — from the bytes kept.
+  const bytes = await readBounded(ctx.request, max);
+  if (bytes === "too_large")
+    return new Response("payload too large", { status: 413 });
+  const type = ctx.request.headers.get("content-type");
+  // A form with no fields — a bare button, or a client that sent no body
+  // at all — is an empty form, not a malformed one.
+  if (type === null || bytes.byteLength === 0)
+    return new FormData() as unknown as Form;
   try {
-    return await ctx.request.formData();
+    return await new Response(bytes, {
+      headers: { "content-type": type },
+    }).formData();
   } catch {
-    // A form with no fields — a bare button, or a client that sent no body
-    // at all — is an empty form, not a malformed one.
-    const type = ctx.request.headers.get("content-type");
-    const length = ctx.request.headers.get("content-length");
-    if (type === null || length === "0")
-      return new FormData() as unknown as Form;
     return new Response("bad request", { status: 400 });
   }
 }

@@ -4,9 +4,9 @@
  * before it reaches an action.
  */
 
+import { BODY_MAX, readBounded } from "./limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
-import { trapAsync } from "../kernel/result.ts";
 import { crossOrigin, type Ctx } from "./context.ts";
 
 export function json(
@@ -153,52 +153,40 @@ export function respondAccess(error: string, status: number): Response {
   return json({ error }, status);
 }
 
-/** A JSON object body, or `{}` for anything else — malformed input is not a 500. */
-export async function body(request: Request): Promise<Record<string, unknown>> {
-  const parsed = await trapAsync(() => request.json());
-  const value = parsed.ok ? parsed.value : undefined;
+/** Bytes as a JSON object, or `{}` for anything else — malformed input is not a 500. */
+function asObject(bytes: Uint8Array): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return {};
+  }
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : {};
 }
 
 /**
- * A JSON object body kept to at most `max` bytes, for a route a stranger
+ * A JSON object body, at most \`BODY_MAX\` bytes (\`http/limits.ts\`); past
+ * that, or malformed, \`{}\` — and an over-limit body closes its connection.
+ */
+export async function body(request: Request): Promise<Record<string, unknown>> {
+  const bytes = await readBounded(request, BODY_MAX);
+  return bytes === "too_large" ? {} : asObject(bytes);
+}
+
+/**
+ * A JSON object body kept to at most \`max\` bytes, for a route a stranger
  * may call: the declared length is a claim and a chunked body declares
- * none, so the stream itself is counted. Past the limit nothing more is
- * kept and nothing is parsed, but the rest is still read off the wire and
- * dropped — a body left half-read would be taken as the start of the next
- * request on that connection, which a proxy in front may hand to someone
- * else. The server's own maximum body size bounds that reading. `too_large`
- * then, else as `body`.
+ * none, so the stream itself is counted (\`readBounded\`). \`too_large\` past
+ * the limit — the connection then closes once answered — else as \`body\`.
  */
 export async function boundedBody(
   request: Request,
   max: number,
 ): Promise<Record<string, unknown> | "too_large"> {
-  if (Number(request.headers.get("content-length") ?? 0) > max)
-    return "too_large";
-  if (request.body === null) return {};
-  const reader = request.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const read = await trapAsync(() => reader.read());
-    if (!read.ok) return size > max ? "too_large" : {};
-    const { done, value } = read.value;
-    if (done) break;
-    size += value.byteLength;
-    if (size <= max) chunks.push(value);
-    else chunks.length = 0;
-  }
-  if (size > max) return "too_large";
-  const parsed = await trapAsync(async () =>
-    JSON.parse(new TextDecoder().decode(Buffer.concat(chunks))),
-  );
-  const value = parsed.ok ? (parsed.value as unknown) : undefined;
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : {};
+  const bytes = await readBounded(request, max);
+  return bytes === "too_large" ? "too_large" : asObject(bytes);
 }
 
 export const str = (v: unknown): string => (typeof v === "string" ? v : "");

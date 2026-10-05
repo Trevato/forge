@@ -7,6 +7,7 @@
 
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
+import { armClose, mustClose, REQUEST_MAX, settleBody } from "./limits.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
@@ -1362,6 +1363,18 @@ function refusedByDatabase(error: unknown): string | undefined {
   return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
 }
 
+/** A response with one header set, copying it when its headers are frozen. */
+function withHeader(response: Response, name: string, value: string): Response {
+  try {
+    response.headers.set(name, value);
+    return response;
+  } catch {
+    const copy = new Response(response.body, response);
+    copy.headers.set(name, value);
+    return copy;
+  }
+}
+
 /** The hook sockets a data directory may hold: this forge's, and others'. */
 const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
 
@@ -1426,6 +1439,10 @@ export async function serve(app: App): Promise<Servers> {
   const web = Bun.serve({
     port: app.config.port ?? 3000,
     idleTimeout: 120,
+    // The largest thing anyone may send — a git push. Every reader below it
+    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
+    // this one only on a declared length.
+    maxRequestBodySize: REQUEST_MAX,
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
     websocket: appWebSocket,
@@ -1444,11 +1461,19 @@ export async function serve(app: App): Promise<Servers> {
           return securityFloor(new Response("not found", { status: 404 }));
       }
       notePeer(request, server.requestIP(request)?.address, trust);
+      // A body refused part-way, or one left unread with no declared length,
+      // ends its connection once answered (`http/limits.ts`).
+      armClose(request, () => server.timeout(request, 1));
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
-      return securityFloor(
+      const response = securityFloor(
         await answer(app, router, apiRouter, limiter, request),
       );
+      await settleBody(request);
+      if (!mustClose(request)) return response;
+      // Said, so no client or proxy reuses it; then done, so none can.
+      server.timeout(request, 1);
+      return withHeader(response, "connection", "close");
     },
     error(error) {
       const refused = refusedByDatabase(error);
