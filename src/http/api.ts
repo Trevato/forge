@@ -84,6 +84,7 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { watchMilestone } from "../actions/watches.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -2150,6 +2151,33 @@ export function apiRoutes(router: Router<Handler>): void {
       return data === undefined ? notFound() : json(data);
     },
   );
+  // Watch a milestone, or stop (#732): the caller's own watch, so a write
+  // token and nothing more. The read above says `watching`.
+  for (const method of ["PUT", "DELETE"] as const)
+    router.add(
+      method,
+      "/api/v1/repos/:owner/:name/milestones/:number/watch",
+      (ctx) => {
+        const denied = requireScope(ctx, "rw");
+        if (denied) return denied;
+        const repo = loadRepo(ctx);
+        const number = positiveInt(ctx.params.number);
+        if (!repo || number === undefined) return notFound();
+        const set = watchMilestone(
+          ctx.app,
+          ctx.auth.user,
+          repo,
+          number,
+          method === "PUT",
+        );
+        if (set.ok) return json(set.value);
+        return set.error === "not_found"
+          ? notFound()
+          : set.error === "unauthorized"
+            ? unauthorized()
+            : apiError("forbidden", 403, "only a person watches a milestone");
+      },
+    );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {

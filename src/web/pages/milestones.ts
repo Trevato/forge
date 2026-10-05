@@ -20,6 +20,8 @@ import {
 } from "../../core/milestones.ts";
 import { PILLAR_DAYS } from "../../core/pillars.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { isWatching } from "../../core/watches.ts";
+import { watchMilestone } from "../../actions/watches.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -28,10 +30,12 @@ import {
   repoBase,
   repoHeader,
   repoPalette,
+  signInFirst,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
-import { page } from "../layout.ts";
-import { time } from "../ui.ts";
+import { field, readForm } from "../form.ts";
+import { page, redirect } from "../layout.ts";
+import { btn, time } from "../ui.ts";
 
 /** Where a milestone is: its own page. */
 export const milestoneHref = (base: string, number: number): string =>
@@ -129,10 +133,37 @@ function folded(rows: Html[], what: string, shown: number): Html {
     </details>`;
 }
 
+/**
+ * Watch, or stop: one button, for a person who is signed in. Watching puts
+ * the milestone's progress in their feed and tells their phone once, when
+ * it lands (`core/watches.ts`).
+ */
+function watchButton(base: string, m: Milestone, watching: boolean): Html {
+  return html`<form
+    method="post"
+    action="${milestoneHref(base, m.issue.number)}/watch"
+    id="ms-watch"
+  >
+    <input type="hidden" name="watch" value="${watching ? "0" : "1"}" />
+    ${watching
+      ? btn("Watching", {
+          size: "sm",
+          icon: "check",
+          title: "Stop watching: no more of it in your feed, and no word when it lands",
+        })
+      : btn("Watch", {
+          size: "sm",
+          variant: "primary",
+          title: "Its progress in your feed, and one word to your phone when it lands",
+        })}
+  </form>`;
+}
+
 function milestoneBody(
   repo: Repo,
   m: Milestone,
   names: boolean,
+  actions: Html | null,
 ): Html {
   const base = repoBase(repo);
   const issue = (number: number, title: string): Html =>
@@ -167,6 +198,7 @@ function milestoneBody(
           >Read the issue #${m.issue.number}</a
         >
       </p>
+      ${when(actions, (bar) => html`<div class="bar ms-actions">${bar}</div>`)}
     </div>
     ${when(
       m.limbs.length > 0,
@@ -293,15 +325,46 @@ export function milestonePage(ctx: Ctx): Response {
     ? readPlan(ctx.app.db, repo, { spend: owner }).milestone(number)
     : undefined;
   if (milestone === undefined) return notFoundPage(ctx);
+  const viewer = ctx.auth.user;
+  const actions =
+    viewer?.kind === "user"
+      ? watchButton(
+          repoBase(repo),
+          milestone,
+          isWatching(ctx.app.db, viewer.id, milestone.issue.id),
+        )
+      : null;
   return page({
     ctx,
     title: `${milestone.name} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}
-    ${milestoneBody(repo, milestone, owner)}`,
+    ${milestoneBody(repo, milestone, owner, actions)}`,
     styleCss: milestonesCss,
   });
+}
+
+/** POST /:owner/:name/milestones/:number/watch — watch, or stop, and back to it. */
+export async function milestoneWatch(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const number = Number(ctx.params.number);
+  const set = watchMilestone(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    number,
+    field(form, "watch") !== "0",
+  );
+  if (!set.ok)
+    return set.error === "not_found"
+      ? notFoundPage(ctx)
+      : new Response("forbidden", { status: 403 });
+  return redirect(milestoneHref(repoBase(repo), number));
 }
 
 /** The plan's limbs as data: `GET /api/v1/repos/:owner/:name/milestones`, and the MCP's `milestones`. */
@@ -328,11 +391,18 @@ export function milestoneData(
   const milestone = readPlan(ctx.app.db, repo, { spend: owner }).milestone(
     number,
   );
+  const viewer = ctx.auth.user;
   return milestone === undefined
     ? undefined
     : {
         repo: { owner: repo.ownerName, name: repo.name },
         ...milestoneJson(milestone, owner),
+        // Whether the caller watches it; a caller who cannot has no answer.
+        ...(viewer?.kind === "user"
+          ? {
+              watching: isWatching(ctx.app.db, viewer.id, milestone.issue.id),
+            }
+          : {}),
       };
 }
 
@@ -352,6 +422,7 @@ export const milestonesCss = /* css */ `
 .ms-top { display: grid; gap: 8px; max-width: 640px; }
 .ms-top h1, .ms-top p { margin: 0; }
 .ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.ms-actions { margin-top: 4px; }
 .ms-section { margin-top: 22px; }
 .ms-section h2 { font-size: 13px; margin: 0 0 6px; }
 .ms-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }

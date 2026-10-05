@@ -18,7 +18,7 @@ import { btn, empty } from "../ui.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,decision.*";
+  "run.finished,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -31,6 +31,7 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   decision: "Decision",
   map: "Map",
   cost: "Cost",
+  milestone: "Watching",
 };
 
 /** One card. A run's card steers the run; every card can tell its app. */
@@ -50,7 +51,7 @@ export function feedCard(item: FeedItem): Html {
       <span class="fcard-app muted small">${item.app}</span>
       <span class="spacer"></span>
       <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-      ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
+      ${item.kind === "ask" || item.kind === "milestone" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
     </div>
     <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.reason}</a></p>
     <details class="fcard-say">
