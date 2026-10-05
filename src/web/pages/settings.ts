@@ -656,7 +656,7 @@ ${named.join("\n")}</textarea
         >
         <p class="hint">
           ${access === "private"
-            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once."
+            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."
             : "The app is public, so anyone may open it now; these names matter once it is private."}
         </p>
       </div>
