@@ -57,6 +57,7 @@ import { convergeFork, convergeState } from "../crew/converge.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
+import { askedIn, askedJson, askedRepos, isAskedShow } from "../core/asked.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -527,6 +528,29 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "asked",
+    description:
+      "What people asked the crew for, newest first, in the repositories you can write: each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), and whether it is flagged (nothing built after three days). `show` narrows to unshipped or flagged; `repo` (owner/name) to one repository. The same data as the /asked page and /api/v1/asked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        show: { type: "string", enum: ["all", "unshipped", "flagged"] },
+      },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const show = args["show"] ?? "all";
+      if (!isAskedShow(show))
+        return bad("invalid_show", "show is all, unshipped or flagged");
+      const spec = args["repo"] === undefined ? null : str(args["repo"]);
+      const repos = askedRepos(ctx.app.db, user, spec);
+      if (spec !== null && repos.length === 0)
+        return bad("not_found", "no such app or repository you can write (owner/name)");
+      return good({ asked: askedIn(ctx.app.db, repos, { show }).map(askedJson) });
     },
   },
   {

@@ -18,8 +18,9 @@
 import type { Database } from "bun:sqlite";
 import { getIssuesByIds, type Issue } from "./issues.ts";
 import { closesFromBody } from "./pulls.ts";
-import type { Repo } from "./repos.ts";
+import { getRepo, listReposWritableTo, type Repo } from "./repos.ts";
 import { listActiveRuns } from "./runs.ts";
+import type { User } from "./users.ts";
 
 export type AskedState = "waiting" | "building" | "shipped" | "closed";
 
@@ -72,6 +73,28 @@ interface PullRow {
 
 const placeholders = (n: number, from = 1): string =>
   Array.from({ length: n }, (_, i) => `?${i + from}`).join(",");
+
+/**
+ * The repositories a viewer may read asks about: those they can write,
+ * narrowed to one when `repoSpec` (`owner/name`) names one of them. Any
+ * other name narrows to nothing, so a repository the viewer cannot write is
+ * indistinguishable from one that does not exist.
+ */
+export function askedRepos(
+  db: Database,
+  viewer: User | undefined,
+  repoSpec: string | null | undefined,
+): readonly Repo[] {
+  const writable = listReposWritableTo(db, viewer, { limit: 200 });
+  if (repoSpec === null || repoSpec === undefined || repoSpec === "")
+    return writable;
+  const [owner, name, ...rest] = repoSpec.split("/");
+  const one =
+    owner && name && rest.length === 0 ? getRepo(db, owner, name) : undefined;
+  return one !== undefined && writable.some((r) => r.id === one.id)
+    ? [one]
+    : [];
+}
 
 /**
  * The asks in these repositories, newest first. The caller decides which

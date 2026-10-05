@@ -38,6 +38,7 @@ for a tunnel and a forge that sleeps.
 | `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
+| `asked`        | `{ repo?, show? }`: what people asked the crew for, newest first: who and when, the pulls that close it, waiting/building/shipped/closed, flagged when nothing was built in three days; repositories you can write |        |
 | `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
