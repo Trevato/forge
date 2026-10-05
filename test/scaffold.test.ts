@@ -139,7 +139,10 @@ describe("a scaffolded app, written out and run on its own", () => {
       `${root}node_modules/@types,${root}node_modules`,
       ...sources,
     ]);
-    expect([code, out.trim()]).toEqual([0, ""]);
+    // tsc's exit code is the verdict: `bun x` may print its own install
+    // lines on a fresh machine (#664). On a failure, the output is the
+    // reason, so that is what the assertion shows.
+    expect(code === 0 ? "" : out.trim()).toBe("");
   }, 120_000);
 
   test("forge.json points the forge's health poll at /healthz", () => {

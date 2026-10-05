@@ -401,11 +401,14 @@ describe("visibility is enforced in SQL, not after the fact", () => {
     // The *first* account on a fresh forge is the site admin, and a site
     // admin sees everything — which would make every assertion here vacuous.
     // So the admin is somebody else entirely, and alice is an ordinary user.
-    await signUp(app, {
-      username: "root",
-      email: "root@forge.test",
-      password: "a-long-root-password",
+    // Not "root": that name is reserved now, and a refused sign-up here made
+    // alice the first account — the admin — without a word.
+    const admin = await signUp(app, {
+      username: "keeper",
+      email: "keeper@forge.test",
+      password: "a-long-keeper-password",
     });
+    if (!admin.ok) throw new Error(`the admin could not sign up: ${admin.error}`);
     const a = await signUp(app, {
       username: "alice",
       email: "a@forge.test",
