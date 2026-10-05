@@ -27,7 +27,7 @@ export const DIRECTION_NOTE =
 
 /** Why the map holds a reader's issue back from the crew. */
 export const READER_SUGGESTION =
-  "a reader's suggestion: someone who writes here adopts it first";
+  "a reader's suggestion: someone who writes here assigns it or links it first";
 
 export const OUTSIDERS_NOTE =
   "Anyone signed in may direct the crew here: the owner let outsiders trigger it.";
@@ -88,6 +88,23 @@ export function speaksForCrew(
 }
 
 /**
+ * Who said it, as the crew should hear it. An imported row's `authorId` is
+ * the connecting user (`origins/import.ts`) and the real author lives only
+ * in `originAuthor`: such a row speaks as that origin login, a name no
+ * account here can hold, so `readersAmong` counts it a reader's — a
+ * stranger's issue on GitHub never reads as the owner's word.
+ */
+export function voiceOf<
+  T extends { readonly authorName: string; readonly originAuthor?: string | null },
+>(said: T): T {
+  return said.originAuthor === null ||
+    said.originAuthor === undefined ||
+    said.originAuthor === ""
+    ? said
+    : { ...said, authorName: `${said.originAuthor} on the origin` };
+}
+
+/**
  * Of the people named, those who may not direct the crew here: the brief
  * quotes their words as a reader's. A name that resolves to nobody is a
  * reader — the safe side of not knowing.
@@ -122,9 +139,12 @@ export function directorsAmong(
  * Of a repository's open issues, those a reader opened that nobody who may
  * direct the crew has adopted yet: the clock never picks them and the map
  * never calls them ready. A reader may suggest work; only a person who can
- * write here makes it the crew's, by assigning it, labelling it, or
- * linking it into the map — a link the crew's planner made does not count,
- * or a reader's words could reach a builder through the planner.
+ * write here makes it the crew's, by assigning it or linking it into the
+ * map. A label is not adoption — a writer tagging "wontfix" must not hand
+ * the issue to a builder — and a link the crew's planner made does not
+ * count, or a reader's words could reach a builder through the planner.
+ * An issue imported from an origin is a reader's whoever connected it
+ * (`voiceOf`).
  */
 export function unadoptedAmong(
   db: Database,
@@ -141,19 +161,13 @@ export function unadoptedAmong(
     return known;
   };
   const suggested = issues.filter(
-    (i) => i.state === "open" && i.assigneeId === null && !speaks(i.authorId),
+    (i) =>
+      i.state === "open" &&
+      i.assigneeId === null &&
+      (i.originAuthor !== null || !speaks(i.authorId)),
   );
   const out = new Set<string>();
   if (suggested.length === 0) return out;
-  const labelled = new Set(
-    db
-      .query<{ id: string }, [string]>(
-        `SELECT DISTINCT il.issue_id AS id FROM issue_label il
-           JOIN issue i ON i.id = il.issue_id WHERE i.repo_id = ?1`,
-      )
-      .all(repo.id)
-      .map((r) => r.id),
-  );
   const edges = db
     .query<{ a: string; b: string; actor: string }, [string]>(
       `SELECT d.issue_id AS a, d.blocked_by_id AS b, d.actor_id AS actor
@@ -175,7 +189,7 @@ export function unadoptedAmong(
       linked.add(e.b);
     }
   for (const i of suggested)
-    if (!labelled.has(i.id) && !linked.has(i.id)) out.add(i.id);
+    if (!linked.has(i.id)) out.add(i.id);
   return out;
 }
 
@@ -186,6 +200,7 @@ export function unadoptedAmong(
  * crew, not a reader's code reach the default branch unread by a person.
  */
 export function landsOnItsOwn(db: Database, repo: Repo, pull: Pull): boolean {
+  if (pull.originAuthor !== null) return false;
   const author = getUserById(db, pull.authorId);
   if (author === undefined) return false;
   if (author.kind === "agent")
@@ -202,7 +217,10 @@ export function landsOnItsOwn(db: Database, repo: Repo, pull: Pull): boolean {
 export function proposedWork(db: Database, repo: Repo): Map<number, Pull> {
   const out = new Map<number, Pull>();
   for (const [n, pull] of openPullsClosing(db, repo.id))
-    if (speaksForCrew(db, repo, getUserById(db, pull.authorId)))
+    if (
+      pull.originAuthor === null &&
+      speaksForCrew(db, repo, getUserById(db, pull.authorId))
+    )
       out.set(n, pull);
   return out;
 }

@@ -97,7 +97,7 @@ import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
-import { readersAmong } from "./direct.ts";
+import { readersAmong, voiceOf } from "./direct.ts";
 
 const log = createLog("crew");
 
@@ -703,11 +703,16 @@ async function work(
               pull.headOid,
           )
         : undefined;
-    const comments = listComments(app.db, issue.id, { kind: "comment" });
-    const reviews = pull ? listReviews(app.db, pull.id) : [];
+    // Imported words speak as their origin author (`voiceOf`), so the
+    // brief marks a stranger's as a reader's, not the connecting user's.
+    const comments = listComments(app.db, issue.id, { kind: "comment" }).map(
+      voiceOf,
+    );
+    const reviews = pull ? listReviews(app.db, pull.id).map(voiceOf) : [];
     const reviewComments = pull ? listReviewComments(app.db, pull.id) : [];
     const prompt = taskPrompt({
       ...brief,
+      issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
       comments,
@@ -716,7 +721,7 @@ async function work(
       readers: readersAmong(
         app.db,
         repo,
-        [issue, ...comments, ...reviews, ...reviewComments].map(
+        [voiceOf(issue), ...comments, ...reviews, ...reviewComments].map(
           (c) => c.authorName,
         ),
       ),
