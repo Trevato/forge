@@ -77,6 +77,7 @@ import {
 import {
   changePassword,
   iconPng,
+  llmsTxt,
   robotsTxt,
   securityTxt,
   sitemapXml,
@@ -111,7 +112,6 @@ import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
   issuePage,
-  issuesList,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
@@ -178,7 +178,7 @@ import {
   agentUpdate,
   crewPage,
 } from "../web/pages/crew.ts";
-import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
+import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
   changePage,
   pullCommentSubmit,
@@ -418,6 +418,7 @@ export function buildRouter(): Router<Handler> {
   });
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
+  router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
   router.add("GET", "/sitemap.xml", sitemapXml);
@@ -685,14 +686,15 @@ export function buildRouter(): Router<Handler> {
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
-  router.add("GET", "/:owner/:name/issues", issuesList);
-  // The studio's own nouns for the same list and the same page — everything
-  // told, and one tell. Each is a second door onto the one handler, never a
-  // second copy of the page; `/issues` and `/issues/:number` stay dev's own
-  // canonical addresses and answer exactly as they always have, in both
-  // modes (`tellsList`/`tellPage` redirect there when the studio does not
-  // apply). The literal /tells is registered before /tells/:number for the
-  // same reason /issues/new is.
+  // One list of issues: `/issues` and `/tells` are two addresses for the
+  // same page, for every repository and every viewer.
+  router.add("GET", "/:owner/:name/issues", tellsList);
+  // The studio's own noun for one tell: a second door onto the one handler,
+  // never a second copy of the page; `/issues/:number` stays dev's own
+  // canonical address and answers exactly as it always has, in both modes
+  // (`tellPage` redirects there when the studio does not apply). The
+  // literal /tells is registered before /tells/:number for the same reason
+  // /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
@@ -735,10 +737,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
 
   // Pull requests. Same /new-before-/:number ordering discipline.
-  router.add("GET", "/:owner/:name/pulls", pullsList);
-  // The studio's own nouns for the same list and the same page — every
-  // change, and one change. See the tells above for the rule; the forms
-  // that ship, close and comment keep posting under /pulls/:number.
+  // One list of pulls, at `/pulls` and `/changes` alike; one change under
+  // the studio's own noun. See the tells above for the rule; the forms that
+  // ship, close and comment keep posting under /pulls/:number.
+  router.add("GET", "/:owner/:name/pulls", changesList);
   router.add("GET", "/:owner/:name/changes", changesList);
   router.add("GET", "/:owner/:name/changes/:number", changePage);
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
@@ -1107,7 +1109,10 @@ async function withIdempotency(
   // A retry that arrives while the first attempt is still running joins it
   // rather than starting a second — the duplicate this whole path prevents.
   const racing = joinInFlight(credential, key);
-  if (racing !== undefined) return fromStored(await racing, true);
+  if (racing !== undefined) {
+    const joined = await racing;
+    return fromStored({ ...joined, body: withoutShownOnce(joined.body) }, true);
+  }
 
   const work = (async (): Promise<StoredResponse> => {
     const response = await invoke(replay());
@@ -1117,6 +1122,9 @@ async function withIdempotency(
       body,
       contentType: response.headers.get("content-type") ?? "application/json",
     };
+    // What the table keeps — and backups with it — never holds a secret
+    // shown once; a replay says it was shown instead.
+    const kept: StoredResponse = { ...outcome, body: withoutShownOnce(body) };
     // A 5xx is not an outcome, it is the absence of one. Remembering it
     // would pin the caller to a failure it was right to retry.
     if (response.status < 500) {
@@ -1124,7 +1132,7 @@ async function withIdempotency(
         tokenId: credential,
         key,
         fingerprint,
-        response: outcome,
+        response: kept,
       });
     }
     return outcome;
@@ -1134,6 +1142,27 @@ async function withIdempotency(
   // replay, and telling it otherwise would make the header useless for
   // exactly the reconciliation it exists for.
   return fromStored(await work, false);
+}
+
+/**
+ * Fields of an API answer that are a secret shown once (a spawned child's
+ * claim link): an idempotent replay must not return them, and the
+ * idempotency table must not keep them.
+ */
+const SHOWN_ONCE = ["claimUrl"] as const;
+export const SHOWN_ONCE_NOTE = "shown once, in the first answer";
+
+export function withoutShownOnce(body: string): string {
+  if (!SHOWN_ONCE.some((k) => body.includes(`"${k}"`))) return body;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return body;
+    const copy: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+    for (const k of SHOWN_ONCE) if (k in copy) copy[k] = SHOWN_ONCE_NOTE;
+    return JSON.stringify(copy);
+  } catch {
+    return body;
+  }
 }
 
 const keyReused = (): Response =>

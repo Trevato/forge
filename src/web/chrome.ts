@@ -82,12 +82,16 @@ export const repoNotFound = notFoundPage;
 
 /** Send an anonymous visitor to sign in, and back where they were going. */
 export function signInFirst(ctx: Ctx): Response {
+  return redirect(signInHref(ctx));
+}
+
+/** Where signing in starts, coming back to this page after. */
+export function signInHref(ctx: Ctx): string {
   const next = ctx.url.pathname + ctx.url.search;
   // Behind a platform edge the edge is how people sign in; an account it
   // made has no password here, so the password form would only refuse them.
-  if (ctx.app.config.edgeToken !== undefined)
-    return redirect(edgeLoginUrl(next));
-  return redirect(`/signin?next=${encodeURIComponent(next)}`);
+  if (ctx.app.config.edgeToken !== undefined) return edgeLoginUrl(next);
+  return `/signin?next=${encodeURIComponent(next)}`;
 }
 
 // ---- repo header ----

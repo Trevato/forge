@@ -128,6 +128,22 @@ describe("reports from outside", () => {
       body: JSON.stringify({ title: "t", body: "x".repeat(70_000) }),
     });
     expect(huge.status).toBe(413);
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ title: "t", body: "x".repeat(70_000) }),
+    );
+    const chunked = await fetch(`${base}/api/v1/repos/alice/game/reports`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": freshSource() },
+      body: new ReadableStream({
+        start(controller) {
+          for (let at = 0; at < bytes.length; at += 4096)
+            controller.enqueue(bytes.slice(at, at + 4096));
+          controller.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+    expect(chunked.status).toBe(413);
     expect(count("report")).toBe(0);
   });
 

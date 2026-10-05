@@ -6,6 +6,11 @@
  * organisation, and the link is burnt in the same statement that checks it,
  * so two people racing on one link cannot both win.
  *
+ * A claim is bound to a spawned forge: it is read only from the
+ * organisation `parent.json` names (`spawnedOrg`), so a forge that was not
+ * spawned has no claim at all, and a row under any other account is never
+ * consulted. A forge that already has an admin cannot be claimed.
+ *
  * It lives in `user_setting` on the child's organisation, one row: a
  * single-use secret that a fresh child needs exactly once, with no schema
  * change for every child to replay. Losing the row costs a new link from
@@ -13,6 +18,10 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { join } from "node:path";
+import type { App } from "../app.ts";
+import { getOrg } from "../core/orgs.ts";
+import type { User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 const KEY = "spawn_claim";
@@ -29,7 +38,33 @@ interface Stored {
 
 export type ClaimState =
   | { readonly state: "ok"; readonly orgId: string }
-  | { readonly state: "used" | "expired" | "unknown" };
+  | { readonly state: "used" | "expired" | "unknown" | "owned" };
+
+/** What a spawned child's `parent.json` says, when it has one. */
+export interface Spawned {
+  readonly org: User;
+  /** Whether the spawner keeps owner access after the claim. */
+  readonly keepAccess: boolean;
+}
+
+/** The organisation this forge was spawned as, or undefined if it was not spawned. */
+export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
+  const file = Bun.file(join(app.config.dataDir, "parent.json"));
+  if (!(await file.exists())) return undefined;
+  try {
+    const parsed = (await file.json()) as {
+      org?: unknown;
+      keepAccess?: unknown;
+    };
+    const org =
+      typeof parsed.org === "string" ? getOrg(app.db, parsed.org) : undefined;
+    return org === undefined
+      ? undefined
+      : { org, keepAccess: parsed.keepAccess === true };
+  } catch {
+    return undefined;
+  }
+}
 
 /** 32 random bytes, base64url: the only copy of the secret. */
 function newToken(): string {
@@ -61,74 +96,96 @@ export function mintClaim(
   return token;
 }
 
+/** Whether a person already administers this forge: then it is not claimable. */
+const hasAdmin = (db: Database): boolean =>
+  db
+    .query(
+      "SELECT 1 FROM user WHERE is_admin = 1 AND is_agent = 0 AND kind = 'user' LIMIT 1",
+    )
+    .get() !== null;
+
 function find(
   db: Database,
+  orgId: string,
   token: string,
-): { orgId: string; raw: string; stored: Stored } | undefined {
+): { raw: string; stored: Stored } | undefined {
   if (!TOKEN.test(token)) return undefined;
-  const hash = sha256(token);
-  const rows = db
+  const row = db
     .query<
-      { user_id: string; value: string },
-      [string]
-    >("SELECT user_id, value FROM user_setting WHERE key = ?1")
-    .all(KEY);
-  for (const row of rows) {
-    let stored: Stored;
-    try {
-      stored = JSON.parse(row.value) as Stored;
-    } catch {
-      continue;
-    }
-    if (stored.h === hash)
-      return { orgId: row.user_id, raw: row.value, stored };
+      { value: string },
+      [string, string]
+    >("SELECT value FROM user_setting WHERE user_id = ?1 AND key = ?2")
+    .get(orgId, KEY);
+  if (!row) return undefined;
+  let stored: Stored;
+  try {
+    stored = JSON.parse(row.value) as Stored;
+  } catch {
+    return undefined;
   }
-  return undefined;
+  return stored.h === sha256(token) ? { raw: row.value, stored } : undefined;
 }
 
-/** What a token is worth right now, without spending it. */
+function judge(
+  db: Database,
+  orgId: string,
+  token: string,
+  now: number,
+): { state: ClaimState; raw?: string; stored?: Stored } {
+  const found = find(db, orgId, token);
+  if (found === undefined) return { state: { state: "unknown" } };
+  if (found.stored.u !== null) return { state: { state: "used" } };
+  if (Date.parse(found.stored.e) <= now) return { state: { state: "expired" } };
+  if (hasAdmin(db)) return { state: { state: "owned" } };
+  return {
+    state: { state: "ok", orgId },
+    raw: found.raw,
+    stored: found.stored,
+  };
+}
+
+/** What a token is worth right now on the organisation `orgId`, without spending it. */
 export function readClaim(
   db: Database,
+  orgId: string,
   token: string,
   now = Date.now(),
 ): ClaimState {
-  const found = find(db, token);
-  if (found === undefined) return { state: "unknown" };
-  if (found.stored.u !== null) return { state: "used" };
-  if (Date.parse(found.stored.e) <= now) return { state: "expired" };
-  return { state: "ok", orgId: found.orgId };
+  return judge(db, orgId, token, now).state;
 }
 
 /**
- * Spend the token: true for exactly one caller. The row is swapped only if
+ * Spend the token: "ok" for exactly one caller. The row is swapped only if
  * it is still the unused value just read, in one statement.
  */
 export function burnClaim(
   db: Database,
+  orgId: string,
   token: string,
   now = Date.now(),
 ): ClaimState {
-  const found = find(db, token);
-  if (found === undefined) return { state: "unknown" };
-  if (found.stored.u !== null) return { state: "used" };
-  if (Date.parse(found.stored.e) <= now) return { state: "expired" };
-  const spent: Stored = { ...found.stored, u: new Date(now).toISOString() };
+  const judged = judge(db, orgId, token, now);
+  if (
+    judged.state.state !== "ok" ||
+    judged.raw === undefined ||
+    judged.stored === undefined
+  )
+    return judged.state;
+  const spent: Stored = { ...judged.stored, u: new Date(now).toISOString() };
   const swapped = db
     .query(
       "UPDATE user_setting SET value = ?1 WHERE user_id = ?2 AND key = ?3 AND value = ?4",
     )
-    .run(JSON.stringify(spent), found.orgId, KEY, found.raw);
-  return swapped.changes === 1
-    ? { state: "ok", orgId: found.orgId }
-    : { state: "used" };
+    .run(JSON.stringify(spent), orgId, KEY, judged.raw);
+  return swapped.changes === 1 ? judged.state : { state: "used" };
 }
 
 /** Put a spent token back, when the account it was spent on could not be made. */
-export function unburnClaim(db: Database, token: string): void {
-  const found = find(db, token);
+export function unburnClaim(db: Database, orgId: string, token: string): void {
+  const found = find(db, orgId, token);
   if (found === undefined || found.stored.u === null) return;
   const back: Stored = { ...found.stored, u: null };
   db.query(
     "UPDATE user_setting SET value = ?1 WHERE user_id = ?2 AND key = ?3 AND value = ?4",
-  ).run(JSON.stringify(back), found.orgId, KEY, found.raw);
+  ).run(JSON.stringify(back), orgId, KEY, found.raw);
 }

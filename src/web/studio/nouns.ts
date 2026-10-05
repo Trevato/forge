@@ -38,9 +38,9 @@ export const changeHref = (base: string, number: number): string =>
 /**
  * The one rule for whether a viewer sees the studio's own page on this
  * repo: studio mode, no `?mode=dev` escape hatch, and an app to have a
- * studio word for — the same check `issuesList`/`pullsList` make before
- * falling back to dev's own list, and `issuePage`/`pullPage` before falling
- * back to dev's own page.
+ * studio word for — the same check `issuePage`/`pullPage` make before
+ * falling back to dev's own page. The lists of issues and pulls never ask
+ * it: they are the same for everyone (`src/web/studio/lists.ts`).
  */
 export function studioRecord(ctx: Ctx, repo: Repo): AppRecord | undefined {
   const studio =

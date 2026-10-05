@@ -55,6 +55,16 @@ function compile(pattern: string): Segment[] {
 export class Router<H> {
   private routes: CompiledRoute<H>[] = [];
 
+  /** The literal first segment of every route: the names a page owns. */
+  literalHeads(): string[] {
+    const heads = new Set<string>();
+    for (const route of this.routes) {
+      const first = route.segments[0];
+      if (first?.kind === "literal" && first.value !== "") heads.add(first.value);
+    }
+    return [...heads].sort();
+  }
+
   add(method: string, pattern: string, handler: H): this {
     this.routes.push({ method, segments: compile(pattern), handler });
     return this;

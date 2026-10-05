@@ -40,6 +40,8 @@ export interface SpawnInput {
   readonly carrySubscriptions: unknown;
   /** What the child is for, in the spawner's words; optional. */
   readonly direction?: unknown;
+  /** Whether the spawner keeps owner access once the child is claimed; false unless true. */
+  readonly keepAccess?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -64,6 +66,8 @@ export interface SpawnPlan {
   readonly subscriptions: readonly string[];
   /** The child's direction; empty when the spawner wrote none. */
   readonly direction: string;
+  /** Whether the spawner stays an owner after the claim; the claim page says which. */
+  readonly keepAccess: boolean;
 }
 
 export interface DryRun {
@@ -150,7 +154,11 @@ export function planSpawn(
       return refuse("direction", `at most ${MAX_DIRECTION_CHARS} characters`);
   }
 
-  return ok({ name, org, apps, briefs, subscriptions, direction });
+  if (input.keepAccess !== undefined && typeof input.keepAccess !== "boolean")
+    return refuse("keepAccess", "must be true or false");
+  const keepAccess = input.keepAccess === true;
+
+  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess });
 }
 
 const enc = new TextEncoder();
@@ -162,6 +170,7 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.briefs.map((b) => `crew brief for ${b.agent}`),
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
+    ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
   ];
   const bytes =
     plan.apps.reduce((n, a) => n + a.bytes, 0) +

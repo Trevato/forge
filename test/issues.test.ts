@@ -121,7 +121,7 @@ describe("issue pages end to end", () => {
 
     const list = await (await fetch(`${base}/mel/proj/issues`)).text();
     expect(list).toContain("First bug");
-    expect(list).toContain("#1");
+    expect(list).toContain('href="/mel/proj/tells/1"');
 
     const detail = await (await fetch(`${base}/mel/proj/issues/1`)).text();
     expect(detail).toContain("<strong>broken</strong>");
@@ -153,7 +153,7 @@ describe("issue pages end to end", () => {
     expect(detail).toContain('data-state="closed"');
     // Default list (open) no longer shows it; closed filter does.
     expect(await (await fetch(`${base}/mel/proj/issues`)).text()).toContain(
-      "No open issues",
+      "Nothing open.",
     );
     expect(
       await (await fetch(`${base}/mel/proj/issues?state=closed`)).text(),
