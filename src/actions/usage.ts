@@ -16,6 +16,7 @@ import { getIssuesByIds } from "../core/issues.ts";
 import { canSeeOwnerFacts, type Repo } from "../core/repos.ts";
 import { standings, type Standing } from "../core/standing.ts";
 import {
+  budgetsOf,
   grantedAccounts,
   listCredentials,
   listGrants,
@@ -70,6 +71,8 @@ export interface UsageReport {
   /** Each account this app spends: its windows, now, every figure read or inferred. */
   readonly standing: readonly (Omit<Standing, "subscriptionId"> & {
     readonly subscription: string;
+    /** The account's whole-life budget and what it has spent, when it has one. */
+    readonly budget?: { readonly usd: number; readonly spentUsd: number };
   })[];
   /** The last 5 hours, today and the week, broken down, with the top runs. */
   readonly spend: Spend;
@@ -148,12 +151,22 @@ export function readUsage(
   for (const row of bySubscription)
     if (subscriptions.has(row.key ?? PLATFORM)) accounts.add(row.key ?? PLATFORM);
   const read = standings(db, [...accounts], now);
+  const budgets = budgetsOf(db);
   const standingsOut = [...accounts]
     .flatMap((id) => {
       const s = read.get(id);
       if (s === undefined) return [];
       const { subscriptionId: _, ...rest } = s;
-      return [{ subscription: subscriptions.get(id) ?? id, ...rest }];
+      const b = budgets.get(id);
+      return [
+        {
+          subscription: subscriptions.get(id) ?? id,
+          ...rest,
+          ...(b?.budgetUsd == null
+            ? {}
+            : { budget: { usd: b.budgetUsd, spentUsd: b.spentUsd } }),
+        },
+      ];
     })
     .sort((a, b) => a.subscription.localeCompare(b.subscription));
 
