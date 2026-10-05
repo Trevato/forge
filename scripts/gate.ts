@@ -61,6 +61,7 @@ export const GATE: readonly string[] = [
   "test/schema-migrations.test.ts",
   "test/vitals.test.ts",
   "test/guard.test.ts",
+  "test/asked.test.ts",
   "test/asks.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
@@ -120,6 +121,7 @@ export const GATE: readonly string[] = [
   "test/oauth-discovery.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
+  "test/reports.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [

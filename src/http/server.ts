@@ -127,6 +127,7 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { askedPage } from "../web/studio/asked_page.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
@@ -284,7 +285,15 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
-import { notePeer, oauthRoutes } from "./oauth.ts";
+import { oauthRoutes } from "./oauth.ts";
+import { notePeer } from "./peer.ts";
+import {
+  reportAcceptSubmit,
+  reportDismissSubmit,
+  reportPage,
+  reportSubmit,
+  reportsPage,
+} from "../web/pages/reports.ts";
 import {
   cookieValue,
   publicUrl,
@@ -440,6 +449,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  // What people asked of the crew, and what became of it (core/asked.ts).
+  router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
@@ -685,6 +696,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
+  router.add("GET", "/:owner/:name/report", reportPage);
+  router.add("POST", "/:owner/:name/report", reportSubmit);
+  router.add("GET", "/:owner/:name/reports", reportsPage);
+  router.add("POST", "/:owner/:name/reports/:id/accept", reportAcceptSubmit);
+  router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", issuePage);
