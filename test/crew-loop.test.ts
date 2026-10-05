@@ -154,7 +154,7 @@ describe("an agent's own comment never starts its next run", () => {
       claimRun(app.db, r.id);
       finishRun(app.db, r.id, { state: "failed", summary: "declined: no", costUsd: 1 });
     }
-    expect(breakerTripped(app.db, issue.id)).toBe(true);
+    expect(breakerTripped(app.db, fresh(), issue.id)).toBe(true);
     const before = agentRuns(issue).length;
     expect(
       queueAgentRun(app, fresh(), issue, agent, "feedback", alice.id),
@@ -170,7 +170,7 @@ describe("an agent's own comment never starts its next run", () => {
     expect(listComments(app.db, issue.id).length).toBe(1);
     // A person speaks: the breaker lets go.
     addComment(app, alice, fresh(), issue, "Try the other way.");
-    expect(breakerTripped(app.db, issue.id)).toBe(false);
+    expect(breakerTripped(app.db, fresh(), issue.id)).toBe(false);
     expect(breakerParked(app.db, [repo.id])).toEqual([]);
   });
 
@@ -188,6 +188,6 @@ describe("an agent's own comment never starts its next run", () => {
       claimRun(app.db, r.id);
       finishRun(app.db, r.id, { state: "failed", summary: "x", costUsd: 0 });
     }
-    expect(breakerTripped(app.db, issued.value.id)).toBe(false);
+    expect(breakerTripped(app.db, fresh(), issued.value.id)).toBe(false);
   });
 });

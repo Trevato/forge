@@ -178,6 +178,8 @@ describe("a run the last forge left running", () => {
     const issued = openIssue(app, alice, repo, { title: "Prune", body: "" });
     if (!issued.ok) throw new Error(String(issued.error));
     const issue = issued.value;
+    // The word the follow-up answers: a follow-up with nothing new never starts.
+    expect(addComment(app, alice, repo, issue, "The low branches first.").ok).toBe(true);
     // A stand-in that never finishes on its own.
     const slow = join(dataDir, "slow-claude");
     writeFileSync(

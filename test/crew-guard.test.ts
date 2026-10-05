@@ -1,0 +1,251 @@
+/**
+ * Runs the crew can already see are waste are not started (#807). A
+ * follow-up with nothing new since the agent's last run — its own reply is
+ * the newest word — is skipped before it is queued, and again as a queued
+ * one starts; an issue that started its day's share of runs without a
+ * person's word is parked once and asked about once; a reader's word
+ * re-arms neither the cap nor the breaker. Each skip and cap is counted for
+ * the token-return view.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { addComment, openIssue } from "../src/actions/issues.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { readUsage } from "../src/actions/usage.ts";
+import { getAgent, type Agent } from "../src/core/agents.ts";
+import { listDecisions } from "../src/core/decisions.ts";
+import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
+import { getRepoById, type Repo } from "../src/core/repos.ts";
+import {
+  claimRun,
+  createRun,
+  finishRun,
+  getRun,
+  listRuns,
+} from "../src/core/runs.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
+import { breakerParked, breakerTripped } from "../src/crew/breaker.ts";
+import { queueAgentRun } from "../src/crew/dispatch.ts";
+import {
+  CAP_NOTE,
+  guardCounts,
+  ISSUE_RUN_CAP,
+  SKIP_SUMMARY,
+} from "../src/crew/guard.ts";
+import { executeAgentRun } from "../src/crew/runner.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+let dataDir: string;
+let app: App;
+let servers: Servers;
+let alice: User;
+let mallory: User;
+let bot: Agent;
+let repo: Repo;
+let made = 0;
+
+const ok = <T>(
+  r: { ok: true; value: T } | { ok: false; error: unknown },
+): T => {
+  if (!r.ok) throw new Error(JSON.stringify(r.error));
+  return r.value;
+};
+const fresh = (): Repo => getRepoById(app.db, repo.id)!;
+const runsOn = (issue: Issue) =>
+  listRuns(app.db, repo.id, { kind: "agent" }).filter(
+    (r) => r.issueId === issue.id,
+  );
+const guards = (answer: string) =>
+  listDecisions(app.db, repo.id, { kind: "guard" }).filter(
+    (d) => d.answer === answer,
+  ).length;
+
+/** A finished run of the bot on `issue`; its reply, when given, is posted after it. */
+function ran(issue: Issue, reply?: string, state: "ok" | "failed" = "ok") {
+  const run = createRun(app.db, {
+    repoId: repo.id,
+    kind: "agent",
+    issueId: issue.id,
+    actorId: bot.user.id,
+    reason: "assigned",
+  });
+  claimRun(app.db, run.id);
+  finishRun(app.db, run.id, {
+    state,
+    summary: state === "ok" ? "answered" : "declined: no",
+    costUsd: 0.5,
+  });
+  if (reply !== undefined) ok(addComment(app, bot.user, repo, issue, reply));
+}
+
+/** An issue of alice's, held by the bot. */
+function held(title: string): Issue {
+  const issue = ok(
+    openIssue(app, alice, fresh(), { title: `${title} ${++made}` }),
+  );
+  // Held without a run starting: the assignment is the row, not the event.
+  app.db
+    .query("UPDATE issue SET assignee_id = ?1 WHERE id = ?2")
+    .run(bot.user.id, issue.id);
+  return getIssueById(app.db, issue.id)!;
+}
+
+beforeAll(async () => {
+  dataDir = await mkdtemp(join(tmpdir(), "forge-guard-"));
+  app = createApp({ dataDir, port: 0 });
+  servers = await serve(app);
+  alice = ok(
+    await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    }),
+  );
+  mallory = ok(
+    await createUser(app.db, {
+      username: "mallory",
+      email: "mallory@forge.local",
+      password: "a-good-passphrase",
+    }),
+  );
+  ok(await createAgent(app, alice, { username: "bot" }));
+  repo = ok(
+    await createRepo(app, alice, { name: "square", visibility: "public" }),
+  );
+  expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+  bot = getAgent(app.db, getUserByName(app.db, "bot")!.id)!;
+}, 30_000);
+
+afterAll(async () => {
+  servers?.stop();
+  app?.close();
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+describe("a follow-up with nothing new is not started", () => {
+  test("when the newest word is the agent's own reply, nothing is queued and the skip is recorded", () => {
+    const issue = held("Paint the fence");
+    ok(addComment(app, alice, repo, issue, "White, please."));
+    ran(issue, "Painted it white.");
+    const before = guards("skipped");
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "feedback", alice.id),
+    ).toBeUndefined();
+    expect(runsOn(issue).filter((r) => r.state === "queued")).toEqual([]);
+    expect(guards("skipped")).toBe(before + 1);
+  });
+
+  test("a person's word after the last run is news: the follow-up is queued", async () => {
+    const issue = held("Paint the gate");
+    ran(issue, "Done.");
+    await Bun.sleep(5);
+    ok(addComment(app, alice, repo, issue, "Now the gate."));
+    const queued = queueAgentRun(app, fresh(), issue, bot, "feedback", alice.id);
+    expect(queued?.state).toBe("queued");
+  });
+
+  test("a follow-up queued behind a run that answered everything ends as it starts, at no cost", async () => {
+    const issue = held("Paint the shed");
+    ok(addComment(app, alice, repo, issue, "Green."));
+    // Queued while an earlier run worked; that run heard the word and ended after it.
+    const queued = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.user.id,
+      reason: "feedback",
+    });
+    ran(issue, "Painted it green.");
+    await executeAgentRun(app, getRun(app.db, queued.id)!, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: "/nonexistent/claude",
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 1000,
+    } as never);
+    const after = getRun(app.db, queued.id)!;
+    expect(after.state).toBe("cancelled");
+    expect(after.summary).toBe(SKIP_SUMMARY);
+    expect(after.costUsd).toBe(0);
+  });
+});
+
+describe("an issue cannot loop", () => {
+  test("past its day's runs it is parked once, asked about once, and a reader's word re-arms nothing", () => {
+    const issue = held("Rounder corners");
+    for (let n = 0; n < ISSUE_RUN_CAP; n++) ran(issue);
+    const before = guards("capped");
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id),
+    ).toBeUndefined();
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id),
+    ).toBeUndefined();
+    const notes = listComments(app.db, issue.id).filter(
+      (c) => c.body === CAP_NOTE,
+    );
+    expect(notes).toHaveLength(1);
+    expect(guards("capped")).toBe(before + 1);
+    expect(
+      breakerParked(app.db, [repo.id]).filter((p) => p.issueId === issue.id),
+    ).toHaveLength(1);
+
+    // A reader speaks: still capped.
+    ok(addComment(app, mallory, repo, issue, "Try again!"));
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id),
+    ).toBeUndefined();
+    // A person who may direct the crew speaks: it runs again.
+    ok(addComment(app, alice, repo, issue, "Smaller radius."));
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id)?.state,
+    ).toBe("queued");
+  });
+
+  test("the cap is a setting", () => {
+    const issue = held("Softer shadow");
+    ran(issue);
+    ran(issue);
+    app.config.issueRunCap = 2;
+    try {
+      expect(
+        queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id),
+      ).toBeUndefined();
+    } finally {
+      delete app.config.issueRunCap;
+    }
+  });
+
+  test("the breaker: a reader's word does not lift it; a writer's does", () => {
+    const issue = held("Faster square");
+    for (let n = 0; n < 3; n++) ran(issue, undefined, "failed");
+    expect(breakerTripped(app.db, fresh(), issue.id)).toBe(true);
+    ok(addComment(app, mallory, repo, issue, "Go on."));
+    expect(breakerTripped(app.db, fresh(), issue.id)).toBe(true);
+    ok(addComment(app, alice, repo, issue, "Use a cache."));
+    expect(breakerTripped(app.db, fresh(), issue.id)).toBe(false);
+  });
+});
+
+describe("what the guard saved is counted", () => {
+  test("skips and caps reach the usage report", () => {
+    const since = new Date(Date.now() - 86_400_000).toISOString();
+    const counts = guardCounts(app.db, repo.id, since);
+    expect(counts.skipped).toBeGreaterThanOrEqual(2);
+    expect(counts.capped).toBeGreaterThanOrEqual(2);
+    const usage = ok(readUsage(app, alice, fresh(), 1));
+    expect(usage.guard).toEqual(counts);
+    // Counted, not listed one by one where a person reads decisions.
+    expect(guards("skipped")).toBe(counts.skipped);
+  });
+});
+

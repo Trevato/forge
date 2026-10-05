@@ -45,6 +45,13 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
+import {
+  CAP_NOTE,
+  capReached,
+  ISSUE_RUN_CAP,
+  recordCap,
+  skipsFeedback,
+} from "./guard.ts";
 import { sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
@@ -243,11 +250,30 @@ export function queueAgentRun(
     return undefined;
   }
   // Three failed or declined runs in an hour: parked, until a person speaks.
-  if (breakerTripped(app.db, issue.id)) {
+  if (breakerTripped(app.db, repo, issue.id)) {
     parkForBreaker(app, repo, issue, agent);
     return undefined;
   }
+  // A day's share of runs on one issue without a person's word: a loop,
+  // parked once and asked about once (`guard.ts`). A run carrying on after
+  // a pause or a restart is the same start, never a new one.
+  const cap = app.config.issueRunCap ?? ISSUE_RUN_CAP;
+  if (again === undefined && capReached(app.db, repo, issue, cap)) {
+    if (parkForBreaker(app, repo, issue, agent, CAP_NOTE))
+      recordCap(app.db, repo, issue, cap);
+    return undefined;
+  }
   const active = activeRunFor(app.db, "agent", issue.id);
+  // A follow-up with nothing new would only read the agent's own reply
+  // and decline. With a run in flight the answer waits for it to end: the
+  // queued run asks again as it starts (`runner.ts`).
+  if (
+    reason === "feedback" &&
+    again === undefined &&
+    active === undefined &&
+    skipsFeedback(app.db, repo, issue, agent)
+  )
+    return undefined;
   // One queued follow-up is enough: the run that eventually starts reads
   // the whole conversation since the last one, so nothing is lost. The
   // queued one may sit behind a running one, so it is looked for by itself.

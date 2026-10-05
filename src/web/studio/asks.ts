@@ -43,7 +43,7 @@ import {
   plannerDeclines,
   spentTodayForRepos,
 } from "../../crew/autonomy.ts";
-import { BREAKER_NOTE, breakerParked } from "../../crew/breaker.ts";
+import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -949,10 +949,10 @@ export function askDismissedBy(db: Database, viewerId: string, issue: Issue): bo
     issue.kind === "pull"
       ? pullCause(db, issue)
       : (db
-          .query<{ at: string | null }, [string, string]>(
-            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body = ?2",
+          .query<{ at: string | null }, [string, string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3)",
           )
-          .get(issue.id, BREAKER_NOTE)?.at ?? issue.createdAt);
+          .get(issue.id, ...WAITING_NOTES)?.at ?? issue.createdAt);
   return at > cause;
 }
 

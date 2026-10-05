@@ -407,6 +407,13 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     // default branch, in the same session, and lands as a pull of its own.
     const pullIssue = getIssue(app.db, repo.id, pull.number)!;
     const agent = getAgentByName(app.db, "bot")!;
+    // The word that queued it, said after the run that opened the pull.
+    await Bun.sleep(5);
+    app.db
+      .query(
+        "INSERT INTO comment (id, issue_id, author_id, body) VALUES (?1, ?2, ?3, 'Shorter, please.')",
+      )
+      .run(`c-${pull.number}`, pullIssue.id, alice.id);
     const queued = queueAgentRun(
       app,
       repo,

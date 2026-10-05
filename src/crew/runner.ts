@@ -99,7 +99,8 @@ import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
-import { feedbackSince, nothingNew } from "./news.ts";
+import { feedbackSince } from "./news.ts";
+import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
 
 const log = createLog("crew");
 
@@ -239,6 +240,13 @@ export async function executeAgentRun(
   run: Run,
   options: CrewOptions,
 ): Promise<Pause | undefined> {
+  // A follow-up queued behind a run that has since answered everything:
+  // nothing new to act on, so nothing starts (`guard.ts`).
+  if (run.reason === "feedback" && run.attempt === 0 && skipsQueued(app, run)) {
+    const skipped = cancelRun(app.db, run.id, SKIP_SUMMARY);
+    if (skipped) announceRun(app, skipped);
+    return undefined;
+  }
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
   const lease = holdLease(app.db, run.id);
@@ -304,6 +312,21 @@ export async function executeAgentRun(
   });
   if (done) announceRun(app, done);
   return undefined;
+}
+
+/** Whether a queued follow-up would find nothing new (`news.ts`): recorded as a skip. */
+function skipsQueued(app: App, run: Run): boolean {
+  const repo = getRepoById(app.db, run.repoId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  const agent =
+    run.actorId === null ? undefined : getAgent(app.db, run.actorId);
+  return (
+    repo !== undefined &&
+    issue !== undefined &&
+    agent !== undefined &&
+    skipsFeedback(app.db, repo, issue, agent)
+  );
 }
 
 /**
