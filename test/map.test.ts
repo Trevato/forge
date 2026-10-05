@@ -187,7 +187,7 @@ describe("the map, per app and across the forge", () => {
       ).headers.get("set-cookie") ?? ""
     ).split(";")[0]!;
   const person = async (username: string, admin = false): Promise<User> => {
-    const made = await createUser(app.db, {
+    const made = await createUser(app.db, { trusted: true,
       username,
       email: `${username}@forge.local`,
       password: "a-good-passphrase",

@@ -685,7 +685,7 @@ describe("rule 6: a run token dies with the run, and only with the run", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tokens-"));
     app = createApp({ dataDir, port: 0 });
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -742,7 +742,7 @@ describe("rule 6, end to end: the crew's per-run token", () => {
     work = await mkdtemp(join(tmpdir(), "forge-crew-token-work-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -860,7 +860,7 @@ describe("rule 7: CHECK_FAILED_LIMIT bounds automatic follow-ups", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-bound-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1106,7 +1106,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1476,7 +1476,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     // anonymous" from "you're signed in but still can't see it" — both
     // must read `not_found`, or an anonymous prober could tell the two
     // apart and learn something about a repo they cannot see.
-    const strangerCreated = await createUser(app.db, {
+    const strangerCreated = await createUser(app.db, { trusted: true,
       username: "stranger",
       email: "stranger@forge.local",
       password: "a-good-passphrase",
@@ -2067,7 +2067,7 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

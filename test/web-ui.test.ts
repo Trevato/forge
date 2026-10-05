@@ -19,6 +19,7 @@ import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { shellJs } from "../src/web/client.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const form = (fields: Record<string, string>) => new URLSearchParams(fields);
 
@@ -59,6 +60,7 @@ describe("web ui", () => {
       }),
       redirect: "manual",
     });
+    proveAll(app);
     return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
   }
 
@@ -432,6 +434,8 @@ describe("web ui", () => {
   // ---- repo deletion ----
 
   test("deleting a repository needs admin and the name typed exactly", async () => {
+    // The profile test above changed mel's email; the new one is taken as proven.
+    proveAll(app);
     await fetch(`${base}/new`, {
       method: "POST",
       headers: { cookie: owner },

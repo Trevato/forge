@@ -9,6 +9,8 @@
  * has been read once.
  */
 
+import { resendVerification } from "../../actions/verify.ts";
+import { emailVerified } from "../../core/verify.ts";
 import {
   addSshKey,
   changePassword,
@@ -115,9 +117,43 @@ function notifyView(ctx: Ctx, error?: string): Html {
   );
 }
 
+/** Shown above the profile until the email is proven. */
+function unverifiedNotice(ctx: Ctx): Html {
+  const user = ctx.auth.user!;
+  if (emailVerified(ctx.app.db, user.id)) return html``;
+  return card(
+    html`<p>
+        Your email is not verified yet. Until it is, you can read and talk,
+        but not make repositories, apps or runs. Follow the link we sent to
+        <strong>${user.email}</strong>, or ask for another.
+      </p>
+      <form method="post" action="/settings/email/verify">
+        ${btn("Send another link", { type: "submit" })}
+      </form>`,
+    { tone: "attn" },
+  );
+}
+
+// POST /settings/email/verify
+export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx);
+  if (form instanceof Response) return form;
+  const sent = await resendVerification(ctx.app, ctx.auth.user);
+  const message = sent.ok
+    ? sent.value === "sent"
+      ? "A new link is on its way."
+      : "Your email is already verified."
+    : sent.error === "too_soon"
+      ? "A link was sent a moment ago. Check your inbox, or try again in a few minutes."
+      : sent.error === "no_mail"
+        ? "This forge sends no mail yet. Ask its owner to verify you."
+        : "The link could not be sent. Try again.";
+  return flashTo(ctx, "/settings", { message });
+}
+
 function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
-  return card(
+  return html`${unverifiedNotice(ctx)}${card(
     html`<form method="post" action="/settings">
       <div class="field">
         <label for="f-username">Username</label>
@@ -173,7 +209,7 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
       </div>
     </form>`,
     { head: html`<h3>Public profile</h3>` },
-  );
+  )}`;
 }
 
 // GET /settings

@@ -21,6 +21,8 @@ import {
   suspendAccount,
   unsuspendAccount,
 } from "../actions/accounts.ts";
+import { resendVerification } from "../actions/verify.ts";
+import { emailVerified } from "../core/verify.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -285,6 +287,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
+import { manifestFor } from "../actions/here.ts";
 import {
   acceptReport,
   dismissReport,
@@ -992,8 +995,27 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user", (ctx) =>
-    ctx.auth.user ? json(publicUser(ctx.auth.user)) : unauthorized(),
+    ctx.auth.user
+      ? json({
+          ...publicUser(ctx.auth.user),
+          emailVerified: emailVerified(ctx.app.db, ctx.auth.user.id),
+        })
+      : unauthorized(),
   );
+
+  // Another verification link for the signed-in account; rate limited.
+  router.add("POST", "/api/v1/user/email/verify", async (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    const sent = await resendVerification(ctx.app, ctx.auth.user);
+    if (sent.ok)
+      return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
+    if (sent.error === "unauthorized") return unauthorized();
+    if (sent.error === "too_soon")
+      return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+    if (sent.error === "no_mail")
+      return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+    return apiError("failed", 502, "the link could not be sent; try again");
+  });
 
   router.add("PATCH", "/api/v1/user", async (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });
@@ -3687,6 +3709,24 @@ export function apiRoutes(router: Router<Handler>): void {
     const asked = fleetSelection(ctx.url.searchParams.getAll("repo"));
     if (!asked.ok) return apiError("invalid_selection", 422, asked.error);
     return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
+  });
+
+  // What the caller can do on a forge page, as who they are (#604): the
+  // manifest every page links to. It differs by caller, so it is never cached.
+  router.add("GET", "/api/v1/here", (ctx) => {
+    const path = ctx.url.searchParams.get("path") ?? "/";
+    const found = manifestFor(
+      ctx.app,
+      ctx.auth.user,
+      ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+      ctx.url.origin,
+      path.startsWith("/") ? path : `/${path}`,
+    );
+    if (!found.ok) return notFound();
+    return json(found.value, 200, {
+      "cache-control": "no-store",
+      vary: "cookie, authorization",
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {

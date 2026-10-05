@@ -18,6 +18,7 @@
  * not v1.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   cacheOriginRepos,
@@ -695,9 +696,11 @@ export function startMirrorJob(
   originId: string,
   fullName: string,
   name?: string,
-): Result<MirrorJob, "unauthorized" | "not_found"> {
+): Result<MirrorJob, "unauthorized" | "not_found" | "unverified"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const origin = getOriginFor(app.db, user.value.id, originId);
   if (!origin) return err("not_found");
   return ok(startMirror(app, user.value, origin, fullName, name));
