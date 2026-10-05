@@ -135,6 +135,97 @@ describe("an action nothing that runs reaches", () => {
     expect(ids({ ...routed, ...runs("http/server.ts", "routes") })).toEqual([]);
   });
 
+  test("an import() in a function nothing calls loads nothing; one that runs reaches the whole module", () => {
+    const action = {
+      "src/actions/spawn.ts": `export function spawnForge(): number { return 1; }`,
+    };
+    const lazy = `
+      export async function lazy(): Promise<number> {
+        const m = await import("../../actions/spawn.ts");
+        return m.spawnForge();
+      }
+      export const other = (): number => 1;
+    `;
+    // A page no route names: nothing loads it at all.
+    expect(ids({ ...action, "src/web/pages/lazy.ts": lazy })).toEqual([
+      "src/actions/spawn.ts#spawnForge",
+    ]);
+    // Its file is loaded and another of its functions runs: `lazy` still does not.
+    expect(
+      ids({
+        ...action,
+        "src/web/pages/lazy.ts": lazy,
+        ...runs("web/pages/lazy.ts", "other"),
+      }),
+    ).toEqual(["src/actions/spawn.ts#spawnForge"]);
+    expect(
+      ids({
+        ...action,
+        "src/web/pages/lazy.ts": lazy,
+        ...runs("web/pages/lazy.ts", "lazy"),
+      }),
+    ).toEqual([]);
+    // At the top level of a file that is loaded, it runs.
+    expect(
+      ids({
+        ...action,
+        "src/main.ts": `const m = await import("./actions/spawn.ts"); m.spawnForge();`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("a file nothing loads runs nothing: its top-level call is no call until a loaded file imports it", () => {
+    const files = {
+      "src/actions/sweep.ts": `export function sweep(): void {}`,
+      "src/tools/orphan.ts": `import { sweep } from "../actions/sweep.ts"; sweep();`,
+    };
+    expect(ids(files)).toEqual(["src/actions/sweep.ts#sweep"]);
+    // Loaded by an entry, for its side effect or through another file.
+    expect(
+      ids({ ...files, "src/main.ts": `import "./tools/orphan.ts";` }),
+    ).toEqual([]);
+    expect(
+      ids({
+        ...files,
+        "src/main.ts": `import { boot } from "./boot.ts"; boot();`,
+        "src/boot.ts": `import "./tools/orphan.ts"; export const boot = (): void => {};`,
+      }),
+    ).toEqual([]);
+    // An import() of it in a function nothing calls does not load it.
+    expect(
+      ids({
+        ...files,
+        "src/main.ts": `export const never = () => import("./tools/orphan.ts");`,
+      }),
+    ).toEqual(["src/actions/sweep.ts#sweep"]);
+  });
+
+  test("the server, the CLI, the terminal, a git hook and the restore are where running starts, and nowhere else", () => {
+    const action = {
+      "src/actions/sweep.ts": `export function sweep(): void {}`,
+    };
+    for (const [entry, up] of [
+      ["src/main.ts", "."],
+      ["src/cli/main.ts", ".."],
+      ["src/tui/main.ts", ".."],
+      ["src/git/hook-entry.ts", ".."],
+      ["src/snapshot/restore.ts", ".."],
+    ] as const)
+      expect(
+        ids({
+          ...action,
+          [entry]: `import { sweep } from "${up}/actions/sweep.ts"; sweep();`,
+        }),
+      ).toEqual([]);
+    for (const other of ["src/tui/gallery.ts", "src/web/main.ts", "src/x.ts"])
+      expect(
+        ids({
+          ...action,
+          [other]: `import { sweep } from "${other.split("/").length > 2 ? ".." : "."}/actions/sweep.ts"; sweep();`,
+        }),
+      ).toEqual(["src/actions/sweep.ts#sweep"]);
+  });
+
   test("is not called by a file that runs unless the function that calls it is reached", () => {
     const door = `
       import { spawnForge } from "../actions/spawn.ts";
