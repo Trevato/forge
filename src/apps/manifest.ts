@@ -12,6 +12,7 @@
 
 import { err, ok, type Result } from "../kernel/result.ts";
 import { parseService, type ServiceSpec } from "./service.ts";
+import type { DeclaredLimits } from "./contain.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -42,6 +43,14 @@ export interface AppManifest {
    * HTTP app.
    */
   readonly service: ServiceSpec | null;
+  /**
+   * Hosts the app's processes may reach (`egress`, top level of
+   * `forge.json`, shared with the check). Everything else is refused at the
+   * cell's proxy (`apps/contain.ts`). Empty when nothing is declared.
+   */
+  readonly egress?: readonly string[] | undefined;
+  /** `app.limits`: the app process's memory, CPU and disk, within the machine's maximum. */
+  readonly limits?: DeclaredLimits | undefined;
 }
 
 export type ManifestError =
@@ -125,6 +134,10 @@ export function parseManifest(
     );
   const looks = looksField(app);
   if (!looks.ok) return looks;
+  const egress = egressField(parsed.value);
+  if (!egress.ok) return egress;
+  const limits = limitsField(app, "app");
+  if (!limits.ok) return limits;
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -151,7 +164,74 @@ export function parseManifest(
     tty: tty.value || null,
     looks: looks.value,
     service,
+    egress: egress.value,
+    limits: limits.value,
   });
+}
+
+const EGRESS_MAX = 32;
+const HOST_RE =
+  /^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]*[a-z0-9])?(:[1-9]\d{0,4})?$/;
+
+/**
+ * `egress`: the hosts this repository's code may reach — exact names, or
+ * `*.example.com` for every name below one, on ports 80 and 443; a
+ * `:port` suffix names one other port instead. Absent is none: the app
+ * reaches the forge and nothing else; install steps also reach the npm
+ * registry.
+ */
+function egressField(root: Json): Result<readonly string[], ManifestError> {
+  const value = root["egress"];
+  if (value === undefined) return ok([]);
+  if (!Array.isArray(value))
+    return invalid("forge.json: egress must be an array of host names");
+  if (value.length > EGRESS_MAX)
+    return invalid(`forge.json: egress may name at most ${EGRESS_MAX} hosts`);
+  const hosts: string[] = [];
+  for (const item of value) {
+    if (
+      typeof item !== "string" ||
+      item.length > 253 ||
+      !HOST_RE.test(item.toLowerCase()) ||
+      Number(item.split(":")[1] ?? 1) > 65535
+    )
+      return invalid(
+        "forge.json: egress entries must be host names (api.example.com, *.example.com, or db.example.com:5432 for a port other than 80 and 443)",
+      );
+    hosts.push(item.toLowerCase());
+  }
+  return ok(hosts);
+}
+
+const LIMIT_FIELDS = {
+  memory: { key: "memoryMiB", min: 64, max: 65536, unit: "MiB" },
+  cpus: { key: "cpus", min: 0.1, max: 64, unit: "cores" },
+  disk: { key: "diskMiB", min: 64, max: 1048576, unit: "MiB" },
+} as const;
+
+/** `app.limits` / `check.limits`: `{ memory, cpus, disk }`, each optional. */
+function limitsField(
+  section: Json,
+  name: "app" | "check",
+): Result<DeclaredLimits, ManifestError> {
+  const value = section["limits"];
+  if (value === undefined) return ok({});
+  if (!isObject(value))
+    return invalid(`forge.json: ${name}.limits must be an object`);
+  const out: { memoryMiB?: number; cpus?: number; diskMiB?: number } = {};
+  for (const [field, raw] of Object.entries(value)) {
+    const rule = LIMIT_FIELDS[field as keyof typeof LIMIT_FIELDS];
+    if (rule === undefined)
+      return invalid(
+        `forge.json: ${name}.limits takes memory, cpus and disk, not ${field}`,
+      );
+    if (typeof raw !== "number" || !(raw >= rule.min && raw <= rule.max))
+      return invalid(
+        `forge.json: ${name}.limits.${field} must be a number of ${rule.unit}, ${rule.min}–${rule.max}`,
+      );
+    out[rule.key] = raw;
+  }
+  return ok(out);
 }
 
 /**
@@ -205,6 +285,10 @@ export interface CheckManifest {
   readonly install: string | null;
   /** Seconds the check may take before it fails. */
   readonly timeout: number;
+  /** Hosts its steps may reach besides the forge and the npm registry. */
+  readonly egress: readonly string[];
+  /** `check.limits`: memory, CPU and disk, within the machine's maximum. */
+  readonly limits: DeclaredLimits;
 }
 
 const CHECK_TIMEOUT_DEFAULT = 20 * 60;
@@ -244,8 +328,14 @@ export function parseCheck(
     return invalid(
       `forge.json: check.timeout must be a whole number of seconds, 1–${CHECK_TIMEOUT_MAX}`,
     );
+  const egress = egressField(parsed.value);
+  if (!egress.ok) return egress;
+  const limits = limitsField(check, "check");
+  if (!limits.ok) return limits;
   return ok({
     run: run.value,
+    egress: egress.value,
+    limits: limits.value,
     install:
       install.value === undefined
         ? (pkg?.value.hasDeps ?? false)

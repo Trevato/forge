@@ -231,6 +231,8 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     email: values.email,
     password,
     isAdmin: true,
+    // The one-time claim link the owner handed out is the proof.
+    trusted: true,
   });
   if (!made.ok) {
     unburnClaim(ctx.app.db, orgId, token);

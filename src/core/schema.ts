@@ -1244,4 +1244,48 @@ export const migrations: readonly string[] = [
   `
   ALTER TABLE repo ADD COLUMN crew_outsiders INTEGER NOT NULL DEFAULT 0;
   `,
+  // 51 — the front page's picks (#686): what a site admin pinned to it, in
+  // order (the first one a stranger can read is featured), and what they
+  // hid from it. Presentation, like a user setting: no event.
+  `
+  CREATE TABLE IF NOT EXISTS front_pick (
+    repo_id  TEXT PRIMARY KEY REFERENCES repo(id) ON DELETE CASCADE,
+    place    TEXT NOT NULL CHECK (place IN ('pinned','hidden')),
+    position INTEGER NOT NULL DEFAULT 0,
+    set_by   TEXT REFERENCES user(id) ON DELETE SET NULL,
+    set_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
+  // 52 — a whole-life budget on a sealed account, in dollars (#601): the
+  // most its runs may ever spend, summed from the run ledger. Null is none.
+  // A spawned child's starter key carries one, so the spawner's money ends
+  // where they said. A locked budget was set by whoever made this forge:
+  // its admin may lower it, never raise or clear it. A run on a budgeted
+  // account reserves what it may spend when it picks the account, so runs
+  // started together are counted together.
+  `
+  ALTER TABLE subscription ADD COLUMN budget_usd REAL
+    CHECK (budget_usd IS NULL OR budget_usd > 0);
+  ALTER TABLE subscription ADD COLUMN budget_locked INTEGER NOT NULL DEFAULT 0
+    CHECK (budget_locked IN (0, 1));
+  ALTER TABLE run ADD COLUMN budget_reserved_usd REAL;
+  `,
+  // 53 — whether an account's email is proven, and its one-time link (#659).
+  // A row is written for every account a public way in makes, unproven; the
+  // accounts here before this migration are proven by it, so verification
+  // holds back newcomers, never the people already here.
+  `
+  CREATE TABLE IF NOT EXISTS email_check (
+    user_id      TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+    verified_at  TEXT,
+    token_hash   TEXT UNIQUE,
+    expires_at   TEXT,
+    last_sent_at TEXT,
+    sent_to      TEXT,
+    sends_day    TEXT,
+    sends        INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT OR IGNORE INTO email_check (user_id, verified_at)
+    SELECT id, created_at FROM user;
+  `,
 ];

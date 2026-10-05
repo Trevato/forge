@@ -5,6 +5,7 @@
  * lives here once.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { listCrewRoles } from "../core/agents.ts";
 import type { Issue } from "../core/issues.ts";
@@ -31,7 +32,9 @@ export async function tell(
   actor: User | undefined,
   repo: Repo,
   said: string,
-): Promise<Result<Told, TellError>> {
+): Promise<Result<Told, TellError | "unverified">> {  if (actor !== undefined && !requireVerified(app, actor).ok)
+    return err("unverified");
+
   const text = said.trim();
   if (text === "") return err("empty");
   // A tell is a run: only someone who may direct the crew here says one,

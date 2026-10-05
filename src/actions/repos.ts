@@ -4,6 +4,7 @@
  * write path — committing files to a branch without a git client.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   createLabel as insertLabel,
@@ -82,9 +83,11 @@ export async function createRepo(
   app: App,
   actor: User | undefined,
   input: CreateRepoInput,
-): Promise<Result<Repo, CreateRepoActionError>> {
+): Promise<Result<Repo, CreateRepoActionError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   // An agent owns nothing it was not given (docs/APPS.md): it works on the
   // repositories whose crew it is on, and cannot make itself a new one.
   if (user.value.kind === "agent") return err("forbidden_owner");
@@ -110,9 +113,11 @@ export async function forkRepo(
   actor: User | undefined,
   parent: Repo,
   name?: string,
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized">> {
+): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const forked = await cloneRepo(
     app.db,
     app.reposRoot,
@@ -144,6 +149,10 @@ export async function updateRepoSettings(
 ): Promise<Result<Repo, UpdateSettingsError>> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  // Who the crew obeys is a person's call: an agent never widens it, even
+  // one on a team that administers the repository (`crew/direct.ts`).
+  if (settings.crewOutsiders !== undefined && admin.value.kind === "agent")
+    return err("not_found");
   const branch = settings.defaultBranch;
   if (branch !== undefined && branch !== repo.defaultBranch) {
     const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
@@ -180,6 +189,37 @@ export async function updateRepoSettings(
       payload: { on: updated.crewOutsiders },
     });
   return ok(updated);
+}
+
+export interface OutsidersAnswer {
+  /** Whether outsiders may trigger the crew, after this call. */
+  readonly on: boolean;
+  /** Whether they could before it. */
+  readonly was: boolean;
+  /** Nothing changed: this was the plan. */
+  readonly dryRun: boolean;
+}
+
+/**
+ * "Outsiders may trigger the crew", on or off — the web form's switch for
+ * the API and the MCP. A repository admin's, never an agent's; a dry run
+ * answers what would change and changes nothing.
+ */
+export async function setCrewOutsiders(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  on: boolean,
+  dryRun: boolean,
+): Promise<Result<OutsidersAnswer, "not_found">> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok || admin.value.kind === "agent") return err("not_found");
+  if (dryRun) return ok({ on, was: repo.crewOutsiders, dryRun });
+  const updated = await updateRepoSettings(app, actor, repo, {
+    crewOutsiders: on,
+  });
+  if (!updated.ok) return err("not_found");
+  return ok({ on: updated.value.crewOutsiders, was: repo.crewOutsiders, dryRun });
 }
 
 export async function deleteRepo(

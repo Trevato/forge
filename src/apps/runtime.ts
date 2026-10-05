@@ -17,6 +17,7 @@ import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
@@ -35,6 +36,7 @@ import {
   failAbandonedRuns,
   finishRun,
   markServing,
+  noteRunProgress,
   STOPPED_SUMMARY,
   type Run,
 } from "../core/runs.ts";
@@ -77,8 +79,11 @@ import {
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
+import { noteReached } from "./egress_report.ts";
+import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
+  type CellBase,
   type ProcessHandle,
   type StartError,
   type StartInput,
@@ -284,6 +289,8 @@ export interface LiveEnv {
   readonly commitOid: string;
   readonly url: string;
   readonly tty: string | null;
+  /** The cell a terminal session runs in, the app's own; unset where cells cannot work. */
+  readonly cell?: CellSpec | undefined;
 }
 
 interface Environment {
@@ -336,6 +343,11 @@ export const appsRuntime = (app: App): AppsRuntime | undefined =>
 
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
+  /** Whether this host can hold an app in a cell (`apps/contain.ts`), asked once at start. */
+  private cells: { ok: true } | { ok: false; reason: string } = {
+    ok: false,
+    reason: "not started",
+  };
   private readonly gate: Gate;
   private unsubscribe: (() => void) | undefined;
   private sweeper: ReturnType<typeof setInterval> | undefined;
@@ -536,6 +548,9 @@ export class AppsRuntime {
 
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
+    this.cells = await cellsAvailable();
+    if (!this.cells.ok)
+      log.warn("apps run uncontained here", { reason: this.cells.reason });
     // Deploys are failed; a check the last forge left is queued again while
     // its commit still heads an open pull; an agent run is the crew's,
     // which queues it again rather than failing it.
@@ -1127,7 +1142,9 @@ export class AppsRuntime {
       forgeToken: token.token,
       log: write,
       warm,
+      cell: this.cellFor(state.app, state.env),
     };
+    this.noteCell(run.id, write);
     clock.lap("setup");
     write(clock.line("starting the process"));
     const start = async (): ReturnType<typeof startProcess> => {
@@ -1187,19 +1204,62 @@ export class AppsRuntime {
     };
   }
 
+  /**
+   * What an environment's processes are held to: the forge's data and home
+   * hidden, the environment's own home. `undefined` where cells cannot work.
+   */
+  cellFor(record: AppRecord, env: EnvName): CellBase | undefined {
+    if (!this.cells.ok) return undefined;
+    const dataDir = this.app.config.dataDir;
+    return {
+      hide: [dataDir, process.env["HOME"] ?? "", tmpdir()],
+      home: join(envDir(dataDir, record.id, env), "home"),
+      onUndeclared: (host, port) =>
+        noteReached(dataDir, record.repoId, host, port),
+    };
+  }
+
+  /** Say on the run, once, whether its processes were held. */
+  private noteCell(runId: string, write: (line: string) => void): void {
+    noteRunProgress(this.app.db, runId, {
+      sandbox: {
+        enforced: this.cells.ok,
+        note: this.cells.ok ? "" : this.cells.reason,
+      },
+    });
+    if (!this.cells.ok)
+      write(`uncontained here: ${this.cells.reason}; the app's processes run unrestricted`);
+  }
+
   /** The running environment a terminal session would attach to, if any. */
   liveFor(record: AppRecord, env: EnvName): LiveEnv | undefined {
     const state = this.envs.get(key(record.id, env));
     const live = state?.live;
     if (state === undefined || live === undefined) return undefined;
+    const dataDir = envDataDir(this.app.config.dataDir, record.id, env);
+    const base = this.cellFor(record, env);
     return {
       env,
       dir: live.dir,
-      dataDir: envDataDir(this.app.config.dataDir, record.id, env),
+      dataDir,
       port: live.handle.port,
       commitOid: live.commitOid,
       url: this.urlFor(record, env),
       tty: live.manifest.tty,
+      cell:
+        base === undefined
+          ? undefined
+          : {
+              dir: live.dir,
+              writable: [dataDir],
+              home: base.home,
+              hide: base.hide,
+              egress: live.manifest.egress ?? [],
+              reach: [this.options.forgeUrl],
+              limits: resolveLimits("app", live.manifest.limits),
+              terminal: true,
+              onUndeclared: base.onUndeclared,
+            },
     };
   }
 
@@ -1314,6 +1374,7 @@ export class AppsRuntime {
         log: write,
         signal: new AbortController().signal,
         warm: true,
+        cell: this.cellFor(record, env),
       }).catch((error: unknown) => {
         revokeAppToken(this.app.db, token.id);
         throw error;

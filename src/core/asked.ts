@@ -7,7 +7,10 @@
  * those facts: `shipped` once one of them merged, `building` while one is
  * open or the crew is running on it, `closed` when it closed with nothing
  * merged, `waiting` otherwise. An ask that is not shipped or closed and is
- * older than the stale window is `flagged`: nothing was built for it.
+ * older than the stale window is `stale`. A stale ask that is still
+ * `waiting` is `flagged`: nothing was built for it. One with a pull open,
+ * or the crew on it, is stale and not flagged: something exists, and each
+ * pull says when it was opened so a row can say how long it has been open.
  *
  * Every row is derived on read from the issue, pull and run tables, so
  * nothing here can drift from the map. `source` names where the ask came
@@ -30,6 +33,8 @@ export interface AskedPull {
   readonly number: number;
   readonly title: string;
   readonly state: "open" | "merged" | "closed";
+  /** When the pull was opened. */
+  readonly openedAt: string;
 }
 
 export interface Asked {
@@ -42,6 +47,8 @@ export interface Asked {
   readonly pulls: readonly AskedPull[];
   readonly state: AskedState;
   /** Not shipped or closed, and older than the stale window. */
+  readonly stale: boolean;
+  /** Stale, and still waiting: no pull open or merged, and nobody on it. */
   readonly flagged: boolean;
   /** The crew's last word on it: its newest agent run or agent comment, on
    * the ask or a pull that closes it. Null when the crew never touched it. */
@@ -89,6 +96,7 @@ interface PullRow {
   title: string;
   body: string;
   state: "open" | "closed";
+  created_at: string;
   merged_at: string | null;
 }
 
@@ -118,6 +126,51 @@ export function askedRepos(
 }
 
 /**
+ * The pulls that say they close each ask, keyed `repoId#number`: every pull
+ * in these repositories, read once — the one join `scan` and `askedCounts`
+ * share, so a count can never disagree with the list.
+ */
+function pullsByAsk(
+  db: Database,
+  repoIds: readonly string[],
+): Map<string, AskedPull[]> {
+  const pulls = new Map<string, AskedPull[]>();
+  const rows = db
+    .query<PullRow & { repo_id: string }, string[]>(
+      `SELECT issue.id, issue.repo_id, issue.number, issue.title, issue.body, issue.state,
+              issue.created_at, pull.merged_at
+       FROM issue JOIN pull ON pull.issue_id = issue.id
+       WHERE issue.repo_id IN (${placeholders(repoIds.length)})
+       ORDER BY issue.number`,
+    )
+    .all(...repoIds);
+  for (const row of rows)
+    for (const n of closesFromBody(row.body)) {
+      const key = `${row.repo_id}#${n}`;
+      const list = pulls.get(key) ?? [];
+      list.push({
+        id: row.id,
+        number: row.number,
+        title: row.title,
+        state:
+          row.merged_at !== null
+            ? "merged"
+            : row.state === "open"
+              ? "open"
+              : "closed",
+        openedAt: row.created_at,
+      });
+      pulls.set(key, list);
+    }
+  return pulls;
+}
+
+/** A person's issues — not an agent's, not one imported under another name: what counts as an ask. */
+const ASK_WHERE = (n: number) => `issue.repo_id IN (${placeholders(n)})
+       AND issue.kind = 'issue' AND user.is_agent = 0
+       AND issue.origin_author IS NULL`;
+
+/**
  * Every ask in these repositories, in `order`, with its state. It reads a
  * step at a time and in the order asked for, so a caller that stops when
  * its page is full reads no further, and one that reads on misses nothing:
@@ -138,33 +191,7 @@ function* scan(
     ),
   );
 
-  const pulls = new Map<string, AskedPull[]>();
-  const rows = db
-    .query<PullRow & { repo_id: string }, string[]>(
-      `SELECT issue.id, issue.repo_id, issue.number, issue.title, issue.body, issue.state,
-              pull.merged_at
-       FROM issue JOIN pull ON pull.issue_id = issue.id
-       WHERE issue.repo_id IN (${placeholders(repoIds.length)})
-       ORDER BY issue.number`,
-    )
-    .all(...repoIds);
-  for (const row of rows)
-    for (const n of closesFromBody(row.body)) {
-      const key = `${row.repo_id}#${n}`;
-      const list = pulls.get(key) ?? [];
-      list.push({
-        id: row.id,
-        number: row.number,
-        title: row.title,
-        state:
-          row.merged_at !== null
-            ? "merged"
-            : row.state === "open"
-              ? "open"
-              : "closed",
-      });
-      pulls.set(key, list);
-    }
+  const pulls = pullsByAsk(db, repoIds);
 
   const running = new Set(
     listActiveRuns(db, repoIds).flatMap((r) =>
@@ -176,9 +203,7 @@ function* scan(
   const way = order === "oldest" ? "ASC" : "DESC";
   const step = db.query<AskRow, (string | number)[]>(
     `SELECT issue.id FROM issue JOIN user ON user.id = issue.author_id
-     WHERE issue.repo_id IN (${placeholders(repoIds.length)})
-       AND issue.kind = 'issue' AND user.is_agent = 0
-       AND issue.origin_author IS NULL
+     WHERE ${ASK_WHERE(repoIds.length)}
      ORDER BY issue.created_at ${way}, issue.number ${way}, issue.id ${way}
      LIMIT ?${repoIds.length + 1} OFFSET ?${repoIds.length + 2}`,
   );
@@ -198,6 +223,9 @@ function* scan(
           : issue.state === "closed"
             ? "closed"
             : "waiting";
+      const stale =
+        (state === "waiting" || state === "building") &&
+        now - Date.parse(issue.createdAt) > STALE_DAYS * DAY;
       yield {
         source: "issue",
         repo,
@@ -206,9 +234,8 @@ function* scan(
         askedAt: issue.createdAt,
         pulls: its,
         state,
-        flagged:
-          (state === "waiting" || state === "building") &&
-          now - Date.parse(issue.createdAt) > STALE_DAYS * DAY,
+        stale,
+        flagged: stale && state === "waiting",
       };
     }
     if (ids.length < SCAN_STEP) return;
@@ -270,20 +297,72 @@ export interface AskedCounts {
   readonly flagged: number;
 }
 
-/** How many asks there are of each kind, over all of them, not one page. */
+/**
+ * How many asks there are of each kind, over all of them, not one page —
+ * counted in SQL, never by reading every ask: the pulls that close asks are
+ * read once (`pullsByAsk`) and handed to one grouped query as key sets, so
+ * the cost follows the pulls, not the tens of thousands of issues a busy
+ * repository can carry. The states are `scan`'s, word for word.
+ */
 export function askedCounts(
   db: Database,
   repos: readonly Repo[],
   now: Date = new Date(),
 ): AskedCounts {
-  const counts = { asked: 0, shipped: 0, unshipped: 0, flagged: 0 };
-  for (const ask of scan(db, repos, "oldest", now.getTime())) {
-    counts.asked++;
-    if (ask.state === "shipped") counts.shipped++;
-    if (shown(ask, "unshipped")) counts.unshipped++;
-    if (ask.flagged) counts.flagged++;
+  if (repos.length === 0) return { asked: 0, shipped: 0, unshipped: 0, flagged: 0 };
+  const repoIds = repos.map((r) => r.id);
+  const shipped: string[] = [];
+  const open: string[] = [];
+  for (const [key, list] of pullsByAsk(db, repoIds)) {
+    if (list.some((p) => p.state === "merged")) shipped.push(key);
+    else if (list.some((p) => p.state === "open")) open.push(key);
   }
-  return counts;
+  const running = listActiveRuns(db, repoIds).flatMap((r) =>
+    r.issueId === null ? [] : [r.issueId],
+  );
+  const direction = repos.flatMap((r) =>
+    r.directionIssueId === null ? [] : [r.directionIssueId],
+  );
+  const n = repoIds.length;
+  const set = (k: number) => `(SELECT value FROM json_each(?${n + k}))`;
+  const row = db
+    .query<
+      { asked: number; shipped: number; building: number; waiting: number; flagged: number },
+      string[]
+    >(
+      `SELECT COUNT(*) AS asked,
+              COALESCE(SUM(shipped), 0) AS shipped,
+              COALESCE(SUM(building), 0) AS building,
+              COALESCE(SUM(waiting), 0) AS waiting,
+              COALESCE(SUM(waiting AND created_at < ?${n + 5}), 0) AS flagged
+       FROM (
+         SELECT shipped,
+                NOT shipped AND (k IN ${set(2)} OR id IN ${set(3)}) AS building,
+                NOT shipped AND NOT (k IN ${set(2)} OR id IN ${set(3)}) AND state = 'open' AS waiting,
+                created_at
+         FROM (
+           SELECT issue.id AS id, issue.state AS state, issue.created_at AS created_at,
+                  issue.repo_id || '#' || issue.number AS k,
+                  (issue.repo_id || '#' || issue.number) IN ${set(1)} AS shipped
+           FROM issue JOIN user ON user.id = issue.author_id
+           WHERE ${ASK_WHERE(n)} AND issue.id NOT IN ${set(4)}
+         )
+       )`,
+    )
+    .get(
+      ...repoIds,
+      JSON.stringify(shipped),
+      JSON.stringify(open),
+      JSON.stringify(running),
+      JSON.stringify(direction),
+      new Date(now.getTime() - STALE_DAYS * DAY).toISOString(),
+    )!;
+  return {
+    asked: row.asked,
+    shipped: row.shipped,
+    unshipped: row.building + row.waiting,
+    flagged: row.flagged,
+  };
 }
 
 /** The newest agent run or agent comment per issue, in two grouped reads. */
@@ -327,8 +406,14 @@ export function askedJson(a: Asked) {
     askedAt: a.askedAt,
     issueState: a.issue.state,
     state: a.state,
+    stale: a.stale,
     flagged: a.flagged,
     lastCrewAt: a.lastCrewAt,
-    pulls: a.pulls.map((p) => ({ number: p.number, title: p.title, state: p.state })),
+    pulls: a.pulls.map((p) => ({
+      number: p.number,
+      title: p.title,
+      state: p.state,
+      openedAt: p.openedAt,
+    })),
   };
 }
