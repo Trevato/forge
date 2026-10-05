@@ -79,6 +79,7 @@ import {
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
+import { noteReached } from "./egress_report.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -1141,7 +1142,7 @@ export class AppsRuntime {
       forgeToken: token.token,
       log: write,
       warm,
-      cell: this.cellFor(state.app.id, state.env),
+      cell: this.cellFor(state.app, state.env),
     };
     this.noteCell(run.id, write);
     clock.lap("setup");
@@ -1207,12 +1208,14 @@ export class AppsRuntime {
    * What an environment's processes are held to: the forge's data and home
    * hidden, the environment's own home. `undefined` where cells cannot work.
    */
-  cellFor(appId: string, env: EnvName): CellBase | undefined {
+  cellFor(record: AppRecord, env: EnvName): CellBase | undefined {
     if (!this.cells.ok) return undefined;
     const dataDir = this.app.config.dataDir;
     return {
       hide: [dataDir, process.env["HOME"] ?? "", tmpdir()],
-      home: join(envDir(dataDir, appId, env), "home"),
+      home: join(envDir(dataDir, record.id, env), "home"),
+      onUndeclared: (host, port) =>
+        noteReached(dataDir, record.repoId, host, port),
     };
   }
 
@@ -1234,7 +1237,7 @@ export class AppsRuntime {
     const live = state?.live;
     if (state === undefined || live === undefined) return undefined;
     const dataDir = envDataDir(this.app.config.dataDir, record.id, env);
-    const base = this.cellFor(record.id, env);
+    const base = this.cellFor(record, env);
     return {
       env,
       dir: live.dir,
@@ -1255,6 +1258,7 @@ export class AppsRuntime {
               reach: [this.options.forgeUrl],
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
+              onUndeclared: base.onUndeclared,
             },
     };
   }
@@ -1370,7 +1374,7 @@ export class AppsRuntime {
         log: write,
         signal: new AbortController().signal,
         warm: true,
-        cell: this.cellFor(record.id, env),
+        cell: this.cellFor(record, env),
       }).catch((error: unknown) => {
         revokeAppToken(this.app.db, token.id);
         throw error;

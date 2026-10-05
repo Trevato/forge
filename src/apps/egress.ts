@@ -26,6 +26,12 @@ export interface EgressPolicy {
   readonly hosts: readonly string[];
   /** Origins always reachable, at exactly this host and port (the forge). */
   readonly origins: readonly { host: string; port: number }[];
+  /**
+   * Set while egress is only reported (`FORGE_CELLS_EGRESS=report`): an
+   * undeclared public host is let through and handed here instead of
+   * refused. Private addresses are refused either way.
+   */
+  readonly report?: ((host: string, port: number) => void) | undefined;
 }
 
 export interface Egress {
@@ -34,17 +40,34 @@ export interface Egress {
 
 const HEAD_MAX = 16 * 1024;
 
-/** A host name is allowed by the declared list (`*.x` matches below `x`). */
-export function hostAllowed(hosts: readonly string[], host: string): boolean {
+/** The ports a declared host may be reached on when its entry names none. */
+export const WEB_PORTS: readonly number[] = [80, 443];
+
+/**
+ * A host and port are allowed by the declared list: `name` or `*.name`
+ * (every name below it) on 80 and 443, or `name:port` on that port alone.
+ */
+export function hostAllowed(
+  hosts: readonly string[],
+  host: string,
+  port: number,
+): boolean {
   const name = host.toLowerCase().replace(/\.$/, "");
   return hosts.some((entry) => {
-    const allowed = entry.toLowerCase();
-    if (allowed.startsWith("*.")) return name.endsWith(allowed.slice(1));
-    return name === allowed;
+    const at = entry.lastIndexOf(":");
+    const pattern = (at === -1 ? entry : entry.slice(0, at)).toLowerCase();
+    const ports = at === -1 ? WEB_PORTS : [Number(entry.slice(at + 1))];
+    if (!ports.includes(port)) return false;
+    if (pattern.startsWith("*.")) return name.endsWith(pattern.slice(1));
+    return name === pattern;
   });
 }
 
-/** Whether an address is on the public internet (not this machine, not a private network). */
+/**
+ * Whether an address is on the public internet (not this machine, not a
+ * private network). Anything that is not an IP address at all is not: a
+ * name is only ever checked here after it has been resolved.
+ */
 export function isPublicAddress(address: string): boolean {
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(address);
   const ip = mapped?.[1] ?? address;
@@ -69,7 +92,9 @@ export function isPublicAddress(address: string): boolean {
   return false;
 }
 
-type Verdict = { ok: true; address: string } | { ok: false; why: string };
+type Verdict =
+  | { ok: true; address: string; undeclared: boolean }
+  | { ok: false; why: string };
 
 async function decide(
   policy: EgressPolicy,
@@ -80,10 +105,13 @@ async function decide(
   const origin = policy.origins.some(
     (o) => o.host.toLowerCase() === name && o.port === port,
   );
-  if (!origin && !hostAllowed(policy.hosts, name))
+  const declared = origin || hostAllowed(policy.hosts, name, port);
+  // Reporting lets an undeclared host through (and says so); it never lets
+  // a private address through — that check below holds in both modes.
+  if (!declared && policy.report === undefined)
     return {
       ok: false,
-      why: `${name} is not in this repository's egress (forge.json "egress")`,
+      why: `${name}:${port} is not in this repository's egress (forge.json "egress")`,
     };
   let addresses: string[];
   try {
@@ -96,7 +124,7 @@ async function decide(
     return { ok: false, why: `${name} does not resolve` };
   if (!origin && !addresses.every(isPublicAddress))
     return { ok: false, why: `${name} resolves to a private address` };
-  return { ok: true, address: first };
+  return { ok: true, address: first, undeclared: !declared };
 }
 
 interface Conn {
@@ -231,6 +259,10 @@ async function open(
     return;
   }
   if (client.data.done) return;
+  if (verdict.undeclared) {
+    log(`egress reported: ${host}:${port} is not in forge.json "egress" (let through while egress is only reported)`);
+    policy.report?.(host.toLowerCase(), port);
+  }
   try {
     const peer = await Bun.connect<undefined>({
       hostname: verdict.address,

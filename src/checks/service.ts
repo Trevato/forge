@@ -42,6 +42,7 @@ import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
+import { noteReached } from "../apps/egress_report.ts";
 import {
   cellsAvailable,
   resolveLimits,
@@ -373,6 +374,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           egress: [...STEP_HOSTS, ...manifest.egress],
           reach: [options.forgeUrl],
           limits: resolveLimits("step", manifest.limits),
+          onUndeclared: (host, port) =>
+            noteReached(app.config.dataDir, repo.id, host, port),
         }
       : undefined;
     try {

@@ -76,6 +76,8 @@ export interface CellBase {
   readonly hide: readonly string[];
   /** The environment's own home: writable, kept across deploys. */
   readonly home: string;
+  /** Told of an undeclared host reached while egress is only reported. */
+  readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -311,6 +313,7 @@ function stepCell(input: StartInput): CellSpec | undefined {
     egress: [...STEP_HOSTS, ...(input.manifest.egress ?? [])],
     reach: [input.forgeUrl],
     limits: resolveLimits("step", undefined),
+    onUndeclared: base.onUndeclared,
   };
 }
 
@@ -381,6 +384,7 @@ export async function startProcess(
             reach: [input.forgeUrl],
             limits: resolveLimits("app", manifest.limits),
             listen: port,
+            onUndeclared: input.cell.onUndeclared,
           },
           log,
         );

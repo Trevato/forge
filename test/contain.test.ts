@@ -19,13 +19,20 @@ import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { cellsAvailable, WATCH, type CellSpec } from "../src/apps/contain.ts";
+import {
+  cellsAvailable,
+  secretMounts,
+  WATCH,
+  type CellSpec,
+} from "../src/apps/contain.ts";
 import { envDir } from "../src/apps/data.ts";
 import {
   hostAllowed,
   isPublicAddress,
   startEgress,
 } from "../src/apps/egress.ts";
+import { noteReached, reachedHosts } from "../src/apps/egress_report.ts";
+import { egressNote } from "../src/web/studio/egress.ts";
 import { parseCheck, parseManifest } from "../src/apps/manifest.ts";
 import { childEnv, runStep } from "../src/apps/process.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
@@ -40,15 +47,23 @@ import { readRunLog } from "../src/runs/log.ts";
 import { missing } from "./helpers/tools.ts";
 
 describe("egress: what a cell may reach", () => {
-  test("a declared name matches exactly, or below a *. wildcard", () => {
-    expect(hostAllowed(["api.example.com"], "api.example.com")).toBe(true);
-    expect(hostAllowed(["api.example.com"], "API.example.com.")).toBe(true);
-    expect(hostAllowed(["api.example.com"], "example.com")).toBe(false);
-    expect(hostAllowed(["api.example.com"], "evilapi.example.com")).toBe(false);
-    expect(hostAllowed(["*.example.com"], "a.b.example.com")).toBe(true);
-    expect(hostAllowed(["*.example.com"], "example.com")).toBe(false);
-    expect(hostAllowed(["*.example.com"], "badexample.com")).toBe(false);
-    expect(hostAllowed([], "registry.npmjs.org")).toBe(false);
+  test("a declared name matches exactly, or below a *. wildcard, on 80 and 443", () => {
+    expect(hostAllowed(["api.example.com"], "api.example.com", 443)).toBe(true);
+    expect(hostAllowed(["api.example.com"], "API.example.com.", 80)).toBe(true);
+    expect(hostAllowed(["api.example.com"], "example.com", 443)).toBe(false);
+    expect(hostAllowed(["api.example.com"], "evilapi.example.com", 443)).toBe(false);
+    expect(hostAllowed(["*.example.com"], "a.b.example.com", 443)).toBe(true);
+    expect(hostAllowed(["*.example.com"], "example.com", 443)).toBe(false);
+    expect(hostAllowed(["*.example.com"], "badexample.com", 443)).toBe(false);
+    expect(hostAllowed([], "registry.npmjs.org", 443)).toBe(false);
+  });
+
+  test("a declared name is not a declared port: ssh and mail are refused unless named", () => {
+    expect(hostAllowed(["api.example.com"], "api.example.com", 22)).toBe(false);
+    expect(hostAllowed(["api.example.com"], "api.example.com", 25)).toBe(false);
+    expect(hostAllowed(["*.example.com"], "a.example.com", 22)).toBe(false);
+    expect(hostAllowed(["db.example.com:5432"], "db.example.com", 5432)).toBe(true);
+    expect(hostAllowed(["db.example.com:5432"], "db.example.com", 443)).toBe(false);
   });
 
   test("private, loopback, link-local and cluster addresses are never public", () => {
@@ -138,7 +153,8 @@ describe("egress: the proxy forwards what is allowed, byte for byte, and refuses
     });
     socket = join(dir, "out.sock");
     egress = startEgress(socket, {
-      hosts: ["localhost"],
+      // Declared on its web ports and on the upstream's: still refused, private.
+      hosts: ["localhost", `localhost:${upstream.port ?? 0}`],
       origins: [{ host: "127.0.0.1", port: upstream.port ?? 0 }],
     });
   });
@@ -198,12 +214,133 @@ describe("egress: the proxy forwards what is allowed, byte for byte, and refuses
     const port = upstream.port ?? 0;
     const undeclared = await exchange(`CONNECT example.com:443 HTTP/1.1\r\n\r\n`);
     expect(undeclared).toStartWith("HTTP/1.1 403");
-    expect(undeclared).toContain('example.com is not in this repository\'s egress (forge.json "egress")');
+    expect(undeclared).toContain('example.com:443 is not in this repository\'s egress (forge.json "egress")');
     const privateName = await exchange(`GET http://localhost:${port}/ HTTP/1.1\r\nHost: localhost\r\n\r\n`);
     expect(privateName).toStartWith("HTTP/1.1 403");
     expect(privateName).toContain("localhost resolves to a private address");
     const otherPort = await exchange(`CONNECT 127.0.0.1:${port + 1} HTTP/1.1\r\n\r\n`);
     expect(otherPort).toStartWith("HTTP/1.1 403");
+  });
+
+  test("a declared host on a port it did not declare (ssh, mail): refused", async () => {
+    for (const port of [22, 25]) {
+      const reply = await exchange(`CONNECT localhost:${port} HTTP/1.1\r\n\r\n`);
+      expect(reply).toStartWith("HTTP/1.1 403");
+      expect(reply).toContain(`localhost:${port} is not in this repository's egress`);
+    }
+  });
+});
+
+describe("egress, reported: an undeclared public host goes through and is counted; a private one never does", () => {
+  let dir: string;
+  let socket: string;
+  let egress: { close(): void };
+  const seen: string[] = [];
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-egress-report-"));
+    socket = join(dir, "out.sock");
+    egress = startEgress(socket, {
+      hosts: [],
+      origins: [],
+      report: (host, port) => seen.push(`${host}:${port}`),
+    });
+  });
+
+  afterAll(async () => {
+    egress.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function head(bytes: string): Promise<string> {
+    let got = "";
+    const done = Promise.withResolvers<void>();
+    const conn = await Bun.connect({
+      unix: socket,
+      socket: {
+        data(_s, chunk) {
+          got += new TextDecoder().decode(chunk);
+          done.resolve();
+        },
+        close: () => done.resolve(),
+        error: () => done.resolve(),
+      },
+    });
+    conn.write(bytes);
+    await Promise.race([done.promise, Bun.sleep(10_000)]);
+    conn.end();
+    return got;
+  }
+
+  test("a private address is refused in report mode too, and not counted", async () => {
+    const reply = await head(`CONNECT localhost:443 HTTP/1.1\r\n\r\n`);
+    expect(reply).toStartWith("HTTP/1.1 403");
+    expect(reply).toContain("private address");
+    expect(seen).toEqual([]);
+  });
+
+  test("an undeclared public host is let through and counted", async () => {
+    const reply = await head(`CONNECT example.com:443 HTTP/1.1\r\n\r\n`);
+    // Through: a tunnel, or the host not answering — never the refusal.
+    if (reply.includes("does not resolve")) {
+      console.log("SKIPPING: no DNS on this machine, so a public host cannot be resolved");
+      return;
+    }
+    expect(reply).not.toStartWith("HTTP/1.1 403");
+    expect(seen).toEqual(["example.com:443"]);
+  }, 20_000);
+});
+
+describe("egress, reported: what an app reached is kept per repository and shown to its writers", () => {
+  let dataDir: string;
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-egress-kept-"));
+  });
+  afterAll(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("counted per host and port, most recent first; a host declared since is not repeated", () => {
+    noteReached(dataDir, "01repo", "api.stripe.com", 443);
+    noteReached(dataDir, "01repo", "api.stripe.com", 443);
+    noteReached(dataDir, "01repo", "db.example.com", 5432);
+    const reached = reachedHosts(dataDir, "01repo");
+    expect(reached.map((r) => [r.host, r.port, r.count])).toEqual([
+      ["db.example.com", 5432, 1],
+      ["api.stripe.com", 443, 2],
+    ]);
+    expect(reachedHosts(dataDir, "01other")).toEqual([]);
+    const note = String(egressNote(dataDir, "01repo", []));
+    expect(note).toContain("api.stripe.com:443");
+    expect(note).toContain('&quot;api.stripe.com&quot;');
+    expect(note).toContain("db.example.com:5432");
+    const after = String(egressNote(dataDir, "01repo", ["api.stripe.com"]));
+    expect(after).not.toContain("api.stripe.com");
+    expect(egressNote(dataDir, "01repo", ["api.stripe.com", "db.example.com:5432"])).toBeNull();
+  });
+});
+
+describe("cells hide every mount that may carry a secret", () => {
+  test("tmpfs mounts and anything under /run or /var/run, but not the cell's own /dev, /proc, /sys", () => {
+    const mountinfo = [
+      "22 1 0:21 / / rw - overlay overlay rw",
+      "23 22 0:22 / /proc rw - proc proc rw",
+      "24 22 0:23 / /dev rw - tmpfs tmpfs rw",
+      "25 24 0:24 / /dev/shm rw - tmpfs shm rw",
+      "26 22 0:25 / /var/run/secrets/kubernetes.io/serviceaccount ro - tmpfs tmpfs ro",
+      "27 22 0:26 / /etc/plat-ca ro - tmpfs tmpfs ro",
+      "28 22 8:1 /data /data rw - ext4 /dev/vda1 rw",
+      "29 22 0:27 / /run/creds\\040x ro - ramfs ramfs ro",
+      "30 22 8:1 /etc/hosts /etc/hosts rw - ext4 /dev/vda1 rw",
+    ].join("\n");
+    const hidden = secretMounts(mountinfo);
+    expect(hidden).toContain("/var/run/secrets/kubernetes.io/serviceaccount");
+    expect(hidden).toContain("/etc/plat-ca");
+    expect(hidden).toContain("/run/creds x");
+    expect(hidden).toContain("/run/secrets");
+    expect(hidden).toContain("/var/run/secrets");
+    for (const kept of ["/", "/proc", "/dev", "/dev/shm", "/data", "/etc/hosts"])
+      expect(hidden).not.toContain(kept);
   });
 });
 
@@ -595,14 +732,66 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
       );
   }, 30_000);
 
-  test("within its limits, a step runs and writes only where it may", async () => {
+  test("within its limits, a step runs, writes only where it may, and sees no mounted secret", async () => {
     await Bun.write(join(hidden, "secret"), "forge data");
     const result = await step(
-      `echo ok > here.txt && test ! -e ${hidden}/secret && ! touch ${hidden}/x 2>/dev/null && ! touch /etc/forge-x 2>/dev/null`,
+      `echo ok > here.txt && test ! -e ${hidden}/secret && ! touch ${hidden}/x 2>/dev/null && ! touch /etc/forge-x 2>/dev/null` +
+        // The places a pod's secrets are mounted hold no file inside (the
+        // directories a nested mount needs may stand, empty).
+        ` && test -z "$(find /var/run/secrets /run/secrets -type f 2>/dev/null)"`,
       cell({}),
     );
     expect(result).toEqual({ ok: true, value: undefined });
     expect(existsSync(join(dir, "here.txt"))).toBe(true);
     expect(existsSync(join(hidden, "x"))).toBe(false);
   }, 30_000);
+});
+
+describe.skipIf(noCells)("cells, egress reported: a step reaches an undeclared public host and it is counted", () => {
+  let dir: string;
+  let listener: ReturnType<typeof Bun.serve>;
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-cell-report-"));
+    listener = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("inside") });
+    process.env["FORGE_CELLS_EGRESS"] = "report";
+  });
+  afterAll(async () => {
+    delete process.env["FORGE_CELLS_EGRESS"];
+    listener.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("the public host is let through and named; the private one is still refused", async () => {
+    const seen: string[] = [];
+    const lines: string[] = [];
+    const result = await runStep(
+      "check",
+      `bun -e "
+        const a = await fetch('https://example.com/', { signal: AbortSignal.timeout(10000) }).then((r) => r.status, () => 'refused');
+        const b = await fetch('http://localhost:${listener.port}/', { proxy: process.env.HTTP_PROXY, signal: AbortSignal.timeout(5000) }).then((r) => r.status, () => 'refused');
+        console.log('PUBLIC', a, 'PRIVATE', b);
+      "`,
+      {
+        cwd: dir,
+        env: childEnv({}),
+        log: (line) => lines.push(line),
+        signal: new AbortController().signal,
+        timeoutMs: 60_000,
+        cell: {
+          dir,
+          writable: [],
+          home: join(dir, ".home"),
+          hide: [],
+          egress: [],
+          reach: [],
+          limits: { memoryMiB: 1024, cpus: 2, diskMiB: 1024 },
+          onUndeclared: (host, port) => seen.push(`${host}:${port}`),
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    const said = lines.find((l) => l.startsWith("PUBLIC "));
+    expect(said).toMatch(/^PUBLIC 200 PRIVATE (403|refused)$/);
+    expect(seen).toEqual(["example.com:443"]);
+  }, 60_000);
 });

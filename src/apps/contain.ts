@@ -29,6 +29,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -101,6 +102,18 @@ export interface CellSpec {
   readonly listen?: number | undefined;
   /** Keep the controlling terminal (an app's `tty`). */
   readonly terminal?: boolean | undefined;
+  /** Told of every undeclared host let through while egress is only reported. */
+  readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+}
+
+/**
+ * Whether undeclared egress is refused (`enforce`, the default) or let
+ * through and reported (`FORGE_CELLS_EGRESS=report`), for a release that
+ * must not break an app before its writers have declared what it uses.
+ * Files, processes and private addresses are held the same in both.
+ */
+export function egressMode(): "enforce" | "report" {
+  return process.env["FORGE_CELLS_EGRESS"] === "report" ? "report" : "enforce";
 }
 
 export interface Cell {
@@ -240,7 +253,14 @@ export function openCell(
   opened.push(
     startEgress(
       join(sockets, "out.sock"),
-      { hosts: spec.egress, origins },
+      {
+        hosts: spec.egress,
+        origins,
+        report:
+          egressMode() === "report"
+            ? (host, port) => spec.onUndeclared?.(host, port)
+            : undefined,
+      },
       log,
     ),
   );
@@ -254,7 +274,9 @@ export function openCell(
     );
 
   // Deepest last, so a hidden directory never covers a writable one inside it.
-  const hide = [...new Set(spec.hide)]
+  // What the caller names, plus whatever the machine mounts that may carry
+  // a secret (`secretMounts`): a cell never needs either.
+  const hidden = [...new Set([...spec.hide, ...secretMounts()])]
     // A path that is not there has nothing to hide (and cannot be mounted
     // over on a read-only root). `/tmp` and `/run` are already the cell's own.
     .filter(
@@ -262,6 +284,10 @@ export function openCell(
         !["", "/", "/tmp", "/run"].includes(path) && existsSync(path),
     )
     .sort((a, b) => a.length - b.length);
+  // A directory is covered by an empty read-only tmpfs; a file (a secret
+  // mounted by itself) by /dev/null.
+  const hide = hidden.filter((path) => isDirectory(path));
+  const blank = hidden.filter((path) => !isDirectory(path));
   // The runtime itself must stay visible when it lives in a hidden home
   // (`~/.bun/bin/bun` on a developer's machine).
   const reveal = [dirname(process.execPath)].filter((path) =>
@@ -281,6 +307,7 @@ export function openCell(
     "--size", String(TMP_MIB * 1024 * 1024), "--tmpfs", "/tmp",
     "--size", SMALL, "--tmpfs", "/run",
     ...hide.flatMap((path) => ["--size", SMALL, "--tmpfs", path]),
+    ...blank.flatMap((path) => ["--ro-bind", "/dev/null", path]),
     ...reveal.flatMap((path) => ["--ro-bind", path, path]),
     ...writable.flatMap((path) => ["--bind", path, path]),
     "--bind", sockets, INSIDE,
@@ -340,6 +367,51 @@ export function openCell(
       rmSync(sockets, { recursive: true, force: true });
     },
   };
+}
+
+/** Whether `path` is a directory (following links, as bubblewrap will). */
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** System mounts a cell keeps: its own /dev, /proc, /sys, and the pod's cgroup view. */
+const SYSTEM_MOUNT = /^\/(dev|proc|sys)(\/|$)/;
+
+/**
+ * Mounts that may carry a secret, read from `/proc/self/mountinfo`: every
+ * tmpfs (how Kubernetes mounts a secret, a projected service-account token
+ * or a config file of the operator's) outside the cell's own /dev, /proc
+ * and /sys, and everything mounted under /run or /var/run. Plus the two
+ * places a secret is conventionally put, whether mounted or not.
+ */
+export function secretMounts(mountinfo = readMountinfo()): string[] {
+  const out = new Set(["/run/secrets", "/var/run/secrets"]);
+  for (const line of mountinfo.split("\n")) {
+    const fields = line.split(" ");
+    const point = fields[4];
+    const dash = fields.indexOf("-");
+    const type = dash === -1 ? undefined : fields[dash + 1];
+    if (point === undefined || point === "/") continue;
+    // mountinfo escapes spaces and the like as octal.
+    const path = point.replace(/\\([0-7]{3})/g, (_, o: string) =>
+      String.fromCharCode(parseInt(o, 8)),
+    );
+    if (SYSTEM_MOUNT.test(path)) continue;
+    if (type === "tmpfs" || /^\/(var\/)?run\//.test(path)) out.add(path);
+  }
+  return [...out];
+}
+
+function readMountinfo(): string {
+  try {
+    return readFileSync("/proc/self/mountinfo", "utf8");
+  } catch {
+    return "";
+  }
 }
 
 // ---- the watch ----

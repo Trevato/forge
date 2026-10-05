@@ -170,12 +170,15 @@ export function parseManifest(
 }
 
 const EGRESS_MAX = 32;
-const HOST_RE = /^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const HOST_RE =
+  /^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)*[a-z0-9]([a-z0-9-]*[a-z0-9])?(:[1-9]\d{0,4})?$/;
 
 /**
  * `egress`: the hosts this repository's code may reach — exact names, or
- * `*.example.com` for every name below one. Absent is none: the app reaches
- * the forge and nothing else; install steps also reach the npm registry.
+ * `*.example.com` for every name below one, on ports 80 and 443; a
+ * `:port` suffix names one other port instead. Absent is none: the app
+ * reaches the forge and nothing else; install steps also reach the npm
+ * registry.
  */
 function egressField(root: Json): Result<readonly string[], ManifestError> {
   const value = root["egress"];
@@ -189,10 +192,11 @@ function egressField(root: Json): Result<readonly string[], ManifestError> {
     if (
       typeof item !== "string" ||
       item.length > 253 ||
-      !HOST_RE.test(item.toLowerCase())
+      !HOST_RE.test(item.toLowerCase()) ||
+      Number(item.split(":")[1] ?? 1) > 65535
     )
       return invalid(
-        "forge.json: egress entries must be host names (api.example.com, or *.example.com)",
+        "forge.json: egress entries must be host names (api.example.com, *.example.com, or db.example.com:5432 for a port other than 80 and 443)",
       );
     hosts.push(item.toLowerCase());
   }

@@ -135,10 +135,16 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    It has a pid namespace of its own, so no other process's environment or
    memory is visible, and a network namespace of its own with loopback and
    nothing else: the way out is the forge's proxy (`apps/egress.ts`), which
-   reaches the forge and the hosts `forge.json` declares in `egress`, and
-   refuses anything else with a 403 that names the host. A declared name
-   that resolves to a private, loopback or link-local address (the cluster,
-   the node's metadata service, another pod) is refused too. Memory, CPU
+   reaches the forge and the hosts `forge.json` declares in `egress` (on
+   ports 80 and 443, unless an entry names its port), and refuses anything
+   else with a 403 that names the host and port. A declared name that
+   resolves to a private, loopback or link-local address (the cluster, the
+   node's metadata service, another pod) is refused too. Every mount that
+   may carry a secret is empty inside: `/run/secrets`, `/var/run/secrets`,
+   and every tmpfs the machine mounts outside `/dev`, `/proc` and `/sys`
+   (how Kubernetes mounts a secret or a service-account token) — and a pod
+   that runs the forge should set `automountServiceAccountToken: false`
+   all the same, since the forge never talks to the cluster. Memory, CPU
    (averaged over 30 seconds) and disk are watched from outside; a cell
    over a limit is stopped, and the reason is the step's error or the
    app's last log line. Where the host cannot hold a cell (no bubblewrap,
@@ -208,13 +214,23 @@ Two more fields say what the app's code may use (rule 9):
 ```
 
 `egress`, at the top level, is shared by the app and its check: exact host
-names, or `*.` for every name below one, at most 32. Without it an app
+names, or `*.` for every name below one, at most 32, each reachable on 80
+and 443 — `db.example.com:5432` names one other port instead. Without it an app
 reaches the forge and nothing else; install, test and check steps also
 reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
 1 core and 1 GiB for an app and 2 GiB, 2 cores and 4 GiB for a step, and
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
+
+A release that turns egress on must not break an app whose writers have
+not declared what it uses yet, so the operator can start it reported:
+`FORGE_CELLS_EGRESS=report` lets an undeclared public host through and
+counts it per repository (`<data>/egress/<repo id>.json`, under the
+forge's data where no cell sees it), and the app's page tells its writers
+which hosts it reached and the `egress` line to add. The default,
+`enforce`, refuses them. Files, processes and private addresses are held
+the same in both modes.
 
 The forge starts the app with:
 

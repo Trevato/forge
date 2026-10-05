@@ -166,8 +166,9 @@ src/
               checkout-index), data (per-environment dirs, copy-on-write
               seeding, SQLite quiesce), process (install/test/start/ready,
               explicit child env), contain (the cell repository code
-              runs in: bubblewrap, a watch on memory/CPU/disk) and egress
-              (the cell's one way out: a proxy to declared hosts), runtime (environments in memory, rebuilt
+              runs in: bubblewrap, a watch on memory/CPU/disk), egress
+              (the cell's one way out: a proxy to declared hosts) and
+              egress_report (what was reached undeclared, reported), runtime (environments in memory, rebuilt
               on boot, serial deploys per env, crash restarts bounded),
               proxy (Host routing, signed grants for private apps), scaffold
               (the app a new app starts as), tty (`ssh <slug>@forge`: the
