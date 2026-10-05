@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
+import { getIssue } from "../core/issues.ts";
 import { getPull, toldBy } from "../core/pulls.ts";
 import {
   canSeeOwnerFacts,
@@ -20,7 +21,18 @@ import {
 import { getUserById, type User } from "../core/users.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
-export type FeedKind = "run" | "ask" | "pull" | "decision" | "map" | "cost";
+export type FeedKind =
+  | "run"
+  | "ask"
+  | "pull"
+  | "decision"
+  | "map"
+  | "cost"
+  // A post: something a person or the crew said — a tell opened, a reply
+  // under one, a look of what a change made (#599).
+  | "tell"
+  | "reply"
+  | "look";
 
 /** What a candidate is, before it is ranked and worded. */
 export interface Candidate {
@@ -193,7 +205,7 @@ function fromEvent(
         kind: "run",
         link,
         urgency: state === "failed" ? 4 : 0,
-        what: `a ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
+        what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
       };
     }
     case "pull.opened":
@@ -203,13 +215,40 @@ function fromEvent(
     case "pull.reviewed":
       return { ...common, kind: "pull", link: change, what: `a change was reviewed${title ? `: ${clip(title)}` : ""}` };
     case "look.taken":
+      return { ...common, kind: "look", link: base(repo), what: "a new picture of it is ready" };
     case "app.serving":
+      return { ...common, kind: "pull", link: base(repo), what: "a new version is serving" };
+    // A tell is a post; a comment is a reply under it, in its own words.
+    case "issue.opened": {
+      if (number === undefined) return undefined;
+      const told = getIssue(db, repo.id, number)?.title ?? "";
       return {
         ...common,
-        kind: "pull",
-        link: base(repo),
-        what: e.kind === "look.taken" ? "a new preview picture is ready" : "a new version is serving",
+        kind: "tell",
+        link: `${base(repo)}/tells/${number}`,
+        what: told === "" ? `told #${number}` : clip(told),
       };
+    }
+    case "issue.commented":
+    case "pull.commented": {
+      if (number === undefined) return undefined;
+      const said = typeof p["body"] === "string" ? p["body"].trim() : "";
+      // A reply names what it answers: the tell's or the change's title.
+      const on = clip(
+        (e.kind === "issue.commented" ? getIssue(db, repo.id, number)?.title : title) ??
+          `#${number}`,
+        60,
+      );
+      return {
+        ...common,
+        kind: "reply",
+        link:
+          e.kind === "issue.commented"
+            ? `${base(repo)}/tells/${number}`
+            : change,
+        what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
+      };
+    }
     case "issue.blocked":
     case "issue.unblocked":
       return {
