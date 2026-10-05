@@ -28,6 +28,7 @@ import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { spawnDoor } from "../spawn/door.ts";
 import { tell, toldWords } from "../actions/tell.ts";
+import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
   readUsage,
   usageDays,
@@ -766,6 +767,60 @@ const TOOLS: readonly Tool[] = [
           ),
         ),
       );
+    },
+  },
+  {
+    name: "returns",
+    description:
+      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "One app, as owner/name; every app of yours when absent." },
+        days: { type: "integer", minimum: 1, maximum: 90 },
+      },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = args["repo"];
+      const days = args["days"];
+      const read = readReturns(ctx.app, user, {
+        ...(typeof repo === "string" ? { repo } : {}),
+        ...(typeof days === "number" ? { days } : {}),
+      });
+      if (read.ok) return good(read.value);
+      return read.error === "bad_days"
+        ? bad("invalid_days", "days is a whole number from 1 to 90")
+        : bad("not_found", "no such app of yours (owner/name)");
+    },
+  },
+  {
+    name: "spend",
+    description:
+      "Report what your session spent on an app's work, when the forge did not run it (a build team, your own assistant): who you are, the model, tokens in and out and/or dollars, and the issue or pull number it was for. Writers and the app's crew only. It is shown beside the crew's own spend in `returns`, never added to it, and no limit reads it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        who: { type: "string", maxLength: 100 },
+        model: { type: "string", maxLength: 100 },
+        tokensIn: { type: "integer", minimum: 0 },
+        tokensOut: { type: "integer", minimum: 0 },
+        usd: { type: "number", minimum: 0, maximum: 10000 },
+        issue: { type: "integer", minimum: 1 },
+        note: { type: "string", maxLength: 500 },
+      },
+      required: ["repo", "who"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const made = reportSpend(ctx.app, user, repo, args);
+      if (made.ok) return good({ id: made.value.id, usd: made.value.usd });
+      return made.error === "invalid"
+        ? bad("invalid", "who, and some spend: tokensIn, tokensOut or usd")
+        : bad("not_found", "no such app or repository (owner/name)");
     },
   },
   {

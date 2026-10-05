@@ -243,6 +243,7 @@ import {
 import { resolveOid } from "../git/merge.ts";
 import { vitals } from "../kernel/vitals.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
+import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
@@ -3684,6 +3685,41 @@ export function apiRoutes(router: Router<Handler>): void {
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.
   // Spend is the owner's own fact, so a reader who cannot write gets 403.
+  // What the tokens bought (`actions/returns.ts`): owner facts only, over
+  // every repository the viewer holds them for, or `?repo=owner/name`.
+  router.add("GET", "/api/v1/returns", (ctx) => {
+    const q = ctx.url.searchParams;
+    const raw = q.get("days");
+    const read = readReturns(ctx.app, ctx.auth.user, {
+      repo: q.get("repo"),
+      ...(raw === null ? {} : { days: Number(raw) }),
+    });
+    if (read.ok) return json(read.value, 200, { "cache-control": "private, no-store" });
+    if (read.error === "unauthorized") return unauthorized();
+    if (read.error === "bad_days")
+      return apiError("invalid_days", 422, `days is a whole number from 1 to ${RETURNS_DAYS.max}`);
+    return notFound();
+  });
+
+  // What an outside session spent on this repository's work: writers and
+  // its crew report it; it is kept apart from the crew's runs and no limit
+  // reads it (`actions/returns.ts`).
+  router.add("POST", "/api/v1/repos/:owner/:name/spend", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const made = reportSpend(ctx.app, ctx.auth.user, repo, await body(ctx.request));
+    if (made.ok) return json(made.value, 201);
+    if (made.error === "unauthorized") return unauthorized();
+    if (made.error === "not_found") return notFound();
+    return apiError(
+      "invalid",
+      422,
+      "who (1–100 characters) and some spend (tokensIn, tokensOut: whole numbers; usd: 0–10000); model, note (≤500) and issue (a number here) are optional",
+    );
+  });
+
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();

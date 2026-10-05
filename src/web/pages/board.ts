@@ -16,6 +16,7 @@
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { tokenReturns } from "../../core/returns.ts";
+import { returnsRepos } from "../../actions/returns.ts";
 import {
   listDecisionsForRepos,
   type Decision,
@@ -369,7 +370,14 @@ export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(
  * viewer holds no owner facts here or nothing ran.
  */
 function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
-  const ids = scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id);
+  const user = ctx.auth.user;
+  if (!user) return null;
+  // The crew spends on every repository, app or not: the whole of the
+  // viewer's own unless `?apps=` narrows the board.
+  const apps = ctx.url.searchParams.get("apps");
+  const ids = apps
+    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
+    : returnsRepos(ctx.app, user).map((r) => r.id);
   if (ids.length === 0) return null;
   const now = Date.now();
   const r = tokenReturns(ctx.app.db, ids, {
@@ -377,12 +385,13 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     until: new Date(now).toISOString(),
   });
   if (r.spent.runs === 0) return null;
-  const apps = ctx.url.searchParams.get("apps");
   const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
   return html`<a class="board-asks" id="returns-line" href="${href}"
     >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
-    · <b>${usd(r.onLanded.perChange.median)}</b> a landed change · <b>${usd(r.landedNothing.usd)}</b>
-    landed nothing</a
+    ${r.onLanded.perChange.changes === 0
+      ? null
+      : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
+    · <b>${usd(r.landedNothing.usd)}</b> landed nothing</a
   >`;
 }
 
