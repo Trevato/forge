@@ -20,6 +20,7 @@ import {
   removeAccount,
   suspendAccount,
   unsuspendAccount,
+  verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { emailVerified } from "../core/verify.ts";
@@ -1109,6 +1110,15 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const done = unsuspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
     return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
+  });
+
+  router.add("POST", "/api/v1/admin/accounts/:username/verify", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = verifyAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok
+      ? json({ username: done.value.username, verified: true })
+      : accountError(done.error);
   });
 
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {

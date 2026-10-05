@@ -23,6 +23,7 @@ import {
 import { deleteRepo as destroyRepo, listReposOwnedBy } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
 import { getUserByName, type User } from "../core/users.ts";
+import { markVerified } from "../core/verify.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
 import { cancelRepoRun } from "./runs.ts";
@@ -141,6 +142,30 @@ export async function removeAccount(
     payload: { username: user.username },
   });
   return ok();
+}
+
+/**
+ * The owner's word that an account's email is theirs: what lets a newcomer
+ * create and cost when the forge sends no mail, or when a link went astray.
+ * Recorded in the audit as the owner's act.
+ */
+export function verifyAccount(
+  app: App,
+  actor: User | undefined,
+  username: string,
+): Result<User, AccountActionError> {
+  const admin = requireForgeAdmin(actor);
+  if (!admin.ok) return admin;
+  const user = getUserByName(app.db, username);
+  if (user === undefined || user.kind === "org") return err("not_found");
+  if (user.kind === "agent" || user.removedAt !== null) return err("not_allowed");
+  markVerified(app.db, user.id, new Date().toISOString());
+  app.bus.append({
+    kind: "account.email_verified",
+    actorId: admin.value.id,
+    payload: { username: user.username, by: "owner" },
+  });
+  return ok(user);
 }
 
 const NEW_FOR_MS = 7 * 24 * 3_600_000;

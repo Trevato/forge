@@ -582,6 +582,7 @@ export function buildRouter(): Router<Handler> {
     accountAct("unsuspend"),
   );
   router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
+  router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);
