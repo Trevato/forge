@@ -453,7 +453,9 @@ export function readPlan(
           ? "Nothing beneath it counts as work yet."
           : open === 0
             ? "Everything beneath it is done."
-            : closedThisWeek === 0
+            : limb.deferred
+              ? "Deferred: the crew picks nothing beneath it until it is resumed, so there is no pace to estimate from."
+              : closedThisWeek === 0
               ? `Nothing closed here in ${PILLAR_DAYS} days, so there is no pace to estimate from.`
               : `About ${days} day${days === 1 ? "" : "s"} at this week's pace: ${closedThisWeek} closed in ${PILLAR_DAYS} days, ${open} open.`;
       const order: Record<LeafState, number> = {

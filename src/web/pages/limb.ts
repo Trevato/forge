@@ -16,6 +16,7 @@ import {
   type LimbRequest,
 } from "../../actions/limbs.ts";
 import type { FleetValue, Operation } from "../../core/fleet_ops.ts";
+import { getIssuesByIds } from "../../core/issues.ts";
 import { pillarsOf } from "../../core/pillars.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -84,9 +85,15 @@ function issueList(base: string, issues: readonly LimbIssue[]): Html {
     )}`;
 }
 
-/** The rows an operation plans or wrote: each one before, after, and how it went. */
+/**
+ * The rows an operation plans or wrote: each issue by its title, what it
+ * held before and holds after, and how it went.
+ */
 function rowList(
+  ctx: Ctx,
+  base: string,
   rows: readonly {
+    targetId: string;
     label: string;
     before: FleetValue;
     after: FleetValue;
@@ -94,11 +101,18 @@ function rowList(
     reason: string;
   }[],
 ): Html {
+  const issues = getIssuesByIds(
+    ctx.app.db,
+    rows.map((r) => r.targetId),
+  );
   return html`<ul class="ms-rows limb-rows">
-    ${rows.map(
-      (r) =>
-        html`<li data-outcome="${r.outcome}">
-          <b>${r.label}</b>
+    ${rows.map((r) => {
+      const issue = issues.get(r.targetId);
+      return html`<li data-outcome="${r.outcome}">
+          ${issue === undefined
+            ? html`<b>${r.label}</b>`
+            : html`<a href="${base}/issues/${issue.number}">${issue.title}</a>
+                <span class="muted small">#${issue.number}</span>`}
           <span class="muted small"
             >${shown(r.before)} → ${shown(r.after)}</span
           >
@@ -109,8 +123,8 @@ function rowList(
                 >${r.outcome}${r.reason === "" ? "" : `: ${r.reason}`}</span
               >`,
           )}
-        </li>`,
-    )}
+        </li>`;
+    })}
   </ul>`;
 }
 
@@ -144,9 +158,25 @@ export function limbPreviewPage(ctx: Ctx): Response {
       ? { reason: "…" }
       : {}),
   });
-  if (!plan.ok) return notFoundPage(ctx);
   const base = repoBase(repo);
   const words = WORDS[action];
+  if (!plan.ok) {
+    if (plan.error.code === "not_found") return notFoundPage(ctx);
+    // Too much for one operation, or an agent asking: said, not hidden.
+    return page({
+      ctx,
+      title: `${words.ask} · ${repo.name}`,
+      crumbs: crumbsFor(repo),
+      palette: repoPalette(ctx, repo),
+      body: html`${repoHeader(ctx, repo, "map")}
+        <div class="ms-top mt">
+          <h1>${words.ask} this limb?</h1>
+          <p id="limb-refused">Not as one action: ${plan.error.message}.</p>
+          <p><a href="${milestoneHref(base, number)}">Back</a></p>
+        </div>`,
+      styleCss: `${milestonesCss}${limbCss}`,
+    });
+  }
   const p = plan.value;
   const willWrite = p.counts.change > 0;
   const pillars =
@@ -187,7 +217,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
       <h2>What is written</h2>
       ${p.rows.length === 0
         ? html`<p class="muted small">Nothing: no open issue is the limb's alone.</p>`
-        : rowList(p.rows)}
+        : rowList(ctx, base, p.rows)}
     </section>
     ${willWrite
       ? html`<form
@@ -310,7 +340,7 @@ export function limbReceiptPage(ctx: Ctx): Response {
     </div>
     <section class="ms-section">
       <h2>The receipt</h2>
-      ${rowList(op.rows)}
+      ${rowList(ctx, base, op.rows)}
     </section>
     ${op.reversible && op.undoneBy === null && op.undoOf === null
       ? html`<form
@@ -357,5 +387,6 @@ export async function limbUndo(ctx: Ctx): Promise<Response> {
 const limbCss = /* css */ `
 .limb-rows li[data-outcome="refused"], .limb-rows li[data-outcome="failed"] { color: var(--muted-fg); }
 .limb-why { color: var(--attn); }
-.limb-confirm { display: grid; gap: 8px; max-width: 520px; }
+.limb-confirm { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; max-width: 520px; }
+.limb-confirm .input { width: 100%; box-sizing: border-box; }
 `;

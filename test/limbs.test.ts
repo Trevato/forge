@@ -279,6 +279,16 @@ describe("limb actions", () => {
     expect((await post(tokenOf(alice, "ro"), path, apply)).status).toBe(403);
     expect((await post(tokenOf(alice, "rw"), path, apply)).status).toBe(403);
     expect((await post(tokenOf(atlas, "rw"), path, apply)).status).toBe(403);
+    // …whatever its token says: an agent is not a person.
+    expect((await post(tokenOf(atlas, "admin"), path, apply)).status).toBe(403);
+    expect(
+      (await tool(tokenOf(atlas, "admin"), {
+        app: "alice/engine",
+        issue: iface.number,
+        action: "defer",
+        dryRun: false,
+      })).error,
+    ).toContain("forbidden");
     const theirs = await post(tokenOf(bob, "admin"), path, apply);
     expect(theirs.status).toBe(201);
     expect(
@@ -577,6 +587,10 @@ describe("limb actions", () => {
     expect(preview).toContain("4 stop being picked");
     expect(preview).toMatch(/1 stays: something\s+outside this limb still waits for\s+it/);
     expect(preview).toContain("A shared toolbar");
+    // The row is the issue by its title, and where it goes.
+    expect(preview).toContain(
+      `<a href="/alice/engine/issues/${iface.number}">One interface</a>`,
+    );
     expect(preview).toContain(
       `under #${feed.number} → behind #${gate.number}, under #${later.number}`,
     );
@@ -619,10 +633,10 @@ describe("limb actions", () => {
     expect(receipt).toContain(`action="${receiptAt}/undo"`);
     // The receipt is its actor's: a reader gets the one 404.
     expect((await get("bob", receiptAt)).status).toBe(404);
-    // The milestone now offers Resume.
-    expect(await (await get("alice", at)).text()).toContain(
-      `href="${at}/limb?action=resume"`,
-    );
+    // The milestone now offers Resume, and promises no date.
+    const held = await (await get("alice", at)).text();
+    expect(held).toContain(`href="${at}/limb?action=resume"`);
+    expect(held).toContain("Deferred: the crew picks nothing beneath it");
 
     const undone = await submit("alice", `${receiptAt}/undo`, {});
     expect(undone.status).toBe(303);
