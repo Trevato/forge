@@ -10,6 +10,7 @@
 import type { App } from "../app.ts";
 import { revertOf, type Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
@@ -58,10 +59,7 @@ export async function revertPull(
     commitOid: pull.mergedOid,
     ontoOid: onto,
     message: `Revert "${pull.title}" (#${pull.number})`,
-    author: {
-      name: writer.value.displayName || writer.value.username,
-      email: writer.value.email,
-    },
+    author: commitIdentity(app.config, writer.value),
   });
   if (!built.ok) return built;
 

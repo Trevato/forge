@@ -10,6 +10,7 @@ import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
+import { forgeHost } from "../core/commit_identity.ts";
 import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
@@ -324,11 +325,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
-    const host =
-      app.config.url !== undefined
-        ? new URL(app.config.url).hostname
-        : (app.config.host ?? "localhost");
-    const user = await ensureEdgeUser(app.db, login, host);
+    const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
     if (user) return { user, scope: "admin", via: "edge" };
   }
 

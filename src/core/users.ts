@@ -5,6 +5,7 @@
 
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
+import { noreplyAddress } from "./commit_identity.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -20,8 +21,16 @@ export interface User {
    * tokens the forge mints for a run (docs/APPS.md).
    */
   readonly kind: "user" | "org" | "agent";
+  /**
+   * Which address the commits the forge writes for this person carry: the
+   * no-reply one on the forge's host, or — by explicit opt-in — `email`
+   * (`core/commit_identity.ts`).
+   */
+  readonly commitEmail: CommitEmail;
   readonly createdAt: string;
 }
+
+export type CommitEmail = "noreply" | "account";
 
 interface UserRow {
   id: string;
@@ -32,6 +41,7 @@ interface UserRow {
   password_hash: string;
   kind: "user" | "org";
   is_agent: number;
+  commit_email: CommitEmail;
   created_at: string;
 }
 
@@ -45,6 +55,7 @@ function toUser(row: UserRow): User {
     // The flag, not the column, decides: see migration 14 for why an agent
     // is stored as kind 'user' with is_agent set.
     kind: row.is_agent === 1 ? "agent" : row.kind,
+    commitEmail: row.commit_email === "account" ? "account" : "noreply",
     createdAt: row.created_at,
   };
 }
@@ -159,11 +170,13 @@ function isUniqueViolation(error: unknown): boolean {
 export interface ProfilePatch {
   displayName?: string;
   email?: string;
+  commitEmail?: CommitEmail;
 }
 
 export type UpdateProfileError =
   | "email_taken"
   | "invalid_email"
+  | "invalid_commit_email"
   | "no_such_user";
 
 /** Change the mutable profile fields. Absent keys are left untouched. */
@@ -186,11 +199,12 @@ export function updateProfile(
   const displayName = (patch.displayName ?? current.displayName)
     .trim()
     .slice(0, MAX_DISPLAY_NAME);
-  db.query("UPDATE user SET email = ?1, display_name = ?2 WHERE id = ?3").run(
-    email,
-    displayName,
-    userId,
-  );
+  const commitEmail = patch.commitEmail ?? current.commitEmail;
+  if (commitEmail !== "noreply" && commitEmail !== "account")
+    return err("invalid_commit_email");
+  db.query(
+    "UPDATE user SET email = ?1, display_name = ?2, commit_email = ?3 WHERE id = ?4",
+  ).run(email, displayName, commitEmail, userId);
   return ok(getUserById(db, userId)!);
 }
 
@@ -244,7 +258,7 @@ export async function ensureEdgeUser(
   if (existing) return existing.kind === "user" ? existing : undefined;
   const made = await createUser(db, {
     username: login,
-    email: `${login}@users.noreply.${host}`,
+    email: noreplyAddress(login, host),
     adminIfFirst: true,
   });
   return made.ok ? made.value : undefined;

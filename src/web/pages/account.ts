@@ -23,8 +23,10 @@ import {
   notifyUrlOf,
   setNotifyUrl,
 } from "../../crew/notify.ts";
+import { forgeHost, noreplyAddress } from "../../core/commit_identity.ts";
 import { listKeys } from "../../core/keys.ts";
 import { listTokens, type TokenScope } from "../../core/tokens.ts";
+import type { CommitEmail, User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
@@ -78,8 +80,16 @@ export function accountShell(
 interface ProfileForm {
   displayName: string;
   email: string;
+  commitEmail: CommitEmail;
   errors?: { displayName?: string; email?: string };
 }
+
+/** The profile form as the account stands now. */
+const currentProfile = (user: User): ProfileForm => ({
+  displayName: user.displayName,
+  email: user.email,
+  commitEmail: user.commitEmail,
+});
 
 function notifyView(ctx: Ctx, error?: string): Html {
   const host = notifyHost(notifyUrlOf(ctx.app.db, ctx.auth.user!.id));
@@ -138,8 +148,25 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
         type: "email",
         value: values.email,
         autocomplete: "email",
-        hint: "Used to attribute commits. Never shown to other people.",
+        hint: "Where the forge reaches you. Never shown to other people, and never in a commit unless you choose it below.",
         ...(values.errors?.email ? { error: values.errors.email } : {}),
+      })}
+      ${selectField({
+        label: "Commit email",
+        name: "commitEmail",
+        options: [
+          {
+            value: "noreply",
+            label: noreplyAddress(user.username, forgeHost(ctx.app.config)),
+            selected: values.commitEmail === "noreply",
+          },
+          {
+            value: "account",
+            label: "My email above — published in every clone",
+            selected: values.commitEmail === "account",
+          },
+        ],
+        hint: "The address on commits the forge makes for you: merges, reverts, web edits. A commit in a public repository cannot be taken back, so the default reaches nobody.",
       })}
       <div class="form-actions">
         ${btn("Save profile", { variant: "primary" })}
@@ -156,10 +183,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${profileView(ctx, {
-      displayName: ctx.auth.user.displayName,
-      email: ctx.auth.user.email,
-    })}${notifyView(ctx)}`,
+    html`${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
   );
 }
 
@@ -174,10 +198,10 @@ export async function notifyUpdate(ctx: Ctx): Promise<Response> {
       ctx,
       "profile",
       "Settings",
-      html`${profileView(ctx, {
-        displayName: ctx.auth.user.displayName,
-        email: ctx.auth.user.email,
-      })}${notifyView(ctx, NOTIFY_ERRORS[saved.error])}`,
+      html`${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(
+        ctx,
+        NOTIFY_ERRORS[saved.error],
+      )}`,
       422,
     );
   // The notifier starts from what asks now, so only what comes after is new.
@@ -195,8 +219,16 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const displayName = field(form, "displayName").trim();
   const email = field(form, "email").trim();
+  // Absent (an older form) leaves the choice as it stands; anything but the
+  // two offered values is refused by the profile write.
+  const chosen = field(form, "commitEmail");
+  const commitEmail = (chosen || ctx.auth.user.commitEmail) as CommitEmail;
 
-  const updated = updateProfile(ctx.app, ctx.auth.user, { displayName, email });
+  const updated = updateProfile(ctx.app, ctx.auth.user, {
+    displayName,
+    email,
+    commitEmail,
+  });
   if (!updated.ok) {
     const errors: ProfileForm["errors"] =
       updated.error === "email_taken"
@@ -208,7 +240,15 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
       ctx,
       "profile",
       "Settings",
-      profileView(ctx, { displayName, email, errors }),
+      profileView(ctx, {
+        displayName,
+        email,
+        commitEmail:
+          commitEmail === "noreply" || commitEmail === "account"
+            ? commitEmail
+            : ctx.auth.user.commitEmail,
+        errors,
+      }),
       422,
     );
   }

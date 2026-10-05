@@ -924,11 +924,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
     const input = await body(ctx.request);
+    if (
+      input.commitEmail !== undefined &&
+      input.commitEmail !== "noreply" &&
+      input.commitEmail !== "account"
+    )
+      return json({ error: "invalid_commit_email" }, 422);
     const updated = updateProfile(ctx.app, ctx.auth.user, {
       ...(typeof input.displayName === "string"
         ? { displayName: input.displayName }
         : {}),
       ...(typeof input.email === "string" ? { email: input.email } : {}),
+      ...(input.commitEmail === "noreply" || input.commitEmail === "account"
+        ? { commitEmail: input.commitEmail }
+        : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
     return json(publicUser(updated.value));

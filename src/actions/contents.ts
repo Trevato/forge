@@ -16,6 +16,7 @@
 import type { App } from "../app.ts";
 import { canAdmin, type Repo } from "../core/repos.ts";
 import { trackPullHead, type Pull } from "../core/pulls.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import type { User } from "../core/users.ts";
 import { isSafeTreePath } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
@@ -187,10 +188,7 @@ export async function editFiles(
       ...(branch !== base ? { startPoint: base } : {}),
       message: input.message?.trim() || "Update files",
       files: input.files,
-      author: {
-        name: writer.value.displayName || writer.value.username,
-        email: writer.value.email,
-      },
+      author: commitIdentity(app.config, writer.value),
       ...(send === undefined
         ? {}
         : {
