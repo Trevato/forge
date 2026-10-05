@@ -1,10 +1,11 @@
 /**
- * One run in the studio: the transcript a person sits on while waiting for a
- * change to become visible — who is on it, the tell it came from, what it
- * has cost, its own lines as they land — and the one control a live run has,
- * Stop, which the home and the app page put on a row of their own. Steer and
- * Stop post to the very same routes with the very same checks as `runPage`
- * (`pages/runs.ts`); `?mode=dev` reads the same log there, unchanged.
+ * One run: the transcript a person sits on while waiting for a change to
+ * become visible — who is on it, the tell it came from, what it has cost,
+ * its own lines as they land — and the one control a live run has, Stop,
+ * which the home and the app page put on a row of their own. The one run
+ * page, for every repository and every viewer (`runPage`, `pages/runs.ts`);
+ * the whole transcript, past the window this page holds, is its depth step
+ * at `?all=1`.
  */
 
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -13,26 +14,17 @@ import { getIssueById } from "../../core/issues.ts";
 import { getPull, openPullsClosing } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { isTerminal, type Run } from "../../core/runs.ts";
+import { listHeldSecrets } from "../../core/run_secret.ts";
 import { getUserById } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import {
-  crumbsFor,
-  repoBase,
-  repoHeader,
-  repoPalette,
-} from "../chrome.ts";
+import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { studioRunJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, icon } from "../ui.ts";
+import { btn, sha } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
-import {
-  costText,
-  durationText,
-  runTitle,
-  runTokens,
-} from "../pages/runs.ts";
+import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
 import { sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
@@ -61,14 +53,14 @@ export function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
 
 
 /**
- * GET /:owner/:name/runs/:id in the studio: who is on it, the tell it came
- * from, how long it has gone and what it has cost, the transcript itself,
- * and its state in the studio's own word — the page someone sits on while
- * waiting for a change to become visible. Steer and Stop are the very same
- * forms `runPage` offers, posting to the very same routes with the very
- * same checks; `?mode=dev` reads the transcript there, unchanged.
+ * GET /:owner/:name/runs/:id: who is on it, the tell it came from, the
+ * commit a deploy or a check is about, how long it has gone and what it has
+ * cost, the secrets it held, the transcript itself, and its state in the
+ * studio's own word — the page someone sits on while waiting for a change
+ * to become visible. `?all=1` holds the whole transcript instead of its
+ * last window.
  */
-export async function studioRun(
+export async function runView(
   ctx: Ctx,
   repo: Repo,
   run: Run,
@@ -105,6 +97,8 @@ export async function studioRun(
   const { word } = await runWord(wordCtx, run);
   const unfinished = !isTerminal(run.state);
   const duration = durationText(run);
+  const all = ctx.url.searchParams.get("all") === "1";
+  const held = listHeldSecrets(db, run.id);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
 
   // The pull this run's tell has become, once one exists: the tell itself
@@ -131,6 +125,9 @@ export async function studioRun(
               : tellHref(base, i.number)}"
             >#${i.number} ${i.title}</a
           >`,
+      )}
+      ${when(run.kind !== "agent" && run.commitOid !== "", () =>
+        sha(run.commitOid, `${base}/commit/${run.commitOid}`),
       )}
       ${when(
         writer,
@@ -163,6 +160,17 @@ export async function studioRun(
     </div>
     <p class="run-summary" id="run-summary">${run.summary}</p>
     ${sandboxLine(run)}
+    ${when(
+      held.length > 0,
+      () =>
+        html`<p class="muted small" id="run-secrets">
+          Secrets held: ${held.map((h) => h.name).join(", ")}${held.every(
+            (h) => h.releasedAt !== null,
+          )
+            ? " (released)"
+            : ""}. Values are never shown.
+        </p>`,
+    )}
   </div>`;
 
   const body = html`${repoHeader(ctx, repo, "app", {
@@ -211,8 +219,9 @@ export async function studioRun(
       ${logBox({
         id: "run-log",
         who,
-        cap: RUN_TRANSCRIPT_CAP,
+        cap: all ? Math.max(lines.length, RUN_TRANSCRIPT_CAP) : RUN_TRANSCRIPT_CAP,
         lines,
+        allHref: `${base}/runs/${run.id}?all=1`,
         ...(unfinished ? { stream } : {}),
         pulse: run.state === "running",
         extra: html`<button type="button" class="run-jump" id="run-jump" hidden>
@@ -269,11 +278,7 @@ export async function studioRun(
             </div>
           </form>`,
       )}
-    </div>
-    <p class="muted small mt">
-      <a href="${base}/runs/${run.id}?mode=dev">${icon("code")}Read the transcript</a>
-      — every tool call, in dev's own words.
-    </p>`;
+    </div>`;
 
   return page({
     ctx,
