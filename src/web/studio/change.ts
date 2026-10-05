@@ -39,6 +39,7 @@ import {
   decisionsFor,
   type Decision,
 } from "./asks.ts";
+import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /** What a conflicted change's own page says: the base it no longer merges
@@ -173,6 +174,11 @@ export async function studioPull(
   const checkLine = card(
     html`<p class="studio-pull-check">
       ${wordBadge(word)} <span class="muted small">${note}</span>
+      ${when(
+        tellsAnswered(db, repo.id, [pull]).get(pull.number),
+        (t) => html`<span class="where-sep" aria-hidden="true">·</span
+          >${tellLine(base, t)}`,
+      )}
       ${when(
         deploy,
         (d) =>

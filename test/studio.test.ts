@@ -1707,6 +1707,58 @@ describe("the studio", () => {
       await rm(dataDir2, { recursive: true, force: true });
     }
   });
+  test("a change on <crew>/<number>-<slug> links the tell it answers, and says so when that tell is closed; other branches show no tell", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "Answered tell",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const n = told.value.number;
+    const open = async (branch: string, title: string) => {
+      const c = await commitToBranch(app, alice, repo, {
+        branch,
+        base: "main",
+        message: title,
+        files: [{ path: `${branch.replace(/\//g, "_")}.md`, content: "x\n" }],
+      });
+      if (!c.ok) throw new Error(JSON.stringify(c.error));
+      const o = await openPull(app, alice, repo, {
+        title,
+        body: "",
+        baseBranch: "main",
+        headBranch: branch,
+      });
+      if (!o.ok) throw new Error(String(o.error));
+      return o.value;
+    };
+    const answering = await open(`scout/${n}-answer-it`, "Answers the tell");
+    const stray = await open("scout/99999-nothing", "Answers nothing");
+    const own = await open("revert-22", "A person's branch");
+
+    const list = await (await get("/alice/notes/changes")).text();
+    const rowOf = (title: string) => {
+      const at = list.indexOf(title);
+      return list.slice(at, list.indexOf("</a>", at + 400) + 4);
+    };
+    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(rowOf("Answers the tell")).not.toContain("already done");
+    expect(rowOf("Answers nothing")).not.toContain("for tell");
+    expect(rowOf("A person's branch")).not.toContain("for tell");
+
+    setIssueState(app, alice, repo, told.value, "closed");
+    const closedList = await (await get("/alice/notes/changes")).text();
+    expect(closedList).toContain("its tell is already done");
+    const page = await (
+      await get(`/alice/notes/changes/${answering.number}`)
+    ).text();
+    expect(page).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(page).toContain("its tell is already done");
+    for (const p of [stray, own]) {
+      const res = await get(`/alice/notes/changes/${p.number}`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).not.toContain("for tell");
+    }
+  });
 });
 
 describe("an owner's page lists an app once, not once in each vocabulary (#221)", () => {
