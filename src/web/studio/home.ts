@@ -4,27 +4,42 @@
  * beside it what is happening right now across all of them, and what a
  * person put on you. Built from the same rows and cards as the rest of the
  * forge, from grouped reads only, so the page does not get slower as the
- * apps grow. A stranger gets the door instead: the public apps, live first.
+ * apps grow. A stranger gets the door instead: the forge featured, then the
+ * best of what is public (`actions/front.ts`).
  */
 
-import { appsRuntime, type EnvState } from "../../apps/runtime.ts";
+import {
+  frontPage,
+  frontPicksJson,
+  setFront,
+  type FrontEntry,
+  type FrontPage,
+  type FrontPicksJson,
+} from "../../actions/front.ts";
 import { crewForRepos } from "../../core/agents.ts";
-import { listPublicApps } from "../../core/apps.ts";
-import { DEFAULT_PAGE, LOOK_SIZES, looksForApps } from "../../core/looks.ts";
-import { getReposByIds, type Repo } from "../../core/repos.ts";
+import { LOOK_SIZES } from "../../core/looks.ts";
+import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import { repoBase } from "../chrome.ts";
+import { repoBase, signInFirst } from "../chrome.ts";
+import { field, readForm } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
-import { fragment, page } from "../layout.ts";
+import { fragment, page, redirect } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
-import { btn, empty, envStateBadge, icon, listCard } from "../ui.ts";
+import {
+  btn,
+  card,
+  empty,
+  envStateBadge,
+  icon,
+  listCard,
+  timeAgo,
+} from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
-import { lookUrl, mayFetchLook, pictured } from "../pages/looks.ts";
 import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
@@ -78,6 +93,9 @@ async function shelf(
             ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
             ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
             ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
+            ${when(user.isAdmin, () =>
+              btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
+            )}
             ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`,
         });
   return { appRepos, apps };
@@ -175,113 +193,190 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   });
 }
 
-/** How many public apps the door reads, and how many tiles it shows. */
-const DOOR_READ = 200;
-const DOOR_TILES = 24;
-
-/** Live first: what answers now, then what wakes on a visit, then the rest. */
-const LIVENESS: Record<EnvState, number> = {
-  running: 0,
-  asleep: 1,
-  deploying: 2,
-  failed: 3,
-  stopped: 4,
-};
+/**
+ * A shelf tile: picture, name, one clamped line, how it is. The shelf
+ * holds only apps with a picture (`frontPage`), so there is no tile
+ * without one.
+ */
+function tile(entry: FrontEntry): Html {
+  const { repo, state, picture } = entry;
+  if (picture === undefined) return html``;
+  return html`<a class="app-tile" href="${repoBase(repo)}">
+    <img
+      class="app-tile-look"
+      src="${picture}"
+      width="${LOOK_SIZES.thumb.width}"
+      height="${LOOK_SIZES.thumb.height}"
+      alt=""
+      loading="lazy"
+    />
+    <span class="app-tile-body">
+      <span class="app-tile-name">${repo.name}</span>
+      <span class="app-tile-desc truncate" title="${repo.description}"
+        >${repo.description !== "" ? repo.description : repo.ownerName}</span
+      >
+      ${state !== undefined ? envStateBadge(state) : null}
+    </span>
+  </a>`;
+}
 
 /**
- * The studio's door for a stranger: the public apps as a shelf of
- * pictures, name and one clamped line, live first — and when nothing
- * public is up yet, an empty shelf that says so, never a git pitch. A
- * signed-out reader gets this whatever the mode: dev has no home of its
- * own for someone with nothing to show them.
+ * The featured repository: its picture, and what makes a forge different —
+ * the crew at work on it right now, by issue; or, when nobody is, when it
+ * last shipped.
+ */
+function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
+  const { repo, picture, crew, signals } = featured;
+  const base = repoBase(repo);
+  const agents = `${crew.running} agent${crew.running === 1 ? "" : "s"}`;
+  const work =
+    crew.running > 0
+      ? html`<p class="front-crew">
+            <span class="front-live" aria-hidden="true"></span>
+            The crew is at work: ${agents} right now
+          </p>
+          <ul class="front-issues">
+            ${crew.issues.map(
+              (i) =>
+                html`<li>
+                  <a href="${base}/issues/${i.number}"
+                    ><span class="muted">#${i.number}</span> ${i.title}</a
+                  >
+                </li>`,
+            )}
+          </ul>`
+      : signals.shippedAt !== null
+        ? html`<p class="front-crew muted">
+            Shipped ${timeAgo(signals.shippedAt)}${signals.ships > 0
+              ? ` · ${signals.ships} change${signals.ships === 1 ? "" : "s"} merged this month`
+              : ""}
+          </p>`
+        : null;
+  return html`<section class="front-featured" aria-label="Featured">
+    ${when(
+      picture,
+      (src) =>
+        html`<a class="front-featured-look" href="${base}"
+          ><img
+            src="${src}"
+            width="${LOOK_SIZES.thumb.width}"
+            height="${LOOK_SIZES.thumb.height}"
+            alt="${repo.name} as it looks now"
+        /></a>`,
+    )}
+    <div class="front-featured-body">
+      <span class="small muted">Featured</span>
+      <h2><a href="${base}">${repo.ownerName}/${repo.name}</a></h2>
+      ${when(repo.description, (d) => html`<p>${d}</p>`)} ${work}
+      <div class="bar">${btn("Open", { href: base, variant: "primary" })}</div>
+    </div>
+  </section>`;
+}
+
+/**
+ * What a site admin may change about the front page, on the page itself
+ * (`/front`): every pin in order with move and unpin, every shown app with
+ * pin and hide, every hidden one with show, and a name to pin anything —
+ * a private pin waits, unshown, until its repository is public.
+ */
+function frontControls(ctx: Ctx, front: FrontPage): Html {
+  const picks = frontPicksJson(ctx.app);
+  const act = (action: string, repo: string, label: string): Html =>
+    html`<form method="post" action="/front" class="inline">
+      <input type="hidden" name="action" value="${action}" />
+      <input type="hidden" name="repo" value="${repo}" />
+      ${btn(label, { size: "sm" })}
+    </form>`;
+  const name = (e: FrontEntry) => `${e.repo.ownerName}/${e.repo.name}`;
+  const shownToStrangers = (full: string): boolean => {
+    const [owner = "", repoName = ""] = full.split("/");
+    const repo = getRepo(ctx.app.db, owner, repoName);
+    return repo !== undefined && canRead(ctx.app.db, repo, undefined);
+  };
+  const unpinnedShown = [
+    ...(front.featured !== undefined && !front.featured.pinned ? [front.featured] : []),
+    ...front.shelf.filter((e) => !e.pinned),
+  ];
+  const row = (label: string, controls: Html): Html =>
+    html`<li class="row front-pick">
+      <span class="mono truncate">${label}</span>
+      <span class="spacer"></span>${controls}
+    </li>`;
+  return card(
+    html`<ul class="list">
+        ${picks.pinned.map((repo, at) =>
+          row(
+            `${at + 1}. ${repo}${shownToStrangers(repo) ? "" : " (private: shown once public)"}`,
+            html`${when(at > 0, () => act("up", repo, "Up"))}
+            ${when(at < picks.pinned.length - 1, () => act("down", repo, "Down"))}
+            ${act("unpin", repo, "Unpin")}`,
+          ),
+        )}
+        ${unpinnedShown.map((e) =>
+          row(name(e), html`${act("pin", name(e), "Pin")} ${act("hide", name(e), "Hide")}`),
+        )}
+        ${picks.hidden.map((repo) =>
+          row(`${repo} (hidden)`, act("show", repo, "Show")),
+        )}
+      </ul>
+      <form method="post" action="/front" class="bar front-pin-any">
+        <input type="hidden" name="action" value="pin" />
+        <input
+          class="input"
+          name="repo"
+          placeholder="owner/name"
+          aria-label="Repository to pin"
+          required
+        />
+        ${btn("Pin", { size: "sm" })}
+      </form>
+      <p class="small muted">
+        The first pin a stranger can read is featured; the rest lead the
+        shelf in this order. The same setting:
+        <code class="mono">PUT /api/v1/front</code> and the MCP tool
+        <code class="mono">front_page</code>.
+      </p>`,
+    {
+      head: html`${icon("settings")}
+        <h2>The front page</h2>`,
+      extra: "front-controls",
+    },
+  );
+}
+
+/**
+ * The studio's door for a stranger (#686): one path — the forge, a few
+ * live apps, open one or sign in. A featured repository the owner picks,
+ * shown with its crew at work; then the best of what is public, ranked by
+ * real signals with at most two per owner near the top (`actions/front.ts`
+ * decides all of it, and the API and MCP answer from the same place); then
+ * one link to the rest. A signed-out reader gets this whatever the mode.
  *
- * Three grouped reads carry the whole shelf (the apps, their repositories,
- * their looks), and a repository's runtime state is a map lookup
- * (`AppsRuntime.status`), not a process call — so this never gets slower
- * as the forge grows apps, the one page anonymous traffic actually hits.
+ * `/front` is the same page for anyone; a site admin there also gets the
+ * controls that decide it.
  */
 export function studioDoor(ctx: Ctx): Response {
-  const db = ctx.app.db;
-  const records = listPublicApps(db, DOOR_READ);
-  const repos = getReposByIds(
-    db,
-    records.map((r) => r.repoId),
-  );
-  const runtime = appsRuntime(ctx.app);
-  const apps = records.flatMap((record) => {
-    const repo = repos.get(record.repoId);
-    if (repo === undefined) return [];
-    const production = (
-      runtime === undefined ? [] : runtime.status(record)
-    ).find((env) => env.env === "production");
-    return [{ record, repo, state: production?.state ?? "stopped" }];
-  });
-  // `sort` is stable: newest first within each liveness.
-  const shown = apps
-    .sort((a, b) => LIVENESS[a.state] - LIVENESS[b.state])
-    .slice(0, DOOR_TILES);
-  const looks = looksForApps(
-    db,
-    shown.map((a) => a.record.id),
-  );
-  const tiles = shown.map(({ record, repo, state }) => {
-    const ofApp = looks.filter(
-      (l) =>
-        l.appId === record.id &&
-        l.env === "production" &&
-        l.page === DEFAULT_PAGE,
-    );
-    // The thumb alone: it is the one picture taken as a stranger sees the
-    // app. The desktop picture is the owner's view, never a stranger's.
-    const thumb = pictured(ofApp, "thumb");
-    const look =
-      thumb !== undefined && mayFetchLook(ctx, repo, record, thumb)
-        ? thumb
-        : undefined;
-    const base = repoBase(repo);
-    return html`<a class="app-tile" href="${base}">
-      ${look
-        ? html`<img
-            class="app-tile-look"
-            src="${lookUrl(base, look)}"
-            width="${LOOK_SIZES[look.kind].width}"
-            height="${LOOK_SIZES[look.kind].height}"
-            alt=""
-            loading="lazy"
-          />`
-        : html`<span class="app-tile-blank" aria-hidden="true"
-            >${icon("rocket")}</span
-          >`}
-      <span class="app-tile-body">
-        <span class="app-tile-name">${repo.name}</span>
-        ${repo.description !== ""
-          ? html`<span
-              class="app-tile-desc truncate"
-              title="${repo.description}"
-              >${repo.description}</span
-            >`
-          : null}
-        ${envStateBadge(state)}
-      </span>
-    </a>`;
-  });
-
+  const front = frontPage(ctx.app);
+  const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
+  const tiles = front.shelf.map(tile);
   const body = html`<section class="hero">
       <h1>Apps, live.</h1>
       <p>A software forge that builds and serves its own apps.</p>
       <div class="bar">
-        ${ctx.app.config.edgeToken === undefined
-          ? html`${btn("Create an account", {
-              href: "/signup",
-              variant: "primary",
-              size: "lg",
-            })}
-            ${btn("Sign in", { href: "/signin", size: "lg" })}`
-          : btn("Sign in", {
-              href: edgeLoginUrl("/"),
-              variant: "primary",
-              size: "lg",
-            })}
+        ${ctx.auth.user !== undefined
+          ? null
+          : ctx.app.config.edgeToken === undefined
+            ? html`${btn("Create an account", {
+                href: "/signup",
+                variant: "primary",
+                size: "lg",
+              })}
+              ${btn("Sign in", { href: "/signin", size: "lg" })}`
+            : btn("Sign in", {
+                href: edgeLoginUrl("/"),
+                variant: "primary",
+                size: "lg",
+              })}
       </div>
       ${when(
         sshCommand(ctx.app),
@@ -295,14 +390,74 @@ export function studioDoor(ctx: Ctx): Response {
           </p>`,
       )}
     </section>
+    ${when(front.featured, (f) => html`<div class="mt">${featuredCard(f)}</div>`)}
     ${tiles.length > 0
-      ? html`<div class="mt app-shelf">${tiles}</div>`
-      : html`<div class="mt">
-          ${empty({
-            icon: "rocket",
-            title: "Nothing public is up yet",
-            note: "Apps made public here show up on this shelf once they run.",
-          })}
-        </div>`}`;
+      ? html`<div class="mt app-shelf">${tiles}</div>
+          ${when(
+            front.total > tiles.length + (front.featured === undefined ? 0 : 1),
+            () =>
+              html`<p class="mt front-more">
+                <a href="/apps">All ${front.total} public apps</a>
+              </p>`,
+          )}`
+      : front.featured === undefined
+        ? html`<div class="mt">
+            ${empty({
+              icon: "rocket",
+              title: "Nothing public is up yet",
+              note: "Apps made public here show up on this shelf once they run.",
+            })}
+          </div>`
+        : null}
+    ${when(admin, () => html`<div class="mt front-admin">${frontControls(ctx, front)}</div>`)}`;
   return page({ ctx, title: "forge", body });
+}
+
+/** The pick one `/front` button asks for, applied to the current picks. */
+function nextPicks(
+  current: FrontPicksJson,
+  action: string,
+  repo: string,
+): FrontPicksJson | undefined {
+  const pinned = current.pinned.filter((r) => r !== repo);
+  const hidden = current.hidden.filter((r) => r !== repo);
+  const at = current.pinned.indexOf(repo);
+  switch (action) {
+    case "pin":
+      return { pinned: [...pinned, repo], hidden };
+    case "unpin":
+    case "show":
+      return { pinned, hidden };
+    case "hide":
+      return { pinned, hidden: [...hidden, repo] };
+    case "up":
+    case "down": {
+      if (at === -1) return undefined;
+      const to = Math.max(0, Math.min(pinned.length, at + (action === "up" ? -1 : 1)));
+      return { pinned: [...pinned.slice(0, to), repo, ...pinned.slice(to)], hidden };
+    }
+    default:
+      return undefined;
+  }
+}
+
+// POST /front — one change to the front page's picks, a site admin's.
+export async function frontUpdate(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
+  const repo = field(form, "repo").trim();
+  const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), repo);
+  if (next === undefined) return new Response("bad request", { status: 400 });
+  const set = setFront(ctx.app, ctx.auth.user, next);
+  return redirect("/front", {
+    url: ctx.url,
+    flash: set.ok
+      ? { message: "The front page is updated." }
+      : {
+          tone: "danger",
+          message: set.error.kind === "invalid" ? set.error.message : "Not yours to change.",
+        },
+  });
 }

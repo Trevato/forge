@@ -20,6 +20,16 @@ import {
   readFeed,
 } from "../feed/feed.ts";
 import { asksAnswer } from "../web/studio/asks.ts";
+import {
+  applyAsksBulk,
+  isAsksOperation,
+  previewAsksBulk,
+} from "../actions/asks_bulk.ts";
+import {
+  getFleetOp,
+  undoFleetOp,
+  type FleetError,
+} from "../actions/fleet.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import {
@@ -65,6 +75,36 @@ export function feedRoutes(router: Router<Handler>): void {
     return json(asksAnswer(ctx, viewer), 200, {
       "cache-control": "private, no-store",
     });
+  });
+
+  // Many asks, one action (`actions/asks_bulk.ts`): a preview by default,
+  // which needs only a read credential; acting takes rw, as acting on each
+  // one would. The receipt is a fleet operation, undone below.
+  router.add("POST", "/api/v1/asks/bulk", async (ctx) => {
+    const input = await body(ctx.request);
+    const preview = input.preview !== false;
+    const denied = requireScope(ctx, preview ? "ro" : "rw");
+    if (denied) return denied;
+    if (preview) {
+      const plan = previewAsksBulk(ctx.app, ctx.auth.user, input.action, input.items);
+      if (!plan.ok) return bulkError(plan.error);
+      return json({ preview: true, ...plan.value });
+    }
+    const op = await applyAsksBulk(ctx.app, ctx.auth.user, input.action, input.items);
+    if (!op.ok) return bulkError(op.error);
+    return json({ preview: false, ...op.value }, 201);
+  });
+
+  // Undo a bulk action on asks — only an asks operation: anything else a
+  // fleet operation did takes an admin credential at /api/v1/fleet/ops.
+  router.add("POST", "/api/v1/asks/bulk/:id/undo", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = getFleetOp(ctx.app, ctx.auth.user, ctx.params.id!);
+    if (!found.ok || !isAsksOperation(found.value)) return notFound();
+    const op = await undoFleetOp(ctx.app, ctx.auth.user, found.value.id);
+    if (!op.ok) return bulkError(op.error);
+    return json(op.value, 201);
   });
 
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {
@@ -167,4 +207,15 @@ export function parseTargets(raw: unknown): string[] | undefined {
     out.push(name);
   }
   return out;
+}
+
+/** A bulk refusal, with the access codes in their fixed shapes. */
+function bulkError(error: FleetError): Response {
+  if (error.code === "not_found") return notFound();
+  if (error.code === "unauthorized") return unauthorized();
+  return apiError(
+    error.code,
+    error.code === "forbidden" ? 403 : error.code === "already_undone" ? 409 : 422,
+    error.message,
+  );
 }

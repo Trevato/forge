@@ -786,11 +786,15 @@ async function work(
       ownerId: repo.ownerId,
       agentId: agent.user.id,
     };
+    // What this run may spend at most; on a budgeted account the pick
+    // reserves it (or what is left, if less) against the account's budget.
+    const ownBudget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
     const picked = pickSubscription(
       app.db,
       app.config.dataDir,
       scope,
       new Date(),
+      { runId: run.id, usd: ownBudget },
     );
     if (picked.kind === "resting") {
       const names = picked.names.join(", ");
@@ -837,7 +841,10 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
+    const budget =
+      picked.kind === "ready" && picked.capUsd !== undefined
+        ? Math.min(ownBudget, picked.capUsd)
+        : ownBudget;
     const reserve = wrapUpReserve(budget);
     const sandbox = sandboxPolicy({
       dataDir: app.config.dataDir,

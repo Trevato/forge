@@ -67,6 +67,81 @@ export const EVERYONE = "";
 
 export type SubscriptionError = "invalid_name" | "name_taken" | "invalid_token";
 
+/** How soon an account out of budget is looked at again. */
+const BUDGET_RECHECK_MS = 3_600_000;
+/** Less than this left on a budget is not worth starting a run on. */
+export const MIN_RUN_USD = 0.25;
+
+/**
+ * What an account has committed, as SQL over its runs (`s` is the
+ * subscription row, `?4` the run picking now): every run's cost, and for a
+ * run still queued or running, its reservation when that is larger — never
+ * the picking run's own reservation, which it is about to make again.
+ */
+const COMMITTED = `(SELECT COALESCE(SUM(
+    CASE WHEN r.state IN ('queued', 'running') AND r.id <> ?4
+         THEN MAX(COALESCE(r.budget_reserved_usd, 0), r.cost_usd)
+         ELSE r.cost_usd END), 0)
+  FROM run r WHERE r.subscription_id = s.id)`;
+export const BUDGET_MAX_USD = 100_000;
+
+/** An account's whole-life budget and what its runs have spent, in dollars. */
+export interface Budget {
+  readonly budgetUsd: number | null;
+  readonly spentUsd: number;
+  /** Set by whoever made this forge (a spawned child's starter key): not this forge's to raise. */
+  readonly locked: boolean;
+}
+
+/** Every sealed account's budget and spend, by id, in one read. */
+export function budgetsOf(db: Database): Map<string, Budget> {
+  const rows = db
+    .query<{ id: string; budget_usd: number | null; spent_usd: number; budget_locked: number }, []>(
+      `SELECT s.id, s.budget_usd, s.budget_locked,
+              (SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = s.id) AS spent_usd
+       FROM subscription s WHERE s.id <> 'platform'`,
+    )
+    .all();
+  return new Map(
+    rows.map((r) => [r.id, { budgetUsd: r.budget_usd, spentUsd: r.spent_usd, locked: r.budget_locked === 1 }]),
+  );
+}
+
+/**
+ * Set or clear (null) an account's whole-life budget. False for no such
+ * sealed account, a budget out of range, or a locked budget: one set by
+ * whoever made this forge is never changed from inside it.
+ */
+export function setBudget(db: Database, subscriptionId: string, usd: number | null): boolean {
+  if (usd !== null && !(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
+  const value = usd === null ? null : Math.round(usd * 100) / 100;
+  // A locked budget may only come down: never up, never cleared.
+  return (
+    db
+      .query(
+        `UPDATE subscription SET budget_usd = ?1
+         WHERE id = ?2 AND id <> 'platform'
+           AND (budget_locked = 0 OR (?1 IS NOT NULL AND ?1 < budget_usd))`,
+      )
+      .run(value, subscriptionId).changes > 0
+  );
+}
+
+/**
+ * A budget that cannot be raised from inside this forge: what spawn puts on
+ * a child's starter key, so the spawner's money ends where they said.
+ */
+export function lockBudget(db: Database, subscriptionId: string, usd: number): boolean {
+  if (!(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
+  return (
+    db
+      .query(
+        "UPDATE subscription SET budget_usd = ?1, budget_locked = 1 WHERE id = ?2 AND id <> 'platform'",
+      )
+      .run(Math.round(usd * 100) / 100, subscriptionId).changes > 0
+  );
+}
+
 const toSubscription = (r: Row): Subscription => ({
   id: r.id,
   name: r.name,
@@ -366,6 +441,8 @@ export type Pick =
       readonly subscription: Subscription;
       readonly envName: string;
       readonly token: string;
+      /** On a budgeted account: the most this run may spend, reserved for it. */
+      readonly capUsd?: number;
     }
   /** Every account on the nearest grant is resting; the earliest to wake. */
   | {
@@ -393,30 +470,57 @@ export function pickSubscription(
   dataDir: string,
   scope: PickScope,
   now: Date,
+  reserve?: { readonly runId: string; readonly usd: number },
 ): Pick {
   const rows = db
     .query<
-      Row & { scope_id: string; agent_id: string; token_enc: string },
-      [string, string, string]
+      Row & {
+        scope_id: string;
+        agent_id: string;
+        token_enc: string;
+        budget_usd: number | null;
+        spent_usd: number;
+      },
+      [string, string, string, string]
     >(
       `SELECT g.scope_id, g.agent_id, s.id, s.name, s.kind, s.token_enc, s.resting_until,
-              s.resting_said, s.last_used_at, s.created_by, s.created_at
+              s.resting_said, s.last_used_at, s.created_by, s.created_at, s.budget_usd,
+              ${COMMITTED} AS spent_usd
        FROM subscription_grant g JOIN subscription s ON s.id = g.subscription_id
        WHERE g.scope_id IN (?1, ?2) AND g.agent_id IN (?3, '') AND s.id <> 'platform'
        ORDER BY (g.scope_id = ?1) DESC, (g.agent_id = ?3) DESC,
                 s.last_used_at IS NOT NULL, s.last_used_at, s.name COLLATE NOCASE`,
     )
-    .all(scope.repoId, scope.ownerId, scope.agentId);
+    .all(scope.repoId, scope.ownerId, scope.agentId, reserve?.runId ?? "");
   const first = rows[0];
   if (first === undefined) return { kind: "env" };
   const grant = rows.filter(
     (r) => r.scope_id === first.scope_id && r.agent_id === first.agent_id,
   );
+  // An account whose whole-life budget is spent is not offered again until
+  // an admin raises it; looked at again within the hour, so a raise is felt.
+  // Spent counts what other runs on it may still spend (their reservation)
+  // as well as what every run has spent, so runs started together cannot
+  // each pass a budget that only one of them fits in.
+  const spent = (r: (typeof grant)[number]) =>
+    r.budget_usd !== null && r.budget_usd - r.spent_usd < MIN_RUN_USD;
   const awake = grant.find(
-    (r) => r.resting_until === null || r.resting_until <= now.toISOString(),
+    (r) =>
+      !spent(r) &&
+      (r.resting_until === null || r.resting_until <= now.toISOString()),
   );
+  if (awake === undefined && grant.every(spent)) {
+    const first = grant[0]!;
+    return {
+      kind: "resting",
+      until: new Date(now.getTime() + BUDGET_RECHECK_MS).toISOString(),
+      said: `its $${first.budget_usd} budget is spent; an admin can raise it`,
+      names: grant.map((r) => r.name),
+    };
+  }
   if (awake === undefined) {
     const soonest = grant
+      .filter((r) => !spent(r) && r.resting_until !== null)
       .map((r) => r.resting_until!)
       .sort()
       .at(0)!;
@@ -441,11 +545,22 @@ export function pickSubscription(
   }
   const subscription = toSubscription(awake);
   touchSubscription(db, awake.id, now);
+  // On a budgeted account the run may spend at most what is left, and that
+  // much is reserved for it now, in the same synchronous step as the
+  // choice, so the next pick already counts it.
+  let capUsd: number | undefined;
+  if (awake.budget_usd !== null && reserve !== undefined) {
+    capUsd = Math.max(0, Math.min(reserve.usd, awake.budget_usd - awake.spent_usd));
+    db.query(
+      "UPDATE run SET subscription_id = ?1, budget_reserved_usd = ?2 WHERE id = ?3",
+    ).run(awake.id, capUsd, reserve.runId);
+  }
   return {
     kind: "ready",
     subscription: { ...subscription, lastUsedAt: now.toISOString() },
     envName: envNameOf(subscription.kind),
     token: opened.value,
+    ...(capUsd === undefined ? {} : { capUsd }),
   };
 }
 

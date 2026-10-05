@@ -94,6 +94,7 @@ import { createLog } from "../kernel/log.ts";
 import {
   directorsAmong,
   landsOnItsOwn,
+  markReaders,
   proposedWork,
   speaksForCrew,
 } from "./direct.ts";
@@ -914,6 +915,29 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
  * critical path); the decider, when there is one, chooses among the first
  * few with the direction in hand. Recorded, so a pick can be judged later.
  */
+/**
+ * The ready issues as the next-issue decider reads them: a reader's words
+ * carry the brief's mark here too (`markReaders`), though it can only pick
+ * a number.
+ */
+export function readyState(
+  db: Database,
+  repo: Repo,
+  few: readonly Ranked[],
+): Record<string, unknown>[] {
+  return markReaders(
+    db,
+    repo,
+    few.map((r) => r.issue),
+  ).map((issue, n) => ({
+    number: issue.number,
+    title: issue.title,
+    body: issue.body.slice(0, 400),
+    holdsUp: few[n]!.holdsUp,
+    ...(issue.untrusted === undefined ? {} : { untrusted: issue.untrusted }),
+  }));
+}
+
 async function nextOf(
   app: App,
   repo: Repo,
@@ -934,12 +958,7 @@ async function nextOf(
     { kind: "next", repo, issue: first.issue },
     {
       direction: repo.autonomyDirection,
-      ready: few.map((r) => ({
-        number: r.issue.number,
-        title: r.issue.title,
-        body: r.issue.body.slice(0, 400),
-        holdsUp: r.holdsUp,
-      })),
+      ready: readyState(app.db, repo, few),
     },
     {
       next: {
