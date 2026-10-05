@@ -7,12 +7,21 @@
  * `Later gate:`, and stands under the Later umbrella (`Later: …`) where the
  * repository keeps one.
  *
+ * A title is not enough, because anyone who may open an issue may write one.
+ * An issue stands for a pillar, the gate or the Later umbrella only when a
+ * person who writes the repository opened it here: not an agent, not someone
+ * who can only read, and not an issue imported from an origin under another
+ * name. So a stranger's "P0 …" on a public repository makes no pillar, and
+ * their "Later gate: …" holds nothing and opens nothing.
+ *
  * A repository with no such issues has no pillars, and plans as it always
  * did.
  */
 
 import type { Database } from "bun:sqlite";
 import { getIssuesByIds, type Issue } from "./issues.ts";
+import { canWrite, type Repo } from "./repos.ts";
+import { getUserById } from "./users.ts";
 
 export interface Pillar {
   /** `P0`. */
@@ -38,16 +47,35 @@ const LATER = /^Later:/i;
 /** More umbrellas than a direction has pillars. */
 const MAX = 64;
 
+/** An open issue, written here by a person, that is titled like an umbrella or the gate. */
+const TITLED = `issue.repo_id = ?1 AND issue.kind = 'issue' AND issue.state = 'open'
+  AND issue.origin_author IS NULL
+  AND (issue.title GLOB 'P[0-9]*' OR issue.title LIKE 'Later%')`;
+
 /** The pillars, the Later gate and the Later umbrella of one repository. */
-export function pillarsOf(db: Database, repoId: string): Pillars {
-  const ids = db
-    .query<{ id: string }, [string, number]>(
-      `SELECT id FROM issue
-        WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
-          AND (title GLOB 'P[0-9]*' OR title LIKE 'Later%')
-        ORDER BY number LIMIT ?2`,
+export function pillarsOf(db: Database, repo: Repo): Pillars {
+  // Who among the people that opened such an issue writes the repository.
+  // Asked per author, not per issue, and before the cap: however many
+  // issues a stranger opens, none of them takes a real umbrella's place.
+  const writers = db
+    .query<{ id: string }, [string]>(
+      `SELECT DISTINCT issue.author_id AS id
+         FROM issue JOIN user ON user.id = issue.author_id
+        WHERE ${TITLED} AND user.kind = 'user' AND user.is_agent = 0`,
     )
-    .all(repoId, MAX)
+    .all(repo.id)
+    .map((row) => row.id)
+    .filter((id) => canWrite(db, repo, getUserById(db, id)));
+  if (writers.length === 0)
+    return { pillars: [], gate: undefined, later: undefined };
+  const ids = db
+    .query<{ id: string }, (string | number)[]>(
+      `SELECT issue.id FROM issue
+        WHERE ${TITLED}
+          AND issue.author_id IN (${writers.map((_, i) => `?${i + 3}`).join(",")})
+        ORDER BY issue.number LIMIT ?2`,
+    )
+    .all(repo.id, MAX, ...writers)
     .map((row) => row.id);
   const issues = [...getIssuesByIds(db, ids).values()].sort(
     (a, b) => a.number - b.number,

@@ -123,7 +123,11 @@ an issue is what frees the next.
 A direction can name what the work is for. Each such _pillar_ is an open
 umbrella issue whose title starts with its name — `P0 Trust: …` — and an
 issue serves the pillar whose umbrella waits for it; nothing else records
-it (`src/core/pillars.ts`). Work that serves no pillar is not dropped and
+it (`src/core/pillars.ts`). A title alone does not make one: the umbrella,
+the gate and the Later umbrella count only when a person who writes the
+repository opened them here — not an agent, not a reader, not an issue
+imported from an origin — so on a public repository a stranger's "P0 …"
+makes no pillar and their "Later gate: …" holds nothing. Work that serves no pillar is not dropped and
 is not ready either: it waits behind the _Later gate_, the open issue whose
 title starts `Later gate:`, opens with one sentence that says why it waits,
 and stands under the `Later: …` umbrella where the repository keeps one.

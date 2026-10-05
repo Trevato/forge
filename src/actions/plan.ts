@@ -231,7 +231,7 @@ export function openPlan(
 
   // What each item is for. A repository with pillars takes no item that
   // says neither which one it serves nor that it waits.
-  const { pillars, gate, later } = pillarsOf(app.db, repo.id);
+  const { pillars, gate, later } = pillarsOf(app.db, repo);
   const serves = new Map<string, Pillar>();
   for (const item of items) {
     if (item.later !== undefined) {
