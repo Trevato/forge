@@ -7,7 +7,7 @@
  */
 
 import { decay, type Affinity, type Weighted, type Why } from "./affinity.ts";
-import type { Candidate } from "./items.ts";
+import type { Candidate, FeedAsk } from "./items.ts";
 
 export interface FeedItem {
   readonly id: string;
@@ -20,6 +20,8 @@ export interface FeedItem {
   /** One sentence: why this, and why here. */
   readonly reason: string;
   readonly score: number;
+  /** For an ask: the decision, options, default and rank. */
+  readonly ask?: FeedAsk;
 }
 
 const RECENCY_MAX = 4;
@@ -137,6 +139,7 @@ export function rank(
       link: s!.c.link,
       reason: s!.reason,
       score: Math.round(bestScore * 1e6) / 1e6,
+      ...(s!.c.ask === undefined ? {} : { ask: s!.c.ask }),
     });
   }
   return out;

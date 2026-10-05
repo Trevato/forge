@@ -972,15 +972,29 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/runs?word=shipped")).text();
     expect(other).not.toContain(`href="/alice/notes/runs/${run.id}"`);
 
+    // One list (#629): the cookie and the query both answer it.
     finishRun(app.db, run.id, { state: "failed", summary: "boom" });
-    const dev = await (
-      await get("/alice/notes/runs", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain("Failed");
-    expect(dev).not.toContain("data-word=");
+    for (const dev of [
+      await get("/alice/notes/runs?word=stopped", {
+        cookie: `${cookie}; forge_mode=dev`,
+      }),
+      await get("/alice/notes/runs?word=stopped&mode=dev"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="stopped"');
+      expect(text).toContain(`href="/alice/notes/runs/${run.id}"`);
+      expect(text).not.toContain("See dev's list");
+    }
+    // Deploys and checks are one quiet link away, and `?kind=` keeps the
+    // meaning a link to dev's list gave it.
+    expect(page).toContain('href="/alice/notes/runs?kind=deploy"');
+    expect(page).toContain('href="/alice/notes/runs?kind=check"');
+    const deploys = await (await get("/alice/notes/runs?kind=deploy")).text();
+    expect(deploys).not.toContain(`href="/alice/notes/runs/${run.id}"`);
+    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=told"');
   });
 
-  test("issues and pulls on a repository that is not an app are the same one list; runs still render what they render today", async () => {
+  test("issues, pulls and runs on a repository that is not an app are the same one list", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainlists",
       visibility: "private",
@@ -1014,7 +1028,7 @@ describe("the studio", () => {
     }
 
     const runs = await (await get("/alice/plainlists/runs")).text();
-    expect(runs).not.toContain(">Working<");
+    expect(runs).toContain(`href="/alice/plainlists/runs?word=working"`);
     expect(runs).not.toContain("See dev's list");
   });
 
@@ -3956,9 +3970,41 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain('id="run-steer"');
     expect(page).toContain("Steer scout");
     expect(page).toContain('id="run-stop"');
-    // The transcript is on the page, and dev's own reading is one click away.
+    // The transcript is on the page, and there is no second reading of it.
     expect(page).toContain('id="run-log"');
-    expect(page).toContain(`href="/alice/engine/runs/${run.id}?mode=dev"`);
+    expect(page).not.toContain("?mode=dev");
+  });
+
+  test("a long transcript holds its last window, and the whole of it is one step deeper at ?all=1", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    for (let n = 0; n < 450; n++)
+      appendRunLog(app.config.dataDir, run.id, `line number ${n}`);
+    finishRun(app.db, run.id, { state: "ok", summary: "done" });
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(page).not.toContain("line number 0<");
+    expect(page).toContain("line number 449");
+    expect(page).toContain(`href="/alice/engine/runs/${run.id}?all=1"`);
+
+    const all = await (
+      await get(`/alice/engine/runs/${run.id}?all=1`, writerCookie)
+    ).text();
+    expect(all).toContain("line number 0<");
+    expect(all).toContain("line number 449");
+
+    // The depth step is refused exactly as the run is.
+    const anon = await fetch(`${base}/alice/engine/runs/${run.id}?all=1`, {
+      redirect: "manual",
+    });
+    expect(anon.status).toBe(404);
   });
 
   test("a reader without access gets the forge's not-found, exactly as dev", async () => {

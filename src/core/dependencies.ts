@@ -13,6 +13,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf } from "./pillars.ts";
 import { getRepoById } from "./repos.ts";
+import { unadoptedAmong } from "../crew/direct.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
 
@@ -26,13 +27,16 @@ export interface Edge {
 /**
  * Link `issue` as blocked by `blocker`. Refused when it would close a loop:
  * a plan with a cycle has no first step, and the map would have nowhere to
- * start it. Linking twice is not an error; the edge simply exists.
+ * start it. Linking twice is not an error; the edge simply exists — and
+ * when `restate` is set (a person who writes here linked it), it is theirs
+ * from now on, which is what adopts a reader's issue (`crew/direct.ts`).
  */
 export function addDependency(
   db: Database,
   issue: Issue,
   blocker: Issue,
   actorId: string | undefined,
+  restate = false,
 ): Result<void, DependencyError> {
   if (issue.id === blocker.id) return err("self");
   if (issue.repoId !== blocker.repoId) return err("cross_repo");
@@ -40,8 +44,9 @@ export function addDependency(
     return err("not_an_issue");
   if (reaches(db, blocker.id, issue.id)) return err("cycle");
   db.query(
-    `INSERT OR IGNORE INTO issue_dependency (issue_id, blocked_by_id, actor_id)
-     VALUES (?1, ?2, ?3)`,
+    `INSERT INTO issue_dependency (issue_id, blocked_by_id, actor_id)
+     VALUES (?1, ?2, ?3)
+     ON CONFLICT DO ${restate ? "UPDATE SET actor_id = excluded.actor_id" : "NOTHING"}`,
   ).run(issue.id, blocker.id, actorId ?? null);
   return ok(undefined);
 }
@@ -194,6 +199,11 @@ export interface Graph {
    */
   readonly held: Held[];
   /**
+   * Open issues a reader opened that no one who may direct the crew has
+   * adopted (`crew/direct.ts`): on the map, never ready for the crew.
+   */
+  readonly unadopted: ReadonlySet<string>;
+  /**
    * Open issues that are deferred (`deferredIn`): behind the Later gate, or
    * needed only by what is. None of them is ready.
    */
@@ -289,11 +299,14 @@ export function repoGraph(db: Database, repoId: string): Graph {
   const kept = edges.filter(
     (e) => present.has(e.issueId) && present.has(e.blockedById),
   );
+  const repo = getRepoById(db, repoId);
   // Only where there are edges can anything be behind a gate.
-  const repo = kept.length === 0 ? undefined : getRepoById(db, repoId);
-  const set = repo === undefined ? undefined : pillarsOf(db, repo);
+  const set =
+    repo === undefined || kept.length === 0 ? undefined : pillarsOf(db, repo);
   return {
     issues,
+    unadopted:
+      repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
     edges: kept,
     held: heldRows.map((r) => ({
       issueId: r.issue_id,
@@ -385,7 +398,8 @@ function waitsForMap(
 
 /**
  * Open issues nothing open stands in front of and that are not deferred,
- * first the ones whose finishing frees the most, then the oldest. What a
+ * first the ones whose finishing frees the most, then the oldest — a
+ * reader's suggestion only once someone who writes here adopted it. What a
  * free crew slot takes next.
  */
 export function readyNow(graph: Graph): Ranked[] {
@@ -398,6 +412,7 @@ export function readyNow(graph: Graph): Ranked[] {
       (i) =>
         open.has(i.id) &&
         !held.has(i.id) &&
+        !graph.unadopted.has(i.id) &&
         !graph.deferred.has(i.id) &&
         (waits.get(i.id)?.size ?? 0) === 0,
     )

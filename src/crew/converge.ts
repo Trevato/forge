@@ -14,6 +14,7 @@
  * Nothing here ever moves the fork's default branch by itself.
  */
 
+import { mayDirectCrew } from "./direct.ts";
 import type { App } from "../app.ts";
 import { openIssue } from "../actions/issues.ts";
 import { listCrewRoles, type Agent } from "../core/agents.ts";
@@ -55,6 +56,8 @@ export type Converge =
   | { kind: "nothing"; relation: ForkRelation | undefined }
   | { kind: "no_crew" }
   | { kind: "nobody" }
+  /** The person asking may not direct the crew here (`direct.ts`). */
+  | { kind: "forbidden" }
   | { kind: "ceiling" };
 
 /** The fork's open converge issue, if the parent's updates are in hand. */
@@ -99,7 +102,7 @@ export function convergeState(
     )?.agent;
     return { kind: "working", issue, agent };
   }
-  if (parkedCount(app, issue.id) >= PARK_STRIKES) return { kind: "parked", issue };
+  if (parkedCount(app, fork, issue.id) >= PARK_STRIKES) return { kind: "parked", issue };
   return { kind: "working", issue, agent: undefined };
 }
 
@@ -128,6 +131,10 @@ export async function convergeFork(
   parent: Repo,
   actor: User | undefined,
 ): Promise<Converge> {
+  // Asked by someone, it is their run to start; asked by nobody, it is the
+  // fork's own autonomy, which its owner turned on.
+  if (actor !== undefined && !mayDirectCrew(app.db, fork, actor))
+    return { kind: "forbidden" };
   const relation = await forkRelation(app, fork, parent);
   if (relation === undefined || relation.state !== "diverged" || relation.clean)
     return { kind: "nothing", relation };

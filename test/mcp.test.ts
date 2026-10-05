@@ -158,6 +158,7 @@ describe("the forge over MCP", () => {
       "tell",
       "share",
       "say",
+      "asks",
       "now",
       "stop",
       "audit",

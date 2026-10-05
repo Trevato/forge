@@ -153,7 +153,7 @@ describe("an interrupted run is not a park", () => {
       await tick();
     }
     expect(parks(work)).toEqual([]);
-    expect(parkedCount(app, work.id)).toBe(0);
+    expect(parkedCount(app, fresh(), work.id)).toBe(0);
     // Three outages inside the hour are not three failures.
     expect(breakerTripped(app.db, work.id)).toBe(false);
     // Not stalled: nobody needs to speak for it to be picked again.
@@ -202,11 +202,11 @@ describe("an interrupted run is not a park", () => {
     const work = issue("Scene graph");
     expect(ended(work, "no changes pushed: DECLINED: out of scope")).toBe(true);
     await tick();
-    expect(parkedCount(app, work.id)).toBe(1);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(false);
+    expect(parkedCount(app, fresh(), work.id)).toBe(1);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(false);
     expect(ended(work, "nothing to propose")).toBe(true);
-    expect(parkedCount(app, work.id)).toBe(2);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(true);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(true);
   });
 
   test("a word from the planner or a person counts again from zero; a builder's does not", async () => {
@@ -215,11 +215,11 @@ describe("an interrupted run is not a park", () => {
     await tick();
     ended(work, "nothing to propose");
     await tick();
-    expect(parkedCount(app, work.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
     // The builder's own report is not a re-plan.
     addComment(app, mason, fresh(), getIssueById(app.db, work.id)!, "Tried twice.");
     await tick();
-    expect(parkedCount(app, work.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
     addComment(
       app,
       atlas,
@@ -228,15 +228,15 @@ describe("an interrupted run is not a park", () => {
       "Split: only the fixed step here.",
     );
     await tick();
-    expect(parkedCount(app, work.id)).toBe(0);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(false);
+    expect(parkedCount(app, fresh(), work.id)).toBe(0);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(false);
     ended(work, "nothing to propose");
     await tick();
-    expect(parkedCount(app, work.id)).toBe(1);
+    expect(parkedCount(app, fresh(), work.id)).toBe(1);
     ended(work, "nothing to propose");
     await tick();
     addComment(app, alice, fresh(), getIssueById(app.db, work.id)!, "Try the fixed step.");
-    expect(parkedCount(app, work.id)).toBe(0);
+    expect(parkedCount(app, fresh(), work.id)).toBe(0);
   });
 });
 
