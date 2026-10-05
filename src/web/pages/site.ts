@@ -9,6 +9,7 @@
  */
 
 import { clientAddress } from "../../http/peer.ts";
+import { verifyEmail } from "../../actions/verify.ts";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
@@ -807,6 +808,25 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
     sessionCookie(session.token, session.expiresAt, ctx.url),
+  );
+}
+
+// GET /verify?token= — the link in a verification email.
+export function verifyPage(ctx: Ctx): Response {
+  const done = verifyEmail(ctx.app, ctx.url.searchParams.get("token") ?? "");
+  return page(
+    {
+      ctx,
+      title: done.ok ? "Email verified" : "Link not valid",
+      body: done.ok
+        ? html`<div class="page-head"><h1>Email verified</h1></div>
+            <p>Thank you, ${done.value.username}. Your email is verified: you can make repositories, apps and runs now.</p>
+            <p><a href="/">Go to the forge</a></p>`
+        : html`<div class="page-head"><h1>This link is not valid</h1></div>
+            <p>It has been used, or it has expired. Sign in and ask for another under Settings.</p>
+            <p><a href="/settings">Settings</a></p>`,
+    },
+    done.ok ? 200 : 400,
   );
 }
 

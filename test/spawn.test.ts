@@ -29,7 +29,7 @@ const post = (origin?: string) =>
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-spawn-"));
   app = createApp({ dataDir: dir, url: "https://forge.test" });
-  const made = await createUser(app.db, { username: "alice", email: "a@x.invalid", isAdmin: true });
+  const made = await createUser(app.db, { trusted: true, username: "alice", email: "a@x.invalid", isAdmin: true });
   if (!made.ok) throw new Error("user");
   alice = made.value;
   const repo = await createRepo(app, alice, { name: "notes" });
@@ -129,7 +129,7 @@ describe("spawnForge", () => {
   });
 
   test("owner-only, signed in, same-origin", async () => {
-    const bob = await createUser(app.db, { username: "bob", email: "b@x.invalid" });
+    const bob = await createUser(app.db, { trusted: true, username: "bob", email: "b@x.invalid" });
     if (!bob.ok) throw new Error();
     expect(await spawn({}, deps, bob.value)).toMatchObject({ error: { kind: "forbidden" } });
     expect(await spawnForge(app, undefined, input, source, deps)).toMatchObject({ error: { kind: "unauthorized" } });

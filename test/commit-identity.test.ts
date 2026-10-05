@@ -132,13 +132,13 @@ describe("commits the forge makes for a person", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-commit-identity-"));
     app = createApp({ dataDir, port: 0, host: "forge.example" });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@private.test",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@public.test",
       password: "a-good-passphrase",

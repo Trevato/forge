@@ -95,7 +95,12 @@ adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
 platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
 is the edge's secret: a request carrying it and `X-Plat-User` is that person,
-signed in by the platform, with an account made on first sight. Everything a forge
+signed in by the platform, with an account made on first sight. Mail out
+(the link that proves a newcomer's email) is SMTP submission over TLS,
+configured by the forge-level secrets `MAIL_SMTP_URL`
+(`smtps://user:pass@host:465`) and `MAIL_FROM`, set live under Settings →
+Secrets, or at boot by `FORGE_SMTP_URL` / `FORGE_MAIL_FROM`. With neither, no
+mail is sent and a newcomer waits for the owner to verify them. Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 

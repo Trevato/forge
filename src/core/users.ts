@@ -3,6 +3,7 @@
  * narrower; there is no second identity system.
  */
 
+import { markUnproven, markVerified } from "./verify.ts";
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { noreplyAddress } from "./commit_identity.ts";
@@ -110,6 +111,15 @@ export interface CreateUserInput {
    * @default false
    */
   agent?: boolean;
+  /**
+   * The caller vouches for this account's email: a seeded account (a
+   * spawned forge's admin, a claim, a test fixture). Without it the account
+   * starts unproven and must follow a link before it can create or cost
+   * (\`core/verify.ts\`) — so a way in added later that forgets to say so is
+   * held back, never trusted by accident. Agents are never held back.
+   * @default false
+   */
+  trusted?: boolean;
 }
 
 export async function createUser(
@@ -173,6 +183,11 @@ export async function createUser(
       >("SELECT username FROM user WHERE username = ?1")
       .get(input.username);
     return err(taken ? "username_taken" : "email_taken");
+  }
+  // Every person gets a row: proven when the caller vouches, else not yet.
+  if (!agent) {
+    if (input.trusted === true) markVerified(db, userId, new Date().toISOString());
+    else markUnproven(db, userId);
   }
   return ok(getUserById(db, userId)!);
 }
@@ -287,7 +302,12 @@ export async function ensureEdgeUser(
     email: noreplyAddress(login, host),
     adminIfFirst: true,
   });
-  return made.ok ? made.value : undefined;
+  if (!made.ok) return undefined;
+  // A newcomer through the edge starts unproven like one through /signup
+  // (its placeholder is no address at all); the forge's first account is
+  // proven by being first.
+  if (made.value.isAdmin) markVerified(db, made.value.id, made.value.createdAt);
+  return made.value;
 }
 
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */

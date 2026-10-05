@@ -4,6 +4,7 @@
  * gets `not_found`, the same as the pages that carry these forms.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addTeamMember as insertMember,
@@ -25,9 +26,11 @@ export function createOrg(
   app: App,
   actor: User | undefined,
   name: string,
-): Result<User, "unauthorized" | "name_reserved" | CreateOrgError> {
+): Result<User, "unauthorized" | "name_reserved" | "unverified" | CreateOrgError> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   // An org shares the account namespace: it may not take a reserved name.
   // A name someone already holds is taken (foundOrg says so); only a new
   // name can be a reserved one.
