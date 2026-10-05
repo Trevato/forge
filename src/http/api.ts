@@ -223,7 +223,7 @@ import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
-import type { Agent } from "../core/agents.ts";
+import { isCrew, type Agent } from "../core/agents.ts";
 import { listApps, type AppRecord } from "../core/apps.ts";
 import {
   CLOSE_REASONS,
@@ -344,13 +344,15 @@ function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
 /**
  * Things said in one repository, a reader's marked `untrusted` as the
  * crew's brief marks them (`markReaders`): a builder that fetches a thread
- * by hand reads the same warning (#619).
+ * by hand reads the same warning (#619). Only the repository's crew is
+ * told: to anyone else the mark would say which commenters cannot write.
  */
-function readerMarked<T extends { readonly authorName: string }>(
-  ctx: Ctx,
-  repoId: string,
-  items: readonly T[],
-): (T & { readonly untrusted?: string })[] {
+function readerMarked<
+  T extends { readonly authorName: string; readonly originAuthor?: string | null },
+>(ctx: Ctx, repoId: string, items: readonly T[]): (T & { readonly untrusted?: string })[] {
+  const viewer = ctx.auth.user;
+  if (viewer?.kind !== "agent" || !isCrew(ctx.app.db, repoId, viewer.id))
+    return [...items];
   const repo = getRepoById(ctx.app.db, repoId);
   return repo === undefined ? [...items] : markReaders(ctx.app.db, repo, items);
 }

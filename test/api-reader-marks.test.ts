@@ -198,6 +198,26 @@ describe("a reader's words over the API carry the brief's mark", () => {
     expect(first(lines, "alice").untrusted).toBeUndefined();
   });
 
+  test("only the crew is told: a person's token, a reader's or the owner's, sees no mark", async () => {
+    for (const who of [mallory, alice]) {
+      const token = createToken(app.db, who.id, "read", "ro").token;
+      const read = async (path: string) =>
+        (
+          await fetch(`${servers.url}/api/v1/repos/alice/square${path}`, {
+            headers: { authorization: `Bearer ${token}` },
+          })
+        ).text();
+      for (const path of [
+        `/issues/${issueNumber}`,
+        "/issues",
+        `/pulls/${pullNumber}`,
+        `/pulls/${pullNumber}/review-states`,
+        `/pulls/${pullNumber}/reviews`,
+      ])
+        expect(await read(path)).not.toContain('"untrusted"');
+    }
+  });
+
   test("a writer's issue carries no mark", async () => {
     const mine = ok(openIssue(app, alice, repo, { title: "Rounder logo" }));
     const issue = await get(`/issues/${mine.number}`);
