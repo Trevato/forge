@@ -43,7 +43,7 @@ import {
   plannerDeclines,
   spentTodayForRepos,
 } from "../../crew/autonomy.ts";
-import { breakerParked } from "../../crew/breaker.ts";
+import { BREAKER_NOTE, breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -917,4 +917,66 @@ export function asksAnswer(ctx: Ctx, user: User) {
     forge: forgeNeedsFor(ctx, user),
     measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
   };
+}
+
+/**
+ * The asks an issue or pull can raise, as dismissal items: a pull is looked
+ * at or stopped on, an issue is parked. What a bulk dismissal records, and
+ * what its undo takes back (`fleet/verbs.ts`).
+ */
+export function askItemsOf(issue: Issue): string[] {
+  return issue.kind === "pull"
+    ? [`ask:look:${issue.id}`, `ask:stopped:${issue.id}`]
+    : [`ask:parked:${issue.id}`];
+}
+
+/**
+ * Whether the viewer's dismissal of this issue's ask still holds: one newer
+ * than its cause — the pull's latest check, or the issue's latest park.
+ */
+export function askDismissedBy(db: Database, viewerId: string, issue: Issue): boolean {
+  const dismissed = askDismissals(db, viewerId);
+  const at = askItemsOf(issue)
+    .map((item) => dismissed.get(item) ?? "")
+    .reduce((a, b) => (a > b ? a : b), "");
+  if (at === "") return false;
+  const cause =
+    issue.kind === "pull"
+      ? (latestRunsForIssues(db, [issue.id]).get(issue.id)?.createdAt ?? issue.createdAt)
+      : (db
+          .query<{ at: string | null }, [string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body = ?2",
+          )
+          .get(issue.id, BREAKER_NOTE)?.at ?? issue.createdAt);
+  return at > cause;
+}
+
+/**
+ * Ask ids, as `GET /api/v1/asks` hands them out (a row's `items`), to the
+ * issues and pulls a bulk action works on — only those that ask the viewer
+ * now, whether or not they dismissed them. The rest are named with why:
+ * a ceiling and a planner's decline are decided where they live.
+ */
+export function askTargetsFor(
+  db: Database,
+  user: User,
+  items: readonly string[],
+): { issueIds: string[]; refused: { item: string; reason: string }[] } {
+  const asks = new Map(
+    askCandidatesFor(db, user, listReposVisibleTo(db, user, { limit: 200 })).map(
+      (a) => [a.id, a],
+    ),
+  );
+  const issueIds: string[] = [];
+  const refused: { item: string; reason: string }[] = [];
+  for (const item of new Set(items)) {
+    const ask = asks.get(item);
+    if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    else if (ask.kind === "paused")
+      refused.push({ item, reason: "a ceiling is raised in the app's settings" });
+    else if (ask.kind === "declined")
+      refused.push({ item, reason: "a planner's decline is answered on its issue" });
+    else issueIds.push((ask.pull ?? ask.issue)!.id);
+  }
+  return { issueIds: [...new Set(issueIds)], refused };
 }
