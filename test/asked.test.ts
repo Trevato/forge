@@ -289,7 +289,12 @@ describe("what you asked for", () => {
     expect((await api(aliceRo, "/api/v1/asked?show=nope")).status).toBe(422);
     expect((await api(aliceRo, "/api/v1/asked?order=nope")).status).toBe(422);
     expect(building.lastCrewAt).toBe(crewAt);
-    expect(Object.keys(building.pulls[0]).sort()).toEqual(["number", "state", "title"]);
+    expect(Object.keys(building.pulls[0]).sort()).toEqual([
+      "number",
+      "openedAt",
+      "state",
+      "title",
+    ]);
   });
 
   test("the MCP `asked` tool reads the same rows, with an ro token", async () => {
@@ -367,6 +372,183 @@ describe("what you asked for", () => {
     // And an older comment does not move it back.
     say(bot, building.issue.id, at(600));
     expect(lastOf("A watering schedule").lastCrewAt).toBe(onPull);
+  });
+});
+
+describe("an old ask says what exists for it", () => {
+  let dataDir = "";
+  let app: App;
+  let servers: Servers;
+  let alice: User;
+  let repo: Repo;
+  let ro = "";
+
+  const old = (title: string, days: number): Issue => {
+    const made = openIssue(app, alice, repo, { title });
+    if (!made.ok) throw new Error(String(made.error));
+    app.db
+      .query("UPDATE issue SET created_at = ?1 WHERE id = ?2")
+      .run(new Date(Date.now() - days * DAY).toISOString(), made.value.id);
+    return made.value;
+  };
+  /** A pull that closes `issue`, opened `days` ago. */
+  const pullFor = async (issue: Issue, branch: string, days: number) => {
+    const committed = await commitToBranch(app, alice, repo, {
+      branch,
+      base: "main",
+      message: branch,
+      files: [{ path: `${branch}.md`, content: "x\n" }],
+    });
+    if (!committed.ok) throw new Error(String(committed.error));
+    const opened = await openPull(app, alice, repo, {
+      title: `Answers #${issue.number}`,
+      body: `Closes #${issue.number}`,
+      baseBranch: "main",
+      headBranch: branch,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    app.db
+      .query("UPDATE issue SET created_at = ?1 WHERE id = ?2")
+      .run(new Date(Date.now() - days * DAY).toISOString(), opened.value.id);
+    return opened.value;
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-asked-old-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    ro = createToken(app.db, alice.id, "ro", "ro").token;
+    const made = await createRepo(app, alice, {
+      name: "garden",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    await commitToBranch(app, alice, repo, {
+      message: "seed",
+      files: [{ path: "README.md", content: "# garden\n" }],
+    });
+    // All four were asked five days ago, past the three-day window.
+    old("Nothing at all", 5);
+    await pullFor(old("A pull is open", 5), "open", 2);
+    const dropped = await pullFor(old("Its only pull closed", 5), "dropped", 4);
+    app.db
+      .query("UPDATE issue SET state = 'closed' WHERE id = ?1")
+      .run(dropped.id);
+    const onIt = old("The crew is on it", 5);
+    createRun(app.db, { repoId: repo.id, kind: "agent", issueId: onIt.id });
+    // And one asked today, with a pull opened today.
+    await pullFor(old("Asked today", 0), "today", 0);
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const rows = () =>
+    new Map(
+      askedIn(app.db, [repo], { show: "all" }).map((a) => [a.issue.title, a]),
+    );
+
+  test("nothing built is for an old ask with no pull open or merged and nobody on it", () => {
+    const all = rows();
+    const facts = (title: string) => {
+      const a = all.get(title)!;
+      return [a.state, a.stale, a.flagged];
+    };
+    expect(facts("Nothing at all")).toEqual(["waiting", true, true]);
+    expect(facts("Its only pull closed")).toEqual(["waiting", true, true]);
+    expect(facts("A pull is open")).toEqual(["building", true, false]);
+    expect(facts("The crew is on it")).toEqual(["building", true, false]);
+    expect(facts("Asked today")).toEqual(["building", false, false]);
+    expect(
+      askedIn(app.db, [repo], { show: "flagged" }).map((a) => a.issue.title),
+    ).toEqual(["Nothing at all", "Its only pull closed"]);
+    expect(askedCounts(app.db, [repo])).toEqual({
+      asked: 5,
+      shipped: 0,
+      unshipped: 5,
+      flagged: 2,
+    });
+  });
+
+  test("the page says a pull is open and for how long; red only where nothing exists", async () => {
+    const signin = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const page = await (
+      await fetch(`${servers.url}/asked`, { headers: { cookie } })
+    ).text();
+    /** The badge of the row with this title: its tone and its words. */
+    const badgeOf = (title: string): string => {
+      const row =
+        page.match(
+          new RegExp(
+            `${title}</span[\\s\\S]*?<span class="row-trail">([\\s\\S]*?)</a>`,
+          ),
+        )?.[1] ?? "";
+      const tone = row.match(/data-variant="(\w+)"/)?.[1] ?? "default";
+      return `${tone}: ${row
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim()}`;
+    };
+    expect(badgeOf("Nothing at all")).toBe("danger: Nothing built");
+    expect(badgeOf("Its only pull closed")).toBe("danger: Nothing built");
+    expect(badgeOf("A pull is open")).toBe("attn: Pull open 2d");
+    expect(badgeOf("The crew is on it")).toBe("attn: Building");
+    expect(badgeOf("Asked today")).toBe("attn: Building");
+    expect(page).toContain("5 asked · 0 shipped · 2 with nothing built");
+  });
+
+  test("the API and the MCP say stale and flagged apart, and when each pull was opened", async () => {
+    const res = await fetch(`${servers.url}/api/v1/asked?show=all`, {
+      headers: { authorization: `Bearer ${ro}` },
+    });
+    const asked = ((await res.json()) as any).asked as any[];
+    const open = asked.find((a) => a.title === "A pull is open");
+    expect([open.stale, open.flagged]).toEqual([true, false]);
+    expect(Date.now() - Date.parse(open.pulls[0].openedAt)).toBeGreaterThan(
+      2 * DAY - 60_000,
+    );
+    const none = asked.find((a) => a.title === "Nothing at all");
+    expect([none.stale, none.flagged]).toEqual([true, true]);
+    const mcp = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${ro}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "asked", arguments: { show: "flagged" } },
+      }),
+    });
+    const told = JSON.parse(((await mcp.json()) as any).result.content[0].text)
+      .asked as any[];
+    expect(told.map((a) => a.title)).toEqual([
+      "Nothing at all",
+      "Its only pull closed",
+    ]);
   });
 });
 

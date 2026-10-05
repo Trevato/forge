@@ -7,7 +7,10 @@
  * those facts: `shipped` once one of them merged, `building` while one is
  * open or the crew is running on it, `closed` when it closed with nothing
  * merged, `waiting` otherwise. An ask that is not shipped or closed and is
- * older than the stale window is `flagged`: nothing was built for it.
+ * older than the stale window is `stale`. A stale ask that is still
+ * `waiting` is `flagged`: nothing was built for it. One with a pull open,
+ * or the crew on it, is stale and not flagged: something exists, and each
+ * pull says when it was opened so a row can say how long it has been open.
  *
  * Every row is derived on read from the issue, pull and run tables, so
  * nothing here can drift from the map. `source` names where the ask came
@@ -30,6 +33,8 @@ export interface AskedPull {
   readonly number: number;
   readonly title: string;
   readonly state: "open" | "merged" | "closed";
+  /** When the pull was opened. */
+  readonly openedAt: string;
 }
 
 export interface Asked {
@@ -42,6 +47,8 @@ export interface Asked {
   readonly pulls: readonly AskedPull[];
   readonly state: AskedState;
   /** Not shipped or closed, and older than the stale window. */
+  readonly stale: boolean;
+  /** Stale, and still waiting: no pull open or merged, and nobody on it. */
   readonly flagged: boolean;
   /** The crew's last word on it: its newest agent run or agent comment, on
    * the ask or a pull that closes it. Null when the crew never touched it. */
@@ -89,6 +96,7 @@ interface PullRow {
   title: string;
   body: string;
   state: "open" | "closed";
+  created_at: string;
   merged_at: string | null;
 }
 
@@ -142,7 +150,7 @@ function* scan(
   const rows = db
     .query<PullRow & { repo_id: string }, string[]>(
       `SELECT issue.id, issue.repo_id, issue.number, issue.title, issue.body, issue.state,
-              pull.merged_at
+              issue.created_at, pull.merged_at
        FROM issue JOIN pull ON pull.issue_id = issue.id
        WHERE issue.repo_id IN (${placeholders(repoIds.length)})
        ORDER BY issue.number`,
@@ -162,6 +170,7 @@ function* scan(
             : row.state === "open"
               ? "open"
               : "closed",
+        openedAt: row.created_at,
       });
       pulls.set(key, list);
     }
@@ -198,6 +207,9 @@ function* scan(
           : issue.state === "closed"
             ? "closed"
             : "waiting";
+      const stale =
+        (state === "waiting" || state === "building") &&
+        now - Date.parse(issue.createdAt) > STALE_DAYS * DAY;
       yield {
         source: "issue",
         repo,
@@ -206,9 +218,8 @@ function* scan(
         askedAt: issue.createdAt,
         pulls: its,
         state,
-        flagged:
-          (state === "waiting" || state === "building") &&
-          now - Date.parse(issue.createdAt) > STALE_DAYS * DAY,
+        stale,
+        flagged: stale && state === "waiting",
       };
     }
     if (ids.length < SCAN_STEP) return;
@@ -327,8 +338,14 @@ export function askedJson(a: Asked) {
     askedAt: a.askedAt,
     issueState: a.issue.state,
     state: a.state,
+    stale: a.stale,
     flagged: a.flagged,
     lastCrewAt: a.lastCrewAt,
-    pulls: a.pulls.map((p) => ({ number: p.number, title: p.title, state: p.state })),
+    pulls: a.pulls.map((p) => ({
+      number: p.number,
+      title: p.title,
+      state: p.state,
+      openedAt: p.openedAt,
+    })),
   };
 }

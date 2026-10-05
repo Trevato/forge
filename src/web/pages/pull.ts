@@ -6,6 +6,7 @@
  * diff is given the full width it needs.
  */
 
+import { threadNote } from "../../crew/direct.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import type { AccessError } from "../../actions/access.ts";
 import {
@@ -876,6 +877,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
           state: pull.state,
           locked: pull.mergedAt !== null,
           closeLabel: "Close pull request",
+          crewNote: threadNote(ctx.app.db, repo, pull),
         })}
         ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
       </div>

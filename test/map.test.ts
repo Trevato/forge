@@ -68,6 +68,7 @@ function paperGraph(n: number, edges: [number, number][]): Graph {
       blockedById: `i${blockedBy}`,
     })),
     held: [],
+    unadopted: new Set(),
   };
 }
 

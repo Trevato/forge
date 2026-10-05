@@ -34,8 +34,11 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import { openPullsClosing } from "../../core/pulls.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import {
+  getRepoById,
+  listReposVisibleTo,
+  type Repo,
+} from "../../core/repos.ts";
 import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -55,6 +58,11 @@ import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import { struckOut } from "../../crew/parks.ts";
+import {
+  OUTSIDERS_NOTE,
+  proposedWork,
+  READER_SUGGESTION,
+} from "../../crew/direct.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
@@ -442,16 +450,22 @@ export function marksFor(
   graph: Graph,
   runs: readonly Run[],
 ): Marks {
+  const repo = getRepoById(db, repoId);
+  if (repo === undefined) return NO_MARKS;
   const byNumber = new Map(graph.issues.map((i) => [i.number, i.id]));
   const waiting = new Set<string>();
-  for (const number of openPullsClosing(db, repoId).keys()) {
+  for (const number of proposedWork(db, repo).keys()) {
     const id = byNumber.get(number);
     if (id !== undefined) waiting.add(id);
   }
   const open = graph.issues.filter((i) => i.state === "open").map((i) => i.id);
-  const parked = struckOut(db, open);
+  const parked = struckOut(db, repo, open);
   const why = new Map<string, string>();
   const numbers = new Map(graph.issues.map((i) => [i.id, i.number]));
+  for (const id of graph.unadopted) {
+    parked.add(id);
+    why.set(id, READER_SUGGESTION);
+  }
   for (const h of graph.held) {
     parked.add(h.issueId);
     const note = `#${numbers.get(h.blockedById)} was ${h.reason === "split" ? "split" : "dropped"}`;
@@ -1154,7 +1168,10 @@ export const mapViewJs = /* js */ `
 
 /** One line on how the repository runs itself, when it does. */
 function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
-  if (repo.autonomy === "off") return null;
+  if (repo.autonomy === "off")
+    return repo.crewOutsiders
+      ? html`<p class="small map-autonomy">${OUTSIDERS_NOTE}</p>`
+      : null;
   const s = autonomyStatus(ctx.app, repo);
   const paused =
     s.paused === "ceiling"
@@ -1164,7 +1181,7 @@ function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
         : s.paused === "nobody"
           ? " · paused: nobody to act as"
           : "";
-  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused}`;
+  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused} · ${repo.crewOutsiders ? "anyone signed in directs the crew" : "only writers direct the crew"}`;
   return html`<p class="small map-autonomy">
     ${icon("play")} ${line} ·
     <a href="${repoBase(repo)}/settings/autonomy">settings</a>
@@ -1297,6 +1314,8 @@ export function mapJson(
   });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
+    // Who the crew takes direction from (`crew/direct.ts`).
+    crewOutsiders: repo.crewOutsiders,
     ready: ready.map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,

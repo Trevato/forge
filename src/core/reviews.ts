@@ -25,6 +25,8 @@ export interface ReviewComment {
   readonly side: Side;
   readonly commitOid: string;
   readonly lineHash: string;
+  /** The origin's login when the line comment was imported; its `authorName` is then the connecting user. */
+  readonly originAuthor: string | null;
 }
 
 /** A stable short hash of a line's exact content, for re-anchoring. */
@@ -83,6 +85,7 @@ export function addReviewComment(
     side: input.side,
     commitOid: input.commitOid,
     lineHash: input.lineHash,
+    originAuthor: null,
   });
 }
 
@@ -96,6 +99,7 @@ interface ReviewRow {
   side: Side;
   commit_oid: string;
   line_hash: string;
+  origin_author: string | null;
 }
 
 export function listReviewComments(
@@ -105,7 +109,8 @@ export function listReviewComments(
   const rows = db
     .query<ReviewRow, [string]>(
       `SELECT comment.id, user.username AS author_name, comment.body, comment.created_at,
-              comment.path, comment.line, comment.side, comment.commit_oid, comment.line_hash
+              comment.path, comment.line, comment.side, comment.commit_oid, comment.line_hash,
+              comment.origin_author
        FROM comment JOIN user ON user.id = comment.author_id
        WHERE comment.issue_id = ?1 AND comment.kind = 'review'
        ORDER BY comment.id`,
@@ -121,6 +126,7 @@ export function listReviewComments(
     side: r.side,
     commitOid: r.commit_oid,
     lineHash: r.line_hash,
+    originAuthor: r.origin_author,
   }));
 }
 

@@ -98,6 +98,7 @@ import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
+import { readersAmong, voiceOf } from "./direct.ts";
 
 const log = createLog("crew");
 
@@ -608,6 +609,7 @@ async function work(
   };
 
   let grant: Grant | undefined;
+  let runTmp: string | undefined;
   try {
     // The secrets this run declared, for this run only: opened now, held for
     // redaction from this moment, dropped in the `finally` below — a crash
@@ -703,16 +705,33 @@ async function work(
               pull.headOid,
           )
         : undefined;
+    // Imported words speak as their origin author (`voiceOf`), so the
+    // brief marks a stranger's as a reader's, not the connecting user's.
+    const comments = listComments(app.db, issue.id, { kind: "comment" }).map(
+      voiceOf,
+    );
+    const reviews = pull ? listReviews(app.db, pull.id).map(voiceOf) : [];
+    const reviewComments = pull
+      ? listReviewComments(app.db, pull.id).map(voiceOf)
+      : [];
     const prompt = taskPrompt({
       ...brief,
+      issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
-      comments: listComments(app.db, issue.id, { kind: "comment" }),
+      comments,
       labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
         (label) => label.name,
       ),
-      reviews: pull ? listReviews(app.db, pull.id) : [],
-      reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
+      reviews,
+      reviewComments,
+      readers: readersAmong(
+        app.db,
+        repo,
+        [voiceOf(issue), ...comments, ...reviews, ...reviewComments].map(
+          (c) => c.authorName,
+        ),
+      ),
       since,
       checkSummary: failedCheck?.run?.summary,
       conflictFiles:
@@ -759,11 +778,15 @@ async function work(
       ownerId: repo.ownerId,
       agentId: agent.user.id,
     };
+    // What this run may spend at most; on a budgeted account the pick
+    // reserves it (or what is left, if less) against the account's budget.
+    const ownBudget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
     const picked = pickSubscription(
       app.db,
       app.config.dataDir,
       scope,
       new Date(),
+      { runId: run.id, usd: ownBudget },
     );
     if (picked.kind === "resting") {
       const names = picked.names.join(", ");
@@ -810,15 +833,34 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
+    const budget =
+      picked.kind === "ready" && picked.capUsd !== undefined
+        ? Math.min(ownBudget, picked.capUsd)
+        : ownBudget;
     const reserve = wrapUpReserve(budget);
-    const sandbox = sandboxPolicy({
-      dataDir: app.config.dataDir,
-      agentName: agent.user.username,
-      urls: [options.localUrl, options.forgeUrl],
-      extraHosts: [...(options.allowHosts ?? []), ...grant.hosts],
-      enforced: options.sandboxEnforced,
-    });
+    // Asked again for every invocation (`crew/sandbox.ts`): an agent made
+    // since the last one is denied from this one on.
+    const hosts = grant.hosts;
+    const shellPolicy = () =>
+      sandboxPolicy({
+        dataDir: app.config.dataDir,
+        agentName: agent.user.username,
+        urls: [options.localUrl, options.forgeUrl],
+        extraHosts: [...(options.allowHosts ?? []), ...hosts],
+        enforced: options.sandboxEnforced,
+        runId: run.id,
+      });
+    const sandbox = shellPolicy();
+    // The run's own temp directory, never the machine's shared one; it goes
+    // when the run does (the `finally` below). Both names: Claude Code's
+    // sandbox reads CLAUDE_CODE_TMPDIR, but its shell still binds
+    // `<TMPDIR>/claude-<uid>` writable, so TMPDIR has to say the same.
+    runTmp = sandbox.tmpDir;
+    if (runTmp !== undefined) {
+      mkdirSync(runTmp, { recursive: true });
+      env["CLAUDE_CODE_TMPDIR"] = runTmp;
+      env["TMPDIR"] = runTmp;
+    }
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;
@@ -837,7 +879,7 @@ async function work(
         budgetUsd,
         resume,
         env,
-        sandbox,
+        sandbox: shellPolicy(),
         timeoutMs: Math.max(deadline - Date.now(), 0),
         log: write,
         signal,
@@ -1078,6 +1120,7 @@ async function work(
   } finally {
     grant?.release();
     deleteToken(app.db, agent.user.id, token.id);
+    if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
   }
 }
 
