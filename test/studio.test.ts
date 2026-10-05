@@ -3675,6 +3675,8 @@ describe("words come from facts, not from run.summary", () => {
       runtime,
       record,
       history: servingHistory(),
+      // The owner reads it: production's facts are theirs to see.
+      viewer: alice,
     };
   });
 
