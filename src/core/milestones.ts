@@ -56,6 +56,8 @@ export interface Limb {
   readonly weight: Weight;
   /** Deferred on purpose: Later, or a limb behind the gate. Never a candidate to trim. */
   readonly deferred: boolean;
+  /** Why, in plain words: "behind the Later gate", or which deferred limb needs it. */
+  readonly deferredBecause?: string;
   /** Why it is a candidate to trim, when it is one. */
   readonly trim?: string;
 }
@@ -95,7 +97,12 @@ export interface Milestone extends Limb {
   /** What it waits for directly that has a tree of its own. */
   readonly limbs: readonly Limb[];
   /** What it waits for directly that brings none: at most an order among these. */
-  readonly leaves: readonly { readonly issue: Issue; readonly state: LeafState }[];
+  readonly leaves: readonly {
+    readonly issue: Issue;
+    readonly state: LeafState;
+    /** For a deferred leaf: why. */
+    readonly why?: string;
+  }[];
 }
 
 export interface Plan {
@@ -174,6 +181,23 @@ export function readPlan(
       edge.issueId,
     ]);
   }
+  // Work behind the gate is Later's whether or not the Later umbrella waits
+  // for it: its milestone counts what the map's Later row counts.
+  const behindGate =
+    set.gate === undefined
+      ? []
+      : graph.edges
+          .filter(
+            (e) =>
+              e.blockedById === set.gate!.id && !isStructural(set, e.issueId),
+          )
+          .map((e) => e.issueId);
+  if (set.later !== undefined && behindGate.length > 0) waits.add(set.later.id);
+  /** What an issue waits for directly, as its milestone shows it. */
+  const childrenOf = (id: string): string[] =>
+    id === set.later?.id
+      ? [...new Set([...(waitsFor.get(id) ?? []), ...behindGate])]
+      : (waitsFor.get(id) ?? []);
   const memo = new Map<string, Set<string>>();
   const walking = new Set<string>();
   const beneath = (id: string): Set<string> => {
@@ -182,7 +206,7 @@ export function readPlan(
     if (walking.has(id)) return new Set();
     walking.add(id);
     const out = new Set<string>();
-    for (const child of waitsFor.get(id) ?? []) {
+    for (const child of childrenOf(id)) {
       out.add(child);
       for (const deeper of beneath(child)) out.add(deeper);
     }
@@ -319,17 +343,18 @@ export function readPlan(
         : weight.open >= TRIM_OPEN && weight.building === 0
           ? `${weight.open} open and nobody building`
           : undefined;
+    const why = graph.deferred.get(issue.id);
     return {
       issue,
       name: nameOf(issue),
       weight,
       deferred,
+      ...(why === undefined ? {} : { deferredBecause: why }),
       ...(trim === undefined ? {} : { trim }),
     };
   };
 
-  const isMilestone = (id: string): boolean =>
-    (waitsFor.get(id) ?? []).length > 0;
+  const isMilestone = (id: string): boolean => childrenOf(id).length > 0;
 
   const top: Issue[] =
     set.pillars.length > 0
@@ -430,7 +455,7 @@ export function readPlan(
         .map((id) => byId.get(id))
         .filter((i): i is Issue => i !== undefined);
       const numbers = new Set(under.map((i) => i.number));
-      const children = (waitsFor.get(issue.id) ?? [])
+      const children = childrenOf(issue.id)
         .map((id) => byId.get(id))
         .filter((i): i is Issue => i !== undefined)
         .sort((a, b) => a.number - b.number);
@@ -454,7 +479,7 @@ export function readPlan(
           : open === 0
             ? "Everything beneath it is done."
             : limb.deferred
-              ? "Deferred: the crew picks nothing beneath it until it is resumed, so there is no pace to estimate from."
+              ? `Deferred${limb.deferredBecause === undefined ? "" : ` (${limb.deferredBecause})`}: the crew picks nothing beneath it until it is resumed, so there is no pace to estimate from.`
               : closedThisWeek === 0
               ? `Nothing closed here in ${PILLAR_DAYS} days, so there is no pace to estimate from.`
               : `About ${days} day${days === 1 ? "" : "s"} at this week's pace: ${closedThisWeek} closed in ${PILLAR_DAYS} days, ${open} open.`;
@@ -487,7 +512,12 @@ export function readPlan(
         limbs: children.filter(isLimb).map(limbOf),
         leaves: children
           .filter((c) => !isLimb(c))
-          .map((c) => ({ issue: c, state: stateOf(c) }))
+          .map((c) => {
+            const state = stateOf(c);
+            const why =
+              state === "deferred" ? graph.deferred.get(c.id) : undefined;
+            return { issue: c, state, ...(why === undefined ? {} : { why }) };
+          })
           .sort(
             (a, b) =>
               order[a.state] - order[b.state] ||
@@ -519,6 +549,9 @@ export function limbJson(limb: Limb): Record<string, unknown> {
     state: limb.issue.state,
     ...weightJson(limb.weight),
     deferred: limb.deferred,
+    ...(limb.deferredBecause === undefined
+      ? {}
+      : { deferredBecause: limb.deferredBecause }),
     ...(limb.trim === undefined ? {} : { trim: limb.trim }),
   };
 }
@@ -536,7 +569,8 @@ export function milestoneJson(
     ...limbJson(milestone),
     title: milestone.issue.title,
     estimate: milestone.estimate,
-    building: milestone.building.map((b) => ({
+    // `building` is the count, as on a limb; this is who is on what.
+    buildingNow: milestone.building.map((b) => ({
       ...brief(b.issue),
       who: names ? (b.who ?? "the crew") : "the crew",
       since: b.since,
@@ -550,6 +584,7 @@ export function milestoneJson(
     leaves: milestone.leaves.map((leaf) => ({
       ...brief(leaf.issue),
       state: leaf.state,
+      ...(leaf.why === undefined ? {} : { deferredBecause: leaf.why }),
     })),
   };
 }

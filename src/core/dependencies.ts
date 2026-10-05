@@ -211,9 +211,10 @@ export interface Graph {
   readonly structural: ReadonlySet<string>;
   /**
    * Open issues that are deferred (`deferredIn`): behind the Later gate, or
-   * needed only by what is. None of them is ready.
+   * needed only by what is. None of them is ready. For each, why, in plain
+   * words, as every surface says it (`deferredWhy`).
    */
-  readonly deferred: ReadonlySet<string>;
+  readonly deferred: ReadonlyMap<string, string>;
 }
 
 /**
@@ -318,12 +319,76 @@ export function repoGraph(db: Database, repoId: string): Graph {
       blockedById: r.blocked_by_id,
       reason: r.reason,
     })),
-    deferred: deferredIn(
+    deferred: deferredWhy(
       { issues, edges: kept },
+      deferredIn({ issues, edges: kept }, set?.gate?.id, set?.later?.id),
       set?.gate?.id,
       set?.later?.id,
     ),
   };
+}
+
+/** How many limbs a reason names before it counts the rest. */
+const NAMED_LIMBS = 2;
+
+/**
+ * Why each deferred issue is deferred, in plain words: it waits behind the
+ * Later gate itself, it is filed under Later, or only deferred work needs
+ * it — and then which: the deferred limbs above it, by number and title.
+ */
+function deferredWhy(
+  graph: Pick<Graph, "issues" | "edges">,
+  deferred: ReadonlySet<string>,
+  gate: string | undefined,
+  later: string | undefined,
+): Map<string, string> {
+  const out = new Map<string, string>();
+  if (deferred.size === 0) return out;
+  const byId = new Map(graph.issues.map((i) => [i.id, i]));
+  const behind = new Set<string>();
+  const filed = new Set<string>();
+  const waiters = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (edge.blockedById === gate) behind.add(edge.issueId);
+    if (edge.issueId === later) filed.add(edge.blockedById);
+    if (deferred.has(edge.issueId))
+      waiters.set(edge.blockedById, [
+        ...(waiters.get(edge.blockedById) ?? []),
+        edge.issueId,
+      ]);
+  }
+  // The deferred limbs an issue hangs from: what above it was itself filed.
+  const limbs = (id: string, seen: Set<string>): Issue[] => {
+    const found: Issue[] = [];
+    for (const waiter of waiters.get(id) ?? []) {
+      if (seen.has(waiter)) continue;
+      seen.add(waiter);
+      const issue = byId.get(waiter);
+      if (issue === undefined || waiter === later) continue;
+      if (behind.has(waiter) || filed.has(waiter)) found.push(issue);
+      else found.push(...limbs(waiter, seen));
+    }
+    return found;
+  };
+  for (const id of deferred) {
+    if (behind.has(id)) out.set(id, "behind the Later gate");
+    else if (filed.has(id) || id === later) out.set(id, "filed under Later");
+    else {
+      const above = limbs(id, new Set([id])).sort((a, b) => a.number - b.number);
+      const named = above
+        .slice(0, NAMED_LIMBS)
+        .map((issue) => `#${issue.number} ${issue.title}`)
+        .join(", ");
+      const more = above.length - NAMED_LIMBS;
+      out.set(
+        id,
+        above.length === 0
+          ? "only deferred work needs it"
+          : `only deferred work needs it: ${named}${more > 0 ? `, and ${more} more` : ""}`,
+      );
+    }
+  }
+  return out;
 }
 
 // ---- rankings, all from one graph ----

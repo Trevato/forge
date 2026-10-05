@@ -359,9 +359,10 @@ describe("pillars", () => {
     expect(data.pillars).toEqual([
       { pillar: "P0 Trust", umbrella: trust.number, open: 3, ready: 2, blocked: 1 },
       { pillar: "P1 Feed", umbrella: feed.number, open: 2, ready: 2, blocked: 0 },
-      // One under the Later umbrella; two behind the gate, which is open.
-      // None is ready: what only Later waits for is deferred too (#733).
-      { pillar: "Later", umbrella: later.number, open: 3, ready: 0, blocked: 3 },
+      // One under the Later umbrella; two behind the gate. All three are
+      // deferred: not ready, and not blocked either — nothing they wait for
+      // is the reason.
+      { pillar: "Later", umbrella: later.number, open: 3, ready: 0, blocked: 0 },
       // The loose issue, the footer (which waits for the composer), and the
       // stranger's three: one waits for the loose issue, and the other two
       // are a reader's suggestions, open and never ready (`crew/direct.ts`).

@@ -383,6 +383,94 @@ describe("limb actions", () => {
     // The crew can pick none of it; what P0 also needs is still ready.
     expect(ready()).toEqual([shared.number, loose.number]);
 
+    // Every surface says so, and why, in the same words. The limb itself
+    // waits behind the gate; what only it needs is deferred through it.
+    const through = `only deferred work needs it: #${iface.number} One interface`;
+    const ro = tokenOf(alice, "ro");
+    const map = (await (
+      await fetch(`${base}/api/v1/repos/alice/engine/map`, {
+        headers: { authorization: `Bearer ${ro}` },
+      })
+    ).json()) as {
+      issues: { number: number; word: string; deferredBecause?: string }[];
+      counts: Record<string, number>;
+      ready: { number: number }[];
+    };
+    const drawn = (issue: Issue) =>
+      map.issues.find((i) => i.number === issue.number)!;
+    expect(drawn(iface)).toMatchObject({
+      word: "deferred",
+      deferredBecause: "behind the Later gate",
+    });
+    for (const leaf of [home, lists, search])
+      expect(drawn(leaf)).toMatchObject({
+        word: "deferred",
+        deferredBecause: through,
+      });
+    // What something active also waits for, and what nothing waits for at
+    // all, read as they did.
+    expect(drawn(shared)).toMatchObject({ word: "ready" });
+    expect(drawn(loose)).toMatchObject({ word: "ready" });
+    expect("deferredBecause" in drawn(shared)).toBe(false);
+    expect(map.counts["deferred"]).toBe(4);
+    expect(map.ready.map((r) => r.number).sort((a, b) => a - b)).toEqual([
+      shared.number,
+      loose.number,
+    ]);
+    const asTool = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${ro}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 900,
+        method: "tools/call",
+        params: { name: "map", arguments: { app: "alice/engine" } },
+      }),
+    });
+    const told = JSON.parse(
+      ((await asTool.json()) as any).result.content[0].text,
+    ) as typeof map;
+    expect(told.issues.find((i) => i.number === home.number)).toMatchObject({
+      word: "deferred",
+      deferredBecause: through,
+    });
+    const mapPage = await (await get("alice", "/alice/engine/map")).text();
+    expect(mapPage).toContain(
+      `<title>#${home.number} One home — deferred: ${through}</title>`,
+    );
+    expect(mapPage).toMatch(/data-state="deferred"><\/i>deferred <b>4<\/b>/);
+    const issuePage = await (
+      await get("alice", `/alice/engine/issues/${home.number}`)
+    ).text();
+    expect(issuePage).toContain(`deferred: ${through}`);
+    expect(issuePage).not.toContain("not picked up yet");
+    expect(
+      await (
+        await get("alice", `/alice/engine/issues/${iface.number}`)
+      ).text(),
+    ).toContain("deferred: behind the Later gate");
+    // The milestone and its data say it too.
+    const limbData = (await (
+      await fetch(
+        `${base}/api/v1/repos/alice/engine/milestones/${iface.number}`,
+        { headers: { authorization: `Bearer ${ro}` } },
+      )
+    ).json()) as {
+      deferred: boolean;
+      deferredBecause: string;
+      leaves: { number: number; state: string; deferredBecause?: string }[];
+    };
+    expect(limbData).toMatchObject({
+      deferred: true,
+      deferredBecause: "behind the Later gate",
+    });
+    expect(limbData.leaves.find((l) => l.number === home.number)).toMatchObject(
+      { state: "deferred", deferredBecause: through },
+    );
+
     const undone = await undoFleetOp(app, alice, op.value.id);
     if (!undone.ok) throw new Error(undone.error.message);
     expect(undone.value.rows.map((r) => r.outcome)).toEqual(["ok"]);
@@ -637,7 +725,9 @@ describe("limb actions", () => {
     // The milestone now offers Resume, and promises no date.
     const held = await (await get("alice", at)).text();
     expect(held).toContain(`href="${at}/limb?action=resume"`);
-    expect(held).toContain("Deferred: the crew picks nothing beneath it");
+    expect(held).toContain(
+      "Deferred (behind the Later gate): the crew picks nothing beneath it",
+    );
 
     const undone = await submit("alice", `${receiptAt}/undo`, {});
     expect(undone.status).toBe(303);

@@ -182,7 +182,14 @@ function milestoneBody(
     html`<a href="${base}/issues/${number}">${title}</a>
       <span class="muted small">#${number}</span>`;
   const w = m.weight;
-  const open = m.leaves.filter((l) => l.issue.state === "open");
+  // Each issue once: what is under Building now or Blocked is not listed
+  // again under Issues.
+  const above = new Set([
+    ...m.building.map((b) => b.issue.id),
+    ...m.blocked.map((b) => b.issue.id),
+  ]);
+  const stillOpen = m.leaves.filter((l) => l.issue.state === "open");
+  const open = stillOpen.filter((l) => !above.has(l.issue.id));
   const closed = m.leaves.filter((l) => l.issue.state !== "open");
   return html`<div class="ms-top mt">
       <p class="small muted">
@@ -286,19 +293,25 @@ function milestoneBody(
           )}
     </section>
     ${when(
-      m.leaves.length > 0,
+      open.length > 0 || closed.length > 0 || stillOpen.length === 0,
       () =>
         html`<section class="ms-section" id="ms-leaves">
           <h2>Issues</h2>
           ${open.length === 0
-            ? html`<p class="muted small">None open.</p>`
+            ? when(
+                stillOpen.length === 0 && m.leaves.length > 0,
+                () => html`<p class="muted small">None open.</p>`,
+              )
             : folded(
                 open.map(
                   (leaf) =>
                     html`<li data-state="${leaf.state}">
                       ${issue(leaf.issue.number, leaf.issue.title)}
                       <span class="ms-state small"
-                        >${STATE_WORDS[leaf.state]}</span
+                        >${STATE_WORDS[leaf.state]}${leaf.why !== undefined &&
+                        !m.deferred
+                          ? ` · ${leaf.why}`
+                          : ""}</span
                       >
                     </li>`,
                 ),
