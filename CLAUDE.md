@@ -84,7 +84,8 @@ bun run src/main.ts   # boots on :3000, data in ./data
   MCP tool in the same pull, and a new screen is linked from a page a person
   can get to. `scripts/hollow.ts` (run by `test/hollow.test.ts` in the gate,
   or `bun scripts/hollow.ts`) names an exported function in `src/actions/`
-  that no surface reaches and a screen no page links to.
+  that nothing that runs reaches (a page function no route names does not
+  count as a caller) and a screen no page links to.
   `scripts/hollow-allow.ts` is for hollow work an issue already owns, never
   for new work.
 - **TypeScript is strict**: `noUncheckedIndexedAccess` (index access is `T |

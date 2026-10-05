@@ -1,7 +1,8 @@
 /**
- * Hollow work does not pass the gate (#615): an exported action no surface
- * reaches, or a screen no page links to, is named by `scripts/hollow.ts`
- * unless `scripts/hollow-allow.ts` lists it under an owning issue.
+ * Hollow work does not pass the gate (#615, #739): an exported action that
+ * nothing that runs reaches, or a screen no page links to, is named by
+ * `scripts/hollow.ts` unless `scripts/hollow-allow.ts` lists it under an
+ * owning issue.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -74,7 +75,7 @@ describe("the repository", () => {
   );
 });
 
-describe("an action no surface reaches", () => {
+describe("an action nothing that runs reaches", () => {
   // The shape that sat on main: an action, its helper, and only tests calling.
   const SPAWN = `
     export const LIMIT = 3;
@@ -83,6 +84,10 @@ describe("an action no surface reaches", () => {
       return childDirOf(id);
     }
   `;
+  /** Where the program starts: it runs `name` from `file`, as src/main.ts runs the server. */
+  const runs = (file: string, name: string): Record<string, string> => ({
+    "src/main.ts": `import { ${name} } from "./${file}"; ${name}();`,
+  });
 
   test("is named, with the helper only it uses; a constant is not an action", () => {
     expect(ids({ "src/actions/spawn.ts": SPAWN })).toEqual([
@@ -91,24 +96,141 @@ describe("an action no surface reaches", () => {
     ]);
   });
 
-  test("is called once a route, a page, the crew, the CLI or the terminal imports it", () => {
-    for (const surface of ["http", "web", "crew", "cli", "tui"])
-      expect(
-        ids({
-          "src/actions/spawn.ts": SPAWN,
-          [`src/${surface}/door.ts`]: `
-            import { spawnForge } from "../actions/spawn.ts";
-            export const door = () => spawnForge("a");
-          `,
-        }),
-      ).toEqual([]);
+  test("is called once what runs calls it, in a route, a page, the crew, the CLI or the terminal; a caller that never runs is no caller", () => {
+    for (const surface of ["http", "web", "crew", "cli", "tui"]) {
+      const files = {
+        "src/actions/spawn.ts": SPAWN,
+        [`src/${surface}/door.ts`]: `
+          import { spawnForge } from "../actions/spawn.ts";
+          export const door = () => spawnForge("a");
+        `,
+      };
+      expect(ids(files)).toHaveLength(2);
+      expect(ids({ ...files, ...runs(`${surface}/door.ts`, "door") })).toEqual(
+        [],
+      );
+    }
   });
 
-  test("is not called by a file outside the surfaces until a surface reaches that file's caller", () => {
+  test("a page function no route names does not make its action called; a route does, once its table is run", () => {
+    const files = {
+      "src/actions/spawn.ts": `export function spawnForge(): number { return 1; }`,
+      "src/web/pages/spawn.ts": `
+        import { spawnForge } from "../../actions/spawn.ts";
+        export const spawnPage = (): Response => new Response(String(spawnForge()));
+      `,
+    };
+    expect(ids(files)).toEqual(["src/actions/spawn.ts#spawnForge"]);
+    const routed = {
+      ...files,
+      "src/http/server.ts": `
+        import { spawnPage } from "../web/pages/spawn.ts";
+        export function routes(router: { add(m: string, p: string, h: unknown): void }): void {
+          router.add("POST", "/spawn", spawnPage);
+        }
+      `,
+    };
+    // A table of routes that nothing calls registers nothing.
+    expect(ids(routed)).toEqual(["src/actions/spawn.ts#spawnForge"]);
+    expect(ids({ ...routed, ...runs("http/server.ts", "routes") })).toEqual([]);
+  });
+
+  test("an import() in a function nothing calls loads nothing; one that runs reaches the whole module", () => {
+    const action = {
+      "src/actions/spawn.ts": `export function spawnForge(): number { return 1; }`,
+    };
+    const lazy = `
+      export async function lazy(): Promise<number> {
+        const m = await import("../../actions/spawn.ts");
+        return m.spawnForge();
+      }
+      export const other = (): number => 1;
+    `;
+    // A page no route names: nothing loads it at all.
+    expect(ids({ ...action, "src/web/pages/lazy.ts": lazy })).toEqual([
+      "src/actions/spawn.ts#spawnForge",
+    ]);
+    // Its file is loaded and another of its functions runs: `lazy` still does not.
+    expect(
+      ids({
+        ...action,
+        "src/web/pages/lazy.ts": lazy,
+        ...runs("web/pages/lazy.ts", "other"),
+      }),
+    ).toEqual(["src/actions/spawn.ts#spawnForge"]);
+    expect(
+      ids({
+        ...action,
+        "src/web/pages/lazy.ts": lazy,
+        ...runs("web/pages/lazy.ts", "lazy"),
+      }),
+    ).toEqual([]);
+    // At the top level of a file that is loaded, it runs.
+    expect(
+      ids({
+        ...action,
+        "src/main.ts": `const m = await import("./actions/spawn.ts"); m.spawnForge();`,
+      }),
+    ).toEqual([]);
+  });
+
+  test("a file nothing loads runs nothing: its top-level call is no call until a loaded file imports it", () => {
+    const files = {
+      "src/actions/sweep.ts": `export function sweep(): void {}`,
+      "src/tools/orphan.ts": `import { sweep } from "../actions/sweep.ts"; sweep();`,
+    };
+    expect(ids(files)).toEqual(["src/actions/sweep.ts#sweep"]);
+    // Loaded by an entry, for its side effect or through another file.
+    expect(
+      ids({ ...files, "src/main.ts": `import "./tools/orphan.ts";` }),
+    ).toEqual([]);
+    expect(
+      ids({
+        ...files,
+        "src/main.ts": `import { boot } from "./boot.ts"; boot();`,
+        "src/boot.ts": `import "./tools/orphan.ts"; export const boot = (): void => {};`,
+      }),
+    ).toEqual([]);
+    // An import() of it in a function nothing calls does not load it.
+    expect(
+      ids({
+        ...files,
+        "src/main.ts": `export const never = () => import("./tools/orphan.ts");`,
+      }),
+    ).toEqual(["src/actions/sweep.ts#sweep"]);
+  });
+
+  test("the server, the CLI, the terminal, a git hook and the restore are where running starts, and nowhere else", () => {
+    const action = {
+      "src/actions/sweep.ts": `export function sweep(): void {}`,
+    };
+    for (const [entry, up] of [
+      ["src/main.ts", "."],
+      ["src/cli/main.ts", ".."],
+      ["src/tui/main.ts", ".."],
+      ["src/git/hook-entry.ts", ".."],
+      ["src/snapshot/restore.ts", ".."],
+    ] as const)
+      expect(
+        ids({
+          ...action,
+          [entry]: `import { sweep } from "${up}/actions/sweep.ts"; sweep();`,
+        }),
+      ).toEqual([]);
+    for (const other of ["src/tui/gallery.ts", "src/web/main.ts", "src/x.ts"])
+      expect(
+        ids({
+          ...action,
+          [other]: `import { sweep } from "${other.split("/").length > 2 ? ".." : "."}/actions/sweep.ts"; sweep();`,
+        }),
+      ).toEqual(["src/actions/sweep.ts#sweep"]);
+  });
+
+  test("is not called by a file that runs unless the function that calls it is reached", () => {
     const door = `
       import { spawnForge } from "../actions/spawn.ts";
       export const spawnDoor = () => spawnForge("a");
-      export const unrelated = 1;
+      export const unrelated = () => 1;
     `;
     const files = { "src/actions/spawn.ts": SPAWN, "src/spawn/door.ts": door };
     expect(ids(files)).toHaveLength(2);
@@ -117,12 +239,14 @@ describe("an action no surface reaches", () => {
       ids({
         ...files,
         "src/http/api.ts": `import { unrelated } from "../spawn/door.ts"; export const n = unrelated;`,
+        ...runs("http/api.ts", "n"),
       }),
     ).toHaveLength(2);
     expect(
       ids({
         ...files,
         "src/http/api.ts": `import { spawnDoor } from "../spawn/door.ts"; export const go = spawnDoor;`,
+        ...runs("http/api.ts", "go"),
       }),
     ).toEqual([]);
   });
@@ -143,6 +267,7 @@ describe("an action no surface reaches", () => {
       ids({
         ...files,
         "src/http/api.ts": `import { closeIssue } from "../actions/issues.ts"; export const r = () => closeIssue();`,
+        ...runs("http/api.ts", "r"),
       }),
     ).toEqual([]);
   });
@@ -155,6 +280,7 @@ describe("an action no surface reaches", () => {
           export function readSpend(): number { return spanSince(); }
         `,
         "src/web/pages/board.ts": `import { readSpend } from "../../actions/spend.ts"; export const board = readSpend;`,
+        ...runs("web/pages/board.ts", "board"),
       }),
     ).toEqual([]);
   });
@@ -168,11 +294,12 @@ describe("an action no surface reaches", () => {
           export function c(): number { return 1; }
         `,
         "src/web/pages/x.ts": `import { c } from "../../actions/loop.ts"; export const x = c;`,
+        ...runs("web/pages/x.ts", "x"),
       }),
     ).toEqual(["src/actions/loop.ts#a", "src/actions/loop.ts#b"]);
   });
 
-  test("a type import, a property, a parameter and a comment that spell its name are not calls", () => {
+  test("a type import, a property, a parameter and a comment that spell its name are not calls, in code that runs", () => {
     expect(
       ids({
         "src/actions/spawn.ts": `export function spawnForge(): number { return 1; }`,
@@ -186,6 +313,7 @@ describe("an action no surface reaches", () => {
           }
           export type T = typeof spawnForge | Spawn;
         `,
+        "src/main.ts": `import { f, table, type T } from "./http/api.ts"; f(table.spawnForge, table as unknown as T & typeof table);`,
       }),
     ).toEqual(["src/actions/spawn.ts#spawnForge"]);
   });
@@ -208,6 +336,7 @@ describe("an action no surface reaches", () => {
           "src/actions/index.ts": `export { spawnForge, spawnForge as birth } from "./spawn.ts";`,
           "src/actions/all.ts": `export * from "./spawn.ts";`,
           "src/http/api.ts": caller,
+          ...runs("http/api.ts", "go"),
         }),
       ).toEqual([]);
   });
@@ -228,6 +357,7 @@ describe("an action no surface reaches", () => {
       ids({
         ...files,
         "src/http/api.ts": `import main, { outer } from "../actions/a.ts"; export const go = () => main() + outer();`,
+        ...runs("http/api.ts", "go"),
       }),
     ).toEqual([]);
   });
@@ -250,7 +380,7 @@ describe("an action no surface reaches", () => {
     ).toEqual(["src/actions/sweep.ts#sweep"]);
   });
 
-  test("the line names it, says who could call it, and where the allow-list is", () => {
+  test("the line names it, says what would call it, and where the allow-list is", () => {
     expect(
       hollow(
         new Map([
@@ -261,7 +391,7 @@ describe("an action no surface reaches", () => {
         ]),
       ).map((h) => h.line),
     ).toEqual([
-      "src/actions/spawn.ts#spawnForge is exported and nothing under src/http, src/web, src/crew, src/cli or src/tui reaches it: call it from a route, a page or an MCP tool, or list it in ALLOWED (scripts/hollow-allow.ts) with the issue that owns it",
+      "src/actions/spawn.ts#spawnForge is exported and nothing that runs reaches it: call it from a route, a routed page or an MCP tool, or list it in ALLOWED (scripts/hollow-allow.ts) with the issue that owns it",
     ]);
   });
 });
@@ -451,6 +581,7 @@ describe("audit", () => {
       "src/http/api.ts",
       `import { b } from "../actions/b.ts"; export const r = b;`,
     ],
+    ["src/main.ts", `import { r } from "./http/api.ts"; r();`],
   ]);
 
   test("what is hollow and not listed is a problem; what is listed with an owner is not", () => {
