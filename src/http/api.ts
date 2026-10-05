@@ -2256,7 +2256,10 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({
       decisions: listDecisions(ctx.app.db, repo.id, {
         kind:
-          kind === "next" || kind === "land" || kind === "retry"
+          kind === "next" ||
+          kind === "land" ||
+          kind === "retry" ||
+          kind === "guard"
             ? kind
             : undefined,
         limit: 100,

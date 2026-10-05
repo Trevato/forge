@@ -23,6 +23,7 @@ import {
   PLATFORM,
 } from "../core/subscriptions.ts";
 import { readSpend, type Spend } from "./spend.ts";
+import { guardCounts, type GuardCounts } from "../crew/guard.ts";
 import {
   recentUsage,
   usageTotals,
@@ -76,6 +77,8 @@ export interface UsageReport {
   })[];
   /** The last 5 hours, today and the week, broken down, with the top runs. */
   readonly spend: Spend;
+  /** Runs the crew did not start in the window, seeing they were waste (`crew/guard.ts`). */
+  readonly guard: GuardCounts;
 }
 
 const ZERO: Omit<UsageTotals, "key"> = {
@@ -189,5 +192,6 @@ export function readUsage(
     })),
     standing: standingsOut,
     spend: readSpend(app, now, repo.id),
+    guard: guardCounts(app.db, repo.id, since),
   });
 }
