@@ -43,12 +43,14 @@ import {
   labelChip,
   labelCss,
   listCard,
+  originTag,
   pager,
   row,
   seg,
   time,
 } from "../ui.ts";
 import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
+import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { tellWord } from "./tell.ts";
@@ -250,6 +252,18 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
   </div>`;
 }
 
+/** The word for a tell closed with nothing merged to shut it — `tellWord`
+ * has none, and a list must not drop the row: closed as done is *done*, and
+ * dropped or split is *cancelled*, so it is found under shipped or stopped
+ * exactly where the person who closed it would look. */
+function closedWord(issue: Issue): { word: Word; note: string } {
+  return issue.closeReason === "dropped"
+    ? { word: "cancelled", note: "dropped" }
+    : issue.closeReason === "split"
+      ? { word: "cancelled", note: "split into others" }
+      : { word: "done", note: "closed as done" };
+}
+
 /** A row's title with its label chips after it. */
 function titled(title: string, labels: readonly Label[] | undefined): Html {
   return html`${title}${(labels ?? []).map((l) => html` ${labelChip(l)}`)}`;
@@ -303,18 +317,17 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   );
   const closingPulls = openPullsClosing(db, repo.id);
   const words = await Promise.all(
-    fetched.map((issue) =>
-      tellWord(wordCtx, repo, issue, closingPulls.get(issue.number)),
+    fetched.map(
+      async (issue) =>
+        (await tellWord(wordCtx, repo, issue, closingPulls.get(issue.number))) ??
+        closedWord(issue),
     ),
   );
   const labels = labelsForIssues(db, fetched.map((issue) => issue.id));
   const repoLabels = listLabels(db, repo.id);
   const rows = fetched
-    .map((issue, i) => ({ issue, info: words[i] }))
-    .filter(
-      (r): r is { issue: Issue; info: { word: Word; note: string } } =>
-        r.info !== undefined && shown(r.info.word, f),
-    );
+    .map((issue, i) => ({ issue, info: words[i]! }))
+    .filter((r) => shown(r.info.word, f));
 
   const list =
     rows.length === 0
@@ -331,7 +344,10 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
               lead: avatar(issue.assigneeName ?? "crew"),
               title: titled(issue.title, labels.get(issue.id)),
               titleAttr: issue.title,
-              meta: html`${issue.assigneeName
+              meta: html`${when(
+                issue.originAuthor,
+                (login) => html`${originTag(login, originGlyph(repo))} · `,
+              )}${issue.assigneeName
                 ? html`${issue.assigneeName} · `
                 : null}${info.note} · ${time(issue.updatedAt)}`,
               trail: wordBadge(info.word),
@@ -442,7 +458,9 @@ export async function changesList(ctx: Ctx): Promise<Response> {
               lead: avatar(pull.authorName),
               title: titled(pull.title, labels.get(pull.id)),
               titleAttr: pull.title,
-              meta: html`${pull.authorName} · ${info.note} ·
+              meta: html`${pull.originAuthor
+                ? originTag(pull.originAuthor, originGlyph(repo))
+                : pull.authorName} · ${info.note} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
               trail: wordBadge(info.word),
             }),
