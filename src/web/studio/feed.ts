@@ -15,7 +15,7 @@ import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, empty } from "../ui.ts";
+import { avatar, btn, empty, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -38,7 +38,20 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   look: "Look",
 };
 
-/** One card. A run's card steers the run; every card can tell its app. */
+/**
+ * Whether the why-line says something the post does not: not when it
+ * repeats the words, nor when it is only that the app is yours — on a
+ * timeline of your own apps, that is every post.
+ */
+const saysMore = (item: FeedItem): boolean =>
+  !item.reason.startsWith(item.what) &&
+  !/^because you (own|work on|pinned) /.test(item.reason);
+
+/**
+ * One post: who, where and when; what it says, as a link into the thing;
+ * why, when that is news; and one quiet control for the rest — say
+ * something (steer a run, tell the crew), dismiss, mute.
+ */
 export function feedCard(item: FeedItem): Html {
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
@@ -53,24 +66,23 @@ export function feedCard(item: FeedItem): Html {
     <div class="fcard-head">
       ${avatar(item.actor ?? item.app)}
       <strong class="fcard-who">${item.actor ?? item.app}</strong>
+      <span class="fcard-app muted small">${item.app} · ${timeAgo(item.at)}</span>
+      <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>
-      <span class="fcard-app muted small">${item.app}</span>
     </div>
     <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
-    ${item.reason === item.what ? null : html`<p class="fcard-why small muted">${item.reason}</p>`}
-    <div class="fcard-foot">
-      <details class="fcard-say">
-        <summary class="small">${target ? "Steer" : "Tell the crew"}</summary>
-        <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
-          <textarea name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
-          ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
-        </form>
-      </details>
+    ${saysMore(item) ? html`<p class="fcard-why small muted">${item.reason}</p>` : null}
+    <details class="fcard-more">
+      <summary class="small muted" aria-label="${target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute"}">${target ? "Steer" : "Tell"} · more</summary>
+      <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
+        <textarea name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
+        ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
+      </form>
       <span class="fcard-acts">
         <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
         ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>
-    </div>
+    </details>
   </article>`;
 }
 

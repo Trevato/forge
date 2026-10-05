@@ -54,7 +54,7 @@ describe("home is the feed", () => {
       if (!r.ok) throw new Error(r.error);
       return r.value;
     };
-    await mk("root", true);
+    await mk("keeper", true);
     alice = await mk("alice");
     bob = await mk("bob");
     aliceCookie = `forge_session=${createSession(app.db, alice.id).token}`;
@@ -88,6 +88,23 @@ describe("home is the feed", () => {
       title: "The combination is 4-8-15",
     });
     if (!hidden.ok) throw new Error(String(hidden.error));
+    // A public repository whose app is private: its runs and pictures are
+    // for those who may enter it, not for every reader.
+    const lab = await createRepo(app, alice, { name: "lab", visibility: "public" });
+    if (!lab.ok) throw new Error("lab");
+    insertApp(app.db, { repoId: lab.value.id, slug: "lab", access: "private" });
+    app.bus.append({
+      kind: "run.finished",
+      repoId: lab.value.id,
+      actorId: alice.id,
+      payload: { kind: "check", state: "ok", summary: "SECRET OUTPUT", runId: "rl" },
+    });
+    app.bus.append({
+      kind: "look.taken",
+      repoId: lab.value.id,
+      actorId: alice.id,
+      payload: { env: "production", commitOid: "0".repeat(40) },
+    });
     // An admin's configuration on the public repository: never a reader's post.
     app.bus.append({
       kind: "webhook.created",
@@ -116,7 +133,12 @@ describe("home is the feed", () => {
     expect(text).toMatch(
       /href="\/alice\/garden\/tells\/1"[^>]*data-feed-open>Water the tomatoes at dawn</,
     );
-    expect(text).toContain("on #1: Mulch them first");
+    // A reply names the tell it answers.
+    expect(text).toContain("on “Water the tomatoes at dawn”: Mulch them first");
+    // Every post's actions sit behind one quiet control, and "because you
+    // own" — true of every post here — is not said again and again.
+    expect(text).toContain('class="fcard-more"');
+    expect(text).not.toContain("because you own alice/garden");
     // Your apps: a narrow column, and a tab on a phone.
     expect(text).toContain('id="live-apps"');
     expect(text).toContain('href="/apps"');
@@ -136,6 +158,12 @@ describe("home is the feed", () => {
     const items = readFeed(app.db, bob).items;
     expect(items.some((i) => i.app === "alice/vault")).toBe(false);
     expect(JSON.stringify(items)).not.toContain("secret-token");
+    // The private app's run and picture: not a reader's posts.
+    expect(JSON.stringify(items)).not.toContain("SECRET OUTPUT");
+    expect(items.some((i) => i.app === "alice/lab")).toBe(false);
+    // Its owner sees both.
+    const owners = readFeed(app.db, alice, { limit: 50 }).items.filter((i) => i.app === "alice/lab");
+    expect(owners.map((i) => i.kind).sort()).toEqual(["look", "run"]);
   });
 
   test("the composer posts a tell without a script, to an app the person may read, and only then", async () => {
@@ -176,6 +204,27 @@ describe("home is the feed", () => {
       redirect: "manual",
     });
     expect(forged.status).toBe(403);
+    // The one tell's refusals: an unverified writer is told to verify, and
+    // nothing is opened.
+    app.db.query(`UPDATE email_check SET verified_at = NULL WHERE user_id = ?1`).run(alice.id);
+    try {
+      const open = listIssues(app.db, garden.id, { state: "open" }).length;
+      const unverified = await fetch(`${servers.url}/tell`, {
+        method: "POST",
+        headers: { cookie: aliceCookie, origin: servers.url },
+        body: new URLSearchParams({ app: "alice/garden", text: "Prune the roses" }),
+        redirect: "manual",
+      });
+      expect(unverified.status).toBe(303);
+      expect(decodeURIComponent(unverified.headers.get("set-cookie") ?? "")).toContain(
+        "Verify your email first",
+      );
+      expect(listIssues(app.db, garden.id, { state: "open" }).length).toBe(open);
+    } finally {
+      app.db
+        .query(`UPDATE email_check SET verified_at = ?1 WHERE user_id = ?2`)
+        .run(new Date().toISOString(), alice.id);
+    }
   });
 
   test("the MCP feed answers the same posts, page by page", async () => {

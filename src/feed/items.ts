@@ -233,6 +233,12 @@ function fromEvent(
     case "pull.commented": {
       if (number === undefined) return undefined;
       const said = typeof p["body"] === "string" ? p["body"].trim() : "";
+      // A reply names what it answers: the tell's or the change's title.
+      const on = clip(
+        (e.kind === "issue.commented" ? getIssue(db, repo.id, number)?.title : title) ??
+          `#${number}`,
+        60,
+      );
       return {
         ...common,
         kind: "reply",
@@ -240,7 +246,7 @@ function fromEvent(
           e.kind === "issue.commented"
             ? `${base(repo)}/tells/${number}`
             : change,
-        what: said === "" ? `replied on #${number}` : `on #${number}: ${clip(said)}`,
+        what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };
     }
     case "issue.blocked":
