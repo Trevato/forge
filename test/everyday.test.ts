@@ -64,6 +64,7 @@ describe("the everyday account", () => {
       ["boss", true],
     ] as const) {
       const made = await createUser(app.db, {
+        trusted: true,
         username,
         email: `${username}@x.test`,
         password: PASSWORD,
