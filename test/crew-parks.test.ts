@@ -53,14 +53,22 @@ import {
   interruptionOf,
 } from "../src/crew/interrupted.ts";
 import { laterGate } from "../src/crew/later.ts";
-import { parkedTwice, parkReason, struckOut } from "../src/crew/parks.ts";
+import {
+  handedOverAt,
+  parkedTwice,
+  parkReason,
+  struckOut,
+} from "../src/crew/parks.ts";
 
 /**
  * One forge with alice's `engine` on its own: atlas plans, mason builds.
  * `ended` is a builder's run on an issue that ends without a pull, settled
  * as the crew would settle it.
  */
-async function engine(prefix: string) {
+async function engine(
+  prefix: string,
+  visibility: "public" | "private" = "private",
+) {
   const dataDir = await mkdtemp(join(tmpdir(), prefix));
   const app = createApp({ dataDir, port: 0 });
   const servers = await serve(app);
@@ -72,10 +80,7 @@ async function engine(prefix: string) {
   });
   if (!a.ok) throw new Error(a.error);
   const alice = a.value;
-  const made = await createRepo(app, alice, {
-    name: "engine",
-    visibility: "private",
-  });
+  const made = await createRepo(app, alice, { name: "engine", visibility });
   if (!made.ok) throw new Error(String(made.error));
   const repo = made.value;
   for (const name of ["atlas", "mason"]) {
@@ -204,7 +209,7 @@ describe("an interrupted run is not a park", () => {
       await tick();
     }
     expect(parks(work)).toEqual([]);
-    expect(parkedCount(app, work.id)).toBe(0);
+    expect(parkedCount(app, fresh(), work.id)).toBe(0);
     // Three outages inside the hour are not three failures.
     expect(breakerTripped(app.db, work.id)).toBe(false);
     // Not stalled: nobody needs to speak for it to be picked again.
@@ -253,11 +258,11 @@ describe("an interrupted run is not a park", () => {
     const work = issue("Scene graph");
     expect(ended(work, "no changes pushed: DECLINED: out of scope")).toBe(true);
     await tick();
-    expect(parkedCount(app, work.id)).toBe(1);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(false);
+    expect(parkedCount(app, fresh(), work.id)).toBe(1);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(false);
     expect(ended(work, "nothing to propose")).toBe(true);
-    expect(parkedCount(app, work.id)).toBe(2);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(true);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(true);
   });
 
   test("a person's word counts again from zero; a builder's and the planner's do not", async () => {
@@ -266,11 +271,11 @@ describe("an interrupted run is not a park", () => {
     await tick();
     ended(work, "nothing to propose");
     await tick();
-    expect(parkedCount(app, work.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
     // The builder's own report is not a re-plan.
     addComment(app, mason, fresh(), getIssueById(app.db, work.id)!, "Tried twice.");
     await tick();
-    expect(parkedCount(app, work.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
     // Nor is the planner's word alone: it answers by splitting, replacing
     // or deferring the issue, and a comment leaves it as it was.
     addComment(
@@ -281,8 +286,8 @@ describe("an interrupted run is not a park", () => {
       "Looked at it; fine as written.",
     );
     await tick();
-    expect(parkedCount(app, work.id)).toBe(2);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(true);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(true);
     addComment(
       app,
       alice,
@@ -291,11 +296,60 @@ describe("an interrupted run is not a park", () => {
       "Try the fixed step.",
     );
     await tick();
-    expect(parkedCount(app, work.id)).toBe(0);
-    expect(struckOut(app.db, [work.id]).has(work.id)).toBe(false);
+    expect(parkedCount(app, fresh(), work.id)).toBe(0);
+    expect(struckOut(app.db, fresh(), [work.id]).has(work.id)).toBe(false);
     ended(work, "nothing to propose");
     await tick();
-    expect(parkedCount(app, work.id)).toBe(1);
+    expect(parkedCount(app, fresh(), work.id)).toBe(1);
+  });
+});
+
+describe("a comment that only reads like a park", () => {
+  let e: Engine;
+  beforeAll(async () => {
+    // Public: anyone signed in may comment here, and writes nothing.
+    e = await engine("forge-park-words-", "public");
+  }, 30_000);
+  afterAll(() => e.close());
+
+  test("refused: a reader's comment in a park's words strikes nothing, and hands nothing to the planner", async () => {
+    const { app, atlas } = e;
+    const c = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!c.ok) throw new Error(c.error);
+    const work = e.issue("Shader cache");
+    const current = () => getIssueById(app.db, work.id)!;
+    for (let n = 0; n < 3; n++) {
+      const said = addComment(
+        app,
+        c.value,
+        e.fresh(),
+        current(),
+        "Parked by the crew: the run ended without a pull: nothing to propose",
+      );
+      expect(said.ok).toBe(true);
+      await tick();
+    }
+    expect(parkedCount(app, e.fresh(), work.id)).toBe(0);
+    expect(struckOut(app.db, e.fresh(), [work.id]).has(work.id)).toBe(false);
+    expect(handedOverAt(app.db, e.fresh(), work.id)).toBeUndefined();
+    expect(parkedTwice(app.db, [e.fresh()])).toEqual([]);
+    // So the planner has no more say over it than over any other issue.
+    const part = e.issue("Shader cache: the key only");
+    const closed = setIssueState(app, atlas, e.fresh(), current(), "closed", {
+      reason: "split",
+      into: [part.number],
+    });
+    expect(closed.ok ? "closed" : closed.error).toBe("forbidden");
+    expect(current().state).toBe("open");
+    // The crew's own first park is the first strike, not the fourth.
+    expect(e.ended(work, "nothing to propose")).toBe(true);
+    await tick();
+    expect(parkedCount(app, e.fresh(), work.id)).toBe(1);
+    expect(struckOut(app.db, e.fresh(), [work.id]).has(work.id)).toBe(false);
   });
 });
 
@@ -320,7 +374,8 @@ describe("an issue parked twice is the planner's", () => {
   const declined =
     "the run ended without a pull: no changes pushed: DECLINED: out of scope";
   const nothing = "the run ended without a pull: nothing to propose";
-  const listed = () => parkedTwice(app.db, [repo.id]).map((i) => i.number);
+  const fresh = () => e.fresh();
+  const listed = () => parkedTwice(app.db, [fresh()]).map((i) => i.number);
   const current = (issue: Issue) => getIssueById(app.db, issue.id)!;
   const direction = () => getIssueById(app.db, e.fresh().directionIssueId!)!;
   const hours = (n: number) => new Date(Date.now() + n * 3_600_000);
@@ -408,10 +463,10 @@ describe("an issue parked twice is the planner's", () => {
     expect(second).toContain(`1. ${declined}`);
     expect(second).toContain(`2. ${nothing}`);
     // One note: still two strikes, and its reason reads back as that alone.
-    expect(parkedCount(app, work.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.id)).toBe(2);
     expect(parkReason(second)).toBe(nothing);
     expect(current(work).assigneeId).toBeNull();
-    expect(parkedTwice(app.db, [repo.id])).toMatchObject([
+    expect(parkedTwice(app.db, [fresh()])).toMatchObject([
       {
         number: work.number,
         title: "Scene graph",
@@ -482,7 +537,7 @@ describe("an issue parked twice is the planner's", () => {
         reviews: [],
         reviewComments: [],
         since: direction().createdAt,
-        parkedTwice: parkedTwice(app.db, [repo.id]),
+        parkedTwice: parkedTwice(app.db, [fresh()]),
         laterGate: laterGate(app.db, repo.id),
         ...extra,
       });
@@ -685,7 +740,7 @@ describe("an issue parked twice is the planner's", () => {
       e.ended(own, "nothing to propose");
       await tick();
     }
-    expect(struckOut(app.db, [own.id]).has(own.id)).toBe(true);
+    expect(struckOut(app.db, fresh(), [own.id]).has(own.id)).toBe(true);
 
     // Refused: a builder, on the very issue the planner was handed.
     expect(closing(mason, again, { reason: "dropped" })).toBe("forbidden");
@@ -743,7 +798,7 @@ describe("an issue parked twice is the planner's", () => {
       addComment(app, alice, e.fresh(), pull, `Parked by the crew: ${why}`);
       await tick();
     }
-    expect(struckOut(app.db, [pull.id]).has(pull.id)).toBe(true);
+    expect(struckOut(app.db, fresh(), [pull.id]).has(pull.id)).toBe(true);
     expect(closing(atlas, pull)).toBe("forbidden");
     expect(closing(atlas, pull, { reason: "dropped" })).toBe("forbidden");
     // Refused: someone else's forge-mate, who cannot see the repository at all.

@@ -604,6 +604,29 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/accounts\/([^/]+)\/suspend$/,
+    describe: (m) => ({
+      verb: "Suspend account",
+      title: `Suspend ${decodeURIComponent(m[1] ?? "")}?`,
+      detail:
+        "Its sessions and tokens stop working at once, it cannot sign in, and its repositories run nothing: queued runs are cancelled and its apps are stopped. Its data stays. You can unsuspend it later.",
+      phrase: "",
+    }),
+  },
+  {
+    pattern: /^\/settings\/accounts\/([^/]+)\/remove$/,
+    describe: (m) => {
+      const name = decodeURIComponent(m[1] ?? "");
+      return {
+        verb: "Remove account",
+        title: `Remove ${name}?`,
+        detail:
+          "Its repositories and their apps are deleted, its credentials, keys and connected forges are dropped, and its email is scrubbed. The name stays taken, and what it said on others' threads stays under it. This cannot be undone.",
+        phrase: name,
+      };
+    },
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/take-back$/,
     describe: (m, ctx) => {
       // The number in the URL is what the route itself will act on; the

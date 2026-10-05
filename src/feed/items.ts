@@ -40,6 +40,17 @@ export interface Candidate {
   readonly urgency: number;
   /** When set, the sentence as it is: a share says who shared it. */
   readonly said?: string;
+  /** For an ask: what it asks, the answers, what happens if nobody acts, and its rank. */
+  readonly ask?: FeedAsk;
+}
+
+export interface FeedAsk {
+  readonly decision: string;
+  readonly options: readonly string[];
+  readonly ifNothing: string;
+  /** How much it matters (`consequenceOf`); higher first. */
+  readonly rank: number;
+  readonly why: string;
 }
 
 export const EVENT_WINDOW = 300;
@@ -50,7 +61,8 @@ const clip = (s: string, n = 120): string =>
 const slug = (r: Repo): string => `${r.ownerName}/${r.name}`;
 const base = (r: Repo): string => `/${r.ownerName}/${r.name}`;
 
-const URGENCY = { stopped: 10, declined: 9, look: 8, parked: 7, paused: 6 } as const;
+/** Every ask sits above the news (a failed run is 4); among asks, consequence alone orders them. */
+const ASK_URGENCY_FLOOR = 5;
 
 export function candidatesFor(
   db: Database,
@@ -103,12 +115,17 @@ export function candidatesFor(
       actorId: null,
       actor: null,
       at: new Date(now).toISOString(),
-      link:
-        a.number === undefined
-          ? `${base(repo)}/settings/autonomy`
-          : `${base(repo)}/${a.kind === "parked" || a.kind === "declined" ? "issues" : "changes"}/${a.number}`,
+      link: a.link,
       what: a.line,
-      urgency: URGENCY[a.kind],
+      // The same order as /asks: the consequence score, nothing else.
+      urgency: ASK_URGENCY_FLOOR + a.consequence.score / 20,
+      ask: {
+        decision: a.words.decision,
+        options: a.words.options,
+        ifNothing: a.words.ifNothing,
+        rank: Math.round(a.consequence.score * 100) / 100,
+        why: a.consequence.why,
+      },
     });
   }
   for (const d of decided) {

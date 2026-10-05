@@ -1215,4 +1215,33 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
   `,
+  // 48 — an account the owner suspended or removed (#660). Columns are added,
+  // never a table rebuilt: a rebuild would drop any trigger on \`user\`.
+  `
+  ALTER TABLE user ADD COLUMN suspended_at TEXT;
+  ALTER TABLE user ADD COLUMN removed_at TEXT;
+  `,
+  // 49 — the asks ledger (`core/ask_ledger.ts`): each time something asked
+  // a person, and how it ended — acted on, dismissed, or gone by itself —
+  // so noise shows up as a number. One row per raising; history, never edited
+  // but to close it.
+  `
+  CREATE TABLE ask_ledger (
+    id         TEXT PRIMARY KEY,
+    viewer_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    ask_id     TEXT NOT NULL,
+    repo_id    TEXT REFERENCES repo(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    raised_at  TEXT NOT NULL,
+    ended_at   TEXT,
+    ended_how  TEXT CHECK (ended_how IN ('acted','dismissed','expired'))
+  );
+  CREATE INDEX ask_ledger_open ON ask_ledger(viewer_id, ended_at);
+  CREATE INDEX ask_ledger_raised ON ask_ledger(viewer_id, raised_at);
+  `,
+  // 50 — "outsiders may trigger the crew" (#619): off, so only people who
+  // can write to a repository start or steer its crew.
+  `
+  ALTER TABLE repo ADD COLUMN crew_outsiders INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

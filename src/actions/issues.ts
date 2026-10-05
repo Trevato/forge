@@ -252,7 +252,7 @@ function handedToPlanner(
 ): boolean {
   if (issue.kind !== "issue" || issue.state !== "open") return false;
   if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
-  const handed = handedOverAt(app.db, issue.id);
+  const handed = handedOverAt(app.db, repo, issue.id);
   if (handed === undefined) return false;
   if (closing.reason === "dropped")
     return issue.authorIsAgent && issue.originAuthor === null;

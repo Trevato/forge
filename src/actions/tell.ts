@@ -11,6 +11,7 @@ import type { Issue } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { listRuns } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { assignIssue, openIssue } from "./issues.ts";
@@ -33,6 +34,9 @@ export async function tell(
 ): Promise<Result<Told, TellError>> {
   const text = said.trim();
   if (text === "") return err("empty");
+  // A tell is a run: only someone who may direct the crew here says one,
+  // and a refused tell opens nothing (`crew/direct.ts`).
+  if (!mayDirectCrew(app.db, repo, actor)) return err("refused");
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;

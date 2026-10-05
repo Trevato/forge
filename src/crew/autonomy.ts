@@ -52,7 +52,6 @@ import {
   getPull,
   closesFromBody,
   listPulls,
-  openPullsClosing,
   type MergePullError,
   type Pull,
 } from "../core/pulls.ts";
@@ -92,6 +91,12 @@ import {
   parkReasons,
 } from "./parks.ts";
 import { createLog } from "../kernel/log.ts";
+import {
+  directorsAmong,
+  landsOnItsOwn,
+  proposedWork,
+  speaksForCrew,
+} from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 
@@ -346,15 +351,15 @@ export async function driveRepo(
     if (r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   const graph = repoGraph(app.db, repo.id);
-  const proposed = openPullsClosing(app.db, repo.id);
+  const proposed = proposedWork(app.db, repo);
   const ready = readyNow(graph).filter(
     (r) =>
       r.issue.id !== repo.directionIssueId &&
       !busyIssues.has(r.issue.id) &&
       !proposed.has(r.issue.number) &&
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
-      !stalled(app, r.issue) &&
-      parkedCount(app, r.issue.id) < PARK_STRIKES,
+      !stalled(app, repo, r.issue) &&
+      parkedCount(app, repo, r.issue.id) < PARK_STRIKES,
   );
   const next = await nextOf(app, repo, ready);
   if (next !== undefined) {
@@ -429,7 +434,7 @@ async function planIfThin(
   ready: number,
   now: Date,
 ): Promise<boolean> {
-  const handed = parkedTwice(app.db, [repo.id]);
+  const handed = parkedTwice(app.db, [repo]);
   if (ready >= THIN_MAP && handed.length === 0) return false;
   const planner = crew.find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return notPlanned(repo, "no planner on the crew");
@@ -457,7 +462,7 @@ async function planIfThin(
     if (
       owed.length === 0 &&
       lastPlan.state === "failed" &&
-      declinedUnanswered(app, direction)
+      declinedUnanswered(app, repo, direction)
     )
       return notPlanned(repo, "the planner declined; waiting for a person");
     if (lastPlan.state === "queued" || lastPlan.state === "running")
@@ -503,7 +508,7 @@ async function planIfThin(
  * the loop autonomy refuses. It waits for a person's word, which is a
  * feedback run like any other.
  */
-function stalled(app: App, issue: Issue): boolean {
+function stalled(app: App, repo: Repo, issue: Issue): boolean {
   const last = app.db
     .query<{ state: string; summary: string; created_at: string }, [string]>(
       `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
@@ -517,20 +522,22 @@ function stalled(app: App, issue: Issue): boolean {
   // tries again (`interrupted.ts`).
   if (last.state === "failed" && interruptionOf(last.summary) !== undefined)
     return false;
-  // A word since then — a person's, or the planner's when it re-planned
-  // a parked issue — is what un-stalls it.
-  const spoken = app.db
-    .query<
-      { n: number },
-      [string, string]
-    >("SELECT COUNT(*) AS n FROM comment WHERE issue_id = ?1 AND created_at > ?2")
-    .get(issue.id, last.created_at);
-  return (spoken?.n ?? 0) === 0;
+  // A word since then — from someone who may direct the crew, or the
+  // planner's when it re-planned a parked issue — is what un-stalls it. A
+  // reader's comment stays on the thread, and so does one imported from
+  // an origin, whoever connected it (#619).
+  return !app.db
+    .query<{ id: string }, [string, string]>(
+      `SELECT DISTINCT author_id AS id FROM comment
+        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
+    )
+    .all(issue.id, last.created_at)
+    .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
 }
 
 /** Whether the newest run on the issue was a decline and no person has spoken since. */
-function declinedUnanswered(app: App, issue: Issue): boolean {
-  return declineOf(app.db, issue.id) !== undefined;
+function declinedUnanswered(app: App, repo: Repo, issue: Issue): boolean {
+  return declineOf(app.db, repo, issue.id) !== undefined;
 }
 
 /** A planner's decline that nobody has answered yet. */
@@ -546,11 +553,13 @@ export interface PlannerDecline {
 }
 
 /**
- * The newest agent run on an issue, when it is a decline no person has
- * answered since: the state `planIfThin` waits in.
+ * The newest agent run on an issue, when it is a decline no person who
+ * may direct the crew has answered since: the state `planIfThin` waits in.
+ * A reader's comment is no answer (#619).
  */
 function declineOf(
   db: Database,
+  repo: Repo,
   issueId: string,
 ): { id: string; summary: string; created_at: string } | undefined {
   const last = db
@@ -561,14 +570,15 @@ function declineOf(
     .get(issueId);
   if (!last || last.state !== "failed" || !last.summary.startsWith("declined"))
     return undefined;
-  const spoken = db
-    .query<{ n: number }, [string, string]>(
-      `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
-       WHERE c.issue_id = ?1 AND c.created_at > ?2 AND u.is_agent = 0
-         AND c.body NOT LIKE 'Parked by the crew%'`,
+  const spoke = db
+    .query<{ id: string }, [string, string]>(
+      `SELECT DISTINCT author_id AS id FROM comment
+       WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
+         AND body NOT LIKE 'Parked by the crew%'`,
     )
-    .get(issueId, last.created_at);
-  return (spoken?.n ?? 0) === 0 ? last : undefined;
+    .all(issueId, last.created_at)
+    .map((r) => r.id);
+  return directorsAmong(db, repo, spoke).length === 0 ? last : undefined;
 }
 
 /**
@@ -586,7 +596,7 @@ export function plannerDeclines(
       continue;
     const issue = getIssueById(db, repo.directionIssueId);
     if (!issue || issue.state !== "open") continue;
-    const run = declineOf(db, issue.id);
+    const run = declineOf(db, repo, issue.id);
     if (run === undefined) continue;
     out.push({
       repo,
@@ -622,9 +632,9 @@ export function parkForBreaker(
   });
 }
 
-/** How many times the crew has parked this issue since a person last spoke (`parks.ts`). */
-export function parkedCount(app: App, issueId: string): number {
-  return countParks(app.db, issueId);
+/** How many times the crew has parked this issue since a person who directs it last spoke (`parks.ts`). */
+export function parkedCount(app: App, repo: Repo, issueId: string): number {
+  return countParks(app.db, repo, issueId);
 }
 
 /** What happens to an issue the crew hands over, said once on the issue. */
@@ -634,18 +644,19 @@ const HANDED_OVER =
 /**
  * What a park says on its issue. A first strike is the reason — and, when a
  * pull closed with it, a word to the planner. The strike that takes the
- * issue out of the crew's hands also says every reason since a person last
- * spoke, and whose it is now: an issue parked twice is handed over, never
- * dropped.
+ * issue out of the crew's hands also says every reason since someone who
+ * directs the crew last spoke, and whose it is now: an issue parked twice
+ * is handed over, never dropped.
  */
 function strikeNote(
   db: Database,
+  repo: Repo,
   issue: Issue,
   reason: string,
   hint = "",
 ): string {
   const note = `${PARK_NOTE}${reason}`;
-  const reasons = [...parkReasons(db, issue.id), parkReason(note)];
+  const reasons = [...parkReasons(db, repo, issue.id), parkReason(note)];
   if (reasons.length < PARK_STRIKES)
     return hint === "" ? note : `${note} ${hint}`;
   return [
@@ -673,7 +684,7 @@ export function parkIssue(
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by || issue.state !== "open") return false;
   if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
-  addComment(app, by, repo, issue, strikeNote(app.db, issue, why));
+  addComment(app, by, repo, issue, strikeNote(app.db, repo, issue, why));
   log.info("parked", {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
@@ -789,6 +800,7 @@ export function parkPull(
       about,
       strikeNote(
         app.db,
+        repo,
         about,
         `${why} (pull #${pull.number} closed).`,
         PLANNER_HINT,
@@ -842,7 +854,7 @@ export function truncateAtWord(text: string, limit: number): string {
  * The issue the planner works from: the direction, as an open issue the
  * run can be about. Made once, kept, and never counted as work.
  */
-function ensureDirectionIssue(
+export function ensureDirectionIssue(
   app: App,
   by: User,
   repo: Repo,
@@ -1036,6 +1048,10 @@ export async function landIfGreen(
 ): Promise<boolean> {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
   if (pull.state !== "open" || pull.mergedAt !== null) return false;
+  // Only work the crew wrote, or a writer's, lands on green by itself: a
+  // reader's pull — from a fork, say — waits for a person, outsiders
+  // switch or not, and is never sent to the crew's reviewer (#619).
+  if (!landsOnItsOwn(app.db, repo, pull)) return false;
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return false;
   // The newest run of each kind is what the head says: a red that a re-run

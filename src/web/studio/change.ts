@@ -7,6 +7,7 @@
  * `?mode=dev` reads the code, unchanged (`pages/pull.ts`).
  */
 
+import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { pullStatus, revertOf, toldBy, type Pull } from "../../core/pulls.ts";
@@ -37,6 +38,7 @@ import {
   decisionActions,
   decisionForm,
   decisionsFor,
+  KIND_TIER,
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
@@ -108,7 +110,7 @@ export async function studioPull(
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
-  const crewDecision = decisionsFor(ctx, [repo]).find(
+  const crewDecision = decisionsFor(ctx, [repo], { evenDismissed: true }).find(
     (d) => d.pull?.id === pull.id,
   );
   // A person's own change carries no crew decision (`decisionsFor` reads
@@ -136,6 +138,7 @@ export async function studioPull(
             ? "The check is green. Look at the preview, then ship it or say what is off."
             : "This app does not wait on the check to ship. Look at the preview, then ship it or say what is off.",
         short: word === "look" ? "the check is green" : "ready to ship",
+        consequence: KIND_TIER.look,
       }
     : undefined;
   const decision = crewDecision ?? own;
@@ -265,6 +268,7 @@ export async function studioPull(
           state: pull.state,
           locked: pull.mergedAt !== null,
           closeLabel: "Close change",
+          crewNote: threadNote(ctx.app.db, repo, pull),
         })}
       </div>
       <aside>${previewCard(ctx, repo, pull)}</aside>

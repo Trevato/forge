@@ -201,10 +201,13 @@ describe("apps, runs and the crew on the web", () => {
     expect(hello).toBeDefined();
     expect(getAppByRepo(app.db, hello.id)?.slug).toBe("hello");
 
-    // The studio's app page — the repo home for a repository that is an
-    // app — carries the same URL, in a link to open it.
+    // The app page is the repo home for a repository that is an app, in
+    // every mode; its Files step, the code, wears the strip with the same
+    // URL in a link to open it.
     const home = await bodyOf(alice, "/alice/hello");
-    expect(home).toContain('href="/alice/hello/app/production/open"');
+    expect(home).toContain('href="/alice/hello/files"');
+    const code = await bodyOf(alice, "/alice/hello/files");
+    expect(code).toContain('href="/alice/hello/app/production/open"');
     // A plain repository wears neither.
     const plain = await web(alice, "/new", {
       form: { owner: "alice", name: "plain", visibility: "private" },
@@ -232,12 +235,14 @@ describe("apps, runs and the crew on the web", () => {
     expect(dash).toContain('href="/alice/hello/app/production/open"');
     expect(dash).toContain('href="/apps/new"');
 
+    // /apps is the shelf (#630): a row opens the app's page, where its URL
+    // and Open live; production's state is the row's own phrase.
     const list = await bodyOf(alice, "/apps");
-    expect(list).toContain("alice/hello");
-    expect(list).toContain(`http://hello.${DOMAIN}:${servers.port}`);
+    expect(list).toContain('href="/alice/hello"');
+    expect(list).toContain('class="shelf-');
     // Signed out, a public app is still listed; the button says sign in.
     const anonymous = await bodyOf("", "/apps");
-    expect(anonymous).toContain("alice/hello");
+    expect(anonymous).toContain('href="/alice/hello"');
     expect(anonymous).toContain("Sign in");
   });
 
@@ -246,21 +251,22 @@ describe("apps, runs and the crew on the web", () => {
   test("dev's old App URL lands on the studio's app page, which has the environment controls a writer gets", async () => {
     const runs = await runsOf(hello);
     expect(runs.length).toBeGreaterThan(0);
-    // Dev mode's repo home is the code, so the redirect switches over.
+    // The app page is the repo home in every mode, so the old URL lands
+    // there directly.
     const old = await web(alice, "/alice/hello/app");
     expect(old.status).toBe(302);
-    expect(old.headers.get("location")).toBe("/alice/hello?mode=studio");
-    // The code page's strip and the App tab are the same way in.
-    expect(await bodyOf(alice, "/alice/hello")).toContain(
-      'href="/alice/hello?mode=studio"',
+    expect(old.headers.get("location")).toBe("/alice/hello");
+    // The code page's strip is the same way back.
+    expect(await bodyOf(alice, "/alice/hello/files")).toContain(
+      'href="/alice/hello"',
     );
     // (Its Open link waits for production to be running, #118 — the
     // dashboard's test above holds that link; this one, the controls.)
-    const html = await bodyOf(alice, "/alice/hello?mode=studio");
+    const html = await bodyOf(alice, "/alice/hello");
     expect(html).toContain('action="/alice/hello/app/production/redeploy"');
     expect(html).toContain('href="/alice/hello/settings/app"');
     // A reader sees no buttons; bob can read the public repo but not write.
-    const readers = await bodyOf(bob, "/alice/hello?mode=studio");
+    const readers = await bodyOf(bob, "/alice/hello");
     expect(readers).not.toContain("/redeploy");
     expect(readers).not.toContain('href="/alice/hello/settings/app"');
   });
@@ -274,7 +280,7 @@ describe("apps, runs and the crew on the web", () => {
       if (runs.every((run) => isTerminal(run.state))) break;
       await Bun.sleep(50);
     }
-    const html = await bodyOf(alice, "/alice/hello?mode=studio");
+    const html = await bodyOf(alice, "/alice/hello");
     expect(html).toContain('id="live"');
     expect(html).toContain('data-repo="/alice/hello"');
 
@@ -303,17 +309,28 @@ describe("apps, runs and the crew on the web", () => {
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
     expect(run).toBeDefined();
-    const list = await bodyOf(alice, "/alice/hello/runs");
+    // One list (#629): the crew's runs by default; the deploys are its
+    // `?kind=deploy`, one quiet link under it.
+    const crew = await bodyOf(alice, "/alice/hello/runs");
+    expect(crew).toContain('href="/alice/hello/runs?kind=deploy"');
+    // Whichever word the deploy has reached, it is under one of them.
+    const list = (
+      await Promise.all(
+        ["", "&word=shipped", "&word=stopped"].map((w) =>
+          bodyOf(alice, `/alice/hello/runs?kind=${run!.kind}${w}`),
+        ),
+      )
+    ).join("");
     expect(list).toContain("Deploy production");
     expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
     expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
-      "No agent runs yet",
+      "Nothing open.",
     );
 
     const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
     expect(page).toContain("<h1>Deploy production</h1>");
     expect(page).toContain('id="run-log"');
-    expect(page).toContain('id="run-state"');
+    expect(page).toContain('id="run-word"');
     // The log is drawn line by line, each by what kind of line it is: the
     // forge's own words ("checking out …") are marked as such.
     expect(page).toContain('class="ln ln-forge"');
@@ -520,10 +537,10 @@ describe("apps, runs and the crew on the web", () => {
       form: { slug: "plain", access: "private", previewData: "empty" },
     });
     expect(enabled.status).toBe(303);
-    expect(enabled.headers.get("location")).toBe("/alice/plain?mode=studio");
+    expect(enabled.headers.get("location")).toBe("/alice/plain");
     expect(getAppByRepo(app.db, plain.id)?.previewData).toBe("empty");
     expect(await bodyOf(alice, "/alice/plain")).toContain(
-      'href="/alice/plain?mode=studio"',
+      'href="/alice/plain/files"',
     );
 
     // Disabling goes through the confirm page, which words itself.

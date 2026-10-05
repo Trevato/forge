@@ -57,7 +57,7 @@ import {
   type Tone,
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { studioRecord } from "../studio/nouns.ts";
+import { studioRecord, tellHref } from "../studio/nouns.ts";
 import { interruptionsOn } from "../../crew/interrupted.ts";
 
 /**
@@ -329,6 +329,8 @@ export interface ComposerOptions {
    * ("pull request", "issue") or the studio's ("change", "tell"). The
    * caller knows which page it is drawing; the composer does not have to. */
   closeLabel: string;
+  /** Who directs the crew here, on a thread an agent holds (`crew/direct.ts`). */
+  crewNote?: string | undefined;
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -355,23 +357,31 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
             name="state"
             value="${o.state === "open" ? "closed" : "open"}"
           />
-          ${
-            o.reasons && o.state === "open"
-              ? html`<select name="reason" aria-label="Why it closes">
-                    <option value="done">done</option>
-                    <option value="dropped">dropped</option>
-                    <option value="split">split into…</option>
-                  </select>
-                  <input
-                    class="input"
-                    name="into"
-                    inputmode="numeric"
-                    placeholder="split into #, #"
-                    aria-label="Issue numbers it was split into"
-                  />`
-              : null
-          }
         </form>`
+      : null;
+  // Why it closes sits beside the button that closes it, joined to the
+  // state form by id like the button; the numbers it split into only show
+  // once "split into…" is picked (`.close-into`, no script needed).
+  const reasons =
+    stateForm !== null && o.reasons && o.state === "open"
+      ? html`<select
+            class="input close-reason"
+            name="reason"
+            form="thread-state"
+            aria-label="Why it closes"
+          >
+            <option value="done">done</option>
+            <option value="dropped">dropped</option>
+            <option value="split">split into…</option>
+          </select>
+          <input
+            class="input close-into"
+            name="into"
+            form="thread-state"
+            inputmode="numeric"
+            placeholder="#, #"
+            aria-label="Issue numbers it was split into"
+          />`
       : null;
   const closeButton =
     o.stateAction !== undefined && !o.locked
@@ -399,13 +409,16 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         placeholder="Leave a comment"
         required
       ></textarea>
+      ${o.crewNote === undefined
+        ? null
+        : html`<p class="muted small crew-note">${o.crewNote}</p>`}
       <div class="form-actions">
         <span class="muted small"
           >${icon("file")} Markdown is supported — <code>**bold**</code>,
           <code>[link](url)</code>, <code>&gt; quote</code>.</span
         >
         <span class="spacer"></span>
-        ${closeButton}
+        ${reasons} ${closeButton}
         ${btn("Comment", { variant: "primary", icon: "comment" })}
       </div>
     </form>`;
@@ -745,7 +758,7 @@ export function dependenciesCard(
         (i) =>
           html`<li data-state="${i.state}">
             ${icon(i.state === "closed" ? "issueClosed" : "issue")}
-            <a href="${base}/issues/${i.number}">${i.title}</a>
+            <a href="${tellHref(base, i.number)}">${i.title}</a>
             <span class="muted small">#${i.number}</span>
             ${i.closeReason === "dropped" || i.closeReason === "split"
               ? html`<span class="muted small">${i.closeReason}</span>`

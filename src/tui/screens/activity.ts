@@ -166,6 +166,15 @@ export function describeEvent(
         detail: "",
         subject: "",
       };
+    case "repo.crew_outsiders":
+      return {
+        headline:
+          payload["on"] === true
+            ? `${who} let outsiders trigger the crew on ${where}`
+            : `${who} kept the crew to writers on ${where}`,
+        detail: "",
+        subject: "",
+      };
     case "repo.mirrored":
       return { headline: `${who} mirrored ${where}`, detail: "", subject: "" };
     case "repo.imported":

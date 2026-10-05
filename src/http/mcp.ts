@@ -56,8 +56,9 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
-import { appsOf } from "../web/studio/asks.ts";
+import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
   askedIn,
@@ -260,6 +261,16 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "asks",
+    description:
+      "What waits on you, most consequential first: each row names the decision, its options and what happens if nobody acts, and why it ranks where it does (security, money, held-up work, then age). Rows of one kind in one app are collapsed with their item ids. Also the forge's own needs (for a site admin) and the last 7 days' asks raised, acted on, dismissed and gone by themselves.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      return good(asksAnswer(ctx, user));
+    },
+  },
+  {
     name: "now",
     description:
       "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`.",
@@ -451,7 +462,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make.",
+      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make. A made child comes back with `claimUrl`, shown once: the link that hands the child to its person.",
     inputSchema: {
       type: "object",
       properties: {
@@ -468,6 +479,16 @@ const TOOLS: readonly Tool[] = [
           type: "array",
           items: { type: "string" },
           description: "The crew members whose briefs go along, by name.",
+        },
+        direction: {
+          type: "string",
+          description:
+            "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
+        },
+        keepAccess: {
+          type: "boolean",
+          description:
+            "Stay an owner of the child after its person claims it (default false: you leave, and they can invite you back). The claim page says which.",
         },
         dryRun: {
           type: "boolean",
@@ -553,6 +574,7 @@ const TOOLS: readonly Tool[] = [
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
+      if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,
@@ -563,7 +585,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -711,7 +733,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, and what is ready now.`,
+    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. Where the app has pillars (umbrella issues titled like "P0 Trust: …"), each item also says what it is for: pillar, the one it serves, or later: true with why, one sentence, which puts it behind the Later gate instead of on the ready list; an item that says neither is refused. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, what is ready now, and what waits for later.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -734,6 +756,21 @@ const TOOLS: readonly Tool[] = [
                 items: { type: ["string", "integer"] },
                 description: "Keys in this plan, or numbers of open issues.",
               },
+              pillar: {
+                type: "string",
+                description:
+                  'The pillar this serves, by short form or name: "P0" or "P0 Trust". Its umbrella issue then waits for it.',
+              },
+              later: {
+                type: "boolean",
+                description:
+                  "True when this serves no pillar now: it opens behind the Later gate, off the ready list. Needs why.",
+              },
+              why: {
+                type: "string",
+                description:
+                  "With later: one sentence saying why it waits. It opens the issue's body.",
+              },
             },
             required: ["key", "title"],
           },
@@ -749,11 +786,16 @@ const TOOLS: readonly Tool[] = [
       if (!items.ok) return bad(items.error.error, items.error.message);
       const planned = openPlan(ctx.app, user, repo, items.value);
       if (!planned.ok) return bad(planned.error.error, planned.error.message);
-      const { opened, ready } = planned.value;
+      const { opened, ready, later, gate } = planned.value;
+      const waits =
+        gate === undefined
+          ? ""
+          : ` ${later.map((n) => `#${n}`).join(", ")} wait${later.length === 1 ? "s" : ""} behind the Later gate #${gate}.`;
       return good({
-        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.`,
+        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.${waits}`,
         opened,
         ready,
+        later,
       });
     },
   },

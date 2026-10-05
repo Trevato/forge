@@ -495,7 +495,7 @@ describe("the decision ledger", () => {
         b.startsWith("Parked by the crew: the check stayed red"),
       ),
     ).toBe(true);
-    expect(parkedCount(app, work.value.id)).toBe(1);
+    expect(parkedCount(app, fresh(), work.value.id)).toBe(1);
     // Parked once: the crew picks it again. Parked twice: never picked by
     // itself, and the planner's, with both reasons as the notes gave them.
     addComment(
@@ -505,12 +505,12 @@ describe("the decision ledger", () => {
       about,
       "Parked by the crew: main moved under it twice",
     );
-    expect(parkedCount(app, work.value.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.value.id)).toBe(2);
     script["next"] = String(work.value.number);
     await driveRepo(app, fresh());
     expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
     expect(
-      parkedTwice(app.db, [repo.id]).find((i) => i.number === work.value.number)
+      parkedTwice(app.db, [fresh()]).find((i) => i.number === work.value.number)
         ?.reasons,
     ).toEqual([
       `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed)`,
@@ -574,7 +574,7 @@ describe("the decision ledger", () => {
       }),
     ).toBe(true);
     expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
-    expect(parkedCount(app, work.value.id)).toBe(1);
+    expect(parkedCount(app, fresh(), work.value.id)).toBe(1);
     // A run that opened a pull parks nothing.
     expect(
       settleAgentRun(app, fresh(), {

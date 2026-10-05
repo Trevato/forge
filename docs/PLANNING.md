@@ -53,8 +53,8 @@ someone is, and one word:
   a large inline SVG repaints the whole drawing every frame.
 - _blocked_ — open, waiting for something open.
 - _waiting_ — an open pull would close it: proposed, not landed.
-- _parked_ — the crew parked it twice since a person last spoke on it; a
-  quiet warning tint. It is the planner's now (below).
+- _parked_ — the crew parked it twice since someone who directs the crew
+  last spoke on it; a quiet warning tint. It is the planner's now (below).
 - _done_ — closed, still on an edge; it recedes.
 
 Working outranks waiting, waiting outranks parked, and the rest is what
@@ -112,10 +112,13 @@ same, one entry per repository, each the repository's map data plus
 
 ## Parked twice
 
-An issue the crew parked twice since a person last spoke on it is struck
-out: the clock no longer dispatches it. It is not dropped. The second park
-says every reason on the issue, in the one note, and hands it to the
-planner (`crew/parks.ts`):
+An issue the crew parked twice since someone who may direct the crew last
+spoke on it is struck out: the clock no longer dispatches it. A reader's
+comment does not start the count again, and neither does the planner's. A
+park is the crew's own note, written in the name of someone who directs
+it or by one of the repository's agents; a comment that only reads like one
+strikes nothing. A struck-out issue is not dropped. The second park says every reason on the issue, in the one
+note, and hands it to the planner (`crew/parks.ts`):
 
 - **The planner's next pass is owed it.** A hand-over newer than the last
   planning run asks the planner once — with a full map, and even when the
@@ -147,6 +150,27 @@ on this forge — turns a direction into a map that way; a builder that finds
 a task too big for one run splits it into linked issues instead of leaving
 half of it. Either way the plan is where everyone can see it, and closing
 an issue is what frees the next.
+
+## Pillars and the Later gate
+
+A direction can name what the work is for. Each such _pillar_ is an open
+umbrella issue whose title starts with its name — `P0 Trust: …` — and an
+issue serves the pillar whose umbrella waits for it; nothing else records
+it (`src/core/pillars.ts`). A title alone does not make one: the umbrella,
+the gate and the Later umbrella count only when a person who writes the
+repository opened them here — not an agent, not a reader, not an issue
+imported from an origin — so on a public repository a stranger's "P0 …"
+makes no pillar and their "Later gate: …" holds nothing. Work that serves no pillar is not dropped and
+is not ready either: it waits behind the _Later gate_, the open issue whose
+title starts `Later gate:`, opens with one sentence that says why it waits,
+and stands under the `Later: …` umbrella where the repository keeps one.
+The owner moves an item out by unlinking it from the gate, or opens them
+all by closing the gate.
+
+A plan says which it is for every issue. The planner's brief tells it to
+link each issue it opens under its pillar or behind the gate, and the MCP
+`plan` tool refuses an item that says neither. A repository with no
+umbrella issues has no pillars, and plans as it always did.
 
 ## A repository on its own
 

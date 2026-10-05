@@ -28,6 +28,7 @@ import { listAllAgents } from "../../actions/crew.ts";
 import { CREW_ROLES, listCrewRoles, type CrewRole } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { crewHasCredential } from "../../core/subscriptions.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -339,4 +340,19 @@ export function studioCrewSettings(
     palette: repoPalette(ctx, repo),
     body,
   });
+}
+
+/**
+ * One sentence when the crew has no model credential, so it cannot start:
+ * what is missing and where it is added — for the admin, a link to it; for
+ * anyone else, who can. Nothing when the crew can run.
+ */
+export function crewKeyNote(ctx: Ctx): Html | null {
+  if (crewHasCredential(ctx.app.db)) return null;
+  return html`<p class="small muted" id="crew-key-note" role="status">
+    ${icon("alert")} The crew has no model key yet, so it cannot start work.
+    ${ctx.auth.user?.isAdmin
+      ? html`<a href="/settings/subscriptions">Add one in Subscriptions</a>.`
+      : "Ask this forge's admin to add one."}
+  </p>`;
 }

@@ -1,8 +1,8 @@
 /**
  * How work reaches the crew. The dispatcher listens to the outbox and
  * sweeps behind it: an issue assigned to an agent becomes a run; a person
- * speaking on an agent's pull — a comment, a verdict, a line comment —
- * becomes a follow-up; a failed deploy of an agent's pull becomes a
+ * who may direct the crew (`direct.ts`) speaking on an agent's pull — a
+ * comment, a verdict, a line comment — becomes a follow-up; a failed deploy of an agent's pull becomes a
  * bounded follow-up. Runs are rows first (`queued`), and a worker tick
  * takes them in order up to the concurrency limit, one per issue at a
  * time. A missed wake-up costs a tick, never a run.
@@ -22,6 +22,7 @@ import {
 } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import { resolveOpen } from "../core/decisions.ts";
+import { accountActive } from "../core/accounts.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -45,6 +46,7 @@ import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
 import { sandboxAvailable } from "./sandbox.ts";
+import { mayDirectCrew } from "./direct.ts";
 import {
   AUTONOMY_TICK_MS,
   autonomyTick,
@@ -214,6 +216,8 @@ export function queueAgentRun(
   actorId?: string,
   again?: { notBefore: string; attempt: number; summary: string },
 ): Run | undefined {
+  // A suspended or removed owner's repositories run nothing, whoever asks.
+  if (!accountActive(app.db, repo.ownerId)) return undefined;
   // The day's ceiling gates every run the crew starts on its own, not only
   // the picks: a review, a feedback run or a conflict run past the ceiling
   // is money the person did not agree to. A person's own assignment is not
@@ -345,6 +349,10 @@ function route(app: App, event: ForgeEvent): void {
         typeof event.payload["state"] === "string" &&
         crewRole(app.db, repo.id, actor.id) === "reviewer";
       if (actor.kind === "agent" && !reviewerVerdict) return;
+      // A reader's words stay on the thread and do nothing more: on a
+      // public repository anyone may comment, and a run spends the owner's
+      // budget holding a write token (#619).
+      if (!mayDirectCrew(app.db, repo, actor)) return;
       const issue = getIssue(app.db, repo.id, number);
       if (!issue || issue.state !== "open") return;
       if (
