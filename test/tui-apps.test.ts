@@ -202,7 +202,7 @@ describe("terminal: apps, runs and the crew", () => {
     });
     await runtime.start();
 
-    const a = await createUser(forge.db, {
+    const a = await createUser(forge.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -210,7 +210,7 @@ describe("terminal: apps, runs and the crew", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    await createUser(forge.db, {
+    await createUser(forge.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",

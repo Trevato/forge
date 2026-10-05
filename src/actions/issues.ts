@@ -18,6 +18,7 @@
  * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
@@ -107,7 +108,10 @@ export function assignIssue(
   repo: Repo,
   issue: Issue,
   assignee: User | null,
-): Result<Issue, AccessError | "assignee_cannot_read" | "agent_not_on_crew"> {
+): Result<
+  Issue,
+  AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified"
+> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   if (issue.repoId !== repo.id) return err("not_found");
@@ -121,6 +125,9 @@ export function assignIssue(
     // repository and works from its own fork, so write is not the test.
     if (assignee.kind === "agent" && !isCrew(app.db, repo.id, assignee.id))
       return err("agent_not_on_crew");
+    // A run costs: only a proven account may start one.
+    if (assignee.kind === "agent" && !requireVerified(app, writer.value).ok)
+      return err("unverified");
   }
   const updated = setAssignee(app.db, issue.id, assignee?.id ?? null);
   if (!updated) return ok(issue);

@@ -52,7 +52,7 @@ describe("reconcile refreshes hooks (H-1)", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-harden-recon-"));
     const app = createApp({ dataDir, port: 0 });
     try {
-      const user = await createUser(app.db, {
+      const user = await createUser(app.db, { trusted: true,
         username: "h",
         email: "h@f.dev",
         password: "reconcile-me-now",

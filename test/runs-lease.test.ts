@@ -32,7 +32,7 @@ describe("run leases", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-lease-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

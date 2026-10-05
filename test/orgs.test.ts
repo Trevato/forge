@@ -47,22 +47,22 @@ describe("org & team core", () => {
   });
 
   test("permission resolves to the highest team a member is on", async () => {
-    const founder = await createUser(app.db, {
+    const founder = await createUser(app.db, { trusted: true,
       username: "founder",
       email: "f@f.dev",
       password: "org-core-pass",
     });
-    const dev = await createUser(app.db, {
+    const dev = await createUser(app.db, { trusted: true,
       username: "dev",
       email: "d@f.dev",
       password: "org-core-pass",
     });
-    const reader = await createUser(app.db, {
+    const reader = await createUser(app.db, { trusted: true,
       username: "reader",
       email: "r@f.dev",
       password: "org-core-pass",
     });
-    const outsider = await createUser(app.db, {
+    const outsider = await createUser(app.db, { trusted: true,
       username: "outsider",
       email: "o@f.dev",
       password: "org-core-pass",

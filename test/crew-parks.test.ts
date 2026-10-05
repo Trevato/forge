@@ -73,6 +73,7 @@ async function engine(
   const app = createApp({ dataDir, port: 0 });
   const servers = await serve(app);
   const a = await createUser(app.db, {
+    trusted: true,
     username: "alice",
     email: "alice@forge.local",
     password: "a-good-passphrase",
@@ -315,6 +316,7 @@ describe("a comment that only reads like a park", () => {
   test("refused: a reader's comment in a park's words strikes nothing, and hands nothing to the planner", async () => {
     const { app, atlas } = e;
     const c = await createUser(app.db, {
+      trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -434,6 +436,7 @@ describe("an issue parked twice is the planner's", () => {
     });
     if (!record.ok) throw new Error(record.error);
     const b = await createUser(app.db, {
+      trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
