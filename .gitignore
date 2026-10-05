@@ -9,3 +9,8 @@ dist/
 
 # a TypeSafe API key, kept beside the forge, never in it
 typesafe-api-key
+
+# databases live under FORGE_APP_DATA or data/, never in the tree (#558)
+/*.db
+/*.db-wal
+/*.db-shm

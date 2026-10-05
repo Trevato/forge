@@ -146,8 +146,10 @@ curate, never implement.
 
 ## Data & state model
 
-SQLite (`bun:sqlite`), WAL mode, foreign keys on, numbered migrations tracked
-in `user_version`. The schema is deliberately small — tables earn their place:
+SQLite (`bun:sqlite`), WAL mode, foreign keys on, migrations tracked by a
+hash of their text in `schema_migration` (`kernel/migrate.ts`), so a preview
+that keeps its data across a rebase never runs one twice; `user_version`
+still counts them. The schema is deliberately small — tables earn their place:
 
 - `user` (humans and bots; bots are just users with narrower tokens)
 - `session` (cookie auth for the web)

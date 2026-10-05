@@ -219,7 +219,9 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   (`notFound`, `noRoute`, `unauthorized`, `forbidden`) or a specific 422 code;
   don't invent a new shape.
 - **Add a schema change:** append a migration to `core/schema.ts` (they run in
-  order, once). Never edit an existing migration — add a new one.
+  order, once each, recognised by a hash of their text in `schema_migration`
+  — see `kernel/migrate.ts`). Never edit an existing migration — an edited
+  one is a new one and runs again. Add a new one.
 - **New git read:** put it in `git/read.ts`; reuse the long-lived `cat-file`
   batch reader rather than spawning per object. Run every rev/path through
   `assertBatchSafe`.
