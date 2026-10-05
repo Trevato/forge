@@ -140,6 +140,7 @@ import {
   takeBackSubmit,
   holdSubmit,
   releaseSubmit,
+  composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
@@ -786,6 +787,8 @@ export function buildRouter(): Router<Handler> {
   // The studio's verbs on an app: tell, ship, say, and — on a shipped
   // change — take it back.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
+  // The home's composer without a script: a tell to the app it names (#599).
+  router.add("POST", "/tell", composerSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);

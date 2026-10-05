@@ -1,7 +1,8 @@
 /**
- * The home's feed: the ranked read model (`feed/feed.ts`) as cards. Each card
- * is one sentence of why, a link straight into the thing, a way to say
- * something to the crew from where you are, and dismiss / mute. The first
+ * The home's feed: the ranked read model (`feed/feed.ts`) as posts (#599).
+ * Each post is who did it, what it says in its own words as a link straight
+ * into the thing, a small line of why it is here, a way to say something to
+ * the crew from where you are, and dismiss / mute. Above them, the composer. The first
  * page is server-rendered; the same region answers at `/live/feed` so a
  * forge event refreshes it through the live-regions client, like the shelf.
  * Every string on a card is plain text and is escaped here, once.
@@ -14,11 +15,12 @@ import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { btn, empty } from "../ui.ts";
+import { avatar, btn, empty } from "../ui.ts";
+import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,decision.*";
+  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,decision.*";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -31,6 +33,9 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   decision: "Decision",
   map: "Map",
   cost: "Cost",
+  tell: "Told",
+  reply: "Reply",
+  look: "Look",
 };
 
 /** One card. A run's card steers the run; every card can tell its app. */
@@ -46,13 +51,16 @@ export function feedCard(item: FeedItem): Html {
     data-kind="${item.kind}"
   >
     <div class="fcard-head">
+      ${avatar(item.actor ?? item.app)}
+      <strong class="fcard-who">${item.actor ?? item.app}</strong>
       <span class="badge">${KIND_LABEL[item.kind]}</span>
       <span class="fcard-app muted small">${item.app}</span>
       <span class="spacer"></span>
       <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
       ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
     </div>
-    <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.reason}</a></p>
+    <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
+    ${item.reason === item.what ? null : html`<p class="fcard-why small muted">${item.reason}</p>`}
     <details class="fcard-say">
       <summary class="small">${target ? "Steer" : "Tell the crew"}</summary>
       <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
@@ -61,6 +69,38 @@ export function feedCard(item: FeedItem): Html {
       </form>
     </details>
   </article>`;
+}
+
+/**
+ * The composer: say something to an app's crew, which opens a tell — the
+ * home's one primary action. Without a script it posts to the chosen app's
+ * own `/tell`; with one it goes through the outbox to `POST
+ * /api/v1/feed/tells`, so it survives a dropped connection. Nothing to say
+ * it to, and it is the way to make an app instead.
+ */
+export function composer(ctx: Ctx, user: User): Html {
+  const { repos } = writableAppsOf(ctx, user);
+  if (repos.length === 0)
+    return empty({
+      icon: "rocket",
+      title: "No apps yet",
+      note: "Make one, tell the crew what it is, and watch it come up here.",
+      action: btn("New app", { href: "/apps/new", variant: "primary" }),
+    });
+  const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
+  const first = slug(repos[0]!);
+  return html`<form id="composer" class="composer" method="post" action="/tell">
+    <textarea name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew"></textarea>
+    <div class="composer-bar">
+      ${repos.length === 1
+        ? html`<input type="hidden" name="app" value="${first}" /><span class="muted small">${first}</span>`
+        : html`<select name="app" class="input" aria-label="Which app">
+            ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
+          </select>`}
+      <span class="spacer"></span>
+      ${btn("Post", { variant: "primary" })}
+    </div>
+  </form>`;
 }
 
 /**
@@ -179,6 +219,19 @@ ${outboxJs}
     box.value = '';
     var d = form.closest('details');
     if (d) d.open = false;
+  });
+  // The composer is a tell too: kept and sent the same way; the box clears
+  // at once, and the post arrives in the timeline when the forge says so.
+  var composer = document.getElementById('composer');
+  if (composer) composer.addEventListener('submit', function (e) {
+    var box = composer.elements.text;
+    var app = composer.elements.app;
+    var text = box ? box.value.trim() : '';
+    if (!text || !app) return;
+    if (!queue('/api/v1/feed/tells', { app: app.value, text: text })) return;
+    e.preventDefault();
+    box.value = '';
+    box.focus();
   });
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
