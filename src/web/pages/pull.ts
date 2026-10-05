@@ -24,6 +24,7 @@ import {
   type PullReviewStatus,
   type PullStatus,
 } from "../../core/pulls.ts";
+import { pullMayRun } from "../../core/pull_trust.ts";
 import { getPull, toldBy } from "../../core/pulls.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
@@ -205,6 +206,10 @@ function reviewsChip(
 
 // ---- the checks ----
 
+/** What a reader's unapproved head shows where its checks would be. */
+const WAITING_WORDS =
+  "Checks and the preview wait for a writer to approve this head";
+
 /**
  * The checks line: where the deploy of this head stands (docs/APPS.md, rule
  * 4). Rendered whenever the repository runs as an app or requires checks —
@@ -216,8 +221,10 @@ function checksLine(
   check: CheckSummary,
   required: boolean,
   isApp: boolean,
+  /** The head is a reader's and no writer has approved it yet. */
+  waiting = false,
 ): Html {
-  if (!isApp && !required && check.state === "none") return html``;
+  if (!isApp && !required && check.state === "none" && !waiting) return html``;
   const run = check.run;
   const link =
     run === null
@@ -241,7 +248,9 @@ function checksLine(
                 >${link}`
             : check.state === "cancelled"
               ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
-              : html`<span>${icon("clock")}No checks on this head yet</span>`;
+              : waiting
+                ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
+                : html`<span>${icon("clock")}No checks on this head yet</span>`;
   return html`<p class="checks-line">
     ${body}${when(
       required,
@@ -299,7 +308,15 @@ function mergeBox(
   isApp: boolean,
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
-  const checks = checksLine(repoBase(repo), check, repo.requireChecks, isApp);
+  // A reader's head runs nothing until a writer approves it; say so rather
+  // than leave "no checks yet" waiting for something that will not come.
+  const checks = checksLine(
+    repoBase(repo),
+    check,
+    repo.requireChecks,
+    isApp,
+    !pullMayRun(ctx.app.db, repo, pull, status.headOid),
+  );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}

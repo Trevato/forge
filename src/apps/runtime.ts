@@ -25,6 +25,7 @@ import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { pullMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
@@ -762,6 +763,23 @@ export class AppsRuntime {
           );
         return;
       }
+      // An approval is what lets a reader's pull run: deploy its head now.
+      case "pull.reviewed": {
+        if (event.payload["state"] !== "approved") return;
+        const pull = this.pullFromEvent(repo, event);
+        if (!pull || pull.state !== "open") return;
+        const head = await this.pullHead(dir, pull);
+        if (head !== undefined)
+          this.requestDeploy(
+            record,
+            repo,
+            previewEnv(pull.number),
+            head,
+            "approved",
+            event.actorId ?? undefined,
+          );
+        return;
+      }
       case "pull.closed":
       case "pull.merged": {
         const number = event.payload["number"];
@@ -810,6 +828,21 @@ export class AppsRuntime {
     actorId?: string,
   ): Run | undefined {
     if (this.stopped) return undefined;
+    // A preview runs a pull's code: from someone who cannot write, only
+    // once a writer has approved this exact head (`core/pull_trust.ts`).
+    if (env !== "production") {
+      const number = envPull(env);
+      const pull =
+        number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+      if (pull === undefined || !pullMayRun(this.app.db, repo, pull, commitOid)) {
+        log.info("preview waits for a writer's approval", {
+          app: record.slug,
+          env,
+          commit: commitOid.slice(0, 7),
+        });
+        return undefined;
+      }
+    }
     const state = this.envFor(record, env);
     state.dormant = undefined;
     if (

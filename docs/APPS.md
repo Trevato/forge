@@ -60,6 +60,11 @@ around it. None is advisory.
    Pushed: redeployed at the new head. Closed or merged: stopped, and its
    data deleted. There is no orphan state; the sweep on boot rebuilds the
    set of previews from the set of open pulls.
+   A pull from someone who cannot write the repository is the exception:
+   its preview and its check run nothing until a person who can write
+   approves that exact head, and each new push waits for a new approval
+   (`core/pull_trust.ts`). A writer's own fork, and the crew's, run as
+   before; an approval by the crew does not count.
 3. **Preview data is a copy, never a window.** When a preview is created its
    data directory is cloned from production's at that moment (copy-on-write
    where the filesystem offers it — APFS, XFS, btrfs — a plain copy

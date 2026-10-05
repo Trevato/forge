@@ -17,6 +17,7 @@ import type { App } from "../app.ts";
 import { announceRun } from "../actions/runs.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
@@ -158,6 +159,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     actorId?: string,
   ): Promise<Run | undefined> {
     if (stopped) return undefined;
+    // A pull from someone who cannot write runs nothing until a writer
+    // approves this exact head (`core/pull_trust.ts`).
+    if (!issueMayRun(app.db, repo, issueId, commitOid)) {
+      log.info("check waits for a writer's approval", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        env,
+        commit: commitOid.slice(0, 7),
+      });
+      return undefined;
+    }
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, commitOid, "forge.json"),
@@ -279,6 +290,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // A slot that opens while this forge is stopping is not taken: the run
       // stays queued for the forge that carries on.
       if (stopped) return;
+      // Asked again as it starts: a check queued before a rule changed, or
+      // handed back by a forge that stopped, runs only what may run now.
+      if (!issueMayRun(app.db, repo, run.issueId, run.commitOid)) {
+        cancelRun(app.db, run.id, "waiting for a writer to approve this head");
+        return;
+      }
       const claimed = claimRun(app.db, run.id);
       if (!claimed) return;
       const lease = holdLease(app.db, run.id);
@@ -492,6 +509,25 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           pull.id,
           actor,
         );
+        return;
+      }
+      // An approval is what lets a reader's pull run: check its head now.
+      case "pull.reviewed": {
+        const number = event.payload["number"];
+        if (typeof number !== "number" || event.payload["state"] !== "approved")
+          return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull || pull.state !== "open") return;
+        const head = await headOf(repo, pull);
+        if (head !== undefined)
+          await request(
+            repo,
+            `pull-${pull.number}`,
+            head,
+            "approved",
+            pull.id,
+            actor,
+          );
         return;
       }
       default:
