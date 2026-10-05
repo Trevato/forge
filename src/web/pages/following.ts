@@ -10,6 +10,7 @@
  * — it becomes the crew's proposal, or an honest sentence about why not.
  */
 
+import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import {
   relationOf,
   takeUpdates,
@@ -19,7 +20,7 @@ import { listCrewRoles } from "../../core/agents.ts";
 import {
   canWrite,
   getRepoById,
-  listForks,
+  visibleForks,
   type Repo,
   canRead,
 } from "../../core/repos.ts";
@@ -172,7 +173,7 @@ export function followingCard(
   const crew = listCrewRoles(ctx.app.db, repo.id).some(
     (c) => c.role === "builder",
   );
-  const followers = listForks(ctx.app.db, repo.id).length;
+  const followers = visibleForks(ctx.app.db, repo.id, ctx.auth.user).length;
 
   const canTake =
     relation.state === "behind" ||
@@ -430,6 +431,8 @@ function convergeWords(
         tone: "danger",
         message: "Nobody can open the converge issue here.",
       };
+    case "forbidden":
+      return { tone: "danger", message: DIRECTION_NOTE };
     case "ceiling":
       return {
         tone: "danger",

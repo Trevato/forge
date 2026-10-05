@@ -28,6 +28,7 @@ import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -280,6 +281,7 @@ import {
   str,
   unauthorized,
 } from "./respond.ts";
+import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import {
@@ -1467,7 +1469,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
-      if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+      if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("forbidden", 403);
       const parent =
         repo.forkParentId === null
@@ -1483,7 +1485,7 @@ export function apiRoutes(router: Router<Handler>): void {
             ? 200
             : outcome.kind === "ceiling"
               ? 429
-              : outcome.kind === "nobody"
+              : outcome.kind === "nobody" || outcome.kind === "forbidden"
                 ? 403
                 : 409;
       return json(
@@ -3117,6 +3119,27 @@ export function apiRoutes(router: Router<Handler>): void {
       : [];
     const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
     return json({ ...v, ...forge, ok: forge.ok && v.ok });
+  });
+
+  // The front page (#686): what a stranger is shown, for anyone; a site
+  // admin also gets the picks, and sets them — pinned in order, hidden.
+  router.add("GET", "/api/v1/front", (ctx) =>
+    json(frontJson(ctx.app, ctx.auth.user)),
+  );
+
+  router.add("PUT", "/api/v1/front", async (ctx) => {
+    const input = await body(ctx.request);
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const picks = frontInput(ctx.app, input);
+    if (picks === undefined)
+      return apiError("invalid", 422, "send {pinned, hidden}: arrays of owner/name");
+    const set = setFront(ctx.app, ctx.auth.user, picks);
+    if (!set.ok)
+      return set.error.kind === "forbidden"
+        ? apiError("forbidden", 403, "the front page is a site admin's to set")
+        : apiError("invalid", 422, set.error.message);
+    return json(set.value);
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.

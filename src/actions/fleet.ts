@@ -32,11 +32,17 @@ import {
   labelsForIssues,
   listLabels,
 } from "../core/issues.ts";
-import { canAdmin, getReposByIds, type Repo } from "../core/repos.ts";
+import { listCrewRoles } from "../core/agents.ts";
+import { joinMany } from "../core/pulls.ts";
+import { canAdmin, canRead, getReposByIds, type Repo } from "../core/repos.ts";
+import { latestRunsForIssues } from "../core/runs.ts";
+import { isStalePull } from "../crew/stale_asks.ts";
+import { askDismissedBy } from "../web/studio/asks.ts";
 import { getRunsByIds } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
+  MAX_ROWS,
   parseQuery,
   selectRows,
   type FleetKind,
@@ -113,6 +119,7 @@ function loadTargets(
   app: App,
   kind: FleetKind,
   ids: readonly string[],
+  viewer?: User,
 ): Target[] {
   if (kind === "repo") {
     const repos = getReposByIds(app.db, ids);
@@ -142,12 +149,35 @@ function loadTargets(
   );
   const labels = labelsForIssues(app.db, ids);
   const blockers = blockerNumbersFor(app.db, ids);
+  const pulls = new Map(
+    joinMany(app.db, [...issues.values()].filter((i) => i.kind === "pull")).map(
+      (p) => [p.id, p],
+    ),
+  );
+  const checks = latestRunsForIssues(app.db, [...pulls.keys()]);
+  const planners = new Map<string, string | null>();
+  for (const repoId of repos.keys())
+    planners.set(
+      repoId,
+      listCrewRoles(app.db, repoId).find((c) => c.role === "planner")?.agent.user
+        .username ?? null,
+    );
   const repoLabels = new Map<string, string[]>();
   for (const repoId of repos.keys())
     repoLabels.set(
       repoId,
       listLabels(app.db, repoId).map((l) => l.name),
     );
+  const pull = (id: string) => {
+    const p = pulls.get(id);
+    return p === undefined
+      ? undefined
+      : {
+          merged: p.mergedAt !== null,
+          green: checks.get(id)?.state === "ok",
+          stale: isStalePull(app.db, id, p.headOid),
+        };
+  };
   return ids.flatMap((id) => {
     const issue = issues.get(id);
     const repo = issue && repos.get(issue.repoId);
@@ -163,6 +193,14 @@ function loadTargets(
           .sort((a, b) => a.localeCompare(b)),
         blockers: blockers.get(id) ?? [],
         repoLabels: repoLabels.get(repo.id) ?? [],
+        planner: planners.get(repo.id) ?? null,
+        ...(viewer === undefined
+          ? {}
+          : {
+              viewerId: viewer.id,
+              askDismissed: askDismissedBy(app.db, viewer.id, issue),
+            }),
+        ...(pull(id) ?? {}),
       },
     ];
   });
@@ -239,23 +277,114 @@ function makePlan(
   if (!act.ok) return act;
   const ids = selectRows(app.db, actor, parsed.value);
   if (!ids.ok) return err(ids.error);
-  const targets = loadTargets(app, parsed.value.kind, ids.value);
+  return ok(planOver(app, actor, parsed.value.kind, ids.value, query.trim(), act.value));
+}
+
+/** The plan for these rows: the one place a row's before, after and refusal are decided. */
+function planOver(
+  app: App,
+  actor: User,
+  kind: FleetKind,
+  ids: readonly string[],
+  query: string,
+  act: { name: string; verb: Verb; value: FleetValue },
+): Plan & { verbOf: Verb; targets: Map<string, Target> } {
+  const targets = loadTargets(app, kind, ids, actor);
   const admin = adminOf(app, actor);
-  const { verb, value } = act.value;
+  const { verb, value } = act;
   const rows = targets.map((t) =>
-    planRow(app, admin, verb, t, (before) => verb.next(before, value)),
+    planRow(app, admin, verb, t, (before) =>
+      verb.nextFor ? verb.nextFor(t, before, value) : verb.next(before, value),
+    ),
   );
-  return ok({
-    query: query.trim(),
-    kind: parsed.value.kind,
-    verb: act.value.name,
+  return {
+    query,
+    kind,
+    verb: act.name,
     value,
     reversible: verb.reversible,
     rows,
     counts: counted(rows),
     verbOf: verb,
     targets: new Map(targets.map((t) => [t.id, t])),
+  };
+}
+
+/**
+ * The same plan, for rows named by id rather than by a query — the asks'
+ * bulk actions (`actions/asks_bulk.ts`). `query` is how the receipt names
+ * the selection. Only rows the actor can read are planned; the rest are
+ * absent, as a query would leave them.
+ */
+function makeIdPlan(
+  app: App,
+  actor: User | undefined,
+  kind: FleetKind,
+  ids: readonly string[],
+  query: string,
+  action: unknown,
+): Result<Plan & { verbOf: Verb; targets: Map<string, Target> }, FleetError> {
+  if (!actor) return fail("unauthorized", "sign in to act");
+  const act = parseAction(app, kind, action);
+  if (!act.ok) return act;
+  if (ids.length > MAX_ROWS)
+    return fail("too_many", `at most ${MAX_ROWS} rows at once`);
+  const readable = new Set(
+    loadTargets(app, kind, ids)
+      .filter((t) => canRead(app.db, t.repo, actor))
+      .map((t) => t.id),
+  );
+  return ok(planOver(app, actor, kind, ids.filter((id) => readable.has(id)), query, act.value));
+}
+
+export function previewFleetIds(
+  app: App,
+  actor: User | undefined,
+  kind: FleetKind,
+  ids: readonly string[],
+  query: string,
+  action: unknown,
+): Result<Plan, FleetError> {
+  const plan = makeIdPlan(app, actor, kind, ids, query, action);
+  if (!plan.ok) return plan;
+  const { verbOf: _verb, targets: _targets, ...shape } = plan.value;
+  return ok(shape);
+}
+
+export async function applyFleetIds(
+  app: App,
+  actor: User | undefined,
+  kind: FleetKind,
+  ids: readonly string[],
+  query: string,
+  action: unknown,
+): Promise<Result<Operation, FleetError>> {
+  const person = requirePerson(actor);
+  if (!person.ok) return person;
+  const plan = makeIdPlan(app, person.value, kind, ids, query, action);
+  if (!plan.ok) return plan;
+  return ok(await carryOutAndRecord(app, person.value, plan.value));
+}
+
+/** Write the plan's changes and keep the receipt, with its one event. */
+async function carryOutAndRecord(
+  app: App,
+  actor: User,
+  plan: Plan & { verbOf: Verb; targets: Map<string, Target> },
+): Promise<Operation> {
+  const done = await carryOut(app, actor, plan.verbOf, plan.rows, plan.targets);
+  const op = recordOperation(app.db, {
+    actorId: actor.id,
+    query: plan.query,
+    kind: plan.kind,
+    verb: plan.verb,
+    value: plan.value,
+    reversible: plan.reversible,
+    undoOf: null,
+    rows: done,
   });
+  announce(app, op);
+  return op;
 }
 
 /** The dry run: what applying would do to each row, and nothing done. */
@@ -332,20 +461,7 @@ export async function applyFleetOp(
   if (!person.ok) return person;
   const plan = makePlan(app, person.value, query, action);
   if (!plan.ok) return plan;
-  const { verbOf, targets, rows } = plan.value;
-  const done = await carryOut(app, person.value, verbOf, rows, targets);
-  const op = recordOperation(app.db, {
-    actorId: person.value.id,
-    query: plan.value.query,
-    kind: plan.value.kind,
-    verb: plan.value.verb,
-    value: plan.value.value,
-    reversible: plan.value.reversible,
-    undoOf: null,
-    rows: done,
-  });
-  announce(app, op);
-  return ok(op);
+  return ok(await carryOutAndRecord(app, person.value, plan.value));
 }
 
 /**
@@ -366,6 +482,9 @@ export async function undoFleetOp(
   const verb = Object.hasOwn(VERBS, op.verb) ? VERBS[op.verb] : undefined;
   if (!op.reversible || verb === undefined)
     return fail("not_reversible", `${op.verb} cannot be undone`);
+  // A personal verb changed the actor's own state: nobody else undoes it.
+  if (verb.personal && op.actorId !== person.value.id)
+    return fail("not_found", "no such operation here");
   if (!claimUndo(app.db, op.id))
     return fail("already_undone", "this operation was undone already");
   let undone: Operation | undefined;
@@ -375,6 +494,7 @@ export async function undoFleetOp(
       app,
       op.kind,
       changed.map((r) => r.targetId),
+      person.value,
     );
     const byId = new Map(targets.map((t) => [t.id, t]));
     const admin = adminOf(app, person.value);

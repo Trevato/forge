@@ -18,6 +18,7 @@ import {
   addSubscription,
   budgetsOf,
   EVERYONE,
+  lockBudget,
   pickSubscription,
   restSubscription,
   setBudget,
@@ -196,10 +197,12 @@ describe("an account's whole-life budget", () => {
   });
 
   test("a locked budget — a spawned child's starter key — is not raised from inside the forge", async () => {
-    const { lockBudget } = await import("../src/core/subscriptions.ts");
-    expect(lockBudget(app.db, starter, 2)).toBe(true);
+    expect(lockBudget(app.db, starter, 3)).toBe(true);
+    // Never raised, never cleared — lowering is allowed.
     expect(setBudget(app.db, starter, 1000)).toBe(false);
+    expect(setBudget(app.db, starter, 3)).toBe(false);
     expect(setBudget(app.db, starter, null)).toBe(false);
+    expect(setBudget(app.db, starter, 2)).toBe(true);
     expect(budgetsOf(app.db).get(starter)).toMatchObject({ budgetUsd: 2, locked: true });
     // Even the forge's admin, through the page, is refused and told why.
     const admin = await signIn("alice");
@@ -213,6 +216,38 @@ describe("an account's whole-life budget", () => {
     expect(budgetsOf(app.db).get(starter)!.budgetUsd).toBe(2);
     const page = (await (await fetch(`${servers.url}/settings/subscriptions`, { headers: { cookie: admin } })).text()).replace(/\s+/g, " ");
     expect(page).toContain("set by whoever made this forge");
-    expect(page).not.toContain(`action="/settings/subscriptions/${starter}/budget"`);
+    // Lowering it from the page is allowed.
+    const lower = await fetch(`${servers.url}/settings/subscriptions/${starter}/budget`, {
+      method: "POST",
+      headers: { cookie: admin, origin: servers.url },
+      body: new URLSearchParams({ budget: "1.5" }),
+      redirect: "manual",
+    });
+    expect(lower.status).toBe(303);
+    expect(budgetsOf(app.db).get(starter)!.budgetUsd).toBe(1.5);
+  });
+
+  test("runs started together reserve what they may spend: two cannot both pass a budget one fits in", () => {
+    const made = addSubscription(app.db, dataDir, { name: "together", token: "sk-ant-api03-together-key-for-the-test" });
+    if (!made.ok) throw new Error("sub");
+    const id = made.value.id;
+    const r = repo;
+    setGrants(app.db, r.id, EVERYONE, [id]);
+    lockBudget(app.db, id, 8);
+    const a = createRun(app.db, { repoId: r.id, kind: "agent" });
+    const b = createRun(app.db, { repoId: r.id, kind: "agent" });
+    const c = createRun(app.db, { repoId: r.id, kind: "agent" });
+    // Each run asks for $5; the budget is $8 and nothing has been spent.
+    const first = pickSubscription(app.db, dataDir, scope(), new Date(), { runId: a.id, usd: 5 });
+    const second = pickSubscription(app.db, dataDir, scope(), new Date(), { runId: b.id, usd: 5 });
+    const third = pickSubscription(app.db, dataDir, scope(), new Date(), { runId: c.id, usd: 5 });
+    expect(first.kind === "ready" && first.capUsd).toBe(5);
+    // The second gets only what is left, and the third nothing.
+    expect(second.kind === "ready" && second.capUsd).toBe(3);
+    expect(third.kind).toBe("resting");
+    // When the first ends having spent $1, its unspent reservation is free again.
+    app.db.query("UPDATE run SET state = 'ok', cost_usd = 1 WHERE id = ?1").run(a.id);
+    const again = pickSubscription(app.db, dataDir, scope(), new Date(), { runId: c.id, usd: 5 });
+    expect(again.kind === "ready" && again.capUsd).toBe(4);
   });
 });
