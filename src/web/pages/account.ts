@@ -27,9 +27,11 @@ import {
 } from "../../crew/notify.ts";
 import { forgeHost, noreplyAddress } from "../../core/commit_identity.ts";
 import { listKeys } from "../../core/keys.ts";
+import { endAccountSession } from "../../actions/signins.ts";
+import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
-import type { Ctx } from "../../http/context.ts";
+import { cookieValue, type Ctx } from "../../http/context.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
@@ -390,8 +392,60 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
 
 // ---- tokens ----
 
+/**
+ * An account's signed-in browsers, each with Sign out. `base` is where its
+ * acts post: the person's own settings, or the owner's page for them.
+ */
+export function sessionsCard(
+  sessions: readonly SessionInfo[],
+  base: string,
+): Html {
+  return card(
+    sessions.length === 0
+      ? html`<p class="muted">Not signed in on any browser.</p>`
+      : html`<div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Signed in</th>
+                <th>Last seen</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sessions.map(
+                (s) =>
+                  html`<tr>
+                    <td class="muted">
+                      ${time(s.createdAt)}
+                      ${s.current ? badge("This browser") : null}
+                    </td>
+                    <td class="muted">
+                      ${s.lastSeenAt ? time(s.lastSeenAt) : "not since"}
+                    </td>
+                    <td>
+                      ${confirmAction({
+                        action: `${base}/sessions/${s.id}/delete`,
+                        verb: "Sign out",
+                        size: "sm",
+                      })}
+                    </td>
+                  </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`,
+    { pad: false, head: html`<h3>Signed-in browsers</h3>` },
+  );
+}
+
 function tokensView(ctx: Ctx): Html {
   const tokens = listTokens(ctx.app.db, ctx.auth.user!.id);
+  const sessions = listSessions(
+    ctx.app.db,
+    ctx.auth.user!.id,
+    cookieValue(ctx.request, "forge_session"),
+  );
   return html`<p class="muted small mb">
       Use a token as the password when pushing over HTTPS, or as a
       <span class="mono">Bearer</span> token for the API. Your account password
@@ -473,7 +527,8 @@ function tokensView(ctx: Ctx): Html {
         </div>
       </form>`,
       { head: html`<h3>New token</h3>` },
-    )}`;
+    )}
+    ${sessionsCard(sessions, "/settings")}`;
 }
 
 // GET /settings/tokens
@@ -526,6 +581,25 @@ export async function tokenDelete(ctx: Ctx): Promise<Response> {
     ...(revoked.ok
       ? { message: "Token revoked." }
       : { tone: "danger" as const, message: "No such token." }),
+  });
+}
+
+// POST /settings/sessions/:id/delete
+export async function sessionDelete(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const user = ctx.auth.user;
+  const ended = endAccountSession(
+    ctx.app,
+    user,
+    user.username,
+    ctx.params.id ?? "",
+  );
+  return flashTo(ctx, "/settings/tokens", {
+    ...(ended.ok
+      ? { message: "Signed out of that browser." }
+      : { tone: "danger" as const, message: "No such browser." }),
   });
 }
 
