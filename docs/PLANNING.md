@@ -290,3 +290,37 @@ not confirm its own plan. Split also moves the parent's blocked-by edges to
 the issues named in `into` (a child that would make a loop is skipped), and
 the parent waits for nothing. Reopening clears the reason. Closes that
 predate reasons count as done.
+
+## Pillars
+
+A pillar is one of the few things the owner asked for, and every issue
+names the one it serves (`core/pillars.ts`).
+
+- **The set is fixed by its umbrellas.** A pillar is an issue titled
+  `P0 Trust: …` (any `P<n> Name:`) or `Later: …`, opened by someone who can
+  write the repository. A stranger's issue with the same title names
+  nothing, and a plan cannot invent a pillar. `P0` comes first, `Later`
+  last; two umbrellas with one name are one pillar, the older.
+- **The label is the pillar.** Its label has the pillar's name and is made
+  the first time it is needed. An issue an umbrella waits for directly
+  carries it — from the link (the page, the API, the MCP's `link`), from a
+  `plan` item that says `pillar`, from a split (each part that names no
+  pillar carries its parent's), and from boot for what was linked before.
+  Unlinked, it loses it. One pillar an issue: under two umbrellas it
+  carries the first. Umbrellas and the Later gate are the plan's furniture:
+  one umbrella waiting for another is an order between pillars, not
+  membership. A mirrored repository's labels are its origin's, so none is
+  written there.
+- **The map by pillar.** Beside the drawing, _By pillar_ lists each pillar
+  — a link to its issues, the list narrowed to its label — with what is
+  open, ready and blocked, then _no pillar_ with the issues that name none,
+  each a link, since they are the ones to file. In the data every issue
+  carries `pillar` (null for none), `pillars` is the same rows, and
+  `mergedByPillar` is `{ days: 7, counts: [{ pillar, merged }] }`: the
+  pulls merged in the last 7 days, each counted under the pillar of the
+  first issue it closes that has one.
+- **The board by pillar.** _Landed_ leads with the same seven days for
+  each app that has pillars: every pillar and its count, zero or not, each
+  a link to its issues.
+
+A repository with no umbrella has no pillars, and none of this shows.

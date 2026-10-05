@@ -399,7 +399,9 @@ person's dev home.
 theme, four regions that fill the window. **Working now** is one card per
 run in flight — who, which app, what it is on, why, how long, what it has
 cost — ordered by when it started. **Landed** is the last dozen shipped
-changes across your apps, each with the app's production look on a phone.
+changes across your apps, each with the app's production look on a phone;
+for an app with pillars it leads with what merged in the last 7 days by
+pillar, each a link to that pillar's issues (`docs/PLANNING.md`).
 **Decided** is the last dozen entries in the decision ledger: which issue
 next, ship or show, try again — the answer, how sure the decider was, and
 what came of it. **Today** is one row per app that runs on its own: spend

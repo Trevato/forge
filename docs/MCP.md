@@ -68,8 +68,11 @@ person pastes.
 ## `plan`
 
 Opens several small issues and their links in one transaction. Each item is
-`{ key, title, body?, blockedBy? }`; `blockedBy` lists keys of the same call or
-numbers of issues already open. A loop, an unknown key, an unknown number, an
+`{ key, title, body?, blockedBy?, pillar? }`; `blockedBy` lists keys of the same
+call or numbers of issues already open, and `pillar` names the pillar the
+issue serves, as `map` lists them (`"P0 Trust"`, `"Later"`): the issue is
+filed under that pillar's umbrella and carries its label. A loop, an unknown
+key, an unknown number, an unknown pillar (the refusal names the pillars), an
 over-long title or body, or more than 12 items refuses the whole plan, naming
 the item, and nothing is opened. Issues belong to the token's owner and emit
 the same events as opening and linking one by one. It needs an `rw` token.
