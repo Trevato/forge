@@ -41,6 +41,7 @@ import {
   type BodyError,
   type TitleError,
 } from "../core/issues.ts";
+import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -51,6 +52,7 @@ import {
   importIssue,
 } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { inheritPillar } from "./pillars.ts";
 import {
   requireParticipant,
   requireWriter,
@@ -192,6 +194,15 @@ export function setIssueState(
   const mayModerate =
     user.value.id === issue.authorId || canWrite(app.db, repo, user.value);
   if (!mayModerate) return err("forbidden");
+  // The plan's own issues — a pillar's umbrella, the Later umbrella, the
+  // Later gate — are a person's to close, whatever access an agent holds:
+  // closing the gate opens everything deferred.
+  if (
+    state === "closed" &&
+    user.value.kind === "agent" &&
+    isStructural(pillarsOf(app.db, repo), issue.id)
+  )
+    return err("forbidden");
   if (
     issue.kind === "pull" &&
     state === "open" &&
@@ -228,6 +239,8 @@ export function setIssueState(
       ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
     },
   });
+  // The parts serve what the whole served.
+  inheritPillar(app, user.value, repo, issue, children);
   return ok(changed);
 }
 

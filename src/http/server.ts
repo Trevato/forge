@@ -142,6 +142,7 @@ import {
   releaseSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
@@ -192,6 +193,7 @@ import {
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
+import { returnsPage } from "../web/pages/returns.ts";
 import {
   fleetGraphCsv,
   fleetGraphLive,
@@ -205,11 +207,11 @@ import {
   crewPage,
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
+import { changePage, pullPage } from "../web/studio/change.ts";
 import {
-  changePage,
   pullCommentSubmit,
+  pullFilesPage,
   pullMergeSubmit,
-  pullPage,
   pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
@@ -495,6 +497,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/mode", modeSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
+  // The board's tokens line, opened: what the spend bought (core/returns.ts).
+  router.add("GET", "/board/returns", returnsPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
   router.add("POST", "/asks/bulk", asksBulkSubmit);
@@ -557,6 +561,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
+  // The everyday account: an admin's daily account, apart from admin (#596).
+  router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
@@ -809,6 +816,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
+  // The change's Files step: the diff, the review threads and the merge
+  // box, one tab under the change itself.
+  router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);

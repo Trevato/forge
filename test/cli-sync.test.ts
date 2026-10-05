@@ -114,7 +114,7 @@ describe("the local client, against a real forge", () => {
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "alice",
         password: "correct horse battery",
         name: "cli",

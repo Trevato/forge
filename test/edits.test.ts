@@ -57,7 +57,7 @@ describe("edits: files, branches and a pull in one call", () => {
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password, name: scope, scope }),
+        body: JSON.stringify({ adminConfirm: true, username, password, name: scope, scope }),
       }),
     ).then((t) => t.token);
 

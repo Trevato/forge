@@ -7,6 +7,7 @@
 import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
@@ -154,6 +155,9 @@ const app = createApp({
 });
 
 await reconcile(app);
+// Issues linked under a pillar's umbrella before pillars had labels.
+const labelled = syncAllPillars(app);
+if (labelled > 0) app.log.info("pillars labelled", { issues: labelled });
 const servers = await serve(app);
 const sshStarted =
   sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;

@@ -131,10 +131,16 @@ function others(dir: string, keep: string): string[] {
  * list; there the forge's own pieces are denied instead: the shared Claude
  * Code directory and the cells' socket directories (`apps/contain.ts`).
  */
+/** Whether the forge's data directory lives inside the machine's temp directory. */
+export function dataInTemp(data: string): boolean {
+  const rel = relative(tmpdir(), data);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
 function tempDenied(data: string): string[] {
   const temp = tmpdir();
   const rel = relative(temp, data);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return [temp];
+  if (!dataInTemp(data)) return [temp];
   return [
     join(temp, `claude-${process.getuid?.() ?? 0}`),
     ...others(temp, "").filter((path) => basename(path).startsWith("fc-")),

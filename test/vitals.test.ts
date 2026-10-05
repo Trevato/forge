@@ -29,6 +29,7 @@ const mint = async (username: string, scope: string) =>
   (
     (await (
       await post("/api/v1/tokens", {
+        adminConfirm: true,
         username,
         password: "a-good-passphrase",
         name: scope,

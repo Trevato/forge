@@ -45,6 +45,7 @@ import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
 import { feedJs, feedNote, feedRegion } from "./feed.ts";
 import { crewKeyNote } from "./crew.ts";
+import { everydayCard } from "../pages/everyday.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 
 /** The events that can change a row on the shelf. */
@@ -179,7 +180,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       </p>`,
   );
   const body = html`<h1 class="sr-only">Studio</h1>
-    ${address} ${costLine}
+    ${everydayCard(ctx, user)} ${address} ${costLine}
     <div class="dash">
       <div class="dash-main stack">
         <div class="bar feed-head">

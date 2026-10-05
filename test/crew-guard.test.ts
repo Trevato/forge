@@ -259,9 +259,11 @@ describe("an issue cannot loop", () => {
     }
   });
 
-  test("the breaker: a reader's word does not lift it; a writer's does", () => {
+  test("the breaker: a reader's word does not lift it; a writer's does", async () => {
     const issue = held("Faster square");
     for (let n = 0; n < 3; n++) ran(issue, undefined, "failed");
+    // Words come after the runs, never in the same millisecond.
+    await Bun.sleep(5);
     expect(breakerTripped(app.db, fresh(), issue.id)).toBe(true);
     ok(addComment(app, mallory, repo, issue, "Go on."));
     expect(breakerTripped(app.db, fresh(), issue.id)).toBe(true);
