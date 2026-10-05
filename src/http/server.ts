@@ -112,13 +112,12 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
-  issuePage,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
   newTellPage,
-  tellPage,
 } from "../web/pages/issues.ts";
+import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
   modeSubmit,
@@ -690,12 +689,9 @@ export function buildRouter(): Router<Handler> {
   // One list of issues: `/issues` and `/tells` are two addresses for the
   // same page, for every repository and every viewer.
   router.add("GET", "/:owner/:name/issues", tellsList);
-  // The studio's own noun for one tell: a second door onto the one handler,
-  // never a second copy of the page; `/issues/:number` stays dev's own
-  // canonical address and answers exactly as it always has, in both modes
-  // (`tellPage` redirects there when the studio does not apply). The
-  // literal /tells is registered before /tells/:number for the same reason
-  // /issues/new is.
+  // One issue page, at `/issues/:number` and `/tells/:number` alike, for
+  // every repository and every viewer. The literal /tells is registered
+  // before /tells/:number for the same reason /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
@@ -706,7 +702,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
-  router.add("GET", "/:owner/:name/issues/:number", issuePage);
+  router.add("GET", "/:owner/:name/issues/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/:number/thread", issueThreadFragment);
   router.add(
     "POST",
