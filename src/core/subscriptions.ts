@@ -75,31 +75,53 @@ export const BUDGET_MAX_USD = 100_000;
 export interface Budget {
   readonly budgetUsd: number | null;
   readonly spentUsd: number;
+  /** Set by whoever made this forge (a spawned child's starter key): not this forge's to raise. */
+  readonly locked: boolean;
 }
 
 /** Every sealed account's budget and spend, by id, in one read. */
 export function budgetsOf(db: Database): Map<string, Budget> {
   const rows = db
-    .query<{ id: string; budget_usd: number | null; spent_usd: number }, []>(
-      `SELECT s.id, s.budget_usd,
+    .query<{ id: string; budget_usd: number | null; spent_usd: number; budget_locked: number }, []>(
+      `SELECT s.id, s.budget_usd, s.budget_locked,
               (SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = s.id) AS spent_usd
        FROM subscription s WHERE s.id <> 'platform'`,
     )
     .all();
-  return new Map(rows.map((r) => [r.id, { budgetUsd: r.budget_usd, spentUsd: r.spent_usd }]));
+  return new Map(
+    rows.map((r) => [r.id, { budgetUsd: r.budget_usd, spentUsd: r.spent_usd, locked: r.budget_locked === 1 }]),
+  );
 }
 
 /**
  * Set or clear (null) an account's whole-life budget. False for no such
- * sealed account or a budget out of range.
+ * sealed account, a budget out of range, or a locked budget: one set by
+ * whoever made this forge is never changed from inside it.
  */
 export function setBudget(db: Database, subscriptionId: string, usd: number | null): boolean {
   if (usd !== null && !(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
   const value = usd === null ? null : Math.round(usd * 100) / 100;
   return (
     db
-      .query("UPDATE subscription SET budget_usd = ?1 WHERE id = ?2 AND id <> 'platform'")
+      .query(
+        "UPDATE subscription SET budget_usd = ?1 WHERE id = ?2 AND id <> 'platform' AND budget_locked = 0",
+      )
       .run(value, subscriptionId).changes > 0
+  );
+}
+
+/**
+ * A budget that cannot be raised from inside this forge: what spawn puts on
+ * a child's starter key, so the spawner's money ends where they said.
+ */
+export function lockBudget(db: Database, subscriptionId: string, usd: number): boolean {
+  if (!(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
+  return (
+    db
+      .query(
+        "UPDATE subscription SET budget_usd = ?1, budget_locked = 1 WHERE id = ?2 AND id <> 'platform'",
+      )
+      .run(Math.round(usd * 100) / 100, subscriptionId).changes > 0
   );
 }
 

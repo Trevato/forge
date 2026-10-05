@@ -1224,9 +1224,12 @@ export const migrations: readonly string[] = [
   // 49 — a whole-life budget on a sealed account, in dollars (#601): the
   // most its runs may ever spend, summed from the run ledger. Null is none.
   // A spawned child's starter key carries one, so the spawner's money ends
-  // where they said.
+  // where they said. A locked budget was set by whoever made this forge:
+  // its admin cannot raise it, only stop using the account.
   `
   ALTER TABLE subscription ADD COLUMN budget_usd REAL
     CHECK (budget_usd IS NULL OR budget_usd > 0);
+  ALTER TABLE subscription ADD COLUMN budget_locked INTEGER NOT NULL DEFAULT 0
+    CHECK (budget_locked IN (0, 1));
   `,
 ];

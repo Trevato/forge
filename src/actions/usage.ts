@@ -72,7 +72,7 @@ export interface UsageReport {
   readonly standing: readonly (Omit<Standing, "subscriptionId"> & {
     readonly subscription: string;
     /** The account's whole-life budget and what it has spent, when it has one. */
-    readonly budget?: { readonly usd: number; readonly spentUsd: number };
+    readonly budget?: { readonly usd: number; readonly spentUsd: number; readonly locked: boolean };
   })[];
   /** The last 5 hours, today and the week, broken down, with the top runs. */
   readonly spend: Spend;
@@ -164,7 +164,7 @@ export function readUsage(
           ...rest,
           ...(b?.budgetUsd == null
             ? {}
-            : { budget: { usd: b.budgetUsd, spentUsd: b.spentUsd } }),
+            : { budget: { usd: b.budgetUsd, spentUsd: b.spentUsd, locked: b.locked } }),
         },
       ];
     })

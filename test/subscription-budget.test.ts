@@ -106,6 +106,7 @@ describe("an account's whole-life budget", () => {
     expect(budgetsOf(app.db).get(starter)).toEqual({
       budgetUsd: 1,
       spentUsd: 0,
+      locked: false,
     });
   });
 
@@ -191,6 +192,27 @@ describe("an account's whole-life budget", () => {
     const usage = readUsage(app, alice, repo, 7);
     if (!usage.ok) throw new Error("usage");
     const row = usage.value.standing.find((s) => s.subscription === "starter")!;
-    expect(row.budget).toEqual({ usd: 20, spentUsd: 1.1 });
+    expect(row.budget).toEqual({ usd: 20, spentUsd: 1.1, locked: false });
+  });
+
+  test("a locked budget — a spawned child's starter key — is not raised from inside the forge", async () => {
+    const { lockBudget } = await import("../src/core/subscriptions.ts");
+    expect(lockBudget(app.db, starter, 2)).toBe(true);
+    expect(setBudget(app.db, starter, 1000)).toBe(false);
+    expect(setBudget(app.db, starter, null)).toBe(false);
+    expect(budgetsOf(app.db).get(starter)).toMatchObject({ budgetUsd: 2, locked: true });
+    // Even the forge's admin, through the page, is refused and told why.
+    const admin = await signIn("alice");
+    const res = await fetch(`${servers.url}/settings/subscriptions/${starter}/budget`, {
+      method: "POST",
+      headers: { cookie: admin, origin: servers.url },
+      body: new URLSearchParams({ budget: "1000" }),
+      redirect: "manual",
+    });
+    expect(res.status).toBe(303);
+    expect(budgetsOf(app.db).get(starter)!.budgetUsd).toBe(2);
+    const page = (await (await fetch(`${servers.url}/settings/subscriptions`, { headers: { cookie: admin } })).text()).replace(/\s+/g, " ");
+    expect(page).toContain("set by whoever made this forge");
+    expect(page).not.toContain(`action="/settings/subscriptions/${starter}/budget"`);
   });
 });
