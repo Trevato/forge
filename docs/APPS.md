@@ -103,11 +103,15 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    visibility), and it is set apart from the repository's own: the code can
    be private while the app is public, or the other way round. A private
    environment sets no cookie of its own; a person arriving by its link is
-   sent to the forge to sign in, which checks `canRead` on the repository
-   and returns them with a signed, short-lived grant for the page they
-   wanted. Someone who cannot see the repository, and anything that is not
-   a person navigating, gets the forge's own "not found". Guessing the
-   hostname yields the same.
+   sent to the forge to sign in, which checks `canEnterApp` — the
+   repository's writers and its crew, never everyone who can read it — and
+   returns them with a signed, short-lived grant for the page they wanted;
+   the proxy asks the same question again on every request, so a grant
+   stops working the moment its holder may no longer enter. Anyone else,
+   and anything that is not a person navigating, gets the forge's own "not
+   found". Guessing the hostname yields the same. Previews and the
+   terminal follow the app, and making the repository public changes
+   nobody's way in.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -409,8 +413,9 @@ exactly this).
 
 Behind the headers is the grant. A person who opens an app through the
 forge — the app's link, or the app's own **Sign in** — is sent to
-`/apps/open`, which vouches for them if they can see the repository and
-sends them back with a signed grant in a cookie naming them (twelve hours,
+`/apps/open`, which vouches for them if they may enter the app (anyone,
+for a public app; a writer or the crew, for a private one) and sends them
+back with a signed grant in a cookie naming them (twelve hours,
 HttpOnly, SameSite=Lax). The forge answers two paths on every app's host:
 `/__forge/signin?to=<path>` starts that round trip, and
 `/__forge/signout?to=<path>` drops the grant. A private app admits nobody
@@ -441,8 +446,8 @@ variables (`FORGE_APP_DATA` and the rest, plus `FORGE_APP_TTY=1` and
 `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest).
 `notes--12@forge` is the preview of pull 12's. The key still decides who
 you are: a private app's terminal answers only to a key the forge knows
-that can read the repository; a public app's answers to anyone, as its web
-page does. Resizes pass through; closing the connection sends the program
+that can write the repository, or the crew's; a public app's answers to
+anyone, as its web page does. Resizes pass through; closing the connection sends the program
 `SIGHUP`.
 
 The scaffold ships a small one (`src/tty.ts`, plain ANSI, no dependencies)

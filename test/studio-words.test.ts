@@ -516,9 +516,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         title: "vocab",
         shows: [`href="#i-pull"/></svg>Changes`],
         hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
-        // #281: `?mode=dev` on the same address is unaffected — the where
-        // strip renders exactly as today, dev's own dots and words.
-        dev: ["workbench", "this machine"],
+        // #630: the app page is the home in every mode; its code, with dev's
+        // where strip, is the Files step one tab over.
       },
       {
         word: "tell",
@@ -526,8 +525,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // #171: the composer's close button used to say "Close issue" here,
         // dev's own noun on the studio's own page.
         shows: ["Close tell"],
-        dev: ["<h2>Labels</h2>", "Close issue"],
-        devTitle: `${tellTitle} · vocab`,
+        // One issue page (#626): dev's controls are its closed Details.
+        title: `${tellTitle} · vocab`,
       },
       // The studio's own nouns for the same two pages (#158): one handler
       // each, so what is walked here is the very page above under the
