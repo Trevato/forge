@@ -707,11 +707,9 @@ describe("a hold is set, shown and lifted", () => {
       `action="/alice/garden/pulls/${pull.number}/release"`,
     );
     expect(after).not.toContain("Hold this change");
-    // The pull's own page, the one that reads the code, says it too.
-    const dev = await page(
-      `/alice/garden/pulls/${pull.number}?mode=dev`,
-      cookie,
-    );
+    // The change's Files step, the one that reads the code, says it too
+    // (#628: one change page; `?mode=dev` answers the same page now).
+    const dev = await page(`/alice/garden/pulls/${pull.number}/files`, cookie);
     expect(dev).toContain("holds this");
     expect(dev).toContain(WHY);
     expect(dev).not.toContain(

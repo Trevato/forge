@@ -14,12 +14,18 @@
  * name. So a stranger's "P0 …" on a public repository makes no pillar, and
  * their "Later gate: …" holds nothing and opens nothing.
  *
+ * This module is the one reader: which pillars there are (`pillarsOf`),
+ * which of them an issue serves (`servedBy`), and what merged for each
+ * (`mergedByPillar`, #610). The label an issue carries is that reading made
+ * visible, written by `actions/pillars.ts` and never read back here.
+ *
  * A repository with no such issues has no pillars, and plans as it always
  * did.
  */
 
 import type { Database } from "bun:sqlite";
 import { getIssuesByIds, type Issue } from "./issues.ts";
+import { closesFromBody } from "./pulls.ts";
 import { canWrite, type Repo } from "./repos.ts";
 import { getUserById } from "./users.ts";
 
@@ -43,7 +49,7 @@ export interface Pillars {
 
 const PILLAR = /^(P\d+) [^:]+(?=:)/;
 const GATE = /^Later gate:/i;
-const LATER = /^Later:/i;
+const LATER_UMBRELLA = /^Later:/i;
 /** More umbrellas than a direction has pillars. */
 const MAX = 64;
 
@@ -93,7 +99,7 @@ export function pillarsOf(db: Database, repo: Repo): Pillars {
         umbrella: issue,
       });
     else if (GATE.test(issue.title)) gate ??= issue;
-    else if (LATER.test(issue.title)) later ??= issue;
+    else if (LATER_UMBRELLA.test(issue.title)) later ??= issue;
   }
   return {
     pillars: [...pillars.values()].sort(
@@ -115,4 +121,225 @@ export function findPillar(
       pillar.short.toLowerCase() === wanted ||
       pillar.name.toLowerCase() === wanted,
   );
+}
+
+// ---- which pillar an issue serves, and what merged for each (#610) ----
+
+/** What an issue that serves no pillar reads as. */
+export const NO_PILLAR = "no pillar";
+/** What deferred work reads as: the Later umbrella's name, and its label's. */
+export const LATER = "Later";
+/** The days of merged work the map and the board count by pillar. */
+export const PILLAR_DAYS = 7;
+
+/**
+ * The names an issue can be filed under, in order: every pillar, then
+ * `Later` where the repository has a gate or a Later umbrella.
+ */
+export function pillarNames(set: Pillars): string[] {
+  return [
+    ...set.pillars.map((pillar) => pillar.name),
+    ...(set.gate !== undefined || set.later !== undefined ? [LATER] : []),
+  ];
+}
+
+/**
+ * Whether an issue is the plan's own furniture — an umbrella, the gate, or
+ * the Later umbrella — and not work: it serves no pillar and is counted in
+ * none. One umbrella waiting for another is an order between pillars.
+ */
+export function isStructural(set: Pillars, issueId: string): boolean {
+  return (
+    set.gate?.id === issueId ||
+    set.later?.id === issueId ||
+    set.pillars.some((pillar) => pillar.umbrella.id === issueId)
+  );
+}
+
+/** The ids of the plan's furniture: every umbrella, the Later umbrella and the gate. */
+export function structuralIds(set: Pillars): Set<string> {
+  return new Set([
+    ...set.pillars.map((pillar) => pillar.umbrella.id),
+    ...(set.later === undefined ? [] : [set.later.id]),
+    ...(set.gate === undefined ? [] : [set.gate.id]),
+  ]);
+}
+
+/**
+ * Why the plan's furniture is never the crew's to take, as the map says it.
+ * An umbrella says what work is for and the gate holds work back: closing
+ * one is a person's decision — closing the gate opens everything deferred.
+ */
+export const PLAN_OWN =
+  "the plan's own: a person closes it, the crew never picks it";
+
+/**
+ * What every issue of the repository serves, by issue id: the first pillar,
+ * in order, whose umbrella waits for it directly; else `Later`, when it
+ * waits behind the gate or stands under the Later umbrella. An umbrella
+ * reads as its own pillar. An issue with no entry serves none. Two reads.
+ */
+export function servedBy(db: Database, set: Pillars): Map<string, string> {
+  const out = new Map<string, string>();
+  const place = new Map<string, number>();
+  const name = new Map<string, string>();
+  set.pillars.forEach((pillar, n) => {
+    place.set(pillar.umbrella.id, n);
+    name.set(pillar.umbrella.id, pillar.name);
+  });
+  if (set.later !== undefined) {
+    place.set(set.later.id, set.pillars.length);
+    name.set(set.later.id, LATER);
+  }
+  const best = new Map<string, number>();
+  if (place.size > 0) {
+    const umbrellas = [...place.keys()];
+    const rows = db
+      .query<{ umbrella: string; id: string }, string[]>(
+        `SELECT d.issue_id AS umbrella, d.blocked_by_id AS id
+           FROM issue_dependency d
+          WHERE d.issue_id IN (${umbrellas.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...umbrellas);
+    for (const row of rows) {
+      if (isStructural(set, row.id)) continue;
+      const n = place.get(row.umbrella)!;
+      if ((best.get(row.id) ?? Number.MAX_SAFE_INTEGER) > n) {
+        best.set(row.id, n);
+        out.set(row.id, name.get(row.umbrella)!);
+      }
+    }
+  }
+  if (set.gate !== undefined) {
+    const waiting = db
+      .query<{ id: string }, [string]>(
+        "SELECT issue_id AS id FROM issue_dependency WHERE blocked_by_id = ?1",
+      )
+      .all(set.gate.id);
+    for (const row of waiting)
+      if (!out.has(row.id) && !isStructural(set, row.id))
+        out.set(row.id, LATER);
+  }
+  for (const pillar of set.pillars) out.set(pillar.umbrella.id, pillar.name);
+  if (set.later !== undefined) out.set(set.later.id, LATER);
+  return out;
+}
+
+/** Merged pulls counted for one pillar; `pillar` null is no pillar. */
+export interface MergedCount {
+  readonly pillar: string | null;
+  readonly merged: number;
+}
+
+/**
+ * The repository's pulls merged since an instant, counted by pillar: a pull
+ * takes the pillar of the first issue it closes that serves one. Every name
+ * has a row, zero or not, in order; no pillar comes last, when there is
+ * any. Two reads however many pulls merged.
+ */
+export function mergedByPillar(
+  db: Database,
+  repoId: string,
+  set: Pillars,
+  served: ReadonlyMap<string, string>,
+  since: string,
+): MergedCount[] {
+  const bodies = db
+    .query<{ body: string }, [string, string]>(
+      `SELECT i.body FROM pull p JOIN issue i ON i.id = p.issue_id
+        WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL AND p.merged_at >= ?2
+        ORDER BY p.merged_at DESC LIMIT 1000`,
+    )
+    .all(repoId, since);
+  const closes = bodies.map((row) => closesFromBody(row.body));
+  const numbers = [...new Set(closes.flat())];
+  const idOf = new Map<number, string>();
+  const CHUNK = 400;
+  for (let i = 0; i < numbers.length; i += CHUNK) {
+    const chunk = numbers.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string; number: number }, (string | number)[]>(
+        `SELECT id, number FROM issue WHERE repo_id = ?1 AND kind = 'issue'
+           AND number IN (${chunk.map((_, n) => `?${n + 2}`).join(",")})`,
+      )
+      .all(repoId, ...chunk);
+    for (const row of rows) idOf.set(row.number, row.id);
+  }
+  const names = pillarNames(set);
+  const counts = new Map<string | null, number>(names.map((n) => [n, 0]));
+  for (const closed of closes) {
+    let pillar: string | null = null;
+    for (const number of closed) {
+      const id = idOf.get(number);
+      const found = id === undefined ? undefined : served.get(id);
+      if (found !== undefined) {
+        pillar = found;
+        break;
+      }
+    }
+    counts.set(pillar, (counts.get(pillar) ?? 0) + 1);
+  }
+  const none = counts.get(null);
+  return [
+    ...names.map((n) => ({ pillar: n, merged: counts.get(n)! })),
+    ...(none === undefined ? [] : [{ pillar: null, merged: none }]),
+  ];
+}
+
+/** Of these repositories, the ones with an open issue titled like an umbrella: one read. */
+export function reposWithUmbrellas(
+  db: Database,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const CHUNK = 400;
+  for (let i = 0; i < repoIds.length; i += CHUNK) {
+    const chunk = repoIds.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ repo_id: string }, string[]>(
+        `SELECT DISTINCT repo_id FROM issue
+          WHERE repo_id IN (${chunk.map((_, n) => `?${n + 1}`).join(",")})
+            AND kind = 'issue' AND state = 'open'
+            AND (title GLOB 'P[0-9]*' OR title LIKE 'Later%')`,
+      )
+      .all(...chunk);
+    for (const row of rows) out.add(row.repo_id);
+  }
+  return out;
+}
+
+/** When the window the map and the board count merged work over began. */
+export function pillarWindowStart(now = new Date()): string {
+  return new Date(now.getTime() - PILLAR_DAYS * 86_400_000).toISOString();
+}
+
+/** A repository's pillars as a surface reads them. */
+export interface PillarView {
+  readonly set: Pillars;
+  /** Every name an issue can be filed under, in order. */
+  readonly names: readonly string[];
+  /** What each issue serves, by issue id. */
+  readonly of: ReadonlyMap<string, string>;
+  /** Pulls merged in the last `PILLAR_DAYS` days, by pillar. */
+  readonly merged: readonly MergedCount[];
+}
+
+/**
+ * One repository's pillars, what each of its issues serves, and the week's
+ * merged work by pillar — or nothing, for a repository that has no pillars.
+ */
+export function pillarView(
+  db: Database,
+  repo: Repo,
+  now = new Date(),
+): PillarView | undefined {
+  const set = pillarsOf(db, repo);
+  if (set.pillars.length === 0) return undefined;
+  const of = servedBy(db, set);
+  return {
+    set,
+    names: pillarNames(set),
+    of,
+    merged: mergedByPillar(db, repo.id, set, of, pillarWindowStart(now)),
+  };
 }

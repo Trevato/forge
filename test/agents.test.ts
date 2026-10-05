@@ -77,7 +77,7 @@ describe("fifty agents at once", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "cora",
         password: "a-long-crew-password",
         name: "fleet",
@@ -286,7 +286,7 @@ describe("Idempotency-Key", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "a-long-bot-password",
         name: "retries",
@@ -362,7 +362,7 @@ describe("Idempotency-Key", () => {
     const other = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "a-long-bot-password",
         name: "second-agent",
@@ -551,7 +551,7 @@ describe("rate limits over HTTP", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "loop",
         password: "a-long-loop-password",
         name: "runaway",
@@ -608,7 +608,7 @@ describe("rate limits over HTTP", () => {
     const fresh = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "loop",
         password: "a-long-loop-password",
         name: "polite",

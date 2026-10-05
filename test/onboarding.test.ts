@@ -134,7 +134,8 @@ describe("onboarding: a person with just a login", () => {
     const created = await fetch(`${base}/settings/tokens`, {
       method: "POST",
       headers: { cookie },
-      body: form({ name: "laptop", scope: "rw" }),
+      // The first account is the site admin: its token is minted on purpose (#596).
+      body: form({ name: "laptop", scope: "rw", aiAdmin: "on" }),
       redirect: "manual",
     });
     expect(created.status).toBe(303);
@@ -165,7 +166,7 @@ describe("onboarding: a person with just a login", () => {
     const roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "nora",
         password: "nora-login-secret",
         name: "ro",

@@ -326,7 +326,7 @@ describe("origins: connecting, mirroring, writing through", () => {
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "alice",
         password: ALICE_PASSWORD,
         name: "rw",

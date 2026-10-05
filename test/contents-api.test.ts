@@ -33,7 +33,7 @@ describe("commit via API (no git client)", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "contents-api-pass",
         name: "c",
@@ -168,7 +168,7 @@ describe("commit via API (no git client)", () => {
     const roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "contents-api-pass",
         name: "ro",

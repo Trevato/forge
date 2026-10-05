@@ -228,7 +228,9 @@ describe("web ui", () => {
     });
     let page = await (await fetch(at)).text();
     expect(page).toContain('data-state="closed"');
-    expect(page).toContain("Closed without merging.");
+    expect(await (await fetch(`${at}/files`)).text()).toContain(
+      "Closed without merging.",
+    );
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
       "Nothing open.",
     );
@@ -241,7 +243,9 @@ describe("web ui", () => {
     });
     page = await (await fetch(at)).text();
     expect(page).toContain('data-state="open"');
-    expect(page).toContain("Ready to merge");
+    expect(await (await fetch(`${at}/files`)).text()).toContain(
+      "Ready to merge",
+    );
   });
 
   // ---- permission-shaped chrome ----
@@ -651,7 +655,8 @@ describe("web ui", () => {
 
     // The verdicts are `v` chords on the radios, and only the verdicts this
     // person may pass: the author never sees `v a`, a reader only `v c`.
-    const pull = `/mel/proj/pulls/${pullNumber}`;
+    const change = `/mel/proj/pulls/${pullNumber}`;
+    const pull = `${change}/files`;
     const asAuthor = await as(pull, owner);
     expect(asAuthor).not.toContain('data-shortcut="v a"');
     expect(asAuthor).toMatch(
@@ -665,14 +670,14 @@ describe("web ui", () => {
     expect(asReader).not.toContain('data-shortcut="v r"');
     expect(asReader).toContain('data-shortcut="v c"');
     // Close, reopen and merge carry no key at all.
-    for (const html of [asAuthor, issue]) {
+    for (const html of [await as(change, owner), issue]) {
       const state = html.slice(
         html.indexOf('id="thread-state"'),
         html.indexOf("</form>", html.indexOf('form="thread-state"')),
       );
       expect(state).not.toContain("data-shortcut");
     }
-    const mergeAt = asAuthor.indexOf(`action="${pull}/merge"`);
+    const mergeAt = asAuthor.indexOf(`action="${change}/merge"`);
     expect(mergeAt).toBeGreaterThan(-1);
     expect(
       asAuthor.slice(mergeAt, asAuthor.indexOf("</form>", mergeAt)),
