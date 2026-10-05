@@ -102,6 +102,7 @@ import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
+import { nextStepsFor } from "../core/next-steps.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const SERVER = { name: "forge", version: "1" };
@@ -734,6 +735,17 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "next_steps",
+    description:
+      "On a forge made for you (spawned), your first three steps and whether each is done: make your everyday account, open your apps, tell the crew something — the same card the home shows. Empty anywhere else, or for anyone but the forge's owner.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    async run(ctx, user) {
+      const steps = await nextStepsFor(ctx.app, user);
+      return good({ steps: steps ?? [] });
     },
   },
   {

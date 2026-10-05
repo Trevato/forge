@@ -66,8 +66,17 @@ export function everydayLine(ctx: Ctx, user: User): Html | null {
 
 function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
   return card(
-    html`<p class="mb">${EVERYDAY_WHY}</p>
-      <form method="post" action="/settings/everyday" class="stack">
+    html`<p class="mb">${EVERYDAY_WHY}</p>${everydayFields(ctx, user, offerKeep)}`,
+    { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
+  );
+}
+
+/** The form alone, for a card that says why itself (the first-login steps, #600). */
+export const everydayAsk = (ctx: Ctx, user: User): Html =>
+  everydayFields(ctx, user, true);
+
+function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
+  return html`<form method="post" action="/settings/everyday" class="stack">
         ${formField({
           label: "Username",
           name: "username",
@@ -107,9 +116,7 @@ function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
         method="post"
         action="/settings/everyday/keep"
         hidden
-      ></form>`,
-    { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
-  );
+      ></form>`;
 }
 
 // POST /settings/everyday — make the everyday account, link it, sign in as it.
