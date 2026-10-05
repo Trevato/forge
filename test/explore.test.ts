@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { exploreLine, parseExploreQuery } from "../src/actions/explore.ts";
+import { suspendAccount } from "../src/actions/accounts.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { createIssue } from "../src/core/issues.ts";
@@ -224,5 +225,18 @@ describe("explore", () => {
     });
     const told = JSON.parse(((await res.json()) as any).result.content[0].text);
     expect(names(told.items)).toEqual(names((await api("kind:app sort:ships", bobToken)).items));
+  });
+
+  test("a suspended account's apps and the account itself are offered to nobody", async () => {
+    const sus = await user("sus");
+    await appOf(sus, "susapp");
+    expect(names((await api("")).items)).toContain("sus/susapp");
+    const done = await suspendAccount(app, alice, "sus");
+    expect(done.ok).toBe(true);
+    for (const token of [undefined, bobToken, aliceToken]) {
+      const shown = names((await api("", token)).items);
+      expect(shown).not.toContain("sus/susapp");
+      expect(shown).not.toContain("sus");
+    }
   });
 });

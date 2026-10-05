@@ -19,7 +19,7 @@ import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { frontScore, frontSignals, type FrontSignals } from "../core/front.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
-import { getUsersByIds, type User } from "../core/users.ts";
+import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { listChildren } from "./spawn.ts";
 
 export type ExploreKind = "app" | "person" | "forge";
@@ -130,7 +130,17 @@ export async function explore(
   );
   const owners = getUsersByIds(db, [...new Set(repos.map((r) => r.ownerId))]);
   const appRepos = repos.filter(
-    (r) => records.has(r.id) && owners.get(r.ownerId)?.kind !== "agent",
+    (r) => {
+      const owner = owners.get(r.ownerId);
+      // An agent's working fork is not a find; a suspended or removed
+      // account's apps are not offered to anyone.
+      return (
+        records.has(r.id) &&
+        owner !== undefined &&
+        owner.kind !== "agent" &&
+        isActive(owner)
+      );
+    },
   );
   const signals = frontSignals(
     db,
