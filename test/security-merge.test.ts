@@ -454,7 +454,7 @@ describe("merge correctness (clean results, recorded for regression)", () => {
     );
     expect(after).toBe(before);
 
-    const page = await (await fetch(`${base}/bob/app/pulls/4`)).text();
+    const page = await (await fetch(`${base}/bob/app/pulls/4/files`)).text();
     expect(page).toContain("Can't merge.");
   });
 });

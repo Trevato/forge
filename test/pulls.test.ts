@@ -119,7 +119,8 @@ describe("pull requests end to end", () => {
     expect(created.status).toBe(303);
     expect(created.headers.get("location")).toBe("/dev/app/pulls/1");
 
-    const pr = await (await fetch(`${base}/dev/app/pulls/1`)).text();
+    // The diff is the change's Files step, one tab under the change.
+    const pr = await (await fetch(`${base}/dev/app/pulls/1/files`)).text();
     expect(pr).toContain("Make beta loud");
     expect(pr).toContain("feature → main");
     // The diff viewer rendered the change with intra-line word marks.
@@ -220,7 +221,7 @@ describe("pull requests end to end", () => {
       body: "",
     });
     const loc = created.headers.get("location")!;
-    const pr = await (await fetch(`${base}${loc}`)).text();
+    const pr = await (await fetch(`${base}${loc}/files`)).text();
     expect(pr).toContain("Can't merge");
     expect(pr).toContain("Conflicts");
 

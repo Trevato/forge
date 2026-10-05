@@ -753,8 +753,12 @@ describe("apps, runs and the crew on the web", () => {
     if (!opened.ok) return;
     const number = opened.value.number;
 
-    const page = await bodyOf(alice, `/alice/hello/pulls/${number}`);
-    expect(page).toContain("<h2>Preview</h2>");
+    // The preview is on the change; the assignee, the checks line and the
+    // merge box are its Files step, one tab under it.
+    expect(await bodyOf(alice, `/alice/hello/pulls/${number}`)).toContain(
+      "<h2>Preview</h2>",
+    );
+    const page = await bodyOf(alice, `/alice/hello/pulls/${number}/files`);
     expect(page).toContain("<h2>Assignee</h2>");
     // Checks are required: the line says so, and the box waits for them
     // unless the preview already came up green.

@@ -143,7 +143,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
 
   test("the PR on the upstream shows the fork's diff and is mergeable", async () => {
     const pr = await (
-      await fetch(`${base}/alice/app/pulls/1`, {
+      await fetch(`${base}/alice/app/pulls/1/files`, {
         headers: { cookie: aliceCookie },
       })
     ).text();

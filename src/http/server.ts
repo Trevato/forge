@@ -205,11 +205,11 @@ import {
   crewPage,
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
+import { changePage, pullPage } from "../web/studio/change.ts";
 import {
-  changePage,
   pullCommentSubmit,
+  pullFilesPage,
   pullMergeSubmit,
-  pullPage,
   pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
@@ -809,6 +809,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
+  // The change's Files step: the diff, the review threads and the merge
+  // box, one tab under the change itself.
+  router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);

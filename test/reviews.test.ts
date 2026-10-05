@@ -115,18 +115,23 @@ describe("review comments on diff lines", () => {
 
   test("the line-number gutter offers a comment affordance on a PR diff", async () => {
     const pr = await (
-      await fetch(`${base}/rev/app/pulls/1`, { headers: { cookie } })
+      await fetch(`${base}/rev/app/pulls/1/files`, { headers: { cookie } })
     ).text();
     expect(pr).toContain("dn-comment");
     expect(pr).toContain("?rc=");
   });
 
   test("the ?rc anchor opens an inline comment form at that line", async () => {
+    const rc = `rc=${encodeURIComponent("code.txt")}~new~2`;
+    // An older link to the change itself is handed on to its Files step.
+    const old = await fetch(`${base}/rev/app/pulls/1?${rc}`, {
+      headers: { cookie },
+      redirect: "manual",
+    });
+    expect(old.status).toBe(303);
+    expect(old.headers.get("location")).toBe(`/rev/app/pulls/1/files?${rc}`);
     const pr = await (
-      await fetch(
-        `${base}/rev/app/pulls/1?rc=${encodeURIComponent("code.txt")}~new~2`,
-        { headers: { cookie } },
-      )
+      await fetch(`${base}/rev/app/pulls/1/files?${rc}`, { headers: { cookie } })
     ).text();
     expect(pr).toContain('action="/rev/app/pulls/1/review"');
     expect(pr).toContain('name="line" value="2"');
@@ -144,7 +149,7 @@ describe("review comments on diff lines", () => {
     });
     expect(res.status).toBe(303);
     const pr = await (
-      await fetch(`${base}/rev/app/pulls/1`, { headers: { cookie } })
+      await fetch(`${base}/rev/app/pulls/1/files`, { headers: { cookie } })
     ).text();
     expect(pr).toContain("why so loud?");
     expect(pr).not.toContain("outdated"); // hash matches the current line
@@ -166,7 +171,7 @@ describe("review comments on diff lines", () => {
     await gitOk(["commit", "-am", "rewrite line 3"], dir);
     await gitOk(["push", "origin", "feature"], dir);
     const pr = await (
-      await fetch(`${base}/rev/app/pulls/1`, { headers: { cookie } })
+      await fetch(`${base}/rev/app/pulls/1/files`, { headers: { cookie } })
     ).text();
     expect(pr).toContain("stale anchor");
     expect(pr).toContain("outdated"); // content hash no longer matches
