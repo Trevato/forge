@@ -8,6 +8,7 @@
  * the system's own voice and takes no actor.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
 import { getIssueById } from "../core/issues.ts";
@@ -76,7 +77,7 @@ export function mayReadRuns(
   const record = getAppByRepo(app.db, repo.id);
   return (
     record === undefined ||
-    canEnterApp(app.db, repo, record.access, actor)
+    canEnterApp(app.db, repo, record, actor)
   );
 }
 
@@ -209,9 +210,11 @@ export function steerRepoRun(
   repo: Repo,
   runId: string,
   text: string,
-): Result<SteerOutcome, AccessError | "empty" | "not_agent"> {
+): Result<SteerOutcome, AccessError | "empty" | "not_agent" | "unverified"> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  const proven = requireVerified(app, writer.value);
+  if (!proven.ok) return proven;
   // A run costs money; like assigning, queueing one is a person's call.
   if (writer.value.kind === "agent") return err("forbidden");
   const run = getRun(app.db, runId);

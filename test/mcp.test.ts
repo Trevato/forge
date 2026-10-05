@@ -67,7 +67,7 @@ describe("the forge over MCP", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -75,7 +75,7 @@ describe("the forge over MCP", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -171,6 +171,7 @@ describe("the forge over MCP", () => {
       "take_updates",
       "converge",
       "asked",
+      "app_members",
       "front_page",
       "map",
       "usage",
@@ -345,7 +346,7 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(ro, "following", { repo: "bob/open" })).value.state,
     ).toBe("diverged");
-    const carol = await createUser(app.db, {
+    const carol = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",

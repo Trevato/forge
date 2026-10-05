@@ -127,7 +127,7 @@ function runsOpenTo(wordCtx: WordCtx, repo: Repo): boolean {
   const record = wordCtx.record;
   return (
     record === undefined ||
-    canEnterApp(wordCtx.db, repo, record.access, wordCtx.viewer)
+    canEnterApp(wordCtx.db, repo, record, wordCtx.viewer)
   );
 }
 

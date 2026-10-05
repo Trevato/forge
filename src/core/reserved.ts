@@ -91,6 +91,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "sitemap.xml",
   "sw.js",
   "theme",
+  "verify",
   "www",
   "asked",
   "claim",

@@ -27,6 +27,7 @@ import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { pullMayRun } from "../core/pull_trust.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import {
@@ -358,7 +359,7 @@ export function envsFor(
   if (runtime === undefined) return [];
   if (record.access === "private") {
     const repo = getRepoById(app.db, record.repoId);
-    if (repo === undefined || !canEnterApp(app.db, repo, record.access, viewer))
+    if (repo === undefined || !canEnterApp(app.db, repo, record, viewer))
       return [];
   }
   return runtime.status(record);
@@ -803,6 +804,23 @@ export class AppsRuntime {
           );
         return;
       }
+      // An approval is what lets a reader's pull run: deploy its head now.
+      case "pull.reviewed": {
+        if (event.payload["state"] !== "approved") return;
+        const pull = this.pullFromEvent(repo, event);
+        if (!pull || pull.state !== "open") return;
+        const head = await this.pullHead(dir, pull);
+        if (head !== undefined)
+          this.requestDeploy(
+            record,
+            repo,
+            previewEnv(pull.number),
+            head,
+            "approved",
+            event.actorId ?? undefined,
+          );
+        return;
+      }
       case "pull.closed":
       case "pull.merged": {
         const number = event.payload["number"];
@@ -853,6 +871,7 @@ export class AppsRuntime {
     // A suspended or removed owner's app does not deploy.
     if (this.stopped || !accountActive(this.app.db, repo.ownerId))
       return undefined;
+    if (!this.mayRun(record, repo, env, commitOid)) return undefined;
     const state = this.envFor(record, env);
     state.dormant = undefined;
     if (
@@ -1360,6 +1379,31 @@ export class AppsRuntime {
    * kept; one start serves every request that arrives while it happens.
    * Returns once it is live, or once it is clear it will not be.
    */
+  /**
+   * A preview runs a pull's code: from someone who cannot write, only once
+   * a writer has approved this exact head (`core/pull_trust.ts`). Asked by
+   * every door that starts one — a deploy and a wake.
+   */
+  private mayRun(
+    record: AppRecord,
+    repo: Repo,
+    env: EnvName,
+    commitOid: string,
+  ): boolean {
+    if (env === "production") return true;
+    const number = envPull(env);
+    const pull =
+      number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, commitOid))
+      return true;
+    log.info("preview waits for a writer's approval", {
+      app: record.slug,
+      env,
+      commit: commitOid.slice(0, 7),
+    });
+    return false;
+  }
+
   async wake(record: AppRecord, env: EnvName): Promise<LiveEnv | undefined> {
     const state = this.envs.get(key(record.id, env));
     if (state === undefined) return undefined;
@@ -1370,6 +1414,14 @@ export class AppsRuntime {
     const repo = getRepoById(this.app.db, record.repoId);
     // Waking runs code without a run row: the owner's standing is asked here.
     if (!repo || !accountActive(this.app.db, repo.ownerId)) return undefined;
+    // So is whose code it is: a preview asleep at a head nobody who can
+    // write approved — built before the gate, or approved by someone who
+    // can no longer write — is taken down, not woken. Approving the head
+    // deploys it again.
+    if (!this.mayRun(record, repo, env, asleep.commitOid)) {
+      await this.teardown(record, env);
+      return undefined;
+    }
     state.waking = (async () => {
       const write = (line: string): void => {
         if (asleep.runId !== "")

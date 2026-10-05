@@ -16,6 +16,7 @@ import { createSession, pruneSessions } from "../src/core/sessions.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "A",
@@ -120,6 +121,7 @@ describe("parity: full control through actions and the API", () => {
       });
       expect(res.status).toBe(201);
     }
+    proveAll(app);
     aliceRw = await mint("alice", "rw");
     aliceAdmin = await mint("alice", "admin");
     aliceRo = await mint("alice", "ro");
@@ -741,6 +743,8 @@ describe("parity: full control through actions and the API", () => {
   // ── orgs & teams ─────────────────────────────────────────────────────
 
   test("orgs and teams: what each caller may see and do", async () => {
+    // Alice changed her email above; the new address is taken as proven.
+    proveAll(app);
     expect(
       (
         await call("POST", "/api/v1/orgs", {

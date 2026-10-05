@@ -183,7 +183,7 @@ describe("the runtime meters what it runs", () => {
       storageEveryMs: 200,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

@@ -73,13 +73,17 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+} from "../actions/app_members.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
-import { clientAddress } from "./peer.ts";
+import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
@@ -715,6 +719,44 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "app_members",
+    description:
+      "The people a private app names: they may enter the app and its previews, and nothing else (no code, no crew, no settings, no terminal). Without `members`, the list. With `members` (usernames; the whole list), the change it would make; with dryRun false, made — by a person who can write the repository, never an agent, with an admin-scope token. Removing a name ends that person's way in at once. The same as the app's settings page and /api/v1/repos/:owner/:name/app/members.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const members = args["members"];
+      const answer = (
+        result: ReturnType<typeof readAppMembers> | ReturnType<typeof setAppMembersThrough>,
+      ): Answer =>
+        result.ok
+          ? good(result.value)
+          : result.error.kind === "invalid"
+            ? bad("invalid", result.error.message)
+            : result.error.kind === "forbidden"
+              ? bad("forbidden", "the people an app names are its writers' to choose")
+              : bad("not_found", "no such app or repository (owner/name)");
+      if (members === undefined) return answer(readAppMembers(ctx.app, user, repo));
+      if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
+        return bad("invalid", "members is a list of usernames");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing who may enter an app needs an admin-scope token");
+      return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
+    },
+  },
+  {
     name: "front_page",
     description:
       "The forge's front page as a stranger is shown it: the featured repository with the crew at work on it, then the public apps ranked by forks, ships, use and freshness, each with its numbers. A site admin also gets the picks; with `pinned` (in order; the first public one is featured) and/or `hidden`, each a list of owner/name, and dryRun false, sets them. The same data as /front and /api/v1/front.",
@@ -1091,7 +1133,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
       body: typeof args["body"] === "string" ? args["body"] : "",
       page: typeof args["page"] === "string" ? args["page"] : "",
     },
-    clientAddress(ctx.request),
+    clientBucket(ctx.request),
   );
   if (!filed.ok) {
     const e = filed.error;
