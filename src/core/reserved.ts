@@ -91,6 +91,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "theme",
   "www",
   "asked",
+  "claim",
   // the forge's own nouns, and the platform's name
   "user",
   "users",
