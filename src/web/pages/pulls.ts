@@ -1,24 +1,14 @@
 /**
- * The pull-request list and the compose form. A pull is an issue with a base
- * and a head, so the list is the issue list with one more state (merged) and
- * a branch pair in the metadata line; the compose form is the only place in
- * the product that reaches across two repositories.
+ * The pull-request compose form, and the one place a pull's third state is
+ * derived. The compose form is the only place in the product that reaches
+ * across two repositories; the list is the studio's (`changesList`,
+ * `src/web/studio/lists.ts`).
  */
 
 import { openPull } from "../../actions/pulls.ts";
-import {
-  commentCounts,
-  issueCounts,
-  labelsForIssues,
-  countComments,
-  labelsFor,
-  listLabels,
-  type Label,
-} from "../../core/issues.ts";
-import { listPulls, type Pull } from "../../core/pulls.ts";
-import { reviewSummary, type ReviewSummary } from "../../core/reviews.ts";
+import type { Label } from "../../core/issues.ts";
+import type { Pull } from "../../core/pulls.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
-import { listRefs } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -29,263 +19,17 @@ import {
   repoHeader,
   repoPalette,
   signInFirst,
-  stickyAction,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
-import { liveClientJs, liveMount } from "../live.ts";
-import {
-  badge,
-  btn,
-  card,
-  empty,
-  icon,
-  labelCss,
-  listCard,
-  pager,
-  seg,
-  time,
-  originTag,
-  userTag,
-  field as formField,
-} from "../ui.ts";
+import { btn, card, empty, icon, field as formField } from "../ui.ts";
 import { refSet } from "./refs.ts";
-import { threadRow } from "./issues.ts";
-import { studioChanges } from "../studio/lists.ts";
-import { pageTitle, studioRecord } from "../studio/nouns.ts";
-import { originGlyph } from "./thread.ts";
-
-const PER_PAGE = 25;
 
 /** open | closed | merged — the one place the third state is derived. */
 export function pullState(pull: Pull): "open" | "closed" | "merged" {
   if (pull.mergedAt !== null) return "merged";
   return pull.state === "closed" ? "closed" : "open";
-}
-
-// ---- the list ----
-
-/**
- * Where each pull on this page stands, review-wise.
- *
- * A verdict only counts against the commit that is head *now*, and the row's
- * `head_oid` is the snapshot taken when the pull opened — so the live tips
- * are read in one `for-each-ref` for the whole page rather than a `rev-parse`
- * per row.
- *
- * The summaries themselves are still one query per pull: `core/reviews.ts`
- * has no grouped twin of `reviewSummary`, and this adapter has no business
- * writing SQL. Bounded by the page size (25), and the gap to close is a
- * `reviewSummariesFor(ids, heads)` beside `commentCounts`.
- */
-async function verdictsFor(
-  ctx: Ctx,
-  repo: Repo,
-  pulls: readonly Pull[],
-): Promise<Map<string, ReviewSummary>> {
-  const out = new Map<string, ReviewSummary>();
-  // Only an open pull has a review still to satisfy; a closed or merged row
-  // wears its own state badge and pays for nothing here.
-  const open = pulls.filter((p) => p.state === "open" && p.mergedAt === null);
-  if (open.length === 0) return out;
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
-  const refs = await listRefs(dir, "refs/");
-  const tips = new Map(refs.ok ? refs.value.map((r) => [r.name, r.oid]) : []);
-  for (const pull of open) {
-    const head =
-      (pull.crossRepo
-        ? tips.get(`refs/pull/${pull.number}/head`)
-        : tips.get(`refs/heads/${pull.headBranch}`)) ?? pull.headOid;
-    out.set(pull.id, reviewSummary(ctx.app.db, pull.id, head));
-  }
-  return out;
-}
-
-/**
- * The row's review mark. Only ever three answers, because a list is a place
- * to spot the one pull that needs you, not to read the whole record: it is
- * approved, somebody wants changes, or nobody has said yet.
- */
-function verdictMark(summary: ReviewSummary | undefined): Html {
-  if (summary === undefined) return html``;
-  if (summary.changesRequested > 0)
-    return badge("Changes requested", { icon: "alert", tone: "danger" });
-  if (summary.approvals > 0)
-    return badge(
-      `${summary.approvals} approval${summary.approvals === 1 ? "" : "s"}`,
-      { icon: "check", tone: "success" },
-    );
-  return html`<span class="badge verdict-stale"
-    >${icon("eye")}Needs review</span
-  >`;
-}
-
-// GET /:owner/:name/pulls
-export async function pullsList(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  // In the studio "every change" is the pull list in the studio's own
-  // words — the same rule `pullPage` follows for one change. `?mode=dev` is
-  // the one-off way to dev's list without switching the browser.
-  const record = studioRecord(ctx, repo);
-  if (record !== undefined) return await studioChanges(ctx, repo, record);
-  const base = repoBase(repo);
-  const db = ctx.app.db;
-  const params = ctx.url.searchParams;
-  const raw_ = params.get("state");
-  const state = raw_ === "closed" ? "closed" : raw_ === "all" ? "all" : "open";
-  const q = params.get("q") ?? "";
-  const author = params.get("author") ?? "";
-  const label = params.get("label") ?? "";
-  const rawCursor = Number(params.get("cursor"));
-  const cursor =
-    Number.isSafeInteger(rawCursor) && rawCursor > 0 ? rawCursor : undefined;
-
-  const pulls = listPulls(db, repo.id, {
-    state,
-    limit: PER_PAGE,
-    ...(label !== "" ? { label } : {}),
-    ...(author !== "" ? { author } : {}),
-    ...(q !== "" ? { query: q } : {}),
-    ...(cursor !== undefined ? { cursor } : {}),
-  });
-  // Two grouped reads for the page, never two per row.
-  const ids = pulls.map((pull) => pull.id);
-  const labels = labelsForIssues(db, ids);
-  const comments = commentCounts(db, ids);
-  const verdicts = await verdictsFor(ctx, repo, pulls);
-  const rows = pulls.map((pull) => ({
-    pull,
-    labels: labels.get(pull.id) ?? [],
-    comments: comments.get(pull.id) ?? 0,
-    verdict: verdicts.get(pull.id),
-  }));
-  // One pass over the covering index gives both numbers the seg control shows.
-  const counts = issueCounts(db, repo.id, "pull");
-
-  const href = (patch: Record<string, string>, next?: number) => {
-    const p = new URLSearchParams();
-    const s = patch.state ?? state;
-    if (s !== "open") p.set("state", s);
-    const l = patch.label ?? label;
-    if (l !== "") p.set("label", l);
-    const a = patch.author ?? author;
-    if (a !== "") p.set("author", a);
-    const query = patch.q ?? q;
-    if (query !== "") p.set("q", query);
-    if (next !== undefined) p.set("cursor", String(next));
-    const text = p.toString();
-    return text === "" ? `${base}/pulls` : `${base}/pulls?${text}`;
-  };
-
-  const newPull = ctx.auth.user
-    ? btn("New pull request", {
-        href: `${base}/pulls/new`,
-        variant: "primary",
-        icon: "pull",
-        shortcut: "c",
-      })
-    : btn("Sign in to open one", { href: "/signin" });
-
-  const list =
-    rows.length === 0
-      ? empty({
-          icon: "pull",
-          title:
-            state === "closed"
-              ? "No closed pull requests"
-              : state === "all"
-                ? "No pull requests yet"
-                : "No open pull requests",
-          note: "A pull request is how a branch asks to become the main line.",
-          action: newPull,
-        })
-      : listCard(
-          rows.map(({ pull, labels, comments, verdict }) =>
-            threadRow(
-              base,
-              "pulls",
-              pull,
-              labels,
-              pullState(pull),
-              html`#${pull.number}
-                <span class="mono"
-                  >${pull.headBranch} → ${pull.baseBranch}</span
-                >
-                · opened ${time(pull.createdAt)} by
-                ${pull.originAuthor
-                  ? originTag(pull.originAuthor, originGlyph(repo))
-                  : userTag(pull.authorName)}${when(
-                  pullState(pull) === "open",
-                  () => html` ${verdictMark(verdict)}`,
-                )}`,
-              comments,
-            ),
-          ),
-        );
-
-  const lastNumber = pulls[pulls.length - 1]?.number;
-  const body = html`${repoHeader(ctx, repo, "pulls")}
-    <div class="mt">
-      <div class="filters">
-        ${seg([
-          {
-            label: "Open",
-            href: href({ state: "open" }),
-            current: state === "open",
-            count: counts.open,
-          },
-          {
-            label: "Closed",
-            href: href({ state: "closed" }),
-            current: state === "closed",
-            count: counts.closed,
-          },
-          {
-            label: "All",
-            href: href({ state: "all" }),
-            current: state === "all",
-          },
-        ])}
-        <form method="get" action="${base}/pulls" role="search">
-          ${when(
-            state !== "open",
-            () => html`<input type="hidden" name="state" value="${state}" />`,
-          )}
-          <input
-            class="input search"
-            type="search"
-            name="q"
-            value="${q}"
-            placeholder="Search titles"
-            aria-label="Search titles"
-          />
-          ${btn("Search", { size: "sm", variant: "outline" })}
-        </form>
-      </div>
-      ${list}
-      ${pager(
-        pulls.length === PER_PAGE && lastNumber !== undefined
-          ? { next: href({}, lastNumber) }
-          : {},
-      )}
-    </div>
-    ${when(ctx.auth.user !== undefined, () => stickyAction(newPull))}
-    ${liveMount({ repo: base })}`;
-
-  return page({
-    ctx,
-    title: pageTitle("changes", repo, false),
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body,
-    styleCss: labelCss([
-      ...listLabels(db, repo.id),
-      ...rows.flatMap((r) => r.labels),
-    ]),
-    scriptJs: liveClientJs,
-  });
 }
 
 // ---- compose ----

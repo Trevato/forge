@@ -59,6 +59,7 @@ export function asksPage(ctx: Ctx): Response {
   const needs = forgeNeedsFor(ctx, user);
   const count = decisions.length + needs.length;
   const body = html`<h1 id="asks-sentence">${askSentence(count)}</h1>
+    <p class="muted small"><a href="/asked">What you asked for</a>, and what became of it.</p>
     <div class="stack">
       ${decisions.map((d) => decisionCard(ctx, d))}
       ${needs.map(forgeCard)}

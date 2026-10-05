@@ -600,22 +600,20 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "tells",
         path: `${repoPath}/issues`,
         shows: [untouchedTitle, tellTitle],
-        dev: [`>#${tellNumber} opened`],
-        devTitle: "Issues · vocab",
+        // One list (#627): `?mode=dev` has no other page to show here.
+        title: "Everything told · vocab",
       },
       {
         word: "tells (told)",
         path: `${repoPath}/issues?word=told`,
         shows: [untouchedTitle],
         hides: [tellTitle],
-        dev: [`>#${tellNumber} opened`],
       },
       {
         word: "tells (next page)",
         path: `${repoPath}/issues?cursor=${tellNumber}`,
         shows: [untouchedTitle],
         hides: [tellTitle],
-        dev: [`>#${untouchedNumber} opened`],
       },
       {
         word: "tells (the studio's noun)",
@@ -650,22 +648,19 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "changes",
         path: `${repoPath}/pulls`,
         shows: [openPullTitle, secondChangeTitle],
-        dev: [openBranch],
-        devTitle: "Pull requests · vocab",
+        title: "Every change · vocab",
       },
       {
         word: "changes (look)",
         path: `${repoPath}/pulls?word=look`,
         shows: [openPullTitle],
         hides: [secondChangeTitle],
-        dev: [openBranch],
       },
       {
         word: "changes (next page)",
         path: `${repoPath}/pulls?cursor=${secondChangeNumber}`,
         shows: [openPullTitle],
         hides: [secondChangeTitle],
-        dev: [openBranch],
       },
       {
         word: "runs",
@@ -876,7 +871,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
     );
   });
 
-  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262)", async () => {
+  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262); its lists are the one list (#627)", async () => {
     const alice = getUserByName(app.db, "alice")!;
     const plain = await createRepo(app, alice, {
       name: "plain",
@@ -885,9 +880,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
     const titles = new Map([
-      ["/alice/plain/issues", "Issues · plain"],
+      ["/alice/plain/issues", "Everything told · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
-      ["/alice/plain/pulls", "Pull requests · plain"],
+      ["/alice/plain/pulls", "Every change · plain"],
       ["/alice/plain/runs", "Runs · plain"],
     ]);
     for (const [path, title] of titles) {
