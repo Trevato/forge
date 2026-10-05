@@ -22,6 +22,7 @@ import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
 import { listRuns } from "../../core/runs.ts";
+import { mayReadRuns } from "../../actions/runs.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -542,11 +543,14 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const kind = readRunsKind(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
 
-  const fetched = listRuns(db, repo.id, {
-    kind,
-    limit: LIST_PAGE,
-    ...(cursor ? { cursor } : {}),
-  });
+  // A private app's runs are for those who may enter it (`mayReadRuns`).
+  const fetched = mayReadRuns(ctx.app, ctx.auth.user, repo)
+    ? listRuns(db, repo.id, {
+        kind,
+        limit: LIST_PAGE,
+        ...(cursor ? { cursor } : {}),
+      })
+    : [];
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),

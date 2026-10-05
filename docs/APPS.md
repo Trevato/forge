@@ -111,7 +111,10 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    and anything that is not a person navigating, gets the forge's own "not
    found". Guessing the hostname yields the same. Previews and the
    terminal follow the app, and making the repository public changes
-   nobody's way in.
+   nobody's way in. So does what the app says about itself: its
+   environments' state and errors (`envsFor`), its runs and their logs
+   (`mayReadRuns`) and its run and serving events reach only those who may
+   enter it.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never

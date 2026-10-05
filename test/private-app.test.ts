@@ -20,6 +20,8 @@ import { AppsRuntime, envsFor } from "../src/apps/runtime.ts";
 import { runAppTty, type TtyHost } from "../src/apps/tty.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { audienceFilter } from "../src/core/event_audience.ts";
+import { listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -254,6 +256,58 @@ describe("a private app on a public repository stays private", () => {
       }).then((r) => r.json() as Promise<any>);
     expect((await as(carolCookie)).environments).toEqual([]);
     expect((await as(aliceCookie)).environments.length).toBeGreaterThan(0);
+  });
+
+  test("a private app's runs and logs are refused to a reader and an anonymous visitor; a writer reads them", async () => {
+    const run = listRuns(app.db, record.repoId, { kind: "deploy", limit: 1 })[0];
+    expect(run).toBeDefined();
+    if (run === undefined) return;
+    const base = `${servers.url}/alice/ledger`;
+    const api = `${servers.url}/api/v1/repos/alice/ledger`;
+    const paths = [
+      `${base}/runs/${run.id}`,
+      `${base}/runs/${run.id}?all=1`,
+      `${api}/runs/${run.id}`,
+      `${api}/runs/${run.id}/log`,
+    ];
+    for (const cookie of [carolCookie, ""]) {
+      const headers = cookie === "" ? {} : { cookie };
+      for (const path of paths) {
+        const res = await fetch(path, { headers, redirect: "manual" });
+        expect(`${path} ${res.status}`).toBe(`${path} 404`);
+      }
+      const listed = (await (
+        await fetch(`${api}/runs`, { headers })
+      ).json()) as any;
+      expect(listed.items).toEqual([]);
+      const page = await (
+        await fetch(`${base}/runs`, { headers: { ...headers, cookie: `${cookie}; forge_mode=dev` } })
+      ).text();
+      expect(page).not.toContain(run.id);
+    }
+    for (const path of paths) {
+      const res = await fetch(path, { headers: { cookie: aliceCookie } });
+      expect(`${path} ${res.status}`).toBe(`${path} 200`);
+    }
+  });
+
+  test("a private app's run and serving events reach only those who may enter it", () => {
+    const event = (kind: string) => ({
+      id: 1,
+      kind,
+      repoId: record.repoId,
+      actorId: null,
+      payload: { summary: "deploy failed: a secret path" },
+      createdAt: new Date().toISOString(),
+    });
+    for (const kind of ["run.finished", "app.serving", "app.stopped"]) {
+      expect(audienceFilter(app.db, carol)(event(kind) as any)).toBe(false);
+      expect(audienceFilter(app.db, undefined)(event(kind) as any)).toBe(false);
+      expect(audienceFilter(app.db, alice)(event(kind) as any)).toBe(true);
+      expect(audienceFilter(app.db, bot)(event(kind) as any)).toBe(true);
+    }
+    // The repository's own events stay the readers'.
+    expect(audienceFilter(app.db, carol)(event("issue.opened") as any)).toBe(true);
   });
 
   test("the settings page says, before saving, what stays private", async () => {

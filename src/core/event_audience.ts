@@ -16,10 +16,11 @@
 
 import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
-import { canAdmin, getRepoById } from "./repos.ts";
+import { getAppByRepo } from "./apps.ts";
+import { canAdmin, canEnterApp, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
-export type EventAudience = "readers" | "admins" | "actor";
+export type EventAudience = "readers" | "admins" | "actor" | "app";
 
 export function eventAudience(kind: string): EventAudience {
   if (
@@ -37,6 +38,9 @@ export function eventAudience(kind: string): EventAudience {
   // A fleet operation spans repositories; its receipt is its actor's.
   if (kind === "repo.pinned" || kind === "repo.unpinned" || kind.startsWith("fleet."))
     return "actor";
+  // A run's summary and an app's serving state can carry the app's own
+  // output: for a private app they are for those who may enter it (#620).
+  if (kind.startsWith("run.") || kind.startsWith("app.")) return "app";
   return "readers";
 }
 
@@ -58,10 +62,25 @@ export function audienceFilter(
     admins.set(repoId, yes);
     return yes;
   };
+  const entrants = new Map<string, boolean>();
+  const mayEnter = (repoId: string): boolean => {
+    const known = entrants.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const record = repo === undefined ? undefined : getAppByRepo(db, repoId);
+    const yes =
+      repo !== undefined &&
+      (record === undefined ||
+        canEnterApp(db, repo, record.access, viewer));
+    entrants.set(repoId, yes);
+    return yes;
+  };
   return (event) => {
     switch (eventAudience(event.kind)) {
       case "readers":
         return true;
+      case "app":
+        return event.repoId === null || mayEnter(event.repoId);
       case "actor":
         return viewer !== undefined && event.actorId === viewer.id;
       case "admins":
