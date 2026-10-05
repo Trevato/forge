@@ -311,7 +311,9 @@ change's size, unlike the page it links to.
 "is everything fine?". It leads with one sentence — _All fine_ when nothing
 asks the viewer, otherwise _N things need you_ — then the decision cards
 (a pull the crew stopped on, a green pull waiting for a look, an app parked
-at its ceiling), and, for a site admin only, one card per sentence of the
+at its ceiling, an issue the breaker parked, and an autonomous app whose
+planner declined its direction — answered by a comment on the direction
+issue, which is also what the board's line above its regions offers), and, for a site admin only, one card per sentence of the
 forge's health (`needs` in `/api/v1/health`). What counts as an ask is
 defined once, in `src/web/studio/asks.ts`: the header's **Asks** count, the
 page, the dashboard's _Needs you_ link and the phone notifier all read it,
@@ -406,11 +408,11 @@ other app the crew spent on this week — and beneath it the efficiency
 signal: spend per shipped change over the last 7 days (the usage ledger's
 `cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped
 query), or "$4.10 spent, nothing shipped" when there is no ratio. Above the
-regions, one line of what needs you: for a site admin the forge's health —
-_All fine_, or each thing that is off — and, for whoever owns an app, each
-issue its crew parked twice, with why, linking to the issue where the
-planner answers; it stays until the issue is split, replaced or deferred
-(`docs/PLANNING.md`). A site
+regions, whoever owns an app gets a line for each thing its crew waits on
+them for: a planner that declined the direction, with a box to answer it,
+and each issue the crew parked twice and handed to its planner, with why
+and a link to the issue where the planner answers — that one stays until
+the issue is split, replaced or deferred (`docs/PLANNING.md`). A site
 admin also gets a strip of the subscriptions above the regions: each
 account's 5-hour and weekly window — used, left, resets — in the words
 `windowWords` (`studio/words.ts`) gives them, with _inferred_ beside every

@@ -130,7 +130,7 @@ planner (`crew/parks.ts`):
   did not write, a planner has exactly this grant: an open issue the crew
   parked twice, as `split` or `dropped` — never `done`, never a pull, never
   a reopen.
-- **Until then it is listed**: on the board's line of what needs you, for
+- **Until then it is listed**: on the board, above its regions, for
   whoever owns the app, with its reasons and a link to the issue; and under
   `parkedTwice` in the map's data and the MCP's `map`. A comment from the
   planner or a builder does not take it off. What does: it is closed, it

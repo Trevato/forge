@@ -427,9 +427,7 @@ describe("the board's forge strip", () => {
 
   test("an admin reads All fine; a stuck run becomes a linked sentence; a non-admin sees nothing", async () => {
     const fine = await board("root");
-    expect(fine).toMatch(
-      /id="forge"\s+data-live="run\.\*,app\.\*,issue\.\*,pull\.\*"/,
-    );
+    expect(fine).toMatch(/id="forge"\s+data-live="run\.\*,app\.\*"/);
     expect(fine).toContain("All fine");
 
     const made = await createRepo(app, admin, { name: "stuck" });

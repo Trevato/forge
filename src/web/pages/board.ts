@@ -3,11 +3,11 @@
  * regions — what is being worked on now, what landed, what the decider
  * decided, and today's spend against each app's ceiling with what a shipped
  * change cost over the week — each a live region that swaps itself when a
- * matching event lands. Above them, one line of what needs the viewer: the
- * forge's health for a site admin, and each issue a crew parked twice for
- * whoever owns the app; a site admin also gets each subscription's windows.
- * Nothing on it needs a click, and everything on it links somewhere. It
- * reads the same tables as the studio and adds no state of its own.
+ * matching event lands. A site admin also gets two strips above them: the
+ * forge's health, and each subscription's windows; whoever owns an app gets
+ * a line for each thing its crew waits on them for. Nothing on it
+ * needs a click, and everything on it links somewhere. It reads the same
+ * tables as the studio and adds no state of its own.
  *
  * `?wall` is its one wall mode, for a screen across the room that nobody
  * touches: the same regions in larger type, without the key hints or a
@@ -47,6 +47,7 @@ import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import {
   autonomyStatus,
+  plannerDeclines,
   startOfTodayUtc,
   truncateAtWord,
 } from "../../crew/autonomy.ts";
@@ -210,7 +211,7 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
-    ${needsStrip(ctx, scope)} ${windowsStrip(ctx)}
+    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -285,53 +286,13 @@ function needHref(need: string, v: Vitals): string | undefined {
   return undefined;
 }
 
-/** A park reason on the board: one clause, cut at a word. */
-const REASON_MAX = 96;
-
-/** What swaps the strip: a run or an app for health; an issue or a pull for a park. */
-const NEEDS_LIVE = "run.*,app.*,issue.*,pull.*";
-
 /**
- * Each issue a crew parked twice, on the apps whose owner facts the viewer
- * may see: the app, the issue, and why — a link to the issue, where the
- * planner answers. It stays until the issue is split, replaced or deferred
- * (`parkedTwice`).
+ * The forge's health as one line, for a site admin only: *All fine*, or
+ * each thing that needs them. A live region of its own; nobody else gets
+ * the element or pays for the reads.
  */
-function parkedLines(ctx: Ctx, scope: BoardScope): Html[] {
-  return parkedTwice(ctx.app.db, [...scope.ownerFacts]).map((issue) => {
-    const repo = scope.byId.get(issue.repoId)!;
-    const why = issue.reasons
-      .map((reason) => truncateAtWord(reason, REASON_MAX))
-      .join("; ");
-    return html`<a
-      class="board-forge-need"
-      href="${repoBase(repo)}/issues/${issue.number}"
-      title="Open it: the planner answers on the issue"
-      >${`${repo.name} #${issue.number} parked twice: ${why}`}</a
-    >`;
-  });
-}
-
-/**
- * What needs the viewer, as one line. For a site admin, the forge's health:
- * *All fine*, or each thing that is off. For whoever owns an app here, each
- * issue its crew parked twice. A live region of its own; a viewer with
- * neither gets no element, and only an admin pays for the forge's reads.
- */
-function needsStrip(ctx: Ctx, scope: BoardScope): Html | null {
-  const parked = parkedLines(ctx, scope);
-  if (!ctx.auth.user?.isAdmin)
-    return parked.length === 0
-      ? null
-      : html`<div
-          class="board-forge"
-          id="forge"
-          data-live="${NEEDS_LIVE}"
-          data-ok="no"
-          role="status"
-        >
-          ${parked}
-        </div>`;
+function forgeStrip(ctx: Ctx): Html | null {
+  if (!ctx.auth.user?.isAdmin) return null;
   const app = ctx.app;
   const runtime = appsRuntime(app);
   const v = vitals({
@@ -346,12 +307,11 @@ function needsStrip(ctx: Ctx, scope: BoardScope): Html | null {
   const others = fh.incidents.filter(
     (i) => i.key !== "stuck" && i.key !== "held",
   );
-  const healthy = v.ok && fh.ok;
-  const ok = healthy && parked.length === 0;
+  const ok = v.ok && fh.ok;
   return html`<div
     class="board-forge"
     id="forge"
-    data-live="${NEEDS_LIVE}"
+    data-live="run.*,app.*"
     data-ok="${ok ? "yes" : "no"}"
     data-rollout="${fh.rollout.state}"
     role="status"
@@ -361,16 +321,80 @@ function needsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     ${
       ok
         ? html`<span class="board-forge-ok">All fine</span>`
-        : healthy
-          ? null
-          : v.needs.map((need) => {
-              const href = needHref(need, v);
-              return href === undefined
-                ? html`<span class="board-forge-need">${need}</span>`
-                : html`<a class="board-forge-need" href="${href}">${need}</a>`;
-            })
+        : v.needs.map((need) => {
+            const href = needHref(need, v);
+            return href === undefined
+              ? html`<span class="board-forge-need">${need}</span>`
+              : html`<a class="board-forge-need" href="${href}">${need}</a>`;
+          })
     }
-    ${parked}
+  </div>`;
+}
+
+// ---- the planner, waiting for a person ----
+
+/** An issue's title and a park's reason on the board: one clause each, cut at a word. */
+const TITLE_MAX = 64;
+const REASON_MAX = 96;
+
+/**
+ * One line per app whose planner declined the direction: its last words
+ * and a box to answer them, which is a comment on the direction issue —
+ * the word `planIfThin` waits for. And one line per issue a crew parked
+ * twice and handed to its planner (`crew/parks.ts`): why, and a link to
+ * the issue, where the planner answers; it stays until the issue is split,
+ * replaced or deferred. Only for apps whose owner facts the viewer may
+ * see; nothing at all when no planner is waiting and none holds an issue.
+ */
+function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const owned = scope.repos.filter((r) => scope.ownerFacts.has(r.id));
+  const declines = plannerDeclines(ctx.app.db, owned);
+  const parked = parkedTwice(
+    ctx.app.db,
+    owned.map((r) => r.id),
+  );
+  if (declines.length === 0 && parked.length === 0) return null;
+  return html`<div
+    class="board-declined"
+    id="declined"
+    data-live="run.*,issue.*,pull.*"
+    role="status"
+  >
+    ${declines.map((d) => {
+      const base = `/${d.repo.ownerName}/${d.repo.name}`;
+      return html`<form
+        class="board-declined-row"
+        method="post"
+        action="${base}/issues/${d.issue.number}/comments"
+      >
+        <span class="board-declined-says"
+          ><b>${d.repo.name}</b>: the planner declined the direction and waits
+          for you. <q>${d.words}</q></span
+        >
+        <input
+          class="input"
+          name="body"
+          required
+          aria-label="Answer the planner on #${d.issue.number}"
+          placeholder="Answer the planner"
+        />
+        <button class="btn" data-variant="primary" type="submit">Answer</button>
+      </form>`;
+    })}
+    ${parked.map((issue) => {
+      const repo = scope.byId.get(issue.repoId)!;
+      const why = issue.reasons
+        .map((reason) => truncateAtWord(reason, REASON_MAX))
+        .join("; ");
+      return html`<div class="board-declined-row board-parked-row">
+        <span class="board-declined-says"
+          ><b>${repo.name}</b>: the crew parked #${issue.number}
+          ${truncateAtWord(issue.title, TITLE_MAX)} twice, and the planner has
+          it. <q>${why}</q></span
+        >
+        <a class="btn" href="${repoBase(repo)}/issues/${issue.number}">Open</a>
+      </div>`;
+    })}
   </div>`;
 }
 
@@ -802,6 +826,12 @@ export const boardCss = /* css */ `
 .board-clock { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted-fg); min-width: 5ch; text-align: right; }
 .board-forge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 28px; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); }
 .board-forge[data-ok="no"] { color: var(--attn); }
+.board-declined { display: flex; flex-direction: column; gap: 8px; padding: 10px var(--pad) 0; }
+.board-declined-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12em, 22em) auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--attn) 45%, var(--border)); border-radius: var(--radius, 10px); }
+.board-parked-row { grid-template-columns: minmax(0, 1fr) auto; }
+.board-declined-says { color: var(--attn); line-height: 1.35; }
+.board-declined-says q { color: var(--fg); }
+.board[data-wall] .board-declined-row .input, .board[data-wall] .board-declined-row .btn { display: none; }
 a.board-forge-need { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .board-grid { flex: 1; display: grid; gap: var(--pad); padding: 12px var(--pad) var(--pad); min-height: 0; }
 .board-region { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -922,6 +952,8 @@ ${widths}
   .board-decision .board-when { grid-column: 2; grid-row: 3; }
   .board-app-nums { flex-wrap: wrap; white-space: normal; gap: 6px 12px; }
   .board-scope { display: none; }
+  .board-declined-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .board-declined-says { grid-column: 1 / -1; }
 }
 /* One region, full bleed. */
 .board[data-focus] .board-region { display: none; }
