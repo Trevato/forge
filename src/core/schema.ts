@@ -1215,7 +1215,7 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
   `,
-  // 48 — the asks ledger (`core/ask_ledger.ts`): each time something asked
+  // 52 — the asks ledger (`core/ask_ledger.ts`): each time something asked
   // a person, and how it ended — acted on, dismissed, or gone by itself —
   // so noise shows up as a number. One row per raising; history, never edited
   // but to close it.

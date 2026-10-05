@@ -61,7 +61,8 @@ const clip = (s: string, n = 120): string =>
 const slug = (r: Repo): string => `${r.ownerName}/${r.name}`;
 const base = (r: Repo): string => `/${r.ownerName}/${r.name}`;
 
-const URGENCY = { stopped: 10, declined: 9, look: 8, parked: 7, paused: 6 } as const;
+/** Every ask sits above the news (a failed run is 4); among asks, consequence alone orders them. */
+const ASK_URGENCY_FLOOR = 5;
 
 export function candidatesFor(
   db: Database,
@@ -116,9 +117,8 @@ export function candidatesFor(
       at: new Date(now).toISOString(),
       link: a.link,
       what: a.line,
-      // Consequence orders asks among themselves; the kind's floor keeps
-      // every ask above the news.
-      urgency: Math.max(URGENCY[a.kind], a.consequence.score / 10),
+      // The same order as /asks: the consequence score, nothing else.
+      urgency: ASK_URGENCY_FLOOR + a.consequence.score / 20,
       ask: {
         decision: a.words.decision,
         options: a.words.options,

@@ -26,6 +26,7 @@ import { looksForApps } from "../../core/looks.ts";
 import { closesFromBody, joinMany, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
+  canWrite,
   listReposWritableTo,
   ownerFactRepoIds,
   type Repo,
@@ -162,8 +163,6 @@ export interface Consequence {
   readonly score: number;
   readonly why: string;
 }
-
-const SECURITY = /\bsecurity\b|\bvulnerab|\bleak/i;
 
 /** The tier of a kind when nothing about the thing itself says more. */
 export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
@@ -362,11 +361,34 @@ function consequencesOf(
   asks: readonly AskCandidate[],
   now: number,
 ): Map<string, Consequence> {
-  const things = asks.map((a) => a.pull ?? a.issue).filter((t) => t !== undefined);
-  const labels = labelsForIssues(
-    db,
-    things.map((t) => t.id),
+  // What a pull says it closes is its author's free text: it counts only
+  // when the author could have written the issue's labels themselves.
+  const trusted = (pull: Pull, repo: Repo): number[] => {
+    if (!pull.authorIsAgent) {
+      const author = getUserById(db, pull.authorId);
+      if (author === undefined || !canWrite(db, repo, author)) return [];
+    }
+    return closesFromBody(pull.body);
+  };
+  const closes = new Map(
+    asks.flatMap((a) => (a.pull ? [[a.id, trusted(a.pull, a.repo)] as const] : [])),
   );
+  const closed = db.query<{ id: string }, [string, string]>(
+    "SELECT id FROM issue WHERE repo_id = ?1 AND number IN (SELECT value FROM json_each(?2))",
+  );
+  const named = new Map(
+    asks.map((a) => {
+      const thing = a.pull ?? a.issue;
+      const numbers = closes.get(a.id) ?? [];
+      const ids =
+        numbers.length === 0
+          ? []
+          : closed.all(a.repo.id, JSON.stringify(numbers)).map((r) => r.id);
+      return [a.id, thing === undefined ? ids : [thing.id, ...ids]] as const;
+    }),
+  );
+  // Labels are set by those who write: never a stranger's words.
+  const labels = labelsForIssues(db, [...new Set([...named.values()].flat())]);
   const blocks = db.query<{ n: number }, [string, string]>(
     `SELECT COUNT(*) AS n FROM issue_dependency d JOIN issue i ON i.id = d.blocked_by_id
      JOIN issue w ON w.id = d.issue_id
@@ -381,11 +403,12 @@ function consequencesOf(
     ) / 10;
     let c = KIND_TIER[a.kind];
     if (thing !== undefined) {
-      const security =
-        SECURITY.test(thing.title) ||
-        (labels.get(thing.id) ?? []).some((l) => /security/i.test(l.name));
+      // Security is a label on the thing, or on what it closes.
+      const security = (named.get(a.id) ?? []).some((id) =>
+        (labels.get(id) ?? []).some((l) => /security/i.test(l.name)),
+      );
       // What the thing would close, and what waits for that.
-      const numbers = a.pull ? closesFromBody(a.pull.body) : [thing.number];
+      const numbers = a.pull ? (closes.get(a.id) ?? []) : [thing.number];
       const waiting =
         numbers.length === 0
           ? 0
@@ -521,12 +544,24 @@ function endOf(db: Database, askId: string, raisedAt: string): Exclude<AskEnd, "
  */
 export function recordAskLedger(db: Database, now = new Date()): void {
   const at = now.toISOString();
+  // Bounded, and in an order that keeps the people asks are for: whoever
+  // has a crew working (on their own repository or their organisation's),
+  // then site admins, then the most recently signed in. A wave of new
+  // accounts can never push an owner out of their own figures.
   const people = db
     .query<{ id: string }, [string]>(
-      `SELECT DISTINCT u.id AS id FROM user u
+      `SELECT u.id AS id FROM user u
        WHERE u.is_agent = 0 AND u.kind = 'user' AND (
          EXISTS (SELECT 1 FROM session s WHERE s.user_id = u.id AND s.expires_at > ?1)
          OR EXISTS (SELECT 1 FROM user_setting t WHERE t.user_id = u.id AND t.key = 'notify_url' AND t.value <> ''))
+       ORDER BY
+         EXISTS (SELECT 1 FROM repo r JOIN repo_crew rc ON rc.repo_id = r.id
+                 WHERE r.owner_id = u.id
+                    OR r.owner_id IN (SELECT tm.org_id FROM team tm JOIN team_member m ON m.team_id = tm.id
+                                      WHERE m.user_id = u.id)) DESC,
+         u.is_admin DESC,
+         (SELECT MAX(s.created_at) FROM session s WHERE s.user_id = u.id) DESC,
+         u.id
        LIMIT 200`,
     )
     .all(at);
