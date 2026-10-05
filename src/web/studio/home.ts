@@ -168,7 +168,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
         </div>
-        ${crewKeyNote(ctx)}
+        ${user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null}
         ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}

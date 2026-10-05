@@ -199,6 +199,13 @@ describe("a spawned child's apps", () => {
     ).text();
     expect(asReader).toContain("bakery");
     expect(asReader).not.toContain("The crew has no model key yet");
+    // Nor on the home: there the note is for an admin or a writer of an app.
+    const readerHome = await (
+      await fetch(`${servers.url}/`, {
+        headers: { cookie: `forge_session=${session.token}` },
+      })
+    ).text();
+    expect(readerHome).not.toContain("The crew has no model key yet");
   });
 
   test("first boot registers apps as the founder, an account with no verified email", () => {
