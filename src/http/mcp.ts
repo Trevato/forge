@@ -25,6 +25,7 @@ import {
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
+import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -40,6 +41,7 @@ import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -79,12 +81,16 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+} from "../actions/app_members.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { manifestFor } from "../actions/here.ts";
-import { clientAddress } from "./peer.ts";
+import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
@@ -715,6 +721,44 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "app_members",
+    description:
+      "The people a private app names: they may enter the app and its previews, and nothing else (no code, no crew, no settings, no terminal). Without `members`, the list. With `members` (usernames; the whole list), the change it would make; with dryRun false, made — by a person who can write the repository, never an agent, with an admin-scope token. Removing a name ends that person's way in at once. The same as the app's settings page and /api/v1/repos/:owner/:name/app/members.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const members = args["members"];
+      const answer = (
+        result: ReturnType<typeof readAppMembers> | ReturnType<typeof setAppMembersThrough>,
+      ): Answer =>
+        result.ok
+          ? good(result.value)
+          : result.error.kind === "invalid"
+            ? bad("invalid", result.error.message)
+            : result.error.kind === "forbidden"
+              ? bad("forbidden", "the people an app names are its writers' to choose")
+              : bad("not_found", "no such app or repository (owner/name)");
+      if (members === undefined) return answer(readAppMembers(ctx.app, user, repo));
+      if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
+        return bad("invalid", "members is a list of usernames");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing who may enter an app needs an admin-scope token");
+      return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
+    },
+  },
+  {
     name: "front_page",
     description:
       "The forge's front page as a stranger is shown it: the featured repository with the crew at work on it, then the public apps ranked by forks, ships, use and freshness, each with its numbers. A site admin also gets the picks; with `pinned` (in order; the first public one is featured) and/or `hidden`, each a list of owner/name, and dryRun false, sets them. The same data as /front and /api/v1/front.",
@@ -944,6 +988,82 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "hold",
+    description:
+      "Hold a pull, or let it go. While a pull is held, no rule sends it to the crew's reviewer and no rule lands it; a person may still merge it themselves. For a person who can write the app: an agent is refused. Give `why` in one line to hold; `release: true` lets it go. It plans first — `dryRun` is true unless you say false — and says what would happen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        pull: { type: "integer", description: "The pull's number." },
+        why: {
+          type: "string",
+          description: "To hold: why, in one line. It shows on the pull.",
+        },
+        release: {
+          type: "boolean",
+          description: "True to let the pull go instead of holding it.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to do it.",
+        },
+      },
+      required: ["app", "pull"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["pull"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined)
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const dry = args["dryRun"] !== false;
+      const name = `${repo.ownerName}/${repo.name}#${pull.number}`;
+      const hint = "Nothing changed; send dryRun: false to do it.";
+      if (args["release"] === true) {
+        const released = releasePull(ctx.app, user, repo, pull, dry);
+        if (!released.ok)
+          return bad(
+            released.error,
+            "holding and releasing are for a person who can write this app",
+          );
+        return good({
+          says: !released.value
+            ? `Nothing holds ${name}.`
+            : dry
+              ? `Would release ${name}. ${hint}`
+              : `Released ${name}. The rules take it from here.`,
+          held: dry ? released.value : false,
+          dryRun: dry,
+        });
+      }
+      const held = holdPull(ctx.app, user, repo, pull, str(args["why"]), dry);
+      if (!held.ok)
+        return bad(
+          held.error,
+          held.error === "not_open"
+            ? "only an open pull can be held"
+            : held.error === "empty_why" || held.error === "why_too_long"
+              ? "say why in one line, at most 200 characters (why)"
+              : "holding and releasing are for a person who can write this app",
+        );
+      return good({
+        says: dry
+          ? `Would hold ${name}: "${held.value.why}". ${hint}`
+          : `Held ${name}. No rule reviews or lands it until it is released.`,
+        held: !dry,
+        hold: { by: held.value.heldByName, why: held.value.why },
+        dryRun: dry,
+      });
+    },
+  },
+  {
     name: "plan",
     description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. Where the app has pillars (umbrella issues titled like "P0 Trust: …"), each item also says what it is for: pillar, the one it serves, or later: true with why, one sentence, which puts it behind the Later gate instead of on the ready list; an item that says neither is refused. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, what is ready now, and what waits for later.`,
     inputSchema: {
@@ -1166,7 +1286,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
       body: typeof args["body"] === "string" ? args["body"] : "",
       page: typeof args["page"] === "string" ? args["page"] : "",
     },
-    clientAddress(ctx.request),
+    clientBucket(ctx.request),
   );
   if (!filed.ok) {
     const e = filed.error;

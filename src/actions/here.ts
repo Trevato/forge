@@ -155,7 +155,7 @@ function repoHere(
     visibility: repo.visibility,
   };
   // A private app the viewer may not enter is not there, to them.
-  if (record === undefined || !canEnterApp(app.db, repo, record.access, viewer))
+  if (record === undefined || !canEnterApp(app.db, repo, record, viewer))
     return base;
   const production = appsRuntime(app)
     ?.status(record)
@@ -217,7 +217,7 @@ function repoActions(
     out.push(...participant.map((a) => ({ ...a, account: true })));
   else if (acts) out.push(...participant);
   const record = getAppByRepo(db, repo.id);
-  if (record !== undefined && canEnterApp(db, repo, record.access, viewer))
+  if (record !== undefined && canEnterApp(db, repo, record, viewer))
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
   if (!acts) return out;
   if (mayDirectCrew(db, repo, viewer))
