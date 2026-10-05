@@ -709,7 +709,9 @@ async function work(
       voiceOf,
     );
     const reviews = pull ? listReviews(app.db, pull.id).map(voiceOf) : [];
-    const reviewComments = pull ? listReviewComments(app.db, pull.id) : [];
+    const reviewComments = pull
+      ? listReviewComments(app.db, pull.id).map(voiceOf)
+      : [];
     const prompt = taskPrompt({
       ...brief,
       issue: voiceOf(brief.issue),
