@@ -80,6 +80,7 @@ export const GATE: readonly string[] = [
   "test/told-by.test.ts",
   "test/highlight.test.ts",
   "test/check-list.test.ts",
+  "test/oauth-discovery.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [

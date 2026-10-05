@@ -1179,4 +1179,14 @@ export const migrations: readonly string[] = [
     CHECK (close_reason IN ('done','dropped','split'));
   ALTER TABLE issue_dependency ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0;
   `,
+  // 45 — OAuth clients registered dynamically (RFC 7591); step one of the
+  // MCP's OAuth. IF NOT EXISTS keeps a replay harmless.
+  `
+  CREATE TABLE IF NOT EXISTS oauth_client (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+  );
+  `,
 ];

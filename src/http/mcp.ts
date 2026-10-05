@@ -56,6 +56,7 @@ import { convergeFork, convergeState } from "../crew/converge.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
+import { resourceMetadataUrl } from "./oauth.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 
@@ -757,7 +758,7 @@ export function mcpRoutes(router: Router<Handler>): void {
           status: 401,
           headers: {
             "content-type": "application/json",
-            "www-authenticate": 'Bearer realm="forge"',
+            "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
           },
         },
       );

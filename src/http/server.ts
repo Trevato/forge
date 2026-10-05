@@ -282,6 +282,7 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
+import { notePeer, oauthRoutes } from "./oauth.ts";
 import {
   cookieValue,
   publicUrl,
@@ -668,6 +669,7 @@ export function buildRouter(): Router<Handler> {
   // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
+  oauthRoutes(router);
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
@@ -1317,6 +1319,7 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
+      notePeer(request, server.requestIP(request)?.address);
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
       return securityFloor(
