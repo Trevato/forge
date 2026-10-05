@@ -12,6 +12,7 @@ import { getAppByRepo } from "../core/apps.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
 import {
   canAdmin,
+  canWrite,
   canRead,
   forkParentFor,
   getRepo,
@@ -177,7 +178,6 @@ export function scopeHeader(
             href: base,
             icon: "rocket" as const,
             current: active === "app",
-            shortcut: "g h",
           },
           {
             label: "Files",
@@ -346,7 +346,11 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
       { t: `${name} — Files`, h: `${base}/files`, c: "This repo" },
       { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
       { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
-      { t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" },
+      // Telling the crew is a writer's verb (the tell box is drawn only for
+      // one), so nobody else is offered a door that leads nowhere.
+      ...(canWrite(ctx.app.db, repo, ctx.auth.user)
+        ? [{ t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" }]
+        : []),
       { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
       { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
     ];

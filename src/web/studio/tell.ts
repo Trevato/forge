@@ -14,7 +14,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { listEvents } from "../../core/events.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canWrite, type Repo } from "../../core/repos.ts";
 import { activeRunFor, listRuns } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -116,7 +116,11 @@ export async function tellWord(
   // were still sitting in a queue.
   if (issue.assigneeId !== null && !issue.assigneeIsAgent)
     return { word: "told", note: "held" };
-  return { word: "told", note: "not picked up yet" };
+  return {
+    word: "told",
+    note:
+      wordCtx.record === undefined ? "waiting for someone" : "not picked up yet",
+  };
 }
 
 /** Every agent run for this tell, newest first: who, how long, what it
@@ -227,6 +231,14 @@ async function studioTell(
     record: getAppByRepo(db, repo.id),
     history: servingHistory(),
   };
+  // A repository that is not an app speaks of issues, not tells.
+  const plain = wordCtx.record === undefined;
+  // Closing is the author's or a writer's (`setIssueState`); nobody else is
+  // shown a button the server would only refuse.
+  const user = ctx.auth.user;
+  const mayClose =
+    user !== undefined &&
+    (user.id === issue.authorId || canWrite(db, repo, user));
   const [wordInfo, runsCard, closingCard] = await Promise.all([
     direction ? undefined : tellWord(wordCtx, repo, issue, closingPull),
     tellRuns(wordCtx, repo, issue),
@@ -243,7 +255,7 @@ async function studioTell(
             ordinary tell</span
           >`
         : wordInfo
-          ? html`${wordBadge(wordInfo.word)}
+          ? html`${wordBadge(wordInfo.word, undefined, plain)}
               <span class="muted small">${wordInfo.note}</span>`
           : stateBadge(issue.state)}
       <span
@@ -294,9 +306,9 @@ async function studioTell(
         ${talk.node}
         ${composer(ctx, {
           action: `${thread}/comments`,
-          stateAction: `${thread}/state`,
+          ...(mayClose ? { stateAction: `${thread}/state` } : {}),
           state: issue.state,
-          closeLabel: "Close tell",
+          closeLabel: plain ? "Close issue" : "Close tell",
           crewNote: threadNote(ctx.app.db, repo, issue),
           reasons: true,
         })}

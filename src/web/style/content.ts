@@ -175,6 +175,13 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .form-actions .close-reason { width: auto; min-height: 32px; padding-block: 0; }
 .form-actions .close-into { display: none; width: 7em; min-height: 32px; }
 .form-actions:has(.close-reason option[value="split"]:checked) .close-into { display: inline-block; }
+/* On a phone the Markdown hint takes its own line, so the reason, Close and
+   Comment stay together on the next one instead of Comment wrapping alone. */
+@media (max-width: 480px) {
+  .comment-form .form-actions > .muted.small { flex-basis: 100%; }
+  .comment-form .form-actions > .spacer { display: none; }
+  .comment-form .form-actions > :last-child { margin-left: auto; }
+}
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .connect-path h3 .ico { color: var(--muted-fg); }
