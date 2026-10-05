@@ -1854,11 +1854,14 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
+      // `{ title }` is the accepting person's wording; the marker stays.
+      const { title } = await body(ctx.request);
       const accepted = await acceptReport(
         ctx.app,
         ctx.auth.user,
         repo,
         ctx.params.id ?? "",
+        typeof title === "string" ? title : undefined,
       );
       if (!accepted.ok)
         return accepted.error === "decided"
