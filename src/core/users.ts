@@ -6,6 +6,7 @@
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { noreplyAddress } from "./commit_identity.ts";
+import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -256,6 +257,9 @@ export async function ensureEdgeUser(
 ): Promise<User | undefined> {
   const existing = getUserByName(db, login);
   if (existing) return existing.kind === "user" ? existing : undefined;
+  // The edge vouches for a login, not for its right to a name: a platform
+  // account called after the crew or the owner is not let in under it.
+  if (reservedName(db, login) !== undefined) return undefined;
   const made = await createUser(db, {
     username: login,
     email: noreplyAddress(login, host),
