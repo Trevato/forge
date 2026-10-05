@@ -21,6 +21,8 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
   cellsAvailable,
+  hiddenMounts,
+  mountMode,
   secretMounts,
   WATCH,
   type CellSpec,
@@ -326,6 +328,66 @@ describe("egress, reported: what an app reached is kept per repository and shown
     const after = String(egressNote(dataDir, "01repo", ["api.stripe.com"]));
     expect(after).not.toContain("api.stripe.com");
     expect(egressNote(dataDir, "01repo", ["api.stripe.com", "db.example.com:5432"])).toBeNull();
+  });
+});
+
+describe("cells in a pod see an allow-list of mounts, not the pod's mounts minus a deny-list (#801)", () => {
+  const mountinfo = [
+    "22 1 0:21 / / rw - overlay overlay rw",
+    "23 22 0:22 / /proc rw - proc proc rw",
+    "24 22 0:23 / /dev rw - tmpfs tmpfs rw",
+    "25 22 0:24 / /sys ro - sysfs sysfs ro",
+    "26 22 8:1 /pods/x/etc-hosts /etc/hosts rw - ext4 /dev/vda1 rw",
+    "27 22 8:1 /pods/x/resolv /etc/resolv.conf rw - ext4 /dev/vda1 rw",
+    "28 22 8:1 /pods/x/hostname /etc/hostname rw - ext4 /dev/vda1 rw",
+    "29 22 8:1 /storage/pvc-1 /data rw - ext4 /dev/vda1 rw",
+    "30 22 8:1 /pods/x/volumes/configmap /etc/app-config ro - ext4 /dev/vda1 ro",
+    "31 22 8:1 /srv/shared /mnt/host rw - ext4 /dev/vda1 rw",
+    "32 22 0:30 / /mnt/csi rw - nfs4 server:/export rw",
+    "33 22 0:31 / /nix/store ro - ext4 /dev/vda2 ro",
+    "34 22 0:32 / /etc/plat-ca ro - tmpfs tmpfs ro",
+  ].join("\n");
+
+  test("every mount but the root, /dev, /proc, /sys and the resolver's files is hidden", () => {
+    const hidden = hiddenMounts(mountinfo, "allow-list", ["/usr/local/bin"]);
+    for (const path of ["/data", "/etc/app-config", "/mnt/host", "/mnt/csi", "/nix/store", "/etc/plat-ca"])
+      expect(hidden).toContain(path);
+    for (const path of ["/", "/proc", "/dev", "/sys", "/etc/hosts", "/etc/resolv.conf", "/etc/hostname"])
+      expect(hidden).not.toContain(path);
+  });
+
+  test("a mount the runtime or a tool lives on stays, or no cell could start", () => {
+    const hidden = hiddenMounts(mountinfo, "allow-list", ["/nix/store/abc-bun/bin"]);
+    expect(hidden).not.toContain("/nix/store");
+    expect(hidden).toContain("/mnt/host");
+  });
+
+  test("outside a pod the deny-list holds: a developer's system mounts stay, secrets go", () => {
+    const hidden = hiddenMounts(mountinfo, "deny-list", []);
+    expect(hidden).toContain("/etc/plat-ca");
+    expect(hidden).not.toContain("/nix/store");
+    expect(hidden).not.toContain("/mnt/host");
+  });
+
+  test("inside Kubernetes the allow-list is the default; FORGE_CELL_MOUNTS chooses either", () => {
+    const saved = { k: process.env["KUBERNETES_SERVICE_HOST"], m: process.env["FORGE_CELL_MOUNTS"] };
+    try {
+      delete process.env["FORGE_CELL_MOUNTS"];
+      process.env["KUBERNETES_SERVICE_HOST"] = "10.43.0.1";
+      expect(mountMode()).toBe("allow-list");
+      delete process.env["KUBERNETES_SERVICE_HOST"];
+      expect(mountMode()).toBe("deny-list");
+      process.env["FORGE_CELL_MOUNTS"] = "allow-list";
+      expect(mountMode()).toBe("allow-list");
+      process.env["KUBERNETES_SERVICE_HOST"] = "10.43.0.1";
+      process.env["FORGE_CELL_MOUNTS"] = "deny-list";
+      expect(mountMode()).toBe("deny-list");
+    } finally {
+      if (saved.k === undefined) delete process.env["KUBERNETES_SERVICE_HOST"];
+      else process.env["KUBERNETES_SERVICE_HOST"] = saved.k;
+      if (saved.m === undefined) delete process.env["FORGE_CELL_MOUNTS"];
+      else process.env["FORGE_CELL_MOUNTS"] = saved.m;
+    }
   });
 });
 

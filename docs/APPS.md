@@ -153,11 +153,17 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    and every tmpfs the machine mounts outside `/dev`, `/proc` and `/sys`
    (how Kubernetes mounts a secret or a service-account token) — and a pod
    that runs the forge should set `automountServiceAccountToken: false`
-   all the same, since the forge never talks to the cluster. That is a
-   deny-list over the machine's mounts: a ConfigMap, hostPath, PVC or CSI
-   volume mounted into the forge's pod is usually not a tmpfs and stays
-   visible, so mount none there. A cell that sees an allow-list of mounts
-   instead is #801. Memory, CPU
+   all the same, since the forge never talks to the cluster. Inside
+   Kubernetes a cell goes further and sees an allow-list of mounts: none
+   of the pod's but the root, its own /dev, /proc and /sys,
+   `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`, and the mounts the
+   runtime and its tools live on — so a ConfigMap, hostPath, PVC or CSI
+   volume mounted for the forge is empty inside. Elsewhere (a developer's
+   machine, whose system is itself mounts: `/nix/store`, a home) the rule
+   is the machine's mounts minus the secret-bearing ones above.
+   `FORGE_CELL_MOUNTS=allow-list|deny-list` chooses either, and
+   `FORGE_CELL_MOUNTS_KEEP` (`:`-separated) names a read-only system mount
+   the allow-list must keep. Memory, CPU
    (averaged over 30 seconds) and disk are watched from outside; a cell
    over a limit is stopped, and the reason is the step's error or the
    app's last log line. Where the host cannot hold a cell (no bubblewrap,
