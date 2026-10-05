@@ -32,6 +32,7 @@ for a tunnel and a forge that sleeps.
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
 | `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
 | `stop`         | stop one run by its id from `now`                                                                 | yes    |
+| `health`       | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |        |
 | `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |        |
 | `outsiders`    | `{ repo, on?, dryRun? }`: whether people who cannot write may direct the crew; with `on`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes    |
 | `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |

@@ -35,6 +35,7 @@ import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 import { dataHomeRefusal } from "./kernel/data_home.ts";
+import { running } from "./kernel/version.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -222,8 +223,6 @@ const probes = apps === undefined ? undefined : startProbes(app, apps);
 // The snapshot: everything that cannot be rebuilt, nightly, to what an
 // operator sealed on the Backups page, else the platform's (`S3_*`) or a
 // directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
-const VERSION =
-  ((await import("../package.json")) as { version?: string }).version ?? "0";
 const snapshots = startSnapshots(
   app,
   () =>
@@ -233,7 +232,7 @@ const snapshots = startSnapshots(
       bus: app.bus,
     })?.store,
   {
-    version: VERSION,
+    version: running().version,
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );

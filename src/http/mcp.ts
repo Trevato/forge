@@ -80,6 +80,8 @@ import {
   setAppMembersThrough,
 } from "../actions/app_members.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { readHealth } from "../actions/health.ts";
+import { running } from "../kernel/version.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -90,7 +92,8 @@ import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
-const SERVER = { name: "forge", version: "1" };
+/** Who answers: the forge, at the version its build stamped. */
+const server = () => ({ name: "forge", version: running().version });
 
 type Args = Record<string, unknown>;
 type Answer =
@@ -421,6 +424,14 @@ const TOOLS: readonly Tool[] = [
               : "no such run here, or not yours to stop",
           );
     },
+  },
+  {
+    name: "health",
+    description:
+      "How this forge is: the version and commit it is running (stamped by the release that built it, `dev` when run from source), whether it is draining, and the platform's word on its rollout, with any incidents. A site admin also gets the forge's own vitals.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run: (ctx, user) => good(readHealth(ctx.app, user)),
   },
   {
     name: "audit",
@@ -1100,7 +1111,7 @@ function rpcOne(
           ? asked
           : PROTOCOLS[0],
         capabilities: { tools: {} },
-        serverInfo: SERVER,
+        serverInfo: server(),
         instructions:
           "This is a person's forge: their apps, and the crew that builds them. `tell` and `say` are how they direct it. Keep what you relay short — three sentences and the real options.",
       });
