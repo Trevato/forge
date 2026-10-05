@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
+import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
@@ -401,5 +402,79 @@ describe("acting on many asks at once", () => {
     };
     expect(plan.verb).toBe("close");
     expect(plan.counts.change).toBeGreaterThan(0);
+  });
+  test("a writer, not an admin, may dismiss their own asks in bulk, and nothing more", async () => {
+    const org = createOrg(app, alice, "guild");
+    if (!org.ok) throw new Error(String(org.error));
+    const team = createTeam(app, alice, org.value, "writers", "write");
+    if (!team.ok) throw new Error(String(team.error));
+    expect(addTeamMember(app, alice, org.value, team.value, "bob").ok).toBe(true);
+    const made = await createRepo(app, alice, { name: "shared", visibility: "private", owner: "guild" });
+    if (!made.ok) throw new Error(String(made.error));
+    await commitToBranch(app, alice, made.value, {
+      message: "seed",
+      files: [{ path: "README.md", content: "# shared\n" }],
+    });
+    addToCrew(app, alice, made.value, "bot");
+    const pull = await greenPull(made.value, "Shared work");
+    const ask = `look:${pull.id}`;
+    expect(items(bob)).toContain(ask);
+    const ship = await api(bobRw, "/api/v1/asks/bulk", { action: "ship", items: [ask], preview: false });
+    expect(ship.body.rows[0].outcome).toBe("refused");
+    expect(ship.body.rows[0].reason).toContain("not an admin");
+    const dismiss = await api(bobRw, "/api/v1/asks/bulk", { action: "dismiss", items: [ask], preview: false });
+    expect(dismiss.body.rows[0].outcome).toBe("ok");
+    expect(items(bob)).not.toContain(ask);
+    // Bob's dismissal is his: alice is still asked.
+    expect(items(alice)).toContain(ask);
+  });
+
+  test("nobody else undoes a person's bulk action through the asks, a site admin included", async () => {
+    const mine = items(alice).filter((i) => i.startsWith("look:"));
+    const done = await api(aliceRw, "/api/v1/asks/bulk", { action: "close", items: mine.slice(0, 1), preview: false });
+    expect(done.status).toBe(201);
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(bob.id);
+    try {
+      const bobAdmin = createToken(app.db, bob.id, "rw", "rw").token;
+      expect((await api(bobAdmin, `/api/v1/asks/bulk/${done.body.id}/undo`, {})).status).toBe(404);
+    } finally {
+      app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(bob.id);
+    }
+    expect((await api(aliceRw, `/api/v1/asks/bulk/${done.body.id}/undo`, {})).status).toBe(201);
+  });
+
+  test("a read-only token previews over the MCP too", async () => {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${aliceRo}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "asks_act", arguments: { action: "dismiss", items: items(alice) } },
+      }),
+    });
+    const body = (await res.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+    expect(body.result.isError).toBeUndefined();
+    const acting = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${aliceRo}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "asks_act", arguments: { action: "dismiss", items: items(alice), dryRun: false } },
+      }),
+    });
+    const refused = (await acting.json()) as { result: { isError?: boolean } };
+    expect(refused.result.isError).toBe(true);
   });
 });

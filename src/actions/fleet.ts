@@ -34,7 +34,13 @@ import {
 } from "../core/issues.ts";
 import { listCrewRoles } from "../core/agents.ts";
 import { joinMany } from "../core/pulls.ts";
-import { canAdmin, canRead, getReposByIds, type Repo } from "../core/repos.ts";
+import {
+  canAdmin,
+  canRead,
+  canSeeOwnerFacts,
+  getReposByIds,
+  type Repo,
+} from "../core/repos.ts";
 import { latestRunsForIssues } from "../core/runs.ts";
 import { isStalePull } from "../crew/stale_asks.ts";
 import { askDismissedBy } from "../web/studio/asks.ts";
@@ -208,16 +214,29 @@ function loadTargets(
 
 const repoName = (repo: Repo): string => `${repo.ownerName}/${repo.name}`;
 
-/** Whether `actor` administers a row's repository, asked once per repository. */
-function adminOf(app: App, actor: User): (repo: Repo) => boolean {
+/**
+ * Whether `actor` may change a row of this verb, asked once per repository:
+ * an admin of its repository — or, for a personal verb (`dismiss`), anyone
+ * the repository's asks are for, since only their own state changes.
+ */
+function authorityOf(
+  app: App,
+  actor: User,
+  verb: Verb,
+): (repo: Repo) => string | undefined {
   const known = new Map<string, boolean>();
   return (repo) => {
     let yes = known.get(repo.id);
     if (yes === undefined) {
-      yes = canAdmin(app.db, repo, actor);
+      yes = verb.personal
+        ? canSeeOwnerFacts(app.db, repo, actor)
+        : canAdmin(app.db, repo, actor);
       known.set(repo.id, yes);
     }
-    return yes;
+    if (yes) return undefined;
+    return verb.personal
+      ? `${repoName(repo)} does not ask you`
+      : `you are not an admin of ${repoName(repo)}`;
   };
 }
 
@@ -227,7 +246,7 @@ function adminOf(app: App, actor: User): (repo: Repo) => boolean {
  */
 function planRow(
   app: App,
-  admin: (repo: Repo) => boolean,
+  authority: (repo: Repo) => string | undefined,
   verb: Verb,
   target: Target,
   after: (before: FleetValue) => FleetValue,
@@ -246,8 +265,8 @@ function planRow(
     outcome: "refused",
     reason,
   });
-  if (!admin(target.repo))
-    return refused(`you are not an admin of ${repoName(target.repo)}`);
+  const denied = authority(target.repo);
+  if (denied !== undefined) return refused(denied);
   if (expect !== undefined && !same(before, expect))
     return refused(`changed since: it is ${shown(before)} now`);
   if (same(row.before, row.after))
@@ -290,10 +309,10 @@ function planOver(
   act: { name: string; verb: Verb; value: FleetValue },
 ): Plan & { verbOf: Verb; targets: Map<string, Target> } {
   const targets = loadTargets(app, kind, ids, actor);
-  const admin = adminOf(app, actor);
+  const authority = authorityOf(app, actor, act.verb);
   const { verb, value } = act;
   const rows = targets.map((t) =>
-    planRow(app, admin, verb, t, (before) =>
+    planRow(app, authority, verb, t, (before) =>
       verb.nextFor ? verb.nextFor(t, before, value) : verb.next(before, value),
     ),
   );
@@ -497,12 +516,12 @@ export async function undoFleetOp(
       person.value,
     );
     const byId = new Map(targets.map((t) => [t.id, t]));
-    const admin = adminOf(app, person.value);
+    const authority = authorityOf(app, person.value, verb);
     const rows = changed.map((r): PlannedRow => {
       const target = byId.get(r.targetId);
       if (target === undefined)
         return { ...r, before: r.after, after: r.before, outcome: "refused", reason: "it is gone" };
-      return planRow(app, admin, verb, target, () => r.before, r.after);
+      return planRow(app, authority, verb, target, () => r.before, r.after);
     });
     const done = await carryOut(app, person.value, verb, rows, byId);
     undone = recordOperation(app.db, {

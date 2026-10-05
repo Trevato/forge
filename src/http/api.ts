@@ -1339,6 +1339,10 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(typeof input.defaultBranch === "string"
         ? { defaultBranch: input.defaultBranch }
         : {}),
+      // "Outsiders may trigger the crew" (`crew/direct.ts`): an admin's, never an agent's.
+      ...(typeof input.crewOutsiders === "boolean"
+        ? { crewOutsiders: input.crewOutsiders }
+        : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
     return json(repoJson(ctx, updated.value));
