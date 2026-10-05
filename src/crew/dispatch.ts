@@ -22,6 +22,7 @@ import {
 } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import { resolveOpen } from "../core/decisions.ts";
+import { accountActive } from "../core/accounts.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -214,6 +215,8 @@ export function queueAgentRun(
   actorId?: string,
   again?: { notBefore: string; attempt: number; summary: string },
 ): Run | undefined {
+  // A suspended or removed owner's repositories run nothing, whoever asks.
+  if (!accountActive(app.db, repo.ownerId)) return undefined;
   // The day's ceiling gates every run the crew starts on its own, not only
   // the picks: a review, a feedback run or a conflict run past the ceiling
   // is money the person did not agree to. A person's own assignment is not

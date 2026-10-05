@@ -62,6 +62,8 @@ export function logBox(opts: {
   pulse?: boolean;
   className?: string;
   extra?: Html;
+  /** Where the whole log is read, when lines were left out. */
+  allHref?: string;
 }): Html {
   const { shown, hidden } = logWindow(opts.lines, opts.cap);
   return html`<div
@@ -75,8 +77,12 @@ export function logBox(opts: {
       hidden > 0,
       () =>
         html`<p class="muted small">
-          Holding the last ${opts.cap} lines here; the run's own log keeps
-          the rest.
+          Holding the last ${opts.cap} lines here;
+          ${opts.allHref === undefined
+            ? html`the run's own log keeps the rest.`
+            : html`<a href="${opts.allHref}"
+                >read all ${opts.lines.length}</a
+              >.`}
         </p>`,
     )}
     ${shown.map((l) => logLine(l, opts.who))}
