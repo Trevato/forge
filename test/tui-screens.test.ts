@@ -453,7 +453,7 @@ describe("the terminal UI, against a real forge", () => {
     }
   });
 
-  test("deleting a repo requires typing its exact name", async () => {
+  test("a repository's settings key hands over the web's one settings page, where deleting it lives", async () => {
     const doomed = await createRepo(forge, alice, { name: "doomed" });
     expect(doomed.ok).toBe(true);
     if (!doomed.ok) return;
@@ -461,20 +461,11 @@ describe("the terminal UI, against a real forge", () => {
     await h.settle();
     await openRepo(h, "doomed");
     await h.press(",");
-    // General → Labels → Webhooks → App → Crew → Danger
-    await h.press("tab", "tab", "tab", "tab", "tab");
-    expect(h.text()).toContain("Danger");
-    await h.press("X");
-    await h.typeText("wrong");
-    await h.press("enter");
-    expect(h.text()).toContain("that is not the name");
-    expect(getRepo(forge.db, "alice", "doomed")).toBeDefined();
-
-    for (let i = 0; i < 5; i++) await h.press("backspace");
-    await h.typeText("doomed");
-    await h.press("enter");
+    // #635: no settings screen in the terminal; the address, said as a path
+    // when no public URL is configured, and nothing deleted on the way.
     await h.settle();
-    expect(getRepo(forge.db, "alice", "doomed")).toBeUndefined();
+    expect(h.text()).toContain("Settings is on the web at /alice/doomed/settings");
+    expect(getRepo(forge.db, "alice", "doomed")).toBeDefined();
     h.stop();
   });
 
