@@ -6,6 +6,7 @@
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { noreplyAddress } from "./commit_identity.ts";
+import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -173,6 +174,14 @@ export interface ProfilePatch {
   commitEmail?: CommitEmail;
 }
 
+/**
+ * A display name as it is stored: trimmed, cut to its limit, and trimmed
+ * again — so a name padded past the cut is judged by what is kept.
+ */
+export function cleanDisplayName(raw: string): string {
+  return raw.trim().slice(0, MAX_DISPLAY_NAME).trim();
+}
+
 export type UpdateProfileError =
   | "email_taken"
   | "invalid_email"
@@ -196,9 +205,7 @@ export function updateProfile(
       .get(email, userId);
     if (taken) return err("email_taken");
   }
-  const displayName = (patch.displayName ?? current.displayName)
-    .trim()
-    .slice(0, MAX_DISPLAY_NAME);
+  const displayName = cleanDisplayName(patch.displayName ?? current.displayName);
   const commitEmail = patch.commitEmail ?? current.commitEmail;
   if (commitEmail !== "noreply" && commitEmail !== "account")
     return err("invalid_commit_email");
@@ -256,6 +263,9 @@ export async function ensureEdgeUser(
 ): Promise<User | undefined> {
   const existing = getUserByName(db, login);
   if (existing) return existing.kind === "user" ? existing : undefined;
+  // The edge vouches for a login, not for its right to a name: a platform
+  // account called after the crew or the owner is not let in under it.
+  if (reservedName(db, login) !== undefined) return undefined;
   const made = await createUser(db, {
     username: login,
     email: noreplyAddress(login, host),
