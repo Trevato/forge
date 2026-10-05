@@ -24,6 +24,7 @@ import {
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
+import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -39,6 +40,7 @@ import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
@@ -832,6 +834,82 @@ const TOOLS: readonly Tool[] = [
             says: `#${issue.number} no longer waits for #${blocker.number}.`,
           })
         : bad(unlinked.error, "you need write access to plan here");
+    },
+  },
+  {
+    name: "hold",
+    description:
+      "Hold a pull, or let it go. While a pull is held, no rule sends it to the crew's reviewer and no rule lands it; a person may still merge it themselves. For a person who can write the app: an agent is refused. Give `why` in one line to hold; `release: true` lets it go. It plans first — `dryRun` is true unless you say false — and says what would happen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        pull: { type: "integer", description: "The pull's number." },
+        why: {
+          type: "string",
+          description: "To hold: why, in one line. It shows on the pull.",
+        },
+        release: {
+          type: "boolean",
+          description: "True to let the pull go instead of holding it.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to do it.",
+        },
+      },
+      required: ["app", "pull"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["pull"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined)
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const dry = args["dryRun"] !== false;
+      const name = `${repo.ownerName}/${repo.name}#${pull.number}`;
+      const hint = "Nothing changed; send dryRun: false to do it.";
+      if (args["release"] === true) {
+        const released = releasePull(ctx.app, user, repo, pull, dry);
+        if (!released.ok)
+          return bad(
+            released.error,
+            "holding and releasing are for a person who can write this app",
+          );
+        return good({
+          says: !released.value
+            ? `Nothing holds ${name}.`
+            : dry
+              ? `Would release ${name}. ${hint}`
+              : `Released ${name}. The rules take it from here.`,
+          held: dry ? released.value : false,
+          dryRun: dry,
+        });
+      }
+      const held = holdPull(ctx.app, user, repo, pull, str(args["why"]), dry);
+      if (!held.ok)
+        return bad(
+          held.error,
+          held.error === "not_open"
+            ? "only an open pull can be held"
+            : held.error === "empty_why" || held.error === "why_too_long"
+              ? "say why in one line, at most 200 characters (why)"
+              : "holding and releasing are for a person who can write this app",
+        );
+      return good({
+        says: dry
+          ? `Would hold ${name}: "${held.value.why}". ${hint}`
+          : `Held ${name}. No rule reviews or lands it until it is released.`,
+        held: !dry,
+        hold: { by: held.value.heldByName, why: held.value.why },
+        dryRun: dry,
+      });
     },
   },
   {

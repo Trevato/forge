@@ -126,6 +126,8 @@ import {
   saySubmit,
   shipSubmit,
   takeBackSubmit,
+  holdSubmit,
+  releaseSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
@@ -766,6 +768,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/hold", holdSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/release", releaseSubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",

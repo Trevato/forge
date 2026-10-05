@@ -45,6 +45,7 @@ for a tunnel and a forge that sleeps.
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
 | `unlink`       | `{ app, issue, blockedBy }`: the issue stops waiting for it                                       | yes    |
+| `hold`         | `{ app, pull, why?, release?, dryRun? }`: hold a pull so no rule reviews or lands it, or let it go; a person who can write, never an agent; plans unless `dryRun: false` | yes    |
 | `plan`         | `{ app, issues }`: open up to 12 linked issues, all or none (see below)                           | yes    |
 
 Answers are JSON in a text block; most carry a `says` sentence short enough
