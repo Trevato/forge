@@ -109,8 +109,9 @@ export function askedRepos(
 }
 
 /**
- * The asks in these repositories, newest first. The caller decides which
- * repositories the viewer may read this about (writers of each).
+ * The asks in these repositories, oldest first unless `order` says newest.
+ * The caller decides which repositories the viewer may read this about
+ * (writers of each).
  */
 export function askedIn(
   db: Database,

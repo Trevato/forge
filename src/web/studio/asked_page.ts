@@ -1,6 +1,6 @@
 /**
- * `/asked`: everything a person asked for, newest first, and what became of
- * it (`core/asked.ts`). The path: the owner wonders whether something he
+ * `/asked`: everything a person asked for, oldest unmet first, and what
+ * became of it (`core/asked.ts`). The path: the owner wonders whether something he
  * asked for was heard, opens this from the asks page or the board, and
  * opens the ask. One row per ask, one word per row; a row with nothing built
  * after the stale window says so. `?show=` narrows it, `?repo=owner/name`

@@ -1,5 +1,5 @@
 /**
- * `/asked`: what people asked of the crew, newest first, with one state
+ * `/asked`: what people asked of the crew, oldest unmet first, with one state
  * word each and a flag when nothing was built — the same rows on the page,
  * the API and the MCP, and only for repositories the viewer can write.
  */
