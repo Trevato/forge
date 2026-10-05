@@ -10,6 +10,7 @@
 
 import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
 import { tellCrew } from "../../actions/crew.ts";
+import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
 import { getPull } from "../../core/pulls.ts";
@@ -49,7 +50,10 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   if (!told.ok)
     return flashTo(ctx, base, {
       tone: "danger",
-      message: "That could not be told.",
+      message:
+        told.error === "forbidden"
+          ? DIRECTION_NOTE
+          : "That could not be told.",
     });
   const { routed } = told.value;
   if (routed === undefined)

@@ -22,6 +22,7 @@ export type Exclusion = {
 };
 
 export const GATE: readonly string[] = [
+  "test/accounts.test.ts",
   "test/crew.test.ts",
   "test/commit-identity.test.ts",
   "test/review-route.test.ts",
@@ -31,6 +32,8 @@ export const GATE: readonly string[] = [
   "test/crew-limits.test.ts",
   "test/crew-parks.test.ts",
   "test/crew-sandbox.test.ts",
+  "test/crew-direction.test.ts",
+  "test/crew-direction-autonomy.test.ts",
   "test/steer.test.ts",
   "test/session-settle.test.ts",
   "test/landing.test.ts",
@@ -44,6 +47,7 @@ export const GATE: readonly string[] = [
   "test/studio-words.test.ts",
   "test/following.test.ts",
   "test/forks.test.ts",
+  "test/front.test.ts",
   "test/fork-flow.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pulls.test.ts",
@@ -63,7 +67,10 @@ export const GATE: readonly string[] = [
   "test/guard.test.ts",
   "test/asked.test.ts",
   "test/asks.test.ts",
+  "test/asks-bulk.test.ts",
   "test/asks-expiry.test.ts",
+  "test/asks-rank.test.ts",
+  "test/plan-pillars.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
   "test/feed-page.test.ts",
@@ -83,6 +90,7 @@ export const GATE: readonly string[] = [
   "test/spawn-plan.test.ts",
   "test/spawn.test.ts",
   "test/spawn-api.test.ts",
+  "test/spawn-child-apps.test.ts",
   "test/spawn-first-boot.test.ts",
   "test/web-apps.test.ts",
   "test/fleet-ops.test.ts",
@@ -109,6 +117,7 @@ export const GATE: readonly string[] = [
   "test/keys.test.ts",
   "test/live-pages.test.ts",
   "test/live.test.ts",
+  "test/looks.test.ts",
   "test/map.test.ts",
   "test/mcp.test.ts",
   "test/notify.test.ts",
@@ -127,6 +136,7 @@ export const GATE: readonly string[] = [
   "test/reports.test.ts",
   "test/report-discovery.test.ts",
   "test/apps-report.test.ts",
+  "test/private-app.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
@@ -173,12 +183,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     file: "test/diff-edge-cases.test.ts",
     reason: "red: wall-clock bounds (5 s, 200 ms) fail on a loaded machine",
     issue: 584,
-  },
-  {
-    file: "test/looks.test.ts",
-    reason:
-      "red: asserts the dashboard and studio pages as they were before the redesign",
-    issue: 291,
   },
   {
     file: "test/origins-security-provider.test.ts",

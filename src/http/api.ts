@@ -15,6 +15,12 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import {
+  listAccounts,
+  removeAccount,
+  suspendAccount,
+  unsuspendAccount,
+} from "../actions/accounts.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -22,6 +28,7 @@ import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -274,6 +281,7 @@ import {
   str,
   unauthorized,
 } from "./respond.ts";
+import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import {
@@ -898,11 +906,15 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("POST", "/api/v1/users", async (ctx) => {
     const input = await body(ctx.request);
-    const created = await signUp(ctx.app, {
-      username: str(input.username),
-      email: str(input.email),
-      password: str(input.password),
-    });
+    const created = await signUp(
+      ctx.app,
+      {
+        username: str(input.username),
+        email: str(input.email),
+        password: str(input.password),
+      },
+      { address: clientAddress(ctx.request) },
+    );
     if (!created.ok) return json({ error: created.error }, 422);
     return json(publicUser(created.value), 201);
   });
@@ -991,6 +1003,49 @@ export function apiRoutes(router: Router<Handler>): void {
         changed.error === "bad_credentials" ? 403 : 422,
       );
     return json({}, 200);
+  });
+
+  // ---- accounts: the owner's view of who joined (#660) ----
+  // Hidden from everyone but a forge admin: the door is not there.
+  const accountError = (error: string): Response =>
+    error === "not_found"
+      ? notFound()
+      : error === "not_allowed"
+        ? apiError(
+            "not_allowed",
+            422,
+            "an admin cannot suspend or remove themselves, another admin, or an agent",
+          )
+        : apiError(error, 500, "the account could not be removed");
+  const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
+    ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+
+  router.add("GET", "/api/v1/admin/accounts", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listAccounts(ctx.app, ctx.auth.user);
+    return listed.ok ? json({ items: listed.value }) : notFound();
+  });
+
+  router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
+  });
+
+  router.add("POST", "/api/v1/admin/accounts/:username/unsuspend", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = unsuspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
+  });
+
+  router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
   router.add("GET", "/api/v1/user/orgs", (ctx) => {
@@ -1414,7 +1469,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
-      if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+      if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("forbidden", 403);
       const parent =
         repo.forkParentId === null
@@ -1430,7 +1485,7 @@ export function apiRoutes(router: Router<Handler>): void {
             ? 200
             : outcome.kind === "ceiling"
               ? 429
-              : outcome.kind === "nobody"
+              : outcome.kind === "nobody" || outcome.kind === "forbidden"
                 ? 403
                 : 409;
       return json(
@@ -1854,11 +1909,14 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
+      // `{ title }` is the accepting person's wording; the marker stays.
+      const { title } = await body(ctx.request);
       const accepted = await acceptReport(
         ctx.app,
         ctx.auth.user,
         repo,
         ctx.params.id ?? "",
+        typeof title === "string" ? title : undefined,
       );
       if (!accepted.ok)
         return accepted.error === "decided"
@@ -3061,6 +3119,27 @@ export function apiRoutes(router: Router<Handler>): void {
       : [];
     const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
     return json({ ...v, ...forge, ok: forge.ok && v.ok });
+  });
+
+  // The front page (#686): what a stranger is shown, for anyone; a site
+  // admin also gets the picks, and sets them — pinned in order, hidden.
+  router.add("GET", "/api/v1/front", (ctx) =>
+    json(frontJson(ctx.app, ctx.auth.user)),
+  );
+
+  router.add("PUT", "/api/v1/front", async (ctx) => {
+    const input = await body(ctx.request);
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const picks = frontInput(ctx.app, input);
+    if (picks === undefined)
+      return apiError("invalid", 422, "send {pinned, hidden}: arrays of owner/name");
+    const set = setFront(ctx.app, ctx.auth.user, picks);
+    if (!set.ok)
+      return set.error.kind === "forbidden"
+        ? apiError("forbidden", 403, "the front page is a site admin's to set")
+        : apiError("invalid", 422, set.error.message);
+    return json(set.value);
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.

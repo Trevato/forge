@@ -14,16 +14,19 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { askDismissals } from "../../core/interactions.ts";
+import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
+  labelsForIssues,
   listComments,
   listOpenPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { joinMany, type Pull } from "../../core/pulls.ts";
+import { closesFromBody, joinMany, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
+  canWrite,
   listReposWritableTo,
   ownerFactRepoIds,
   type Repo,
@@ -34,13 +37,13 @@ import {
   automaticRunsSince,
   latestRunsForIssues,
 } from "../../core/runs.ts";
-import type { User } from "../../core/users.ts";
+import { getUserById, type User } from "../../core/users.ts";
 import {
   isPausedAtCeiling,
   plannerDeclines,
   spentTodayForRepos,
 } from "../../crew/autonomy.ts";
-import { breakerParked } from "../../crew/breaker.ts";
+import { BREAKER_NOTE, breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -48,7 +51,8 @@ import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
-import { lookThumb, lookUrl, thumbLook } from "../pages/looks.ts";
+import { lookUrl } from "../../core/looks.ts";
+import { lookThumb, thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
@@ -111,7 +115,64 @@ export interface Decision {
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
   /** The preview pictured on a phone, when the forge has taken one. */
   readonly picture?: string | undefined;
+  readonly consequence: Consequence;
 }
+
+/** What an ask asks, the answers it takes, and what happens if nobody gives one. */
+export interface AskWords {
+  readonly decision: string;
+  readonly options: readonly string[];
+  readonly ifNothing: string;
+}
+
+/** The words for each kind of ask: every ask names its decision, its options and its default. */
+export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
+  look: {
+    decision: "Ship this change?",
+    options: ["Ship", "Say what is off"],
+    ifNothing: "it waits; nothing ships",
+  },
+  stopped: {
+    decision: "The check fails and the crew stopped: what should it try?",
+    options: ["Tell them what to try", "Close it"],
+    ifNothing: "it stays red; the crew tries nothing more",
+  },
+  parked: {
+    decision: "What should the crew try next?",
+    options: ["Tell them"],
+    ifNothing: "nothing more starts on it",
+  },
+  declined: {
+    decision: "The planner declined the direction: answer it?",
+    options: ["Answer the planner"],
+    ifNothing: "the planner plans nothing more for this app",
+  },
+  paused: {
+    decision: "Raise today's ceiling?",
+    options: ["Raise it in settings"],
+    ifNothing: "the crew starts again at 00:00 UTC",
+  },
+};
+
+/**
+ * How much an ask matters, as a score and the reason: security first, then
+ * money, then what holds other work up, then the rest by kind — and, inside
+ * a tier, the older first (the age part stays under 1, so it never crosses
+ * a tier). `consequenceOf` is the one place this order is decided.
+ */
+export interface Consequence {
+  readonly score: number;
+  readonly why: string;
+}
+
+/** The tier of a kind when nothing about the thing itself says more. */
+export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
+  paused: { score: 80, why: "money: the crew is stopped at its ceiling" },
+  declined: { score: 70, why: "the planner has stopped for this app" },
+  stopped: { score: 50, why: "red, and the crew stopped" },
+  parked: { score: 40, why: "parked by the crew" },
+  look: { score: 30, why: "green, waiting" },
+};
 
 /** When a person last spoke on a conversation, or its start. */
 function lastHumanWord(db: Database, issue: Issue, agentName: string): string {
@@ -292,6 +353,79 @@ function askCandidatesFor(
   return out;
 }
 
+/**
+ * Score each candidate (`Consequence`). Labels and blocked work are read
+ * once for the whole set, never per row.
+ */
+function consequencesOf(
+  db: Database,
+  asks: readonly AskCandidate[],
+  now: number,
+): Map<string, Consequence> {
+  // What a pull says it closes is its author's free text: it counts only
+  // when the author could have written the issue's labels themselves.
+  const trusted = (pull: Pull, repo: Repo): number[] => {
+    if (!pull.authorIsAgent) {
+      const author = getUserById(db, pull.authorId);
+      if (author === undefined || !canWrite(db, repo, author)) return [];
+    }
+    return closesFromBody(pull.body);
+  };
+  const closes = new Map(
+    asks.flatMap((a) => (a.pull ? [[a.id, trusted(a.pull, a.repo)] as const] : [])),
+  );
+  const closed = db.query<{ id: string }, [string, string]>(
+    "SELECT id FROM issue WHERE repo_id = ?1 AND number IN (SELECT value FROM json_each(?2))",
+  );
+  const named = new Map(
+    asks.map((a) => {
+      const thing = a.pull ?? a.issue;
+      const numbers = closes.get(a.id) ?? [];
+      const ids =
+        numbers.length === 0
+          ? []
+          : closed.all(a.repo.id, JSON.stringify(numbers)).map((r) => r.id);
+      return [a.id, thing === undefined ? ids : [thing.id, ...ids]] as const;
+    }),
+  );
+  // Labels are set by those who write: never a stranger's words.
+  const labels = labelsForIssues(db, [...new Set([...named.values()].flat())]);
+  const blocks = db.query<{ n: number }, [string, string]>(
+    `SELECT COUNT(*) AS n FROM issue_dependency d JOIN issue i ON i.id = d.blocked_by_id
+     JOIN issue w ON w.id = d.issue_id
+     WHERE i.repo_id = ?1 AND w.state = 'open' AND i.number IN (SELECT value FROM json_each(?2))`,
+  );
+  const out = new Map<string, Consequence>();
+  for (const a of asks) {
+    const thing = a.pull ?? a.issue;
+    const age = Math.min(
+      Math.max(0, (now - Date.parse(a.since)) / 86_400_000),
+      9.9,
+    ) / 10;
+    let c = KIND_TIER[a.kind];
+    if (thing !== undefined) {
+      // Security is a label on the thing, or on what it closes.
+      const security = (named.get(a.id) ?? []).some((id) =>
+        (labels.get(id) ?? []).some((l) => /security/i.test(l.name)),
+      );
+      // What the thing would close, and what waits for that.
+      const numbers = a.pull ? (closes.get(a.id) ?? []) : [thing.number];
+      const waiting =
+        numbers.length === 0
+          ? 0
+          : (blocks.get(a.repo.id, JSON.stringify(numbers))?.n ?? 0);
+      if (security) c = { score: 100, why: "security" };
+      else if (waiting > 0 && c.score < 60)
+        c = {
+          score: 60,
+          why: `${waiting} other ${waiting === 1 ? "issue waits" : "issues wait"} for it`,
+        };
+    }
+    out.set(a.id, { score: c.score + age, why: c.why });
+  }
+  return out;
+}
+
 /** The row an ask collapses into: one kind in one repository. */
 const groupId = (a: { kind: DecisionKind; repo: Repo }): string =>
   `${a.kind}:${a.repo.id}`;
@@ -322,11 +456,22 @@ export interface AskRow<T> {
   readonly kind: DecisionKind;
   readonly repo: Repo;
   readonly items: readonly T[];
+  /** The weightiest ask's: what the row ranks by. */
+  readonly consequence: Consequence;
 }
 
-export function askRows<T extends { id: string; kind: DecisionKind; repo: Repo }>(
-  asks: readonly T[],
+/**
+ * Asks as rows, most consequential first: a row ranks by its weightiest
+ * ask, and the asks inside it the same way.
+ */
+export function askRows<
+  T extends { id: string; kind: DecisionKind; repo: Repo; consequence: Consequence },
+>(
+  unranked: readonly T[],
 ): AskRow<T>[] {
+  const asks = [...unranked].sort(
+    (a, b) => b.consequence.score - a.consequence.score,
+  );
   const rows = new Map<string, T[]>();
   for (const a of asks) {
     const key = groupId(a);
@@ -339,7 +484,22 @@ export function askRows<T extends { id: string; kind: DecisionKind; repo: Repo }
     kind: items[0]!.kind,
     repo: items[0]!.repo,
     items,
+    consequence: items[0]!.consequence,
   }));
+}
+
+type Scored = AskCandidate & { readonly consequence: Consequence };
+
+/** Every candidate for the viewer, scored, dismissed or not. */
+function scoredFor(
+  db: Database,
+  user: User | undefined,
+  repos: readonly Repo[],
+  now = Date.now(),
+): Scored[] {
+  const asks = askCandidatesFor(db, user, repos);
+  const scores = consequencesOf(db, asks, now);
+  return asks.map((a) => ({ ...a, consequence: scores.get(a.id)! }));
 }
 
 /** What asks the viewer now: candidates, less what they set aside. */
@@ -347,9 +507,81 @@ function waitingOn(
   db: Database,
   user: User | undefined,
   repos: readonly Repo[],
-): AskCandidate[] {
+): Scored[] {
   if (!user) return [];
-  return notDismissed(db, user, askCandidatesFor(db, user, repos));
+  return notDismissed(db, user, scoredFor(db, user, repos));
+}
+
+/** How an ask that is no longer asked ended, when nobody dismissed it. */
+function endOf(db: Database, askId: string, raisedAt: string): Exclude<AskEnd, "dismissed"> {
+  const [kind, what] = askId.split(":") as [DecisionKind, string];
+  if (kind === "look" || kind === "stopped") {
+    const pull = getIssueById(db, what);
+    // Shipped or closed: someone decided. Still open: the cause went away.
+    return pull !== undefined && pull.state !== "open" ? "acted" : "expired";
+  }
+  if (kind === "parked") {
+    const issue = getIssueById(db, what);
+    if (issue === undefined) return "expired";
+    if (issue.state !== "open") return "acted";
+    const spoke = listComments(db, issue.id).some(
+      (c) => c.createdAt > raisedAt && getUserById(db, c.authorId)?.kind === "user",
+    );
+    return spoke ? "acted" : "expired";
+  }
+  // A pause lifted the same day was a raised ceiling; a decline that ends
+  // was answered (the planner only goes on after a person's word).
+  if (kind === "paused")
+    return raisedAt.slice(0, 10) === new Date().toISOString().slice(0, 10)
+      ? "acted"
+      : "expired";
+  return "acted";
+}
+
+/**
+ * Bring the asks ledger (`core/ask_ledger.ts`) in line with what asks each
+ * person who came to the forge lately — a signed-in session that has not
+ * expired, or a phone to tell. A tick's work, never a request's.
+ */
+export function recordAskLedger(db: Database, now = new Date()): void {
+  const at = now.toISOString();
+  // Bounded, and in an order that keeps the people asks are for: whoever
+  // has a crew working (on their own repository or their organisation's),
+  // then site admins, then the most recently signed in. A wave of new
+  // accounts can never push an owner out of their own figures.
+  const people = db
+    .query<{ id: string }, [string]>(
+      `SELECT u.id AS id FROM user u
+       WHERE u.is_agent = 0 AND u.kind = 'user' AND (
+         EXISTS (SELECT 1 FROM session s WHERE s.user_id = u.id AND s.expires_at > ?1)
+         OR EXISTS (SELECT 1 FROM user_setting t WHERE t.user_id = u.id AND t.key = 'notify_url' AND t.value <> ''))
+       ORDER BY
+         EXISTS (SELECT 1 FROM repo r JOIN repo_crew rc ON rc.repo_id = r.id
+                 WHERE r.owner_id = u.id
+                    OR r.owner_id IN (SELECT tm.org_id FROM team tm JOIN team_member m ON m.team_id = tm.id
+                                      WHERE m.user_id = u.id)) DESC,
+         u.is_admin DESC,
+         (SELECT MAX(s.created_at) FROM session s WHERE s.user_id = u.id) DESC,
+         u.id
+       LIMIT 200`,
+    )
+    .all(at);
+  for (const { id } of people) {
+    const user = getUserById(db, id);
+    if (!user) continue;
+    const repos = listReposVisibleTo(db, user, { limit: 200 });
+    const all = scoredFor(db, user, repos, now.getTime());
+    const shown = notDismissed(db, user, all);
+    const brief = (a: Scored) => ({ id: a.id, repoId: a.repo.id, kind: a.kind });
+    syncAskLedger(
+      db,
+      user.id,
+      all.map(brief),
+      shown.map(brief),
+      (askId, raisedAt) => endOf(db, askId, raisedAt),
+      at,
+    );
+  }
 }
 
 /** One ask in a line, without its repository's name (the row adds that). */
@@ -397,6 +629,10 @@ export function askLinesFor(
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
   items: string[];
+  /** The decision, its options and what happens if nobody acts (`ASK_WORDS`). */
+  words: AskWords;
+  /** Why it ranks where it does; rows come most consequential first. */
+  consequence: Consequence;
 }[] {
   const repos = listReposVisibleTo(db, user, { limit: 200 });
   return askRows(waitingOn(db, user, repos)).map((row) => {
@@ -406,6 +642,8 @@ export function askLinesFor(
       kind: row.kind,
       repoId: row.repo.id,
       items: row.items.map((c) => c.id),
+      words: ASK_WORDS[row.kind],
+      consequence: row.consequence,
     };
     const only = row.items.length === 1 ? row.items[0]! : undefined;
     if (only === undefined)
@@ -445,7 +683,7 @@ export function decisionsFor(
 ): Decision[] {
   const db = ctx.app.db;
   const candidates = options.evenDismissed
-    ? askCandidatesFor(db, ctx.auth.user, allRepos)
+    ? scoredFor(db, ctx.auth.user, allRepos)
     : waitingOn(db, ctx.auth.user, allRepos);
   // The pictures, in one read: a green pull's row leads with its preview.
   const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
@@ -459,13 +697,16 @@ export function decisionsFor(
     if (record === undefined) return undefined;
     const env = previewEnv(pull.number);
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === env),
     );
     return (
-      look && lookUrl(repoBase(repo), env, look.commitOid, look.page, look.kind)
+      look && lookUrl(repoBase(repo), look)
     );
   };
-  return candidates.map((c): Decision => {
+  const worded = (c: Scored): Omit<Decision, "consequence"> => {
     if (c.kind === "parked" && c.issue)
       return {
         kind: "parked",
@@ -484,7 +725,7 @@ export function decisionsFor(
         issue: c.issue,
         who: c.who,
         says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
-        short: `the planner declined: ${c.decline.words}`,
+        short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
       };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
@@ -531,7 +772,8 @@ export function decisionsFor(
       says: `${c.repo.name} reached its $${dollars(c.repo.autonomyCeilingUsd)} for today. The crew picks nothing more until 00:00 UTC. Raise the ceiling in settings to go on now.`,
       short: `at its $${dollars(c.repo.autonomyCeilingUsd)} ceiling until 00:00 UTC`,
     };
-  });
+  };
+  return candidates.map((c) => ({ ...worded(c), consequence: c.consequence }));
 }
 /** The id of the form a row's own button submits (see `decisionForm`). */
 const askFormId = (d: Decision): string => `ask-${d.id}`;
@@ -660,4 +902,81 @@ export function askSentence(count: number): string {
   return count === 0
     ? "All fine"
     : `${count} ${count === 1 ? "thing needs" : "things need"} you`;
+}
+
+/**
+ * What asks the viewer, as data: the rows most consequential first (each
+ * with its decision, options and default), the forge's own needs for an
+ * admin, and the week's measure of asks raised against acted on, dismissed
+ * and gone by themselves. `GET /api/v1/asks` and the MCP's `asks` read this.
+ */
+export function asksAnswer(ctx: Ctx, user: User) {
+  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  return {
+    rows: askLinesFor(ctx.app.db, user),
+    forge: forgeNeedsFor(ctx, user),
+    measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
+  };
+}
+
+/**
+ * The asks an issue or pull can raise, as dismissal items: a pull is looked
+ * at or stopped on, an issue is parked. What a bulk dismissal records, and
+ * what its undo takes back (`fleet/verbs.ts`).
+ */
+export function askItemsOf(issue: Issue): string[] {
+  return issue.kind === "pull"
+    ? [`ask:look:${issue.id}`, `ask:stopped:${issue.id}`]
+    : [`ask:parked:${issue.id}`];
+}
+
+/**
+ * Whether the viewer's dismissal of this issue's ask still holds: one newer
+ * than its cause — the pull's latest check, or the issue's latest park.
+ */
+export function askDismissedBy(db: Database, viewerId: string, issue: Issue): boolean {
+  const dismissed = askDismissals(db, viewerId);
+  const at = askItemsOf(issue)
+    .map((item) => dismissed.get(item) ?? "")
+    .reduce((a, b) => (a > b ? a : b), "");
+  if (at === "") return false;
+  const cause =
+    issue.kind === "pull"
+      ? (latestRunsForIssues(db, [issue.id]).get(issue.id)?.createdAt ?? issue.createdAt)
+      : (db
+          .query<{ at: string | null }, [string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body = ?2",
+          )
+          .get(issue.id, BREAKER_NOTE)?.at ?? issue.createdAt);
+  return at > cause;
+}
+
+/**
+ * Ask ids, as `GET /api/v1/asks` hands them out (a row's `items`), to the
+ * issues and pulls a bulk action works on — only those that ask the viewer
+ * now, whether or not they dismissed them. The rest are named with why:
+ * a ceiling and a planner's decline are decided where they live.
+ */
+export function askTargetsFor(
+  db: Database,
+  user: User,
+  items: readonly string[],
+): { issueIds: string[]; refused: { item: string; reason: string }[] } {
+  const asks = new Map(
+    askCandidatesFor(db, user, listReposVisibleTo(db, user, { limit: 200 })).map(
+      (a) => [a.id, a],
+    ),
+  );
+  const issueIds: string[] = [];
+  const refused: { item: string; reason: string }[] = [];
+  for (const item of new Set(items)) {
+    const ask = asks.get(item);
+    if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    else if (ask.kind === "paused")
+      refused.push({ item, reason: "a ceiling is raised in the app's settings" });
+    else if (ask.kind === "declined")
+      refused.push({ item, reason: "a planner's decline is answered on its issue" });
+    else issueIds.push((ask.pull ?? ask.issue)!.id);
+  }
+  return { issueIds: [...new Set(issueIds)], refused };
 }

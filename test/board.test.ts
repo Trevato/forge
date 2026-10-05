@@ -249,7 +249,7 @@ describe("the board", () => {
     expect(landed).toContain("notes · scout");
     expect(landed).toContain(`/alice/notes/pulls/${pull.number}`);
     expect(landed).toContain(
-      `src="/alice/notes/looks/production/${pull.headOid}/thumb.png"`,
+      `src="/alice/notes/looks/production/${pull.headOid}/thumb.png?v=`,
     );
     // Decided: kind in words, the answer, how sure, the pick's issue.
     const decided = html.slice(

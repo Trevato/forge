@@ -5,13 +5,14 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { accountAct, accountsPage } from "../web/pages/accounts.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
-import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
+import { ensureEdgeUser, getUserByName, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
@@ -128,10 +129,19 @@ import {
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
-import { asksPage } from "../web/studio/asks_page.ts";
+import {
+  asksBulkSubmit,
+  asksBulkUndo,
+  asksPage,
+} from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
-import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
+import {
+  frontUpdate,
+  liveAppsFragment,
+  liveOnYouFragment,
+  studioDoor,
+} from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
@@ -286,7 +296,7 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { notePeer } from "./peer.ts";
+import { clientAddress, notePeer } from "./peer.ts";
 import {
   reportAcceptSubmit,
   reportDismissSubmit,
@@ -335,8 +345,19 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
+    const existed = getUserByName(app.db, login) !== undefined;
     const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
-    if (user) return { user, scope: "admin", via: "edge" };
+    if (user) {
+      // An account the edge made is audited like one made at /signup.
+      if (!existed) {
+        app.bus.append({
+          kind: "user.created",
+          actorId: user.id,
+          payload: { via: "edge", address: clientAddress(request) },
+        });
+      }
+      return { user, scope: "admin", via: "edge" };
+    }
   }
 
   const session = cookieValue(request, "forge_session");
@@ -439,6 +460,10 @@ export function buildRouter(): Router<Handler> {
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim/:token", claimPage);
   router.add("POST", "/claim/:token", claimSubmit);
+  // The front page as a stranger sees it, for anyone; a site admin there
+  // also gets the controls that decide it (#686).
+  router.add("GET", "/front", studioDoor);
+  router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
@@ -450,6 +475,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  router.add("POST", "/asks/bulk", asksBulkSubmit);
+  router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -534,6 +561,18 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
+  router.add("GET", "/settings/accounts", accountsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/suspend",
+    accountAct("suspend"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/unsuspend",
+    accountAct("unsuspend"),
+  );
+  router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);
@@ -1294,6 +1333,17 @@ export interface Servers {
   stop(): void;
 }
 
+/**
+ * A refusal a database trigger raised (`RAISE(ABORT, '…')`): an operator's
+ * guard saying no, in its own words. It is the answer, not a fault, so the
+ * person sees the reason and a 403 rather than "internal".
+ */
+function refusedByDatabase(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
+}
+
 /** The hook sockets a data directory may hold: this forge's, and others'. */
 const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
 
@@ -1373,6 +1423,11 @@ export async function serve(app: App): Promise<Servers> {
       );
     },
     error(error) {
+      const refused = refusedByDatabase(error);
+      if (refused !== undefined) {
+        app.log.warn("refused by the database", { reason: refused });
+        return securityFloor(json({ error: "refused", message: refused }, 403));
+      }
       app.log.error("unhandled request error", { error: String(error) });
       return securityFloor(json({ error: "internal" }, 500));
     },

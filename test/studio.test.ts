@@ -11,7 +11,11 @@ import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { previewEnv, type EnvName } from "../src/apps/data.ts";
-import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
+import {
+  AppsRuntime,
+  type EnvState,
+  type EnvStatus,
+} from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
@@ -32,7 +36,7 @@ import {
 import { setCrewRole } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
-import { recordLook } from "../src/core/looks.ts";
+import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import {
   getRepoById,
@@ -72,6 +76,38 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
 );
+
+/**
+ * A runtime registered for `app`, never started, answering every app's
+ * production with `stateOf` (running unless told) — the door shows only
+ * what is up or wakes. The returned function takes it away again.
+ */
+async function serving(
+  app: App,
+  servers: Servers,
+  stateOf: (record: AppRecord) => EnvState = () => "running",
+): Promise<() => Promise<void>> {
+  const runtime = new AppsRuntime(app, {
+    domain: "studio-door.test",
+    scheme: "http",
+    publicPort: servers.port,
+    forgeUrl: servers.url,
+  });
+  const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
+    (record: AppRecord): EnvStatus[] => [
+      {
+        env: "production",
+        state: stateOf(record),
+        // Serving the commit its newest picture is of.
+        commitOid: looksForEnv(app.db, record.id, "production")[0]?.commitOid ?? "",
+      } as EnvStatus,
+    ],
+  );
+  return async () => {
+    status.mockRestore();
+    await runtime.stop();
+  };
+}
 
 describe("the studio", () => {
   let dataDir: string;
@@ -972,15 +1008,29 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/runs?word=shipped")).text();
     expect(other).not.toContain(`href="/alice/notes/runs/${run.id}"`);
 
+    // One list (#629): the cookie and the query both answer it.
     finishRun(app.db, run.id, { state: "failed", summary: "boom" });
-    const dev = await (
-      await get("/alice/notes/runs", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain("Failed");
-    expect(dev).not.toContain("data-word=");
+    for (const dev of [
+      await get("/alice/notes/runs?word=stopped", {
+        cookie: `${cookie}; forge_mode=dev`,
+      }),
+      await get("/alice/notes/runs?word=stopped&mode=dev"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="stopped"');
+      expect(text).toContain(`href="/alice/notes/runs/${run.id}"`);
+      expect(text).not.toContain("See dev's list");
+    }
+    // Deploys and checks are one quiet link away, and `?kind=` keeps the
+    // meaning a link to dev's list gave it.
+    expect(page).toContain('href="/alice/notes/runs?kind=deploy"');
+    expect(page).toContain('href="/alice/notes/runs?kind=check"');
+    const deploys = await (await get("/alice/notes/runs?kind=deploy")).text();
+    expect(deploys).not.toContain(`href="/alice/notes/runs/${run.id}"`);
+    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=told"');
   });
 
-  test("issues and pulls on a repository that is not an app are the same one list; runs still render what they render today", async () => {
+  test("issues, pulls and runs on a repository that is not an app are the same one list", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainlists",
       visibility: "private",
@@ -1014,7 +1064,7 @@ describe("the studio", () => {
     }
 
     const runs = await (await get("/alice/plainlists/runs")).text();
-    expect(runs).not.toContain(">Working<");
+    expect(runs).toContain(`href="/alice/plainlists/runs?word=working"`);
     expect(runs).not.toContain("See dev's list");
   });
 
@@ -1530,6 +1580,7 @@ describe("the studio", () => {
 
     // Signed out, with the studio cookie: the public app's name, its look,
     // and Sign in / Create an account — never the private one.
+    const done = await serving(app, servers);
     const anon = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
@@ -1566,6 +1617,7 @@ describe("the studio", () => {
     expect(dev).toContain("<h1>Apps, live.</h1>");
     expect(dev).toContain("a lighthouse in the fog");
     expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
+    await done();
   });
 
   test("the front door's tile is the thumb, not the full desktop picture, when both exist (#287)", async () => {
@@ -1613,9 +1665,11 @@ describe("the studio", () => {
     drop("desktop");
     drop("thumb");
 
+    const done = await serving(app, servers);
     const anon = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
+    await done();
     const tile = anon
       .split("<img")
       .find((chunk) =>
@@ -1627,63 +1681,6 @@ describe("the studio", () => {
     expect(tile).toContain(`/looks/production/${commit}/thumb.png`);
     expect(tile).toContain('width="640"');
     expect(tile).toContain('height="400"');
-  });
-
-  test("the front door never shows a stranger the owner's desktop picture: no thumb, no picture", async () => {
-    const created = await createRepo(app, alice, {
-      name: "oldtile",
-      visibility: "public",
-      description: "no thumb yet",
-    });
-    if (!created.ok) throw new Error(String(created.error));
-    const seeded = await commitToBranch(app, alice, created.value, {
-      message: "Start",
-      files: [
-        {
-          path: "package.json",
-          content:
-            '{"name":"oldtile","scripts":{"start":"bun run server.ts"}}\n',
-        },
-        {
-          path: "server.ts",
-          content:
-            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
-        },
-      ],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, alice, created.value, {
-      slug: "oldtile",
-    });
-    if (!enabled.ok) throw new Error(String(enabled.error));
-    const record = getAppByRepo(app.db, created.value.id)!;
-    const commit = seeded.value.commitOid;
-    const rel = join("looks", record.id, "production-desktop.png");
-    const abs = join(app.config.dataDir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, PNG);
-    recordLook(app.db, {
-      appId: record.id,
-      env: "production",
-      commitOid: commit,
-      kind: "desktop",
-      path: rel,
-    });
-
-    const anon = await (
-      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
-    ).text();
-    const tile = anon
-      .split("<img")
-      .find((chunk) =>
-        chunk.includes(
-          `/${created.value.ownerName}/${created.value.name}/looks/`,
-        ),
-      );
-    // The desktop picture is taken as the owner; the door's tiles are for
-    // strangers, so without a thumb the tile has no picture at all.
-    expect(tile).toBeUndefined();
-    expect(anon).not.toContain(`/looks/production/${commit}/desktop.png`);
   });
 
   test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
@@ -1815,7 +1812,7 @@ describe("the studio", () => {
     }
   });
 
-  test("the door reads public apps, not a window of the newest repositories, and puts the live ones first (#288)", async () => {
+  test("the door reads public apps, not a window of the newest repositories, and shows only the live ones (#288, #686)", async () => {
     const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-door-"));
     const app2 = createApp({ dataDir: dataDir2, port: 0 });
     const servers2 = await serve(app2);
@@ -1840,7 +1837,7 @@ describe("the studio", () => {
         return getAppByRepo(app2.db, created.value.id)!;
       };
       const older = await appOf("older");
-      await appOf("quiet");
+      const quiet = await appOf("quiet");
       // More public plain repositories than the old window held, all newer
       // than the apps.
       for (let n = 0; n < 25; n++) {
@@ -1850,33 +1847,30 @@ describe("the studio", () => {
         });
         if (!r.ok) throw new Error(String(r.error));
       }
-      // `older` is serving, `quiet` is not: live first, though older. A
-      // runtime registered for this forge, never started, answers with
-      // the stubbed states.
-      new AppsRuntime(app2, {
-        domain: "studio-door.test",
-        scheme: "http",
-        publicPort: servers2.port,
-        forgeUrl: servers2.url,
-      });
-      const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
-        (record: AppRecord): EnvStatus[] =>
-          [
-            {
-              env: "production",
-              state: record.id === older.id ? "running" : "stopped",
-            } as EnvStatus,
-          ],
+      // Each with a picture, so only liveness decides.
+      for (const record of [older, quiet]) {
+        mkdirSync(join(dataDir2, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir2, "looks", record.id, "thumb.png"), PNG);
+        recordLook(app2.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: "0".repeat(40),
+          kind: "thumb",
+          path: `looks/${record.id}/thumb.png`,
+        });
+      }
+      // `older` is serving, `quiet` is stopped: a stranger is shown what is
+      // up, never what is down.
+      const done = await serving(app2, servers2, (record) =>
+        record.id === older.id ? "running" : "stopped",
       );
       try {
         const body = await (await fetch(`${servers2.url}/`)).text();
-        const at = (name: string) => body.indexOf(`href="/pia/${name}"`);
-        expect(at("older")).toBeGreaterThan(-1);
-        expect(at("quiet")).toBeGreaterThan(-1);
-        expect(at("older")).toBeLessThan(at("quiet"));
+        expect(body).toContain('href="/pia/older"');
+        expect(body).not.toContain('href="/pia/quiet"');
         expect(body).not.toContain('href="/pia/plain-0"');
       } finally {
-        status.mockRestore();
+        await done();
       }
     } finally {
       servers2.stop();
@@ -3956,9 +3950,41 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain('id="run-steer"');
     expect(page).toContain("Steer scout");
     expect(page).toContain('id="run-stop"');
-    // The transcript is on the page, and dev's own reading is one click away.
+    // The transcript is on the page, and there is no second reading of it.
     expect(page).toContain('id="run-log"');
-    expect(page).toContain(`href="/alice/engine/runs/${run.id}?mode=dev"`);
+    expect(page).not.toContain("?mode=dev");
+  });
+
+  test("a long transcript holds its last window, and the whole of it is one step deeper at ?all=1", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    for (let n = 0; n < 450; n++)
+      appendRunLog(app.config.dataDir, run.id, `line number ${n}`);
+    finishRun(app.db, run.id, { state: "ok", summary: "done" });
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(page).not.toContain("line number 0<");
+    expect(page).toContain("line number 449");
+    expect(page).toContain(`href="/alice/engine/runs/${run.id}?all=1"`);
+
+    const all = await (
+      await get(`/alice/engine/runs/${run.id}?all=1`, writerCookie)
+    ).text();
+    expect(all).toContain("line number 0<");
+    expect(all).toContain("line number 449");
+
+    // The depth step is refused exactly as the run is.
+    const anon = await fetch(`${base}/alice/engine/runs/${run.id}?all=1`, {
+      redirect: "manual",
+    });
+    expect(anon.status).toBe(404);
   });
 
   test("a reader without access gets the forge's not-found, exactly as dev", async () => {

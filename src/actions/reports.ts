@@ -17,10 +17,16 @@
  *   who writes the repository; an agent is refused even when it is on the
  *   crew, so a stranger's text reaches an agent only after a person has
  *   made it their own issue.
+ * - **It stays marked.** The issue's title opens with `OUTSIDE_TITLE` and
+ *   it carries the label `OUTSIDE_LABEL`. The person may change the title's
+ *   words before it opens; the marker is not theirs to remove, and the
+ *   crew's brief says whose words an issue so marked holds.
  */
 import type { App } from "../app.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import {
+  OUTSIDE_COLOR,
+  OUTSIDE_LABEL,
   WAITING_MAX,
   cleanReport,
   countWaiting,
@@ -29,16 +35,19 @@ import {
   insertReport,
   listWaiting,
   noteIssue,
+  outsideTitle,
   undecideReport,
   type Report,
   type ReportError,
   type ReportInput,
 } from "../core/reports.ts";
-import type { Issue } from "../core/issues.ts";
+import { createLabel, getLabel, type Issue } from "../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { defect } from "../kernel/error.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { openIssueThrough } from "./issues.ts";
+import { isMirror } from "../origins/write-through.ts";
+import { openIssueThrough, setIssueLabels } from "./issues.ts";
 
 const PER_SOURCE = 3;
 const PER_REPO = 20;
@@ -171,16 +180,25 @@ export function acceptedBody(report: Report, by: User): string {
 
 export type DecideError = DeciderError | "decided";
 
+/**
+ * Accept a report as an issue. `title` is the accepting person's wording,
+ * the report's own when they leave it; either way it opens behind the
+ * marker. A title that cannot be used refuses before anything is decided,
+ * so the report still waits.
+ */
 export async function acceptReport(
   app: App,
   actor: User | undefined,
   repo: Repo,
   reportId: string,
+  title?: string,
 ): Promise<Result<Issue, DecideError | string>> {
   const decider = requireDecider(app, actor, repo);
   if (!decider.ok) return decider;
   const report = getReport(app.db, repo.id, reportId);
   if (report === undefined) return err("not_found");
+  const named = outsideTitle(title ?? report.title);
+  if (!named.ok) return named;
   if (
     !decideReport(app.db, report.id, {
       state: "accepted",
@@ -189,13 +207,17 @@ export async function acceptReport(
   )
     return err("decided");
   const opened = await openIssueThrough(app, decider.value, repo, {
-    title: report.title,
+    title: named.value,
     body: acceptedBody(report, decider.value),
+    labels: [OUTSIDE_LABEL],
   });
   if (!opened.ok) {
     undecideReport(app.db, report.id);
     return err(opened.error);
   }
+  // The issue exists. The report takes its number and the outbox hears of
+  // it now, before anything else can fail: an accepted report with no issue
+  // to show for it could be neither found nor accepted again.
   noteIssue(app.db, report.id, opened.value.number);
   app.bus.append({
     kind: "report.accepted",
@@ -203,6 +225,20 @@ export async function acceptReport(
     actorId: decider.value.id,
     payload: { id: report.id, number: opened.value.number },
   });
+  // On a mirror the label went up with the issue and the origin's answer is
+  // what stands. Here the forge keeps the label itself, made on first use.
+  if (!isMirror(app, repo)) {
+    if (getLabel(app.db, repo.id, OUTSIDE_LABEL) === undefined)
+      createLabel(app.db, repo.id, OUTSIDE_LABEL, OUTSIDE_COLOR);
+    const labelled = setIssueLabels(app, decider.value, repo, opened.value, [
+      OUTSIDE_LABEL,
+    ]);
+    if (!labelled.ok)
+      defect(
+        "report.unlabelled",
+        `issue #${opened.value.number} could not take the ${OUTSIDE_LABEL} label: ${labelled.error}`,
+      );
+  }
   return ok(opened.value);
 }
 

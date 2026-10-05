@@ -6,6 +6,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { rmSync } from "node:fs";
 import { isSafeName } from "../git/guard.ts";
 import { installHooks } from "../git/hooks.ts";
 import { closeReader } from "../git/read.ts";
@@ -91,6 +92,12 @@ export interface Repo {
   readonly autonomyCeilingUsd: number;
   readonly autonomySlots: number;
   readonly autonomyBy: string | null;
+  /**
+   * "Outsiders may trigger the crew": whether someone who cannot write here
+   * may still start or steer a run by speaking (`crew/direct.ts`). Off by
+   * default; on a public repository it hands strangers the owner's budget.
+   */
+  readonly crewOutsiders: boolean;
   /** The issue the planner is given, when the map has run dry. */
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
@@ -121,6 +128,7 @@ interface RepoRow {
   autonomy_ceiling_usd: number;
   autonomy_slots: number;
   autonomy_by: string | null;
+  crew_outsiders: number;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
   origin_id: string | null;
@@ -155,6 +163,7 @@ function toRepo(row: RepoRow): Repo {
     autonomyCeilingUsd: row.autonomy_ceiling_usd,
     autonomySlots: row.autonomy_slots,
     autonomyBy: row.autonomy_by,
+    crewOutsiders: row.crew_outsiders === 1,
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
     origin:
@@ -268,16 +277,20 @@ export async function createRepo(
   await installHooks(dir);
 
   const repoId = id();
-  db.query(
-    `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-  ).run(
-    repoId,
-    input.ownerId,
-    input.name,
-    input.visibility ?? "private",
-    input.description ?? "",
-    branch,
+  rowOrUndo(dir, () =>
+    db
+      .query(
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+      )
+      .run(
+        repoId,
+        input.ownerId,
+        input.name,
+        input.visibility ?? "private",
+        input.description ?? "",
+        branch,
+      ),
   );
   return ok(getRepoById(db, repoId)!);
 }
@@ -336,19 +349,37 @@ export async function forkRepo(
   await installHooks(forkDir);
 
   const repoId = id();
-  db.query(
-    `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
-  ).run(
-    repoId,
-    ownerId,
-    forkName,
-    parent.visibility,
-    parent.description,
-    parent.defaultBranch,
-    parent.id,
+  rowOrUndo(forkDir, () =>
+    db
+      .query(
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      )
+      .run(
+        repoId,
+        ownerId,
+        forkName,
+        parent.visibility,
+        parent.description,
+        parent.defaultBranch,
+        parent.id,
+      ),
   );
   return ok(getRepoById(db, repoId)!);
+}
+
+/**
+ * Git first, row second — and when the row is refused (a constraint, an
+ * operator's trigger), the directory git just made goes with it, so a
+ * refusal leaves nothing on disk for anyone to fill it with.
+ */
+function rowOrUndo(dir: string, insert: () => unknown): void {
+  try {
+    insert();
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Repos forked directly from this one. */
@@ -423,6 +454,14 @@ export function getRepoById(db: Database, repoId: string): Repo | undefined {
     .query<RepoRow, [string]>(`${SELECT} WHERE repo.id = ?1`)
     .get(repoId);
   return row ? toRepo(row) : undefined;
+}
+
+/** Every repository one account owns, whatever its visibility. */
+export function listReposOwnedBy(db: Database, ownerId: string): Repo[] {
+  return db
+    .query<RepoRow, [string]>(`${SELECT} WHERE repo.owner_id = ?1`)
+    .all(ownerId)
+    .map(toRepo);
 }
 
 /**
@@ -651,6 +690,22 @@ export function canWrite(
 }
 
 /**
+ * Who may enter an app, its previews and its terminal. A public app is open
+ * to anyone. A private one answers to the people who can write the
+ * repository and to its crew — never to everyone who can read it, so making
+ * a repository public changes nobody's way into its app (#620).
+ */
+export function canEnterApp(
+  db: Database,
+  repo: Repo,
+  access: "public" | "private",
+  user: User | undefined,
+): boolean {
+  if (access === "public") return true;
+  return canWrite(db, repo, user) || onCrew(db, repo, user);
+}
+
+/**
  * Money, the crew roster, autonomy limits and a run's own cost describe
  * running the app, not what it is — a stranger who can only read a public
  * app sees what it does and what it has shipped, never what it costs or
@@ -747,6 +802,8 @@ export interface RepoSettings {
   autonomySlots?: number;
   /** Who the forge acts as when it assigns and lands on its own. */
   autonomyBy?: string | null;
+  /** Whether someone who cannot write here may start or steer a run. */
+  crewOutsiders?: boolean;
 }
 
 /** Update the mutable repo fields, leaving unspecified ones untouched. */
@@ -759,7 +816,7 @@ export function updateRepoSettings(
     `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
-       autonomy_slots = ?11, autonomy_by = ?12
+       autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -774,6 +831,7 @@ export function updateRepoSettings(
     settings.autonomyCeilingUsd ?? repo.autonomyCeilingUsd,
     settings.autonomySlots ?? repo.autonomySlots,
     settings.autonomyBy === undefined ? repo.autonomyBy : settings.autonomyBy,
+    (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
   );
   return getRepoById(db, repo.id)!;
 }

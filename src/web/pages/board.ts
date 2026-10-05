@@ -14,6 +14,7 @@
  */
 
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
+import { askMeasure } from "../../core/ask_ledger.ts";
 import {
   listDecisionsForRepos,
   type Decision,
@@ -61,7 +62,8 @@ import {
   windowWords,
   type FigureWords,
 } from "../studio/words.ts";
-import { lookUrl, thumbLook } from "./looks.ts";
+import { lookUrl } from "../../core/looks.ts";
+import { thumbLook } from "./looks.ts";
 
 // ---- words ----
 
@@ -209,7 +211,8 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
-    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${windowsStrip(ctx)}
+    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${asksStrip(ctx)}
+    ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -327,6 +330,29 @@ function forgeStrip(ctx: Ctx): Html | null {
           })
     }
   </div>`;
+}
+
+// ---- what asked you, and what came of it ----
+
+/** The window the asks measure covers. */
+export const ASKS_WINDOW_DAYS = 7;
+
+/**
+ * The viewer's asks over the last week, as four figures: raised, acted on,
+ * dismissed, and gone by themselves. Many dismissed against few acted on
+ * is noise, shown as a number (`core/ask_ledger.ts`). Absent before
+ * anything has asked.
+ */
+function asksStrip(ctx: Ctx): Html | null {
+  const user = ctx.auth.user;
+  if (!user) return null;
+  const since = new Date(Date.now() - ASKS_WINDOW_DAYS * 86_400_000).toISOString();
+  const m = askMeasure(ctx.app.db, user.id, since);
+  if (m.raised + m.acted + m.dismissed + m.expired === 0) return null;
+  return html`<a class="board-asks" id="asks-measure" href="/asks"
+    >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
+    on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
+  >`;
 }
 
 // ---- the planner, waiting for a person ----
@@ -565,17 +591,14 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     const record = scope.records.get(repo.id);
     if (record === undefined) return undefined;
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === "production"),
     );
     return (
       look &&
-      lookUrl(
-        repoBase(repo),
-        "production",
-        look.commitOid,
-        look.page,
-        look.kind,
-      )
+      lookUrl(repoBase(repo), look)
     );
   };
   const rows = pulls.map((pull: Pull) => {
@@ -804,6 +827,8 @@ export const boardCss = /* css */ `
 .board-asked:hover { color: var(--fg); }
 .board-forge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 28px; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); }
 .board-forge[data-ok="no"] { color: var(--attn); }
+.board-asks { display: block; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); text-decoration: none; }
+.board-asks b { color: var(--fg); font-weight: 600; }
 .board-declined { display: flex; flex-direction: column; gap: 8px; padding: 10px var(--pad) 0; }
 .board-declined-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12em, 22em) auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--attn) 45%, var(--border)); border-radius: var(--radius, 10px); }
 .board-declined-says { color: var(--attn); line-height: 1.35; }

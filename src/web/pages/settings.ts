@@ -255,7 +255,10 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
       ${selectField({
         label: "Visibility",
         name: "visibility",
-        hint: "A private repository and a repository that does not exist look identical to anyone else.",
+        hint:
+          repo.visibility === "private"
+            ? "A private repository and a repository that does not exist look identical to anyone else. Making it public shows everyone its code, issues, pulls and run logs; a private app and its previews stay open only to people who can write here."
+            : "Public: anyone can read the code, issues, pulls and run logs. A private app and its previews stay open only to people who can write here.",
         options: [
           {
             value: "private",
@@ -320,6 +323,22 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="crewOutsiders"
+            ${repo.crewOutsiders ? html`checked` : null}
+          />
+          <span
+            >Outsiders may trigger the crew — anyone signed in who can read
+            this repository starts and steers runs by commenting, on your
+            budget. Off, only people who can write here direct the crew;
+            anyone else's words stay on the thread. Turning it on or off is
+            recorded in the activity.</span
+          >
+        </label>
+      </div>
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
@@ -349,6 +368,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
     protectDefault: form.get("protect") !== null,
     requireReview: form.get("requireReview") !== null,
     requireChecks: form.get("requireChecks") !== null,
+    crewOutsiders: form.get("crewOutsiders") !== null,
     ...(branch !== "" ? { defaultBranch: branch } : {}),
   });
   const flash: Flash = updated.ok
@@ -425,11 +445,11 @@ function appSettingsView(
           hint:
             values.access === "public"
               ? `Right now anyone with the link can open it, signed in or not. The code stays as ${repo.visibility} as the repository is: the two are set separately.`
-              : `Right now a visitor is asked to sign in and let through only if they can see this repository${repo.visibility === "private" ? " — its collaborators, since the repository is private" : " — anyone signed in, since the repository is public"}. Everyone else sees not found. Choose Public to share it with people who cannot see the code.`,
+              : `Right now a visitor is asked to sign in and let through only if they can write this repository, or are on its crew; reading the code is not enough, so it stays this way if the repository is made public. Everyone else sees not found. Choose Public to share it with anyone.`,
           options: [
             {
               value: "private",
-              label: "Private — people who can see this repository",
+              label: "Private — people who can write this repository",
               selected: values.access === "private",
             },
             {

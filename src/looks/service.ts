@@ -32,7 +32,12 @@ import type { App } from "../app.ts";
 import { isEnvName, previewEnv, type EnvName } from "../apps/data.ts";
 import { signGrant, type GrantWho } from "../apps/proxy.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { getAppById, getAppByRepo, listApps } from "../core/apps.ts";
+import {
+  getAppById,
+  getAppByRepo,
+  listApps,
+  type AppRecord,
+} from "../core/apps.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
@@ -48,6 +53,7 @@ import {
   type LookKind,
 } from "../core/looks.ts";
 import { getPull } from "../core/pulls.ts";
+import { frontPicks } from "../core/front.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
 import { thumbnail } from "../design/image/image.ts";
@@ -187,6 +193,8 @@ interface Pending {
   readonly env: EnvName;
   readonly commitOid: string;
   readonly at: number;
+  /** Queued by the sweep: a picture that failed at this head is not retaken. */
+  readonly swept?: true;
 }
 
 export function startLooks(app: App, options: LooksOptions): LooksHandle {
@@ -331,7 +339,13 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
-    const wanted = missing(item.appId, item.env, item.commitOid, status.looks);
+    const wanted = missing(
+      item.appId,
+      item.env,
+      item.commitOid,
+      status.looks,
+      item.swept === true,
+    );
     if (wanted.length === 0) return;
     // The phone and desktop pictures are what the owner sees: the app
     // renders for a signed-in admin, exactly as when they open it from the
@@ -453,17 +467,64 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const runtime = appsRuntime(app);
     if (runtime === undefined) return;
     try {
+      const pinned = new Set(frontPicks(app.db).pinned);
+      const toWake: AppRecord[] = [];
       for (const record of listApps(app.db)) {
         const status = runtime.envStatus(record, "production");
+        // An app pinned to the front page is shown only with a picture, so
+        // one asleep without one is woken to have it taken — at most the
+        // dozen pins, and only those a stranger can open.
+        if (
+          status?.state === "asleep" &&
+          pinned.has(record.repoId) &&
+          record.access === "public" &&
+          getRepoById(app.db, record.repoId)?.visibility === "public" &&
+          missing(record.id, "production", status.commitOid, status.looks, true)
+            .length > 0
+        )
+          toWake.push(record);
         if (status?.state !== "running") continue;
         // A picture that failed at this head had its turn: the next
         // deploy tries again, not every sweep.
         const { commitOid, looks: pages } = status;
         if (missing(record.id, "production", commitOid, pages, true).length > 0)
-          enqueue({ appId: record.id, env: "production", commitOid, at: Date.now() });
+          enqueue({
+            appId: record.id,
+            env: "production",
+            commitOid,
+            at: Date.now(),
+            swept: true,
+          });
       }
+      if (toWake.length > 0) void wakeForPictures(runtime, toWake);
     } catch (error) {
       log.error("looks sweep failed", { error: String(error) });
+    }
+  }
+
+  /** Wake each app in turn and queue its picture; it sleeps again on its own. */
+  async function wakeForPictures(
+    runtime: NonNullable<ReturnType<typeof appsRuntime>>,
+    records: readonly AppRecord[],
+  ): Promise<void> {
+    for (const record of records) {
+      if (stopped) return;
+      try {
+        const live = await runtime.wake(record, "production");
+        if (live === undefined) continue;
+        enqueue({
+          appId: record.id,
+          env: "production",
+          commitOid: live.commitOid,
+          at: Date.now(),
+          swept: true,
+        });
+      } catch (error) {
+        log.warn("could not wake a pinned app for its picture", {
+          app: record.slug,
+          error: String(error),
+        });
+      }
     }
   }
 
