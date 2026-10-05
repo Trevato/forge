@@ -131,6 +131,11 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(html).toContain('name="token"');
   });
 
+  test("an unclaimed forge's sign-in page leads to the claim page; the parent's does not", async () => {
+    expect(await (await fetch(`${childServers.url}/signin`)).text()).toContain('href="/claim"');
+    expect(await (await fetch(`${parentServers.url}/signin`)).text()).not.toContain('href="/claim"');
+  });
+
   test("a token in a query string is never read: only the form's body counts", async () => {
     const res = await fetch(
       `${childServers.url}/claim?token=${tokenOf(first)}`,
@@ -180,6 +185,10 @@ describe("the claim link in the fragment, and its re-issue", () => {
     });
     expect(ok.status).toBe(303);
     expect(getUserByName(child.db, "maria-owner")?.isAdmin).toBe(true);
+  });
+
+  test("once claimed, the sign-in page no longer offers a claim", async () => {
+    expect(await (await fetch(`${childServers.url}/signin`)).text()).not.toContain('href="/claim"');
   });
 
   test("a claimed forge's link is not re-issued", async () => {
