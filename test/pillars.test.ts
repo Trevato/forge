@@ -147,6 +147,7 @@ describe("pillars", () => {
       ["bob", false],
     ] as const) {
       const made = await createUser(app.db, {
+        trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

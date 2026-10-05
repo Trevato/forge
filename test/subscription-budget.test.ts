@@ -68,7 +68,7 @@ describe("an account's whole-life budget", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-budget-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "a@x.test",
       password: "a-long-budget-passphrase",
@@ -76,7 +76,7 @@ describe("an account's whole-life budget", () => {
     });
     if (!a.ok) throw new Error("user");
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "b@x.test",
       password: "a-long-budget-passphrase",

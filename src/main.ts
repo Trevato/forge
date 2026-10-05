@@ -93,6 +93,16 @@ const app = createApp({
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
     ? { migrateFromPrivateHosts: true }
     : {}),
+  // Mail out (email verification): SMTP submission, both or neither.
+  ...((process.env.FORGE_SMTP_URL ?? "").trim() !== "" &&
+  (process.env.FORGE_MAIL_FROM ?? "").trim() !== ""
+    ? {
+        mail: {
+          url: process.env.FORGE_SMTP_URL!.trim(),
+          from: process.env.FORGE_MAIL_FROM!.trim(),
+        },
+      }
+    : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
     : {}),

@@ -3,6 +3,7 @@
  * an account authenticates with over the SSH listener.
  */
 
+import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addKey,
@@ -68,6 +69,9 @@ export async function signUp(
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
+  // The address is proven by the link it is sent (the first account by
+  // being first); until then nothing it does may create or cost.
+  await welcome(app, created.value);
   return created;
 }
 
@@ -132,6 +136,10 @@ export function updateProfile(
     return err("display_name_reserved");
   const updated = writeProfile(app.db, user.value.id, patch);
   if (!updated.ok) return updated;
+  // A new address is unproven at once; its link follows (and can be asked
+  // for again), so a send that fails never leaves the old proof standing.
+  if (updated.value.email.toLowerCase() !== user.value.email.toLowerCase())
+    void emailChanged(app, updated.value);
   const fields = (["displayName", "email", "commitEmail"] as const).filter(
     (k) => patch[k] !== undefined,
   );

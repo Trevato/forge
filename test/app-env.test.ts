@@ -46,7 +46,7 @@ describe("an app's environment", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-app-env-"));
     app = createApp({ dataDir, port: 0 });
-    const alice = await createUser(app.db, {
+    const alice = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.test",
       password: "a-good-passphrase",

@@ -50,7 +50,7 @@ describe("a forge back from a snapshot", () => {
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "forge-snapshot-"));
     app = createApp({ dataDir: join(root, "live"), port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
