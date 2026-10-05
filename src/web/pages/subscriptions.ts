@@ -230,7 +230,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                   </form>`,
               )}
               ${when(
-                s.id !== PLATFORM && budget?.locked !== true,
+                s.id !== PLATFORM,
                 () =>
                   html`<form
                     class="headroom row-actions"
@@ -246,7 +246,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                       name="budget"
                       type="number"
                       min="1"
-                      max="${BUDGET_MAX_USD}"
+                      max="${budget?.locked ? budget.budgetUsd : BUDGET_MAX_USD}"
                       step="1"
                       placeholder="none"
                       value="${budget?.budgetUsd ?? ""}"
@@ -443,13 +443,15 @@ export async function subscriptionBudget(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
-  if (budgetsOf(ctx.app.db).get(ctx.params.id ?? "")?.locked)
-    return flashTo(ctx, POOL, {
-      tone: "danger",
-      message: "This budget was set by whoever made this forge, and is not raised from here. Add your own key to spend more.",
-    });
   const raw = field(form, "budget").trim();
   const usd = raw === "" ? null : Number(raw);
+  const held = budgetsOf(ctx.app.db).get(ctx.params.id ?? "");
+  if (held?.locked && (usd === null || !(usd < (held.budgetUsd ?? 0))))
+    return flashTo(ctx, POOL, {
+      tone: "danger",
+      message:
+        "This budget was set by whoever made this forge: it can be lowered here, never raised or cleared. Add your own key to spend more.",
+    });
   const saved = usd !== null && !Number.isFinite(usd) ? false : setBudget(ctx.app.db, ctx.params.id ?? "", usd);
   return flashTo(
     ctx,
