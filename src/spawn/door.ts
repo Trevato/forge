@@ -15,7 +15,7 @@ import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { hostedPlacement, type Placement } from "./placement.ts";
-import { dryRun, planSpawn, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
+import { dryRun, planSpawn, KEY_BUDGET_NOTE, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -140,7 +140,15 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (dry) {
     const planned = planSpawn(input, source);
     if (!planned.ok) return spawnWords({ kind: "invalid", ...planned.error });
-    return { status: 200, body: { dryRun: true, plan: planned.value, ...dryRun(planned.value, source) } };
+    return {
+      status: 200,
+      body: {
+        dryRun: true,
+        plan: planned.value,
+        ...dryRun(planned.value, source),
+        ...(planned.value.budgetUsd === null ? {} : { keyNote: KEY_BUDGET_NOTE }),
+      },
+    };
   }
   const made = await spawnForge(ctx.app, user, input, source, {
     placement: placementFor(ctx.app),
@@ -148,6 +156,14 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     url: ctx.url,
     ...(typeof modelKey === "string" ? { modelKey } : {}),
   });
-  return made.ok ? { status: made.value.existed ? 200 : 201, body: { dryRun: false, ...made.value } } : spawnWords(made.error);
+  if (!made.ok) return spawnWords(made.error);
+  return {
+    status: made.value.existed ? 200 : 201,
+    body: {
+      dryRun: false,
+      ...made.value,
+      ...(typeof modelKey === "string" ? { keyNote: KEY_BUDGET_NOTE } : {}),
+    },
+  };
 }
 

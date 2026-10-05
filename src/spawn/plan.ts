@@ -17,6 +17,14 @@ export const MAX_BRIEF_CHARS = 20_000;
 export const MAX_DIRECTION_CHARS = 2000;
 /** The whole-life budget on a child's model key, in dollars. */
 export const MIN_BUDGET_USD = 1;
+/**
+ * What a key's budget is, said plainly wherever a key is handed over: the
+ * forge enforces it for a child it hosts (whose admin has no shell or
+ * database), and only the provider's own limit binds a child on a machine
+ * its owner controls.
+ */
+export const KEY_BUDGET_NOTE =
+  "The budget holds while this forge hosts the child: its admin cannot raise it. On a machine the child's owner controls, only a spend limit set at the provider binds the key, so use a key from a workspace with its own spend limit.";
 export const MAX_BUDGET_USD = 1000;
 
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;

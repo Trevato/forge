@@ -199,6 +199,7 @@ describe("a spawned child's own keys and domain", () => {
     const dryText = await dry.text();
     expect(dryText).not.toContain(API_KEY);
     expect(dryText).toContain("with a $5 budget it cannot raise");
+    expect(dryText).toContain("use a key from a workspace with its own spend limit");
     const res = await post(
       {
         name: "maria",
