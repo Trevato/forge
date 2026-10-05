@@ -261,6 +261,7 @@ import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
   apiError,
   body,
+  boundedBody,
   forbidden,
   json,
   notFound,
@@ -1794,10 +1795,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/repos/:owner/:name/reports", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const declared = Number(ctx.request.headers.get("content-length") ?? 0);
-    if (declared > REQUEST_MAX)
-      return apiError("too_large", 413, REPORT_HINT);
-    const input = await body(ctx.request);
+    const input = await boundedBody(ctx.request, REQUEST_MAX);
+    if (input === "too_large")
+      return json({ error: "too_large", message: REPORT_HINT }, 413);
     const filed = fileReport(
       ctx.app,
       repo,

@@ -205,7 +205,6 @@ export function llmsTxt(ctx: Ctx): Response {
   const repos = listReposVisibleTo(ctx.app.db, undefined, {
     limit: LLMS_REPOS,
   });
-  const line = (s: string) => s.replace(/\s+/g, " ").trim();
   return text(
     [
       `# forge at ${ctx.url.host}`,
@@ -230,9 +229,11 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       "## Public repositories",
       "",
+      // Names and addresses only: a description is whatever its owner
+      // wrote, and an agent reading this file must not meet anyone's words
+      // as the forge's own.
       ...repos.map(
-        (r) =>
-          `- [${r.ownerName}/${r.name}](${o}/${r.ownerName}/${r.name})${r.description.trim() === "" ? "" : `: ${line(r.description).slice(0, 200)}`}`,
+        (r) => `- [${r.ownerName}/${r.name}](${o}/${r.ownerName}/${r.name})`,
       ),
       "",
     ].join("\n"),

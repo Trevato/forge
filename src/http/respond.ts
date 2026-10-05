@@ -158,6 +158,45 @@ export async function body(request: Request): Promise<Record<string, unknown>> {
     : {};
 }
 
+/**
+ * A JSON object body kept to at most `max` bytes, for a route a stranger
+ * may call: the declared length is a claim and a chunked body declares
+ * none, so the stream itself is counted. Past the limit nothing more is
+ * kept and nothing is parsed, but the rest is still read off the wire and
+ * dropped — a body left half-read would be taken as the start of the next
+ * request on that connection, which a proxy in front may hand to someone
+ * else. The server's own maximum body size bounds that reading. `too_large`
+ * then, else as `body`.
+ */
+export async function boundedBody(
+  request: Request,
+  max: number,
+): Promise<Record<string, unknown> | "too_large"> {
+  if (Number(request.headers.get("content-length") ?? 0) > max)
+    return "too_large";
+  if (request.body === null) return {};
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const read = await trapAsync(() => reader.read());
+    if (!read.ok) return size > max ? "too_large" : {};
+    const { done, value } = read.value;
+    if (done) break;
+    size += value.byteLength;
+    if (size <= max) chunks.push(value);
+    else chunks.length = 0;
+  }
+  if (size > max) return "too_large";
+  const parsed = await trapAsync(async () =>
+    JSON.parse(new TextDecoder().decode(Buffer.concat(chunks))),
+  );
+  const value = parsed.ok ? (parsed.value as unknown) : undefined;
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 export const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /**

@@ -67,7 +67,7 @@ import {
   isAskedShow,
 } from "../core/asked.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
-import { body, json } from "./respond.ts";
+import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
@@ -941,42 +941,50 @@ const NOT_HERE = (allow: string): Response =>
 export function mcpRoutes(router: Router<Handler>): void {
   router.add("POST", "/mcp", async (ctx) => {
     const user = ctx.auth.user;
-    const declared = Number(ctx.request.headers.get("content-length") ?? 0);
-    const message: unknown =
-      declared > REQUEST_MAX ? {} : await body(ctx.request);
-    // `report` is open to anyone, so it is answered before identity.
+    // A token or the account's own password; never a cookie.
+    if (
+      user !== undefined &&
+      (ctx.auth.via === "token" || ctx.auth.via === "password")
+    ) {
+      const message: unknown = await body(ctx.request);
+      const reported = reportCall(ctx, message);
+      if (reported !== undefined) return json(reported);
+      const answer = await rpcOne(ctx, user, message);
+      if (answer === undefined) return new Response(null, { status: 202 });
+      return json(answer);
+    }
+    // A stranger may call `report` and nothing else, so their body is read
+    // to a hard byte limit and no further.
+    const message = await boundedBody(ctx.request, REQUEST_MAX);
+    if (message === "too_large")
+      return json(
+        { error: "too_large", message: `at most ${REQUEST_MAX} bytes without a token` },
+        413,
+      );
     const reported = reportCall(ctx, message);
     if (reported !== undefined) return json(reported);
-    // A token or the account's own password; never a cookie. The refusal
-    // keeps the OAuth challenge a client starts from, and names the one
-    // thing a stranger can do without signing in.
-    if (
-      user === undefined ||
-      (ctx.auth.via !== "token" && ctx.auth.via !== "password")
-    )
-      return new Response(
-        JSON.stringify({
-          error: "unauthorized",
-          message:
-            "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?}) files a problem report on a public repository; see /llms.txt",
-          report: {
-            method: "tools/call",
-            name: "report",
-            arguments: ["repo", "title", "body", "page"],
-          },
-        }),
-        {
-          status: 401,
-          headers: {
-            "content-type": "application/json",
-            "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
-            link: `<${ctx.url.origin}/llms.txt>; rel="service-doc"; type="text/markdown"`,
-          },
+    // The refusal keeps the OAuth challenge a client starts from, and names
+    // the one thing a stranger can do without signing in.
+    return new Response(
+      JSON.stringify({
+        error: "unauthorized",
+        message:
+          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?}) files a problem report on a public repository; see /llms.txt",
+        report: {
+          method: "tools/call",
+          name: "report",
+          arguments: ["repo", "title", "body", "page"],
         },
-      );
-    const answer = await rpcOne(ctx, user, message);
-    if (answer === undefined) return new Response(null, { status: 202 });
-    return json(answer);
+      }),
+      {
+        status: 401,
+        headers: {
+          "content-type": "application/json",
+          "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
+          link: `<${ctx.url.origin}/llms.txt>; rel="service-doc"; type="text/markdown"`,
+        },
+      },
+    );
   });
   // No server-to-client stream is offered: nothing to hold open, nothing
   // for a proxy to cut.
