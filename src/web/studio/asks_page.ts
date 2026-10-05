@@ -118,6 +118,7 @@ export function asksPage(ctx: Ctx): Response {
   const first = rows.slice(0, ASKS_SHOWN);
   const rest = rows.slice(ASKS_SHOWN);
   const body = html`<h1 id="asks-sentence">${askSentence(count)}</h1>
+    <p class="muted small"><a href="/asked">What you asked for</a>, and what became of it.</p>
     <div class="stack">
       ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r))}
     </div>

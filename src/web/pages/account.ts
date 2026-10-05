@@ -235,7 +235,9 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
         ? { email: "Another account already uses that address." }
         : updated.error === "invalid_email"
           ? { email: "That doesn't look like an email address." }
-          : {};
+          : updated.error === "display_name_reserved"
+            ? { displayName: "That name belongs to the crew, the owner or the forge." }
+            : {};
     return accountShell(
       ctx,
       "profile",

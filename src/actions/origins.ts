@@ -43,11 +43,7 @@ import type { User } from "../core/users.ts";
 import { discover } from "../origins/discover.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { getJob, type MirrorJob } from "../origins/jobs.ts";
-import {
-  mirrorRepo as runMirror,
-  startMirror,
-  type MirrorError,
-} from "../origins/mirror.ts";
+import { startMirror } from "../origins/mirror.ts";
 import {
   appFor,
   authorizeUrl,
@@ -683,27 +679,6 @@ export async function listRemoteRepos(
   }
   cacheOriginRepos(app.db, origin.id, collected);
   return ok(listOriginRepos(app.db, origin.id));
-}
-
-/**
- * Mirror and wait. The surfaces that have nowhere to render progress (and
- * every caller that just wants the repo) keep this; anything with a screen
- * should start the job instead and watch it.
- */
-export async function mirrorRepo(
-  app: App,
-  actor: User | undefined,
-  originId: string,
-  fullName: string,
-  name?: string,
-): Promise<Result<Repo, "unauthorized" | MirrorError>> {
-  const user = requireUser(actor);
-  if (!user.ok) return user;
-  const origin = getOriginFor(app.db, user.value.id, originId);
-  if (!origin) return err("not_found");
-  const mirrored = await runMirror(app, user.value, origin, fullName, name);
-  if (!mirrored.ok) return mirrored;
-  return ok(mirrored.value.repo);
 }
 
 /**

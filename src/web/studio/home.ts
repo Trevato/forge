@@ -153,6 +153,10 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ${costLine}
     <div class="dash">
       <div class="dash-main stack">
+        <div class="bar feed-head">
+          <span class="spacer"></span>
+          <a class="small muted" href="/asked">What you asked for</a>
+        </div>
         ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}
