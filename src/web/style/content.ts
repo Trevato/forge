@@ -181,6 +181,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .comment-form .form-actions > .muted.small { flex-basis: 100%; }
   .comment-form .form-actions > .spacer { display: none; }
   .comment-form .form-actions > :last-child { margin-left: auto; }
+  /* The reason select, Close and Comment must fit 332 px with room to
+     spare: a tighter gap and a narrower select. */
+  .comment-form .form-actions { gap: 6px; }
+  .comment-form .form-actions .close-reason { padding-inline: 8px 24px; max-width: 84px; }
+  .comment-form .form-actions > :last-child .ico { display: none; }
 }
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
