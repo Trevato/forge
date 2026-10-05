@@ -10,6 +10,7 @@ import { listChildren, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
+import { kindOfToken } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -93,6 +94,16 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (!Array.isArray(apps)) return apps;
   const crew = names(raw["crew"], "crew", MAX_CREW);
   if (!Array.isArray(crew)) return crew;
+  // The child's model key: an API-billed key with a daily cap, or none. A
+  // subscription token is a person's own plan and never travels.
+  const modelKey = raw["modelKey"];
+  if (modelKey !== undefined) {
+    if (typeof modelKey !== "string" || kindOfToken(modelKey) !== "api_key")
+      return invalid("modelKey", "must be an API key (sk-ant-api…); a subscription token is a person's own plan and never goes to a child");
+    if (raw["keyCapUsd"] === undefined) return invalid("keyCapUsd", "a model key needs a daily cap in dollars");
+  } else if (raw["keyCapUsd"] !== undefined) {
+    return invalid("keyCapUsd", "a cap is for a model key; send modelKey with it");
+  }
 
   const db = ctx.app.db;
   // Only what the caller named and may read: an unreadable app is "not a known app".
@@ -123,6 +134,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     carrySubscriptions: false,
     direction: raw["direction"],
     keepAccess: raw["keepAccess"],
+    keyCapUsd: raw["keyCapUsd"],
   };
 
   if (dry) {
@@ -134,6 +146,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     placement: placementFor(ctx.app),
     request: ctx.request,
     url: ctx.url,
+    ...(typeof modelKey === "string" ? { modelKey } : {}),
   });
   return made.ok ? { status: made.value.existed ? 200 : 201, body: { dryRun: false, ...made.value } } : spawnWords(made.error);
 }

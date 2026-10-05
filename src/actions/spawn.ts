@@ -38,6 +38,9 @@ import { repoDir } from "../git/repos.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { crossOrigin } from "../http/context.ts";
+import { addSubscription, getSubscriptionByName, setGrants } from "../core/subscriptions.ts";
+import { loadKey } from "../kernel/secret.ts";
+import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { mintClaim } from "../spawn/claim.ts";
 import type { Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
@@ -70,6 +73,13 @@ export interface SpawnDeps {
   /** The request that asked, for the same-origin check on this mutation. */
   readonly request: Request;
   readonly url: URL;
+  /**
+   * The child's own model key, when the spawner gives it one: an API-billed
+   * key (never a person's subscription token), sealed in the child with the
+   * child's own `secret.key`, granted to its organisation, and never shown
+   * again or kept by the parent. Its daily cap is the plan's `keyCapUsd`.
+   */
+  readonly modelKey?: string;
 }
 
 interface Ledger {
@@ -81,6 +91,8 @@ interface Ledger {
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+/** The name the child's sealed model key goes by. */
+export const STARTER_KEY = "starter";
 const inFlight = new Set<string>();
 
 const fail = (message: string) => err<SpawnError>({ kind: "failed", message });
@@ -174,7 +186,7 @@ async function make(
     await writeLedger(app, ledger);
   }
 
-  const copied = await copyInto(app, owner, plan, ledger);
+  const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
   if (!copied.ok) return fail(copied.error);
   const claimUrl = `${ledger.url}/claim/${copied.value}`;
 
@@ -204,6 +216,7 @@ async function copyInto(
   owner: User,
   plan: SpawnPlan,
   ledger: Ledger,
+  modelKey: string | undefined,
 ): Promise<Result<string, string>> {
   const dir = childDirOf(app, ledger.bodyId);
   await mkdir(dir, { recursive: true });
@@ -292,6 +305,31 @@ async function copyInto(
         setCrewRole(child.db, repo.id, theirs.user.id, role);
       }
 
+    // The child's own keys, made in its own directory now, so they exist
+    // before its first boot and are provably not the parent's: the key that
+    // seals its secrets, and its SSH host key.
+    loadKey(dir);
+    loadOrCreateHostKey(join(dir, "ssh"));
+
+    // A model key the spawner handed over, sealed with the child's key,
+    // offered to its organisation's crew, and capped per day on each app.
+    if (modelKey !== undefined && plan.keyCapUsd !== null) {
+      const sealed =
+        getSubscriptionByName(child.db, STARTER_KEY) ??
+        (() => {
+          const added = addSubscription(child.db, dir, {
+            name: STARTER_KEY,
+            token: modelKey,
+            createdBy: founder.id,
+          });
+          return added.ok ? added.value : undefined;
+        })();
+      if (!sealed) return err("could not seal the child's model key");
+      setGrants(child.db, org.id, "", [sealed.id]);
+      for (const { child: repo } of copiedRepos)
+        updateRepoSettings(child.db, repo, { autonomyCeilingUsd: plan.keyCapUsd });
+    }
+
     const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
     await Bun.write(
       join(dir, "parent.json"),
@@ -299,6 +337,8 @@ async function copyInto(
         upstream,
         name: plan.name,
         org: plan.org,
+        // The child's own address, from the placement: <name>.<parent's host>.
+        url: ledger.url,
         keepAccess: plan.keepAccess,
       }),
     );

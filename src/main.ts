@@ -85,6 +85,11 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // Hosted, the host says how this forge's terminal is reached; printed
+  // verbatim wherever the forge tells people how to connect.
+  ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
+    ? { appSsh: (process.env.FORGE_APP_SSH ?? "").trim() }
+    : {}),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"

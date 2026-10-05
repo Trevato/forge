@@ -15,6 +15,9 @@ export const MAX_SUBSCRIPTIONS = 200;
 export const MAX_BRIEF_CHARS = 20_000;
 /** The spawner's words for what the child is for: its direction. */
 export const MAX_DIRECTION_CHARS = 2000;
+/** The daily cap on a child's model key, in dollars. */
+export const MIN_KEY_CAP_USD = 1;
+export const MAX_KEY_CAP_USD = 1000;
 
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -42,6 +45,11 @@ export interface SpawnInput {
   readonly direction?: unknown;
   /** Whether the spawner keeps owner access once the child is claimed; false unless true. */
   readonly keepAccess?: unknown;
+  /**
+   * The daily cap on the child's model key, in dollars, when one is given.
+   * The key itself never enters the plan: only that there is one, capped.
+   */
+  readonly keyCapUsd?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -68,6 +76,8 @@ export interface SpawnPlan {
   readonly direction: string;
   /** Whether the spawner stays an owner after the claim; the claim page says which. */
   readonly keepAccess: boolean;
+  /** The child's model key's daily cap in dollars; null when it gets no key. */
+  readonly keyCapUsd: number | null;
 }
 
 export interface DryRun {
@@ -158,7 +168,15 @@ export function planSpawn(
     return refuse("keepAccess", "must be true or false");
   const keepAccess = input.keepAccess === true;
 
-  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess });
+  let keyCapUsd: number | null = null;
+  if (input.keyCapUsd !== undefined && input.keyCapUsd !== null) {
+    const cap = input.keyCapUsd;
+    if (typeof cap !== "number" || !Number.isFinite(cap) || cap < MIN_KEY_CAP_USD || cap > MAX_KEY_CAP_USD)
+      return refuse("keyCapUsd", `a daily cap from $${MIN_KEY_CAP_USD} to $${MAX_KEY_CAP_USD}`);
+    keyCapUsd = Math.round(cap * 100) / 100;
+  }
+
+  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess, keyCapUsd });
 }
 
 const enc = new TextEncoder();
@@ -171,6 +189,9 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
     ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
+    ...(plan.keyCapUsd === null
+      ? []
+      : [`its own model key (API-billed, sealed, never shown again), capped at $${plan.keyCapUsd} a day per app`]),
   ];
   const bytes =
     plan.apps.reduce((n, a) => n + a.bytes, 0) +

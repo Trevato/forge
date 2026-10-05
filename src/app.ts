@@ -76,6 +76,12 @@ export interface ForgeConfig {
    * Undefined means the forge is running without SSH.
    */
   sshPort?: number;
+  /**
+   * The exact command the host forge gave this one to reach its terminal
+   * (`FORGE_APP_SSH`), when it runs as an app of another forge (a spawned
+   * child). Printed verbatim wherever the forge says how to connect.
+   */
+  appSsh?: string;
 }
 
 export interface App {
