@@ -141,7 +141,8 @@ describe("a forge behind the platform edge", () => {
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { ...asAda, origin: "https://forge.example" },
-      body: JSON.stringify({ name: "cli", scope: "rw" }),
+      // Ada is the site admin: from a page, her token is minted on purpose (#596).
+      body: JSON.stringify({ name: "cli", scope: "rw", adminConfirm: true }),
     });
     expect(minted.status).toBe(201);
   });
