@@ -44,7 +44,7 @@ describe("a spawned child's apps", () => {
 
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-child-apps-"));
-    parent = createApp({ dataDir: dir, url: "https://forge.test" });
+    parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const made = await createUser(parent.db, {
       username: "alice",
       email: "a@x.invalid",
@@ -125,7 +125,7 @@ describe("a spawned child's apps", () => {
       },
     );
     if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
-    child = createApp({ dataDir: childDirOf(parent, spawned.value.bodyId) });
+    child = createApp({ dataDir: childDirOf(parent, spawned.value.bodyId), port: 0 });
     await firstBoot(child);
     servers = await serve(child);
     const token = spawned.value.claimUrl!.split("/claim/")[1]!;
