@@ -111,7 +111,6 @@ import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
   issuePage,
-  issuesList,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
@@ -176,7 +175,7 @@ import {
   agentUpdate,
   crewPage,
 } from "../web/pages/crew.ts";
-import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
+import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
   changePage,
   pullCommentSubmit,
@@ -678,14 +677,15 @@ export function buildRouter(): Router<Handler> {
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
-  router.add("GET", "/:owner/:name/issues", issuesList);
-  // The studio's own nouns for the same list and the same page — everything
-  // told, and one tell. Each is a second door onto the one handler, never a
-  // second copy of the page; `/issues` and `/issues/:number` stay dev's own
-  // canonical addresses and answer exactly as they always have, in both
-  // modes (`tellsList`/`tellPage` redirect there when the studio does not
-  // apply). The literal /tells is registered before /tells/:number for the
-  // same reason /issues/new is.
+  // One list of issues: `/issues` and `/tells` are two addresses for the
+  // same page, for every repository and every viewer.
+  router.add("GET", "/:owner/:name/issues", tellsList);
+  // The studio's own noun for one tell: a second door onto the one handler,
+  // never a second copy of the page; `/issues/:number` stays dev's own
+  // canonical address and answers exactly as it always has, in both modes
+  // (`tellPage` redirects there when the studio does not apply). The
+  // literal /tells is registered before /tells/:number for the same reason
+  // /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
@@ -728,10 +728,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
 
   // Pull requests. Same /new-before-/:number ordering discipline.
-  router.add("GET", "/:owner/:name/pulls", pullsList);
-  // The studio's own nouns for the same list and the same page — every
-  // change, and one change. See the tells above for the rule; the forms
-  // that ship, close and comment keep posting under /pulls/:number.
+  // One list of pulls, at `/pulls` and `/changes` alike; one change under
+  // the studio's own noun. See the tells above for the rule; the forms that
+  // ship, close and comment keep posting under /pulls/:number.
+  router.add("GET", "/:owner/:name/pulls", changesList);
   router.add("GET", "/:owner/:name/changes", changesList);
   router.add("GET", "/:owner/:name/changes/:number", changePage);
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);

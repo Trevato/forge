@@ -245,9 +245,16 @@ production has not caught up to yet, or a run with nothing to show —
 still read as _working_: still moving, not one of the five a list links to
 on its own. Paging is the underlying list's own cursor, unchanged; a word
 filter narrows the page it lands on rather than inventing a second scheme.
-`?mode=dev` on any of the three is dev's list, exactly as it always has
-been; a repository that is not an app renders dev's list here regardless
-of mode, since there is no studio to switch to.
+Told and changes are the only lists of issues and pulls: every repository,
+app or not, and every viewer, whatever the mode, at `/issues` and `/tells`,
+`/pulls` and `/changes` alike (`?mode=dev` changes nothing there). Besides
+the word they narrow by `?label=` (the repository's labels are chips under
+the words), `?assignee=`, `?author=` and `?q=` (a piece of the title), each
+shown as a chip that clears itself; an older `?state=closed|all` address
+still answers with what it asked for. Told carries one verb besides opening
+a row — compose, for a signed-in person. A row wears its labels; a change's
+branches, diff and reviews are one step deeper, on the change. The runs
+list keeps `?mode=dev` to dev's runs until that list is contracted too.
 
 ## A tell, on its own page
 
