@@ -1692,7 +1692,7 @@ describe("the studio", () => {
     }
   });
 
-  test("clicking your own name in the studio lands on /:owner, which leads with your apps on the shelf and New app as the primary action; dev mode is unchanged, and a stranger never sees a private one", async () => {
+  test("clicking your own name lands on /:owner, which leads with your apps on the shelf and New app as the primary action, in every mode; a stranger never sees a private one", async () => {
     const studio = await (await get("/alice")).text();
     expect(studio).toContain("<h2>Apps</h2>");
     expect(studio).toContain('href="/alice/notes"');
@@ -1705,9 +1705,10 @@ describe("the studio", () => {
     const dev = await (
       await get("/alice", { cookie: `${cookie}; forge_mode=dev` })
     ).text();
-    expect(dev).not.toContain("<h2>Apps</h2>");
-    expect(dev).not.toContain('href="/apps/new?owner=alice"');
-    expect(dev).not.toContain("not running");
+    // One owner page (#633): the cookie changes nothing.
+    expect(dev).toContain("<h2>Apps</h2>");
+    expect(dev).toContain('href="/apps/new?owner=alice"');
+    expect(dev).toContain("not running");
 
     const carol = await createUser(app.db, { trusted: true,
       username: "carol",
@@ -1734,7 +1735,8 @@ describe("the studio", () => {
       })
     ).text();
     expect(stranger).not.toContain('href="/alice/notes"');
-    expect(stranger).toContain("No apps yet");
+    // Nothing to see is shown as nothing: no empty apps card for a visitor.
+    expect(stranger).not.toContain("No apps yet");
     expect(stranger).not.toContain('href="/apps/new?owner=alice"');
   });
 
@@ -2176,7 +2178,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   const occurrences = (haystack: string, needle: string): number =>
     haystack.split(needle).length - 1;
 
-  test("a person with one app and one plain repository renders each once in the studio, and both together in one list in dev mode", async () => {
+  test("a person with one app and one plain repository renders each once, in every mode; one with no app shows a visitor no apps card at all", async () => {
     const dan = await createUser(app.db, { trusted: true,
       username: "dan",
       email: "dan@forge.local",
@@ -2232,8 +2234,32 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     ).text();
     expect(occurrences(dev, 'href="/dan/beacon"')).toBe(1);
     expect(occurrences(dev, 'href="/dan/scratch"')).toBe(1);
-    expect(dev).not.toContain("<h2>Apps</h2>");
-    expect(dev).not.toContain("<h2>Other repositories</h2>");
+    expect(dev).toContain("<h2>Apps</h2>");
+    expect(dev).toContain("<h2>Other repositories</h2>");
+
+    // Someone with repositories and no app: a visitor is not shown an empty
+    // apps card, and the list is simply their repositories.
+    const gus = await createUser(app.db, { trusted: true,
+      username: "gus",
+      email: "gus@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!gus.ok) throw new Error(gus.error);
+    const plainOnly = await createRepo(app, gus.value, {
+      name: "notebook",
+      visibility: "public",
+      description: "",
+    });
+    if (!plainOnly.ok) throw new Error(String(plainOnly.error));
+    const visit = await (
+      await fetch(`${base}/gus`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(visit).not.toContain("No apps yet");
+    expect(visit).toContain("<h2>Repositories</h2>");
+    expect(visit).toContain('href="/gus/notebook"');
   });
 
   test("an owner whose only repository is an app reads the empty list below as no other repositories, not as a bug", async () => {
@@ -2269,6 +2295,55 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     expect(occurrences(studio, 'href="/eve/lighthouse"')).toBe(1);
     expect(studio).toContain("No other repositories");
     expect(studio).not.toContain("<h2>Other repositories</h2>");
+  });
+
+  test("a private app on a public repository shows its state only to its writers: a visitor gets a plain row", async () => {
+    const hal = await createUser(app.db, { trusted: true,
+      username: "hal",
+      email: "hal@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!hal.ok) throw new Error(hal.error);
+    const ownerCookie = await signIn("hal", "a-good-passphrase");
+    const made = await createRepo(app, hal.value, {
+      name: "ledger",
+      visibility: "public",
+      description: "the books",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, hal.value, made.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, hal.value, made.value, {
+      slug: "hal-ledger",
+      access: "private",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const ivy = await createUser(app.db, { trusted: true,
+      username: "ivy",
+      email: "ivy@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!ivy.ok) throw new Error(ivy.error);
+    const strangerCookie = await signIn("ivy", "a-good-passphrase");
+
+    const visit = (cookie?: string) =>
+      fetch(`${base}/hal`, {
+        headers: cookie === undefined ? {} : { cookie },
+        redirect: "manual",
+      }).then((r) => r.text());
+    for (const page of [await visit(), await visit(strangerCookie)]) {
+      // The repository is public, so it is listed — once, plainly.
+      expect(occurrences(page, 'href="/hal/ledger"')).toBe(1);
+      expect(page).toContain("the books");
+      expect(page).not.toContain("not running");
+      expect(page).not.toContain("quiet");
+      expect(page).not.toContain('class="studio-word"');
+    }
+    const own = await visit(ownerCookie);
+    expect(own).toContain("not running");
   });
 
   test("an org's page draws the same way: its app once, its plain repository once, and Members/Teams unmoved", async () => {
