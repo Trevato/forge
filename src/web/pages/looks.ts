@@ -21,7 +21,7 @@ import {
   type LookKind,
 } from "../../core/looks.ts";
 import type { Pull } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
@@ -72,6 +72,10 @@ export function lookImage(ctx: Ctx): Response {
     (l) => l.commitOid === commit && lookSlot(l.page, l.kind) === slot,
   );
   if (look === undefined || look.error !== null) return notFound();
+  // Phone and desktop are taken as the owner, signed in as an admin: what
+  // they show is the writers' to see. The thumb is taken as a stranger.
+  if (look.kind !== "thumb" && !canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user))
+    return notFound();
   const path = join(ctx.app.config.dataDir, look.path);
   if (!existsSync(path)) return notFound();
   return new Response(Bun.file(path), {
@@ -98,6 +102,8 @@ export function lookCard(
   pull: Pull,
   headOid: string,
 ): Html {
+  // Its pictures are the owner's view: a reader who cannot write gets none.
+  if (!canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)) return html``;
   const base = repoBase(repo);
   const env = previewEnv(pull.number);
   const looks = looksForEnv(ctx.app.db, record.id, env);
@@ -188,7 +194,12 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
   const looks = looksForEnv(ctx.app.db, record.id, "production").filter(
     (l) => l.page === DEFAULT_PAGE,
   );
-  const look = pictured(looks, "thumb") ?? pictured(looks, "desktop");
+  // The desktop picture is the owner's view: only a writer falls back to it.
+  const look =
+    pictured(looks, "thumb") ??
+    (canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)
+      ? pictured(looks, "desktop")
+      : undefined);
   if (look === undefined) return html``;
   const base = repoBase(repo);
   const size = LOOK_SIZES[look.kind];

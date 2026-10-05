@@ -713,6 +713,36 @@ describe("the look", () => {
     expect(calls).toHaveLength(before + 1);
   }, 60_000);
 
+  test("a public app's owner-view pictures are its writers' alone: a stranger and a reader get the thumb, never phone or desktop", async () => {
+    app.db.query(`UPDATE repo SET visibility = 'public' WHERE id = ?1`).run(repo.id);
+    try {
+      const head = runtime.envStatus(record, "production")!.commitOid;
+      // The test before left this head's thumb failed; picture it again.
+      const thumbPath = `looks/${record.id}/production/${head}-thumb.png`;
+      writeFileSync(join(dataDir, thumbPath), PNG);
+      recordLook(app.db, {
+        appId: record.id,
+        env: "production",
+        commitOid: head,
+        kind: "thumb",
+        path: thumbPath,
+      });
+      const at = (kind: string) => `/alice/hello/looks/production/${head}/${kind}.png`;
+      for (const cookie of ["", bobCookie]) {
+        expect((await web(at("desktop"), cookie)).status).toBe(404);
+        expect((await web(at("phone"), cookie)).status).toBe(404);
+        expect((await web(at("thumb"), cookie)).status).toBe(200);
+      }
+      expect((await web(at("desktop"), aliceCookie)).status).toBe(200);
+      // The app's page shows a reader the thumb, never the owner's desktop.
+      const page = await (await web("/alice/hello", `${bobCookie}; forge_mode=studio`)).text();
+      expect(page).not.toContain("/desktop.png");
+      expect(page).not.toContain("/phone.png");
+    } finally {
+      app.db.query(`UPDATE repo SET visibility = 'private' WHERE id = ?1`).run(repo.id);
+    }
+  });
+
   test("memory pressure is what the container truly holds, never its page cache", async () => {
     const { cgroupMemoryPressure, memoryPressure } =
       await import("../src/looks/service.ts");
