@@ -33,7 +33,7 @@ describe("a run the last forge left running", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-interrupted-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -311,7 +311,7 @@ describe("an issue handed to someone else", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-reassign-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

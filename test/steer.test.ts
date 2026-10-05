@@ -117,7 +117,7 @@ fi
       runTimeoutMs: 60_000,
     });
     try {
-      const a = await createUser(app.db, {
+      const a = await createUser(app.db, { trusted: true,
         username: "alice",
         email: "alice@forge.local",
         password: "a-good-passphrase",

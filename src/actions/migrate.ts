@@ -17,6 +17,7 @@
  * thing: make it run here, adapting rather than rewriting.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { getOriginFor } from "../core/origins.ts";
@@ -77,6 +78,7 @@ export interface MigrateStarted {
 
 export type MigrateError =
   | CreateRepoActionError
+  | "unverified"
   | "invalid_url"
   | "private_host"
   | "no_such_origin"
@@ -103,9 +105,11 @@ export async function migrateRepo(
   app: App,
   actor: User | undefined,
   input: MigrateInput,
-): Promise<Result<MigrateStarted, MigrateError>> {
+): Promise<Result<MigrateStarted, MigrateError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
 
   const source = await resolveSource(app, user.value, input.source);
   if (!source.ok) return source;
@@ -188,6 +192,8 @@ export function migrateMessage(error: MigrateError): string {
       return "You cannot create repositories for that owner.";
     case "unauthorized":
       return "Sign in first.";
+    case "unverified":
+      return "Verify your email first: follow the link we sent, or ask for another under Settings.";
   }
 }
 

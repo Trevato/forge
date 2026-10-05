@@ -41,7 +41,7 @@ describe("an agent's own comment never starts its next run", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-loop-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

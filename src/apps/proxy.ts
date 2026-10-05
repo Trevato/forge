@@ -20,7 +20,7 @@ import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 import { canEnterApp, canRead, getRepoById } from "../core/repos.ts";
-import { getUserById } from "../core/users.ts";
+import { getUserById, isActive } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
@@ -323,7 +323,8 @@ function stillEntitled(
   return (
     repo !== undefined &&
     user !== undefined &&
-    canEnterApp(runtime.app.db, repo, target.app.access, user)
+    isActive(user) &&
+    canEnterApp(runtime.app.db, repo, target.app, user)
   );
 }
 

@@ -105,7 +105,7 @@ describe("an interrupted run is not a park", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-parks-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

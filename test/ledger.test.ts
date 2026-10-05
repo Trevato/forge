@@ -72,7 +72,7 @@ describe("the decision ledger", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ledger-"));
     app = createApp({ dataDir, port: 0, decider });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

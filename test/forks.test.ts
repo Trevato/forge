@@ -7,6 +7,7 @@ import { deleteRepo, getRepo } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "F",
@@ -59,6 +60,7 @@ describe("forks", () => {
         password: "fork-me-please",
       }),
     });
+    proveAll(app);
     return fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },

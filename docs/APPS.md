@@ -104,14 +104,18 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    be private while the app is public, or the other way round. A private
    environment sets no cookie of its own; a person arriving by its link is
    sent to the forge to sign in, which checks `canEnterApp` — the
-   repository's writers and its crew, never everyone who can read it — and
+   repository's writers, its crew, and the people the app names (its
+   settings' **Who may enter**, `app_members` over MCP), never everyone who
+   can read it — and
    returns them with a signed, short-lived grant for the page they wanted;
    the proxy asks the same question again on every request, so a grant
    stops working the moment its holder may no longer enter. Anyone else,
    and anything that is not a person navigating, gets the forge's own "not
-   found". Guessing the hostname yields the same. Previews and the
-   terminal follow the app, and making the repository public changes
-   nobody's way in.
+   found". Guessing the hostname yields the same. Previews follow the app;
+   the terminal stays its writers' and crew's. Making the repository public
+   changes nobody's way in. A person the app names enters it and its
+   previews and gets nothing else: no code of a private repository, no
+   crew, no settings, no owner facts.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -472,7 +476,8 @@ exactly this).
 Behind the headers is the grant. A person who opens an app through the
 forge — the app's link, or the app's own **Sign in** — is sent to
 `/apps/open`, which vouches for them if they may enter the app (anyone,
-for a public app; a writer or the crew, for a private one) and sends them
+for a public app; a writer, the crew or a person it names, for a private
+one) and sends them
 back with a signed grant in a cookie naming them (twelve hours,
 HttpOnly, SameSite=Lax). The forge answers two paths on every app's host:
 `/__forge/signin?to=<path>` starts that round trip, and
