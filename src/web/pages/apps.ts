@@ -179,38 +179,8 @@ export function appsCard(ctx: Ctx): Html {
   });
 }
 
-// GET /apps
-export async function appsList(ctx: Ctx): Promise<Response> {
-  // In the studio, the same list a person's home links to is the shelf,
-  // not dev's table — `?mode=dev` still renders what follows, unchanged.
-  if (ctx.mode === "studio") return await studioAppsList(ctx);
-  const entries = appsForViewer(ctx);
-  const create = ctx.auth.user
-    ? btn("New app", {
-        href: "/apps/new",
-        variant: "primary",
-        size: "sm",
-        icon: "plus",
-        shortcut: "c",
-      })
-    : btn("Sign in to make one", { href: "/signin", size: "sm" });
-  const body = html`${pageHead("Apps", {
-    actions: create,
-    sub: "Repositories that run. Production follows the default branch; every open pull request gets a preview.",
-  })}
-  ${entries.length === 0
-    ? empty({
-        icon: "rocket",
-        title: "Nothing runs here yet",
-        note: "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
-        action: create,
-      })
-    : listCard(entries.map(appRow))}`;
-  return page({ ctx, title: "Apps", body });
-}
-
 /**
- * GET /apps in the studio: every app the viewer can land, drawn as the
+ * GET /apps: every app the viewer can land, for every viewer, drawn as the
  * shelf (`shelfRows`, `studio/shelf.ts`) — the same row the home's *Your
  * apps* card draws, never a second copy of it. `?live=1` is a link, not a
  * form, narrowing the shelf to what production is actually serving; with
@@ -219,7 +189,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
  * viewer gets the public shelf, and a reader who cannot write to an app
  * never sees its crew or its cost.
  */
-async function studioAppsList(ctx: Ctx): Promise<Response> {
+export async function appsList(ctx: Ctx): Promise<Response> {
   const entries = appsForViewer(ctx);
   const liveCount = entries.filter(
     (e) => e.production?.state === "running",
@@ -523,8 +493,8 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         : plan
           ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
           : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
-  // The repository's home: in the studio that is the app page (repoHome,
-  // once the record exists); in dev it is the code, wearing the app strip.
+  // The repository's home is the app page (repoHome), once the record
+  // exists; the code is its Files step.
   return flashTo(ctx, repoBase(repo), { message: `${first}${second}` });
 }
 
@@ -571,7 +541,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
     )}
     <span class="spacer"></span>
     ${btn("App", {
-      href: appHref(ctx, repo),
+      href: appHref(repo),
       size: "sm",
       variant: "ghost",
       icon: "chevronRight",
@@ -582,14 +552,12 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
 // ---- the app page ----
 
 /**
- * Where an app's page is: the studio's (`studio/app.ts`), which is the
- * repository's home in studio mode. A dev-mode viewer is handed the same
- * page with `?mode=studio` on it — the one link that switches the browser
- * (`http/server.ts`) — since dev's repo home is the code, as ever.
+ * Where an app's page is: the studio's (`studio/app.ts`), the repository's
+ * home for every viewer. Its code is one tab deeper, the Files step
+ * (`repoFiles`, `pages/repo.ts`).
  */
-export function appHref(ctx: Ctx, repo: Repo): string {
-  const base = repoBase(repo);
-  return ctx.mode === "studio" ? base : `${base}?mode=studio`;
+export function appHref(repo: Repo): string {
+  return repoBase(repo);
 }
 
 // GET /:owner/:name/app — dev's App page, folded into the studio's (#395).
@@ -601,7 +569,7 @@ export function appPage(ctx: Ctx): Response {
   if (!appView(ctx.app, ctx.auth.user, repo).ok) return notFoundPage(ctx);
   return new Response(null, {
     status: 302,
-    headers: { location: appHref(ctx, repo), "cache-control": "no-store" },
+    headers: { location: appHref(repo), "cache-control": "no-store" },
   });
 }
 
@@ -768,14 +736,9 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   const queued = await redeployEnv(ctx.app, user, repo, env);
   if (!queued.ok) return envFailure(ctx, repo, queued.error);
   const run = queued.value;
-  // Dev hands the deploy over to its run; the studio stays on the page that
-  // asked for it and watches the head card change there. With no run at
-  // all, both stay where they were.
-  const to =
-    ctx.mode === "studio" || run === undefined
-      ? envBack(ctx, repo)
-      : `${repoBase(repo)}/runs/${run.id}`;
-  return redirect(to, {
+  // The page that asked for it stays put and watches the head card change
+  // there (`envBack`); the run itself is one link away on that card.
+  return redirect(envBack(ctx, repo), {
     url: ctx.url,
     flash: {
       message:

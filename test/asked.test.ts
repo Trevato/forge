@@ -1,5 +1,5 @@
 /**
- * `/asked`: what people asked of the crew, newest first, with one state
+ * `/asked`: what people asked of the crew, oldest unmet first, with one state
  * word each and a flag when nothing was built — the same rows on the page,
  * the API and the MCP, and only for repositories the viewer can write.
  */
@@ -13,8 +13,14 @@ import { createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { askedIn, askedRepos, STALE_DAYS } from "../src/core/asked.ts";
-import type { Issue } from "../src/core/issues.ts";
+import {
+  ASKED_LIMIT,
+  askedCounts,
+  askedIn,
+  askedRepos,
+  STALE_DAYS,
+} from "../src/core/asked.ts";
+import { addComment, createIssue, type Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -293,5 +299,170 @@ describe("what you asked for", () => {
       "not_found",
     );
     expect((await mcp(bobRo, {})).value.asked).toEqual([]);
+  });
+
+  test("the page leads each row with what became of it, so a narrow screen cuts where and who, not that", async () => {
+    const signin = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const page = await (
+      await fetch(`${servers.url}/asked`, { headers: { cookie } })
+    ).text();
+    const meta = (title: string) =>
+      (
+        page.match(
+          new RegExp(
+            `${title}</span\\s*>\\s*<span class="row-meta">([\\s\\S]*?)</span>`,
+          ),
+        )?.[1] ?? ""
+      )
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+    expect(meta("Plant tomatoes")).toStartWith(
+      "crew not on it yet · no pull yet · alice/garden #",
+    );
+    expect(meta("A watering schedule")).toMatch(
+      /^crew .+ · pull #\d+ open · alice\/garden #\d+ · alice · /,
+    );
+  });
+
+  // Last, because it moves the crew's last activity the tests above read.
+  test("an agent's comment is the crew's last activity too; a person's comment is not", () => {
+    const bot = getUserByName(app.db, "bot")!;
+    const at = (minutesAgo: number) =>
+      new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    const say = (who: User, issueId: string, when: string) => {
+      const said = addComment(app.db, {
+        issueId,
+        authorId: who.id,
+        body: "A word on this.",
+      });
+      if (!said.ok) throw new Error(said.error);
+      app.db
+        .query("UPDATE comment SET created_at = ?1 WHERE id = ?2")
+        .run(when, said.value.id);
+    };
+    const lastOf = (title: string) =>
+      askedIn(app.db, [repo]).find((a) => a.issue.title === title)!;
+
+    // Nothing ran on this ask: the agent's comment alone is the activity,
+    // and the person's later one does not move it.
+    const botAt = at(120);
+    say(bot, asks["waiting"]!.id, botAt);
+    say(alice, asks["waiting"]!.id, at(5));
+    expect(lastOf("Plant tomatoes").lastCrewAt).toBe(botAt);
+
+    // On a pull that closes the ask, newer than the run: the comment wins.
+    const building = lastOf("A watering schedule");
+    const onPull = at(10);
+    say(bot, building.pulls[0]!.id, onPull);
+    expect(lastOf("A watering schedule").lastCrewAt).toBe(onPull);
+    // And an older comment does not move it back.
+    say(bot, building.issue.id, at(600));
+    expect(lastOf("A watering schedule").lastCrewAt).toBe(onPull);
+  });
+});
+
+describe("a repository with more asks than one read", () => {
+  /** More than the 2,000 the scan once stopped at. */
+  const MANY = 2_100;
+  let dataDir = "";
+  let app: App;
+  let repo: Repo;
+  let alice: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-asked-many-"));
+    app = createApp({ dataDir, port: 0 });
+    const a = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, {
+      name: "orchard",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    // One ask from long ago that nothing was built for, then many since.
+    app.db.exec("BEGIN");
+    for (let i = 0; i <= MANY; i++) {
+      const opened = createIssue(app.db, {
+        repoId: repo.id,
+        authorId: alice.id,
+        title: i === 0 ? "The oldest wish" : `Ask ${i}`,
+      });
+      if (!opened.ok) throw new Error(opened.error);
+    }
+    app.db.exec("COMMIT");
+    // Asked a minute apart, oldest first, the first one a month ago.
+    app.db
+      .query(
+        `UPDATE issue SET created_at =
+           strftime('%Y-%m-%dT%H:%M:%fZ', '2026-01-01T00:00:00Z', '+' || number || ' minutes')
+         WHERE repo_id = ?1`,
+      )
+      .run(repo.id);
+  }, 60_000);
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const now = new Date("2026-02-01T00:00:00Z");
+
+  test("the oldest unmet ask is first, however many came after", () => {
+    const rows = askedIn(app.db, [repo], { now });
+    expect(rows).toHaveLength(ASKED_LIMIT);
+    expect(rows[0]!.issue.title).toBe("The oldest wish");
+    expect(rows[1]!.issue.title).toBe("Ask 1");
+    expect(rows.every((a) => a.flagged)).toBe(true);
+    const newest = askedIn(app.db, [repo], { now, order: "newest" });
+    expect(newest[0]!.issue.title).toBe(`Ask ${MANY}`);
+    expect(newest.at(-1)!.issue.title).toBe(`Ask ${MANY - ASKED_LIMIT + 1}`);
+  });
+
+  test("the counts are of every ask, not of one page", () => {
+    expect(askedCounts(app.db, [repo], now)).toEqual({
+      asked: MANY + 1,
+      shipped: 0,
+      unshipped: MANY + 1,
+      flagged: MANY + 1,
+    });
+  });
+
+  test("asks that are closed are read past: the page still fills with what is unmet, oldest first", () => {
+    // Everything but the oldest wish and the newest fifty is closed.
+    app.db
+      .query(
+        "UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND number > 1 AND number <= ?2",
+      )
+      .run(repo.id, MANY + 1 - 50);
+    const rows = askedIn(app.db, [repo], { now });
+    expect(rows.map((a) => a.issue.title)).toEqual([
+      "The oldest wish",
+      ...Array.from({ length: 50 }, (_, i) => `Ask ${MANY - 49 + i}`),
+    ]);
+    expect(askedCounts(app.db, [repo], now)).toEqual({
+      asked: MANY + 1,
+      shipped: 0,
+      unshipped: 51,
+      flagged: 51,
+    });
+    expect(askedIn(app.db, [repo], { now, show: "all" })).toHaveLength(
+      ASKED_LIMIT,
+    );
   });
 });
