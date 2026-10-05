@@ -2027,11 +2027,7 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(
-          ctx.app.db,
-          repo,
-          graph.issues.map((i) => i.id),
-        ),
+        pillarView(ctx.app.db, repo.id),
       ),
     );
   });

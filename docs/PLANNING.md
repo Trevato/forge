@@ -118,6 +118,54 @@ a task too big for one run splits it into linked issues instead of leaving
 half of it. Either way the plan is where everyone can see it, and closing
 an issue is what frees the next.
 
+## Pillars and the Later gate
+
+A direction can name what the work is for. Each such _pillar_ is an open
+umbrella issue whose title starts with its name — `P0 Trust: …` — and an
+issue serves the pillar whose umbrella waits for it; nothing else records
+it (`src/core/pillars.ts`). Work that serves no pillar is not dropped and
+is not ready either: it waits behind the _Later gate_, the open issue whose
+title starts `Later gate:`, opens with one sentence that says why it waits,
+and stands under the `Later: …` umbrella where the repository keeps one.
+The owner moves an item out by unlinking it from the gate, or opens them
+all by closing the gate.
+
+A plan says which it is for every issue. The planner's brief tells it to
+link each issue it opens under its pillar or behind the gate, and the MCP
+`plan` tool refuses an item that says neither. A repository with no
+umbrella issues has no pillars, and plans as it always did.
+
+An umbrella, the gate and the Later umbrella count only when someone who
+can write the repository opened them: a stranger's issue with the same
+title names nothing. `P0` comes first; two umbrellas with one name are one
+pillar, the older. Membership is direct: an issue the umbrella itself
+waits for. Under two umbrellas an issue serves the first, and a pillar
+outranks _Later_. Umbrellas and the gate are the plan's furniture: one
+umbrella waiting for another is an order between pillars, not membership.
+
+**What a person sees** (#610). `core/pillars.ts` is the one reader of all
+this; three surfaces show what it reads.
+
+- **The label.** An issue carries the label of the pillar it serves —
+  `Later` for deferred work — made the first time it is needed, and no
+  other pillar's. `actions/pillars.ts` writes it where the edges change (a
+  link or an unlink, a `plan`, a split, where each umbrella that waited for
+  the whole now waits for its parts) and at boot for what was linked
+  before. The label only says what the edges say: it is never read back,
+  and one set by hand does not survive the next boot. A mirrored
+  repository's labels are its origin's, so none is written there.
+- **The map by pillar.** Beside the drawing, _By pillar_ lists each pillar
+  and _Later_ — a link to its issues, the list narrowed to its label — with
+  what is open, ready and blocked, then _no pillar_ with the issues that
+  serve none, each a link, since they are the ones to file. In the data
+  every issue carries `pillar` (null for none), `pillars` is the same
+  rows, and `mergedByPillar` is `{ days: 7, counts: [{ pillar, merged }] }`:
+  the pulls merged in the last 7 days, each counted under the pillar of the
+  first issue it closes that serves one.
+- **The board by pillar.** _Landed_ leads with the same seven days for
+  each app that has pillars: every pillar and its count, zero or not, each
+  a link to its issues.
+
 ## A repository on its own
 
 A repository has one setting for how much the crew does without being
@@ -290,37 +338,3 @@ not confirm its own plan. Split also moves the parent's blocked-by edges to
 the issues named in `into` (a child that would make a loop is skipped), and
 the parent waits for nothing. Reopening clears the reason. Closes that
 predate reasons count as done.
-
-## Pillars
-
-A pillar is one of the few things the owner asked for, and every issue
-names the one it serves (`core/pillars.ts`).
-
-- **The set is fixed by its umbrellas.** A pillar is an issue titled
-  `P0 Trust: …` (any `P<n> Name:`) or `Later: …`, opened by someone who can
-  write the repository. A stranger's issue with the same title names
-  nothing, and a plan cannot invent a pillar. `P0` comes first, `Later`
-  last; two umbrellas with one name are one pillar, the older.
-- **The label is the pillar.** Its label has the pillar's name and is made
-  the first time it is needed. An issue an umbrella waits for directly
-  carries it — from the link (the page, the API, the MCP's `link`), from a
-  `plan` item that says `pillar`, from a split (each part that names no
-  pillar carries its parent's), and from boot for what was linked before.
-  Unlinked, it loses it. One pillar an issue: under two umbrellas it
-  carries the first. Umbrellas and the Later gate are the plan's furniture:
-  one umbrella waiting for another is an order between pillars, not
-  membership. A mirrored repository's labels are its origin's, so none is
-  written there.
-- **The map by pillar.** Beside the drawing, _By pillar_ lists each pillar
-  — a link to its issues, the list narrowed to its label — with what is
-  open, ready and blocked, then _no pillar_ with the issues that name none,
-  each a link, since they are the ones to file. In the data every issue
-  carries `pillar` (null for none), `pillars` is the same rows, and
-  `mergedByPillar` is `{ days: 7, counts: [{ pillar, merged }] }`: the
-  pulls merged in the last 7 days, each counted under the pillar of the
-  first issue it closes that has one.
-- **The board by pillar.** _Landed_ leads with the same seven days for
-  each app that has pillars: every pillar and its count, zero or not, each
-  a link to its issues.
-
-A repository with no umbrella has no pillars, and none of this shows.

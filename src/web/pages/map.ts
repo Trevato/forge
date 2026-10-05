@@ -58,6 +58,7 @@ import { struckOut } from "../../crew/parks.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
 import {
   isStructural,
+  LATER,
   NO_PILLAR,
   PILLAR_DAYS,
   pillarView,
@@ -865,12 +866,17 @@ export function pillarRows(
   marks: Marks,
   view: PillarView,
 ): PillarRow[] {
-  const tally = new Map<string | null, { open: number; ready: number; blocked: number }>(
-    view.pillars.map((p) => [p.name, { open: 0, ready: 0, blocked: 0 }]),
+  const tally = new Map<
+    string | null,
+    { open: number; ready: number; blocked: number }
+  >(view.names.map((name) => [name, { open: 0, ready: 0, blocked: 0 }]));
+  const umbrella = new Map<string, number>(
+    view.set.pillars.map((p) => [p.name, p.umbrella.number]),
   );
+  if (view.set.later !== undefined) umbrella.set(LATER, view.set.later.number);
   const loose: Issue[] = [];
   for (const issue of graph.issues) {
-    if (issue.state !== "open" || isStructural(view.pillars, issue)) continue;
+    if (issue.state !== "open" || isStructural(view.set, issue.id)) continue;
     if (issue.id === repo.directionIssueId) continue;
     const name = view.of.get(issue.id) ?? null;
     const row = tally.get(name) ?? { open: 0, ready: 0, blocked: 0 };
@@ -882,10 +888,10 @@ export function pillarRows(
     if (name === null) loose.push(issue);
   }
   return [
-    ...view.pillars.map((p) => ({
-      name: p.name,
-      umbrella: p.number,
-      ...tally.get(p.name)!,
+    ...view.names.map((name) => ({
+      name,
+      ...(umbrella.has(name) ? { umbrella: umbrella.get(name)! } : {}),
+      ...tally.get(name)!,
     })),
     ...(loose.length === 0
       ? []
@@ -1300,11 +1306,7 @@ export function mapPage(ctx: Ctx): Response {
   const counts = countWords(
     graph.issues.map((i) => wordFor(i, readySet, marks)),
   );
-  const pillars = pillarView(
-    db,
-    repo,
-    graph.issues.map((i) => i.id),
-  );
+  const pillars = pillarView(db, repo.id);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>

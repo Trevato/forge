@@ -1,11 +1,11 @@
 /**
  * Pillars: every issue carries the one it serves. An umbrella a writer
- * opened names a pillar and a stranger's names nothing; an issue linked
- * under an umbrella gets the pillar's label, made on first use, by a link,
- * by a plan that names the pillar, by a split, and at boot for what was
- * linked before; the map counts open work by pillar and reads "no pillar"
- * for the rest; the board and the map's data count the week's merged pulls
- * by pillar.
+ * opened names a pillar and a stranger's names nothing; an issue an
+ * umbrella waits for serves that pillar and carries its label, made on
+ * first use — by a link, by a plan, by a split, and at boot for what was
+ * linked before — and one behind the Later gate carries `Later`; the map
+ * counts open work by pillar and reads "no pillar" for the rest; the board
+ * and the map's data count the week's merged pulls by pillar.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -33,11 +33,7 @@ import {
   setIssueLabels,
   type Issue,
 } from "../src/core/issues.ts";
-import {
-  mergedByPillar,
-  pillarsOf,
-  pillarWindowStart,
-} from "../src/core/pillars.ts";
+import { pillarsOf, pillarView } from "../src/core/pillars.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -63,8 +59,10 @@ describe("pillars", () => {
   let sandbox: Issue;
   let review: Issue;
   let deferred: Issue;
+  let waiting: Issue;
   let loose: Issue;
   let composer: Issue;
+  let slider: Issue;
   let footer: Issue;
   let parts: Issue[];
   let synced: Issue;
@@ -194,13 +192,14 @@ describe("pillars", () => {
     ).split(";")[0]!;
     rw = createToken(app.db, alice.id, "rw", "rw").token;
 
+    // A stranger's issues, titled like umbrellas and older than the real ones.
+    spam = issue("P9 Spam: hello", bob);
+    issue("P0 Trust: mine now", bob);
+    issue("Later gate: mine too", bob);
     trust = issue("P0 Trust: agents contained, every agent pull reviewed");
     feed = issue("P1 Feed: one front door");
     later = issue("Later: work that serves no pillar now");
     gate = issue("Later gate: nothing behind this starts until it is opened");
-    // A stranger's issues, titled like umbrellas.
-    spam = issue("P9 Spam: hello", bob);
-    issue("P0 Trust: mine now", bob);
     // An order between pillars, and the gate behind them: not membership.
     expect(link(feed, trust).ok).toBe(true);
     expect(link(gate, trust).ok).toBe(true);
@@ -212,14 +211,14 @@ describe("pillars", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("an umbrella a writer opened names a pillar, in order; a stranger's names nothing", () => {
-    expect(
-      pillarsOf(app.db, fresh()).map((p) => [p.name, p.number]),
-    ).toEqual([
+  test("an umbrella a writer opened names a pillar, in order; a stranger's names nothing, and is no gate", () => {
+    const set = pillarsOf(app.db, repo.id);
+    expect(set.pillars.map((p) => [p.name, p.umbrella.number])).toEqual([
       ["P0 Trust", trust.number],
       ["P1 Feed", feed.number],
-      ["Later", later.number],
     ]);
+    expect(set.gate?.number).toBe(gate.number);
+    expect(set.later?.number).toBe(later.number);
   });
 
   test("linked under an umbrella, an issue carries the pillar's label, made on first use; unlinked, it does not", () => {
@@ -258,6 +257,14 @@ describe("pillars", () => {
     expect(names(review)).toEqual(["bug"]);
     expect(link(trust, review).ok).toBe(true);
     expect(names(review)).toEqual(["P0 Trust", "bug"]);
+    // Behind the Later gate, an issue reads Later; a pillar outranks it.
+    waiting = issue("A fleet table");
+    expect(link(waiting, gate).ok).toBe(true);
+    expect(names(waiting)).toEqual(["Later"]);
+    expect(link(feed, waiting).ok).toBe(true);
+    expect(names(waiting)).toEqual(["P1 Feed"]);
+    expect(unlink(feed, waiting).ok).toBe(true);
+    expect(names(waiting)).toEqual(["Later"]);
   });
 
   test("the crew's link labels too; a stranger can link nothing, and their umbrella labels nothing", () => {
@@ -273,26 +280,17 @@ describe("pillars", () => {
     expect(getLabel(app.db, repo.id, "P9 Spam")).toBeUndefined();
   });
 
-  test("the `plan` tool takes a pillar per item: filed under its umbrella, labelled; an unknown pillar refuses the plan", async () => {
-    const before = listIssues(app.db, repo.id, { state: "open", limit: 100 }).length;
-    const unknown = await tool("plan", {
-      app: "alice/engine",
-      issues: [
-        { key: "a", title: "A thing", pillar: "P7 Steering" },
-        { key: "b", title: "Another" },
-      ],
-    });
-    expect(unknown.error).toBe(
-      'unknown_pillar: "a": no pillar "P7 Steering" here; the pillars are P0 Trust, P1 Feed, Later',
-    );
-    expect(
-      listIssues(app.db, repo.id, { state: "open", limit: 100 }).length,
-    ).toBe(before);
+  test("a plan's items carry what they were filed under: the pillar's label, or Later", async () => {
     const planned = await tool("plan", {
       app: "alice/engine",
       issues: [
-        { key: "composer", title: "A composer above the timeline", pillar: "p1 feed" },
-        { key: "footer", title: "Tidy the footer", blockedBy: ["composer"] },
+        { key: "composer", title: "A composer above the timeline", pillar: "P1" },
+        {
+          key: "slider",
+          title: "A profit slider",
+          later: true,
+          why: "Money lines serve no pillar now.",
+        },
       ],
     });
     const opened = new Map<string, number>(
@@ -306,22 +304,30 @@ describe("pillars", () => {
         (i) => i.number === n,
       )!;
     composer = byNumber(opened.get("composer")!);
-    footer = byNumber(opened.get("footer")!);
+    slider = byNumber(opened.get("slider")!);
     expect(names(composer)).toEqual(["P1 Feed"]);
     expect(
       dependenciesOf(app.db, feed.id).blockedBy.map((i) => i.number),
     ).toContain(composer.number);
+    expect(names(slider)).toEqual(["Later"]);
+    // Work nobody filed, waiting for the composer.
+    footer = issue("Tidy the footer");
+    expect(link(footer, composer).ok).toBe(true);
     expect(names(footer)).toEqual([]);
   });
 
-  test("an issue split into parts: each part that names no pillar carries its parent's", () => {
+  test("an issue split into parts: the umbrella waits for the parts, and they carry its label", () => {
     parts = [issue("Review: the queue"), issue("Review: the verdict")];
     const split = setIssueState(app, alice, fresh(), current(review), "closed", {
       reason: "split",
       into: parts.map((p) => p.number),
     });
     expect(split.ok).toBe(true);
-    for (const part of parts) expect(names(part)).toEqual(["P0 Trust"]);
+    const under = dependenciesOf(app.db, trust.id).blockedBy.map((i) => i.number);
+    for (const part of parts) {
+      expect(under).toContain(part.number);
+      expect(names(part)).toEqual(["P0 Trust"]);
+    }
   });
 
   test("at boot, what an umbrella already waited for is labelled, once, and nothing is announced", () => {
@@ -333,6 +339,10 @@ describe("pillars", () => {
     expect(syncAllPillars(app)).toBe(1);
     expect(names(synced)).toEqual(["P1 Feed"]);
     expect(syncAllPillars(app)).toBe(0);
+    // The label only says what the edges say: one set by hand does not stay.
+    setIssueLabels(app.db, loose.id, [getLabel(app.db, repo.id, "P0 Trust")!.id]);
+    expect(syncAllPillars(app)).toBe(1);
+    expect(names(loose)).toEqual([]);
     expect(events("issue.labeled")).toBe(said);
   });
 
@@ -343,10 +353,11 @@ describe("pillars", () => {
     expect(data.pillars).toEqual([
       { pillar: "P0 Trust", umbrella: trust.number, open: 3, ready: 2, blocked: 1 },
       { pillar: "P1 Feed", umbrella: feed.number, open: 2, ready: 2, blocked: 0 },
-      { pillar: "Later", umbrella: later.number, open: 1, ready: 1, blocked: 0 },
-      // The loose issue and the plan's footer (which waits for the composer),
-      // and the stranger's two (one of which waits for the loose issue).
-      { pillar: null, open: 4, ready: 2, blocked: 2 },
+      // One under the Later umbrella; two behind the gate, which is open.
+      { pillar: "Later", umbrella: later.number, open: 3, ready: 1, blocked: 2 },
+      // The loose issue, the footer (which waits for the composer), and the
+      // stranger's three (one of which waits for the loose issue).
+      { pillar: null, open: 5, ready: 3, blocked: 2 },
     ]);
     const pillarOf = new Map<number, string | null>(
       data.issues.map((i: { number: number; pillar: string | null }) => [
@@ -357,6 +368,8 @@ describe("pillars", () => {
     expect(pillarOf.get(sandbox.number)).toBe("P0 Trust");
     expect(pillarOf.get(composer.number)).toBe("P1 Feed");
     expect(pillarOf.get(deferred.number)).toBe("Later");
+    expect(pillarOf.get(slider.number)).toBe("Later");
+    expect(pillarOf.get(gate.number)).toBeNull();
     expect(pillarOf.get(loose.number)).toBeNull();
     expect(pillarOf.get(spam.number)).toBeNull();
     // An umbrella reads as its own pillar, never as no pillar.
@@ -397,14 +410,7 @@ describe("pillars", () => {
       { pillar: "Later", merged: 0 },
       { pillar: null, merged: 2 },
     ];
-    expect(
-      mergedByPillar(
-        app.db,
-        fresh(),
-        pillarsOf(app.db, fresh()),
-        pillarWindowStart(),
-      ),
-    ).toEqual(want);
+    expect(pillarView(app.db, repo.id)!.merged).toEqual(want);
     const data = await api("/api/v1/repos/alice/engine/map");
     expect(data.mergedByPillar).toEqual({ days: 7, counts: want });
 

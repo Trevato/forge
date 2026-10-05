@@ -69,14 +69,39 @@ person pastes.
 ## `plan`
 
 Opens several small issues and their links in one transaction. Each item is
-`{ key, title, body?, blockedBy?, pillar? }`; `blockedBy` lists keys of the same
-call or numbers of issues already open, and `pillar` names the pillar the
-issue serves, as `map` lists them (`"P0 Trust"`, `"Later"`): the issue is
-filed under that pillar's umbrella and carries its label. A loop, an unknown
-key, an unknown number, an unknown pillar (the refusal names the pillars), an
+`{ key, title, body?, blockedBy? }`; `blockedBy` lists keys of the same call or
+numbers of issues already open. A loop, an unknown key, an unknown number, an
 over-long title or body, or more than 12 items refuses the whole plan, naming
 the item, and nothing is opened. Issues belong to the token's owner and emit
 the same events as opening and linking one by one. It needs an `rw` token.
+
+Where the app has pillars (docs/PLANNING.md), every item also says what it
+is for, or the whole plan is refused (`no_pillar`), naming the item and the
+pillars there are:
+
+- `pillar`, the one it serves, by short form or name (`"P0"` or
+  `"P0 Trust"`): the pillar's umbrella issue then waits for it.
+- `later: true` with `why`, one sentence: it serves no pillar now. It opens
+  blocked by the Later gate, so it is not on the ready list, its body opens
+  with `**Later:**` and the sentence, and the answer lists it in `later`.
+
+```json
+{ "app": "trevato/forge", "issues": [
+  { "key": "review", "title": "Every agent pull is reviewed", "pillar": "P0" },
+  { "key": "slider", "title": "The profit slider", "later": true,
+    "why": "Money lines serve no pillar now." } ] }
+```
+
+answers
+
+```json
+{ "says": "Opened 2 issues: review is #7, slider is #8. #8 waits behind the Later gate #5.",
+  "opened": [{ "key": "review", "number": 7 }, { "key": "slider", "number": 8 }],
+  "ready": [7], "later": [8] }
+```
+
+An app with no pillars takes no `pillar` (`unknown_pillar`), and `later`
+needs the gate to exist (`no_later_gate`).
 
 ```json
 { "app": "alice/game", "issues": [
@@ -90,5 +115,5 @@ answers
 ```json
 { "says": "Opened 3 issues: board is #7, moves is #8, play is #9.",
   "opened": [{ "key": "board", "number": 7 }, { "key": "moves", "number": 8 }, { "key": "play", "number": 9 }],
-  "ready": [7, 8] }
+  "ready": [7, 8], "later": [] }
 ```

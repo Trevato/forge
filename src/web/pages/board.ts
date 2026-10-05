@@ -37,11 +37,9 @@ import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
-  mergedByPillar,
   NO_PILLAR,
   PILLAR_DAYS,
-  pillarsOf,
-  pillarWindowStart,
+  pillarView,
   reposWithUmbrellas,
 } from "../../core/pillars.ts";
 import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
@@ -644,11 +642,10 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
 function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
   const db = ctx.app.db;
   const having = reposWithUmbrellas(db, scope.ids);
-  const since = pillarWindowStart();
   const lines = scope.repos.flatMap((repo) => {
     if (!having.has(repo.id)) return [];
-    const pillars = pillarsOf(db, repo);
-    if (pillars.length === 0) return [];
+    const view = pillarView(db, repo.id);
+    if (view === undefined) return [];
     const base = repoBase(repo);
     return [
       html`<p class="board-pillars" data-app="${repo.name}">
@@ -656,7 +653,7 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
           >${scope.repos.length === 1 ? "" : `${repo.name} · `}merged in
           ${PILLAR_DAYS} days</span
         >
-        ${mergedByPillar(db, repo, pillars, since).map((count) =>
+        ${view.merged.map((count) =>
           count.pillar === null
             ? html`<span class="board-pillar" data-zero="no"
                 >${NO_PILLAR} <b>${count.merged}</b></span
