@@ -76,6 +76,11 @@ export interface ForgeConfig {
    * for the owner's word.
    */
   mail?: MailConfig;
+  /**
+   * The most messages the forge sends in a day, to everyone together
+   * (`actions/mail.ts`). Undefined is `FORGE_DAILY`.
+   */
+  mailDailyCap?: number;
   /** Stand-in for `mail` in tests: receives each message instead of SMTP. */
   mailer?: Mailer;
   /**

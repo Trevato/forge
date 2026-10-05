@@ -28,6 +28,8 @@ export function eventAudience(kind: string): EventAudience {
     kind.startsWith("app.domain.") ||
     kind.startsWith("prompt.") ||
     kind.startsWith("secret.") ||
+    // The forge's mail ceiling is its owner's to hear (`actions/mail.ts`).
+    kind.startsWith("mail.") ||
     // A report from outside waits for a person who decides; its arrival is
     // theirs to see, never the readers' (`actions/reports.ts`).
     kind.startsWith("report.") ||

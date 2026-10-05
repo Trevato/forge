@@ -129,6 +129,7 @@ export const GATE: readonly string[] = [
   "test/live-pages.test.ts",
   "test/live.test.ts",
   "test/looks.test.ts",
+  "test/mail-caps.test.ts",
   "test/map.test.ts",
   "test/mcp.test.ts",
   "test/notify.test.ts",

@@ -147,7 +147,9 @@ export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
       ? "A link was sent a moment ago. Check your inbox, or try again in a few minutes."
       : sent.error === "no_mail"
         ? "This forge sends no mail yet. Ask its owner to verify you."
-        : "The link could not be sent. Try again.";
+        : sent.error === "capped"
+          ? "The forge has sent all the mail it may for now. Try again tomorrow, or ask its owner to verify you."
+          : "The link could not be sent. Try again.";
   return flashTo(ctx, "/settings", { message });
 }
 
