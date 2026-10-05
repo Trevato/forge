@@ -97,15 +97,7 @@ function aboutCard(
           },
         ],
       })}
-      ${repo.protectDefault
-        ? html`<input type="hidden" name="protect" value="on" />`
-        : null}
-      ${repo.requireReview
-        ? html`<input type="hidden" name="requireReview" value="on" />`
-        : null}
-      ${repo.requireChecks
-        ? html`<input type="hidden" name="requireChecks" value="on" />`
-        : null}
+      <input type="hidden" name="card" value="about" />
       <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
     </form>`,
     { head: html`${icon("pencil")}<h2>About</h2>` },
@@ -333,7 +325,7 @@ ${repo.autonomyDirection}</textarea
           name: "ceiling",
           value: String(repo.autonomyCeilingUsd),
           type: "number",
-          hint: "Dollars of agent spend on this app per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.",
+          hint: `Dollars of agent spend on this ${getAppByRepo(ctx.app.db, repo.id) === undefined ? "repository" : "app"} per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.`,
         })}
         ${field({
           label: "Slots",

@@ -39,6 +39,7 @@ import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import {
+  getRepo,
   getRepoById,
   setDirectionIssue,
   type Repo,
@@ -5751,6 +5752,49 @@ describe("a stranger sees the app, not the owner's books", () => {
       strangerCookie,
     );
     expect(refused.status).toBe(404);
+  });
+
+  test("each settings card saves only its own fields: About never turns a gate or the outsiders switch off, and Branch and gates never touches the words", async () => {
+    const before = getRepo(app.db, "alice", "beacon")!;
+    const on = await post(
+      "/alice/beacon/settings",
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        protect: "on",
+        requireReview: "on",
+        crewOutsiders: "on",
+      },
+      ownerCookie,
+    );
+    expect(on.status).toBe(303);
+    let now = getRepo(app.db, "alice", "beacon")!;
+    expect(now.crewOutsiders).toBe(true);
+    expect(now.description).toBe(before.description);
+
+    const about = await post(
+      "/alice/beacon/settings",
+      { card: "about", description: "a lamp", visibility: now.visibility },
+      ownerCookie,
+    );
+    expect(about.status).toBe(303);
+    now = getRepo(app.db, "alice", "beacon")!;
+    expect(now.description).toBe("a lamp");
+    expect(now.crewOutsiders).toBe(true);
+    expect(now.protectDefault).toBe(true);
+    expect(now.requireReview).toBe(true);
+
+    // Put it back for the tests that follow.
+    await post(
+      "/alice/beacon/settings",
+      { card: "gates", defaultBranch: before.defaultBranch },
+      ownerCookie,
+    );
+    await post(
+      "/alice/beacon/settings",
+      { card: "about", description: before.description, visibility: before.visibility },
+      ownerCookie,
+    );
   });
 
   test("a role change made from the studio settings page lands exactly as dev's page does", async () => {

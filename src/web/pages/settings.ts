@@ -228,8 +228,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   // sends them back unchanged, as that one does the gates below.
   const body = card(
     html`<form method="post" action="${base}/settings">
-      <input type="hidden" name="description" value="${repo.description}" />
-      <input type="hidden" name="visibility" value="${repo.visibility}" />
+      <input type="hidden" name="card" value="gates" />
       ${selectField({
         label: "Default branch",
         name: "defaultBranch",
@@ -322,15 +321,32 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const base = repoBase(repo);
   const branch = field(form, "defaultBranch");
 
-  const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
+  // The page has two forms over this one route, and each changes only its
+  // own fields: About its words and visibility, Branch and gates the rest.
+  // A form that names no card (an older client) sends them all, as before.
+  // A checkbox that is off sends nothing, so a card that never drew it must
+  // never read its absence as "off".
+  const card = field(form, "card");
+  const about = {
     description: field(form, "description"),
-    visibility: field(form, "visibility") === "public" ? "public" : "private",
+    visibility:
+      field(form, "visibility") === "public"
+        ? ("public" as const)
+        : ("private" as const),
+  };
+  const gates = {
     protectDefault: form.get("protect") !== null,
     requireReview: form.get("requireReview") !== null,
     requireChecks: form.get("requireChecks") !== null,
     crewOutsiders: form.get("crewOutsiders") !== null,
     ...(branch !== "" ? { defaultBranch: branch } : {}),
-  });
+  };
+  const updated = await updateRepoSettings(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    card === "about" ? about : card === "gates" ? gates : { ...about, ...gates },
+  );
   const flash: Flash = updated.ok
     ? { message: "Settings saved." }
     : {
