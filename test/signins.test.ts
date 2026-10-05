@@ -117,10 +117,6 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     const adaToken = createToken(app.db, ada.id, "a", "admin").token;
     expect((await api("/api/v1/users/bo/signins", adaToken)).status).toBe(404);
     expect(
-      (await api(`/api/v1/users/bo/tokens/${victimToken.id}`, adaToken, "DELETE"))
-        .status,
-    ).toBe(404);
-    expect(
       (await api(`/api/v1/users/bo/sessions/${id}`, adaToken, "DELETE")).status,
     ).toBe(404);
     const adaCookie = cookieFor(ada);
@@ -182,6 +178,8 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     expect(audit.every((e) => e.actorId === owner.id)).toBe(true);
   });
 
+  // Revoking another account's token over the API is #781's
+  // `DELETE /api/v1/users/:username/tokens/:id`; this pull adds the browsers.
   test("the owner does the same over the API, with an admin token", async () => {
     const ownerToken = createToken(app.db, owner.id, "o", "admin").token;
     const token = createToken(app.db, bo.id, "phone", "ro");
@@ -192,10 +190,6 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     };
     expect(seen.tokens.map((t) => t.name)).toContain("phone");
     expect(JSON.stringify(seen)).not.toContain(browser.split("=")[1]!);
-    expect(
-      (await api(`/api/v1/users/bo/tokens/${token.id}`, ownerToken, "DELETE")).status,
-    ).toBe(204);
-    expect(await signedIn({ token: token.token })).toBe(false);
     for (const s of seen.sessions)
       expect(
         (await api(`/api/v1/users/bo/sessions/${s.id}`, ownerToken, "DELETE")).status,

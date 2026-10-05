@@ -8,11 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import {
-  accountSignIns,
-  endAccountSession,
-  revokeAccountToken,
-} from "../actions/signins.ts";
+import { accountSignIns, endAccountSession } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -1273,18 +1269,6 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!seen.ok) return notFound();
     return json({ tokens: seen.value.tokens, sessions: seen.value.sessions });
-  });
-
-  router.add("DELETE", "/api/v1/users/:username/tokens/:id", (ctx) => {
-    const denied = requireAccount(ctx, { adminToken: true });
-    if (denied) return denied;
-    const done = revokeAccountToken(
-      ctx.app,
-      ctx.auth.user,
-      ctx.params.username!,
-      ctx.params.id!,
-    );
-    return done.ok ? new Response(null, { status: 204 }) : notFound();
   });
 
   router.add("DELETE", "/api/v1/users/:username/sessions/:id", (ctx) => {
