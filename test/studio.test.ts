@@ -5763,6 +5763,9 @@ describe("a stranger sees the app, not the owner's books", () => {
         defaultBranch: before.defaultBranch,
         protect: "on",
         requireReview: "on",
+        // The settings page sends this marker beside the switch; without it a
+        // save leaves the switch as it is (#822).
+        crewOutsidersShown: "1",
         crewOutsiders: "on",
       },
       ownerCookie,
@@ -5787,7 +5790,11 @@ describe("a stranger sees the app, not the owner's books", () => {
     // Put it back for the tests that follow.
     await post(
       "/alice/beacon/settings",
-      { card: "gates", defaultBranch: before.defaultBranch },
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        crewOutsidersShown: "1",
+      },
       ownerCookie,
     );
     await post(
