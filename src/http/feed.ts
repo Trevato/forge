@@ -4,6 +4,7 @@
  */
 
 import { tellCrew } from "../actions/crew.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { getEvent } from "../core/events.ts";
 import {
@@ -127,7 +128,9 @@ export function feedRoutes(router: Router<Handler>): void {
     if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
     const told = await tellCrew(ctx.app, viewer, repo, text);
     if (!told.ok)
-      return apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
+      return told.error === "forbidden"
+        ? apiError("forbidden", 403, DIRECTION_NOTE)
+        : apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
     return json({ issue: told.value.issue.number }, 201);
   });
 

@@ -1239,4 +1239,9 @@ export const migrations: readonly string[] = [
   CREATE INDEX ask_ledger_open ON ask_ledger(viewer_id, ended_at);
   CREATE INDEX ask_ledger_raised ON ask_ledger(viewer_id, raised_at);
   `,
+  // 50 — "outsiders may trigger the crew" (#619): off, so only people who
+  // can write to a repository start or steer its crew.
+  `
+  ALTER TABLE repo ADD COLUMN crew_outsiders INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

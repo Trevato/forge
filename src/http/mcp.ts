@@ -56,6 +56,7 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -573,6 +574,7 @@ const TOOLS: readonly Tool[] = [
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
+      if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,
@@ -583,7 +585,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {
