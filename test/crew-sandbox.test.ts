@@ -5,8 +5,9 @@
  * command and running anyway.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
@@ -102,5 +103,69 @@ describe("the sandbox on a run's record", () => {
     noteRunProgress(app.db, run.id, { sandbox: { enforced: false, note: "x" } });
     noteRunProgress(app.db, run.id, { costUsd: 1 });
     expect(getRun(app.db, run.id)!.sandboxEnforced).toBe(false);
+  });
+});
+
+describe("the shell sandbox denies the whole data directory but the agent's own (#560)", () => {
+  let dataDir: string;
+  const runId = "01m46abcdefghjkmnpqrstvwxy";
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-sandbox-allow-"));
+    for (const dir of [
+      "checks/01check/src",
+      "looks/01app/production",
+      "repos/alice",
+      "apps/01app/production",
+      "crew/scout/01repo/7",
+      "crew/scout/.t/older-run",
+      "crew/mason/01repo/3",
+      "crew/torque/01repo/9",
+    ])
+      mkdirSync(join(dataDir, dir), { recursive: true });
+    for (const file of ["forge.db", "secret.key", "steward-direction-parked.txt", "checks/01check/src/a.ts"])
+      writeFileSync(join(dataDir, file), "x");
+  });
+  afterAll(async () => {
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const policy = () =>
+    sandboxPolicy({ dataDir, agentName: "scout", urls: [], runId });
+  const denied = (path: string, deny: readonly string[]) =>
+    deny.some((d) => path === d || path.startsWith(`${d}/`));
+
+  test("every entry of the data directory is denied but crew/, known or not", () => {
+    const { denyRead } = policy();
+    for (const entry of ["checks", "looks", "repos", "apps", "forge.db", "secret.key", "steward-direction-parked.txt"])
+      expect(denied(join(dataDir, entry), denyRead)).toBe(true);
+    expect(denyRead).not.toContain(join(dataDir, "crew"));
+  });
+
+  test("inside crew/, every agent but this one is denied, and this one's other runs' temp", () => {
+    const { denyRead } = policy();
+    expect(denied(join(dataDir, "crew/mason"), denyRead)).toBe(true);
+    expect(denied(join(dataDir, "crew/torque"), denyRead)).toBe(true);
+    expect(denied(join(dataDir, "crew/scout/.t/older-run"), denyRead)).toBe(true);
+  });
+
+  test("the agent still reaches its own working directory and its own run's temp", () => {
+    const { denyRead, tmpDir } = policy();
+    expect(denied(join(dataDir, "crew/scout/01repo/7"), denyRead)).toBe(false);
+    expect(tmpDir).toBeDefined();
+    expect(tmpDir!.startsWith(join(dataDir, "crew/scout/.t/"))).toBe(true);
+    expect(denied(tmpDir!, denyRead)).toBe(false);
+  });
+
+  test("the shared Claude Code temp directory and ~/.claude.json are denied", () => {
+    const { denyRead } = policy();
+    expect(denyRead).toContain(join(homedir(), ".claude.json"));
+    expect(denyRead).toContain(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`));
+  });
+
+  test("asked again, the policy denies an agent that appeared since", () => {
+    expect(denied(join(dataDir, "crew/quill"), policy().denyRead)).toBe(false);
+    mkdirSync(join(dataDir, "crew/quill"), { recursive: true });
+    expect(denied(join(dataDir, "crew/quill"), policy().denyRead)).toBe(true);
   });
 });

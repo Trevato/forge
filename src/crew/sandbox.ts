@@ -7,14 +7,24 @@
  * not the agent's business — the forge's repositories, its index and key,
  * the other agents' clones, and the operator's own credentials.
  *
- * A denied path denies everything under it, the working directory
- * included, which is why the crew root is not simply denied: the other
- * agents' directories are listed one by one at the moment the run starts.
+ * The data directory is an allow-list: every entry in it is denied but
+ * `crew/`, and inside `crew/` every agent's directory but this agent's — so
+ * something the forge starts keeping there tomorrow is denied without
+ * anyone remembering to add it. A denied path denies everything under it,
+ * the working directory included, which is why `crew/` itself is not denied
+ * and its entries are listed one by one. Claude Code cannot deny by rule,
+ * so the list is taken again for every invocation of a run (the work and
+ * the wrap-up), and an agent created mid-invocation is denied from the next.
+ *
+ * Each run has its own temp directory (`tmpDir`, handed to Claude Code as
+ * `CLAUDE_CODE_TMPDIR`) under the agent's own `.t/`, never the machine's
+ * shared `/tmp/claude-<uid>`, which holds every other session's files and
+ * is denied; the agent's other runs' temp directories are denied too.
  */
 
-import { existsSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { readdirSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { crewRoot } from "./workdir.ts";
 
 export interface SandboxPolicy {
@@ -29,6 +39,8 @@ export interface SandboxPolicy {
    * and then runs anyway is not.
    */
   readonly enforced: boolean;
+  /** This run's own temp directory, when the policy was asked for a run. */
+  readonly tmpDir?: string | undefined;
 }
 
 /**
@@ -82,18 +94,23 @@ const HOME_SECRETS = [
   ".kube",
   ".config/gh",
   ".claude",
+  ".claude.json",
 ];
 
-const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
-
-function socketsIn(data: string): string[] {
+/** The entries of `dir` as paths, but `keep`; nothing when it is not there. */
+function others(dir: string, keep: string): string[] {
   try {
-    return readdirSync(data)
-      .filter((name) => SOCKET_FILE.test(name))
-      .map((name) => join(data, name));
+    return readdirSync(dir)
+      .filter((name) => name !== keep)
+      .map((name) => join(dir, name));
   } catch {
-    return [join(data, "forge.sock")];
+    return [];
   }
+}
+
+/** Where a run's temp directory lives: short, because Claude Code makes sockets in it. */
+export function runTmpDir(dataDir: string, agentName: string, runId: string): string {
+  return join(crewRoot(dataDir), agentName, ".t", runId.slice(-12));
 }
 
 export function sandboxPolicy(input: {
@@ -105,6 +122,8 @@ export function sandboxPolicy(input: {
   extraHosts?: readonly string[] | undefined;
   /** Whether the host can enforce it (`sandboxAvailable`); yes by default. */
   enforced?: boolean | undefined;
+  /** The run this is for: it gets a temp directory of its own (`tmpDir`). */
+  runId?: string | undefined;
 }): SandboxPolicy {
   const hosts = new Set<string>([
     "127.0.0.1",
@@ -122,30 +141,29 @@ export function sandboxPolicy(input: {
     if (host.trim() !== "") hosts.add(host.trim());
 
   const data = input.dataDir;
-  const deny = [
-    join(data, "repos"),
-    join(data, "forge.db"),
-    join(data, "forge.db-wal"),
-    join(data, "forge.db-shm"),
-    join(data, "secret.key"),
-    // Every forge's hook socket in the directory: this one's, and an old
-    // one's still draining beside it. A hook's authority is the forge's.
-    ...socketsIn(data),
-    join(data, "ssh"),
-    join(data, "apps"),
-    join(data, "runs"),
-  ];
   const crew = crewRoot(data);
-  if (existsSync(crew)) {
-    for (const name of readdirSync(crew)) {
-      if (name !== input.agentName) deny.push(join(crew, name));
-    }
-  }
+  const own = join(crew, input.agentName);
+  const tmpDir =
+    input.runId === undefined
+      ? undefined
+      : runTmpDir(data, input.agentName, input.runId);
+  const deny = [
+    // Every entry but crew/: the index, the key, the repositories, the hook
+    // sockets, the checks' and apps' trees, the looks, whatever comes next.
+    ...others(data, "crew"),
+    // Every agent but this one.
+    ...others(crew, input.agentName),
+    // This agent's other runs' temp directories.
+    ...others(join(own, ".t"), tmpDir === undefined ? "" : basename(tmpDir)),
+    // The machine's shared Claude Code temp directory: every other session's.
+    join(tmpdir(), `claude-${process.getuid?.() ?? 0}`),
+  ];
   const home = homedir();
   for (const secret of HOME_SECRETS) deny.push(join(home, secret));
   return {
     allowHosts: [...hosts],
     denyRead: deny,
     enforced: input.enforced ?? true,
+    ...(tmpDir === undefined ? {} : { tmpDir }),
   };
 }
