@@ -300,6 +300,7 @@ const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Map", h: "/map", c: "Go to" },
   { t: "Asks you", h: "/asks", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
+  { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },

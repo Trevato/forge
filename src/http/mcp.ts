@@ -56,8 +56,10 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
-import { appsOf } from "../web/studio/asks.ts";
+import { appsOf, asksAnswer } from "../web/studio/asks.ts";
+import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
   askedIn,
@@ -66,6 +68,7 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -257,6 +260,38 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "asks",
+    description:
+      "What waits on you, most consequential first: each row names the decision, its options and what happens if nobody acts, and why it ranks where it does (security, money, held-up work, then age). Rows of one kind in one app are collapsed with their item ids. Also the forge's own needs (for a site admin) and the last 7 days' asks raised, acted on, dismissed and gone by themselves.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      return good(asksAnswer(ctx, user));
+    },
+  },
+  {
+    name: "asks_act",
+    description:
+      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). With preview (the default) nothing changes: the answer is each row's before and after and the rows refused with why. With preview false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Every row is checked against your admin of its app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
+        items: { type: "array", items: { type: "string" }, maxItems: 100 },
+        preview: { type: "boolean" },
+      },
+      required: ["action", "items"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const answer =
+        args["preview"] === false
+          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
+          : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
+      return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
     },
   },
   {
@@ -563,6 +598,7 @@ const TOOLS: readonly Tool[] = [
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
+      if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,
@@ -573,7 +609,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -595,6 +631,38 @@ const TOOLS: readonly Tool[] = [
       if (spec !== null && repos.length === 0)
         return bad("not_found", "no such app or repository you can write (owner/name)");
       return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
+    },
+  },
+  {
+    name: "front_page",
+    description:
+      "The forge's front page as a stranger is shown it: the featured repository with the crew at work on it, then the public apps ranked by forks, ships, use and freshness, each with its numbers. A site admin also gets the picks; with `pinned` (in order; the first public one is featured) and/or `hidden`, each a list of owner/name, and dryRun false, sets them. The same data as /front and /api/v1/front.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
+        hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        dryRun: { type: "boolean" },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      if (args["pinned"] === undefined && args["hidden"] === undefined)
+        return good(frontJson(ctx.app, user));
+      const picks = frontInput(ctx.app, args);
+      if (picks === undefined)
+        return bad("invalid", "pinned and hidden are lists of owner/name");
+      const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
+      if (!set.ok)
+        return set.error.kind === "forbidden"
+          ? bad("forbidden", "the front page is a site admin's to set")
+          : bad("invalid", set.error.message);
+      return good({
+        dryRun: args["dryRun"] !== false,
+        picks: set.value,
+        ...(args["dryRun"] === false ? { front: frontJson(ctx.app, user) } : {}),
+      });
     },
   },
   {

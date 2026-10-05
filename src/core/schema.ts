@@ -1221,4 +1221,53 @@ export const migrations: readonly string[] = [
   ALTER TABLE user ADD COLUMN suspended_at TEXT;
   ALTER TABLE user ADD COLUMN removed_at TEXT;
   `,
+  // 49 — the asks ledger (`core/ask_ledger.ts`): each time something asked
+  // a person, and how it ended — acted on, dismissed, or gone by itself —
+  // so noise shows up as a number. One row per raising; history, never edited
+  // but to close it.
+  `
+  CREATE TABLE ask_ledger (
+    id         TEXT PRIMARY KEY,
+    viewer_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    ask_id     TEXT NOT NULL,
+    repo_id    TEXT REFERENCES repo(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    raised_at  TEXT NOT NULL,
+    ended_at   TEXT,
+    ended_how  TEXT CHECK (ended_how IN ('acted','dismissed','expired'))
+  );
+  CREATE INDEX ask_ledger_open ON ask_ledger(viewer_id, ended_at);
+  CREATE INDEX ask_ledger_raised ON ask_ledger(viewer_id, raised_at);
+  `,
+  // 50 — "outsiders may trigger the crew" (#619): off, so only people who
+  // can write to a repository start or steer its crew.
+  `
+  ALTER TABLE repo ADD COLUMN crew_outsiders INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 51 — the front page's picks (#686): what a site admin pinned to it, in
+  // order (the first one a stranger can read is featured), and what they
+  // hid from it. Presentation, like a user setting: no event.
+  `
+  CREATE TABLE IF NOT EXISTS front_pick (
+    repo_id  TEXT PRIMARY KEY REFERENCES repo(id) ON DELETE CASCADE,
+    place    TEXT NOT NULL CHECK (place IN ('pinned','hidden')),
+    position INTEGER NOT NULL DEFAULT 0,
+    set_by   TEXT REFERENCES user(id) ON DELETE SET NULL,
+    set_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
+  // 52 — a whole-life budget on a sealed account, in dollars (#601): the
+  // most its runs may ever spend, summed from the run ledger. Null is none.
+  // A spawned child's starter key carries one, so the spawner's money ends
+  // where they said. A locked budget was set by whoever made this forge:
+  // its admin may lower it, never raise or clear it. A run on a budgeted
+  // account reserves what it may spend when it picks the account, so runs
+  // started together are counted together.
+  `
+  ALTER TABLE subscription ADD COLUMN budget_usd REAL
+    CHECK (budget_usd IS NULL OR budget_usd > 0);
+  ALTER TABLE subscription ADD COLUMN budget_locked INTEGER NOT NULL DEFAULT 0
+    CHECK (budget_locked IN (0, 1));
+  ALTER TABLE run ADD COLUMN budget_reserved_usd REAL;
+  `,
 ];
