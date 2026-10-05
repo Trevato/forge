@@ -16,6 +16,7 @@ import {
   type TakeError,
 } from "../core/following.ts";
 import { canRead, getRepoById, type Repo } from "../core/repos.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import type { User } from "../core/users.ts";
 import { divergence } from "../git/branches.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -81,8 +82,7 @@ export async function takeUpdates(
   const who = writer.value;
   return take(app, fork, parent, {
     id: who.id,
-    name: who.displayName || who.username,
-    email: who.email,
+    ...commitIdentity(app.config, who),
   });
 }
 

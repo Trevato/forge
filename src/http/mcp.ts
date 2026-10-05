@@ -46,8 +46,10 @@ import {
   canWrite,
   getRepo,
   getRepoById,
+  ownerFactRepoIds,
   type Repo,
 } from "../core/repos.ts";
+import { plannerDeclines } from "../crew/autonomy.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
@@ -257,7 +259,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "now",
     description:
-      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far.",
+      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -268,8 +270,27 @@ const TOOLS: readonly Tool[] = [
         ctx.app.db,
         runs.map((r) => r.actorId).filter((id): id is string => id !== null),
       );
-      return good(
-        runs.map((r) => {
+      // A planner that declined the direction is the crew waiting on you:
+      // it rides the same list, as a row with no run.
+      // Owner facts only: a stranger's public app never shows its planner here.
+      const owned = ownerFactRepoIds(ctx.app.db, repos, user);
+      const waiting = plannerDeclines(
+        ctx.app.db,
+        repos.filter((r) => owned.has(r.id)),
+      ).map((d) => ({
+        run: null,
+        app: `${d.repo.ownerName}/${d.repo.name}`,
+        who: "the planner",
+        on: `#${d.issue.number} ${d.issue.title}`,
+        why: "declined",
+        state: "waiting for you",
+        says: d.words,
+        since: d.at,
+        costUsd: 0,
+      }));
+      return good([
+        ...waiting,
+        ...runs.map((r) => {
           const repo = byId.get(r.repoId)!;
           const issue =
             r.issueId === null
@@ -286,7 +307,7 @@ const TOOLS: readonly Tool[] = [
             costUsd: r.costUsd,
           };
         }),
-      );
+      ]);
     },
   },
   {

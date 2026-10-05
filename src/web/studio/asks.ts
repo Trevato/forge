@@ -34,7 +34,11 @@ import {
   latestRunsForIssues,
 } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
-import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
+import {
+  isPausedAtCeiling,
+  plannerDeclines,
+  spentTodayForRepos,
+} from "../../crew/autonomy.ts";
 import { breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -81,7 +85,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "paused" | "parked";
+export type DecisionKind = "stopped" | "look" | "paused" | "parked" | "declined";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -93,7 +97,8 @@ export interface Decision {
   readonly id: string;
   readonly repo: Repo;
   readonly pull?: Pull | undefined;
-  /** For "parked": the issue the breaker stopped. */
+  /** For "parked": the issue the breaker stopped; for "declined": the
+   * direction issue the planner declined. */
   readonly issue?: Issue | undefined;
   readonly who: string;
   /** Three sentences at most: what, why, what happens next. */
@@ -136,6 +141,8 @@ interface AskCandidate {
   /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
   readonly tries?: number;
   readonly stoppedByDecider?: boolean;
+  /** For "declined": the declining run and what the planner said. */
+  readonly decline?: { readonly runId: string; readonly words: string };
 }
 
 /**
@@ -237,6 +244,16 @@ function askCandidatesFor(
     const repo = byId.get(p.repoId);
     if (issue && repo) out.push({ kind: "parked", repo, issue, who: "the crew" });
   }
+  // A planner that declined the direction plans nothing more until a person
+  // answers on the direction issue: the crew has gone quiet on purpose.
+  for (const d of plannerDeclines(db, repos))
+    out.push({
+      kind: "declined",
+      repo: d.repo,
+      issue: d.issue,
+      who: "the planner",
+      decline: { runId: d.runId, words: d.words },
+    });
   return out;
 }
 
@@ -265,6 +282,14 @@ export function askLinesFor(
         ...about,
         id: `paused:${c.repo.id}`,
         line: `${repo} is paused at its ceiling`,
+      };
+    if (c.kind === "declined")
+      return {
+        ...about,
+        number: c.issue!.number,
+        // The run, not the issue: each new decline is new, and pages once.
+        id: `declined:${c.decline!.runId}`,
+        line: `${repo}: the planner declined the direction and waits for you`,
       };
     if (c.kind === "parked")
       return {
@@ -322,6 +347,16 @@ export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
         who: c.who,
         says: `Three runs on #${c.issue.number} failed or were declined within an hour, so the crew parked it. Say what to try and it starts again.`,
         short: `#${c.issue.number} parked after three failed runs`,
+      };
+    if (c.kind === "declined" && c.issue && c.decline)
+      return {
+        kind: "declined",
+        id: `declined:${c.decline.runId}`,
+        repo: c.repo,
+        issue: c.issue,
+        who: c.who,
+        says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
+        short: `the planner declined: ${c.decline.words}`,
       };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
@@ -440,6 +475,12 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
     ${btn("Not like this", {
       href: `${changeHref(base, pull.number)}#comment-body`,
       size: "sm",
+    })}`;
+  if (d.kind === "declined" && d.issue)
+    return html`${btn("Answer", {
+      href: `${base}/issues/${d.issue.number}#comment-body`,
+      size: "sm",
+      variant: "primary",
     })}`;
   if (d.kind === "parked" && d.issue)
     return html`${btn("Tell them", {

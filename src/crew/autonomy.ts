@@ -499,21 +499,73 @@ function stalled(app: App, issue: Issue): boolean {
 
 /** Whether the newest run on the issue was a decline and no person has spoken since. */
 function declinedUnanswered(app: App, issue: Issue): boolean {
-  const last = app.db
-    .query<{ summary: string; created_at: string }, [string]>(
-      `SELECT summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+  return declineOf(app.db, issue.id) !== undefined;
+}
+
+/** A planner's decline that nobody has answered yet. */
+export interface PlannerDecline {
+  readonly repo: Repo;
+  /** The direction issue the planner declined. */
+  readonly issue: Issue;
+  /** The declining run: a new decline is a new id, so it pages once. */
+  readonly runId: string;
+  /** What the planner said, without the `declined:` mark. */
+  readonly words: string;
+  readonly at: string;
+}
+
+/**
+ * The newest agent run on an issue, when it is a decline no person has
+ * answered since: the state `planIfThin` waits in.
+ */
+function declineOf(
+  db: Database,
+  issueId: string,
+): { id: string; summary: string; created_at: string } | undefined {
+  const last = db
+    .query<{ id: string; state: string; summary: string; created_at: string }, [string]>(
+      `SELECT id, state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
        ORDER BY created_at DESC LIMIT 1`,
     )
-    .get(issue.id);
-  if (!last || !last.summary.startsWith("declined")) return false;
-  const spoken = app.db
+    .get(issueId);
+  if (!last || last.state !== "failed" || !last.summary.startsWith("declined"))
+    return undefined;
+  const spoken = db
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
        WHERE c.issue_id = ?1 AND c.created_at > ?2 AND u.is_agent = 0
          AND c.body NOT LIKE 'Parked by the crew%'`,
     )
-    .get(issue.id, last.created_at);
-  return (spoken?.n ?? 0) === 0;
+    .get(issueId, last.created_at);
+  return (spoken?.n ?? 0) === 0 ? last : undefined;
+}
+
+/**
+ * The autonomous repositories among these whose planner declined the
+ * direction and waits for a person: the board's line, the asks, the phone.
+ * One small read per repository that has a direction issue.
+ */
+export function plannerDeclines(
+  db: Database,
+  repos: readonly Repo[],
+): PlannerDecline[] {
+  const out: PlannerDecline[] = [];
+  for (const repo of repos) {
+    if (repo.autonomy !== "autonomous" || repo.directionIssueId === null)
+      continue;
+    const issue = getIssueById(db, repo.directionIssueId);
+    if (!issue || issue.state !== "open") continue;
+    const run = declineOf(db, issue.id);
+    if (run === undefined) continue;
+    out.push({
+      repo,
+      issue,
+      runId: run.id,
+      words: run.summary.replace(/^declined:?\s*/, ""),
+      at: run.created_at,
+    });
+  }
+  return out;
 }
 
 /**

@@ -253,6 +253,7 @@ describe("edits: refusals that must leave nothing behind", () => {
     expect(await refs()).toEqual([...before, "refs/heads/proposal"].sort());
   });
 
+  // The actor's, at the address they publish — the no-reply one by default.
   test("commit identity is the actor's, whatever the body claims", async () => {
     const r = await edit({
       author: { name: "Mallory", email: "mallory@evil.test" },
@@ -263,7 +264,9 @@ describe("edits: refusals that must leave nothing behind", () => {
     const who = (
       await git(["log", "-1", "--format=%an <%ae>|%cn <%ce>", "main"])
     ).stdout.trim();
-    expect(who).toBe("alice <alice@forge.test>|alice <alice@forge.test>");
+    expect(who).toBe(
+      "alice <alice@users.noreply.localhost>|alice <alice@users.noreply.localhost>",
+    );
   });
 
   test("racing edits to one branch: exactly one lands, the rest hear branch_moved", async () => {

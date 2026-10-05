@@ -58,6 +58,12 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
 
+The commits the forge writes for you — merges, squashes, reverts, web edits —
+carry `you@users.noreply.<forge host>`, never your account email. Choosing your
+real address is an opt-in under **Commit email** in `/settings` (or
+`PATCH /api/v1/user` with `{"commitEmail":"account"}`); commits you push
+yourself carry whatever your own git says.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,

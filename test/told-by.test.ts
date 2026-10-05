@@ -146,8 +146,8 @@ describe("who told and who shipped", () => {
       { cwd: repoDir(app.reposRoot, "alice", "notes") },
     ).stdout.toString();
     expect(log).toContain("scout|alice");
-    expect(log).toContain("Requested-by: bob <bob@forge.local>");
-    expect(log).toContain("Co-authored-by: alice <alice@forge.local>");
+    expect(log).toContain("Requested-by: bob <bob@users.noreply.localhost>");
+    expect(log).toContain("Co-authored-by: alice <alice@users.noreply.localhost>");
 
     const board = await (await get("/board")).text();
     expect(board).toContain("told by bob");

@@ -127,7 +127,8 @@ describe("oauth discovery and registration", () => {
   });
 
   test("the migration is idempotent", () => {
-    const ddl = migrations[migrations.length - 1]!;
+    // Found by what it says, not where it sits: a later migration moves it.
+    const ddl = migrations.find((m) => m.includes("TABLE IF NOT EXISTS oauth_client"))!;
     expect(ddl).toContain("oauth_client");
     expect(() => app.db.exec(ddl)).not.toThrow();
     expect(() => app.db.exec(ddl)).not.toThrow();
