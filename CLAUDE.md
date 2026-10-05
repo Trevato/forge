@@ -80,6 +80,13 @@ bun run src/main.ts   # boots on :3000, data in ./data
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.
+- **Done means reachable.** A new action is called from a route, a page or an
+  MCP tool in the same pull, and a new screen is linked from a page a person
+  can get to. `scripts/hollow.ts` (run by `test/hollow.test.ts` in the gate,
+  or `bun scripts/hollow.ts`) names an exported function in `src/actions/`
+  that no surface reaches and a screen no page links to.
+  `scripts/hollow-allow.ts` is for hollow work an issue already owns, never
+  for new work.
 - **TypeScript is strict**: `noUncheckedIndexedAccess` (index access is `T |
 undefined` — handle it), `exactOptionalPropertyTypes` (don't pass `undefined`
   where a key should be absent), `verbatimModuleSyntax` (`import type`), and
