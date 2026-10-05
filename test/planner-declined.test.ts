@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addComment, openIssue } from "../src/actions/issues.ts";
+import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import type { Issue } from "../src/core/issues.ts";
@@ -225,14 +225,20 @@ describe("the planner declined, waiting for a person", () => {
   });
 
   test("a person's answer on the direction issue clears it everywhere", async () => {
-    const said = addComment(
-      app,
-      alice,
-      fresh(),
-      direction,
-      "Plan the next season: herbs.",
+    // Answered from the board's own form: the comment lands on the
+    // direction issue and the person is sent back to the board.
+    const cookie = await signIn("alice");
+    const answered = await fetch(
+      `${servers.url}/alice/garden/issues/${direction.number}/comments`,
+      {
+        method: "POST",
+        headers: { cookie, origin: servers.url },
+        body: new URLSearchParams({ back: "board", body: "Plan the next season: herbs." }),
+        redirect: "manual",
+      },
     );
-    expect(said.ok).toBe(true);
+    expect(answered.status).toBe(303);
+    expect(answered.headers.get("location")).toBe("/board");
     expect(plannerDeclines(app.db, [fresh()])).toEqual([]);
     expect(
       askLinesFor(app.db, alice).filter((a) => a.kind === "declined"),
@@ -240,5 +246,19 @@ describe("the planner declined, waiting for a person", () => {
     expect(await page(await signIn("alice"), "/board")).not.toContain(
       "waits for you",
     );
+  });
+  test("`back` is a fixed word: anything else returns to the issue, never elsewhere", async () => {
+    const cookie = await signIn("alice");
+    const res = await fetch(
+      `${servers.url}/alice/garden/issues/${direction.number}/comments`,
+      {
+        method: "POST",
+        headers: { cookie, origin: servers.url },
+        body: new URLSearchParams({ back: "https://evil.example/", body: "noted" }),
+        redirect: "manual",
+      },
+    );
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe(`/alice/garden/issues/${direction.number}#conversation`);
   });
 });

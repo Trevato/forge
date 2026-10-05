@@ -371,6 +371,7 @@ function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
           ><b>${d.repo.name}</b>: the planner declined the direction and waits
           for you. <q>${d.words}</q></span
         >
+        <input type="hidden" name="back" value="board" />
         <input
           class="input"
           name="body"

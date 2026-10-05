@@ -11,6 +11,7 @@ import type { App } from "../app.ts";
 import { createClient, parseRegistration } from "../core/oauth.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
+import { clientAddress } from "./peer.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 
@@ -18,12 +19,6 @@ import type { Router } from "./router.ts";
 const REGISTER_PER_MINUTE = 10;
 /** A registration is a few hundred bytes; refuse anything past this. */
 const BODY_MAX = 16 * 1024;
-
-/** Peer addresses by request, set by the listener (`server.requestIP`). */
-const peers = new WeakMap<Request, string>();
-export const notePeer = (request: Request, address: string | undefined): void => {
-  if (address !== undefined) peers.set(request, address);
-};
 
 const limiters = new WeakMap<App, RateLimiter>();
 const limiterOf = (app: App): RateLimiter => {
@@ -38,16 +33,6 @@ const limiterOf = (app: App): RateLimiter => {
   }
   return limiter;
 };
-
-const LOOPBACK = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
-
-/** The socket's peer; behind a proxy on this host, the hop it reports. */
-function clientAddress(request: Request): string {
-  const peer = peers.get(request) ?? "unknown";
-  if (!LOOPBACK.has(peer)) return peer;
-  const hop = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return hop !== undefined && hop !== "" ? hop.slice(0, 64) : peer;
-}
 
 export const resourceMetadataUrl = (origin: string): string =>
   `${origin}/.well-known/oauth-protected-resource`;
