@@ -90,6 +90,7 @@ import {
   pathsJson,
   pinSubmit,
   rawBlob,
+  repoFiles,
   repoHome,
   repoSyncSubmit,
   treePage,
@@ -821,6 +822,9 @@ export function buildRouter(): Router<Handler> {
 
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);
+  // An app's code, one tab under the app (its home); any other repository's
+  // home is already its code, and /files sends it there.
+  router.add("GET", "/:owner/:name/files", repoFiles);
   router.add("GET", "/:owner/:name/tree/:ref", treePage);
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
