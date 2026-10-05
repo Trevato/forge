@@ -25,6 +25,7 @@ import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
   getIssue,
   getIssueById,
+  labelsForIssues,
   listComments,
   type Issue,
 } from "../core/issues.ts";
@@ -709,13 +710,18 @@ async function work(
       voiceOf,
     );
     const reviews = pull ? listReviews(app.db, pull.id).map(voiceOf) : [];
-    const reviewComments = pull ? listReviewComments(app.db, pull.id) : [];
+    const reviewComments = pull
+      ? listReviewComments(app.db, pull.id).map(voiceOf)
+      : [];
     const prompt = taskPrompt({
       ...brief,
       issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
       comments,
+      labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
+        (label) => label.name,
+      ),
       reviews,
       reviewComments,
       readers: readersAmong(

@@ -8,7 +8,7 @@ import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getUserById, type User } from "./users.ts";
+import { getUserById, isActive, type User } from "./users.ts";
 
 export type TokenScope = "ro" | "rw" | "admin";
 
@@ -86,7 +86,7 @@ export function verifyToken(
   if (row.expires_at !== null && Date.parse(row.expires_at) <= Date.now())
     return err("invalid_token");
   const user = getUserById(db, row.user_id);
-  if (!user) return err("invalid_token");
+  if (!user || !isActive(user)) return err("invalid_token");
   const now = Date.now();
   const seen =
     row.last_used_at === null ? 0 : Date.parse(row.last_used_at) || 0;

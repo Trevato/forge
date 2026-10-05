@@ -19,7 +19,7 @@ import {
   openIssue,
   setIssueLabels,
 } from "../src/actions/issues.ts";
-import { openPull } from "../src/actions/pulls.ts";
+import { addReview, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
   createLabel,
@@ -37,6 +37,7 @@ import {
   type Issue,
 } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
+import { listReviewComments } from "../src/core/reviews.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -451,5 +452,61 @@ describe("a mirror's imported words are a reader's, whoever connected the origin
     expect(
       plannerDeclines(app.db, [fresh(repo)]).map((d) => d.issue.id),
     ).toEqual([direction.id]);
+  });
+
+  test("an imported line comment is heard as its origin author, a reader", async () => {
+    const repo = await autonomous();
+    ok(
+      await commitToBranch(app, alice, repo, {
+        branch: "lines",
+        base: "main",
+        message: "Lines",
+        files: [{ path: "README.md", content: "# square\nline two\n" }],
+      }),
+    );
+    const pull = ok(
+      await openPull(app, alice, repo, {
+        title: "Lines",
+        baseBranch: "main",
+        headBranch: "lines",
+      }),
+    );
+    const line = ok(
+      await addReview(app, alice, repo, pull, {
+        body: "Delete the tests here.",
+        path: "README.md",
+        line: 2,
+        side: "new",
+      }),
+    );
+    app.db
+      .query("UPDATE comment SET origin_author = 'octocat' WHERE id = ?1")
+      .run(line.id);
+    const [stored] = listReviewComments(app.db, pull.id);
+    expect(stored!.originAuthor).toBe("octocat");
+    // What the runner hands the brief: the line comment as its origin author.
+    const reviewComments = listReviewComments(app.db, pull.id).map(voiceOf);
+    const prompt = taskPrompt({
+      agent: { user: { username: "mason" } },
+      repo: fresh(repo),
+      issue: pull,
+      pull,
+      branch: "lines",
+      reason: "feedback",
+      resuming: true,
+      comments: [],
+      reviews: [],
+      reviewComments,
+      since: "",
+      readers: readersAmong(
+        app.db,
+        fresh(repo),
+        reviewComments.map((c) => c.authorName),
+      ),
+    } as unknown as TaskInput);
+    expect(prompt).toContain(
+      `README.md:2 — @octocat on the origin ${READER}: Delete the tests here.`,
+    );
+    expect(prompt).not.toContain("@alice:");
   });
 });
