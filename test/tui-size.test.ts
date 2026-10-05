@@ -184,31 +184,29 @@ describe("the terminal lays out for the terminal it is in", () => {
         }
       });
 
-  test("the dashboard's feed sits beside the repositories at two columns and under them below", async () => {
+  test("what is on you sits beside the repositories at two columns and under them below", async () => {
     const h = await boot(TWO_PANE_COLS, 40);
     try {
       const at = (what: string): number =>
         h.lines().findIndex((line) => line.includes(what));
-      expect(at("Recent activity")).toBe(at("filter repositories"));
-      expect(at("Organizations")).toBeGreaterThan(-1);
+      expect(at("On you")).toBe(at("find a repository"));
+      expect(at("On your machine")).toBeGreaterThan(-1);
 
       await h.resize(TWO_PANE_COLS - 1, 40);
-      // Stacked: the feed is a card under the list, and the three small
-      // cards wait for a wider window rather than crowd a column.
-      expect(at("Recent activity")).toBeGreaterThan(at("alice/lighthouse"));
-      expect(at("Organizations")).toBe(-1);
-      // And `tab` reaches exactly what is drawn: the feed, then back.
+      // Stacked: what is on you is a card under the list, and the machine
+      // card waits for a wider window rather than crowd a column.
+      expect(at("On you")).toBeGreaterThan(at("alice/lighthouse"));
+      expect(at("On your machine")).toBe(-1);
+      // And `tab` reaches exactly what is drawn: on you, then back.
       const c = theme("dark").c;
       await h.press("tab");
-      expect(h.app.screen.styleAt(0, at("Recent activity")).fg).toBe(c.accent);
+      expect(h.app.screen.styleAt(0, at("On you")).fg).toBe(c.accent);
       await h.press("tab");
-      expect(h.app.screen.styleAt(0, at("Recent activity")).fg).not.toBe(
-        c.accent,
-      );
+      expect(h.app.screen.styleAt(0, at("On you")).fg).not.toBe(c.accent);
 
       // Too short to stack: the repositories have the whole body.
       await h.resize(80, 12);
-      expect(at("Recent activity")).toBe(-1);
+      expect(at("On you")).toBe(-1);
       expect(at("alice/lighthouse")).toBeGreaterThan(-1);
     } finally {
       h.stop();

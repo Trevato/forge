@@ -30,11 +30,9 @@ import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
-import { exploreScreen } from "./screens/explore.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
-import { ownerScreen } from "./screens/owner.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
 import { local } from "./screens/where.ts";
@@ -95,18 +93,23 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => ctx.push(dashboardScreen(session, ctx)),
       },
       {
+        // Browsing other people and forges is the web explorer's (#607):
+        // the terminal hands over its address.
         id: "explore",
-        title: "Explore repositories",
-        run: () => ctx.push(exploreScreen(session, ctx)),
+        title: "Explore",
+        hint: "on the web",
+        run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
       {
+        // A person's or an org's page is the web's (#636): the terminal
+        // hands over its address.
         id: "profile",
         title: "Open a profile",
         hint: "username or org",
         run: () =>
           ctx.push(
             askFor(ctx, "Profile", "username", (name) => {
-              ctx.push(ownerScreen(session, ctx, name));
+              openOnWeb(session, ctx, `/${encodeURIComponent(name)}`, "That profile");
               return undefined;
             }),
           ),
