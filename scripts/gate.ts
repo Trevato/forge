@@ -65,6 +65,7 @@ export const GATE: readonly string[] = [
   "test/guard.test.ts",
   "test/asked.test.ts",
   "test/asks.test.ts",
+  "test/asks-expiry.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
   "test/feed-page.test.ts",
@@ -84,6 +85,7 @@ export const GATE: readonly string[] = [
   "test/spawn-plan.test.ts",
   "test/spawn.test.ts",
   "test/spawn-api.test.ts",
+  "test/spawn-first-boot.test.ts",
   "test/web-apps.test.ts",
   "test/fleet-ops.test.ts",
   "test/meter.test.ts",
@@ -111,6 +113,7 @@ export const GATE: readonly string[] = [
   "test/live.test.ts",
   "test/map.test.ts",
   "test/mcp.test.ts",
+  "test/looks.test.ts",
   "test/notify.test.ts",
   "test/onboarding.test.ts",
   "test/origins-oauth.test.ts",
@@ -127,6 +130,7 @@ export const GATE: readonly string[] = [
   "test/reports.test.ts",
   "test/report-discovery.test.ts",
   "test/apps-report.test.ts",
+  "test/private-app.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
@@ -173,12 +177,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     file: "test/diff-edge-cases.test.ts",
     reason: "red: wall-clock bounds (5 s, 200 ms) fail on a loaded machine",
     issue: 584,
-  },
-  {
-    file: "test/looks.test.ts",
-    reason:
-      "red: asserts the dashboard and studio pages as they were before the redesign",
-    issue: 291,
   },
   {
     file: "test/origins-security-provider.test.ts",

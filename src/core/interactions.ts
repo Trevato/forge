@@ -128,3 +128,24 @@ export function dismissedItems(db: Database, viewerId: string): Set<string> {
       .map((r) => r.item_id),
   );
 }
+
+/**
+ * The asks this viewer dismissed, each with when they last did. A dismissed
+ * ask is not dismissed forever: it holds until something new happens to it
+ * (`web/studio/asks.ts` compares this moment with the ask's own).
+ */
+export function askDismissals(
+  db: Database,
+  viewerId: string,
+): Map<string, string> {
+  return new Map(
+    db
+      .query<{ item_id: string; at: string }, [string]>(
+        `SELECT item_id, MAX(created_at) AS at FROM interaction
+         WHERE viewer_id = ?1 AND kind = 'dismissed' AND item_id LIKE 'ask:%'
+         GROUP BY item_id`,
+      )
+      .all(viewerId)
+      .map((r) => [r.item_id, r.at]),
+  );
+}

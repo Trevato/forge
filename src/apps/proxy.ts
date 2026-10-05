@@ -19,7 +19,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
-import { canRead, getRepoById } from "../core/repos.ts";
+import { canEnterApp, canRead, getRepoById } from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
@@ -310,6 +311,22 @@ const HOP_BY_HOP = [
   "upgrade",
 ];
 
+/** Whether the person a grant names may enter this app now. */
+function stillEntitled(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  grant: Grant,
+): boolean {
+  if (grant.who === undefined) return false;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  const user = getUserById(runtime.app.db, grant.who.id);
+  return (
+    repo !== undefined &&
+    user !== undefined &&
+    canEnterApp(runtime.app.db, repo, target.app.access, user)
+  );
+}
+
 /**
  * What a request addressed to an app must pass before anything is served:
  * a private app's grant, then a live port. One gate for both the request
@@ -322,14 +339,24 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
   const cookie = cookieValue(request, grantCookieName(target));
-  const grant =
+  const signed =
     cookie === undefined
       ? undefined
       : readGrant(runtime.app.config.dataDir, cookie, target);
+  // A private app's grant is asked again on every request whether the
+  // person it names may still enter: a grant outlives a change of heart —
+  // a writer removed, the app made private — by up to twelve hours, and
+  // reading the repository was never enough (#620).
+  const grant =
+    signed !== undefined &&
+    target.app.access === "private" &&
+    !stillEntitled(runtime, target, signed)
+      ? undefined
+      : signed;
   if (target.app.access === "private") {
     if (grant === undefined) {
       // A person arriving by link is sent to the forge to sign in; it vouches
-      // for them if they can see the repository and sends them back with the
+      // for them if they may enter the app and sends them back with the
       // grant, and otherwise gives the answer a private repository gives.
       // Anything that is not a person navigating — a script, an API call —
       // gets that answer here.

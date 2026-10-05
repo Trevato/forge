@@ -58,15 +58,18 @@ function spokenSince(db: Database, issueId: string, since: string): boolean {
 export function breakerParked(
   db: Database,
   repoIds: readonly string[],
-): { issueId: string; repoId: string }[] {
+): { issueId: string; repoId: string; at: string }[] {
   if (repoIds.length === 0) return [];
   const marks = repoIds.map(() => "?").join(",");
+  // `at` is when the note was left: what a dismissal of the park is compared with.
   return db
-    .query<{ issueId: string; repoId: string }, string[]>(
-      `SELECT i.id AS issueId, i.repo_id AS repoId FROM issue i
-       WHERE i.state = 'open' AND i.repo_id IN (${marks})
-         AND (SELECT c.body FROM comment c WHERE c.issue_id = i.id
-              ORDER BY c.created_at DESC, c.id DESC LIMIT 1) = ?${repoIds.length + 1}`,
+    .query<{ issueId: string; repoId: string; at: string }, string[]>(
+      `SELECT issueId, repoId, at FROM (
+         SELECT i.id AS issueId, i.repo_id AS repoId, c.body AS body, c.created_at AS at,
+                ROW_NUMBER() OVER (PARTITION BY i.id ORDER BY c.created_at DESC, c.id DESC) AS rn
+         FROM issue i JOIN comment c ON c.issue_id = i.id
+         WHERE i.state = 'open' AND i.repo_id IN (${marks})
+       ) WHERE rn = 1 AND body = ?${repoIds.length + 1}`,
     )
     .all(...repoIds, BREAKER_NOTE);
 }
