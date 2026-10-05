@@ -23,6 +23,7 @@ export type Exclusion = {
 
 export const GATE: readonly string[] = [
   "test/accounts.test.ts",
+  "test/client-address.test.ts",
   "test/crew.test.ts",
   "test/commit-identity.test.ts",
   "test/review-route.test.ts",

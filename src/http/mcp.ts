@@ -82,7 +82,7 @@ import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 import { manifestFor } from "../actions/here.ts";
-import { clientAddress } from "./peer.ts";
+import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
@@ -1127,7 +1127,7 @@ function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
       body: typeof args["body"] === "string" ? args["body"] : "",
       page: typeof args["page"] === "string" ? args["page"] : "",
     },
-    clientAddress(ctx.request),
+    clientBucket(ctx.request),
   );
   if (!filed.ok) {
     const e = filed.error;
