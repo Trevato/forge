@@ -29,6 +29,7 @@ import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
+import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 import { dataHomeRefusal } from "./kernel/data_home.ts";
@@ -263,8 +264,18 @@ runSync(app); // one pass on boot: a forge that was down has fetching to do
 // Which green pulls no longer merge as they stand, so the asks can leave
 // them out (`crew/stale_asks.ts`): git answers, off the request path, and an
 // unchanged pull costs two ref reads. Never throws into the timer.
-const staleTimer = setInterval(() => void sweepStaleAsks(app), 120_000);
-void sweepStaleAsks(app);
+// The asks ledger rides the same tick, after the sweep has said what
+// expired: what asked each person, and how it ended.
+const tickAsks = async (): Promise<void> => {
+  await sweepStaleAsks(app);
+  try {
+    recordAskLedger(app.db);
+  } catch (error) {
+    app.log.error("asks ledger failed", { error: String(error) });
+  }
+};
+const staleTimer = setInterval(() => void tickAsks(), 120_000);
+void tickAsks();
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
 if (apps)

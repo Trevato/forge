@@ -40,6 +40,17 @@ export interface Candidate {
   readonly urgency: number;
   /** When set, the sentence as it is: a share says who shared it. */
   readonly said?: string;
+  /** For an ask: what it asks, the answers, what happens if nobody acts, and its rank. */
+  readonly ask?: FeedAsk;
+}
+
+export interface FeedAsk {
+  readonly decision: string;
+  readonly options: readonly string[];
+  readonly ifNothing: string;
+  /** How much it matters (`consequenceOf`); higher first. */
+  readonly rank: number;
+  readonly why: string;
 }
 
 export const EVENT_WINDOW = 300;
@@ -105,7 +116,16 @@ export function candidatesFor(
       at: new Date(now).toISOString(),
       link: a.link,
       what: a.line,
-      urgency: URGENCY[a.kind],
+      // Consequence orders asks among themselves; the kind's floor keeps
+      // every ask above the news.
+      urgency: Math.max(URGENCY[a.kind], a.consequence.score / 10),
+      ask: {
+        decision: a.words.decision,
+        options: a.words.options,
+        ifNothing: a.words.ifNothing,
+        rank: Math.round(a.consequence.score * 100) / 100,
+        why: a.consequence.why,
+      },
     });
   }
   for (const d of decided) {
