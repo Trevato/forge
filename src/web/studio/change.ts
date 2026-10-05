@@ -326,10 +326,14 @@ async function changeConversation(
   const writer = ctx.auth.user !== undefined && canWrite(db, repo, ctx.auth.user);
   const openForOwner = writer && status !== undefined;
   const reviewed = status?.reviews == null || status.reviews.mergeable;
+  // A mirror's change lands on the origin, never here (`mergePull` refuses
+  // it as "mirrored"): no decision is offered, and Files says where to merge.
+  const mirrored = repo.origin !== null || pull.originHeadRepo !== null;
   const ownReady =
     crewDecision === undefined &&
     openForOwner &&
     reviewed &&
+    !mirrored &&
     (conflicted || word === "look" || !repo.requireChecks);
   const own: Decision | undefined = ownReady
     ? {
@@ -348,15 +352,22 @@ async function changeConversation(
         consequence: KIND_TIER.look,
       }
     : undefined;
-  const decision = crewDecision ?? own;
-  // Nothing to offer yet, and nothing wrong either — the check just has not
-  // gone green, and this repository waits for that before it ships.
-  const ownNotReadyNote =
-    crewDecision === undefined && openForOwner && !conflicted && !ownReady
-      ? reviewed
-        ? note
-        : "it waits on an approving review of what it is now"
-      : undefined;
+  // Whoever opened it, Ship is offered only where `mergePull` would take
+  // it: a review gate that is not yet satisfied, or a mirror, offers none.
+  const decision =
+    reviewed && !mirrored ? (crewDecision ?? own) : undefined;
+  // Nothing to offer yet, said plainly to a writer: the merge belongs to the
+  // origin, the review gate is still closed, or the check has not gone green
+  // and this repository waits for that before it ships.
+  const ownNotReadyNote = !openForOwner
+    ? undefined
+    : mirrored
+      ? "it merges on the origin, from its Files step"
+      : !reviewed
+        ? "it waits on an approving review of what it is now"
+        : crewDecision === undefined && !conflicted && !ownReady
+          ? note
+          : undefined;
 
   const checkLine = card(
     html`<p class="studio-pull-check">

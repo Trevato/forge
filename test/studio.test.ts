@@ -829,6 +829,95 @@ describe("the studio", () => {
     }
   });
 
+  test("the crew's green change in a review-gated app offers no Ship until it is approved, and says why", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/crew-gated",
+      base: "main",
+      message: "Crew gated",
+      files: [{ path: "CREW_GATED.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Crew gated change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/crew-gated",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+    const ship = `action="/alice/notes/pulls/${pull.number}/ship"`;
+    const at = `/alice/notes/pulls/${pull.number}`;
+
+    // Green and the crew's: Ship is offered while no review is required…
+    expect(await (await get(at)).text()).toContain(ship);
+    // …and not once this app requires an approving review it lacks.
+    const gate = await updateRepoSettings(app, alice, repo, {
+      requireReview: true,
+    });
+    if (!gate.ok) throw new Error(String(gate.error));
+    try {
+      const gated = await (await get(at)).text();
+      expect(gated).not.toContain(ship);
+      expect(gated).toContain("it waits on an approving review of what it is now");
+    } finally {
+      const off = await updateRepoSettings(app, alice, repo, {
+        requireReview: false,
+      });
+      if (!off.ok) throw new Error(String(off.error));
+    }
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+  });
+
+  test("a mirrored change offers no Ship: it merges on the origin, from its Files step", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/from-origin",
+      base: "main",
+      message: "From origin",
+      files: [{ path: "FROM_ORIGIN.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "A change from an origin fork",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/from-origin",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+    // A pull whose head lives at an origin, as a mirror's pulls do:
+    // `mergePull` refuses it ("mirrored"), so the page must not offer it.
+    app.db.run("UPDATE pull SET origin_head_repo = ?1 WHERE issue_id = ?2", [
+      "octo/widgets",
+      pull.id,
+    ]);
+    const page = await (await get(`/alice/notes/pulls/${pull.number}`)).text();
+    expect(page).not.toContain(`action="/alice/notes/pulls/${pull.number}/ship"`);
+    expect(page).toContain("it merges on the origin, from its Files step");
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+  });
+
   test("a change that waits on a review never offers Ship, and the Files step's forms answer back on the Files step", async () => {
     const gated = await createRepo(app, alice, {
       name: "gatedchange",
