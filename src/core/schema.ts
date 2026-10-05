@@ -1215,4 +1215,12 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
   `,
+  // 53 — a whole-life budget on a sealed account, in dollars (#601): the
+  // most its runs may ever spend, summed from the run ledger. Null is none.
+  // A spawned child's starter key carries one, so the spawner's money ends
+  // where they said. (Numbered by the lead; 48–52 are other pulls'.)
+  `
+  ALTER TABLE subscription ADD COLUMN budget_usd REAL
+    CHECK (budget_usd IS NULL OR budget_usd > 0);
+  `,
 ];

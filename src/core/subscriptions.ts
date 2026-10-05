@@ -67,6 +67,42 @@ export const EVERYONE = "";
 
 export type SubscriptionError = "invalid_name" | "name_taken" | "invalid_token";
 
+/** How soon an account out of budget is looked at again. */
+const BUDGET_RECHECK_MS = 3_600_000;
+export const BUDGET_MAX_USD = 100_000;
+
+/** An account's whole-life budget and what its runs have spent, in dollars. */
+export interface Budget {
+  readonly budgetUsd: number | null;
+  readonly spentUsd: number;
+}
+
+/** Every sealed account's budget and spend, by id, in one read. */
+export function budgetsOf(db: Database): Map<string, Budget> {
+  const rows = db
+    .query<{ id: string; budget_usd: number | null; spent_usd: number }, []>(
+      `SELECT s.id, s.budget_usd,
+              (SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = s.id) AS spent_usd
+       FROM subscription s WHERE s.id <> 'platform'`,
+    )
+    .all();
+  return new Map(rows.map((r) => [r.id, { budgetUsd: r.budget_usd, spentUsd: r.spent_usd }]));
+}
+
+/**
+ * Set or clear (null) an account's whole-life budget. False for no such
+ * sealed account or a budget out of range.
+ */
+export function setBudget(db: Database, subscriptionId: string, usd: number | null): boolean {
+  if (usd !== null && !(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
+  const value = usd === null ? null : Math.round(usd * 100) / 100;
+  return (
+    db
+      .query("UPDATE subscription SET budget_usd = ?1 WHERE id = ?2 AND id <> 'platform'")
+      .run(value, subscriptionId).changes > 0
+  );
+}
+
 const toSubscription = (r: Row): Subscription => ({
   id: r.id,
   name: r.name,
@@ -396,11 +432,18 @@ export function pickSubscription(
 ): Pick {
   const rows = db
     .query<
-      Row & { scope_id: string; agent_id: string; token_enc: string },
+      Row & {
+        scope_id: string;
+        agent_id: string;
+        token_enc: string;
+        budget_usd: number | null;
+        spent_usd: number;
+      },
       [string, string, string]
     >(
       `SELECT g.scope_id, g.agent_id, s.id, s.name, s.kind, s.token_enc, s.resting_until,
-              s.resting_said, s.last_used_at, s.created_by, s.created_at
+              s.resting_said, s.last_used_at, s.created_by, s.created_at, s.budget_usd,
+              (SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = s.id) AS spent_usd
        FROM subscription_grant g JOIN subscription s ON s.id = g.subscription_id
        WHERE g.scope_id IN (?1, ?2) AND g.agent_id IN (?3, '') AND s.id <> 'platform'
        ORDER BY (g.scope_id = ?1) DESC, (g.agent_id = ?3) DESC,
@@ -412,11 +455,27 @@ export function pickSubscription(
   const grant = rows.filter(
     (r) => r.scope_id === first.scope_id && r.agent_id === first.agent_id,
   );
+  // An account whose whole-life budget is spent is not offered again until
+  // an admin raises it; looked at again within the hour, so a raise is felt.
+  const spent = (r: (typeof grant)[number]) =>
+    r.budget_usd !== null && r.spent_usd >= r.budget_usd;
   const awake = grant.find(
-    (r) => r.resting_until === null || r.resting_until <= now.toISOString(),
+    (r) =>
+      !spent(r) &&
+      (r.resting_until === null || r.resting_until <= now.toISOString()),
   );
+  if (awake === undefined && grant.every(spent)) {
+    const first = grant[0]!;
+    return {
+      kind: "resting",
+      until: new Date(now.getTime() + BUDGET_RECHECK_MS).toISOString(),
+      said: `its $${first.budget_usd} budget is spent; an admin can raise it`,
+      names: grant.map((r) => r.name),
+    };
+  }
   if (awake === undefined) {
     const soonest = grant
+      .filter((r) => !spent(r) && r.resting_until !== null)
       .map((r) => r.resting_until!)
       .sort()
       .at(0)!;
