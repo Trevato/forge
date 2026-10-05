@@ -18,6 +18,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
 
@@ -63,6 +64,7 @@ describe("explore", () => {
       adminIfFirst: true,
     });
     if (!made.ok) throw new Error(made.error);
+    proveAll(app);
     return made.value;
   };
   const appOf = async (
