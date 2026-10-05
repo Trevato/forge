@@ -127,6 +127,7 @@ export const GATE: readonly string[] = [
   "test/reports.test.ts",
   "test/report-discovery.test.ts",
   "test/apps-report.test.ts",
+  "test/private-app.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
