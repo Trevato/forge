@@ -374,9 +374,8 @@ describe("pillars", () => {
     expect(page).toContain("3 open · 2 ready · 1 blocked");
     expect(page).toContain("<b>no pillar</b>");
     expect(page).toContain(`href="/alice/engine/issues/${loose.number}"`);
-    // The pillar's link is the list narrowed to its label. (Dev's list
-    // narrows today; the studio's takes `label` with the one list, #627.)
-    const list = await get("/alice/engine/issues?label=P0%20Trust&mode=dev");
+    // The pillar's link is the list narrowed to its label.
+    const list = await get("/alice/engine/issues?label=P0%20Trust");
     expect(list).toContain("Sandbox every run");
     expect(list).not.toContain("Tidy the README");
   });
