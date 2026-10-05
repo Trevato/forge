@@ -300,6 +300,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -3324,6 +3325,37 @@ export function apiRoutes(router: Router<Handler>): void {
       query: exploreLine(query),
       items: await explore(ctx.app, ctx.auth.user, query),
     });
+  });
+
+  // Make it yours (#606): a fork with its app, planned unless dryRun is
+  // false; the answer names the copy and what was and was not copied.
+  router.add("POST", "/api/v1/repos/:owner/:name/make-it-yours", async (ctx) => {
+    const input = await body(ctx.request);
+    const dryRun = input.dryRun !== false;
+    const denied = requireScope(ctx, dryRun ? "ro" : "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const name = str(input.name);
+    const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
+      dryRun,
+      ...(name === "" ? {} : { name }),
+    });
+    if (!made.ok)
+      return made.error.kind === "invalid"
+        ? apiError("invalid", 422, made.error.message)
+        : made.error.kind === "own"
+          ? apiError("own", 409, "this app is already yours")
+          : made.error.kind === "unverified"
+            ? apiError("unverified", 403, "prove your email first")
+            : made.error.kind === "unauthorized"
+              ? unauthorized()
+              : notFound();
+    const { made: done, ...plan } = made.value;
+    return json(
+      done === undefined ? plan : { ...plan, url: `/${done.repo.ownerName}/${done.repo.name}` },
+      dryRun ? 200 : 201,
+    );
   });
 
   // The front page (#686): what a stranger is shown, for anyone; a site

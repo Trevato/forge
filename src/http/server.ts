@@ -161,6 +161,10 @@ import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
 import {
+  makeItYoursPage,
+  makeItYoursSubmit,
+} from "../web/studio/make_it_yours.ts";
+import {
   frontUpdate,
   liveAppsFragment,
   liveOnYouFragment,
@@ -946,6 +950,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // Make it yours (#606): a fork with its app, planned, then made.
+  router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
+  router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
   // A fork takes what it follows: git's part by itself, the rest by the crew.
   router.add("POST", "/:owner/:name/following", followingSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are

@@ -215,6 +215,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .repo-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; }
   .repo-layout > .about { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
+/* Make it yours: what is copied and what is not, read before saying yes. */
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--muted-fg); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
 .about dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
 .about dt { color: var(--muted-fg); }
 .about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
