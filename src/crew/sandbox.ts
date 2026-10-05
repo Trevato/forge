@@ -14,17 +14,23 @@
  * the working directory included, which is why `crew/` itself is not denied
  * and its entries are listed one by one. Claude Code cannot deny by rule,
  * so the list is taken again for every invocation of a run (the work and
- * the wrap-up), and an agent created mid-invocation is denied from the next.
+ * the wrap-up): an entry created during an invocation — a new agent, a new
+ * top-level directory — stays readable until the next one. A listing that
+ * fails refuses the run (`SandboxListingError`) rather than deny nothing,
+ * and the paths that must never be read are denied by name as well, so the
+ * allow-list only ever adds to them.
  *
  * Each run has its own temp directory (`tmpDir`, handed to Claude Code as
- * `CLAUDE_CODE_TMPDIR` and `TMPDIR`) under the agent's own `.t/`, never the machine's
- * shared `/tmp/claude-<uid>`, which holds every other session's files and
- * is denied; the agent's other runs' temp directories are denied too.
+ * `CLAUDE_CODE_TMPDIR` and `TMPDIR`) under the agent's own `.t/`; the
+ * machine's temp directory, which holds every other session's files and
+ * the forge's own, is denied whole, and so are the agent's other runs'
+ * temp directories. A run that ends removes its own; what a forge that
+ * died left behind is swept at the next crew start (`sweepRunTmp`).
  */
 
-import { readdirSync } from "node:fs";
+import { readdirSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { crewRoot } from "./workdir.ts";
 
 export interface SandboxPolicy {
@@ -97,15 +103,79 @@ const HOME_SECRETS = [
   ".claude.json",
 ];
 
-/** The entries of `dir` as paths, but `keep`; nothing when it is not there. */
+/** The data directory could not be listed: the run is refused, never left undenied. */
+export class SandboxListingError extends Error {}
+
+/**
+ * The entries of `dir` as paths, but `keep`. A directory that is not there
+ * has nothing in it; one that cannot be listed (too many open files, a
+ * permission) throws, because an empty answer would deny nothing.
+ */
 function others(dir: string, keep: string): string[] {
   try {
     return readdirSync(dir)
       .filter((name) => name !== keep)
       .map((name) => join(dir, name));
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new SandboxListingError(
+      `cannot list ${dir} to build the shell's sandbox: ${(error as Error).message}`,
+    );
   }
+}
+
+/**
+ * The machine's temp directory, whole. When the data directory lives inside
+ * it (a developer's forge, a test) the whole cannot be denied, and listing
+ * every entry of a busy temp directory overflows Claude Code's argument
+ * list; there the forge's own pieces are denied instead: the shared Claude
+ * Code directory and the cells' socket directories (`apps/contain.ts`).
+ */
+function tempDenied(data: string): string[] {
+  const temp = tmpdir();
+  const rel = relative(temp, data);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return [temp];
+  return [
+    join(temp, `claude-${process.getuid?.() ?? 0}`),
+    ...others(temp, "").filter((path) => basename(path).startsWith("fc-")),
+  ];
+}
+
+/** Denied by name whatever the listing says: what must never be read. */
+const ALWAYS_DENIED = [
+  "repos",
+  "forge.db",
+  "forge.db-wal",
+  "forge.db-shm",
+  "secret.key",
+  "ssh",
+  "apps",
+  "runs",
+  "checks",
+  "looks",
+  "egress",
+];
+
+/**
+ * Remove the run temp directories older than `olderThanMs` that a forge
+ * which stopped mid-run left behind. Only old ones: during a rollout the
+ * forge being replaced is still finishing its runs beside this one.
+ */
+export function sweepRunTmp(dataDir: string, olderThanMs: number): number {
+  const cutoff = Date.now() - olderThanMs;
+  let swept = 0;
+  for (const agent of others(crewRoot(dataDir), "")) {
+    for (const dir of others(join(agent, ".t"), "")) {
+      try {
+        if (statSync(dir).mtimeMs > cutoff) continue;
+        rmSync(dir, { recursive: true, force: true });
+        swept++;
+      } catch {
+        // gone already
+      }
+    }
+  }
+  return swept;
 }
 
 /** Where a run's temp directory lives: short, because Claude Code makes sockets in it. */
@@ -148,6 +218,8 @@ export function sandboxPolicy(input: {
       ? undefined
       : runTmpDir(data, input.agentName, input.runId);
   const deny = [
+    // The floor: named, whether or not the listing below sees them.
+    ...ALWAYS_DENIED.map((name) => join(data, name)),
     // Every entry but crew/: the index, the key, the repositories, the hook
     // sockets, the checks' and apps' trees, the looks, whatever comes next.
     ...others(data, "crew"),
@@ -155,8 +227,9 @@ export function sandboxPolicy(input: {
     ...others(crew, input.agentName),
     // This agent's other runs' temp directories.
     ...others(join(own, ".t"), tmpDir === undefined ? "" : basename(tmpDir)),
-    // The machine's shared Claude Code temp directory: every other session's.
-    join(tmpdir(), `claude-${process.getuid?.() ?? 0}`),
+    // The machine's temp directory: every other session's files, and the
+    // forge's own (a cell's sockets, a checkout's index).
+    ...tempDenied(data),
   ];
   const home = homedir();
   for (const secret of HOME_SECRETS) deny.push(join(home, secret));

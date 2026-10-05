@@ -5,7 +5,13 @@
  * command and running anyway.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +21,12 @@ import { createRun, getRun, noteRunProgress } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { sandboxLine } from "../src/web/studio/sandbox.ts";
 import { claudeSettings } from "../src/crew/claude.ts";
-import { sandboxAvailable, sandboxPolicy } from "../src/crew/sandbox.ts";
+import {
+  SandboxListingError,
+  sandboxAvailable,
+  sandboxPolicy,
+  sweepRunTmp,
+} from "../src/crew/sandbox.ts";
 
 describe("the shell sandbox", () => {
   const input = {
@@ -128,6 +139,8 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
   });
   afterAll(async () => {
     await rm(dataDir, { recursive: true, force: true });
+    await rm(join(tmpdir(), "fc-forge-sandbox-neighbour"), { recursive: true, force: true });
+    await rm(join(dataDir, "..", `forge-sandbox-locked-${process.pid}`), { recursive: true, force: true });
   });
 
   const policy = () =>
@@ -157,10 +170,47 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
     expect(denied(tmpDir!, denyRead)).toBe(false);
   });
 
-  test("the shared Claude Code temp directory and ~/.claude.json are denied", () => {
+  test("the machine's temp directory and ~/.claude.json are denied", () => {
     const { denyRead } = policy();
     expect(denyRead).toContain(join(homedir(), ".claude.json"));
-    expect(denyRead).toContain(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`));
+    // This data directory lives in the temp directory, so the forge's own
+    // pieces of it are denied: the shared Claude Code directory and a cell's.
+    mkdirSync(join(tmpdir(), "fc-forge-sandbox-neighbour"), { recursive: true });
+    expect(denied(join(tmpdir(), "fc-forge-sandbox-neighbour"), policy().denyRead)).toBe(true);
+    expect(policy().denyRead).toContain(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`));
+    const elsewhere = sandboxPolicy({ dataDir: "/srv/forge-data-nowhere", agentName: "scout", urls: [] });
+    expect(elsewhere.denyRead).toContain(tmpdir());
+  });
+
+  test("the paths that must never be read are denied by name, listed or not", () => {
+    const { denyRead } = sandboxPolicy({ dataDir: "/srv/forge-data-nowhere", agentName: "scout", urls: [] });
+    for (const name of ["forge.db", "secret.key", "repos", "checks", "looks", "ssh"])
+      expect(denyRead).toContain(join("/srv/forge-data-nowhere", name));
+  });
+
+  test("a data directory that cannot be listed refuses the run, never denies nothing", () => {
+    const locked = join(dataDir, "..", `forge-sandbox-locked-${process.pid}`);
+    mkdirSync(join(locked, "crew"), { recursive: true });
+    chmodSync(locked, 0o000);
+    try {
+      expect(() =>
+        sandboxPolicy({ dataDir: locked, agentName: "scout", urls: [], runId }),
+      ).toThrow(SandboxListingError);
+    } finally {
+      chmodSync(locked, 0o700);
+    }
+  });
+
+  test("a stopped forge's run temp directories are swept once they are old, not before", () => {
+    const old = join(dataDir, "crew/mason/.t/old-run");
+    const fresh = join(dataDir, "crew/mason/.t/fresh-run");
+    mkdirSync(old, { recursive: true });
+    mkdirSync(fresh, { recursive: true });
+    const longAgo = new Date(Date.now() - 3 * 60 * 60_000);
+    utimesSync(old, longAgo, longAgo);
+    expect(sweepRunTmp(dataDir, 60 * 60_000)).toBeGreaterThanOrEqual(1);
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
   });
 
   test("asked again, the policy denies an agent that appeared since", () => {
