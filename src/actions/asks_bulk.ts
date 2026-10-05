@@ -15,7 +15,9 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import {
   applyFleetIds,
+  getFleetOp,
   previewFleetIds,
+  undoFleetOp,
   type FleetError,
   type Plan,
 } from "./fleet.ts";
@@ -120,11 +122,42 @@ export async function applyAsksBulk(
   return ok({ ...op.value, skipped: r.value.skipped });
 }
 
-/** Whether a fleet receipt is a bulk action on asks: what the asks' own undo may reverse. */
-export function isAsksOperation(op: Operation): boolean {
+/** Whether a fleet receipt is a bulk action on asks. */
+function isAsksOperation(op: Operation): boolean {
   return (
     op.kind === "issue" &&
     op.query.startsWith("asks: ") &&
     Object.values(ASK_ACTIONS).includes(op.verb)
   );
+}
+
+/**
+ * A bulk action on asks, for the one person who took it — never another,
+ * a site admin included: a person's asks are theirs, and so is undoing
+ * what they did with them. Anything else is not found.
+ */
+export function ownAsksOperation(
+  app: App,
+  actor: User | undefined,
+  operationId: string,
+): Operation | undefined {
+  const found = getFleetOp(app, actor, operationId);
+  return found.ok &&
+    actor !== undefined &&
+    found.value.actorId === actor.id &&
+    isAsksOperation(found.value)
+    ? found.value
+    : undefined;
+}
+
+/** Undo one's own bulk action on asks, once (`undoFleetOp`). */
+export async function undoAsksBulk(
+  app: App,
+  actor: User | undefined,
+  operationId: string,
+): Promise<Result<Operation, FleetError>> {
+  const op = ownAsksOperation(app, actor, operationId);
+  if (op === undefined)
+    return err({ code: "not_found", message: "no such operation here" });
+  return undoFleetOp(app, actor, op.id);
 }
