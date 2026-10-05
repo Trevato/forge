@@ -17,7 +17,7 @@
  * the wrap-up), and an agent created mid-invocation is denied from the next.
  *
  * Each run has its own temp directory (`tmpDir`, handed to Claude Code as
- * `CLAUDE_CODE_TMPDIR`) under the agent's own `.t/`, never the machine's
+ * `CLAUDE_CODE_TMPDIR` and `TMPDIR`) under the agent's own `.t/`, never the machine's
  * shared `/tmp/claude-<uid>`, which holds every other session's files and
  * is denied; the agent's other runs' temp directories are denied too.
  */

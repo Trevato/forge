@@ -823,11 +823,14 @@ async function work(
       });
     const sandbox = shellPolicy();
     // The run's own temp directory, never the machine's shared one; it goes
-    // when the run does (the `finally` below).
+    // when the run does (the `finally` below). Both names: Claude Code's
+    // sandbox reads CLAUDE_CODE_TMPDIR, but its shell still binds
+    // `<TMPDIR>/claude-<uid>` writable, so TMPDIR has to say the same.
     runTmp = sandbox.tmpDir;
     if (runTmp !== undefined) {
       mkdirSync(runTmp, { recursive: true });
       env["CLAUDE_CODE_TMPDIR"] = runTmp;
+      env["TMPDIR"] = runTmp;
     }
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
