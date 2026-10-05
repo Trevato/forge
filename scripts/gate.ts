@@ -77,6 +77,7 @@ export const GATE: readonly string[] = [
   "test/fleet-ops.test.ts",
   "test/meter.test.ts",
   "test/told-by.test.ts",
+  "test/highlight.test.ts",
   "test/check-list.test.ts",
 ];
 
@@ -145,11 +146,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/git-ssh.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/git.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/hardening.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/highlight.test.ts",
-    reason: "red: a 10ms highlighter bound fails on a slower machine",
-    issue: 294,
-  },
   { file: "test/image-gif.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/image-graphics.test.ts",

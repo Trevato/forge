@@ -14,8 +14,9 @@
  *   step, so no input can wedge it.
  *
  *   **Linear.** No backtracking regex ever touches a whole line; the hot loops
- *   compare character codes. A 10,000-character line scans in under a
- *   millisecond, which is what makes the editor's per-keystroke re-scan free.
+ *   compare character codes. A line sixteen times longer costs about sixteen
+ *   times as much, never two hundred and fifty-six, which is what keeps the
+ *   editor's per-keystroke re-scan cheap however long the line.
  *
  * ## Two levels of token
  *
