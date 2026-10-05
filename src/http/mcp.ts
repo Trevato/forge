@@ -471,6 +471,11 @@ const TOOLS: readonly Tool[] = [
           description:
             "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
         },
+        keepAccess: {
+          type: "boolean",
+          description:
+            "Stay an owner of the child after its person claims it (default false: you leave, and they can invite you back). The claim page says which.",
+        },
         dryRun: {
           type: "boolean",
           description: "Plan only (the default). Send false to make the child.",

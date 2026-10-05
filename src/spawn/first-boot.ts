@@ -10,28 +10,22 @@
  * untouched.
  */
 
-import { join } from "node:path";
 import { assignIssue } from "../actions/issues.ts";
 import type { App } from "../app.ts";
 import { listCrewRoles } from "../core/agents.ts";
-import { getOrg, listTeamMembers, listTeams, OWNERS_TEAM } from "../core/orgs.ts";
+import { listTeamMembers, listTeams, OWNERS_TEAM } from "../core/orgs.ts";
 import { getRepoById, listReposByOwner } from "../core/repos.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { ensureDirectionIssue } from "../crew/autonomy.ts";
+import { spawnedOrg } from "./claim.ts";
 
 const BOOTED = "spawn_first_boot";
 
 export async function firstBoot(app: App): Promise<void> {
-  const file = Bun.file(join(app.config.dataDir, "parent.json"));
-  if (!(await file.exists())) return;
-  let org: string;
-  try {
-    org = String(((await file.json()) as { org?: unknown }).org ?? "");
-  } catch {
-    return;
-  }
-  const owner = getOrg(app.db, org);
-  if (!owner || getUserSetting(app.db, owner.id, BOOTED) !== undefined) return;
+  const spawned = await spawnedOrg(app);
+  if (spawned === undefined) return;
+  const owner = spawned.org;
+  if (getUserSetting(app.db, owner.id, BOOTED) !== undefined) return;
   // The spawner's account: the organisation's first owner. It acts here only
   // to open and assign, as the spawner would have.
   const owners = listTeams(app.db, owner.id).find((t) => t.name === OWNERS_TEAM);

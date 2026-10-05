@@ -26,10 +26,11 @@ import {
 import { listIssues } from "../src/core/issues.ts";
 import { getOrg, listTeams, listTeamMembers } from "../src/core/orgs.ts";
 import { getRepo } from "../src/core/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import { serve, SHOWN_ONCE_NOTE, type Servers } from "../src/http/server.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import type { SpawnSource } from "../src/spawn/plan.ts";
@@ -71,7 +72,7 @@ describe("a spawned child's first boot", () => {
 
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-first-boot-"));
-    parent = createApp({ dataDir: dir, url: "https://forge.test" });
+    parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const made = await createUser(parent.db, {
       username: "alice",
       email: "a@x.invalid",
@@ -144,7 +145,7 @@ describe("a spawned child's first boot", () => {
     claimUrl = spawned.value.claimUrl ?? "";
     token = claimUrl.split("/claim/")[1] ?? "";
 
-    child = createApp({ dataDir: childDirOf(parent, bodyId) });
+    child = createApp({ dataDir: childDirOf(parent, bodyId), port: 0 });
     await firstBoot(child);
     servers = await serve(child);
   }, 60_000);
@@ -257,6 +258,10 @@ describe("a spawned child's first boot", () => {
     expect(page.status).toBe(200);
     const text = await page.text();
     expect(text).toContain("This forge is yours");
+    // Plain about who can see it, before anyone submits.
+    expect(text.replace(/\s+/g, " ")).toContain(
+      "alice, who made it, no longer has access unless you invite them back",
+    );
     expect(getUserByName(child.db, "maria")).toBeUndefined();
   });
 
@@ -297,6 +302,22 @@ describe("a spawned child's first boot", () => {
     expect(await home.text()).toContain("maria");
   });
 
+  test("by default the spawner's account leaves: it cannot open the child's private pages", async () => {
+    const founder = getUserByName(child.db, "alice")!;
+    const org = getOrg(child.db, "bakery")!;
+    const owners = listTeams(child.db, org.id).find((t) => t.name === "Owners")!;
+    expect(listTeamMembers(child.db, owners.id).map((u) => u.username)).toEqual(["maria"]);
+    expect(founder.isAdmin).toBe(false);
+    // The spawner's identity, signed in (a session, or the edge mapping its
+    // login to this account), sees the private app as if it did not exist.
+    const { createSession } = await import("../src/core/sessions.ts");
+    const session = createSession(child.db, founder.id);
+    const res = await fetch(url("/bakery/bakery"), {
+      headers: { cookie: `forge_session=${session.token}` },
+    });
+    expect(res.status).toBe(404);
+  });
+
   test("a used link says so, and claims nothing a second time", async () => {
     const page = await fetch(url(`/claim/${token}`));
     expect(page.status).toBe(410);
@@ -327,5 +348,105 @@ describe("a spawned child's first boot", () => {
         .status,
     ).toBe(410);
     expect(getUserByName(child.db, "late")).toBeUndefined();
+  });
+
+});
+
+describe("claims are bound to a spawned forge, and the link is shown once", () => {
+  let dir = "";
+  let parent: App;
+  let servers: Servers;
+  let rw = "";
+  let kidDir = "";
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-claim-bound-"));
+    parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
+    const made = await createUser(parent.db, { username: "alice", email: "a@x.invalid", password: "a-long-passphrase-1", isAdmin: true });
+    if (!made.ok) throw new Error("user");
+    const repo = await createRepo(parent, made.value, { name: "bakery" });
+    if (!repo.ok) throw new Error("repo");
+    const c = await commitFiles(repoDir(parent.reposRoot, "alice", "bakery"), {
+      branch: "main",
+      message: "the bakery",
+      files: [{ path: "README.md", content: "# bakery\n" }],
+      author,
+    });
+    if (!c.ok) throw new Error("commit");
+    rw = createToken(parent.db, made.value.id, "rw", "rw").token;
+    servers = await serve(parent);
+  }, 60_000);
+
+  afterAll(async () => {
+    servers.stop();
+    parent.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a forge that was not spawned has no claim page, even with a crafted row", async () => {
+    const { mintClaim } = await import("../src/spawn/claim.ts");
+    const alice = getUserByName(parent.db, "alice")!;
+    const crafted = mintClaim(parent.db, alice.id);
+    const page = await fetch(`${servers.url}/claim/${crafted}`);
+    expect(page.status).toBe(404);
+    const res = await fetch(`${servers.url}/claim/${crafted}`, {
+      method: "POST",
+      headers: { origin: "https://forge.test" },
+      body: new URLSearchParams({ username: "mallory", email: "m@evil.test", password: "a-long-mallory-passphrase" }),
+      redirect: "manual",
+    });
+    expect(res.status).toBe(404);
+    expect(getUserByName(parent.db, "mallory")).toBeUndefined();
+  });
+
+  test("an idempotent spawn keeps no claim link: the replay says it was shown once", async () => {
+    const send = () =>
+      fetch(`${servers.url}/api/v1/forges`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${rw}`, "content-type": "application/json", "idempotency-key": "kai-1" },
+        body: JSON.stringify({ name: "kai", apps: ["alice/bakery"], dryRun: false, keepAccess: true }),
+      });
+    const first = await send();
+    expect(first.status).toBe(201);
+    const made = (await first.json()) as { claimUrl: string; bodyId: string };
+    const token = made.claimUrl.split("/claim/")[1]!;
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const stored = parent.db.query("SELECT body FROM idempotency").all() as { body: string }[];
+    expect(stored.length).toBe(1);
+    expect(stored[0]!.body).not.toContain(token);
+    const again = await send();
+    const replayed = (await again.json()) as { claimUrl: string };
+    expect(replayed.claimUrl).toBe(SHOWN_ONCE_NOTE);
+    kidDir = childDirOf(parent, made.bodyId);
+    // Keep the token for the next test.
+    (globalThis as { kaiToken?: string }).kaiToken = token;
+  });
+
+  test("a spawner who keeps access is named on the claim page, and stays an owner", async () => {
+    const token = (globalThis as { kaiToken?: string }).kaiToken!;
+    const kid = createApp({ dataDir: kidDir, port: 0 });
+    await firstBoot(kid);
+    const kidServers = await serve(kid);
+    try {
+      const page = (await (await fetch(`${kidServers.url}/claim/${token}`)).text()).replace(/\s+/g, " ");
+      expect(page).toContain("alice keeps owner access to this forge; you can remove it in your organisation");
+      const res = await fetch(`${kidServers.url}/claim/${token}`, {
+        method: "POST",
+        headers: { origin: kidServers.url },
+        body: new URLSearchParams({ username: "kai-owner", email: "kai@x.test", password: "a-long-kai-passphrase" }),
+        redirect: "manual",
+      });
+      expect(res.status).toBe(303);
+      const org = getOrg(kid.db, "kai")!;
+      const owners = listTeams(kid.db, org.id).find((t) => t.name === "Owners")!;
+      expect(listTeamMembers(kid.db, owners.id).map((u) => u.username).sort()).toEqual(["alice", "kai-owner"]);
+      // A crafted row on any other account of the child is never consulted.
+      const { mintClaim } = await import("../src/spawn/claim.ts");
+      const other = mintClaim(kid.db, getUserByName(kid.db, "alice")!.id);
+      expect((await fetch(`${kidServers.url}/claim/${other}`)).status).toBe(404);
+    } finally {
+      kidServers.stop();
+      kid.close();
+    }
   });
 });

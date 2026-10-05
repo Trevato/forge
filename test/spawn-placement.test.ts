@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 
-const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "" });
+const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "", keepAccess: false });
 const make = (o: Partial<Parameters<typeof hostedPlacement>[0]> = {}) => {
   let n = 0;
   const store = memoryBodies();

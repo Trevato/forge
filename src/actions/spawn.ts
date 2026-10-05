@@ -295,7 +295,12 @@ async function copyInto(
     const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
     await Bun.write(
       join(dir, "parent.json"),
-      JSON.stringify({ upstream, name: plan.name, org: plan.org }),
+      JSON.stringify({
+        upstream,
+        name: plan.name,
+        org: plan.org,
+        keepAccess: plan.keepAccess,
+      }),
     );
     return ok(mintClaim(child.db, org.id));
   } finally {
