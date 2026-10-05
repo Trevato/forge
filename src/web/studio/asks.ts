@@ -686,7 +686,7 @@ export function decisionsFor(
         issue: c.issue,
         who: c.who,
         says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
-        short: `the planner declined: ${c.decline.words}`,
+        short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
       };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;

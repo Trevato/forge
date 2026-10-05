@@ -36,7 +36,7 @@ const weight = (c: Consequence): Html | null =>
 /** One clause, and what happens if nobody acts — never the same sentence twice. */
 const clause = (d: Decision | undefined, kind: Decision["kind"], c: Consequence): Html =>
   html`<p>
-    ${weight(c)}${d === undefined ? null : html`${d.short}. `}<span class="muted"
+    ${weight(c)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
       >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
     >
   </p>`;
