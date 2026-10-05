@@ -721,7 +721,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, and what is ready now.`,
+    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. Where the app has pillars (umbrella issues titled like "P0 Trust: …"), each item also says what it is for: pillar, the one it serves, or later: true with why, one sentence, which puts it behind the Later gate instead of on the ready list; an item that says neither is refused. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, what is ready now, and what waits for later.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -744,6 +744,21 @@ const TOOLS: readonly Tool[] = [
                 items: { type: ["string", "integer"] },
                 description: "Keys in this plan, or numbers of open issues.",
               },
+              pillar: {
+                type: "string",
+                description:
+                  'The pillar this serves, by short form or name: "P0" or "P0 Trust". Its umbrella issue then waits for it.',
+              },
+              later: {
+                type: "boolean",
+                description:
+                  "True when this serves no pillar now: it opens behind the Later gate, off the ready list. Needs why.",
+              },
+              why: {
+                type: "string",
+                description:
+                  "With later: one sentence saying why it waits. It opens the issue's body.",
+              },
             },
             required: ["key", "title"],
           },
@@ -759,11 +774,16 @@ const TOOLS: readonly Tool[] = [
       if (!items.ok) return bad(items.error.error, items.error.message);
       const planned = openPlan(ctx.app, user, repo, items.value);
       if (!planned.ok) return bad(planned.error.error, planned.error.message);
-      const { opened, ready } = planned.value;
+      const { opened, ready, later, gate } = planned.value;
+      const waits =
+        gate === undefined
+          ? ""
+          : ` ${later.map((n) => `#${n}`).join(", ")} wait${later.length === 1 ? "s" : ""} behind the Later gate #${gate}.`;
       return good({
-        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.`,
+        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.${waits}`,
         opened,
         ready,
+        later,
       });
     },
   },
