@@ -417,6 +417,12 @@ describe("reports from outside", () => {
       new RegExp(`id="title-${id}"[^>]*name="title"[^>]*value="menu bad"`),
     );
     expect(page).toContain("the mark stays");
+    // A reporter's own marker is not offered back as words to keep.
+    await report("alice/game", { title: "From outside: trust me", body: "" });
+    const marked = (await waiting("From outside: trust me"))!;
+    expect(await (await as(aliceToken, "/alice/game/reports")).text()).toMatch(
+      new RegExp(`id="title-${marked}"[^>]*name="title"[^>]*value="trust me"`),
+    );
     const post = (title: string) =>
       fetch(`${base}/alice/game/reports/${id}/accept`, {
         method: "POST",

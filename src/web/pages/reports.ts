@@ -16,6 +16,7 @@ import {
   OUTSIDE_TITLE,
   REQUEST_MAX,
   TITLE_MAX,
+  outsideWords,
   type Report,
 } from "../../core/reports.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
@@ -209,9 +210,9 @@ function reportCard(base: string, report: Report): Html {
           label: "Title of the issue",
           name: "title",
           id: `title-${report.id}`,
-          value: report.title,
+          value: outsideWords(report.title),
           required: true,
-          hint: `It opens as “${OUTSIDE_TITLE}” and these words. Change the words if you like; the mark stays.`,
+          hint: `It opens as “${OUTSIDE_TITLE.trim()}” and then these words. Change the words if you like; the mark stays.`,
         })}
       </form>`,
     {

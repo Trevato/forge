@@ -109,20 +109,28 @@ export const saysOutside = (title: string): boolean =>
   title.toLowerCase().startsWith(OUTSIDE_TITLE.trim().toLowerCase());
 
 /**
+ * A title's own words: one line of plain text, with any marker in front —
+ * the reporter's own, or one typed back in — taken off.
+ */
+export function outsideWords(title: string): string {
+  let words = plainText(title).replace(/\s+/g, " ").trim();
+  while (saysOutside(words))
+    words = words.slice(OUTSIDE_TITLE.trim().length).trim();
+  return words;
+}
+
+/**
  * The title of the issue an accepted report becomes: the words as the
- * accepting person left them, behind the marker. A marker already in front
- * — the reporter's own, or one typed back in — is taken off first, so there
- * is exactly one and no edit removes it.
+ * accepting person left them, behind the marker. There is exactly one
+ * marker and no edit removes it.
  */
 export function outsideTitle(
   title: string,
 ): Result<string, "empty_title" | "title_too_long"> {
-  let rest = plainText(title).replace(/\s+/g, " ").trim();
-  while (saysOutside(rest))
-    rest = rest.slice(OUTSIDE_TITLE.trim().length).trim();
-  if (rest === "") return err("empty_title");
-  if (rest.length > TITLE_MAX) return err("title_too_long");
-  return ok(`${OUTSIDE_TITLE}${rest}`);
+  const words = outsideWords(title);
+  if (words === "") return err("empty_title");
+  if (words.length > TITLE_MAX) return err("title_too_long");
+  return ok(`${OUTSIDE_TITLE}${words}`);
 }
 
 export function countWaiting(db: Database, repoId: string): number {
