@@ -68,7 +68,8 @@ import {
   windowWords,
   type FigureWords,
 } from "../studio/words.ts";
-import { lookUrl, thumbLook } from "./looks.ts";
+import { lookUrl } from "../../core/looks.ts";
+import { thumbLook } from "./looks.ts";
 
 // ---- words ----
 
@@ -601,6 +602,9 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     const record = scope.records.get(repo.id);
     if (record === undefined) return undefined;
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === "production"),
     );
     return (

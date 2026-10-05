@@ -19,6 +19,8 @@ import {
   looksForEnv,
   type Look,
   type LookKind,
+  lookUrl,
+  lookVersion,
 } from "../../core/looks.ts";
 import type { Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -29,21 +31,6 @@ import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { card, icon, sha, time } from "../ui.ts";
 
-/**
- * Which taking of a picture this is: a picture retaken at the same commit
- * (a thumb from before thumbs were the page, or one that failed) is a new
- * file under the same name, so the name alone cannot be cached for good.
- */
-export const lookVersion = (look: Look): string =>
-  look.createdAt.replace(/\D/g, "");
-
-/** Where a picture is served. Named by page and kind, unless the page is
- * the home page, when it is the kind alone — exactly the URL from before
- * `app.looks` existed — and by which taking of it, so a browser that kept
- * the last one for a year asks for the new one. */
-export const lookUrl = (base: string, look: Look): string =>
-  `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind)}.png?v=${lookVersion(look)}`;
-
 /** The newest picture at one width, when there is one. */
 export const pictured = (
   looks: readonly Look[],
@@ -52,14 +39,23 @@ export const pictured = (
 
 /**
  * The picture for a small slot: the dedicated thumb, or — for a commit
- * taken before it existed — the phone shot a thumbnail loaded before.
- * Always the home page: a slot this small has room for one picture of an
- * app, and the home page is the one everyone means by it.
+ * taken before it existed — the phone shot a thumbnail loaded before,
+ * whichever this viewer may fetch (`mayFetchLook`: the phone shot is the
+ * owner's view, so a reader gets the thumb or nothing, never a broken
+ * image). Always the home page: a slot this small has room for one picture
+ * of an app, and the home page is the one everyone means by it.
  */
-export const thumbLook = (looks: readonly Look[]): Look | undefined => {
+export function thumbLook(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+  looks: readonly Look[],
+): Look | undefined {
   const home = looks.filter((l) => l.page === DEFAULT_PAGE);
-  return pictured(home, "thumb") ?? pictured(home, "phone");
-};
+  return [pictured(home, "thumb"), pictured(home, "phone")].find(
+    (l) => l !== undefined && mayFetchLook(ctx, repo, record, l),
+  );
+}
 
 // GET /:owner/:name/looks/:env/:commit/:kind.png — the last segment is
 // really a slot (`lookSlot`): the kind alone for the home page, the page

@@ -215,6 +215,16 @@ export async function acceptReport(
     undecideReport(app.db, report.id);
     return err(opened.error);
   }
+  // The issue exists. The report takes its number and the outbox hears of
+  // it now, before anything else can fail: an accepted report with no issue
+  // to show for it could be neither found nor accepted again.
+  noteIssue(app.db, report.id, opened.value.number);
+  app.bus.append({
+    kind: "report.accepted",
+    repoId: repo.id,
+    actorId: decider.value.id,
+    payload: { id: report.id, number: opened.value.number },
+  });
   // On a mirror the label went up with the issue and the origin's answer is
   // what stands. Here the forge keeps the label itself, made on first use.
   if (!isMirror(app, repo)) {
@@ -229,13 +239,6 @@ export async function acceptReport(
         `issue #${opened.value.number} could not take the ${OUTSIDE_LABEL} label: ${labelled.error}`,
       );
   }
-  noteIssue(app.db, report.id, opened.value.number);
-  app.bus.append({
-    kind: "report.accepted",
-    repoId: repo.id,
-    actorId: decider.value.id,
-    payload: { id: report.id, number: opened.value.number },
-  });
   return ok(opened.value);
 }
 
