@@ -10,6 +10,7 @@
  * — it becomes the crew's proposal, or an honest sentence about why not.
  */
 
+import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import {
   relationOf,
   takeUpdates,
@@ -430,6 +431,8 @@ function convergeWords(
         tone: "danger",
         message: "Nobody can open the converge issue here.",
       };
+    case "forbidden":
+      return { tone: "danger", message: DIRECTION_NOTE };
     case "ceiling":
       return {
         tone: "danger",

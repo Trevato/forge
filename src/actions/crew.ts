@@ -30,7 +30,13 @@ import type { Repo } from "../core/repos.ts";
 import { createUser, type CreateUserError, type User } from "../core/users.ts";
 import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { requireReader, requireRepoAdmin, requireUser } from "./access.ts";
+import {
+  requireParticipant,
+  requireReader,
+  requireRepoAdmin,
+  requireUser,
+} from "./access.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
 
 export interface CreateAgentInput {
@@ -248,8 +254,16 @@ export async function tellCrew(
   repo: Repo,
   text: string,
 ): Promise<
-  Result<TellCrewResult, "not_found" | "unauthorized" | TitleError | "body_too_long" | MirrorError>
+  Result<
+    TellCrewResult,
+    "not_found" | "unauthorized" | "forbidden" | TitleError | "body_too_long" | MirrorError
+  >
 > {
+  // A tell is a run: only someone who may direct the crew here may say
+  // one (`crew/direct.ts`), and a refused tell opens nothing.
+  const participant = requireParticipant(app, actor, repo);
+  if (!participant.ok) return participant;
+  if (!mayDirectCrew(app.db, repo, participant.value)) return err("forbidden");
   const trimmed = text.trim();
   const firstLine = trimmed.split(/\n/)[0]!.trim();
   const title =
