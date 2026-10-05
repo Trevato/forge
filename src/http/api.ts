@@ -284,6 +284,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
 import { clientAddress } from "./peer.ts";
+import { manifestFor } from "../actions/here.ts";
 import {
   acceptReport,
   dismissReport,
@@ -3640,6 +3641,24 @@ export function apiRoutes(router: Router<Handler>): void {
     const asked = fleetSelection(ctx.url.searchParams.getAll("repo"));
     if (!asked.ok) return apiError("invalid_selection", 422, asked.error);
     return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
+  });
+
+  // What the caller can do on a forge page, as who they are (#604): the
+  // manifest every page links to. It differs by caller, so it is never cached.
+  router.add("GET", "/api/v1/here", (ctx) => {
+    const path = ctx.url.searchParams.get("path") ?? "/";
+    const found = manifestFor(
+      ctx.app,
+      ctx.auth.user,
+      ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+      ctx.url.origin,
+      path.startsWith("/") ? path : `/${path}`,
+    );
+    if (!found.ok) return notFound();
+    return json(found.value, 200, {
+      "cache-control": "no-store",
+      vary: "cookie, authorization",
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {
