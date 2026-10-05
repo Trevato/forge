@@ -352,6 +352,19 @@ Paid-for lessons from open-platform-ts, designed in structurally:
    reconciles anything a notification missed.
 5. Config reloads fail closed — a bad config degrades to the last good one,
    never a dead process.
+6. No request has the forge read an unbounded body (`src/http/limits.ts`).
+   The listener's ceiling (`maxRequestBodySize`) is 512 MiB, the largest
+   git push, and the runtime enforces it on a declared length only. Every
+   reader counts the stream itself, declared or chunked: 16 MiB for any JSON
+   or form body, 64 KiB for anything a stranger may send (signing up or in,
+   a report, a client registration), 16 MiB for a git fetch's negotiation
+   (1 MiB as sent when compressed, inflated with its own ceiling), 512 MiB
+   for a push's pack. Past a cap the reader stops keeping bytes and drains
+   at most 1 MiB more, so the connection stays framed and the next request
+   on it is read as itself; past that the connection is closed once
+   answered. A body no route read, of no declared length, is treated the
+   same. A cancelled read is never used: it leaves the rest of the body on
+   the connection to be taken for the next request.
 
 ## The diff viewer
 

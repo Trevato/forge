@@ -120,7 +120,10 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    the terminal stays its writers' and crew's. Making the repository public
    changes nobody's way in. A person the app names enters it and its
    previews and gets nothing else: no code of a private repository, no
-   crew, no settings, no owner facts.
+   crew, no settings, no owner facts. What the app says about itself
+   follows the same rule: its environments' state and errors (`envsFor`),
+   its runs and their logs (`mayReadRuns`) and its run and serving events
+   reach only those who may enter it.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
