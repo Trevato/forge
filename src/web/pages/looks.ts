@@ -19,6 +19,8 @@ import {
   looksForEnv,
   type Look,
   type LookKind,
+  lookUrl,
+  lookVersion,
 } from "../../core/looks.ts";
 import type { Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -28,21 +30,6 @@ import { keepLook } from "../../looks/service.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { card, icon, sha, time } from "../ui.ts";
-
-/**
- * Which taking of a picture this is: a picture retaken at the same commit
- * (a thumb from before thumbs were the page, or one that failed) is a new
- * file under the same name, so the name alone cannot be cached for good.
- */
-export const lookVersion = (look: Look): string =>
-  look.createdAt.replace(/\D/g, "");
-
-/** Where a picture is served. Named by page and kind, unless the page is
- * the home page, when it is the kind alone — exactly the URL from before
- * `app.looks` existed — and by which taking of it, so a browser that kept
- * the last one for a year asks for the new one. */
-export const lookUrl = (base: string, look: Look): string =>
-  `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind)}.png?v=${lookVersion(look)}`;
 
 /** The newest picture at one width, when there is one. */
 export const pictured = (

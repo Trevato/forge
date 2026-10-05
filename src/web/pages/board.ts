@@ -61,7 +61,8 @@ import {
   windowWords,
   type FigureWords,
 } from "../studio/words.ts";
-import { lookUrl, thumbLook } from "./looks.ts";
+import { lookUrl } from "../../core/looks.ts";
+import { thumbLook } from "./looks.ts";
 
 // ---- words ----
 

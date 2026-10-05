@@ -32,7 +32,7 @@ import { getIssuesByIds } from "../core/issues.ts";
 import {
   DEFAULT_PAGE,
   looksForApps,
-  lookSlot,
+  lookUrl,
   type Look,
 } from "../core/looks.ts";
 import { keepLook } from "../looks/service.ts";
@@ -190,7 +190,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
       picture:
         thumb === undefined
           ? undefined
-          : `/${repo.ownerName}/${repo.name}/looks/production/${thumb.commitOid}/${lookSlot(DEFAULT_PAGE, "thumb")}.png`,
+          : lookUrl(`/${repo.ownerName}/${repo.name}`, thumb),
       pinned: isPinned,
       signals: scored.s,
       score: scored.score,
