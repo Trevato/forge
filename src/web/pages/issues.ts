@@ -618,6 +618,9 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
+  // A comment posted from the board's "the planner declined" line returns to
+  // the board. A fixed word, never a URL from the form: no open redirect.
+  const back = field(form, "back") === "board" ? "/board" : undefined;
   const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
   const body = field(form, "body");
   if (body.trim() === "")
@@ -637,7 +640,11 @@ export async function issueCommentSubmit(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message: originError(added.error) ?? "That comment could not be posted.",
     });
-  return flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." });
+  return back === undefined
+    ? flashTo(ctx, `${dest}#conversation`, { message: "Comment posted." })
+    : flashTo(ctx, back, {
+        message: `Answered on #${found.issue.number}. The planner plans again.`,
+      });
 }
 
 export { parseNumber };
