@@ -126,6 +126,7 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { askedPage } from "../web/studio/asked_page.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
@@ -444,6 +445,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  // What people asked of the crew, and what became of it (core/asked.ts).
+  router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);

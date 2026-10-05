@@ -320,6 +320,24 @@ page, the dashboard's _Needs you_ link and the phone notifier all read it,
 so the numbers agree. It is server-rendered and every button is a form post,
 so it works without JavaScript.
 
+## What you asked for
+
+`/asked` (`askedPage`, `src/web/studio/asked_page.ts`) is the other
+direction: not what waits on you, but what you and your people asked of the
+crew, and whether it happened. One row per issue a person opened (an
+agent's issue is not an ask; neither is the direction issue) in every
+repository the viewer can write — by default only what has nothing merged
+yet, oldest first, because the path is "open the oldest unmet ask": who
+asked and when, the pull that answers it, when the crew last ran or spoke on
+it, and one word — _Waiting_, _Building_ (a pull is open or the crew
+is running), _Shipped_ (a pull that closes it merged), _Closed_ (closed with
+nothing merged). An ask still waiting or building after three days carries
+_Nothing built_. `?show=flagged|all` changes the view, `?order=newest` flips it,
+`?repo=owner/name` keeps it to one repository. The rows are derived on read
+in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
+the same rows. Each row names its `source` (`issue` today) so thoughts can
+join the same list. It is reached from the feed's header, the board, the asks page and the palette.
+
 ## The home
 
 `/` in the studio: what is on you (issues and pulls a person assigned to
