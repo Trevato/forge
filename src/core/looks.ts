@@ -15,17 +15,38 @@ export const isLookKind = (value: string): value is LookKind =>
   (LOOK_KINDS as readonly string[]).includes(value);
 
 /**
- * The three widths, as a person holds them: a phone, a laptop's window, and
- * a thumbnail — taken at the size a slot actually shows, at desktop's own
- * aspect, rather than a full picture squeezed into a small box.
+ * The three sizes a picture is kept at, as a person holds them: a phone, a
+ * laptop's window, and a thumbnail — the desktop page reduced to half its
+ * width, sharp in a tile on a phone or a desktop at twice the pixels.
  */
 export const LOOK_SIZES: Readonly<
   Record<LookKind, { readonly width: number; readonly height: number }>
 > = {
   phone: { width: 390, height: 844 },
   desktop: { width: 1280, height: 800 },
-  thumb: { width: 200, height: 125 },
+  thumb: { width: 640, height: 400 },
 };
+
+/**
+ * The window each picture is taken in. A thumb is the desktop page, taken
+ * whole and reduced: a browser does not lay a page out in a window the
+ * size of a tile (headless Chromium keeps a minimum width, and pictures a
+ * corner of a wider page).
+ */
+export const LOOK_WINDOWS: Readonly<
+  Record<LookKind, { readonly width: number; readonly height: number }>
+> = {
+  phone: LOOK_SIZES.phone,
+  desktop: LOOK_SIZES.desktop,
+  thumb: LOOK_SIZES.desktop,
+};
+
+/**
+ * The width of a thumb taken in a 200×125 window, before thumbs were the
+ * desktop page reduced: a corner of the page, cropped, taken as the owner.
+ * One at this width is retaken the next time its app is up.
+ */
+export const LEGACY_THUMB_WIDTH = 200;
 
 /** A look with no page recorded — every row before `app.looks` existed. */
 export const DEFAULT_PAGE = "/";
