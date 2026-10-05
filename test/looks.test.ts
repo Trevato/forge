@@ -26,6 +26,7 @@ import type { AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
 import { encodePng } from "../src/design/image/png.ts";
+import { setAppMembers } from "../src/core/app_members.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
@@ -756,8 +757,11 @@ describe("the look", () => {
       }
       const strangers = await (await web("/alice/hello", "forge_mode=studio")).text();
       expect(strangers).not.toContain("/looks/production/");
-      // A signed-in reader may open it: the thumb, taken as nobody — never
-      // the owner's phone or desktop.
+      // A signed-in reader may not enter a private app (#620): no picture.
+      // Named by the app (#752), they may: the thumb, taken as nobody —
+      // never the owner's phone or desktop.
+      expect(await status("thumb", bobCookie)).toBe(404);
+      setAppMembers(app.db, record.id, [bob.id], alice.id);
       expect(await status("desktop", bobCookie)).toBe(404);
       expect(await status("phone", bobCookie)).toBe(404);
       expect(await status("thumb", bobCookie)).toBe(200);

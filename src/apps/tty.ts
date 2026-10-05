@@ -121,8 +121,9 @@ export async function runAppTty(
     return err({ refusal: "not_found", detail: "" });
   if (target.app.access === "private" && user === undefined)
     return err({ refusal: "private", detail: "" });
-  // A private app's terminal is its writers' and crew's, as the app is.
-  if (!canEnterApp(forge.db, repo, target.app.access, user))
+  // A private app's terminal is its writers' and crew's: a person the app
+  // names may enter the app, not its terminal (#752).
+  if (!canEnterApp(forge.db, repo, target.app, user, { named: false }))
     return err({ refusal: "not_found", detail: "" });
   if (host.term === undefined) return err({ refusal: "no_pty", detail: "" });
   const runtime = appsRuntime(forge);

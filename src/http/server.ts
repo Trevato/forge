@@ -202,6 +202,7 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appMembersUpdate,
   appDomainAdd,
   appDomainCheck,
   appDomainDelete,
@@ -908,6 +909,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
   router.add("POST", "/:owner/:name/settings/app/env", appEnvSet);
   router.add(
     "POST",
