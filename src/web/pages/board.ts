@@ -44,7 +44,11 @@ import {
 } from "../../core/repos.ts";
 import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { autonomyStatus, startOfTodayUtc } from "../../crew/autonomy.ts";
+import {
+  autonomyStatus,
+  plannerDeclines,
+  startOfTodayUtc,
+} from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
@@ -190,6 +194,7 @@ export function boardPage(ctx: Ctx): Response {
             : `${repos.length} app${repos.length === 1 ? "" : "s"}`
         }</span
       >
+      <a class="board-asked" href="/asked">What you asked for</a>
       <span class="spacer"></span>
       <span class="board-keys" aria-hidden="true"
         ><kbd>f</kbd> fullscreen <kbd>1</kbd>–<kbd>4</kbd> one region
@@ -204,7 +209,7 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
-    ${forgeStrip(ctx)} ${windowsStrip(ctx)}
+    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -321,6 +326,51 @@ function forgeStrip(ctx: Ctx): Html | null {
               : html`<a class="board-forge-need" href="${href}">${need}</a>`;
           })
     }
+  </div>`;
+}
+
+// ---- the planner, waiting for a person ----
+
+/**
+ * One line per app whose planner declined the direction: its last words
+ * and a box to answer them, which is a comment on the direction issue —
+ * the word `planIfThin` waits for. Only for apps whose owner facts the
+ * viewer may see; nothing at all when no planner is waiting.
+ */
+function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const declines = plannerDeclines(
+    ctx.app.db,
+    scope.repos.filter((r) => scope.ownerFacts.has(r.id)),
+  );
+  if (declines.length === 0) return null;
+  return html`<div
+    class="board-declined"
+    id="declined"
+    data-live="run.*,issue.*"
+    role="status"
+  >
+    ${declines.map((d) => {
+      const base = `/${d.repo.ownerName}/${d.repo.name}`;
+      return html`<form
+        class="board-declined-row"
+        method="post"
+        action="${base}/issues/${d.issue.number}/comments"
+      >
+        <span class="board-declined-says"
+          ><b>${d.repo.name}</b>: the planner declined the direction and waits
+          for you. <q>${d.words}</q></span
+        >
+        <input type="hidden" name="back" value="board" />
+        <input
+          class="input"
+          name="body"
+          required
+          aria-label="Answer the planner on #${d.issue.number}"
+          placeholder="Answer the planner"
+        />
+        <button class="btn" data-variant="primary" type="submit">Answer</button>
+      </form>`;
+    })}
   </div>`;
 }
 
@@ -750,8 +800,15 @@ export const boardCss = /* css */ `
 .board-live[data-state="open"] .board-dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
 .board-live[data-state="reconnecting"] .board-dot { background: var(--attn); }
 .board-clock { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted-fg); min-width: 5ch; text-align: right; }
+.board-asked { font-size: 13px; color: var(--muted-fg); text-decoration: none; }
+.board-asked:hover { color: var(--fg); }
 .board-forge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 28px; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); }
 .board-forge[data-ok="no"] { color: var(--attn); }
+.board-declined { display: flex; flex-direction: column; gap: 8px; padding: 10px var(--pad) 0; }
+.board-declined-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12em, 22em) auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--attn) 45%, var(--border)); border-radius: var(--radius, 10px); }
+.board-declined-says { color: var(--attn); line-height: 1.35; }
+.board-declined-says q { color: var(--fg); }
+.board[data-wall] .board-declined-row .input, .board[data-wall] .board-declined-row .btn { display: none; }
 a.board-forge-need { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .board-grid { flex: 1; display: grid; gap: var(--pad); padding: 12px var(--pad) var(--pad); min-height: 0; }
 .board-region { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -872,6 +929,8 @@ ${widths}
   .board-decision .board-when { grid-column: 2; grid-row: 3; }
   .board-app-nums { flex-wrap: wrap; white-space: normal; gap: 6px 12px; }
   .board-scope { display: none; }
+  .board-declined-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .board-declined-says { grid-column: 1 / -1; }
 }
 /* One region, full bleed. */
 .board[data-focus] .board-region { display: none; }

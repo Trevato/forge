@@ -10,7 +10,7 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import type { EnvState, EnvStatus } from "../apps/runtime.ts";
+import { VERIFYING_NOTE, type EnvState, type EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
 import {
@@ -357,7 +357,9 @@ export function envTone(state: EnvState | undefined): Tone {
  * it came up belongs to `envFacts`, which sits under this and says it once.
  *
  * A serving app is never called down because its tests are red: the words
- * say the tests failed, the tone stays the tone of something that answers.
+ * say the tests failed, and the tone is not green: it answers, but not
+ * verified. While they still run it reads `serving · verifying`, neither
+ * green nor failed.
  */
 export function envPhrase(env: EnvStatus | undefined): {
   word: string;
@@ -372,10 +374,11 @@ export function envPhrase(env: EnvStatus | undefined): {
   // behind it, so it is not plain green either.
   if (env.failedDeploy !== undefined)
     return { word: "live · a newer push failed", tone: "attn" };
-  return {
-    word: env.error === undefined ? "live" : "serving · tests failed",
-    tone: "success",
-  };
+  if (env.error !== undefined)
+    return { word: "serving · tests failed", tone: "attn" };
+  if (env.note === VERIFYING_NOTE)
+    return { word: "serving · verifying", tone: "default" };
+  return { word: "live", tone: "success" };
 }
 
 export interface EnvFactsOptions {

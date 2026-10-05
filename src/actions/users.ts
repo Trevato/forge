@@ -94,7 +94,7 @@ export function updateProfile(
   if (!user.ok) return user;
   const updated = writeProfile(app.db, user.value.id, patch);
   if (!updated.ok) return updated;
-  const fields = (["displayName", "email"] as const).filter(
+  const fields = (["displayName", "email", "commitEmail"] as const).filter(
     (k) => patch[k] !== undefined,
   );
   app.bus.append({

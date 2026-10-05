@@ -153,6 +153,10 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ${costLine}
     <div class="dash">
       <div class="dash-main stack">
+        <div class="bar feed-head">
+          <span class="spacer"></span>
+          <a class="small muted" href="/asked">What you asked for</a>
+        </div>
         ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}
@@ -225,7 +229,9 @@ export function studioDoor(ctx: Ctx): Response {
         l.env === "production" &&
         l.page === DEFAULT_PAGE,
     );
-    const look = pictured(ofApp, "thumb") ?? pictured(ofApp, "desktop");
+    // The thumb alone: it is the one picture taken as a stranger sees the
+    // app. The desktop picture is the owner's view, never a stranger's.
+    const look = pictured(ofApp, "thumb");
     const base = repoBase(repo);
     return html`<a class="app-tile" href="${base}">
       ${look

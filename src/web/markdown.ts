@@ -100,6 +100,7 @@ export function renderMarkdown(source: string): Html {
   let quote = false;
   let fence = false;
   let fenceLang: Language = "plain";
+  let fenceWidth = 3;
   let body: string[] = [];
   let align: string[] | null = null;
   let skip = -1;
@@ -139,7 +140,11 @@ export function renderMarkdown(source: string): Html {
     // The delimiter row was consumed with the header it belongs to.
     if (index === skip) continue;
     if (fence) {
-      if (line.startsWith("```")) {
+      // CommonMark: only a line of backticks at least as long as the
+      // opening, and nothing else, closes it — so a block fenced with more
+      // backticks than its text holds cannot be closed from inside.
+      const closing = /^(`{3,})\s*$/.exec(line);
+      if (closing !== null && (closing[1] ?? "").length >= fenceWidth) {
         out.push(closeFence(body, fenceLang));
         body = [];
         fence = false;
@@ -151,8 +156,9 @@ export function renderMarkdown(source: string): Html {
     if (line.startsWith("```")) {
       closeBlocks();
       fence = true;
+      fenceWidth = /^`+/.exec(line)?.[0].length ?? 3;
       body = [];
-      fenceLang = languageFromName((raws[index] ?? "").slice(3));
+      fenceLang = languageFromName((raws[index] ?? "").slice(fenceWidth));
       continue;
     }
 

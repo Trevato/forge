@@ -211,6 +211,8 @@ export function publicUser(user: User) {
     username: user.username,
     displayName: user.displayName,
     isAdmin: user.isAdmin,
+    // Which address commits carry — the choice, never the address itself.
+    commitEmail: user.commitEmail,
   };
 }
 

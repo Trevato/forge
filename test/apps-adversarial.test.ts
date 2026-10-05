@@ -2106,3 +2106,47 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
     expect(await page.text()).toContain("<h1>ip-forge</h1>");
   }, 90_000);
 });
+
+describe("manifest: service kind", () => {
+  const svc = (app: object) =>
+    parseManifest(
+      JSON.stringify({ app: { kind: "service", run: "x", ...app } }),
+      undefined,
+    );
+  test("a service declares ports, placement and volumes", () => {
+    const r = svc({
+      ports: [25565],
+      placement: "metal",
+      volumes: [{ path: "world", sync: 60 }],
+    });
+    expect(r.ok && r.value.service).toEqual({
+      ports: [{ port: 25565, protocol: "tcp" }],
+      alwaysOn: true,
+      placement: "metal",
+      volumes: [{ path: "world", sync: 60 }],
+    });
+  });
+  test("a web app has no service", () => {
+    const r = parseManifest(JSON.stringify({ app: { run: "x" } }), undefined);
+    expect(r.ok && r.value.service).toBeNull();
+  });
+  test("bad declarations fail closed", () => {
+    for (const bad of [
+      {},
+      { ports: [] },
+      { ports: [80] },
+      { ports: [25565, 25565] },
+      { ports: ["25565"] },
+      { ports: [25565], always_on: false },
+      { ports: [25565], placement: "moon" },
+      { ports: [25565], volumes: [{ path: "../etc" }] },
+      { ports: [25565], volumes: [{ path: "/abs" }] },
+      { ports: [25565], volumes: [{ path: "w", sync: 1 }] },
+    ])
+      expect(svc(bad).ok).toBe(false);
+    expect(
+      parseManifest(JSON.stringify({ app: { run: "x", kind: "vm" } }), undefined)
+        .ok,
+    ).toBe(false);
+  });
+});

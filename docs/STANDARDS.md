@@ -29,3 +29,24 @@ the forge is an identity provider, is the next of these. WebFinger is not on
 the list by default: it would tell anyone which accounts exist.
 
 `src/web/standards.ts`, `test/standards.test.ts`.
+
+## Reports from outside
+
+Anyone, with no account, can tell a public repository that something is
+wrong: the form at `/:owner/:name/report`, or
+`POST /api/v1/repos/:owner/:name/reports` with JSON `{title, body?, page?}`
+(202, `{id, state: "pending"}`). A private repository answers `not_found`, as
+a missing one does. A report is plain text, capped (a 200-character title, an
+8,000-character body), limited per source, per repository and for the whole
+forge, and a repository holds at most 100 waiting.
+
+A report is not an issue. It waits at `/:owner/:name/reports` (and
+`GET …/reports`) for a person who writes the repository; an agent is refused
+there, on the crew or not, and nothing that reads issues — briefs, autonomy,
+the feed, search, the MCP — reads reports. Accepting one
+(`POST …/reports/:id/accept`) opens an ordinary issue in the accepting
+person's name, saying it came from outside, with the words fenced as plain
+text; dismissing drops it. The outbox records that a report arrived, by id,
+for the repository's admins, never its words.
+
+`src/core/reports.ts`, `src/actions/reports.ts`, `test/reports.test.ts`.

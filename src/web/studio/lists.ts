@@ -23,7 +23,7 @@ import {
   repoHeader,
   repoPalette,
 } from "../chrome.ts";
-import { html, type Html } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -43,6 +43,7 @@ import {
   studioRecord,
   tellHref,
 } from "./nouns.ts";
+import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { tellWord } from "./tell.ts";
 import {
   pullWord,
@@ -261,6 +262,7 @@ export async function studioChanges(
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),
   );
+  const answered = tellsAnswered(db, repo.id, fetched);
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
     .filter((r) => inWordFilter(r.info.word, filter));
@@ -280,7 +282,7 @@ export async function studioChanges(
               lead: avatar(pull.authorName),
               title: pull.title,
               meta: html`${pull.authorName} · ${info.note} ·
-              ${time(pull.updatedAt)}`,
+              ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
               trail: wordBadge(info.word),
             }),
           ),

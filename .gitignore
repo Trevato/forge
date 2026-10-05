@@ -14,3 +14,8 @@ typesafe-api-key
 /*.db
 /*.db-wal
 /*.db-shm
+# a forge whose data directory was the checkout leaves these; boot now
+# refuses that, and the gate refuses a tracked key or database (#622)
+/forge.db*
+/ssh/
+/*.sock

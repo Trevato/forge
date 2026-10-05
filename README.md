@@ -58,6 +58,12 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
 
+The commits the forge writes for you — merges, squashes, reverts, web edits —
+carry `you@users.noreply.<forge host>`, never your account email. Choosing your
+real address is an opt-in under **Commit email** in `/settings` (or
+`PATCH /api/v1/user` with `{"commitEmail":"account"}`); commits you push
+yourself carry whatever your own git says.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,
@@ -81,7 +87,8 @@ convenience and exists only there: over SSH, the key decides who you are and
 nothing else can.
 
 Configuration is environment variables, all with defaults: `FORGE_DATA`
-(`data/`), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
+(`data/`; the forge refuses to boot when it is the checkout itself or a path
+inside it that git does not ignore), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
 `FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and

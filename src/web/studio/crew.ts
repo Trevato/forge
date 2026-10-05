@@ -1,19 +1,27 @@
 /**
- * The studio's own settings: who is on the crew, and how far it may go on
- * its own — the two decisions that belong to the studio's story, told from
- * one page reached from its head. Everything here posts to the very same
- * routes dev's Crew and Autonomy pages already use (`crewAdd`, `crewRemove`,
- * `crewRoleUpdate`, `autonomySettingsUpdate`) — same same-origin check, same
- * authorization, same errors. This module only draws the page; it never
- * decides anything a mutation already decides.
+ * The studio's own settings: what the app says it is, who is on the crew,
+ * and how far it may go on its own — the decisions that belong to the
+ * studio's story, told from one page reached from its head. Everything here
+ * posts to the very same routes dev's General, Crew and Autonomy pages
+ * already use (`settingsUpdate`, `crewAdd`, `crewRemove`, `crewRoleUpdate`,
+ * `autonomySettingsUpdate`) — same same-origin check, same authorization,
+ * same errors. This module only draws the page; it never decides anything a
+ * mutation already decides.
+ *
+ * The description and visibility form posts the same fields dev's General
+ * page always sends (`protectDefault`/`requireReview`/`requireChecks`) as
+ * hidden inputs carrying the repo's current values, so a save from here
+ * cannot silently turn off branch protection it never showed — the same
+ * trick `autonomyCard` already plays with `direction`.
  *
  * Crew and autonomy are the owner's own book-keeping, same as the app page's
  * rail (`canSeeOwnerFacts`): a viewer who cannot write here is told that,
- * not shown the roster or the day's spend. The forms that change either are
- * drawn only for who the actions themselves would let post — an admin —
- * so nothing here offers a control that would just come back refused.
- * Everything else about the repository — visibility, branches, labels,
- * webhooks, deletion — stays dev's, one link away.
+ * not shown the roster or the day's spend. The forms that change any of
+ * this are drawn only for who the actions themselves would let post — an
+ * admin — so nothing here offers a control that would just come back
+ * refused. Everything else about the repository — branches, labels,
+ * webhooks, the app's own environment, deletion or disabling — stays
+ * dev's, one link away.
  */
 
 import { listAllAgents } from "../../actions/crew.ts";
@@ -44,6 +52,54 @@ const ROLE_WORD: Record<CrewRole, string> = {
   reviewer: "reviews",
   planner: "plans",
 };
+
+/**
+ * The sentence and the ceiling the New app page asked for, editable again:
+ * posts straight to `settingsUpdate` (`POST /:owner/:name/settings`, the
+ * same one dev's General page uses), with hidden inputs carrying the branch
+ * protection fields that form always sends so this save can't reset them.
+ */
+function aboutCard(repo: Repo, base: string, admin: boolean): Html | null {
+  if (!admin) return null;
+  return card(
+    html`<form method="post" action="${base}/settings">
+      ${field({
+        label: "Description",
+        name: "description",
+        value: repo.description,
+        hint: "One line, shown wherever this app is listed.",
+      })}
+      ${selectField({
+        label: "Visibility",
+        name: "visibility",
+        hint: "A private app and one that does not exist look identical to anyone else.",
+        options: [
+          {
+            value: "private",
+            label: "Private",
+            selected: repo.visibility === "private",
+          },
+          {
+            value: "public",
+            label: "Public",
+            selected: repo.visibility === "public",
+          },
+        ],
+      })}
+      ${repo.protectDefault
+        ? html`<input type="hidden" name="protect" value="on" />`
+        : null}
+      ${repo.requireReview
+        ? html`<input type="hidden" name="requireReview" value="on" />`
+        : null}
+      ${repo.requireChecks
+        ? html`<input type="hidden" name="requireChecks" value="on" />`
+        : null}
+      <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
+    </form>`,
+    { head: html`${icon("pencil")}<h2>About</h2>` },
+  );
+}
 
 function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
   const db = ctx.app.db;
@@ -269,6 +325,7 @@ export function studioCrewSettings(
       </div>`
     : html`${repoHeader(ctx, repo, "settings", { compact: true })}
       <div class="stack">
+        ${aboutCard(repo, base, admin)}
         ${crewCard(ctx, repo, base, admin)}
         ${autonomyCard(ctx, repo, base, admin)}
         <p class="muted small">

@@ -10,6 +10,7 @@ import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
+import { forgeHost } from "../core/commit_identity.ts";
 import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
@@ -125,6 +126,7 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { askedPage } from "../web/studio/asked_page.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
@@ -282,7 +284,15 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
-import { notePeer, oauthRoutes } from "./oauth.ts";
+import { oauthRoutes } from "./oauth.ts";
+import { notePeer } from "./peer.ts";
+import {
+  reportAcceptSubmit,
+  reportDismissSubmit,
+  reportPage,
+  reportSubmit,
+  reportsPage,
+} from "../web/pages/reports.ts";
 import {
   cookieValue,
   publicUrl,
@@ -324,11 +334,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
-    const host =
-      app.config.url !== undefined
-        ? new URL(app.config.url).hostname
-        : (app.config.host ?? "localhost");
-    const user = await ensureEdgeUser(app.db, login, host);
+    const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
     if (user) return { user, scope: "admin", via: "edge" };
   }
 
@@ -439,6 +445,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  // What people asked of the crew, and what became of it (core/asked.ts).
+  router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
@@ -684,6 +692,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
+  router.add("GET", "/:owner/:name/report", reportPage);
+  router.add("POST", "/:owner/:name/report", reportSubmit);
+  router.add("GET", "/:owner/:name/reports", reportsPage);
+  router.add("POST", "/:owner/:name/reports/:id/accept", reportAcceptSubmit);
+  router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", issuePage);

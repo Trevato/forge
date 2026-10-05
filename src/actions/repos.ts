@@ -22,6 +22,7 @@ import {
   type Repo,
   type RepoSettings,
 } from "../core/repos.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import type { User } from "../core/users.ts";
 import {
   createWebhook as insertWebhook,
@@ -344,10 +345,7 @@ export async function commitToBranch(
       ...(branch !== startPoint ? { startPoint } : {}),
       message: input.message || "Update files",
       files: input.files,
-      author: {
-        name: writer.value.displayName || writer.value.username,
-        email: writer.value.email,
-      },
+      author: commitIdentity(app.config, writer.value),
     },
   );
   if (!committed.ok) return committed;

@@ -32,7 +32,11 @@ import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
-import { setDirectionIssue, type Repo } from "../src/core/repos.ts";
+import {
+  getRepoById,
+  setDirectionIssue,
+  type Repo,
+} from "../src/core/repos.ts";
 import {
   agentRunTotals,
   claimRun,
@@ -1334,7 +1338,7 @@ describe("the studio", () => {
     // A look for each app's production, so the picture route has something
     // real to answer for and refuse.
     const dropLook = (appId: string, env: "production", commit: string) => {
-      const rel = join("looks", appId, `${env}-desktop.png`);
+      const rel = join("looks", appId, `${env}-thumb.png`);
       const abs = join(app.config.dataDir, rel);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, PNG);
@@ -1342,7 +1346,7 @@ describe("the studio", () => {
         appId,
         env,
         commitOid: commit,
-        kind: "desktop",
+        kind: "thumb",
         path: rel,
       });
     };
@@ -1359,7 +1363,7 @@ describe("the studio", () => {
     expect(anon).toContain("beacon");
     expect(anon).toContain("a lighthouse in the fog");
     expect(anon).toContain(
-      `/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      `/looks/production/${seededPublic.value.commitOid}/thumb.png`,
     );
     expect(anon).toContain('href="/signin"');
     expect(anon).toContain('href="/signup"');
@@ -1368,13 +1372,13 @@ describe("the studio", () => {
 
     // The private app's picture 404s for a stranger — asserted, not assumed.
     const privateLook = await fetch(
-      `${base}/alice/notes/looks/production/${"0".repeat(40)}/desktop.png`,
+      `${base}/alice/notes/looks/production/${"0".repeat(40)}/thumb.png`,
       { headers: { cookie: "forge_mode=studio" } },
     );
     expect(privateLook.status).toBe(404);
     // The public one's does not.
     const publicLook = await fetch(
-      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/thumb.png`,
       { headers: { cookie: "forge_mode=studio" } },
     );
     expect(publicLook.status).toBe(200);
@@ -1448,11 +1452,11 @@ describe("the studio", () => {
       );
     expect(tile).toBeDefined();
     expect(tile).toContain(`/looks/production/${commit}/thumb.png`);
-    expect(tile).toContain('width="200"');
-    expect(tile).toContain('height="125"');
+    expect(tile).toContain('width="640"');
+    expect(tile).toContain('height="400"');
   });
 
-  test("the front door's tile still renders at desktop's size for a commit from before thumbs existed (#287)", async () => {
+  test("the front door never shows a stranger the owner's desktop picture: no thumb, no picture", async () => {
     const created = await createRepo(app, alice, {
       name: "oldtile",
       visibility: "public",
@@ -1503,10 +1507,10 @@ describe("the studio", () => {
           `/${created.value.ownerName}/${created.value.name}/looks/`,
         ),
       );
-    expect(tile).toBeDefined();
-    expect(tile).toContain(`/looks/production/${commit}/desktop.png`);
-    expect(tile).toContain('width="1280"');
-    expect(tile).toContain('height="800"');
+    // The desktop picture is taken as the owner; the door's tiles are for
+    // strangers, so without a thumb the tile has no picture at all.
+    expect(tile).toBeUndefined();
+    expect(anon).not.toContain(`/looks/production/${commit}/desktop.png`);
   });
 
   test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
@@ -1705,6 +1709,58 @@ describe("the studio", () => {
       servers2.stop();
       app2.close();
       await rm(dataDir2, { recursive: true, force: true });
+    }
+  });
+  test("a change on <crew>/<number>-<slug> links the tell it answers, and says so when that tell is closed; other branches show no tell", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "Answered tell",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const n = told.value.number;
+    const open = async (branch: string, title: string) => {
+      const c = await commitToBranch(app, alice, repo, {
+        branch,
+        base: "main",
+        message: title,
+        files: [{ path: `${branch.replace(/\//g, "_")}.md`, content: "x\n" }],
+      });
+      if (!c.ok) throw new Error(JSON.stringify(c.error));
+      const o = await openPull(app, alice, repo, {
+        title,
+        body: "",
+        baseBranch: "main",
+        headBranch: branch,
+      });
+      if (!o.ok) throw new Error(String(o.error));
+      return o.value;
+    };
+    const answering = await open(`scout/${n}-answer-it`, "Answers the tell");
+    const stray = await open("scout/99999-nothing", "Answers nothing");
+    const own = await open("revert-22", "A person's branch");
+
+    const list = await (await get("/alice/notes/changes")).text();
+    const rowOf = (title: string) => {
+      const at = list.indexOf(title);
+      return list.slice(at, list.indexOf("</a>", at + 400) + 4);
+    };
+    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(rowOf("Answers the tell")).not.toContain("already done");
+    expect(rowOf("Answers nothing")).not.toContain("for tell");
+    expect(rowOf("A person's branch")).not.toContain("for tell");
+
+    setIssueState(app, alice, repo, told.value, "closed");
+    const closedList = await (await get("/alice/notes/changes")).text();
+    expect(closedList).toContain("its tell is already done");
+    const page = await (
+      await get(`/alice/notes/changes/${answering.number}`)
+    ).text();
+    expect(page).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(page).toContain("its tell is already done");
+    for (const p of [stray, own]) {
+      const res = await get(`/alice/notes/changes/${p.number}`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).not.toContain("for tell");
     }
   });
 });
@@ -3219,6 +3275,34 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(red).toContain(runLink);
     expect(red).toContain("serving · tests failed: 2 failing");
     expect(red).toContain("live 3.4s after the push");
+    // One badge, not green, and the row still links to the preview.
+    expect(red).toMatch(/data-variant="attn"[^]*?serving · tests failed<\/span/);
+    expect(red).not.toContain('data-variant="success"');
+    expect(red).not.toContain(">live<");
+
+    putEnv(env, {
+      deploying: {
+        run: { id: deployRun.id, commitOid: pull.headOid },
+        abort: new AbortController(),
+      },
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        manifest: { tty: null },
+      },
+    });
+    const verifying = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(verifying).toContain(open);
+    expect(verifying).toContain("serving · verifying</span");
+    expect(verifying).not.toContain('data-variant="success"');
+    expect(verifying).not.toContain('data-variant="attn"');
 
     putEnv(env, {
       live: {
@@ -8236,5 +8320,180 @@ describe("the studio's empty lists", () => {
     expect(pulls).toContain("No change is look yet.");
     const runs = await get("/alice/busy/runs?word=stopped");
     expect(runs).toContain("No run is stopped yet.");
+  });
+});
+
+/**
+ * Issue #230: the studio's settings page can change the two facts it
+ * prints most about an app — description and visibility — by posting to
+ * the very same `/:owner/:name/settings` route dev's General page uses.
+ */
+describe("the studio can change what an app says it is (#230)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let ownerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie?: string) =>
+    fetch(`${base}${path}`, {
+      headers: {
+        cookie:
+          cookie === undefined
+            ? "forge_mode=studio"
+            : `${cookie}; forge_mode=studio`,
+      },
+      redirect: "manual",
+    });
+
+  const post = (path: string, body: Record<string, string>, cookie: string) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        cookie: `${cookie}; forge_mode=studio`,
+        origin: base,
+      },
+      body: new URLSearchParams(body),
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-about-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const alice = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!alice.ok) throw new Error(alice.error);
+    const carol = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    ownerCookie = await signIn("alice");
+    readerCookie = await signIn("carol");
+    const made = await createRepo(app, alice.value, {
+      name: "lamp",
+      visibility: "public",
+      description: "lights the hallway",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "lamp\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    // Branch protection is on and unexposed by the studio's form — proof
+    // that saving from here does not silently turn it off.
+    const protectedOn = await updateRepoSettings(app, alice.value, repo, {
+      protectDefault: true,
+      requireReview: true,
+      requireChecks: true,
+    });
+    if (!protectedOn.ok) throw new Error(String(protectedOn.error));
+    repo = protectedOn.value;
+    const enabled = await enableApp(app, alice.value, repo, { slug: "lamp" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a writer changes the description and visibility from the studio, and the app's page and the shelf row show it", async () => {
+    // The rendered form carries the branch-protection fields it never shows
+    // as hidden inputs, so a real submit of it — exactly what's posted here
+    // — cannot silently turn them off.
+    const before = await (
+      await get("/alice/lamp/settings", ownerCookie)
+    ).text();
+    expect(before).toContain('<input type="hidden" name="protect" value="on"');
+    expect(before).toContain(
+      '<input type="hidden" name="requireReview" value="on"',
+    );
+    expect(before).toContain(
+      '<input type="hidden" name="requireChecks" value="on"',
+    );
+
+    const saved = await post(
+      "/alice/lamp/settings",
+      {
+        description: "a lamp that stays lit all night",
+        visibility: "private",
+        protect: "on",
+        requireReview: "on",
+        requireChecks: "on",
+      },
+      ownerCookie,
+    );
+    expect(saved.status).toBe(303);
+    expect(saved.headers.get("location")).toBe("/alice/lamp/settings");
+
+    const ownPage = await (
+      await get("/alice/lamp?mode=dev", ownerCookie)
+    ).text();
+    expect(ownPage).toContain("a lamp that stays lit all night");
+    expect(ownPage).toContain("Private");
+
+    // `/app` has been a redirect to the studio app page since the dev app
+    // page was folded into it (#433): the head to read is that page's.
+    const moved = await get("/alice/lamp/app", ownerCookie);
+    expect(moved.status).toBe(302);
+    expect(moved.headers.get("location")).toBe("/alice/lamp");
+    const appHead = await (await get("/alice/lamp", ownerCookie)).text();
+    expect(appHead).toContain("Private");
+
+    const shelf = await (await get("/", ownerCookie)).text();
+    expect(shelf).toContain("a lamp that stays lit all night");
+
+    const list = await (await get("/apps", ownerCookie)).text();
+    expect(list).toContain("a lamp that stays lit all night");
+
+    // Branch protection, never shown on this form, is exactly as it was.
+    const dbRepo = getRepoById(app.db, repo.id);
+    expect(dbRepo?.protectDefault).toBe(true);
+    expect(dbRepo?.requireReview).toBe(true);
+    expect(dbRepo?.requireChecks).toBe(true);
+  });
+
+  test("a reader gets neither control: no form on the settings page, and the post is refused", async () => {
+    const settings = await (
+      await get("/alice/lamp/settings", readerCookie)
+    ).text();
+    expect(settings).not.toContain('action="/alice/lamp/settings"');
+    expect(settings).not.toContain("<textarea");
+
+    const refused = await post(
+      "/alice/lamp/settings",
+      { description: "carol was here", visibility: "public" },
+      readerCookie,
+    );
+    expect(refused.status).toBe(404);
+    const dbRepo = getRepoById(app.db, repo.id);
+    expect(dbRepo?.description).not.toBe("carol was here");
   });
 });

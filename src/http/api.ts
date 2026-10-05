@@ -8,6 +8,13 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import {
+  askedIn,
+  askedJson,
+  askedRepos,
+  isAskedOrder,
+  isAskedShow,
+} from "../core/asked.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -268,6 +275,17 @@ import {
   unauthorized,
 } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { clientAddress } from "./peer.ts";
+import {
+  acceptReport,
+  dismissReport,
+  fileReport,
+  waitingReports,
+} from "../actions/reports.ts";
+import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+
+/** What a refused report is told: the shape that would have been taken. */
+const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
 
 // ---- shapes ----
 
@@ -925,11 +943,20 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
     const input = await body(ctx.request);
+    if (
+      input.commitEmail !== undefined &&
+      input.commitEmail !== "noreply" &&
+      input.commitEmail !== "account"
+    )
+      return json({ error: "invalid_commit_email" }, 422);
     const updated = updateProfile(ctx.app, ctx.auth.user, {
       ...(typeof input.displayName === "string"
         ? { displayName: input.displayName }
         : {}),
       ...(typeof input.email === "string" ? { email: input.email } : {}),
+      ...(input.commitEmail === "noreply" || input.commitEmail === "account"
+        ? { commitEmail: input.commitEmail }
+        : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
     return json(publicUser(updated.value));
@@ -1741,6 +1768,107 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(withLabels(ctx, created.value), 201);
   });
 
+  // ── reports from outside — no account, a person decides ──────────────
+
+  router.add("POST", "/api/v1/repos/:owner/:name/reports", async (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const declared = Number(ctx.request.headers.get("content-length") ?? 0);
+    if (declared > REQUEST_MAX)
+      return apiError("too_large", 413, REPORT_HINT);
+    const input = await body(ctx.request);
+    const filed = fileReport(
+      ctx.app,
+      repo,
+      { title: str(input.title), body: str(input.body), page: str(input.page) },
+      clientAddress(ctx.request),
+    );
+    if (!filed.ok) {
+      const refusal = filed.error;
+      if (refusal.error === "not_found") return notFound();
+      if (refusal.error === "rate_limited")
+        return json(
+          { error: "rate_limited", message: "too many reports; wait and send again" },
+          429,
+          { "retry-after": String(refusal.retryAfter) },
+        );
+      if (refusal.error === "queue_full")
+        return apiError(
+          "queue_full",
+          429,
+          "this repository has many reports waiting; try again later",
+        );
+      return apiError(refusal.error, 422, REPORT_HINT);
+    }
+    return json(
+      {
+        id: filed.value.id,
+        state: filed.value.state,
+        message:
+          "Received. A person who maintains this repository will read it; nothing acts on it before they do.",
+      },
+      202,
+    );
+  });
+
+  // Reading the words is a writer's act, so a read-only token — the one an
+  // app process holds for its owner — cannot fetch them.
+  router.add("GET", "/api/v1/repos/:owner/:name/reports", (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
+    if (!waiting.ok) return respondAccess(waiting.error, 403);
+    return json({
+      items: waiting.value.map((r) => ({ ...r, from: "outside" })),
+    });
+  });
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/reports/:id/accept",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const accepted = await acceptReport(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.id ?? "",
+      );
+      if (!accepted.ok)
+        return accepted.error === "decided"
+          ? apiError("decided", 409, "this report was already decided")
+          : originAware(accepted.error);
+      return json(withLabels(ctx, accepted.value), 201);
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/reports/:id/dismiss",
+    (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const dismissed = dismissReport(
+        ctx.app,
+        ctx.auth.user,
+        repo,
+        ctx.params.id ?? "",
+      );
+      if (!dismissed.ok)
+        return dismissed.error === "decided"
+          ? apiError("decided", 409, "this report was already decided")
+          : respondAccess(dismissed.error, 403);
+      return json({ id: ctx.params.id, state: "dismissed" });
+    },
+  );
+
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
     const found = loadIssue(ctx);
     if ("error" in found) return found.error;
@@ -1879,6 +2007,25 @@ export function apiRoutes(router: Router<Handler>): void {
         ),
       ),
     );
+  });
+  // What people asked of the crew in the repositories the caller can write —
+  // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
+  router.add("GET", "/api/v1/asked", (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const raw = ctx.url.searchParams.get("show");
+    if (raw !== null && !isAskedShow(raw))
+      return apiError("invalid_show", 422, "show is all, unshipped or flagged");
+    const order = ctx.url.searchParams.get("order");
+    if (order !== null && !isAskedOrder(order))
+      return apiError("invalid_order", 422, "order is oldest or newest");
+    const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
+    return json({
+      asked: askedIn(ctx.app.db, repos, {
+        show: raw ?? "unshipped",
+        order: order ?? "oldest",
+      }).map(askedJson),
+    });
   });
   // Every repository the caller can see, one entry each: the global map.
   router.add("GET", "/api/v1/map", (ctx) =>

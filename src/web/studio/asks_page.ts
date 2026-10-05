@@ -25,7 +25,9 @@ function decisionCard(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const title = d.pull
     ? html`<a href="${changeHref(base, d.pull.number)}">${d.pull.title}</a>`
-    : html`<a href="${base}/settings/autonomy">Paused</a>`;
+    : d.issue
+      ? html`<a href="${base}/issues/${d.issue.number}">${d.issue.title}</a>`
+      : html`<a href="${base}/settings/autonomy">Paused</a>`;
   return card(
     html`<p>${d.says}</p>
       <div class="bar mt">${decisionActions(ctx, d)}</div>`,
@@ -57,6 +59,7 @@ export function asksPage(ctx: Ctx): Response {
   const needs = forgeNeedsFor(ctx, user);
   const count = decisions.length + needs.length;
   const body = html`<h1 id="asks-sentence">${askSentence(count)}</h1>
+    <p class="muted small"><a href="/asked">What you asked for</a>, and what became of it.</p>
     <div class="stack">
       ${decisions.map((d) => decisionCard(ctx, d))}
       ${needs.map(forgeCard)}

@@ -11,6 +11,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { parseService, type ServiceSpec } from "./service.ts";
 
 export interface AppManifest {
   /** The command that serves on `$PORT`. Run through `sh -c`, `exec`-ed. */
@@ -35,6 +36,12 @@ export interface AppManifest {
    * before this field existed.
    */
   readonly looks: readonly string[];
+  /**
+   * Set when `app.kind` is `"service"`: declared TCP ports, always on,
+   * a placement preference and synced volumes. `null` for an ordinary
+   * HTTP app.
+   */
+  readonly service: ServiceSpec | null;
 }
 
 export type ManifestError =
@@ -75,6 +82,7 @@ export function parseManifest(
       ready: READY_DEFAULT,
       tty: null,
       looks: ["/"],
+      service: null,
     });
   }
 
@@ -117,6 +125,15 @@ export function parseManifest(
     );
   const looks = looksField(app);
   if (!looks.ok) return looks;
+  const kind = app["kind"];
+  if (kind !== undefined && kind !== "web" && kind !== "service")
+    return invalid('forge.json: app.kind must be "web" or "service"');
+  let service: ServiceSpec | null = null;
+  if (kind === "service") {
+    const spec = parseService(app);
+    if (!spec.ok) return err({ kind: "invalid", message: spec.error.message });
+    service = spec.value;
+  }
 
   return ok({
     run: runCommand,
@@ -133,6 +150,7 @@ export function parseManifest(
     ready: ready ?? READY_DEFAULT,
     tty: tty.value || null,
     looks: looks.value,
+    service,
   });
 }
 
