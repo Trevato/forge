@@ -1,6 +1,6 @@
 /**
  * What a follow-up run is about: the comments, verdicts and line comments
- * since the agent's last run on the task that are not its own. The brief
+ * since the agent's last run on the task began that are not its own. The brief
  * quotes exactly these, and a feedback run with none is not started — the
  * agent would only read its own reply as the newest word and decline, at
  * full price. One rule, asked by the brief and by the dispatcher.
@@ -12,7 +12,6 @@ import { getIssue, listComments, type Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { listReviewComments, listReviews } from "../core/reviews.ts";
-import { lastAgentRun } from "../core/runs.ts";
 import { issueOfBranch } from "./brief.ts";
 
 interface Said {
@@ -50,9 +49,12 @@ export function newsSince<
 }
 
 /**
- * Since when a run of `agent` on `issue` has something new to read: when
- * its last run on the task ended — the task spans the issue and the pull
- * opened for it — or the issue's start.
+ * Since when a run of `agent` on `issue` has something new to read: since
+ * its last run on the task began — the task spans the issue and the pull
+ * opened for it — because that is when its brief was read. Anything said
+ * after, steered into that run or not, is news again; a word said while a
+ * run could not be steered is never lost. With no run begun yet, all of it
+ * is news.
  */
 export function feedbackSince(
   db: Database,
@@ -68,12 +70,31 @@ export function feedbackSince(
       : (issueOfBranch(agent, pull.headBranch) ?? issue.number);
   const taskIssue =
     pull === undefined ? undefined : getIssue(db, repo.id, taskNumber);
-  const previous =
-    lastAgentRun(db, issue.id, agent.user.id) ??
+  return (
+    lastBegun(db, issue.id, agent.user.id) ??
     (taskIssue === undefined
       ? undefined
-      : lastAgentRun(db, taskIssue.id, agent.user.id));
-  return previous?.finishedAt ?? issue.createdAt;
+      : lastBegun(db, taskIssue.id, agent.user.id)) ??
+    ""
+  );
+}
+
+/** When the agent's newest ended run on an issue that actually began, began — never the run asking. */
+function lastBegun(
+  db: Database,
+  issueId: string,
+  agentId: string,
+): string | undefined {
+  return (
+    db
+      .query<{ at: string }, [string, string]>(
+        `SELECT started_at AS at FROM run WHERE kind = 'agent' AND issue_id = ?1
+           AND actor_id = ?2 AND started_at IS NOT NULL
+           AND state IN ('ok','failed','cancelled')
+         ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(issueId, agentId)?.at ?? undefined
+  );
 }
 
 /** Whether a feedback run of `agent` on `issue` would find nothing new to act on. */

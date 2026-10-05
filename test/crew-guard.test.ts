@@ -37,6 +37,7 @@ import {
   SKIP_SUMMARY,
 } from "../src/crew/guard.ts";
 import { executeAgentRun } from "../src/crew/runner.ts";
+import { feedbackSince, newsSince } from "../src/crew/news.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -152,6 +153,37 @@ describe("a follow-up with nothing new is not started", () => {
     ok(addComment(app, alice, repo, issue, "Now the gate."));
     const queued = queueAgentRun(app, fresh(), issue, bot, "feedback", alice.id);
     expect(queued?.state).toBe("queued");
+  });
+
+  test("a word said while a run worked, and could not be steered into it, is heard by the next", async () => {
+    const issue = held("Paint the porch");
+    // The run begins and reads its brief…
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.user.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    await Bun.sleep(5);
+    // …a person speaks while it works, and the session cannot hear it…
+    ok(addComment(app, alice, repo, issue, "Blue, not green."));
+    await Bun.sleep(5);
+    // …and it ends with its own reply after the word.
+    finishRun(app.db, run.id, { state: "ok", summary: "answered", costUsd: 0.5 });
+    ok(addComment(app, bot.user, repo, issue, "Painted it green."));
+    const queued = queueAgentRun(app, fresh(), issue, bot, "feedback", alice.id);
+    expect(queued?.state).toBe("queued");
+    // The brief the next run reads quotes it.
+    const news = newsSince({
+      comments: listComments(app.db, issue.id, { kind: "comment" }),
+      reviews: [],
+      reviewComments: [],
+      since: feedbackSince(app.db, fresh(), getIssueById(app.db, issue.id)!, bot),
+      agentName: "bot",
+    });
+    expect(news.comments.map((c) => c.body)).toEqual(["Blue, not green."]);
   });
 
   test("a follow-up queued behind a run that answered everything ends as it starts, at no cost", async () => {

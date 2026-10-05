@@ -242,7 +242,12 @@ export async function executeAgentRun(
 ): Promise<Pause | undefined> {
   // A follow-up queued behind a run that has since answered everything:
   // nothing new to act on, so nothing starts (`guard.ts`).
-  if (run.reason === "feedback" && run.attempt === 0 && skipsQueued(app, run)) {
+  if (
+    run.reason === "feedback" &&
+    run.attempt === 0 &&
+    run.startedAt === null &&
+    skipsQueued(app, run)
+  ) {
     const skipped = cancelRun(app.db, run.id, SKIP_SUMMARY);
     if (skipped) announceRun(app, skipped);
     return undefined;
