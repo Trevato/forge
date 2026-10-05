@@ -18,9 +18,11 @@
  *   explicit admin token) — exactly the floor `/settings/origins` sits on. An
  *   origin somebody else connected is `not_found`, like everything else you
  *   cannot see.
- * - **The templates are the local ones.** Every renderer here is imported
- *   from the page that serves the same screen for a repository we hold. A
- *   divergence between the two would be a bug you could see.
+ * - **The templates are the local ones** wherever a repository we hold has
+ *   the same screen: the code, the commits, the branches. The issue and pull
+ *   lists are the exception, kept below: a list here has no crew, no runs
+ *   and no production to put a word to, so it reads the origin's own state,
+ *   labels and authors instead.
  */
 
 import { mirrorJobFor, startMirrorJob } from "../../actions/origins.ts";
@@ -29,7 +31,13 @@ import { getOriginFor } from "../../core/origins.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { MirrorJob, MirrorStage } from "../../origins/jobs.ts";
-import type { CommentView, IssueDetail } from "../../view/source.ts";
+import type { IssueState, Label } from "../../core/issues.ts";
+import type {
+  CommentView,
+  IssueDetail,
+  IssueQuery,
+  IssueSummary,
+} from "../../view/source.ts";
 import { sourceFor } from "../../view/source.ts";
 import { notFoundPage, scopeHeader } from "../chrome.ts";
 import { commentCard } from "../comments.ts";
@@ -55,10 +63,14 @@ import {
   labelChip,
   labelCss,
   listCard,
+  originTag,
   pager,
+  seg,
   stateBadge,
   time,
   tlComment,
+  userTag,
+  type IconName,
 } from "../ui.ts";
 import { browseCommit, browseCommits } from "./commits.ts";
 import { blankDraft, editorPage, runContribute } from "./edit.ts";
@@ -79,16 +91,228 @@ import {
   renderCode,
   rawResponse,
 } from "./repo.ts";
-import {
-  filterBar,
-  readQuery,
-  scopeGlyph,
-  sourceQuery,
-  summaryRow,
-  withFacet,
-} from "./issues.ts";
 
 const PER_PAGE = 25;
+
+// ---- the list's facets and rows ----
+
+interface ListQuery {
+  state: IssueState | "all";
+  label: string;
+  author: string;
+  q: string;
+  cursor: number | undefined;
+}
+
+function readQuery(ctx: Ctx): ListQuery {
+  const params = ctx.url.searchParams;
+  const raw = params.get("state");
+  const cursor = Number(params.get("cursor"));
+  return {
+    state: raw === "closed" ? "closed" : raw === "all" ? "all" : "open",
+    label: params.get("label") ?? "",
+    author: params.get("author") ?? "",
+    q: params.get("q") ?? "",
+    cursor: Number.isSafeInteger(cursor) && cursor > 0 ? cursor : undefined,
+  };
+}
+
+/** Rebuild the current URL with one facet changed — filters compose instead
+ * of replacing each other. */
+function withFacet(
+  base: string,
+  query: ListQuery,
+  patch: Partial<Record<"state" | "label" | "author" | "q", string>>,
+  cursor?: number,
+): string {
+  const params = new URLSearchParams();
+  const state = patch.state ?? query.state;
+  if (state !== "open") params.set("state", state);
+  const label = patch.label ?? query.label;
+  if (label !== "") params.set("label", label);
+  const author = patch.author ?? query.author;
+  if (author !== "") params.set("author", author);
+  const q = patch.q ?? query.q;
+  if (q !== "") params.set("q", q);
+  if (cursor !== undefined) params.set("cursor", String(cursor));
+  const text = params.toString();
+  return text === "" ? base : `${base}?${text}`;
+}
+
+function filterBar(
+  base: string,
+  query: ListQuery,
+  labels: Label[],
+  counts: { open: number; closed: number } | undefined,
+): Html {
+  return html`<div class="filters">
+      ${seg([
+        {
+          label: "Open",
+          href: withFacet(base, query, { state: "open" }),
+          current: query.state === "open",
+          ...(counts === undefined ? {} : { count: counts.open }),
+        },
+        {
+          label: "Closed",
+          href: withFacet(base, query, { state: "closed" }),
+          current: query.state === "closed",
+          ...(counts === undefined ? {} : { count: counts.closed }),
+        },
+        {
+          label: "All",
+          href: withFacet(base, query, { state: "all" }),
+          current: query.state === "all",
+        },
+      ])}
+      <form method="get" action="${base}" role="search">
+        ${when(query.state !== "open", () => hidden("state", query.state))}
+        ${when(query.label !== "", () => hidden("label", query.label))}
+        ${when(query.author !== "", () => hidden("author", query.author))}
+        <input
+          class="input search"
+          type="search"
+          name="q"
+          value="${query.q}"
+          placeholder="Search titles"
+          aria-label="Search titles"
+        />
+        ${btn("Search", { size: "sm", variant: "outline" })}
+      </form>
+      <span class="spacer"></span>
+      ${when(query.author !== "" || query.label !== "" || query.q !== "", () =>
+        btn("Clear filters", {
+          href: withFacet(base, query, { label: "", author: "", q: "" }),
+          size: "sm",
+          variant: "ghost",
+          icon: "x",
+        }),
+      )}
+    </div>
+    ${when(
+      labels.length > 0,
+      () =>
+        html`<div class="bar mb">
+          ${labels.map((l) =>
+            query.label.toLowerCase() === l.name.toLowerCase()
+              ? html`<a
+                  class="label lc-${l.color}"
+                  href="${withFacet(base, query, { label: "" })}"
+                  aria-current="true"
+                  title="Remove this filter"
+                  >${l.name} ✕</a
+                >`
+              : labelChip(l, withFacet(base, query, { label: l.name })),
+          )}
+        </div>`,
+    )}`;
+}
+
+function hidden(name: string, value: string): Html {
+  return html`<input type="hidden" name="${name}" value="${value}" />`;
+}
+
+/**
+ * One issue or pull row: state as the colour of the leading icon, title with
+ * its label chips, one metadata line, and the comment count trailing. There
+ * is no state badge — the list is already filtered by state, and a badge that
+ * repeats the filter is noise. Nothing inside is a link: the row *is* one.
+ */
+function threadRow(
+  base: string,
+  segment: "issues" | "pulls",
+  issue: { number: number; title: string },
+  labels: readonly Label[],
+  state: "open" | "closed" | "merged",
+  meta: Html,
+  comments = 0,
+): Html {
+  return html`<li>
+    <a
+      class="row"
+      data-state="${state}"
+      data-nav
+      tabindex="-1"
+      href="${base}/${segment}/${issue.number}"
+    >
+      <span class="row-lead"
+        >${icon(
+          state === "merged"
+            ? "merge"
+            : segment === "pulls"
+              ? "pull"
+              : state === "closed"
+                ? "issueClosed"
+                : "issue",
+        )}</span
+      >
+      <span class="row-main">
+        <span class="row-title" title="${issue.title}"
+          >${issue.title}${labels.map((l) => html` ${labelChip(l)}`)}</span
+        >
+        <span class="row-meta">${meta}</span>
+      </span>
+      ${when(
+        comments > 0,
+        () =>
+          html`<span class="row-trail"
+            ><span class="count" title="${`${comments} comments`}"
+              >${icon("comment")}${comments}</span
+            ></span
+          >`,
+      )}
+    </a>
+  </li>`;
+}
+
+/**
+ * One row from a `RepoSource` summary — the shape both sides speak. A live
+ * browse and a repository we hold produce byte-identical rows; only the base
+ * of the href differs.
+ */
+function summaryRow(
+  base: string,
+  segment: "issues" | "pulls",
+  item: IssueSummary,
+  glyph: IconName,
+  state: "open" | "closed" | "merged",
+  extraMeta?: Html,
+): Html {
+  return threadRow(
+    base,
+    segment,
+    item,
+    item.labels,
+    state,
+    html`#${item.number}${extraMeta ?? null} opened ${time(item.createdAt)} by
+    ${item.originAuthor
+      ? originTag(item.originAuthor, glyph)
+      : userTag(item.authorName)}`,
+    item.commentCount,
+  );
+}
+
+/** The mark an imported author wears on this scope. */
+function scopeGlyph(scope: RepoScope): IconName {
+  return scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe";
+}
+
+/** A `ListQuery` as the source's own query shape. */
+function sourceQuery(
+  query: ListQuery,
+  kind: "issue" | "pull",
+  limit: number,
+): IssueQuery {
+  return {
+    kind,
+    state: query.state,
+    limit,
+    ...(query.label !== "" ? { label: query.label } : {}),
+    ...(query.author !== "" ? { author: query.author } : {}),
+    ...(query.q !== "" ? { query: query.q } : {}),
+    ...(query.cursor !== undefined ? { cursor: String(query.cursor) } : {}),
+  };
+}
 
 // ---- resolving one ----
 

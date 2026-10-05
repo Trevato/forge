@@ -229,6 +229,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .filters .search { min-width: 180px; flex: 1; max-width: 320px; }
+/* A list's six words fit a phone without pushing the page sideways: a
+   little less padding there, and a scroll inside the bar as the last resort. */
+.filters .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 420px) { .filters .seg > a { padding: 0 8px; } }
 
 .merge-box { margin-top: 14px; }
 .merge-box .card-body { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
