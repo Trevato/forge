@@ -86,6 +86,7 @@ describe("a spawned child's own keys and domain", () => {
     loadKey(dir);
     loadOrCreateHostKey(join(dir, "ssh"));
     const made = await createUser(parent.db, {
+      trusted: true,
       username: "alice",
       email: "a@x.invalid",
       password: "a-long-passphrase-1",
@@ -298,6 +299,12 @@ describe("a spawned child's own keys and domain", () => {
       expect(spent.kind === "resting" && spent.said).toContain("$5 budget is spent");
       // A repository made in the org later is covered by the same org grant.
       const later = { repoId: "a-new-repository", ownerId: org.id, agentId: "someone" };
+      expect(pickSubscription(child.db, childDir, later, new Date()).kind).toBe("resting");
+      // Deleting the repository its runs were on gives nothing back: the
+      // spend is a counter that only grows (#815).
+      child.db.query("DELETE FROM repo WHERE id = ?1").run(bakery.id);
+      expect(child.db.query("SELECT COUNT(*) AS n FROM run").get()).toEqual({ n: 0 });
+      expect(budgetsOf(child.db).get(sub.id)!.spentUsd).toBe(5);
       expect(pickSubscription(child.db, childDir, later, new Date()).kind).toBe("resting");
     } finally {
       child.close();

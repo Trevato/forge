@@ -94,7 +94,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (!Array.isArray(apps)) return apps;
   const crew = names(raw["crew"], "crew", MAX_CREW);
   if (!Array.isArray(crew)) return crew;
-  // The child's model key: an API-billed key with a daily cap, or none. A
+  // The child's model key: an API-billed key with a whole-life budget, or none. A
   // subscription token is a person's own plan and never travels.
   const modelKey = raw["modelKey"];
   if (modelKey !== undefined) {

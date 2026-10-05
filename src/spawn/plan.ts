@@ -54,7 +54,7 @@ export interface SpawnInput {
   /** Whether the spawner keeps owner access once the child is claimed; false unless true. */
   readonly keepAccess?: unknown;
   /**
-   * The daily cap on the child's model key, in dollars, when one is given.
+   * The whole-life budget on the child's model key, in dollars, when one is given.
    * The key itself never enters the plan: only that there is one, capped.
    */
   readonly budgetUsd?: unknown;
@@ -84,7 +84,7 @@ export interface SpawnPlan {
   readonly direction: string;
   /** Whether the spawner stays an owner after the claim; the claim page says which. */
   readonly keepAccess: boolean;
-  /** The child's model key's daily cap in dollars; null when it gets no key. */
+  /** The child's model key's whole-life budget in dollars; null when it gets no key. */
   readonly budgetUsd: number | null;
 }
 
