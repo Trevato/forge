@@ -11,8 +11,8 @@ import type { App } from "../app.ts";
 import { createClient, parseRegistration } from "../core/oauth.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
-import { clientAddress } from "./peer.ts";
-import { body, json } from "./respond.ts";
+import { clientBucket } from "./peer.ts";
+import { boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 
 /** Registrations per address per minute. */
@@ -71,7 +71,7 @@ export function oauthRoutes(router: Router<Handler>): void {
     ),
   );
   router.add("POST", "/oauth/register", async (ctx) => {
-    const verdict = limiterOf(ctx.app).take(clientAddress(ctx.request), "ro");
+    const verdict = limiterOf(ctx.app).take(clientBucket(ctx.request), "ro");
     if (!verdict.allowed)
       return json(
         {
@@ -81,8 +81,9 @@ export function oauthRoutes(router: Router<Handler>): void {
         429,
         { ...open, "retry-after": String(verdict.retryAfter), "cache-control": "no-store" },
       );
-    const declared = Number(ctx.request.headers.get("content-length") ?? 0);
-    const raw = declared > BODY_MAX ? {} : await body(ctx.request);
+    const raw = await boundedBody(ctx.request, BODY_MAX);
+    if (raw === "too_large")
+      return json({ error: "invalid_client_metadata", error_description: `at most ${BODY_MAX} bytes` }, 413, { ...open, "cache-control": "no-store" });
     const parsed = parseRegistration(raw);
     if (!parsed.ok)
       return json(parsed.error, 400, { ...open, "cache-control": "no-store" });

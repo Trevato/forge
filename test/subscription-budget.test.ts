@@ -251,3 +251,91 @@ describe("an account's whole-life budget", () => {
     expect(again.kind === "ready" && again.capUsd).toBe(4);
   });
 });
+
+describe("spend that cannot be taken back", () => {
+  let dataDir = "";
+  let app: App;
+  let owner: User;
+  let key = "";
+  let n = 0;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-budget-spent-"));
+    app = createApp({ dataDir, port: 0 });
+    const made = await createUser(app.db, { trusted: true, username: "olga", email: "o@x.test", password: "a-long-budget-passphrase", isAdmin: true });
+    if (!made.ok) throw new Error("user");
+    owner = made.value;
+    const s = addSubscription(app.db, dataDir, { name: "starter", token: "sk-ant-api03-spent-counter-key-for-the-test" });
+    if (!s.ok) throw new Error("sub");
+    key = s.value.id;
+    lockBudget(app.db, key, 5);
+  }, 30_000);
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  /** A fresh repository granted the key, with $5 spent on it by one run. */
+  async function spendFive(owned = owner): Promise<{ repo: Repo; runId: string }> {
+    const repo = await createRepo(app, owned, { name: `shop-${++n}` });
+    if (!repo.ok) throw new Error(`repo: ${String(repo.error)}`);
+    setGrants(app.db, repo.value.id, EVERYONE, [key]);
+    const run = createRun(app.db, { repoId: repo.value.id, kind: "agent" });
+    app.db.query("UPDATE run SET subscription_id = ?1, cost_usd = ?2 WHERE id = ?3").run(key, 5, run.id);
+    return { repo: repo.value, runId: run.id };
+  }
+  const scopeOf = (repo: Repo) => ({ repoId: repo.id, ownerId: repo.ownerId, agentId: "a" });
+
+  test("spend is counted as it is recorded, cost by cost", async () => {
+    const { repo } = await spendFive();
+    expect(budgetsOf(app.db).get(key)!.spentUsd).toBe(5);
+    expect(pickSubscription(app.db, dataDir, scopeOf(repo), new Date()).kind).toBe("resting");
+  });
+
+  test("deleting the repository gives nothing back: the next run, anywhere, is still refused", async () => {
+    const { deleteRepo } = await import("../src/actions/repos.ts");
+    const repo = (await createRepo(app, owner, { name: `shop-${++n}` }));
+    if (!repo.ok) throw new Error("repo");
+    setGrants(app.db, repo.value.id, EVERYONE, [key]);
+    const before = budgetsOf(app.db).get(key)!.spentUsd;
+    for (const r of app.db.query("SELECT id, name FROM repo").all() as { id: string; name: string }[])
+      if (r.name !== repo.value.name) {
+        const full = (await import("../src/core/repos.ts")).getRepoById(app.db, r.id)!;
+        expect((await deleteRepo(app, owner, full)).ok).toBe(true);
+      }
+    expect(app.db.query("SELECT COUNT(*) AS n FROM run").get()).toEqual({ n: 0 });
+    expect(budgetsOf(app.db).get(key)!.spentUsd).toBe(before);
+    expect(pickSubscription(app.db, dataDir, scopeOf(repo.value), new Date()).kind).toBe("resting");
+  });
+
+  test("nor does deleting a run, removing an app, or deleting the organisation", async () => {
+    const before = budgetsOf(app.db).get(key)!.spentUsd;
+    const { runId, repo } = await spendFive();
+    app.db.query("DELETE FROM run WHERE id = ?1").run(runId);
+    expect(budgetsOf(app.db).get(key)!.spentUsd).toBe(before + 5);
+    const { disableApp } = await import("../src/actions/apps.ts");
+    const { createApp: insertApp } = await import("../src/core/apps.ts");
+    insertApp(app.db, { repoId: repo.id, slug: `shop-${n}`, access: "private" });
+    disableApp(app, owner, repo);
+    expect(budgetsOf(app.db).get(key)!.spentUsd).toBe(before + 5);
+    // An organisation's repository: spent on, then the repository deleted
+    // by its owner — an org cannot be deleted while it owns anything.
+    const { createOrg } = await import("../src/core/orgs.ts");
+    const { deleteRepo } = await import("../src/actions/repos.ts");
+    const org = createOrg(app.db, `org-${n}`, owner.id);
+    if (!org.ok) throw new Error("org");
+    const orgRepo = await createRepo(app, owner, { name: "wares", owner: org.value.username });
+    if (!orgRepo.ok) throw new Error(`org repo: ${String(orgRepo.error)}`);
+    setGrants(app.db, org.value.id, EVERYONE, [key]);
+    const run = createRun(app.db, { repoId: orgRepo.value.id, kind: "agent" });
+    app.db.query("UPDATE run SET subscription_id = ?1, cost_usd = ?2 WHERE id = ?3").run(key, 1, run.id);
+    const counted = budgetsOf(app.db).get(key)!.spentUsd;
+    expect(counted).toBe(before + 6);
+    expect((await deleteRepo(app, owner, orgRepo.value)).ok).toBe(true);
+    expect(budgetsOf(app.db).get(key)!.spentUsd).toBe(counted);
+    const later = await createRepo(app, owner, { name: "wares-again", owner: org.value.username });
+    if (!later.ok) throw new Error("later");
+    expect(pickSubscription(app.db, dataDir, scopeOf(later.value), new Date()).kind).toBe("resting");
+  });
+});

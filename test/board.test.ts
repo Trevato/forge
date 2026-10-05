@@ -409,6 +409,8 @@ describe("the board's forge strip", () => {
     ] as const) {
       const u = await createUser(app.db, { trusted: true,
         username,
+        // Fixtures may name an account after a reserved word on purpose.
+        allowReserved: true,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",
         adminIfFirst,

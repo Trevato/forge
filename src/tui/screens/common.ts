@@ -722,6 +722,26 @@ export function openLink(ctx: Ctx, url: string): void {
 }
 
 /**
+ * A page the web owns, from the terminal: the address, opened in a browser
+ * when one is reachable and shown to copy when not. With no public URL
+ * configured the path is still the answer, said as one. Settings, a run's
+ * log, anything the terminal does not draw itself comes through here.
+ */
+export function openOnWeb(
+  f: { app: { config: { url?: string | undefined } } },
+  ctx: Ctx,
+  path: string,
+  what: string,
+): void {
+  const base = f.app.config.url;
+  if (base === undefined) {
+    ctx.toast(`${what} is on the web at ${path}`, "attn");
+    return;
+  }
+  openLink(ctx, `${base.replace(/\/+$/, "")}${path}`);
+}
+
+/**
  * A link, shown plain so it can be selected and copied by hand, with mouse
  * reporting off for as long as it is open — the one thing that makes the
  * terminal's own drag-to-select work inside a mouse-aware app. `c` copies

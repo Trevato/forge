@@ -19,7 +19,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import {
+  commitToBranch,
+  createRepo,
+  updateRepoSettings,
+} from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -296,16 +300,15 @@ describe("reviews, threads and the merge gate", () => {
     const admin = boot(forge, identityFor(alice));
     try {
       await admin.settle();
-      // Turn the gate on through the settings screen the feature added.
+      // Turn the gate on: settings are the web's one page now (#635), so
+      // this goes through the same action that page posts to.
+      const on = await updateRepoSettings(forge, alice, repo, {
+        requireReview: true,
+      });
+      expect(on.ok).toBe(true);
       await admin.until("acme/lighthouse");
       await admin.press("enter");
       await admin.until("README");
-      await admin.press(",");
-      await admin.until("require review");
-      expect(admin.text()).toContain("off");
-      await admin.press("R");
-      await admin.until("on — a pull needs an approval");
-      await admin.press("esc");
 
       await admin.press("p");
       await admin.until("Tweak the lamp");
