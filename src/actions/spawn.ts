@@ -38,8 +38,15 @@ import { repoDir } from "../git/repos.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { crossOrigin } from "../http/context.ts";
-import { addSubscription, getSubscriptionByName, setGrants } from "../core/subscriptions.ts";
-import { loadKey } from "../kernel/secret.ts";
+import {
+  addSubscription,
+  getSubscriptionByName,
+  lockBudget,
+  setGrants,
+  subscriptionAad,
+} from "../core/subscriptions.ts";
+import { Database } from "bun:sqlite";
+import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { mintClaim } from "../spawn/claim.ts";
 import type { Placement } from "../spawn/placement.ts";
@@ -77,7 +84,8 @@ export interface SpawnDeps {
    * The child's own model key, when the spawner gives it one: an API-billed
    * key (never a person's subscription token), sealed in the child with the
    * child's own `secret.key`, granted to its organisation, and never shown
-   * again or kept by the parent. Its daily cap is the plan's `keyCapUsd`.
+   * again or kept by the parent. Its whole-life budget is the plan's
+   * `budgetUsd`, locked in the child.
    */
   readonly modelKey?: string;
 }
@@ -173,6 +181,16 @@ async function make(
   if (ledger) {
     if (ledger.planHash !== planHash)
       return err({ kind: "exists", message: `a different child named ${plan.name} already exists` });
+    // The plan names that there is a key, never which: a retry with another
+    // key is refused plainly rather than quietly keeping the first.
+    if (deps.modelKey !== undefined) {
+      const held = heldKey(childDirOf(app, ledger.bodyId));
+      if (held !== undefined && held !== deps.modelKey)
+        return err({
+          kind: "exists",
+          message: `${plan.name} was already given a different model key; a key is given once`,
+        });
+    }
     if (ledger.done)
       return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
   } else {
@@ -311,9 +329,11 @@ async function copyInto(
     loadKey(dir);
     loadOrCreateHostKey(join(dir, "ssh"));
 
-    // A model key the spawner handed over, sealed with the child's key,
-    // offered to its organisation's crew, and capped per day on each app.
-    if (modelKey !== undefined && plan.keyCapUsd !== null) {
+    // A model key the spawner handed over: sealed with the child's key,
+    // offered to its organisation's crew, and bound to a whole-life budget
+    // the child cannot raise — enforced where every run picks its account,
+    // whoever started the run and on whichever repository.
+    if (modelKey !== undefined && plan.budgetUsd !== null) {
       const sealed =
         getSubscriptionByName(child.db, STARTER_KEY) ??
         (() => {
@@ -326,8 +346,8 @@ async function copyInto(
         })();
       if (!sealed) return err("could not seal the child's model key");
       setGrants(child.db, org.id, "", [sealed.id]);
-      for (const { child: repo } of copiedRepos)
-        updateRepoSettings(child.db, repo, { autonomyCeilingUsd: plan.keyCapUsd });
+      if (!lockBudget(child.db, sealed.id, plan.budgetUsd))
+        return err("could not set the key's budget");
     }
 
     const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
@@ -345,6 +365,29 @@ async function copyInto(
     return ok(mintClaim(child.db, org.id));
   } finally {
     child.close();
+  }
+}
+
+/**
+ * The model key a child already holds, opened with the child's own key; or
+ * undefined when it has none yet (or the child's database is not there).
+ */
+function heldKey(dir: string): string | undefined {
+  let db: Database | undefined;
+  try {
+    db = new Database(join(dir, "forge.db"), { readonly: true });
+    const row = db
+      .query<{ id: string; token_enc: string }, [string]>(
+        "SELECT id, token_enc FROM subscription WHERE name = ?1",
+      )
+      .get(STARTER_KEY);
+    if (!row) return undefined;
+    const opened = open(dir, row.token_enc, subscriptionAad(row.id));
+    return opened.ok ? opened.value : "";
+  } catch {
+    return undefined;
+  } finally {
+    db?.close();
   }
 }
 

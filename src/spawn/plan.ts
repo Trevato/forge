@@ -15,9 +15,9 @@ export const MAX_SUBSCRIPTIONS = 200;
 export const MAX_BRIEF_CHARS = 20_000;
 /** The spawner's words for what the child is for: its direction. */
 export const MAX_DIRECTION_CHARS = 2000;
-/** The daily cap on a child's model key, in dollars. */
-export const MIN_KEY_CAP_USD = 1;
-export const MAX_KEY_CAP_USD = 1000;
+/** The whole-life budget on a child's model key, in dollars. */
+export const MIN_BUDGET_USD = 1;
+export const MAX_BUDGET_USD = 1000;
 
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -49,7 +49,7 @@ export interface SpawnInput {
    * The daily cap on the child's model key, in dollars, when one is given.
    * The key itself never enters the plan: only that there is one, capped.
    */
-  readonly keyCapUsd?: unknown;
+  readonly budgetUsd?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -77,7 +77,7 @@ export interface SpawnPlan {
   /** Whether the spawner stays an owner after the claim; the claim page says which. */
   readonly keepAccess: boolean;
   /** The child's model key's daily cap in dollars; null when it gets no key. */
-  readonly keyCapUsd: number | null;
+  readonly budgetUsd: number | null;
 }
 
 export interface DryRun {
@@ -168,15 +168,15 @@ export function planSpawn(
     return refuse("keepAccess", "must be true or false");
   const keepAccess = input.keepAccess === true;
 
-  let keyCapUsd: number | null = null;
-  if (input.keyCapUsd !== undefined && input.keyCapUsd !== null) {
-    const cap = input.keyCapUsd;
-    if (typeof cap !== "number" || !Number.isFinite(cap) || cap < MIN_KEY_CAP_USD || cap > MAX_KEY_CAP_USD)
-      return refuse("keyCapUsd", `a daily cap from $${MIN_KEY_CAP_USD} to $${MAX_KEY_CAP_USD}`);
-    keyCapUsd = Math.round(cap * 100) / 100;
+  let budgetUsd: number | null = null;
+  if (input.budgetUsd !== undefined && input.budgetUsd !== null) {
+    const cap = input.budgetUsd;
+    if (typeof cap !== "number" || !Number.isFinite(cap) || cap < MIN_BUDGET_USD || cap > MAX_BUDGET_USD)
+      return refuse("budgetUsd", `a budget from $${MIN_BUDGET_USD} to $${MAX_BUDGET_USD}, for the key's whole life`);
+    budgetUsd = Math.round(cap * 100) / 100;
   }
 
-  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess, keyCapUsd });
+  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess, budgetUsd });
 }
 
 const enc = new TextEncoder();
@@ -189,9 +189,9 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
     ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
-    ...(plan.keyCapUsd === null
+    ...(plan.budgetUsd === null
       ? []
-      : [`its own model key (API-billed, sealed, never shown again), capped at $${plan.keyCapUsd} a day per app`]),
+      : [`its own model key (API-billed, sealed, never shown again), with a $${plan.budgetUsd} budget it cannot raise`]),
   ];
   const bytes =
     plan.apps.reduce((n, a) => n + a.bytes, 0) +

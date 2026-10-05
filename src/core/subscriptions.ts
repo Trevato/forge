@@ -139,6 +139,9 @@ const toSubscription = (r: Row): Subscription => ({
 const aad = (subscriptionId: string): string =>
   `subscription:${subscriptionId}`;
 
+/** What a sealed account's token is bound to, for opening it elsewhere. */
+export const subscriptionAad = aad;
+
 /** The variable Claude Code reads a token of this kind from. */
 export const envNameOf = (kind: SubscriptionKind): string =>
   kind === "oauth" ? "CLAUDE_CODE_OAUTH_TOKEN" : "ANTHROPIC_API_KEY";

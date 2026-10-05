@@ -100,9 +100,9 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (modelKey !== undefined) {
     if (typeof modelKey !== "string" || kindOfToken(modelKey) !== "api_key")
       return invalid("modelKey", "must be an API key (sk-ant-api…); a subscription token is a person's own plan and never goes to a child");
-    if (raw["keyCapUsd"] === undefined) return invalid("keyCapUsd", "a model key needs a daily cap in dollars");
-  } else if (raw["keyCapUsd"] !== undefined) {
-    return invalid("keyCapUsd", "a cap is for a model key; send modelKey with it");
+    if (raw["budgetUsd"] === undefined) return invalid("budgetUsd", "a model key needs a budget in dollars, for its whole life");
+  } else if (raw["budgetUsd"] !== undefined) {
+    return invalid("budgetUsd", "a budget is for a model key; send modelKey with it");
   }
 
   const db = ctx.app.db;
@@ -134,7 +134,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     carrySubscriptions: false,
     direction: raw["direction"],
     keepAccess: raw["keepAccess"],
-    keyCapUsd: raw["keyCapUsd"],
+    budgetUsd: raw["budgetUsd"],
   };
 
   if (dry) {

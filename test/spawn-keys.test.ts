@@ -17,10 +17,14 @@ import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, STARTER_KEY } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
+import { createRun } from "../src/core/runs.ts";
 import {
+  budgetsOf,
   crewHasCredential,
   getSubscriptionByName,
   listGrants,
+  pickSubscription,
+  setBudget,
 } from "../src/core/subscriptions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -108,13 +112,13 @@ describe("a spawned child's own keys and domain", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("a subscription token never goes to a child, and a key needs a cap", async () => {
+  test("a subscription token never goes to a child, and a key needs a budget", async () => {
     const oauth = await post({
       name: "maria",
       apps: ["alice/bakery"],
       dryRun: false,
       modelKey: OAUTH,
-      keyCapUsd: 5,
+      budgetUsd: 5,
     });
     expect(oauth.status).toBe(422);
     expect(await oauth.text()).toContain(
@@ -136,7 +140,7 @@ describe("a spawned child's own keys and domain", () => {
           name: "maria",
           apps: ["alice/bakery"],
           dryRun: false,
-          keyCapUsd: 5,
+          budgetUsd: 5,
         })
       ).status,
     ).toBe(422);
@@ -147,7 +151,7 @@ describe("a spawned child's own keys and domain", () => {
           apps: ["alice/bakery"],
           dryRun: false,
           modelKey: API_KEY,
-          keyCapUsd: 0,
+          budgetUsd: 0,
         })
       ).status,
     ).toBe(422);
@@ -172,7 +176,7 @@ describe("a spawned child's own keys and domain", () => {
             apps: ["alice/bakery"],
             dryRun: false,
             modelKey: API_KEY,
-            keyCapUsd: 5,
+            budgetUsd: 5,
           },
         },
       }),
@@ -184,24 +188,24 @@ describe("a spawned child's own keys and domain", () => {
     );
   });
 
-  test("a child is made with a capped API key; the answer and the dry run never show it", async () => {
+  test("a child is made with an API key and a budget; the answer and the dry run never show the key", async () => {
     const dry = await post({
       name: "maria",
       apps: ["alice/bakery"],
       modelKey: API_KEY,
-      keyCapUsd: 5,
+      budgetUsd: 5,
     });
     expect(dry.status).toBe(200);
     const dryText = await dry.text();
     expect(dryText).not.toContain(API_KEY);
-    expect(dryText).toContain("capped at $5 a day per app");
+    expect(dryText).toContain("with a $5 budget it cannot raise");
     const res = await post(
       {
         name: "maria",
         apps: ["alice/bakery"],
         dryRun: false,
         modelKey: API_KEY,
-        keyCapUsd: 5,
+        budgetUsd: 5,
       },
       { "idempotency-key": "maria-1" },
     );
@@ -258,8 +262,42 @@ describe("a spawned child's own keys and domain", () => {
       expect(listGrants(child.db, org.id).map((g) => g.subscriptionId)).toEqual(
         [sub.id],
       );
-      expect(getRepo(child.db, "maria", "bakery")!.autonomyCeilingUsd).toBe(5);
+      // The budget is on the key, locked; no repository ceiling is touched.
+      expect(budgetsOf(child.db).get(sub.id)).toEqual({ budgetUsd: 5, spentUsd: 0, locked: true });
+      expect(setBudget(child.db, sub.id, 1000)).toBe(false);
+      expect(getRepo(child.db, "maria", "bakery")!.autonomyCeilingUsd).not.toBe(5);
       expect(crewHasCredential(child.db, {})).toBe(true);
+    } finally {
+      child.close();
+    }
+  });
+
+  test("a retry with another key is refused plainly; the same key answers that the child exists", async () => {
+    const other = await post({ name: "maria", apps: ["alice/bakery"], dryRun: false, modelKey: `${API_KEY}-other`, budgetUsd: 5 });
+    expect(other.status).toBe(409);
+    expect(await other.text()).toContain("already given a different model key");
+    const same = await post({ name: "maria", apps: ["alice/bakery"], dryRun: false, modelKey: API_KEY, budgetUsd: 5 });
+    expect(same.status).toBe(200);
+    expect(((await same.json()) as { existed: boolean }).existed).toBe(true);
+  });
+
+  test("once the starter budget is spent, a run in the child gets no account: an assigned one, on any repository of its org", async () => {
+    const child = createApp({ dataDir: childDir, port: 0 });
+    try {
+      const sub = getSubscriptionByName(child.db, STARTER_KEY)!;
+      const org = getOrg(child.db, "maria")!;
+      const bakery = getRepo(child.db, "maria", "bakery")!;
+      // Any agent, any reason (a person's assignment included): the pick is the gate.
+      const scope = { repoId: bakery.id, ownerId: org.id, agentId: "someone" };
+      expect(pickSubscription(child.db, childDir, scope, new Date()).kind).toBe("ready");
+      const run = createRun(child.db, { repoId: bakery.id, kind: "agent", reason: "assigned" });
+      child.db.query("UPDATE run SET subscription_id = ?1, cost_usd = ?2 WHERE id = ?3").run(sub.id, 5, run.id);
+      const spent = pickSubscription(child.db, childDir, scope, new Date());
+      expect(spent.kind).toBe("resting");
+      expect(spent.kind === "resting" && spent.said).toContain("$5 budget is spent");
+      // A repository made in the org later is covered by the same org grant.
+      const later = { repoId: "a-new-repository", ownerId: org.id, agentId: "someone" };
+      expect(pickSubscription(child.db, childDir, later, new Date()).kind).toBe("resting");
     } finally {
       child.close();
     }
