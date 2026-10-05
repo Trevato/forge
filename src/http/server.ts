@@ -5,13 +5,14 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { accountAct, accountsPage } from "../web/pages/accounts.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
-import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
+import { ensureEdgeUser, getUserByName, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
@@ -112,13 +113,12 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
-  issuePage,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
   newTellPage,
-  tellPage,
 } from "../web/pages/issues.ts";
+import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
 import {
@@ -294,7 +294,7 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { notePeer } from "./peer.ts";
+import { clientAddress, notePeer } from "./peer.ts";
 import {
   reportAcceptSubmit,
   reportDismissSubmit,
@@ -343,8 +343,19 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
+    const existed = getUserByName(app.db, login) !== undefined;
     const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
-    if (user) return { user, scope: "admin", via: "edge" };
+    if (user) {
+      // An account the edge made is audited like one made at /signup.
+      if (!existed) {
+        app.bus.append({
+          kind: "user.created",
+          actorId: user.id,
+          payload: { via: "edge", address: clientAddress(request) },
+        });
+      }
+      return { user, scope: "admin", via: "edge" };
+    }
   }
 
   const session = cookieValue(request, "forge_session");
@@ -542,6 +553,18 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
+  router.add("GET", "/settings/accounts", accountsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/suspend",
+    accountAct("suspend"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/unsuspend",
+    accountAct("unsuspend"),
+  );
+  router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);
@@ -697,12 +720,9 @@ export function buildRouter(): Router<Handler> {
   // One list of issues: `/issues` and `/tells` are two addresses for the
   // same page, for every repository and every viewer.
   router.add("GET", "/:owner/:name/issues", tellsList);
-  // The studio's own noun for one tell: a second door onto the one handler,
-  // never a second copy of the page; `/issues/:number` stays dev's own
-  // canonical address and answers exactly as it always has, in both modes
-  // (`tellPage` redirects there when the studio does not apply). The
-  // literal /tells is registered before /tells/:number for the same reason
-  // /issues/new is.
+  // One issue page, at `/issues/:number` and `/tells/:number` alike, for
+  // every repository and every viewer. The literal /tells is registered
+  // before /tells/:number for the same reason /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
@@ -713,7 +733,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
-  router.add("GET", "/:owner/:name/issues/:number", issuePage);
+  router.add("GET", "/:owner/:name/issues/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/:number/thread", issueThreadFragment);
   router.add(
     "POST",
@@ -1319,6 +1339,17 @@ export interface Servers {
   stop(): void;
 }
 
+/**
+ * A refusal a database trigger raised (`RAISE(ABORT, '…')`): an operator's
+ * guard saying no, in its own words. It is the answer, not a fault, so the
+ * person sees the reason and a 403 rather than "internal".
+ */
+function refusedByDatabase(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
+}
+
 /** The hook sockets a data directory may hold: this forge's, and others'. */
 const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
 
@@ -1398,6 +1429,11 @@ export async function serve(app: App): Promise<Servers> {
       );
     },
     error(error) {
+      const refused = refusedByDatabase(error);
+      if (refused !== undefined) {
+        app.log.warn("refused by the database", { reason: refused });
+        return securityFloor(json({ error: "refused", message: refused }, 403));
+      }
       app.log.error("unhandled request error", { error: String(error) });
       return securityFloor(json({ error: "internal" }, 500));
     },

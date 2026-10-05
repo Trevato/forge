@@ -212,7 +212,7 @@ describe("pillars", () => {
   });
 
   test("an umbrella a writer opened names a pillar, in order; a stranger's names nothing, and is no gate", () => {
-    const set = pillarsOf(app.db, repo.id);
+    const set = pillarsOf(app.db, fresh());
     expect(set.pillars.map((p) => [p.name, p.umbrella.number])).toEqual([
       ["P0 Trust", trust.number],
       ["P1 Feed", feed.number],
@@ -414,7 +414,7 @@ describe("pillars", () => {
       { pillar: "Later", merged: 0 },
       { pillar: null, merged: 2 },
     ];
-    expect(pillarView(app.db, repo.id)!.merged).toEqual(want);
+    expect(pillarView(app.db, fresh())!.merged).toEqual(want);
     const data = await api("/api/v1/repos/alice/engine/map");
     expect(data.mergedByPillar).toEqual({ days: 7, counts: want });
 

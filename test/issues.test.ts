@@ -166,7 +166,9 @@ describe("issue pages end to end", () => {
       redirect: "manual",
     });
     detail = await (await fetch(`${base}/mel/proj/issues/1`)).text();
-    expect(detail).toContain('data-state="open"');
+    // Open again, the tell reads in its word: said, nobody has it yet.
+    expect(detail).toContain('data-word="told"');
+    expect(detail).not.toContain('data-state="closed"');
   });
 
   test("cross-origin issue post is refused (CSRF)", async () => {

@@ -174,7 +174,7 @@ export function followLink(
 ): void {
   if (!FURNITURE.test(waiter.title) && !FURNITURE.test(blocker.title)) return;
   if (isMirror(app, repo)) return;
-  const set = pillarsOf(app.db, repo.id);
+  const set = pillarsOf(app.db, repo);
   if (!hasPillars(set)) return;
   relabel(app, actor, repo, set, [waiter, blocker]);
 }
@@ -193,7 +193,7 @@ export function inheritPillar(
   children: readonly Issue[],
 ): void {
   if (children.length === 0 || isMirror(app, repo)) return;
-  const set = pillarsOf(app.db, repo.id);
+  const set = pillarsOf(app.db, repo);
   if (!hasPillars(set) || isStructural(set, parent.id)) return;
   const umbrellas = [
     ...set.pillars.map((pillar) => pillar.umbrella),
@@ -228,7 +228,7 @@ export function inheritPillar(
  * nothing. Returns how many issues changed.
  */
 function syncRepo(app: App, repo: Repo): number {
-  const set = pillarsOf(app.db, repo.id);
+  const set = pillarsOf(app.db, repo);
   const names = pillarNames(set);
   if (names.length === 0) return 0;
   const served = servedBy(app.db, set);

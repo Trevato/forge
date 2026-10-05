@@ -433,7 +433,7 @@ describe("the code browser on the web", () => {
     expect(beacon).toContain('class="counts"');
   });
 
-  test("an issue row carries its comment count with the message glyph", async () => {
+  test("an issue's comments are on the issue; its row in the one list is its word", async () => {
     const repo = getRepo(app.db, "alice", "beacon")!;
     await fetch(`${base}/alice/beacon/issues/1/comments`, {
       method: "POST",
@@ -443,8 +443,11 @@ describe("the code browser on the web", () => {
     });
     expect(repo).toBeDefined();
     const html = await text("/alice/beacon/issues", alice);
-    expect(html).toContain('class="count"');
-    expect(html).toContain("1 comments");
+    expect(html).toContain('href="/alice/beacon/tells/1"');
+    expect(html).toContain("data-word=");
+    expect(await text("/alice/beacon/issues/1", alice)).toContain(
+      "still flickering",
+    );
   });
 
   // ---- search ----

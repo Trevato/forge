@@ -15,6 +15,12 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import {
+  listAccounts,
+  removeAccount,
+  suspendAccount,
+  unsuspendAccount,
+} from "../actions/accounts.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -904,11 +910,15 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("POST", "/api/v1/users", async (ctx) => {
     const input = await body(ctx.request);
-    const created = await signUp(ctx.app, {
-      username: str(input.username),
-      email: str(input.email),
-      password: str(input.password),
-    });
+    const created = await signUp(
+      ctx.app,
+      {
+        username: str(input.username),
+        email: str(input.email),
+        password: str(input.password),
+      },
+      { address: clientAddress(ctx.request) },
+    );
     if (!created.ok) return json({ error: created.error }, 422);
     return json(publicUser(created.value), 201);
   });
@@ -997,6 +1007,49 @@ export function apiRoutes(router: Router<Handler>): void {
         changed.error === "bad_credentials" ? 403 : 422,
       );
     return json({}, 200);
+  });
+
+  // ---- accounts: the owner's view of who joined (#660) ----
+  // Hidden from everyone but a forge admin: the door is not there.
+  const accountError = (error: string): Response =>
+    error === "not_found"
+      ? notFound()
+      : error === "not_allowed"
+        ? apiError(
+            "not_allowed",
+            422,
+            "an admin cannot suspend or remove themselves, another admin, or an agent",
+          )
+        : apiError(error, 500, "the account could not be removed");
+  const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
+    ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+
+  router.add("GET", "/api/v1/admin/accounts", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listAccounts(ctx.app, ctx.auth.user);
+    return listed.ok ? json({ items: listed.value }) : notFound();
+  });
+
+  router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
+  });
+
+  router.add("POST", "/api/v1/admin/accounts/:username/unsuspend", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = unsuspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
+  });
+
+  router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
   router.add("GET", "/api/v1/user/orgs", (ctx) => {
@@ -1860,11 +1913,14 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
+      // `{ title }` is the accepting person's wording; the marker stays.
+      const { title } = await body(ctx.request);
       const accepted = await acceptReport(
         ctx.app,
         ctx.auth.user,
         repo,
         ctx.params.id ?? "",
+        typeof title === "string" ? title : undefined,
       );
       if (!accepted.ok)
         return accepted.error === "decided"
@@ -2083,7 +2139,7 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(ctx.app.db, repo.id),
+        pillarView(ctx.app.db, repo),
       ),
     );
   });

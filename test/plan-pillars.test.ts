@@ -10,6 +10,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import {
@@ -116,7 +118,7 @@ describe("a plan says what each issue is for", () => {
   });
 
   test("the pillars are the open umbrellas, in order, with the gate and the Later umbrella apart", () => {
-    const read = pillarsOf(app.db, forge.id);
+    const read = pillarsOf(app.db, forge);
     expect(
       read.pillars.map((p) => [p.short, p.name, p.umbrella.number]),
     ).toEqual([
@@ -128,7 +130,7 @@ describe("a plan says what each issue is for", () => {
     expect(findPillar(read.pillars, " p1 ")?.name).toBe("P1 Feed");
     expect(findPillar(read.pillars, "p0 trust")?.short).toBe("P0");
     expect(findPillar(read.pillars, "Trust")).toBeUndefined();
-    expect(pillarsOf(app.db, lamp.id)).toEqual({
+    expect(pillarsOf(app.db, lamp)).toEqual({
       pillars: [],
       gate: undefined,
       later: undefined,
@@ -324,7 +326,7 @@ describe("a plan says what each issue is for", () => {
 
   test("a pillar whose umbrella is closed is no longer one", async () => {
     setIssueState(app.db, feed.id, "closed", "done");
-    expect(pillarsOf(app.db, forge.id).pillars.map((p) => p.short)).toEqual([
+    expect(pillarsOf(app.db, forge).pillars.map((p) => p.short)).toEqual([
       "P0",
     ]);
     const refused = await plan("alice/forge", [
@@ -333,6 +335,167 @@ describe("a plan says what each issue is for", () => {
     expect(refused.error).toContain(
       '"P1" is not a pillar here; they are P0 Trust',
     );
+  });
+});
+
+describe("whose issue stands for a pillar", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let alice: User;
+  let mallory: User;
+  let rw: string;
+  /** Public, so a signed-in stranger may open issues in it. */
+  let open: Repo;
+  let nextId = 1;
+
+  const plan = async (issues: unknown[]) => {
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${rw}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: nextId++,
+        method: "tools/call",
+        params: { name: "plan", arguments: { app: "alice/open", issues } },
+      }),
+    });
+    const body = (await res.json()) as any;
+    const text: string = body.result.content[0].text;
+    return body.result.isError === true
+      ? { error: text, value: undefined }
+      : { error: undefined, value: JSON.parse(text) };
+  };
+  const person = async (username: string): Promise<User> => {
+    const made = await createUser(app.db, {
+      username,
+      email: `${username}@forge.local`,
+      password: "a-good-passphrase",
+      adminIfFirst: username === "alice",
+    });
+    if (!made.ok) throw new Error(made.error);
+    return made.value;
+  };
+  /** An issue opened the way anyone opens one: through the action, as `who`. */
+  const opens = (who: User, title: string): Issue => {
+    const made = openIssue(app, who, open, { title });
+    if (!made.ok) throw new Error(String(made.error));
+    return made.value;
+  };
+  const NONE = { pillars: [], gate: undefined, later: undefined };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-pillars-who-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    alice = await person("alice");
+    mallory = await person("mallory");
+    rw = createToken(app.db, alice.id, "rw", "rw").token;
+    const made = await createRepo(app, alice, {
+      name: "open",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    open = made.value;
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test('a stranger\'s "P0 …" on a public repository makes no pillar: plans go on as before, and nothing is linked under it', async () => {
+    const theirs = opens(mallory, "P0 Anything: mine now");
+    expect(pillarsOf(app.db, open)).toEqual(NONE);
+    // Not refused for naming no pillar: the repository has none.
+    const plain = await plan([{ key: "a", title: "Wire the switch" }]);
+    expect(plain.error).toBeUndefined();
+    expect(plain.value.ready).toContain(plain.value.opened[0].number);
+    // And their issue is not a pillar to serve.
+    const named = await plan([{ key: "b", title: "B", pillar: "P0" }]);
+    expect(named.error).toContain("this repository has no pillars to serve");
+    const edges = app.db
+      .query("SELECT count(*) AS n FROM issue_dependency WHERE issue_id = ?1")
+      .get(theirs.id) as { n: number };
+    expect(edges.n).toBe(0);
+  });
+
+  test('a stranger\'s "Later gate: …" holds nothing, so closing it opens nothing', async () => {
+    opens(mallory, "Later gate: trust me");
+    opens(mallory, "Later: also mine");
+    expect(pillarsOf(app.db, open)).toEqual(NONE);
+    const deferred = await plan([
+      { key: "c", title: "C", later: true, why: "Not now." },
+    ]);
+    expect(deferred.error).toContain("no_later_gate");
+  });
+
+  test("an agent's issue, on the crew or not, and an issue imported from an origin are not pillars either", async () => {
+    const bot = await createAgent(app, alice, { username: "bot" });
+    if (!bot.ok) throw new Error(String(bot.error));
+    expect(addToCrew(app, alice, open, "bot").ok).toBe(true);
+    opens(bot.value.user, "P1 Feed: says the agent");
+    const imported = opens(alice, "P2 Explorer: from elsewhere");
+    app.db
+      .query("UPDATE issue SET origin_author = 'someone' WHERE id = ?1")
+      .run(imported.id);
+    expect(pillarsOf(app.db, open)).toEqual(NONE);
+  });
+
+  test("the owner's umbrella and gate count, a writer's who is not the owner counts, and a stranger's of the same name does not take their place", async () => {
+    // Opened first, so it would be the one kept if a title were enough.
+    opens(mallory, "P3 Fork tree: not this one");
+    const trust = opens(alice, "P0 Trust: agents contained");
+    const gate = opens(alice, "Later gate: nothing behind this starts");
+    const forks = opens(alice, "P3 Fork tree: the tree is the organization");
+    // A second person with write access here: a site admin.
+    const dana = await person("dana");
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(dana.id);
+    const explorer = opens(
+      { ...dana, isAdmin: true },
+      "P2 Explorer: ranked by real metrics",
+    );
+    const read = pillarsOf(app.db, open);
+    expect(read.pillars.map((p) => [p.name, p.umbrella.number])).toEqual([
+      ["P0 Trust", trust.number],
+      ["P2 Explorer", explorer.number],
+      ["P3 Fork tree", forks.number],
+    ]);
+    expect(read.gate?.number).toBe(gate.number);
+    expect(read.later).toBeUndefined();
+    // Now there are pillars, so a plan must say what each item is for.
+    const refused = await plan([{ key: "d", title: "D" }]);
+    expect(refused.error).toContain(
+      "give it P0 Trust, P2 Explorer or P3 Fork tree",
+    );
+    const deferred = await plan([
+      { key: "e", title: "E", later: true, why: "Not now." },
+    ]);
+    expect(deferred.value.says).toEndWith(
+      `waits behind the Later gate #${gate.number}.`,
+    );
+  });
+
+  test("however many a stranger opens, the owner's umbrella is still found", () => {
+    app.db.exec("BEGIN");
+    for (let i = 0; i < 80; i++) {
+      const made = createIssue(app.db, {
+        repoId: open.id,
+        authorId: mallory.id,
+        title: `P${i} Noise: ${i}`,
+      });
+      if (!made.ok) throw new Error(made.error);
+    }
+    app.db.exec("COMMIT");
+    const late = opens(alice, "P4 Forge in a link: one link");
+    const read = pillarsOf(app.db, open);
+    expect(read.pillars.map((p) => p.short)).toEqual(["P0", "P2", "P3", "P4"]);
+    expect(read.pillars.at(-1)!.umbrella.number).toBe(late.number);
   });
 });
 
@@ -352,10 +515,13 @@ describe("the planner's brief", () => {
   test("tells the planner to link each issue under its pillar, or behind the Later gate with why", () => {
     const planner = brief("planner");
     expect(planner).toContain(
-      "link every issue you open under the pillar it serves",
+      "Link every issue you open under the pillar it serves",
     );
     expect(planner).toContain(
-      'link it behind the Later gate, the open issue whose title starts "Later gate:"',
+      'link it behind the Later gate, the open issue whose title starts "Later gate:", opened by the owner or a writer',
+    );
+    expect(planner).toContain(
+      "opened by the owner or a writer of the repository; an issue so titled by anyone else is not a pillar",
     );
     expect(planner).toContain(
       "open its body with one sentence that says why it waits",

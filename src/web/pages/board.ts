@@ -582,13 +582,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     );
     return (
       look &&
-      lookUrl(
-        repoBase(repo),
-        "production",
-        look.commitOid,
-        look.page,
-        look.kind,
-      )
+      lookUrl(repoBase(repo), look)
     );
   };
   const rows = pulls.map((pull: Pull) => {
@@ -646,7 +640,7 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
   const having = reposWithUmbrellas(db, scope.ids);
   const lines = scope.repos.flatMap((repo) => {
     if (!having.has(repo.id)) return [];
-    const view = pillarView(db, repo.id);
+    const view = pillarView(db, repo);
     if (view === undefined) return [];
     const base = repoBase(repo);
     // One tap to how far a pillar is: its umbrella's milestone.

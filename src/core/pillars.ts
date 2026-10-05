@@ -7,9 +7,12 @@
  * `Later gate:`, and stands under the Later umbrella (`Later: …`) where the
  * repository keeps one.
  *
- * An umbrella, the gate and the Later umbrella count only when someone who
- * can write the repository opened them: the set is fixed by the people who
- * steer it, and a stranger's issue with the right title names nothing.
+ * A title is not enough, because anyone who may open an issue may write one.
+ * An issue stands for a pillar, the gate or the Later umbrella only when a
+ * person who writes the repository opened it here: not an agent, not someone
+ * who can only read, and not an issue imported from an origin under another
+ * name. So a stranger's "P0 …" on a public repository makes no pillar, and
+ * their "Later gate: …" holds nothing and opens nothing.
  *
  * This module is the one reader: which pillars there are (`pillarsOf`),
  * which of them an issue serves (`servedBy`), and what merged for each
@@ -23,8 +26,8 @@
 import type { Database } from "bun:sqlite";
 import { getIssuesByIds, type Issue } from "./issues.ts";
 import { closesFromBody } from "./pulls.ts";
-import { canWrite, getRepoById } from "./repos.ts";
-import { getUsersByIds } from "./users.ts";
+import { canWrite, type Repo } from "./repos.ts";
+import { getUserById } from "./users.ts";
 
 export interface Pillar {
   /** `P0`. */
@@ -50,37 +53,39 @@ const LATER_UMBRELLA = /^Later:/i;
 /** More umbrellas than a direction has pillars. */
 const MAX = 64;
 
+/** An open issue, written here by a person, that is titled like an umbrella or the gate. */
+const TITLED = `issue.repo_id = ?1 AND issue.kind = 'issue' AND issue.state = 'open'
+  AND issue.origin_author IS NULL
+  AND (issue.title GLOB 'P[0-9]*' OR issue.title LIKE 'Later%')`;
+
 /** The pillars, the Later gate and the Later umbrella of one repository. */
-export function pillarsOf(db: Database, repoId: string): Pillars {
-  const ids = db
-    .query<{ id: string }, [string, number]>(
-      `SELECT id FROM issue
-        WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open'
-          AND (title GLOB 'P[0-9]*' OR title LIKE 'Later%')
-        ORDER BY number LIMIT ?2`,
+export function pillarsOf(db: Database, repo: Repo): Pillars {
+  // Who among the people that opened such an issue writes the repository.
+  // Asked per author, not per issue, and before the cap: however many
+  // issues a stranger opens, none of them takes a real umbrella's place.
+  const writers = db
+    .query<{ id: string }, [string]>(
+      `SELECT DISTINCT issue.author_id AS id
+         FROM issue JOIN user ON user.id = issue.author_id
+        WHERE ${TITLED} AND user.kind = 'user' AND user.is_agent = 0`,
     )
-    .all(repoId, MAX)
+    .all(repo.id)
+    .map((row) => row.id)
+    .filter((id) => canWrite(db, repo, getUserById(db, id)));
+  if (writers.length === 0)
+    return { pillars: [], gate: undefined, later: undefined };
+  const ids = db
+    .query<{ id: string }, (string | number)[]>(
+      `SELECT issue.id FROM issue
+        WHERE ${TITLED}
+          AND issue.author_id IN (${writers.map((_, i) => `?${i + 3}`).join(",")})
+        ORDER BY issue.number LIMIT ?2`,
+    )
+    .all(repo.id, MAX, ...writers)
     .map((row) => row.id);
-  const repo = ids.length === 0 ? undefined : getRepoById(db, repoId);
-  if (repo === undefined) return { pillars: [], gate: undefined, later: undefined };
-  const found = [...getIssuesByIds(db, ids).values()];
-  // Only what a writer opened: one read of the authors, one answer each.
-  const authors = getUsersByIds(
-    db,
-    found.map((issue) => issue.authorId),
+  const issues = [...getIssuesByIds(db, ids).values()].sort(
+    (a, b) => a.number - b.number,
   );
-  const steers = new Map<string, boolean>();
-  const mayName = (authorId: string): boolean => {
-    const known = steers.get(authorId);
-    if (known !== undefined) return known;
-    const author = authors.get(authorId);
-    const may = author !== undefined && canWrite(db, repo, author);
-    steers.set(authorId, may);
-    return may;
-  };
-  const issues = found
-    .filter((issue) => mayName(issue.authorId))
-    .sort((a, b) => a.number - b.number);
   const pillars = new Map<string, Pillar>();
   let gate: Issue | undefined;
   let later: Issue | undefined;
@@ -308,16 +313,16 @@ export interface PillarView {
  */
 export function pillarView(
   db: Database,
-  repoId: string,
+  repo: Repo,
   now = new Date(),
 ): PillarView | undefined {
-  const set = pillarsOf(db, repoId);
+  const set = pillarsOf(db, repo);
   if (set.pillars.length === 0) return undefined;
   const of = servedBy(db, set);
   return {
     set,
     names: pillarNames(set),
     of,
-    merged: mergedByPillar(db, repoId, set, of, pillarWindowStart(now)),
+    merged: mergedByPillar(db, repo.id, set, of, pillarWindowStart(now)),
   };
 }
