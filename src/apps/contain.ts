@@ -204,11 +204,14 @@ const INSIDE = "/run/forge";
  * Started inside the cell before the command: the proxy's front door, the
  * forge's loopback ports, and (for an app) the way in. `sh -c` with the
  * listen port and loopback ports as arguments, then the command's own argv.
+ * Each relay is started from a subshell that exits at once, so it belongs to
+ * the cell's init and never to the command — whose children are how the
+ * forge tells a busy app from an idle one (`apps/busy.ts`).
  */
 const WRAPPER = `s=${INSIDE}; listen=$1; shift; loops=$1; shift
-socat TCP-LISTEN:${PROXY_PORT},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/out.sock >/dev/null 2>&1 &
-for p in $loops; do socat TCP-LISTEN:$p,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/loop-$p.sock >/dev/null 2>&1 & done
-[ "$listen" = - ] || socat UNIX-LISTEN:$s/in.sock,fork,unlink-early TCP:127.0.0.1:$listen >/dev/null 2>&1 &
+(socat TCP-LISTEN:${PROXY_PORT},bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/out.sock >/dev/null 2>&1 &)
+for p in $loops; do (socat TCP-LISTEN:$p,bind=127.0.0.1,fork,reuseaddr UNIX-CONNECT:$s/loop-$p.sock >/dev/null 2>&1 &); done
+[ "$listen" = - ] || (socat UNIX-LISTEN:$s/in.sock,fork,unlink-early TCP:127.0.0.1:$listen >/dev/null 2>&1 &)
 i=0; while [ $i -lt 200 ] && ! grep -q ':${PROXY_PORT.toString(16).toUpperCase().padStart(4, "0")} 00000000:0000 0A' /proc/net/tcp 2>/dev/null; do sleep 0.01; i=$((i+1)); done
 exec "$@"`;
 
@@ -252,7 +255,12 @@ export function openCell(
 
   // Deepest last, so a hidden directory never covers a writable one inside it.
   const hide = [...new Set(spec.hide)]
-    .filter((path) => path !== "/" && path !== "")
+    // A path that is not there has nothing to hide (and cannot be mounted
+    // over on a read-only root). `/tmp` and `/run` are already the cell's own.
+    .filter(
+      (path) =>
+        !["", "/", "/tmp", "/run"].includes(path) && existsSync(path),
+    )
     .sort((a, b) => a.length - b.length);
   // The runtime itself must stay visible when it lives in a hidden home
   // (`~/.bun/bin/bun` on a developer's machine).
@@ -354,15 +362,27 @@ interface Watched {
 const watched = new Set<Watched>();
 let timer: ReturnType<typeof setInterval> | undefined;
 
-/** Kill every process under `root`, deepest first, then `root` itself. */
+/**
+ * Kill every process under `root`, deepest first. `root` is bubblewrap,
+ * which exits on its own once its child is gone and reaps it on the way;
+ * killing it first would leave that child to whoever is pid 1. It gets a
+ * second to do so, then the same signal.
+ */
 export function killTree(root: number): void {
-  for (const pid of [...descendants(root), root]) {
+  for (const pid of descendants(root)) {
     try {
       process.kill(pid, "SIGKILL");
     } catch {
       // already gone
     }
   }
+  setTimeout(() => {
+    try {
+      process.kill(root, "SIGKILL");
+    } catch {
+      // gone, as it should be
+    }
+  }, 1_000).unref();
 }
 
 /** Send `signal` to every process under `root`, not `root` (bubblewrap) itself. */
@@ -374,6 +394,19 @@ export function signalTree(root: number, signal: NodeJS.Signals): void {
       // already gone
     }
   }
+}
+
+/**
+ * The command's own pid in a cell whose bubblewrap is `root`: the first
+ * child of the cell's init (the relays come after it). `undefined` until it
+ * exists.
+ */
+export function commandPid(root: number): number | undefined {
+  const children = processTable().children;
+  const init = children.get(root)?.[0];
+  if (init === undefined) return undefined;
+  const inside = children.get(init) ?? [];
+  return inside.length === 0 ? undefined : Math.min(...inside);
 }
 
 function descendants(root: number): number[] {

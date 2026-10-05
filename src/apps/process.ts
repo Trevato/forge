@@ -19,6 +19,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
 import {
+  commandPid,
   killTree,
   openCell,
   resolveLimits,
@@ -418,8 +419,15 @@ export async function startProcess(
   void pump(proc.stdout, remember);
   void pump(proc.stderr, remember);
 
+  let inner: number | undefined;
   const handle: ProcessHandle = {
-    pid: proc.pid,
+    // In a cell, the app's own pid rather than bubblewrap's: what has
+    // children when the app is busy (`apps/busy.ts`).
+    get pid() {
+      if (cell === undefined) return proc.pid;
+      inner ??= commandPid(proc.pid);
+      return inner ?? proc.pid;
+    },
     port,
     exited: proc.exited,
     stop: async () => {

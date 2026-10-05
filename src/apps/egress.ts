@@ -177,19 +177,19 @@ async function open(
   const raw = client.data.head;
   const end = headEnd(raw);
   const head = decoder.decode(raw.subarray(0, end));
-  const rest = raw.subarray(end);
   const [requestLine = "", ...headers] = head.split("\r\n");
   const [method = "", target = "", version = "HTTP/1.1"] =
     requestLine.split(" ");
   let host: string;
   let port: number;
-  let first: Uint8Array;
+  // What goes upstream ahead of the bytes after the head: nothing for a
+  // tunnel, the rewritten head for a forwarded request.
+  let prefix = new Uint8Array(0);
   let tunnel = false;
   if (method.toUpperCase() === "CONNECT") {
     const at = target.lastIndexOf(":");
     host = target.slice(0, at);
     port = Number(target.slice(at + 1));
-    first = rest;
     tunnel = true;
   } else {
     let url: URL;
@@ -216,11 +216,8 @@ async function open(
     const kept = headers.filter(
       (h) => h !== "" && !/^(proxy-[a-z-]*|connection|keep-alive):/i.test(h),
     );
-    first = concat(
-      encoder.encode(
-        `${method} ${url.pathname}${url.search} ${version}\r\n${kept.join("\r\n")}\r\nConnection: close\r\n\r\n`,
-      ),
-      rest,
+    prefix = encoder.encode(
+      `${method} ${url.pathname}${url.search} ${version}\r\n${kept.join("\r\n")}\r\nConnection: close\r\n\r\n`,
     );
   }
   if (host === "" || !Number.isInteger(port) || port < 1 || port > 65535) {
@@ -266,6 +263,9 @@ async function open(
         client.data.toClient,
         encoder.encode("HTTP/1.1 200 Connection Established\r\n\r\n"),
       );
+    // Everything after the head — including what arrived during the dial,
+    // kept with it — goes out now; from here `data` forwards directly.
+    const first = concat(prefix, client.data.head.subarray(end));
     if (first.length > 0) send(peer, client.data.toPeer, first);
   } catch {
     refuse(client, "502 Bad Gateway", `${host}:${port} did not answer`);

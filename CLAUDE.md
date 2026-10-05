@@ -48,7 +48,9 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 11. **A child inherits nothing it was not handed.** App and agent processes
     start from `childEnv` (`apps/process.ts`) — an explicit, short
     environment — never from the forge's own, which carries secrets. A
-    preview's data is a copy of production's, never a path to it.
+    preview's data is a copy of production's, never a path to it. And it
+    runs in a cell (`apps/contain.ts`): never a plain child where the host
+    can hold one.
 
 ## How to work
 
@@ -155,7 +157,9 @@ src/
               fail-closed), checkout (a commit exported with read-tree +
               checkout-index), data (per-environment dirs, copy-on-write
               seeding, SQLite quiesce), process (install/test/start/ready,
-              explicit child env), runtime (environments in memory, rebuilt
+              explicit child env), contain (the cell repository code
+              runs in: bubblewrap, a watch on memory/CPU/disk) and egress
+              (the cell's one way out: a proxy to declared hosts), runtime (environments in memory, rebuilt
               on boot, serial deploys per env, crash restarts bounded),
               proxy (Host routing, signed grants for private apps), scaffold
               (the app a new app starts as), tty (`ssh <slug>@forge`: the
@@ -259,7 +263,8 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
 
 ## Not yet built (deliberately)
 
-A self-describing (OpenAPI) endpoint, containers around app processes,
+A self-describing (OpenAPI) endpoint, container images for app processes
+(they run in a cell — `apps/contain.ts` — not an image),
 custom domains, and a gate that lands a pull on its own once review and
 checks agree. The event outbox and API surface are shaped so these arrive
 as additions, not rewrites. `docs/ARCHITECTURE.md` closes with the

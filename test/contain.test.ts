@@ -21,10 +21,15 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { cellsAvailable, WATCH, type CellSpec } from "../src/apps/contain.ts";
 import { envDir } from "../src/apps/data.ts";
-import { hostAllowed, isPublicAddress } from "../src/apps/egress.ts";
+import {
+  hostAllowed,
+  isPublicAddress,
+  startEgress,
+} from "../src/apps/egress.ts";
 import { parseCheck, parseManifest } from "../src/apps/manifest.ts";
 import { childEnv, runStep } from "../src/apps/process.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
+import { runAppTty } from "../src/apps/tty.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -117,6 +122,91 @@ describe("egress: what a cell may reach", () => {
   });
 });
 
+describe("egress: the proxy forwards what is allowed, byte for byte, and refuses the rest", () => {
+  let dir: string;
+  let upstream: ReturnType<typeof Bun.serve>;
+  let socket: string;
+  let egress: { close(): void };
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-egress-"));
+    upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: async (req) =>
+        new Response(`${req.method} ${new URL(req.url).pathname} ${await req.text()}`),
+    });
+    socket = join(dir, "out.sock");
+    egress = startEgress(socket, {
+      hosts: ["localhost"],
+      origins: [{ host: "127.0.0.1", port: upstream.port ?? 0 }],
+    });
+  });
+
+  afterAll(async () => {
+    egress.close();
+    upstream.stop(true);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  /** Send `bytes` to the proxy, then `after` once it answers; everything that comes back. */
+  async function exchange(bytes: string, after = ""): Promise<string> {
+    let got = "";
+    let answered = false;
+    const decoder = new TextDecoder();
+    const done = Promise.withResolvers<void>();
+    const conn = await Bun.connect({
+      unix: socket,
+      socket: {
+        data(sock, chunk) {
+          got += decoder.decode(chunk);
+          if (!answered && after !== "") {
+            answered = true;
+            sock.write(after);
+          }
+        },
+        close: () => done.resolve(),
+        error: () => done.resolve(),
+      },
+    });
+    conn.write(bytes);
+    await Promise.race([done.promise, Bun.sleep(3_000)]);
+    conn.end();
+    return got;
+  }
+
+  test("an allowed origin, as an absolute-form request: forwarded with its body", async () => {
+    const port = upstream.port ?? 0;
+    const reply = await exchange(
+      `POST http://127.0.0.1:${port}/echo HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 5\r\nProxy-Authorization: x\r\n\r\nhello`,
+    );
+    expect(reply).toStartWith("HTTP/1.1 200");
+    expect(reply).toContain("POST /echo hello");
+  });
+
+  test("an allowed origin, through CONNECT: a tunnel that carries the request after it opens", async () => {
+    const port = upstream.port ?? 0;
+    const reply = await exchange(
+      `CONNECT 127.0.0.1:${port} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n\r\n`,
+      `GET /tunnel HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`,
+    );
+    expect(reply).toStartWith("HTTP/1.1 200 Connection Established");
+    expect(reply).toContain("GET /tunnel ");
+  });
+
+  test("a host nobody declared, a declared name on a private address, and the origin at another port: refused, named", async () => {
+    const port = upstream.port ?? 0;
+    const undeclared = await exchange(`CONNECT example.com:443 HTTP/1.1\r\n\r\n`);
+    expect(undeclared).toStartWith("HTTP/1.1 403");
+    expect(undeclared).toContain('example.com is not in this repository\'s egress (forge.json "egress")');
+    const privateName = await exchange(`GET http://localhost:${port}/ HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+    expect(privateName).toStartWith("HTTP/1.1 403");
+    expect(privateName).toContain("localhost resolves to a private address");
+    const otherPort = await exchange(`CONNECT 127.0.0.1:${port + 1} HTTP/1.1\r\n\r\n`);
+    expect(otherPort).toStartWith("HTTP/1.1 403");
+  });
+});
+
 const noCells = missing("bwrap", "socat") || process.platform !== "linux";
 
 /** What the probe tries, from inside a deploy or a check. */
@@ -125,6 +215,8 @@ function probeSource(targets: {
   otherAppDir: string;
   canary: string;
   listenerPort: number;
+  /** The forge's own pid: its environment holds every secret it was started with. */
+  forgePid: number;
 }): string {
   return `
 import { readdirSync, readFileSync } from "node:fs";
@@ -154,6 +246,11 @@ async function probe() {
     otherApp: await attempt(() => readdirSync(T.otherAppDir).join(",")),
     environment: await attempt(() => {
       if (Object.values(process.env).some((v) => v?.includes(T.canary))) return "own env";
+      // The pid is the forge's only outside a pid namespace of its own; inside
+      // one the same number may be a process of the cell's.
+      const cmdline = readFileSync("/proc/" + T.forgePid + "/cmdline", "latin1");
+      const forge = readFileSync("/proc/" + T.forgePid + "/environ", "latin1");
+      if (cmdline.includes("test") && forge.length > 0) return "the forge's environment, " + forge.length + " bytes";
       for (const pid of readdirSync("/proc")) {
         if (!/^\\d+$/.test(pid)) continue;
         try {
@@ -310,7 +407,7 @@ describe.skipIf(noCells)(
       expect(await cellsAvailable()).toEqual({ ok: true });
     });
 
-    test("an app, its preview and its check, on a fresh account, are each refused everything but the forge", async () => {
+    test("an app, its terminal, its preview and its check, on a fresh account, are each refused everything but the forge", async () => {
       const made = await createRepo(app, mallory, {
         name: "probe",
         visibility: "public",
@@ -322,11 +419,12 @@ describe.skipIf(noCells)(
         otherAppDir: envDir(dataDir, other.id, "production"),
         canary: CANARY,
         listenerPort: listener.port ?? 0,
+        forgePid: process.pid,
       });
       const forgeJson = JSON.stringify({
         // Declared, but it is this machine: still refused.
         egress: ["localhost"],
-        app: { run: "bun probe.ts serve", health: "/" },
+        app: { run: "bun probe.ts serve", health: "/", tty: "bun probe.ts check" },
         check: { run: "bun probe.ts check", timeout: 120 },
       });
       const committed = await commitToBranch(app, mallory, repo, {
@@ -366,6 +464,30 @@ describe.skipIf(noCells)(
         "/probe",
       );
       expectContained((await fromApp.json()) as Record<string, string>);
+
+      // The app's terminal (`ssh probe@forge`) is the app: the same cell.
+      let screen = "";
+      const decoder = new TextDecoder();
+      const terminal = await runAppTty(
+        app,
+        {
+          cols: 200,
+          rows: 50,
+          term: "xterm",
+          write: (bytes) => {
+            screen += decoder.decode(bytes);
+          },
+          onData: () => {},
+          onResize: () => {},
+        },
+        mallory,
+        { app: record, env: "production" },
+      );
+      expect(terminal.ok).toBe(true);
+      const shown = screen.split(/\r?\n/).find((l) => l.startsWith("PROBE "));
+      expect(shown).toBeDefined();
+      expectContained(JSON.parse(shown!.slice(6)) as Record<string, string>);
+
 
       const check = await settled(
         "check",
@@ -452,11 +574,12 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
   }, 30_000);
 
   test("over its CPU limit", async () => {
-    const result = await step(`bun -e "for (;;) {}"`, cell({ cpus: 0.25 }));
+    // A small share, so a busy machine still gives the loop more than it.
+    const result = await step(`bun -e "for (;;) {}"`, cell({ cpus: 0.02 }));
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatch(
-        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.25$/,
+        /^check stopped: it used [\d.]+ cores for \d+s, over its limit of 0\.02$/,
       );
   }, 30_000);
 
