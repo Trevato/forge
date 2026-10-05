@@ -34,6 +34,7 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
+import { holdsFor } from "../../core/holds.ts";
 import {
   getRepoById,
   listReposVisibleTo,
@@ -411,13 +412,15 @@ export type Word =
   | "blocked"
   | "done"
   | "parked"
-  | "waiting";
+  | "waiting"
+  | "held";
 
 const WORDS: readonly Word[] = [
   "ready",
   "working",
   "blocked",
   "waiting",
+  "held",
   "parked",
   "done",
 ];
@@ -428,6 +431,8 @@ export interface Marks {
   readonly crew: Map<string, RunState>;
   /** Open issues an open pull would close: proposed, not landed. */
   readonly waiting: Set<string>;
+  /** Of those, the ones whose pull a person holds, by issue id: "alice: second review under way". */
+  readonly onHold: Map<string, string>;
   /** Issues whose last word is the crew parking them, or whose blocker closed unfinished. */
   readonly parked: Set<string>;
   /** Why an issue is parked on a closed blocker, by issue id: "#4 was dropped". */
@@ -460,9 +465,18 @@ export function marksFor(
   if (repo === undefined) return NO_MARKS;
   const byNumber = new Map(graph.issues.map((i) => [i.number, i.id]));
   const waiting = new Set<string>();
-  for (const number of proposedWork(db, repo).keys()) {
+  const onHold = new Map<string, string>();
+  const closing = proposedWork(db, repo);
+  const holds = holdsFor(
+    db,
+    [...closing.values()].map((pull) => pull.id),
+  );
+  for (const [number, pull] of closing) {
     const id = byNumber.get(number);
-    if (id !== undefined) waiting.add(id);
+    if (id === undefined) continue;
+    waiting.add(id);
+    const hold = holds.get(pull.id);
+    if (hold !== undefined) onHold.set(id, `${hold.heldByName}: ${hold.why}`);
   }
   const open = graph.issues.filter((i) => i.state === "open").map((i) => i.id);
   const parked = struckOut(db, repo, open);
@@ -481,6 +495,7 @@ export function marksFor(
   return {
     crew: crewMarks(runs),
     waiting,
+    onHold,
     parked,
     why,
     twice: parkedTwice(db, [repo]),
@@ -490,6 +505,7 @@ export function marksFor(
 export const NO_MARKS: Marks = {
   crew: new Map(),
   waiting: new Set(),
+  onHold: new Map(),
   parked: new Set(),
   why: new Map(),
   twice: [],
@@ -497,12 +513,14 @@ export const NO_MARKS: Marks = {
 
 /**
  * The word for an issue, most telling first: done is done; the crew on it
- * outranks a pull for it; a pull outranks having been parked; and what is
- * left is ready or blocked by what the graph says.
+ * outranks a pull for it; a pull a person holds says so rather than that it
+ * waits; a pull outranks having been parked; and what is left is ready or
+ * blocked by what the graph says.
  */
 export function wordFor(issue: Issue, ready: Set<string>, marks: Marks): Word {
   if (issue.state === "closed") return "done";
   if (marks.crew.has(issue.id)) return "working";
+  if (marks.onHold.has(issue.id)) return "held";
   if (marks.waiting.has(issue.id)) return "waiting";
   if (marks.parked.has(issue.id)) return "parked";
   return ready.has(issue.id) ? "ready" : "blocked";
@@ -632,7 +650,7 @@ function node(
     ${run ? html`data-run="${run}"` : null}
     href="${issueHref(base, n.issue.number)}"
   >
-    <title>${number} ${n.issue.title} — ${word}${emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
+    <title>${number} ${n.issue.title} — ${word}${word === "held" ? ` by ${emphasis.marks.onHold.get(n.issue.id)}` : emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
     ${word === "working"
       ? html`<rect
           class="map-breath"
@@ -818,6 +836,7 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
     done: 0,
     parked: 0,
     waiting: 0,
+    held: 0,
   };
   for (const w of words) out[w]++;
   return out;
@@ -965,6 +984,9 @@ export const mapCss = /* css */ `
 .map-node[data-state="waiting"] .map-dot { fill: var(--merged); }
 .map-node[data-state="parked"] .map-dot { fill: var(--attn); }
 .map-node[data-state="parked"] .map-word { fill: var(--attn); }
+.map-node[data-state="held"] .map-card { stroke: color-mix(in srgb, var(--attn) 45%, var(--border)); }
+.map-node[data-state="held"] .map-dot { fill: var(--attn); }
+.map-node[data-state="held"] .map-word { fill: var(--attn); }
 
 /* ---- edges ---- */
 .map-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.25; }
@@ -981,6 +1003,7 @@ export const mapCss = /* css */ `
 .map-counts i[data-state="working"] { background: var(--accent); }
 .map-counts i[data-state="waiting"] { background: var(--merged); }
 .map-counts i[data-state="parked"] { background: var(--attn); }
+.map-counts i[data-state="held"] { background: var(--attn); }
 .map-counts i[data-state="done"] { background: transparent; border: 1px solid var(--faint); }
 
 /* ---- beside the drawing ---- */
@@ -1324,6 +1347,7 @@ export function mapJson(
       ? { closeReason: i.closeReason }
       : {}),
     ...(marks.why.has(i.id) ? { parkedBecause: marks.why.get(i.id) } : {}),
+    ...(marks.onHold.has(i.id) ? { heldBy: marks.onHold.get(i.id) } : {}),
   });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
