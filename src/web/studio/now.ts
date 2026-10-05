@@ -8,7 +8,7 @@
  */
 
 import { envPull } from "../../apps/data.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
@@ -207,7 +207,7 @@ export async function nowCard(
 
   // An environment the sleep sweep is sparing because it is mid-work:
   // that is something going on in the app, and the reason it is awake.
-  const busyRows = (wordCtx.runtime?.status(record) ?? []).flatMap((env) => {
+  const busyRows = envsFor(ctx.app, ctx.auth.user, record).flatMap((env) => {
     if (env.busy === undefined) return [];
     const number = envPull(env.env);
     return [

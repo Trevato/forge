@@ -7,7 +7,7 @@
  * `?mode=dev` reads the code, unchanged (`pages/pull.ts`).
  */
 
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { pullStatus, revertOf, toldBy, type Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
@@ -103,9 +103,9 @@ export async function studioPull(
     const run = checkSummary(db, pull.id, pull.headOid).run;
     if (run) deploy = { id: run.id, commitOid: run.commitOid };
   } else {
-    const production = wordCtx.runtime
-      ?.status(record)
-      .find((e) => e.env === "production");
+    const production = envsFor(ctx.app, ctx.auth.user, record).find(
+      (e) => e.env === "production",
+    );
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }

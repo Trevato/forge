@@ -24,7 +24,7 @@
  * told-but-stuck when nobody on the crew can take it.
  */
 
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
 import { reposWithUnclaimedTell } from "../../core/issues.ts";
@@ -84,7 +84,9 @@ export function productionFactsForRepos(
   for (const repo of repos) {
     const record = records.get(repo.id);
     const production = record
-      ? runtime.status(record).find((e) => e.env === "production")
+      ? envsFor(ctx.app, ctx.auth.user, record).find(
+          (e) => e.env === "production",
+        )
       : undefined;
     productions.set(repo.id, production);
     if (production?.runId !== undefined && production.createdAt !== undefined)
@@ -158,9 +160,7 @@ export async function shelfRows(
     repos.map(async (repo) => {
       const record = records.get(repo.id);
       const envs =
-        runtime === undefined || record === undefined
-          ? []
-          : runtime.status(record);
+        record === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record);
       const production = envs.find((e) => e.env === "production");
       const latest = latestRuns.get(repo.id);
       // A run still in flight is the thing that is moving, and outranks a

@@ -37,7 +37,7 @@ import {
 import { ITEM_ID } from "../core/interactions.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
-import { appsRuntime } from "../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -156,9 +156,9 @@ const TOOLS: readonly Tool[] = [
       return good(
         repos.map((repo) => {
           const record = records.get(repo.id)!;
-          const production = runtime
-            ?.status(record)
-            .find((e) => e.env === "production");
+          const production = envsFor(ctx.app, user, record).find(
+            (e) => e.env === "production",
+          );
           return {
             app: `${repo.ownerName}/${repo.name}`,
             description: repo.description,

@@ -16,7 +16,7 @@ import { newApp, openEnvUrl } from "../src/actions/apps.ts";
 import { updateRepoSettings } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { grantUrl } from "../src/apps/proxy.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, envsFor } from "../src/apps/runtime.ts";
 import { runAppTty, type TtyHost } from "../src/apps/tty.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -240,6 +240,20 @@ describe("a private app on a public repository stays private", () => {
       expect(through.ok).toBe(false);
       if (!through.ok) expect(through.error.refusal).toBe("no_pty");
     }
+  });
+
+  test("a reader sees none of a private app's state or errors; a writer sees it", async () => {
+    // The runtime knows production from the first deploy on.
+    expect(envsFor(app, alice, record).length).toBeGreaterThan(0);
+    expect(envsFor(app, bot, record).length).toBeGreaterThan(0);
+    expect(envsFor(app, carol, record)).toEqual([]);
+    expect(envsFor(app, undefined, record)).toEqual([]);
+    const as = (cookie: string) =>
+      fetch(`${servers.url}/api/v1/repos/alice/ledger/app`, {
+        headers: { cookie },
+      }).then((r) => r.json() as Promise<any>);
+    expect((await as(carolCookie)).environments).toEqual([]);
+    expect((await as(aliceCookie)).environments.length).toBeGreaterThan(0);
   });
 
   test("the settings page says, before saving, what stays private", async () => {

@@ -219,7 +219,7 @@ import {
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
-import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
+import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import type { Agent } from "../core/agents.ts";
@@ -780,7 +780,7 @@ function repoQuery(ctx: Ctx) {
  * and the domains of its own that are verified — the ones the forge serves.
  */
 function appJson(
-  db: Database,
+  ctx: Ctx,
   record: AppRecord,
   repo: Repo,
   runtime: AppsRuntime | undefined,
@@ -789,11 +789,12 @@ function appJson(
     ...record,
     repo: { owner: repo.ownerName, name: repo.name },
     url: runtime?.urlFor(record, "production") ?? null,
-    domains: listDomains(db, record.id)
+    domains: listDomains(ctx.app.db, record.id)
       .filter((d) => d.verifiedAt !== null)
       .map((d) => d.host),
     serving: runtime !== undefined,
-    environments: runtime?.status(record) ?? [],
+    environments:
+      runtime === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record),
   };
 }
 
@@ -3149,7 +3150,7 @@ export function apiRoutes(router: Router<Handler>): void {
     for (const record of records) {
       const repo = repos.get(record.repoId);
       if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
-      items.push(appJson(ctx.app.db, record, repo, runtime));
+      items.push(appJson(ctx, record, repo, runtime));
     }
     return json({ items, next_cursor: null });
   });
@@ -3174,7 +3175,7 @@ export function apiRoutes(router: Router<Handler>): void {
       {
         repo: repoJson(ctx, made.value.repo),
         app: appJson(
-          ctx.app.db,
+          ctx,
           made.value.app,
           made.value.repo,
           appsRuntime(ctx.app),
@@ -3268,7 +3269,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const view = appView(ctx.app, ctx.auth.user, repo);
     if (!view.ok) return notFound();
     return json(
-      appJson(ctx.app.db, view.value.app, repo, appsRuntime(ctx.app)),
+      appJson(ctx, view.value.app, repo, appsRuntime(ctx.app)),
     );
   });
 
@@ -3281,7 +3282,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const enabled = enableApp(ctx.app, ctx.auth.user, repo, appPatch(input));
     if (!enabled.ok) return respondAccess(enabled.error, 422);
     return json(
-      appJson(ctx.app.db, enabled.value, repo, appsRuntime(ctx.app)),
+      appJson(ctx, enabled.value, repo, appsRuntime(ctx.app)),
       201,
     );
   });
@@ -3299,7 +3300,7 @@ export function apiRoutes(router: Router<Handler>): void {
       appPatch(input),
     );
     if (!updated.ok) return respondAccess(updated.error, 422);
-    return json(appJson(ctx.app.db, updated.value, repo, appsRuntime(ctx.app)));
+    return json(appJson(ctx, updated.value, repo, appsRuntime(ctx.app)));
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name/app", (ctx) => {

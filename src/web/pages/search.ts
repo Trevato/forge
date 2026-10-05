@@ -12,7 +12,7 @@
  */
 
 import { search } from "../../actions/search.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
 import { canWrite, getRepo } from "../../core/repos.ts";
@@ -77,8 +77,7 @@ const privateBadge = (yes: boolean): Html =>
 /** Whether an app is live. No query — `runtime.status` reads what is
  * already in memory. */
 function appState(ctx: Ctx, record: AppRecord): { tone: Tone; word: string } {
-  const runtime = appsRuntime(ctx.app);
-  const envs = runtime === undefined ? [] : runtime.status(record);
+  const envs = envsFor(ctx.app, ctx.auth.user, record);
   const state = envs.find((e) => e.env === "production")?.state ?? "stopped";
   const tone: Tone =
     state === "running" ? "success" : state === "failed" ? "danger" : "default";

@@ -7,7 +7,7 @@
  */
 
 import type { App } from "../app.ts";
-import { appsRuntime, type EnvStatus } from "../apps/runtime.ts";
+import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
@@ -454,7 +454,7 @@ export function appView(
   const runtime = appsRuntime(app);
   return ok({
     app: record,
-    environments: runtime === undefined ? [] : runtime.status(record),
+    environments: envsFor(app, actor, record),
     serving: runtime !== undefined,
   });
 }
