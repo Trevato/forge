@@ -71,7 +71,7 @@ describe("the board", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -407,7 +407,7 @@ describe("the board's forge strip", () => {
       ["root", true],
       ["bob", false],
     ] as const) {
-      const u = await createUser(app.db, {
+      const u = await createUser(app.db, { trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

@@ -77,6 +77,7 @@ import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { manifestFor } from "../actions/here.ts";
 import { clientAddress } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -178,6 +179,33 @@ const TOOLS: readonly Tool[] = [
           };
         }),
       );
+    },
+  },
+  {
+    name: "here",
+    description:
+      "What you can do on a forge page, as who you are: what it is, and each action open to you with its HTTP route and MCP tool. Give the page's URL or path.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", maxLength: 2000 } },
+      required: ["url"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const raw = str(args["url"]);
+      const parsed = URL.parse(raw, ctx.url.origin);
+      if (parsed === null || parsed.origin !== ctx.url.origin)
+        return bad("not_found", "not a page of this forge");
+      const found = manifestFor(
+        ctx.app,
+        user,
+        ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+        ctx.url.origin,
+        parsed.pathname,
+      );
+      return found.ok
+        ? good(found.value)
+        : bad("not_found", "no such page here, or it is not visible to you");
     },
   },
   {

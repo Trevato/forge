@@ -115,7 +115,7 @@ describe("token counts on the pages", () => {
       ["alice", true],
       ["bob", false],
     ] as const) {
-      const u = await createUser(app.db, {
+      const u = await createUser(app.db, { trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

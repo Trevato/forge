@@ -12,6 +12,7 @@
  */
 
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -25,6 +26,7 @@ import {
   createRun,
   finishRun,
   listActive,
+  noteRunProgress,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -40,6 +42,13 @@ import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
+import { noteReached } from "../apps/egress_report.ts";
+import {
+  cellsAvailable,
+  resolveLimits,
+  STEP_HOSTS,
+  type CellSpec,
+} from "../apps/contain.ts";
 import { summariseCheckFailure } from "./summary.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -346,6 +355,29 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write(`checking out ${run.commitOid.slice(0, 7)}`);
     const exported = await exportTree(bare, run.commitOid, dir);
     if (!exported.ok) return { ok: false, error: exported.error };
+    // The check is repository code: it runs in a cell of its own
+    // (`apps/contain.ts`), its checkout and a home its only places to write,
+    // the forge, the registry and what it declared its only way out.
+    const cells = await cellsAvailable();
+    noteRunProgress(app.db, run.id, {
+      sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
+    });
+    if (!cells.ok)
+      write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
+    const home = `${dir}.home`;
+    const cell: CellSpec | undefined = cells.ok
+      ? {
+          dir,
+          writable: [],
+          home,
+          hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+          egress: [...STEP_HOSTS, ...manifest.egress],
+          reach: [options.forgeUrl],
+          limits: resolveLimits("step", manifest.limits),
+          onUndeclared: (host, port) =>
+            noteReached(app.config.dataDir, repo.id, host, port),
+        }
+      : undefined;
     try {
       const env = childEnv({
         CI: "1",
@@ -360,6 +392,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           log: write,
           signal,
           timeoutMs: manifest.timeout * 1000,
+          cell,
         });
         if (!installed.ok) return { ok: false, error: installed.error };
       }
@@ -380,6 +413,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         },
         signal,
         timeoutMs: manifest.timeout * 1000,
+        cell,
       });
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
@@ -391,6 +425,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       return { ok: true };
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   }
 
