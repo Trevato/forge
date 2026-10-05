@@ -63,8 +63,10 @@ const client = (
 describe("a provider request cannot be turned against the credential", () => {
   test("a redirect off-host is refused and the far host sees nothing", async () => {
     const seen: Request[] = [];
-    // Two distinct origins on loopback: `localhost` and `127.0.0.1` differ
-    // by hostname, and each `Bun.serve` picks its own port anyway.
+    // Two distinct origins on loopback, told apart by port. Both are bound
+    // and dialled at the same literal address: a name like `localhost` may
+    // bind one family and resolve to the other, and then the redirect this
+    // test is about is never reached.
     const attacker = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -73,10 +75,12 @@ describe("a provider request cannot be turned against the credential", () => {
         return Response.json({ login: "mallory" });
       },
     });
+    let asked = 0;
     const origin = Bun.serve({
       port: 0,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       fetch() {
+        asked++;
         return new Response(null, {
           status: 302,
           headers: {
@@ -87,8 +91,10 @@ describe("a provider request cannot be turned against the credential", () => {
     });
     try {
       const result = await client(
-        `http://localhost:${origin.port}/api/v1`,
+        `http://127.0.0.1:${origin.port}/api/v1`,
       ).call({ path: "/user", method: "POST", body: { secret: "payload" } });
+      // The origin was reached and did redirect: the refusal is the client's.
+      expect(asked).toBe(1);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.error).toBe("invalid_response");
