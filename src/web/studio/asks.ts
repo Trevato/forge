@@ -23,7 +23,7 @@ import {
   type Issue,
 } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { closesFromBody, joinMany, type Pull } from "../../core/pulls.ts";
+import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
   canWrite,
@@ -43,15 +43,16 @@ import {
   plannerDeclines,
   spentTodayForRepos,
 } from "../../crew/autonomy.ts";
-import { breakerParked } from "../../crew/breaker.ts";
+import { BREAKER_NOTE, breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
-import { isStalePull } from "../../crew/stale_asks.ts";
+import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
-import { lookThumb, lookUrl, thumbLook } from "../pages/looks.ts";
+import { lookUrl } from "../../core/looks.ts";
+import { lookThumb, thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
@@ -290,7 +291,9 @@ function askCandidatesFor(
       out.push({
         kind: "look",
         id: `look:${pull.id}`,
-        since: check.createdAt,
+        // New since its green check — or since it merged again, if later.
+        since: [check.createdAt, mergesAgainSince(db, pull.id, pull.headOid) ?? ""]
+          .reduce((a, b) => (a > b ? a : b)),
         repo,
         pull,
         who,
@@ -597,13 +600,16 @@ function lineOf(c: AskCandidate): string {
 }
 
 /** A collapsed row in a line: how many, and of what. */
-function rowLine(kind: DecisionKind, n: number): string {
-  if (kind === "parked")
-    return `the crew parked ${n} issues after three failed runs`;
-  if (kind === "declined") return `the planner declined ${n} times and waits for you`;
-  if (kind === "stopped") return `the crew stopped on ${n} changes`;
-  return `${n} green changes wait for your look`;
-}
+export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> = {
+  look: (n) => `${n} green changes wait for your look`,
+  stopped: (n) => `the crew stopped on ${n} changes`,
+  parked: (n) => `the crew parked ${n} issues after three failed runs`,
+  declined: (n) => `the planner declined ${n} times and waits for you`,
+  paused: (n) => `${n} pauses at the ceiling`,
+};
+
+/** Every kind has its own: a row never says "green changes" of something that is not one. */
+const rowLine = (kind: DecisionKind, n: number): string => ROW_PLURAL[kind](n);
 
 /** The anchor a row's card carries on `/asks`, so a link can land on it. */
 export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
@@ -696,6 +702,9 @@ export function decisionsFor(
     if (record === undefined) return undefined;
     const env = previewEnv(pull.number);
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === env),
     );
     return (
@@ -913,4 +922,74 @@ export function asksAnswer(ctx: Ctx, user: User) {
     forge: forgeNeedsFor(ctx, user),
     measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
   };
+}
+
+/**
+ * The asks an issue or pull can raise, as dismissal items: a pull is looked
+ * at or stopped on, an issue is parked. What a bulk dismissal records, and
+ * what its undo takes back (`fleet/verbs.ts`).
+ */
+export function askItemsOf(issue: Issue): string[] {
+  return issue.kind === "pull"
+    ? [`ask:look:${issue.id}`, `ask:stopped:${issue.id}`]
+    : [`ask:parked:${issue.id}`];
+}
+
+/**
+ * Whether the viewer's dismissal of this issue's ask still holds: one newer
+ * than its cause — the pull's latest check, or the issue's latest park.
+ */
+export function askDismissedBy(db: Database, viewerId: string, issue: Issue): boolean {
+  const dismissed = askDismissals(db, viewerId);
+  const at = askItemsOf(issue)
+    .map((item) => dismissed.get(item) ?? "")
+    .reduce((a, b) => (a > b ? a : b), "");
+  if (at === "") return false;
+  const cause =
+    issue.kind === "pull"
+      ? pullCause(db, issue)
+      : (db
+          .query<{ at: string | null }, [string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body = ?2",
+          )
+          .get(issue.id, BREAKER_NOTE)?.at ?? issue.createdAt);
+  return at > cause;
+}
+
+/** A pull ask's cause, as `askCandidatesFor` dates it: its green check, or merging again. */
+function pullCause(db: Database, issue: Issue): string {
+  const check = latestRunsForIssues(db, [issue.id]).get(issue.id)?.createdAt ?? issue.createdAt;
+  const pull = getPull(db, issue.repoId, issue.number);
+  const again = pull ? (mergesAgainSince(db, pull.id, pull.headOid) ?? "") : "";
+  return check > again ? check : again;
+}
+
+/**
+ * Ask ids, as `GET /api/v1/asks` hands them out (a row's `items`), to the
+ * issues and pulls a bulk action works on — only those that ask the viewer
+ * now, whether or not they dismissed them. The rest are named with why:
+ * a ceiling and a planner's decline are decided where they live.
+ */
+export function askTargetsFor(
+  db: Database,
+  user: User,
+  items: readonly string[],
+): { issueIds: string[]; refused: { item: string; reason: string }[] } {
+  const asks = new Map(
+    askCandidatesFor(db, user, listReposVisibleTo(db, user, { limit: 200 })).map(
+      (a) => [a.id, a],
+    ),
+  );
+  const issueIds: string[] = [];
+  const refused: { item: string; reason: string }[] = [];
+  for (const item of new Set(items)) {
+    const ask = asks.get(item);
+    if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    else if (ask.kind === "paused")
+      refused.push({ item, reason: "a ceiling is raised in the app's settings" });
+    else if (ask.kind === "declined")
+      refused.push({ item, reason: "a planner's decline is answered on its issue" });
+    else issueIds.push((ask.pull ?? ask.issue)!.id);
+  }
+  return { issueIds: [...new Set(issueIds)], refused };
 }

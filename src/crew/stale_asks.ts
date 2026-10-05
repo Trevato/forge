@@ -27,6 +27,8 @@ interface Known {
   /** The pull's head the answer was taken at, as the database names it. */
   readonly head: string;
   readonly stale: boolean;
+  /** When a sweep last saw it go from not merging to merging: its ask is new from then. */
+  readonly mergesSince?: string;
 }
 
 const knownByDb = new WeakMap<Database, Map<string, Known>>();
@@ -45,6 +47,23 @@ export function isStalePull(
 ): boolean {
   const known = knownByDb.get(db)?.get(pullId);
   return known !== undefined && known.stale && known.head === headOid;
+}
+
+/**
+ * When this pull, at this head, last went from not merging to merging — a
+ * new cause for its ask even with no new check, so a dismissal from before
+ * no longer holds (`web/studio/asks.ts`). Undefined when it never did, or
+ * when this process has not seen it happen.
+ */
+export function mergesAgainSince(
+  db: Database,
+  pullId: string,
+  headOid: string,
+): string | undefined {
+  const known = knownByDb.get(db)?.get(pullId);
+  return known !== undefined && !known.stale && known.head === headOid
+    ? known.mergesSince
+    : undefined;
 }
 
 /** The most pulls one sweep looks at: enough for a busy forge, bounded for a strange one. */
@@ -85,7 +104,19 @@ export async function sweepStaleAsks(app: App): Promise<void> {
       const stale =
         status.ahead === 0 ||
         (!status.mergeable && status.conflicts.length > 0);
-      known.set(pull.id, { between, head: pull.headOid, stale });
+      const was = known.get(pull.id);
+      const mergesSince =
+        !stale && was?.stale === true && was.head === pull.headOid
+          ? new Date().toISOString()
+          : was?.head === pull.headOid
+            ? was.mergesSince
+            : undefined;
+      known.set(pull.id, {
+        between,
+        head: pull.headOid,
+        stale,
+        ...(mergesSince === undefined ? {} : { mergesSince }),
+      });
     } catch (error) {
       app.log.warn("stale-ask sweep skipped a pull", {
         pull: pull.number,

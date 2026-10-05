@@ -129,6 +129,34 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    agent processes are started with an explicit environment — `PATH`,
    `HOME`, a locale, and the variables this document names — never the
    forge's.
+9. **Repository code runs in a cell of its own.** An app, its previews,
+   its terminal, and every install, test and check step run inside
+   bubblewrap (`apps/contain.ts`), the tool that already holds the crew's
+   shell. In a cell the machine is read-only; the forge's data directory
+   and home are empty; `/tmp` is the cell's own; the only writable places
+   are its own checkout, its environment's data and a home kept beside it.
+   It has a pid namespace of its own, so no other process's environment or
+   memory is visible, and a network namespace of its own with loopback and
+   nothing else: the way out is the forge's proxy (`apps/egress.ts`), which
+   reaches the forge and the hosts `forge.json` declares in `egress` (on
+   ports 80 and 443, unless an entry names its port), and refuses anything
+   else with a 403 that names the host and port. A declared name that
+   resolves to a private, loopback or link-local address (the cluster, the
+   node's metadata service, another pod) is refused too. Every mount that
+   may carry a secret is empty inside: `/run/secrets`, `/var/run/secrets`,
+   and every tmpfs the machine mounts outside `/dev`, `/proc` and `/sys`
+   (how Kubernetes mounts a secret or a service-account token) — and a pod
+   that runs the forge should set `automountServiceAccountToken: false`
+   all the same, since the forge never talks to the cluster. That is a
+   deny-list over the machine's mounts: a ConfigMap, hostPath, PVC or CSI
+   volume mounted into the forge's pod is usually not a tmpfs and stays
+   visible, so mount none there. A cell that sees an allow-list of mounts
+   instead is #801. Memory, CPU
+   (averaged over 30 seconds) and disk are watched from outside; a cell
+   over a limit is stopped, and the reason is the step's error or the
+   app's last log line. Where the host cannot hold a cell (no bubblewrap,
+   no user namespaces — macOS), the code runs as before and every deploy
+   and check says so on its run page: "Uncontained", with the reason.
 
 ## The golden path
 
@@ -181,6 +209,36 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 `looks` names the pages worth a picture (below), and defaults to `["/"]`. The
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
+
+Two more fields say what the app's code may use (rule 9):
+
+```json
+{
+  "egress": ["api.stripe.com", "*.cdn.example.com"],
+  "app": { "run": "bun run src/server.ts", "limits": { "memory": 1024, "cpus": 1, "disk": 2048 } },
+  "check": { "run": "bun test", "limits": { "memory": 4096 } }
+}
+```
+
+`egress`, at the top level, is shared by the app and its check: exact host
+names, or `*.` for every name below one, at most 32, each reachable on 80
+and 443 — `db.example.com:5432` names one other port instead. Without it an app
+reaches the forge and nothing else; install, test and check steps also
+reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
+1 core and 1 GiB for an app and 2 GiB, 2 cores and 4 GiB for a step, and
+are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
+number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
+holds at most 256 MiB.
+
+A release that turns egress on must not break an app whose writers have
+not declared what it uses yet, so the operator can start it reported:
+`FORGE_CELLS_EGRESS=report` lets an undeclared public host through (on 80
+and 443 only) and
+counts it per repository (`<data>/egress/<repo id>.json`, under the
+forge's data where no cell sees it), and the app's page tells its writers
+which hosts it reached and the `egress` line to add. The default,
+`enforce`, refuses them. Files, processes and private addresses are held
+the same in both modes.
 
 The forge starts the app with:
 
@@ -975,10 +1033,10 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 
 ## What is deliberately not here
 
-Containers. An app runs as the forge's own user, in its own directory, and
-nothing more separates it from the host than that. On the machine one
-person owns this is the honest, fast answer; a sandboxed runtime is the
-next layer, and the process boundary here is where it will attach. TLS
+Containers. A cell (rule 9) is namespaces and a watch, not an image: an
+app runs the machine's own `bun` and tools, read-only, and its limits are
+enforced by stopping it, not by throttling it — a container cannot create
+the cgroups that would throttle. TLS
 termination and an approve-and-land gate are additions of the same kind:
 the shapes above hold, and a new column or listener carries each of them —
 as one column carried a domain of the app's own.

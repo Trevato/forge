@@ -22,6 +22,7 @@ import { audienceFilter, eventAudience } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -156,6 +157,22 @@ describe("who an event is for", () => {
     }).then((r) => r.text());
     expect(page).not.toContain("hooks.example.test");
     expect(page).not.toContain("STRIPE_SECRET_KEY");
+  });
+
+  test("the dev home's activity rail says nothing of it to a signed-in stranger either", async () => {
+    const as = (user: User) =>
+      fetch(`${base}/?mode=dev`, {
+        headers: {
+          accept: "text/html",
+          cookie: `forge_session=${createSession(app.db, user.id).token}`,
+        },
+      }).then((r) => r.text());
+    const strangers = await as(bob);
+    expect(strangers).toContain("Recent activity");
+    expect(strangers).not.toContain("hooks.example.test");
+    expect(strangers).not.toContain("STRIPE_SECRET_KEY");
+    // The repository's admin still sees her own configuration there.
+    expect(await as(alice)).toContain("STRIPE_SECRET_KEY");
   });
 
   test("the streams hold configuration back from a reader as it happens", async () => {

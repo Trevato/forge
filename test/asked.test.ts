@@ -196,6 +196,21 @@ describe("what you asked for", () => {
     expect(states()["Refactor the watering module"]).toBeUndefined();
   });
 
+  test("the counts, made in SQL, agree with the list kind by kind", () => {
+    const all = askedIn(app.db, [repo], { show: "all", limit: ASKED_LIMIT });
+    expect(askedCounts(app.db, [repo])).toEqual({
+      asked: all.length,
+      shipped: all.filter((a) => a.state === "shipped").length,
+      unshipped: all.filter((a) => a.state === "waiting" || a.state === "building").length,
+      flagged: all.filter((a) => a.flagged).length,
+    });
+    expect(askedCounts(app.db, [])).toEqual({ asked: 0, shipped: 0, unshipped: 0, flagged: 0 });
+    // The fixture holds every state, so the agreement is not a run of zeros.
+    expect(new Set(all.map((a) => a.state))).toEqual(
+      new Set(["waiting", "building", "shipped", "closed"]),
+    );
+  });
+
   test("by default: nothing merged yet, oldest first; newest first on request", () => {
     const rows = askedIn(app.db, [repo]);
     expect(rows.map((a) => a.issue.title)).toEqual([
