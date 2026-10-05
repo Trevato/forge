@@ -79,6 +79,11 @@ import {
   readAppMembers,
   setAppMembersThrough,
 } from "../actions/app_members.ts";
+import {
+  explore,
+  exploreLine,
+  parseExploreQuery,
+} from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
@@ -760,6 +765,23 @@ const TOOLS: readonly Tool[] = [
       if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
         return bad("forbidden", "changing who may enter an app needs an admin-scope token");
       return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
+    },
+  },
+  {
+    name: "explore",
+    description:
+      "The apps, people (and, for a site admin, spawned forges) you can see, ranked by forks by people, pulls merged this month, hours in use and how lately they shipped, each with its numbers. `query` is one line: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`, and words to match. The same rows as /explore and /api/v1/explore.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", maxLength: 200 } },
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const query = parseExploreQuery(str(args["query"]));
+      return good({
+        query: exploreLine(query),
+        items: await explore(ctx.app, user, query),
+      });
     },
   },
   {

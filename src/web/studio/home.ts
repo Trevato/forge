@@ -407,7 +407,7 @@ export function studioDoor(ctx: Ctx): Response {
             front.total > tiles.length + (front.featured === undefined ? 0 : 1),
             () =>
               html`<p class="mt front-more">
-                <a href="/apps">All ${front.total} public apps</a>
+                <a href="/explore?q=kind%3Aapp">All ${front.total} public apps</a>
               </p>`,
           )}`
       : front.featured === undefined
