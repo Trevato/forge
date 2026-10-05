@@ -238,17 +238,6 @@ function origin(url: string): { host: string; port: number } | undefined {
   }
 }
 
-/**
- * An app's own public address as an `egress` entry (`host`, or `host:port`
- * off the web ports): declared, so the proxy still refuses it when the name
- * resolves to a private address, never an origin that skips that check.
- */
-export function ownAddress(url: string): string[] {
-  const own = origin(url);
-  if (own === undefined || own.host === "") return [];
-  return [own.port === 80 || own.port === 443 ? own.host : `${own.host}:${own.port}`];
-}
-
 const isLoopback = (host: string): boolean =>
   host === "localhost" || host === "::1" || /^127\./.test(host);
 

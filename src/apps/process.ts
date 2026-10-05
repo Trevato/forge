@@ -20,7 +20,6 @@ import { stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
 import {
   commandPid,
-  ownAddress,
   killTree,
   openCell,
   resolveLimits,
@@ -381,9 +380,7 @@ export async function startProcess(
             writable: [input.dataDir],
             home: input.cell.home,
             hide: input.cell.hide,
-            // What it declared, and itself at its public address — held to
-            // the public check like any declared host.
-            egress: [...(manifest.egress ?? []), ...ownAddress(input.url)],
+            egress: manifest.egress ?? [],
             reach: [input.forgeUrl],
             limits: resolveLimits("app", manifest.limits),
             listen: port,
