@@ -99,6 +99,7 @@ import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
+import { feedbackSince, nothingNew } from "./news.ts";
 
 const log = createLog("crew");
 
@@ -669,7 +670,7 @@ async function work(
       (taskIssue === undefined
         ? undefined
         : lastAgentRun(app.db, taskIssue.id, agent.user.id));
-    const since = previous?.finishedAt ?? issue.createdAt;
+    const since = feedbackSince(app.db, repo, issue, agent);
     const record = getAppByRepo(app.db, repo.id);
     const runtime = appsRuntime(app);
     const previewUrl =
