@@ -481,7 +481,7 @@ describe("the studio", () => {
     expect(page).not.toContain("has it");
   });
 
-  test("a pull on an app renders as a studio page — the preview, the look and the decision, no diff; ?mode=dev still renders the diff", async () => {
+  test("a pull on an app renders as one change page — the preview, the look and the decision, no diff; the diff is its Files step, and ?mode=dev changes nothing", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const branch = await commitToBranch(app, alice, repo, {
       branch: "feature/studio-pull",
@@ -522,25 +522,31 @@ describe("the studio", () => {
     expect(studio).toContain('data-word="look"');
     expect(studio).toContain("Ship");
     expect(studio).toContain('id="comment-body"');
-    expect(studio).toContain(
-      `href="/alice/notes/pulls/${pull.number}?mode=dev"`,
-    );
+    expect(studio).toContain(`href="/alice/notes/pulls/${pull.number}/files"`);
+    expect(studio).not.toContain("?mode=dev");
     expect(studio).not.toContain("diff-table");
 
-    // The dev page, either by cookie or by the one-off query, is untouched
-    // and still carries the diff.
-    const devCookie = await (
+    // The Files step carries the diff, under the same head.
+    const files = await (
+      await get(`/alice/notes/pulls/${pull.number}/files`)
+    ).text();
+    expect(files).toContain("Studio pull test");
+    expect(files).toContain("diff-table");
+    expect(files).toContain("STUDIO_PULL.md");
+    expect(files).toContain(`action="/alice/notes/pulls/${pull.number}/merge"`);
+
+    // There is no second page behind the mode: the cookie and the query
+    // both answer the one change.
+    for (const dev of [
       await get(`/alice/notes/pulls/${pull.number}`, {
         cookie: `${cookie}; forge_mode=dev`,
-      })
-    ).text();
-    expect(devCookie).toContain("diff-table");
-    expect(devCookie).toContain("STUDIO_PULL.md");
-
-    const devQuery = await (
-      await get(`/alice/notes/pulls/${pull.number}?mode=dev`)
-    ).text();
-    expect(devQuery).toContain("diff-table");
+      }),
+      await get(`/alice/notes/pulls/${pull.number}?mode=dev`),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="look"');
+      expect(text).not.toContain("diff-table");
+    }
 
     // Ship it, so it stops being an ask on the shared repo's home for the
     // tests that follow.
@@ -701,7 +707,7 @@ describe("the studio", () => {
     expect(merged.ok).toBe(true);
   });
 
-  test("a pull on a repository that is not an app renders exactly what it renders today, even in studio mode", async () => {
+  test("a pull on a repository that is not an app is the same one change page, with the diff and the merge box on its Files step", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainrepo",
       visibility: "private",
@@ -729,12 +735,127 @@ describe("the studio", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     const pull = opened.value;
 
-    const studioCookie = await (
+    const change = await (
       await get(`/alice/plainrepo/pulls/${pull.number}`)
     ).text();
-    expect(studioCookie).toContain("diff-table");
-    expect(studioCookie).toContain("PLAIN.md");
-    expect(studioCookie).toContain("Merge pull request");
+    expect(change).toContain("Plain pull");
+    expect(change).toContain("data-word=");
+    expect(change).not.toContain("diff-table");
+    // No app: no preview and no look, and the decision does not say "app".
+    expect(change).not.toContain("<h2>Preview</h2>");
+    expect(change).toContain("Nothing here waits on a check to ship.");
+
+    const files = await (
+      await get(`/alice/plainrepo/pulls/${pull.number}/files`)
+    ).text();
+    expect(files).toContain("diff-table");
+    expect(files).toContain("PLAIN.md");
+    expect(files).toContain("Merge pull request");
+    expect(files).toContain("feature/plain → main");
+  });
+
+  test("the Files step is refused to a reader who cannot see the change, exactly as the change is", async () => {
+    const hidden = await createRepo(app, alice, {
+      name: "hiddenfiles",
+      visibility: "private",
+      description: "",
+    });
+    if (!hidden.ok) throw new Error(String(hidden.error));
+    const seeded = await commitToBranch(app, alice, hidden.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, hidden.value, {
+      branch: "secret",
+      base: "main",
+      message: "Secret",
+      files: [{ path: "SECRET.md", content: "do not show\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, hidden.value, {
+      title: "Hidden",
+      body: "",
+      baseBranch: "main",
+      headBranch: "secret",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const n = opened.value.number;
+
+    for (const path of [
+      `/alice/hiddenfiles/pulls/${n}`,
+      `/alice/hiddenfiles/pulls/${n}/files`,
+      `/alice/hiddenfiles/pulls/${n + 1}/files`,
+    ]) {
+      const anon = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(anon.status, path).toBe(404);
+      expect(await anon.text()).not.toContain("SECRET.md");
+    }
+  });
+
+  test("a change that waits on a review never offers Ship, and the Files step's forms answer back on the Files step", async () => {
+    const gated = await createRepo(app, alice, {
+      name: "gatedchange",
+      visibility: "private",
+      description: "",
+    });
+    if (!gated.ok) throw new Error(String(gated.error));
+    const seeded = await commitToBranch(app, alice, gated.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const on = await updateRepoSettings(app, alice, gated.value, {
+      requireReview: true,
+    });
+    if (!on.ok) throw new Error(String(on.error));
+    const branch = await commitToBranch(app, alice, on.value, {
+      branch: "wants-review",
+      base: "main",
+      message: "Wants review",
+      files: [{ path: "REVIEW.md", content: "look\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, on.value, {
+      title: "Wants a review",
+      body: "",
+      baseBranch: "main",
+      headBranch: "wants-review",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const at = `/alice/gatedchange/pulls/${opened.value.number}`;
+
+    const change = await (await get(at)).text();
+    expect(change).not.toContain(`action="${at}/ship"`);
+    expect(change).toContain("it waits on an approving review");
+
+    // A merge the gate refuses lands back on the Files step, where the
+    // merge box says why.
+    const refused = await fetch(`${base}${at}/merge`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ strategy: "merge" }),
+      redirect: "manual",
+    });
+    expect(refused.status).toBe(303);
+    expect(refused.headers.get("location")).toBe(`${at}/files`);
+    const files = await (await get(`${at}/files`)).text();
+    expect(files).toContain("Waiting on review.");
+
+    // A line comment lands on its own file, on the Files step.
+    const commented = await fetch(`${base}${at}/review`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({
+        path: "REVIEW.md",
+        side: "new",
+        line: "1",
+        body: "why?",
+      }),
+      redirect: "manual",
+    });
+    expect(commented.status).toBe(303);
+    expect(commented.headers.get("location")).toStartWith(`${at}/files#`);
   });
 
   test("a tell renders as one page — who has it, its runs, what blocks it with its form — and labels and the assignee in a closed Details; ?mode=dev changes nothing", async () => {
@@ -1278,7 +1399,7 @@ describe("the studio", () => {
     // The studio's change, not dev's diff.
     expect(changeHtml).not.toContain("diff-table");
     expect(changeHtml).toContain(`action="/alice/notes/pulls/${p}/comments"`);
-    expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}?mode=dev"`);
+    expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}/files"`);
     expect(changeHtml).toContain('id="comment-body"');
 
     // Dev's own addresses answer the studio's pages where they stand — a

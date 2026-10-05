@@ -549,10 +549,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/pulls/${openPullNumber}`,
         // #171: the composer's close button used to say "Close pull
         // request" here, dev's own noun on the studio's own page.
-        shows: ["Close change"],
+        // One change page (#628): the diff, the branch and the merge box are
+        // its Files step, which speaks git on purpose, so it is not a row.
+        shows: ["Close change", `${repoPath}/pulls/${openPullNumber}/files`],
         hides: ['class="where"'],
-        dev: ["diff-table", openBranch, "Close pull request", "workbench"],
-        devTitle: `${openPullTitle} · vocab`,
+        title: `${openPullTitle} · vocab`,
       },
       {
         word: "look (the studio's noun)",
@@ -563,7 +564,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "shipped",
         path: `${repoPath}/pulls/${mergedPullNumber}`,
-        dev: ["diff-table"],
+        shows: ['data-word="shipped"'],
       },
       {
         // #197: the map used to link every card to dev's `/issues/:number`

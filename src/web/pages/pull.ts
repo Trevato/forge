@@ -655,7 +655,9 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     comments: reviewComments,
     threads: threadViews,
     fileLinkBase: `${base}/blob/${status.headOid}`,
-    ...(ctx.auth.user ? { reviewBase: `${thread}/files` } : {}),
+    ...(ctx.auth.user
+      ? { reviewBase: thread, reviewPage: `${thread}/files` }
+      : {}),
     ...(active ? { active } : {}),
   };
 
