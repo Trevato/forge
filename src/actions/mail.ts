@@ -2,7 +2,9 @@
  * Mail the forge sends is capped by who it goes to, not only by who asks
  * (#784). A verification link is limited per account (`core/verify.ts`),
  * but many accounts could still mail one stranger many times, or mail many
- * strangers. So every message passes two caps, counted in `mail_sent`:
+ * strangers. So every message passes two caps, counted in `mail_sent` by
+ * the mailbox it reaches (`mailbox`: a `+tag` or Gmail's dots make no new
+ * person):
  *
  * - at most `RECIPIENT_DAILY` messages to one address in a day, whatever
  *   account asks;
@@ -46,7 +48,7 @@ export function mayMail(app: App, to: string, now = Date.now()): boolean {
     atCeiling(app, now);
     return false;
   }
-  return sentSince(app.db, from, recipientKey(to)) < RECIPIENT_DAILY;
+  return sentSince(app.db, from, recipientKey(app.config.dataDir, to)) < RECIPIENT_DAILY;
 }
 
 /** Send through the caps: "sent", "capped" when a cap holds it, "failed" when the mailer did. */
@@ -57,7 +59,7 @@ export async function sendCapped(
   now = Date.now(),
 ): Promise<"sent" | "capped" | "failed"> {
   if (!mayMail(app, mail.to, now)) return "capped";
-  const held = holdSend(app.db, recipientKey(mail.to), new Date(now).toISOString());
+  const held = holdSend(app.db, recipientKey(app.config.dataDir, mail.to), new Date(now).toISOString());
   const delivered = await mailer(mail).catch(() => false);
   if (!delivered) {
     releaseSend(app.db, held);

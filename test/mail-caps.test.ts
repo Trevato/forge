@@ -17,6 +17,8 @@ import {
   RECIPIENT_DAILY,
 } from "../src/actions/mail.ts";
 import { sendVerification } from "../src/actions/verify.ts";
+import { mailbox, recipientKey } from "../src/core/mail_log.ts";
+import { createHash } from "node:crypto";
 import { listEvents } from "../src/core/events.ts";
 import { createUser, getUserById, type User } from "../src/core/users.ts";
 import { RESEND_AFTER_MS } from "../src/core/verify.ts";
@@ -101,6 +103,36 @@ describe("one address hears a few messages a day, whoever asks", () => {
     expect(to()).toBe(RECIPIENT_DAILY);
     // Another address is not held back by the stranger's count.
     expect(await sendVerification(app, await person(), now)).toBe("sent");
+  });
+
+  test("a +tag, Gmail's dots and its second domain make no new person", async () => {
+    const variants = [
+      ["ann+1@gmail.com", "A.nn@googlemail.com", "ann+news@gmail.com", "an.n@gmail.com"],
+      ["bob+1@example.com", "BOB+2@example.com", "bob@example.com", "bob+3@example.com"],
+    ];
+    let now = Date.now();
+    for (const addresses of variants)
+      for (const [n, address] of addresses.entries()) {
+        const asker = readdress(await person(), address);
+        now += RESEND_AFTER_MS + 1;
+        expect(await sendVerification(app, asker, now)).toBe(
+          n < RECIPIENT_DAILY ? "sent" : "capped",
+        );
+      }
+    // Dots are one mailbox only where the provider says so.
+    expect(mailbox("b.ob@example.com")).not.toBe(mailbox("bob@example.com"));
+    expect(mailbox("A.n.n+x@GoogleMail.com")).toBe("ann@gmail.com");
+  });
+
+  test("the count is keyed with the forge's secret, never a bare hash of the address", () => {
+    const stored = app.db
+      .query<{ recipient: string }, []>("SELECT recipient FROM mail_sent")
+      .all()
+      .map((r) => r.recipient);
+    expect(stored.length).toBeGreaterThan(0);
+    const bare = createHash("sha256").update("stranger@example.com").digest("hex");
+    expect(stored).not.toContain(bare);
+    expect(stored).toContain(recipientKey(app.config.dataDir, "Stranger+x@example.com"));
   });
 
   test("the person waiting is told plainly, over the API", async () => {

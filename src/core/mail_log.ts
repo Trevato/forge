@@ -1,16 +1,49 @@
 /**
- * Every message the forge sent, by a hash of its recipient: what the mail
- * caps (`actions/mail.ts`) count, so they hold across a restart. The address
- * itself is never kept here — a hash of it, lowercased, is enough to count.
+ * Every message the forge sent, by a keyed hash of its recipient: what the
+ * mail caps (`actions/mail.ts`) count, so they hold across a restart. The
+ * address itself is never kept here, and the hash is keyed with the data
+ * directory's secret, so a copy of the database cannot be tested against a
+ * list of addresses.
  */
 
 import type { Database } from "bun:sqlite";
-import { sha256 } from "../kernel/hash.ts";
+import { createHmac } from "node:crypto";
 import { id } from "../kernel/id.ts";
+import { loadKey } from "../kernel/secret.ts";
 
-/** The key a recipient is counted by. */
-export function recipientKey(address: string): string {
-  return sha256(address.trim().toLowerCase());
+/** Mail providers that ignore dots in the local part, and their one domain. */
+const DOTLESS: Record<string, string> = {
+  "gmail.com": "gmail.com",
+  "googlemail.com": "gmail.com",
+};
+
+/**
+ * The mailbox an address reaches, as far as the forge can tell: lowercased,
+ * a `+tag` dropped, and for Gmail its dots dropped and its two domains made
+ * one. So `Ann+1@gmail.com`, `a.nn@googlemail.com` and `ann@gmail.com` are
+ * one person to the caps.
+ */
+export function mailbox(address: string): string {
+  const lower = address.trim().toLowerCase();
+  const at = lower.lastIndexOf("@");
+  if (at <= 0) return lower;
+  let local = lower.slice(0, at);
+  let domain = lower.slice(at + 1);
+  const plus = local.indexOf("+");
+  if (plus > 0) local = local.slice(0, plus);
+  const folded = DOTLESS[domain];
+  if (folded !== undefined) {
+    local = local.replaceAll(".", "");
+    domain = folded;
+  }
+  return `${local}@${domain}`;
+}
+
+/** The key a recipient is counted by: its mailbox, keyed with the forge's secret. */
+export function recipientKey(dataDir: string, address: string): string {
+  return createHmac("sha256", loadKey(dataDir))
+    .update(`mail-recipient:${mailbox(address)}`)
+    .digest("hex");
 }
 
 /** Hold a place for a message about to go; returns its row, to release if it fails. */
