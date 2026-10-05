@@ -188,7 +188,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       return;
     }
     // What asks them, and for an admin, who joined (`actions/accounts.ts`).
-    const asks: { id: string; line: string }[] = [
+    const asks: { line: string; items: readonly string[] }[] = [
       ...askLinesFor(app.db, user),
       ...newAccountLines(app.db, user, now()),
     ];

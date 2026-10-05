@@ -60,8 +60,8 @@ describe("accounts: the owner sees, suspends and removes", () => {
     servers = await serve(app);
     base = servers.url;
     const owner = await signUp(app, {
-      username: "owner",
-      email: "owner@f.dev",
+      username: "olive",
+      email: "olive@f.dev",
       password: "owner-passphrase",
     });
     if (!owner.ok) throw new Error(owner.error);
@@ -313,7 +313,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
       agent: true,
     });
     if (!agent.ok) throw new Error(agent.error);
-    const issue = await openIssue(app, getUserByName(app.db, "owner")!, repo, {
+    const issue = await openIssue(app, getUserByName(app.db, "olive")!, repo, {
       title: "work",
     });
     if (!issue.ok) throw new Error(issue.error);
@@ -347,7 +347,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     const bare = repoDir(app.reposRoot, "oscar", "junk");
     expect(existsSync(bare)).toBe(true);
     // oscar spoke on someone else's repository.
-    const owner = getUserByName(app.db, "owner")!;
+    const owner = getUserByName(app.db, "olive")!;
     const host = await createRepo(app, owner, {
       name: "public-host",
       visibility: "public",
@@ -381,7 +381,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     expect(again.status).toBe(422);
     // What oscar said on another's thread is still there.
     const thread = await api(
-      `/api/v1/repos/owner/public-host/issues/${issue.value.number}`,
+      `/api/v1/repos/olive/public-host/issues/${issue.value.number}`,
       { token: ownerToken },
     );
     expect(JSON.stringify(await thread.json())).toContain("hi from oscar");
@@ -398,7 +398,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
   });
 
   test("the owner cannot suspend or remove themselves, another admin, or an agent", async () => {
-    for (const name of ["owner", "builder"]) {
+    for (const name of ["olive", "builder"]) {
       expect(
         (
           await api(`/api/v1/admin/accounts/${name}/suspend`, {
@@ -435,7 +435,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
         message: "new repositories are paused here",
       });
       // The refusal leaves nothing on disk.
-      expect(existsSync(repoDir(app.reposRoot, "owner", "guarded"))).toBe(false);
+      expect(existsSync(repoDir(app.reposRoot, "olive", "guarded"))).toBe(false);
     } finally {
       app.db.exec("DROP TRIGGER test_refuse");
     }

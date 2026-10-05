@@ -154,7 +154,7 @@ export function newAccountLines(
   db: Database,
   user: User,
   now: number = Date.now(),
-): { id: string; line: string }[] {
+): { id: string; line: string; items: readonly string[] }[] {
   if (!user.isAdmin || user.kind !== "user") return [];
   const since = new Date(now - NEW_FOR_MS).toISOString();
   return readAccounts(db)
@@ -165,8 +165,12 @@ export function newAccountLines(
         a.removedAt === null &&
         a.createdAt >= since,
     )
-    .map((a) => ({
-      id: `account:${a.username}`,
-      line: `${a.username} joined the forge${a.via === null ? "" : ` (${a.via})`}`,
-    }));
+    .map((a) => {
+      const id = `account:${a.username}`;
+      return {
+        id,
+        line: `${a.username} joined the forge${a.via === null ? "" : ` (${a.via})`}`,
+        items: [id],
+      };
+    });
 }
