@@ -149,3 +149,20 @@ export function askDismissals(
       .map((r) => [r.item_id, r.at]),
   );
 }
+
+/**
+ * Take back this viewer's dismissals of these items: an undo of a bulk
+ * dismissal (`fleet/verbs.ts`). The one edit the table allows, and only of
+ * the viewer's own rows.
+ */
+export function removeDismissals(
+  db: Database,
+  viewerId: string,
+  itemIds: readonly string[],
+): void {
+  if (itemIds.length === 0) return;
+  db.query<unknown, [string, string]>(
+    `DELETE FROM interaction WHERE viewer_id = ?1 AND kind = 'dismissed'
+       AND item_id IN (SELECT value FROM json_each(?2))`,
+  ).run(viewerId, JSON.stringify(itemIds));
+}

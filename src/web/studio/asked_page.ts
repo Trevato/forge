@@ -23,7 +23,16 @@ import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { badge, empty, listCard, row, seg, time, type Tone } from "../ui.ts";
+import {
+  badge,
+  empty,
+  listCard,
+  row,
+  seg,
+  time,
+  timeAgo,
+  type Tone,
+} from "../ui.ts";
 
 const WORD: Record<AskedState, { text: string; tone: Tone }> = {
   waiting: { text: "Waiting", tone: "default" },
@@ -40,8 +49,24 @@ function pullNote(a: Asked): string {
   return a.pulls.length > 0 ? "no pull merged" : "no pull yet";
 }
 
+/**
+ * The one badge a row wears. Red is for an old ask with nothing to show.
+ * An old ask whose pull is open says that, and how long the pull has been
+ * open, which is the next thing a person asks.
+ */
+function wordFor(a: Asked): { text: string; tone: Tone } {
+  if (a.flagged) return { text: "Nothing built", tone: "danger" };
+  const open = a.pulls.find((p) => p.state === "open");
+  if (a.stale && open !== undefined)
+    return {
+      text: `Pull open ${timeAgo(open.openedAt).replace(/ ago$/, "")}`,
+      tone: "attn",
+    };
+  return WORD[a.state];
+}
+
 function askedRow(a: Asked): Html {
-  const word = WORD[a.state];
+  const word = wordFor(a);
   return row({
     href: `${repoBase(a.repo)}/issues/${a.issue.number}`,
     nav: true,
@@ -53,13 +78,10 @@ function askedRow(a: Asked): Html {
       : html`crew ${time(a.lastCrewAt)}`}
     · ${pullNote(a)} · ${a.repo.ownerName}/${a.repo.name} #${a.issue.number} ·
     ${a.askedBy} · ${time(a.askedAt)}`,
-    // One badge per row: a flagged ask says only that nothing was built
-    // (the meta line still names its pull), so a phone keeps the title.
-    trail: a.flagged
-      ? badge("Nothing built", { tone: "danger" })
-      : badge(word.text, { tone: word.tone }),
+    // One badge per row, so a phone keeps the title.
+    trail: badge(word.text, { tone: word.tone }),
     titleAttr: a.flagged
-      ? `${word.text}, and nothing built in ${STALE_DAYS} days`
+      ? `${WORD[a.state].text}, and nothing built in ${STALE_DAYS} days`
       : a.issue.title,
   });
 }
