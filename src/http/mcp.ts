@@ -280,20 +280,21 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). With preview (the default) nothing changes: the answer is each row's before and after and the rows refused with why. With preview false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Every row is checked against your admin of its app.",
+      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
     inputSchema: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
         items: { type: "array", items: { type: "string" }, maxItems: 100 },
-        preview: { type: "boolean" },
+        dryRun: { type: "boolean" },
       },
       required: ["action", "items"],
     },
     writes: true,
+    dryByDefault: true,
     async run(ctx, user, args) {
       const answer =
-        args["preview"] === false
+        args["dryRun"] === false
           ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
           : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
