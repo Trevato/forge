@@ -26,6 +26,7 @@ import {
 } from "../actions/dependencies.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
+import { spawnDoor } from "../spawn/door.ts";
 import { tell, toldWords } from "../actions/tell.ts";
 import {
   readUsage,
@@ -80,6 +81,8 @@ interface Tool {
   readonly inputSchema: Record<string, unknown>;
   /** Whether it changes anything: `rw` scope, and said so to the client. */
   readonly writes: boolean;
+  /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
+  readonly dryByDefault?: true;
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
 }
 
@@ -415,6 +418,49 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "spawn",
+    description:
+      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "The child's name: a-z, 0-9 and -, at most 39 characters.",
+        },
+        apps: {
+          type: "array",
+          items: APP_ARG,
+          description: "The apps to copy, each as owner/name, with their history.",
+        },
+        crew: {
+          type: "array",
+          items: { type: "string" },
+          description: "The crew members whose briefs go along, by name.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to make the child.",
+        },
+      },
+      required: ["name"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const door = await spawnDoor(ctx, user, args);
+      if (door.status >= 400)
+        return bad(String(door.body["error"]), String(door.body["message"]));
+      const made = door.body["dryRun"] === false;
+      return good({
+        says: made
+          ? `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}.`
+          : "This is the plan; nothing was made. Send dryRun: false to spawn.",
+        ...door.body,
+      });
+    },
+  },
+  {
     name: "take_updates",
     description:
       "Take the parent's updates into a fork: a fast-forward, or a merge when git merges cleanly. A conflict is refused with its files; use `converge` then.",
@@ -707,17 +753,18 @@ function rpcOne(
       const tool = TOOLS.find((t) => t.name === params["name"]);
       if (tool === undefined)
         return refuse(-32602, `no tool named ${String(params["name"])}`);
-      if (tool.writes && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
+      const args =
+        typeof params["arguments"] === "object" && params["arguments"] !== null
+          ? (params["arguments"] as Args)
+          : {};
+      const plansOnly = tool.dryByDefault === true && args["dryRun"] !== false;
+      if (tool.writes && !plansOnly && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [
             { type: "text", text: "forbidden: this token may read, not act" },
           ],
           isError: true,
         });
-      const args =
-        typeof params["arguments"] === "object" && params["arguments"] !== null
-          ? (params["arguments"] as Args)
-          : {};
       return Promise.resolve(tool.run(ctx, user, args)).then((answer) =>
         reply(
           answer.ok

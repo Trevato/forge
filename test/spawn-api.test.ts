@@ -1,0 +1,162 @@
+/**
+ * The callers of spawnForge: POST/GET /api/v1/forges and the MCP `spawn`
+ * tool. Dry-run is the default, an ro token plans and never makes, and a
+ * fake placement stands in for where the child lives.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { createAgent } from "../src/actions/crew.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { spawnWords, usePlacement } from "../src/spawn/door.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { ok } from "../src/kernel/result.ts";
+import type { SpawnError } from "../src/actions/spawn.ts";
+
+describe("spawn over the API and MCP", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let rw: string;
+  let ro: string;
+  let bobRw: string;
+  let placed = 0;
+
+  const post = (token: string | null, payload: unknown, extra: Record<string, string> = {}) =>
+    fetch(`${base}/api/v1/forges`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...extra },
+      body: JSON.stringify(payload),
+    });
+  const get = (token: string) =>
+    fetch(`${base}/api/v1/forges`, { headers: { authorization: `Bearer ${token}` } });
+  const mcp = async (token: string, args: unknown) => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "spawn", arguments: args } }),
+    });
+    const r = ((await res.json()) as any).result;
+    return { error: r.isError === true, text: r.content[0].text as string };
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-spawn-api-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, { username: "alice", email: "a@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    const b = await createUser(app.db, { username: "bob", email: "b@forge.local", password: "a-good-passphrase" });
+    if (!a.ok || !b.ok) throw new Error("users");
+    rw = createToken(app.db, a.value.id, "rw", "rw").token;
+    ro = createToken(app.db, a.value.id, "ro", "ro").token;
+    bobRw = createToken(app.db, b.value.id, "rw", "rw").token;
+    const repo = await createRepo(app, a.value, { name: "notes" });
+    if (!repo.ok) throw new Error("repo");
+    await commitToBranch(app, a.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
+    const agent = await createAgent(app, a.value, { username: "scout", brief: "ship small" });
+    if (!agent.ok) throw new Error(`agent ${JSON.stringify(agent.error)}`);
+    usePlacement(app, {
+      place: async (plan) => ok({ url: `https://${plan.name}.fake.test`, bodyId: `fake-${++placed}` }),
+      retire: async () => ok(),
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("dry-run is the default: the plan comes back and nothing is made", async () => {
+    const res = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"] });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.dryRun).toBe(true);
+    expect(body.plan.apps.map((a: any) => a.ref)).toEqual(["alice/notes"]);
+    expect(body.plan.briefs).toEqual([{ agent: "scout", text: "ship small" }]);
+    expect(body.leftBehind).toContain("secrets");
+    expect(placed).toBe(0);
+    expect(await readdir(join(dataDir, "children")).catch(() => [])).toEqual([]);
+    expect(await (await get(rw)).json()).toEqual({ items: [], next_cursor: null });
+  });
+
+  test("the boundary refuses a bad name, an unknown app, an unknown crew member", async () => {
+    for (const bad of [
+      { name: "Bad Name", apps: [] },
+      { name: "kid", apps: ["alice/nope"] },
+      { name: "kid", apps: ["alice/notes"], crew: ["ghost"] },
+      { name: "kid", apps: "alice/notes" },
+      { name: "kid", dryRun: "no" },
+    ]) {
+      const res = await post(rw, bad);
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as any).error).toBe("invalid");
+    }
+    expect((await post(rw, [1])).status).toBe(422);
+  });
+
+  test("a non-admin, an ro token and no token are refused, even for a dry run", async () => {
+    expect((await post(bobRw, { name: "kid" })).status).toBe(403);
+    expect((await post(bobRw, { name: "kid", dryRun: false })).status).toBe(403);
+    expect((await post(ro, { name: "kid" })).status).toBe(403);
+    expect((await post(null, { name: "kid" })).status).toBe(401);
+    expect((await get(bobRw)).status).toBe(403);
+    expect(placed).toBe(0);
+  });
+
+  test("a cross-origin spawn is refused", async () => {
+    const res = await post(rw, { name: "kid", apps: ["alice/notes"], dryRun: false }, { origin: "https://evil.test" });
+    expect(res.status).toBe(403);
+    expect(placed).toBe(0);
+  });
+
+  test("dryRun: false makes the child through the placement, and the ledger lists it", async () => {
+    const res = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"], dryRun: false });
+    expect(res.status).toBe(201);
+    const made = (await res.json()) as any;
+    expect(made).toMatchObject({ dryRun: false, name: "kid", url: "https://kid.fake.test", existed: false });
+    expect(placed).toBe(1);
+    const list = (await (await get(ro)).json()) as any;
+    expect(list.items).toEqual([{ name: "kid", url: "https://kid.fake.test", bodyId: "fake-1", done: true }]);
+    // The same request again is answered, not made twice.
+    const again = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"], dryRun: false });
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as any).existed).toBe(true);
+    expect(placed).toBe(1);
+  });
+
+  test("every SpawnError kind has one status and one sentence", () => {
+    const kinds: SpawnError[] = [
+      { kind: "unauthorized" },
+      { kind: "forbidden" },
+      { kind: "cross_origin" },
+      { kind: "invalid", field: "name", reason: "x" },
+      { kind: "refused", reason: "children", message: "a forge holds at most 5 hosted children" },
+      { kind: "exists", message: "that child is being made" },
+      { kind: "failed", message: "git failed" },
+    ];
+    expect(kinds.map((k) => spawnWords(k).status)).toEqual([401, 403, 403, 422, 409, 409, 500]);
+    for (const k of kinds) expect(String(spawnWords(k).body["message"]).length).toBeGreaterThan(5);
+  });
+
+  test("MCP: it lists as a tool, plans by default for ro, and only rw makes", async () => {
+    const plan = await mcp(ro, { name: "kid2", apps: ["alice/notes"] });
+    expect(plan.error).toBe(false);
+    expect(JSON.parse(plan.text)).toMatchObject({ dryRun: true, says: expect.stringContaining("nothing was made") });
+    const denied = await mcp(ro, { name: "kid2", apps: ["alice/notes"], dryRun: false });
+    expect(denied).toEqual({ error: true, text: "forbidden: this token may read, not act" });
+    const notAdmin = await mcp(bobRw, { name: "kid2" });
+    expect(notAdmin.error).toBe(true);
+    expect(notAdmin.text).toStartWith("forbidden:");
+    const made = await mcp(rw, { name: "kid2", apps: ["alice/notes"], dryRun: false });
+    expect(made.error).toBe(false);
+    expect(JSON.parse(made.text)).toMatchObject({ dryRun: false, name: "kid2", url: "https://kid2.fake.test" });
+    expect(placed).toBe(2);
+  });
+});

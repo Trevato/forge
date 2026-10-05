@@ -35,6 +35,7 @@ for a tunnel and a forge that sleeps.
 | `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door             |        |
 | `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
 | `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
+| `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
 | `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |

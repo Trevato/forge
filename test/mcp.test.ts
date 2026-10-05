@@ -163,6 +163,7 @@ describe("the forge over MCP", () => {
       "audit",
       "probe",
       "following",
+      "spawn",
       "take_updates",
       "converge",
       "map",

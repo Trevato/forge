@@ -9,6 +9,8 @@
  */
 
 import { forgeHealth } from "../kernel/guard.ts";
+import { listChildren } from "../actions/spawn.ts";
+import { spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
@@ -2890,6 +2892,25 @@ export function apiRoutes(router: Router<Handler>): void {
       : [];
     const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
     return json({ ...v, ...forge, ok: forge.ok && v.ok });
+  });
+
+  // A forge's children (docs/SPAWN.md): an admin's, planned before made.
+  router.add("GET", "/api/v1/forges", async (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    if (!ctx.auth.user?.isAdmin) return forbidden();
+    return json({ items: await listChildren(ctx.app), next_cursor: null });
+  });
+
+  // `dryRun` is true unless it is `false`: the plan, and nothing is made.
+  router.add("POST", "/api/v1/forges", async (ctx) => {
+    const input = await body(ctx.request);
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    if (typeof input !== "object" || input === null || Array.isArray(input))
+      return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
+    const door = await spawnDoor(ctx, ctx.auth.user!, input as Record<string, unknown>);
+    return json(door.body, door.status);
   });
 
   router.add("GET", "/api/v1/apps", (ctx) => {

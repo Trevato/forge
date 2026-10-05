@@ -36,3 +36,7 @@ as a second implementation of the placement seam (#427), in their own issue.
 - The parent never reaches into a child; children report in with a signed
   heartbeat carrying counts and version only.
 - A proposal can only create branches under `child/<name>/` and open pulls.
+
+## Callers
+
+`POST /api/v1/forges {name, apps[], crew[], dryRun}` (rw token, admin only) and the MCP `spawn` tool share `src/spawn/door.ts`. `dryRun` is true unless it is `false`: the answer is the plan and what is left behind, and nothing is made. `GET /api/v1/forges` lists the ledger's children. The child's org is its name; `crew` names the agents whose briefs travel. Errors: 401 unauthorized, 403 forbidden / cross_origin, 422 invalid, 409 refused / exists, 500 failed — each with one sentence. The MCP lets an `ro` token plan, never make.

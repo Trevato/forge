@@ -12,7 +12,7 @@
  * idempotent — and a finished one is answered, not made twice.
  */
 
-import { mkdir, rename } from "node:fs/promises";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { createApp, type App } from "../app.ts";
 import { getAgentByName, createAgentRow, updateAgent, BRIEF_MAX } from "../core/agents.ts";
@@ -251,4 +251,18 @@ async function copyInto(
   } finally {
     child.close();
   }
+}
+
+/** The children this forge has made or begun, from its ledger, by name. */
+export async function listChildren(
+  app: App,
+): Promise<{ name: string; url: string; bodyId: string; done: boolean }[]> {
+  const dir = join(app.config.dataDir, "spawn");
+  const files = await readdir(dir).catch(() => [] as string[]);
+  const out = [];
+  for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
+    const ledger = await readLedger(app, f.slice(0, -".json".length));
+    if (ledger) out.push({ name: ledger.name, url: ledger.url, bodyId: ledger.bodyId, done: ledger.done });
+  }
+  return out;
 }
