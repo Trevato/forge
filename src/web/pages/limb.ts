@@ -149,7 +149,8 @@ export function limbPreviewPage(ctx: Ctx): Response {
   const words = WORDS[action];
   const p = plan.value;
   const willWrite = p.counts.change > 0;
-  const pillars = action === "resume" ? pillarsOf(ctx.app.db, repo.id).pillars : [];
+  const pillars =
+    action === "resume" ? pillarsOf(ctx.app.db, repo).pillars : [];
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="ms-top mt">
       <p class="small muted">

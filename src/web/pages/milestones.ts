@@ -342,7 +342,7 @@ export function milestonePage(ctx: Ctx): Response {
     ? limbActions(
         repoBase(repo),
         milestone,
-        isStructural(pillarsOf(ctx.app.db, repo.id), milestone.issue.id),
+        isStructural(pillarsOf(ctx.app.db, repo), milestone.issue.id),
       )
     : null;
   return page({

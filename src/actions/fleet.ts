@@ -145,12 +145,12 @@ function loadTargets(
   const blockers = blockerNumbersFor(app.db, ids);
   const repoLabels = new Map<string, string[]>();
   const pillars = new Map<string, Pillars>();
-  for (const repoId of repos.keys()) {
+  for (const [repoId, repo] of repos) {
     repoLabels.set(
       repoId,
       listLabels(app.db, repoId).map((l) => l.name),
     );
-    pillars.set(repoId, pillarsOf(app.db, repoId));
+    pillars.set(repoId, pillarsOf(app.db, repo));
   }
   const under = umbrellasOver(app, ids, [...pillars.values()]);
   return ids.flatMap((id) => {

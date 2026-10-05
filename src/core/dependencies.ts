@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf } from "./pillars.ts";
+import { getRepoById } from "./repos.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
 
@@ -289,7 +290,8 @@ export function repoGraph(db: Database, repoId: string): Graph {
     (e) => present.has(e.issueId) && present.has(e.blockedById),
   );
   // Only where there are edges can anything be behind a gate.
-  const set = kept.length === 0 ? undefined : pillarsOf(db, repoId);
+  const repo = kept.length === 0 ? undefined : getRepoById(db, repoId);
+  const set = repo === undefined ? undefined : pillarsOf(db, repo);
   return {
     issues,
     edges: kept,
