@@ -24,7 +24,7 @@ import { fragment, page } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
 import { btn, empty, envStateBadge, icon, listCard } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
-import { lookUrl, pictured } from "../pages/looks.ts";
+import { lookUrl, mayFetchLook, pictured } from "../pages/looks.ts";
 import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
@@ -243,13 +243,17 @@ export function studioDoor(ctx: Ctx): Response {
     );
     // The thumb alone: it is the one picture taken as a stranger sees the
     // app. The desktop picture is the owner's view, never a stranger's.
-    const look = pictured(ofApp, "thumb");
+    const thumb = pictured(ofApp, "thumb");
+    const look =
+      thumb !== undefined && mayFetchLook(ctx, repo, record, thumb)
+        ? thumb
+        : undefined;
     const base = repoBase(repo);
     return html`<a class="app-tile" href="${base}">
       ${look
         ? html`<img
             class="app-tile-look"
-            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+            src="${lookUrl(base, look)}"
             width="${LOOK_SIZES[look.kind].width}"
             height="${LOOK_SIZES[look.kind].height}"
             alt=""

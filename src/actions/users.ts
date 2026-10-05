@@ -21,6 +21,7 @@ import {
   changePassword as rehash,
   cleanDisplayName,
   createUser,
+  getUserByName,
   updateProfile as writeProfile,
   verifyPassword,
   type CreateUserError,
@@ -48,7 +49,12 @@ export async function signUp(
   app: App,
   input: SignUpInput,
 ): Promise<Result<User, SignUpError>> {
-  if (reservedName(app.db, input.username) !== undefined)
+  // A name someone already holds is taken (createUser says so); only a new
+  // name can be a reserved one.
+  if (
+    getUserByName(app.db, input.username) === undefined &&
+    reservedName(app.db, input.username) !== undefined
+  )
     return err("username_reserved");
   const created = await createUser(app.db, { ...input, adminIfFirst: true });
   if (!created.ok) return created;

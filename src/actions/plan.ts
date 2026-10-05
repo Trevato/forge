@@ -2,11 +2,18 @@
  * Opening a plan: several small issues and the links between them, all or
  * nothing. Every refusal names the item that was wrong, and nothing is
  * written (or announced) until the whole plan is known to be good.
+ *
+ * Where the repository has pillars (`core/pillars.ts`), a plan is honest
+ * about what each item is for: an item names the pillar it serves and its
+ * umbrella waits for it, or it is for later and waits behind the Later gate
+ * with one sentence that says why. An item that says neither is refused, so
+ * nothing reaches the ready list without a reason to be built now.
  */
 
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
 import { addDependency, repoGraph, readyNow } from "../core/dependencies.ts";
+import { findPillar, pillarsOf, type Pillar } from "../core/pillars.ts";
 import {
   createIssue,
   getIssue,
@@ -21,6 +28,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
 
 export const PLAN_MAX = 12;
+/** One sentence, with room. */
+export const WHY_MAX = 300;
 const KEY = /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/;
 
 export interface PlanItem {
@@ -29,6 +38,10 @@ export interface PlanItem {
   readonly body: string;
   /** Keys of this plan, or numbers of issues already open in the repository. */
   readonly blockedBy: readonly (string | number)[];
+  /** The pillar it serves, by short form (`P0`) or name (`P0 Trust`). */
+  readonly pillar?: string;
+  /** Set when it serves no pillar now: why it waits, in one sentence. */
+  readonly later?: string;
 }
 
 /** A refusal: a stable code, and a sentence that names the item at fault. */
@@ -89,7 +102,44 @@ export function parsePlan(raw: unknown): Result<PlanItem[], PlanError> {
           `"${key}": blockedBy takes keys or issue numbers`,
         );
     }
-    items.push({ key, title, body, blockedBy: waits as (string | number)[] });
+    const pillar = o["pillar"];
+    if (
+      pillar !== undefined &&
+      (typeof pillar !== "string" || pillar.trim() === "")
+    )
+      return refuse("invalid", `"${key}": pillar is the name of a pillar`);
+    const later = o["later"] ?? false;
+    if (typeof later !== "boolean")
+      return refuse("invalid", `"${key}": later is true or false`);
+    if (later && pillar !== undefined)
+      return refuse(
+        "invalid",
+        `"${key}" names a pillar and is for later: it is one or the other`,
+      );
+    if (typeof (o["why"] ?? "") !== "string")
+      return refuse("invalid", `"${key}": why must be text`);
+    // One line: it becomes the first line of the issue.
+    const why = ((o["why"] ?? "") as string).trim().replace(/\s+/g, " ");
+    if (!later && why !== "")
+      return refuse("invalid", `"${key}": why goes with later: true`);
+    if (later && why === "")
+      return refuse(
+        "no_reason",
+        `"${key}" is for later: say why it waits, in one sentence (why)`,
+      );
+    if (why.length > WHY_MAX)
+      return refuse(
+        "why_too_long",
+        `"${key}": why is one sentence, at most ${WHY_MAX} characters`,
+      );
+    items.push({
+      key,
+      title,
+      body,
+      blockedBy: waits as (string | number)[],
+      ...(pillar === undefined ? {} : { pillar: pillar.trim() }),
+      ...(later ? { later: why } : {}),
+    });
   }
   return ok(items);
 }
@@ -98,7 +148,18 @@ export interface Planned {
   readonly opened: { key: string; number: number }[];
   /** Numbers of the open issues nothing open stands in front of. */
   readonly ready: number[];
+  /** Numbers of the issues this plan put behind the Later gate. */
+  readonly later: number[];
+  /** The Later gate's number, when the plan put something behind it. */
+  readonly gate?: number;
 }
+
+/** "P0 Trust, P1 Feed or P2 Explorer". */
+const namesOf = (pillars: readonly Pillar[]): string =>
+  pillars
+    .map((pillar) => pillar.name)
+    .join(", ")
+    .replace(/, ([^,]*)$/, " or $1");
 
 /** Which key sits on a loop among the plan's own links, if any. */
 function loopAt(items: readonly PlanItem[]): string | undefined {
@@ -168,7 +229,37 @@ export function openPlan(
   if (loop !== undefined)
     return refuse("cycle", `"${loop}" is on a loop: that would make a loop`);
 
+  // What each item is for. A repository with pillars takes no item that
+  // says neither which one it serves nor that it waits.
+  const { pillars, gate, later } = pillarsOf(app.db, repo);
+  const serves = new Map<string, Pillar>();
+  for (const item of items) {
+    if (item.later !== undefined) {
+      if (gate === undefined)
+        return refuse(
+          "no_later_gate",
+          `"${item.key}" is for later, and this repository has no open issue titled "Later gate: …" to hold it`,
+        );
+    } else if (item.pillar !== undefined) {
+      const pillar = findPillar(pillars, item.pillar);
+      if (pillar === undefined)
+        return refuse(
+          "unknown_pillar",
+          pillars.length === 0
+            ? `"${item.key}": this repository has no pillars to serve`
+            : `"${item.key}": "${item.pillar}" is not a pillar here; they are ${namesOf(pillars)}`,
+        );
+      serves.set(item.key, pillar);
+    } else if (pillars.length > 0)
+      return refuse(
+        "no_pillar",
+        `"${item.key}" names no pillar: give it ${namesOf(pillars)}, or later: true and why`,
+      );
+  }
+
   const opened: { key: string; number: number }[] = [];
+  /** The links an item's purpose adds: [the issue that waits, what it waits for]. */
+  const purpose: [Issue, Issue][] = [];
   const failed = transact(app.db, (): PlanError | undefined => {
     app.db.exec("SAVEPOINT plan");
     const made = new Map<string, Issue>();
@@ -182,7 +273,11 @@ export function openPlan(
         repoId: repo.id,
         authorId: actor.id,
         title: item.title,
-        body: item.body,
+        // A deferred issue opens with why it waits.
+        body:
+          item.later === undefined
+            ? item.body
+            : `**Later:** ${item.later}${item.body === "" ? "" : `\n\n${item.body}`}`,
       });
       if (!created.ok)
         return undo({
@@ -206,6 +301,28 @@ export function openPlan(
             message: `"${item.key}" cannot wait for ${String(w)}: ${linked.error}`,
           });
       }
+    for (const item of items) {
+      const issue = made.get(item.key)!;
+      const pillar = serves.get(item.key);
+      const links: [Issue, Issue][] =
+        pillar !== undefined
+          ? [[pillar.umbrella, issue]]
+          : item.later !== undefined
+            ? [
+                [issue, gate!],
+                ...(later ? [[later, issue] as [Issue, Issue]] : []),
+              ]
+            : [];
+      for (const [waits, blocker] of links) {
+        const linked = addDependency(app.db, waits, blocker, actor.id);
+        if (!linked.ok)
+          return undo({
+            error: linked.error,
+            message: `"${item.key}" cannot ${pillar ? `serve ${pillar.name}` : "wait for later"}: ${linked.error}`,
+          });
+        purpose.push([waits, blocker]);
+      }
+    }
     app.db.exec("RELEASE plan");
     for (const item of items)
       opened.push({ key: item.key, number: made.get(item.key)!.number });
@@ -233,8 +350,20 @@ export function openPlan(
         },
       });
   }
+  for (const [waits, blocker] of purpose)
+    app.bus.append({
+      kind: "issue.blocked",
+      repoId: repo.id,
+      actorId: actor.id,
+      payload: { number: waits.number, blockedBy: blocker.number },
+    });
+  const deferred = items
+    .filter((item) => item.later !== undefined)
+    .map((item) => number.get(item.key)!);
   return ok({
     opened,
     ready: readyNow(repoGraph(app.db, repo.id)).map((r) => r.issue.number),
+    later: deferred,
+    ...(deferred.length > 0 && gate ? { gate: gate.number } : {}),
   });
 }
