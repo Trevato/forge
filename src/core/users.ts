@@ -29,6 +29,10 @@ export interface User {
    */
   readonly commitEmail: CommitEmail;
   readonly createdAt: string;
+  /** When the owner suspended the account; null while it is in good standing. */
+  readonly suspendedAt: string | null;
+  /** When the owner removed it. The row stays so the name stays taken. */
+  readonly removedAt: string | null;
 }
 
 export type CommitEmail = "noreply" | "account";
@@ -44,6 +48,8 @@ interface UserRow {
   is_agent: number;
   commit_email: CommitEmail;
   created_at: string;
+  suspended_at: string | null;
+  removed_at: string | null;
 }
 
 function toUser(row: UserRow): User {
@@ -58,8 +64,17 @@ function toUser(row: UserRow): User {
     kind: row.is_agent === 1 ? "agent" : row.kind,
     commitEmail: row.commit_email === "account" ? "account" : "noreply",
     createdAt: row.created_at,
+    suspendedAt: row.suspended_at,
+    removedAt: row.removed_at,
   };
 }
+
+/**
+ * Whether an account may act at all. Every credential — session, token,
+ * password, edge sign-in, SSH key — asks this before it names a person.
+ */
+export const isActive = (user: User): boolean =>
+  user.suspendedAt === null && user.removedAt === null;
 
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
@@ -262,7 +277,8 @@ export async function ensureEdgeUser(
   host: string,
 ): Promise<User | undefined> {
   const existing = getUserByName(db, login);
-  if (existing) return existing.kind === "user" ? existing : undefined;
+  if (existing)
+    return existing.kind === "user" && isActive(existing) ? existing : undefined;
   // The edge vouches for a login, not for its right to a name: a platform
   // account called after the crew or the owner is not let in under it.
   if (reservedName(db, login) !== undefined) return undefined;
@@ -295,7 +311,8 @@ export async function verifyPassword(
   // neither does an agent, whose hash is empty besides.
   if (!valid || !row || row.kind === "org" || row.is_agent === 1)
     return err("bad_credentials");
-  return ok(toUser(row));
+  const user = toUser(row);
+  return isActive(user) ? ok(user) : err("bad_credentials");
 }
 
 /**

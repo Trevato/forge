@@ -309,17 +309,28 @@ describe("apps, runs and the crew on the web", () => {
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
     expect(run).toBeDefined();
-    const list = await bodyOf(alice, "/alice/hello/runs");
+    // One list (#629): the crew's runs by default; the deploys are its
+    // `?kind=deploy`, one quiet link under it.
+    const crew = await bodyOf(alice, "/alice/hello/runs");
+    expect(crew).toContain('href="/alice/hello/runs?kind=deploy"');
+    // Whichever word the deploy has reached, it is under one of them.
+    const list = (
+      await Promise.all(
+        ["", "&word=shipped", "&word=stopped"].map((w) =>
+          bodyOf(alice, `/alice/hello/runs?kind=${run!.kind}${w}`),
+        ),
+      )
+    ).join("");
     expect(list).toContain("Deploy production");
     expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
     expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
-      "No agent runs yet",
+      "Nothing open.",
     );
 
     const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
     expect(page).toContain("<h1>Deploy production</h1>");
     expect(page).toContain('id="run-log"');
-    expect(page).toContain('id="run-state"');
+    expect(page).toContain('id="run-word"');
     // The log is drawn line by line, each by what kind of line it is: the
     // forge's own words ("checking out …") are marked as such.
     expect(page).toContain('class="ln ln-forge"');

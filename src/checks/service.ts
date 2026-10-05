@@ -39,6 +39,7 @@ import { holdLease } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
+import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
 import { summariseCheckFailure } from "./summary.ts";
 import type { CheckDetail } from "../core/runs.ts";
@@ -158,7 +159,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     issueId?: string,
     actorId?: string,
   ): Promise<Run | undefined> {
-    if (stopped) return undefined;
+    // A suspended or removed owner's code is not run, not even to check it.
+    if (stopped || !accountActive(app.db, repo.ownerId)) return undefined;
     // A pull from someone who cannot write runs nothing until a writer
     // approves this exact head (`core/pull_trust.ts`).
     if (!issueMayRun(app.db, repo, issueId, commitOid)) {

@@ -569,13 +569,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     );
     return (
       look &&
-      lookUrl(
-        repoBase(repo),
-        "production",
-        look.commitOid,
-        look.page,
-        look.kind,
-      )
+      lookUrl(repoBase(repo), look)
     );
   };
   const rows = pulls.map((pull: Pull) => {
