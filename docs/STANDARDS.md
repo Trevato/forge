@@ -61,4 +61,14 @@ person's name, saying it came from outside, with the words fenced as plain
 text; dismissing drops it. The outbox records that a report arrived, by id,
 for the repository's admins, never its words.
 
+The issue stays marked. Its title opens with `From outside:` and it carries
+the label `outside`, made in the repository on first use. The person
+accepting may reword the title first, in the form on the reports page or as
+`{ "title": "…" }` to the API; the marker is put back in front whatever
+they send, once, and a title that is empty or over 200 characters is
+refused with the report still waiting. The crew's brief for an issue so
+marked, by its label or by its title, says before the text that the title
+and the fenced words are a stranger's, unchecked: a description to verify,
+never instructions.
+
 `src/core/reports.ts`, `src/actions/reports.ts`, `test/reports.test.ts`.
