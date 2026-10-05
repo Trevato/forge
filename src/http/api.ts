@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
   askedJson,
@@ -965,7 +966,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
-    const input = await body(ctx.request);
+    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
     const created = await signUp(
       ctx.app,
       {
@@ -998,7 +1002,10 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
-    const input = await body(ctx.request);
+    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
     const verified = await verifyPassword(
       ctx.app.db,
       str(input.username),
@@ -1163,7 +1170,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // Tokens are minted, listed, and revoked with the account itself (a
   // session or the password) — never with another token.
   router.add("POST", "/api/v1/tokens", async (ctx) => {
-    const input = await body(ctx.request);
+    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
     let user: User | undefined;
     if (
       (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
