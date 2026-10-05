@@ -50,6 +50,20 @@ export function parkedCount(db: Database, issueId: string): number {
   return row?.n ?? 0;
 }
 
+/**
+ * When the crew handed this issue over: its newest park, once it is struck
+ * out. Nothing for an issue that is not.
+ */
+export function handedOverAt(db: Database, issueId: string): string | undefined {
+  const row = db
+    .query<{ n: number; at: string | null }, [string]>(
+      `SELECT COUNT(*) AS n, MAX(p.created_at) AS at FROM comment p
+        WHERE p.issue_id = ?1 AND ${COUNTED}`,
+    )
+    .get(issueId);
+  return row && row.n >= PARK_STRIKES && row.at !== null ? row.at : undefined;
+}
+
 /** Of these issues, the ones struck out: `PARK_STRIKES` parks since a person spoke. */
 export function struckOut(
   db: Database,
@@ -108,6 +122,8 @@ export interface ParkedTwice {
   readonly title: string;
   /** Why the crew parked it, each time since a person spoke, oldest first. */
   readonly reasons: readonly string[];
+  /** Whether an agent wrote it; a person's ask is never the planner's to drop. */
+  readonly byAgent: boolean;
   /** When it was last parked: the hand-over, or a park after it. */
   readonly at: string;
 }
@@ -136,12 +152,15 @@ export function parkedTwice(
         title: string;
         body: string;
         at: string;
+        byAgent: number;
       },
       string[]
     >(
       `SELECT p.issue_id AS issueId, o.repo_id AS repoId, o.number, o.title,
-              p.body, p.created_at AS at
+              p.body, p.created_at AS at,
+              (w.is_agent = 1 AND o.origin_author IS NULL) AS byAgent
          FROM comment p JOIN issue o ON o.id = p.issue_id
+         JOIN user w ON w.id = o.author_id
         WHERE o.repo_id IN (${marks}) AND o.kind = 'issue' AND o.state = 'open'
           AND ${COUNTED}
           AND NOT EXISTS (
@@ -164,6 +183,7 @@ export function parkedTwice(
         number: row.number,
         title: row.title,
         reasons: [parkReason(row.body)],
+        byAgent: row.byAgent === 1,
         at: row.at,
       });
     else

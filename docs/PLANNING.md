@@ -125,11 +125,13 @@ planner (`crew/parks.ts`):
   `split` into its parts), replaced (a fresh issue, the old one closed as
   split into it with "replaced by #m"), or deferred (linked to wait for the
   Later gate — the open issue whose title starts _Later gate_, which the
-  owner closes to let deferred work start; where a repository has none,
-  the third state is closed as `dropped`, with why). To close an issue it
-  did not write, a planner has exactly this grant: an open issue the crew
-  parked twice, as `split` or `dropped` — never `done`, never a pull, never
-  a reopen.
+  owner closes to let deferred work start — with the reasons in a comment).
+  To close an issue it did not write, a planner has exactly this grant, on
+  an open issue the crew parked twice: `split`, only into open issues made
+  since the hand-over, never the issue itself or the Later gate, so a
+  closed or an old issue cannot stand in for a drop; and `dropped`, only
+  when an agent wrote the issue. What a person asked for is dropped by a
+  person. Never `done`, never a pull, never a reopen, never on a mirror.
 - **Until then it is listed**: on the board, above its regions, for
   whoever owns the app, with its reasons and a link to the issue; and under
   `parkedTwice` in the map's data and the MCP's `map`. A comment from the

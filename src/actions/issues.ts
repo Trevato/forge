@@ -43,7 +43,8 @@ import {
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
-import { struckOut } from "../crew/parks.ts";
+import { laterGate } from "../crew/later.ts";
+import { handedOverAt } from "../crew/parks.ts";
 import {
   applyLabelNames,
   commentByRemoteId,
@@ -231,9 +232,16 @@ export function setIssueState(
 /**
  * The one close a crew member may make on an issue it did not write: the
  * repository's planner, on an open issue the crew parked twice and handed
- * to it (`crew/parks.ts`), and only as split or dropped. Done is what a
- * landed pull or a person says; a pull, a reopen, and every other issue
- * stay with the people who can write here.
+ * to it (`crew/parks.ts`). Nothing a person asked for is lost by it:
+ *
+ * - split, only into what replaces it — every issue named must be an open
+ *   issue made since the hand-over, not the issue itself and not the Later
+ *   gate, so a closed or an old issue cannot stand in for a drop;
+ * - dropped, only when an agent wrote the issue. A person's ask is dropped
+ *   by a person.
+ *
+ * Done is what a landed pull or a person says; a pull, a reopen, and every
+ * other issue stay with the people who can write here.
  */
 function handedToPlanner(
   app: App,
@@ -242,13 +250,27 @@ function handedToPlanner(
   actor: User,
   closing: Closing,
 ): boolean {
-  return (
-    issue.kind === "issue" &&
-    issue.state === "open" &&
-    (closing.reason === "split" || closing.reason === "dropped") &&
-    crewRole(app.db, repo.id, actor.id) === "planner" &&
-    struckOut(app.db, [issue.id]).has(issue.id)
-  );
+  if (issue.kind !== "issue" || issue.state !== "open") return false;
+  if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
+  const handed = handedOverAt(app.db, issue.id);
+  if (handed === undefined) return false;
+  if (closing.reason === "dropped")
+    return issue.authorIsAgent && issue.originAuthor === null;
+  if (closing.reason !== "split") return false;
+  const into = closing.into ?? [];
+  if (into.length === 0) return false;
+  const gate = laterGate(app.db, repo.id);
+  return into.every((number) => {
+    const part = getIssue(app.db, repo.id, number);
+    return (
+      part !== undefined &&
+      part.kind === "issue" &&
+      part.state === "open" &&
+      part.id !== issue.id &&
+      part.number !== gate &&
+      part.createdAt > handed
+    );
+  });
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

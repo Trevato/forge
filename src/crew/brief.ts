@@ -160,6 +160,8 @@ export interface HandedOver {
   readonly title: string;
   /** Why it was parked, each time, oldest first. */
   readonly reasons: readonly string[];
+  /** Whether an agent wrote it. A person's ask is never dropped. */
+  readonly byAgent?: boolean | undefined;
 }
 
 /**
@@ -367,9 +369,10 @@ function taskBody(input: TaskInput): string {
 
 /**
  * What a planner is told of the issues the crew parked twice: each with
- * every reason, and the states it may leave one in — split, replaced by a
- * fresh issue, or deferred behind the Later gate (dropped, where the
- * repository has no gate). Nothing for anyone else, or when there are none.
+ * every reason and whose it is, and the states it may leave one in — split,
+ * replaced by a fresh issue, deferred behind the Later gate where the
+ * repository has one, or, for an issue the crew wrote, dropped. Nothing
+ * for anyone else, or when there are none.
  */
 function parkedTwiceLines(input: TaskInput): string[] {
   const handed = input.role === "planner" ? (input.parkedTwice ?? []) : [];
@@ -378,15 +381,18 @@ function parkedTwiceLines(input: TaskInput): string[] {
   return [
     "The crew tried each of these twice and could not finish it as written. They are yours now, before anything new:",
     ...handed.flatMap((issue) => [
-      `- Parked twice: #${issue.number} ${issue.title}`,
+      `- Parked twice: #${issue.number} ${issue.title} (${issue.byAgent === true ? "the crew's own" : "a person's ask"})`,
       ...issue.reasons.map((reason, n) => `    ${n + 1}. ${reason}`),
     ]),
     "Leave every one of them in exactly one of these states, and say which in a comment on it:",
-    `- Split: open the smaller issues, then close it as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]}.`,
+    `- Split: open the smaller issues first, then close it as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]}. Only open issues made since it was handed to you are accepted.`,
     '- Replaced: open one fresh issue that says what done looks like now, comment "replaced by #M" on the old one, and close it the same way with "into":[M].',
-    input.laterGate === undefined
-      ? '- Dropped: when the direction no longer needs it, say why on it and close it with {"state":"closed","reason":"dropped"}.'
-      : `- Deferred: when it serves the direction later rather than now, put it behind the Later gate — POST ${issues}/N/dependencies with {"blockedBy":${input.laterGate}}.`,
+    ...(input.laterGate === undefined
+      ? []
+      : [
+          `- Deferred: when it serves the direction later rather than now, say why on it, with the reasons above, and put it behind the Later gate — POST ${issues}/N/dependencies with {"blockedBy":${input.laterGate}}.`,
+        ]),
+    '- Dropped: only an issue the crew wrote, when the direction no longer needs it — say why on it and close it with {"state":"closed","reason":"dropped"}. A person\'s ask is never yours to drop: split it, replace it or defer it.',
     `If other issues wait for one you close, make them wait for what replaces it: DELETE ${issues}/D/dependencies/N, then POST ${issues}/D/dependencies with {"blockedBy":M}.`,
     "Never leave one as it was: what you leave stays on the owner's board and comes back to you.",
   ];

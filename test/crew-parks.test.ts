@@ -310,6 +310,9 @@ describe("an issue parked twice is the planner's", () => {
   let base: string;
   let work: Issue;
   let again: Issue;
+  /** An issue older than `again`'s hand-over, and the Later gate. */
+  let older: Issue;
+  let gate: Issue;
   /** bob's own app, and the issue on it that was parked twice. */
   let tool: Repo;
   let hinge: Issue;
@@ -439,6 +442,7 @@ describe("an issue parked twice is the planner's", () => {
     expect(await driveRepo(app, e.fresh(), hours(1))).toBe("picked");
     expect(direction().assigneeId).toBeNull();
     // A second issue is parked twice, after that pass.
+    older = more[0]!;
     again = more[4]!;
     e.ended(again, "nothing to propose");
     await tick();
@@ -483,19 +487,29 @@ describe("an issue parked twice is the planner's", () => {
         ...extra,
       });
     const brief = told();
-    expect(brief).toContain(`- Parked twice: #${work.number} Scene graph`);
+    expect(brief).toContain(
+      `- Parked twice: #${work.number} Scene graph (a person's ask)`,
+    );
     expect(brief).toContain(`    1. ${declined}`);
     expect(brief).toContain(`    2. ${nothing}`);
     expect(brief).toContain(`- Parked twice: #${again.number} Particles`);
     expect(brief).toContain('{"state":"closed","reason":"split","into":[A,B]}');
     expect(brief).toContain('comment "replaced by #M"');
+    // Dropping is for what the crew wrote; a person's ask is never dropped.
+    expect(brief).toContain("- Dropped: only an issue the crew wrote");
+    expect(brief).toContain("A person's ask is never yours to drop");
+    expect(
+      told({
+        parkedTwice: [
+          { number: 7, title: "Pool", reasons: ["a", "b"], byAgent: true },
+        ],
+      }),
+    ).toContain("- Parked twice: #7 Pool (the crew's own)");
     // No Later gate here yet: nothing to defer behind.
-    expect(brief).toContain("- Dropped:");
     expect(brief).not.toContain("Later gate");
     expect(told({ laterGate: 9 })).toContain(
       `/issues/N/dependencies with {"blockedBy":9}`,
     );
-    expect(told({ laterGate: 9 })).not.toContain("- Dropped:");
     // A resumed session is told the same, as the news it is.
     const resumed = told({ resuming: true });
     expect(resumed).toContain(`- Parked twice: #${work.number} Scene graph`);
@@ -635,7 +649,7 @@ describe("an issue parked twice is the planner's", () => {
     expect(listed()).toEqual([work.number, again.number]);
   });
 
-  test("the planner may close what it was handed, as split or dropped, and nothing else", async () => {
+  test("the planner may split what it was handed into fresh open issues, drop only what an agent wrote, and nothing else", async () => {
     const closing = (
       who: User,
       on: Issue,
@@ -656,6 +670,23 @@ describe("an issue parked twice is the planner's", () => {
     const once = e.issue("Bloom");
     e.ended(once, "nothing to propose");
     await tick();
+    gate = e.issue(
+      "Later gate: nothing behind this starts until the owner opens it",
+    );
+    const gone = e.issue("Particles, the old plan");
+    expect(setIssueState(app, alice, e.fresh(), gone, "closed").ok).toBe(true);
+    // An issue the crew wrote itself, parked twice like the person's.
+    const made = openIssue(app, mason, e.fresh(), {
+      title: "Tidy the particle pool",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const own = made.value;
+    for (let n = 0; n < 2; n++) {
+      e.ended(own, "nothing to propose");
+      await tick();
+    }
+    expect(struckOut(app.db, [own.id]).has(own.id)).toBe(true);
+
     // Refused: a builder, on the very issue the planner was handed.
     expect(closing(mason, again, { reason: "dropped" })).toBe("forbidden");
     expect(
@@ -664,9 +695,34 @@ describe("an issue parked twice is the planner's", () => {
     // Refused: the planner, on an issue nobody handed it.
     expect(closing(atlas, untried, { reason: "dropped" })).toBe("forbidden");
     expect(closing(atlas, once, { reason: "dropped" })).toBe("forbidden");
+    expect(
+      closing(atlas, untried, { reason: "split", into: [part.number] }),
+    ).toBe("forbidden");
     // Refused: the planner calling what the crew gave up on done.
     expect(closing(atlas, again)).toBe("forbidden");
     expect(closing(atlas, again, { reason: "done" })).toBe("forbidden");
+    // Refused: the planner dropping a person's ask. That is the person's call.
+    expect(closing(atlas, again, { reason: "dropped" })).toBe("forbidden");
+    // Refused: a split that names nothing to replace it.
+    expect(closing(atlas, again, { reason: "split" })).toBe("forbidden");
+    expect(closing(atlas, again, { reason: "split", into: [] })).toBe(
+      "forbidden",
+    );
+    // Refused: a split into anything but a fresh, open replacement — a
+    // closed issue (a drop under another name), an issue older than the
+    // hand-over, the issue itself, the Later gate, or any of those beside a
+    // good one.
+    for (const into of [
+      [gone.number],
+      [older.number],
+      [again.number],
+      [gate.number],
+      [part.number, gone.number],
+      [part.number, 9999],
+    ])
+      expect(closing(atlas, again, { reason: "split", into })).toBe(
+        "forbidden",
+      );
     // Refused: a pull, however often it was parked.
     const branch = await commitToBranch(app, alice, e.fresh(), {
       branch: "feature/fog",
@@ -693,32 +749,59 @@ describe("an issue parked twice is the planner's", () => {
     // Refused: someone else's forge-mate, who cannot see the repository at all.
     expect(closing(bob, again, { reason: "dropped" })).toBe("not_found");
     // Nothing above changed anything.
-    for (const on of [again, untried, once, pull])
+    for (const on of [again, untried, once, pull, own, part, older])
       expect(current(on).state).toBe("open");
+
     // Refused over the API too, as the planner's own token.
     const token = createToken(app.db, atlas.id, "rw", "rw").token;
-    const patch = (number: number, body: unknown) =>
-      fetch(`${base}/api/v1/repos/alice/engine/issues/${number}`, {
-        method: "PATCH",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-    const refused = await patch(untried.number, {
-      state: "closed",
-      reason: "dropped",
-    });
-    expect(refused.status).toBe(403);
-    expect((await patch(again.number, { state: "closed" })).status).toBe(403);
-    // Allowed: split into what replaces it, by the route the brief names.
-    const split = await patch(again.number, {
-      state: "closed",
-      reason: "split",
-      into: [part.number],
-    });
-    expect(split.status).toBe(200);
+    const patch = async (number: number, body: unknown): Promise<number> =>
+      (
+        await fetch(`${base}/api/v1/repos/alice/engine/issues/${number}`, {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        })
+      ).status;
+    const closed = { state: "closed" };
+    expect(await patch(untried.number, { ...closed, reason: "dropped" })).toBe(
+      403,
+    );
+    expect(await patch(again.number, closed)).toBe(403);
+    expect(await patch(again.number, { ...closed, reason: "dropped" })).toBe(
+      403,
+    );
+    expect(await patch(again.number, { ...closed, reason: "split" })).toBe(403);
+    expect(
+      await patch(again.number, {
+        ...closed,
+        reason: "split",
+        into: [gone.number],
+      }),
+    ).toBe(403);
+    expect(
+      await patch(again.number, {
+        ...closed,
+        reason: "split",
+        into: [gate.number],
+      }),
+    ).toBe(403);
+    expect(current(again).state).toBe("open");
+
+    // Allowed: dropping what an agent wrote.
+    expect(await patch(own.number, { ...closed, reason: "dropped" })).toBe(200);
+    expect(current(own).closeReason).toBe("dropped");
+    // Allowed: a person's ask split into the fresh, open issue that replaces
+    // it, by the route the brief names; the trail is on the closed issue.
+    expect(
+      await patch(again.number, {
+        ...closed,
+        reason: "split",
+        into: [part.number],
+      }),
+    ).toBe(200);
     expect(current(again).state).toBe("closed");
     expect(current(again).closeReason).toBe("split");
     // What is closed stays closed: the grant is to close, never to reopen.
@@ -738,9 +821,6 @@ describe("an issue parked twice is the planner's", () => {
   });
 
   test("the planner may defer it behind the Later gate or replace it with a fresh issue, and then it is off the board", async () => {
-    const gate = e.issue(
-      "Later gate: nothing behind this starts until the owner opens it",
-    );
     expect(laterGate(app.db, repo.id)).toBe(gate.number);
     // Deferred: it waits for the gate, as the planner's own link.
     expect(linkIssue(app, atlas, e.fresh(), current(again), gate).ok).toBe(
