@@ -13,7 +13,8 @@ import {
   type IssueState,
   type Label,
 } from "../../core/issues.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canRead, type Repo } from "../../core/repos.ts";
+import { waitingCount } from "../../actions/reports.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { IssueQuery, IssueSummary } from "../../view/source.ts";
 import {
@@ -325,6 +326,16 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
         shortcut: "c",
       })
     : btn("Sign in to open an issue", { href: "/signin" });
+  // A stranger can still say something is wrong on a public repository;
+  // its writers see how many such reports wait for them.
+  const outside = canRead(db, repo, undefined)
+    ? btn("Report a problem", { href: `${base}/report`, variant: "ghost" })
+    : null;
+  const waiting = waitingCount(ctx.app, ctx.auth.user, repo);
+  const reports =
+    waiting > 0
+      ? btn(`${waiting} from outside`, { href: `${base}/reports` })
+      : null;
 
   const list =
     issues.length === 0
@@ -352,6 +363,10 @@ export async function issuesList(ctx: Ctx): Promise<Response> {
 
   const body = html`${scopeHeader(ctx, scope, "issues")}
     <div class="mt">
+      ${when(
+        ctx.auth.user === undefined || reports !== null,
+        () => html`<div class="form-actions">${reports} ${ctx.auth.user === undefined ? outside : null}</div>`,
+      )}
       ${filterBar(`${base}/issues`, query, repoLabels, counts)} ${list}
       ${pager(
         nextCursor === null

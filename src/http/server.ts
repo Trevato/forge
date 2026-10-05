@@ -283,7 +283,15 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
-import { notePeer, oauthRoutes } from "./oauth.ts";
+import { oauthRoutes } from "./oauth.ts";
+import { notePeer } from "./peer.ts";
+import {
+  reportAcceptSubmit,
+  reportDismissSubmit,
+  reportPage,
+  reportSubmit,
+  reportsPage,
+} from "../web/pages/reports.ts";
 import {
   cookieValue,
   publicUrl,
@@ -681,6 +689,11 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
+  router.add("GET", "/:owner/:name/report", reportPage);
+  router.add("POST", "/:owner/:name/report", reportSubmit);
+  router.add("GET", "/:owner/:name/reports", reportsPage);
+  router.add("POST", "/:owner/:name/reports/:id/accept", reportAcceptSubmit);
+  router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
   router.add("GET", "/:owner/:name/issues/:number", issuePage);
