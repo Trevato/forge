@@ -93,6 +93,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => ctx.push(dashboardScreen(session, ctx)),
       },
       {
+        // Browsing other people and forges is the web explorer's (#607):
+        // the terminal hands over its address.
+        id: "explore",
+        title: "Explore",
+        hint: "on the web",
+        run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
+      },
+      {
         // A person's or an org's page is the web's (#636): the terminal
         // hands over its address.
         id: "profile",
