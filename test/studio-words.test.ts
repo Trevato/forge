@@ -516,9 +516,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         title: "vocab",
         shows: [`href="#i-pull"/></svg>Changes`],
         hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
-        // #281: `?mode=dev` on the same address is unaffected — the where
-        // strip renders exactly as today, dev's own dots and words.
-        dev: ["workbench", "this machine"],
+        // #630: the app page is the home in every mode; its code, with dev's
+        // where strip, is the Files step one tab over.
       },
       {
         word: "tell",

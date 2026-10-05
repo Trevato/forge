@@ -245,17 +245,56 @@ describe("the studio", () => {
     }
   });
 
-  test("an app's home is the app in the studio, and the code in dev", async () => {
+  test("an app's home is the app for every viewer, and its code is the Files step one tab over", async () => {
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toContain("Tell the crew");
     expect(studio).toContain("<h2>Crew</h2>");
     expect(studio).toContain(">Studio<");
+    expect(studio).toContain('href="/alice/notes/files"');
     expect(studio).not.toContain(">Commits<");
-    const dev = await (
-      await get("/alice/notes", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).not.toContain("Tell the crew");
-    expect(dev).toContain(">Commits<");
+    // No second home behind the mode: the cookie and the query both get
+    // the app.
+    for (const dev of [
+      await get("/alice/notes", { cookie: `${cookie}; forge_mode=dev` }),
+      await get("/alice/notes?mode=dev"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain("Tell the crew");
+      expect(text).toContain('href="/alice/notes/files"');
+      expect(text).not.toContain("?mode=studio");
+    }
+
+    // The Files step is the code page: the tree, the README, the rail.
+    const files = await (await get("/alice/notes/files")).text();
+    expect(files).toContain("package.json");
+    expect(files).toContain("server.ts");
+    expect(files).not.toContain("Tell the crew");
+    // An older `?ref=` link to the app's code is handed on to it.
+    const old = await get("/alice/notes?ref=main");
+    expect(old.status).toBe(303);
+    expect(old.headers.get("location")).toBe("/alice/notes/files?ref=main");
+  });
+
+  test("/files on a repository that is not an app is its home, which already is its code", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainfiles",
+      visibility: "private",
+      description: "",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const res = await get("/alice/plainfiles/files?ref=main");
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/alice/plainfiles?ref=main");
+    // And a reader who cannot see it gets the forge's not-found, never a
+    // redirect that says it exists.
+    const anon = await fetch(`${base}/alice/plainfiles/files`, {
+      redirect: "manual",
+    });
+    expect(anon.status).toBe(404);
+    const anonApp = await fetch(`${base}/alice/notes/files`, {
+      redirect: "manual",
+    });
+    expect(anonApp.status).toBe(404);
   });
 
   test("a repository with no app record keeps the studio's framing: one card, one door to make it one; ?mode=dev is unchanged, and an app itself never shows the card", async () => {
@@ -1357,13 +1396,17 @@ describe("the studio", () => {
     expect(studio).not.toContain("not serving");
     expect(studio).toContain('href="/apps?live=1"');
 
-    const dev = await (
-      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(
-      "Repositories that run. Production follows the default branch",
-    );
-    expect(dev).not.toContain('href="/apps?live=1"');
+    // One list (#630): dev's table is gone, and the cookie and the query
+    // both answer the shelf.
+    for (const dev of [
+      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` }),
+      await bobGet("/apps?mode=dev"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('href="/apps?live=1"');
+      expect(text).not.toContain('href="/alice/notes"');
+      expect(text).not.toContain("Repositories that run.");
+    }
   });
 
   test("clicking your own name in the studio lands on /:owner, which leads with your apps on the shelf and New app as the primary action; dev mode is unchanged, and a stranger never sees a private one", async () => {
@@ -8020,7 +8063,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     ).toBeGreaterThan(0);
   });
 
-  test("dev mode: Stop comes back to the page it was pressed on, Redeploy goes to the run", async () => {
+  test("dev mode is the same: Stop and Redeploy both come back to the page they were pressed on", async () => {
     const stopped = await press("stop", "dev", `${base}/alice/notes/pulls/1`);
     expect(stopped.status).toBe(303);
     expect(stopped.headers.get("location")).toBe("/alice/notes/pulls/1");
@@ -8028,8 +8071,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
 
     const queued = await press("redeploy", "dev", `${base}/alice/notes`);
     expect(queued.status).toBe(303);
-    const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 1 })[0];
-    expect(queued.headers.get("location")).toBe(`/alice/notes/runs/${run?.id}`);
+    expect(queued.headers.get("location")).toBe("/alice/notes");
     expect(flashOf(queued)).toContain("Redeploying production.");
   });
 
@@ -8037,7 +8079,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
   // answering — a redirect to the studio app page — and the environment
   // controls it carried (each preview's Redeploy and Stop, the way to the
   // environment settings) are drawn here instead.
-  test("GET /:owner/:name/app redirects to the studio app page, switching a dev browser over", async () => {
+  test("GET /:owner/:name/app redirects to the app page, for a dev browser too", async () => {
     const asStudio = await fetch(`${base}/alice/notes/app`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
       redirect: "manual",
@@ -8050,8 +8092,8 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       redirect: "manual",
     });
     expect(asDev.status).toBe(302);
-    expect(asDev.headers.get("location")).toBe("/alice/notes?mode=studio");
-    const landed = await fetch(`${base}/alice/notes?mode=studio`, {
+    expect(asDev.headers.get("location")).toBe("/alice/notes");
+    const landed = await fetch(`${base}/alice/notes`, {
       headers: { cookie: `${cookie}; forge_mode=dev` },
       redirect: "manual",
     });
