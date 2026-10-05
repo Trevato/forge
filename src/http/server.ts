@@ -90,6 +90,7 @@ import {
   pathsJson,
   pinSubmit,
   rawBlob,
+  repoFiles,
   repoHome,
   repoSyncSubmit,
   treePage,
@@ -126,6 +127,7 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
@@ -435,6 +437,9 @@ export function buildRouter(): Router<Handler> {
   // cached by the browser's HTTP cache or an update would wait a day.
   router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
+  // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
+  router.add("GET", "/claim/:token", claimPage);
+  router.add("POST", "/claim/:token", claimSubmit);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
@@ -817,6 +822,9 @@ export function buildRouter(): Router<Handler> {
 
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);
+  // An app's code, one tab under the app (its home); any other repository's
+  // home is already its code, and /files sends it there.
+  router.add("GET", "/:owner/:name/files", repoFiles);
   router.add("GET", "/:owner/:name/tree/:ref", treePage);
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
@@ -1105,7 +1113,10 @@ async function withIdempotency(
   // A retry that arrives while the first attempt is still running joins it
   // rather than starting a second — the duplicate this whole path prevents.
   const racing = joinInFlight(credential, key);
-  if (racing !== undefined) return fromStored(await racing, true);
+  if (racing !== undefined) {
+    const joined = await racing;
+    return fromStored({ ...joined, body: withoutShownOnce(joined.body) }, true);
+  }
 
   const work = (async (): Promise<StoredResponse> => {
     const response = await invoke(replay());
@@ -1115,6 +1126,9 @@ async function withIdempotency(
       body,
       contentType: response.headers.get("content-type") ?? "application/json",
     };
+    // What the table keeps — and backups with it — never holds a secret
+    // shown once; a replay says it was shown instead.
+    const kept: StoredResponse = { ...outcome, body: withoutShownOnce(body) };
     // A 5xx is not an outcome, it is the absence of one. Remembering it
     // would pin the caller to a failure it was right to retry.
     if (response.status < 500) {
@@ -1122,7 +1136,7 @@ async function withIdempotency(
         tokenId: credential,
         key,
         fingerprint,
-        response: outcome,
+        response: kept,
       });
     }
     return outcome;
@@ -1132,6 +1146,27 @@ async function withIdempotency(
   // replay, and telling it otherwise would make the header useless for
   // exactly the reconciliation it exists for.
   return fromStored(await work, false);
+}
+
+/**
+ * Fields of an API answer that are a secret shown once (a spawned child's
+ * claim link): an idempotent replay must not return them, and the
+ * idempotency table must not keep them.
+ */
+const SHOWN_ONCE = ["claimUrl"] as const;
+export const SHOWN_ONCE_NOTE = "shown once, in the first answer";
+
+export function withoutShownOnce(body: string): string {
+  if (!SHOWN_ONCE.some((k) => body.includes(`"${k}"`))) return body;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return body;
+    const copy: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+    for (const k of SHOWN_ONCE) if (k in copy) copy[k] = SHOWN_ONCE_NOTE;
+    return JSON.stringify(copy);
+  } catch {
+    return body;
+  }
 }
 
 const keyReused = (): Response =>
