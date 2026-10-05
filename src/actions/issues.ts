@@ -191,8 +191,14 @@ export function setIssueState(
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
   if (isMirror(app, repo)) return err("mirrored");
+  // An author's say over their own issue is a person's. An agent closes an
+  // issue by landing a pull for it, or by the planner's grant below, and
+  // reopens nothing: otherwise what it opened to replace a person's ask
+  // would be its own to close, and the ask gone with no person deciding.
+  const ownSay =
+    user.value.kind !== "agent" && user.value.id === issue.authorId;
   const mayModerate =
-    user.value.id === issue.authorId ||
+    ownSay ||
     canWrite(app.db, repo, user.value) ||
     (state === "closed" &&
       handedToPlanner(app, repo, issue, user.value, closing));

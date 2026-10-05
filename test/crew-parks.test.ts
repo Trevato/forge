@@ -347,6 +347,19 @@ describe("a comment that only reads like a park", () => {
     });
     expect(closed.ok ? "closed" : closed.error).toBe("forbidden");
     expect(current().state).toBe("open");
+    // A person's own issue stays theirs to close and reopen, writer or not.
+    const hers = openIssue(app, c.value, e.fresh(), { title: "A reader's idea" });
+    if (!hers.ok) throw new Error(String(hers.error));
+    for (const to of ["closed", "open"] as const)
+      expect(
+        setIssueState(
+          app,
+          c.value,
+          e.fresh(),
+          getIssueById(app.db, hers.value.id)!,
+          to,
+        ).ok,
+      ).toBe(true);
     // The crew's own first park is the first strike, not the fourth.
     expect(e.ended(work, "nothing to propose")).toBe(true);
     await tick();
@@ -876,6 +889,75 @@ describe("an issue parked twice is the planner's", () => {
       setIssueState(app, alice, e.fresh(), current(again), "open").ok,
     ).toBe(true);
     expect(listed()).toEqual([work.number, again.number]);
+  });
+
+  test("refused: an agent's own issue is not its own to close or reopen — what the planner opened to replace a person's ask stays", async () => {
+    // A person's ask, handed over; the planner opens what replaces it and
+    // splits the ask into that, as it may.
+    const ask = e.issue("Decals");
+    for (let n = 0; n < 2; n++) {
+      e.ended(ask, "nothing to propose");
+      await tick();
+    }
+    const made = openIssue(app, atlas, e.fresh(), { title: "Decals: one layer" });
+    if (!made.ok) throw new Error(String(made.error));
+    const stand = made.value;
+    const token = createToken(app.db, atlas.id, "rw", "rw").token;
+    const patch = async (number: number, body: unknown): Promise<number> =>
+      (
+        await fetch(`${base}/api/v1/repos/alice/engine/issues/${number}`, {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        })
+      ).status;
+    expect(
+      await patch(ask.number, {
+        state: "closed",
+        reason: "split",
+        into: [stand.number],
+      }),
+    ).toBe(200);
+    expect(current(ask).closeReason).toBe("split");
+    const set = (
+      who: User,
+      on: Issue,
+      state: "open" | "closed",
+      how?: { reason: "done" | "dropped" },
+    ) => {
+      const done = setIssueState(app, who, e.fresh(), current(on), state, how);
+      return done.ok ? state : done.error;
+    };
+    // The ask now lives in the issue the planner wrote. Writing it does not
+    // make it the planner's to close, by any reason or by any door.
+    expect(set(atlas, stand, "closed")).toBe("forbidden");
+    expect(set(atlas, stand, "closed", { reason: "done" })).toBe("forbidden");
+    expect(set(atlas, stand, "closed", { reason: "dropped" })).toBe(
+      "forbidden",
+    );
+    expect(await patch(stand.number, { state: "closed" })).toBe(403);
+    expect(
+      await patch(stand.number, { state: "closed", reason: "dropped" }),
+    ).toBe(403);
+    expect(current(stand).state).toBe("open");
+    // Nor to reopen, once a person has closed it.
+    expect(set(alice, stand, "closed")).toBe("closed");
+    expect(set(atlas, stand, "open")).toBe("forbidden");
+    expect(await patch(stand.number, { state: "open" })).toBe(403);
+    expect(current(stand).state).toBe("closed");
+    expect(set(alice, stand, "open")).toBe("open");
+    // A builder's own issue is the same: it closes when a pull for it lands.
+    const filed = openIssue(app, mason, e.fresh(), { title: "Sort the decals" });
+    if (!filed.ok) throw new Error(String(filed.error));
+    expect(set(mason, filed.value, "closed")).toBe("forbidden");
+    expect(set(alice, filed.value, "closed")).toBe("closed");
+    expect(set(mason, filed.value, "open")).toBe("forbidden");
+    expect(current(filed.value).state).toBe("closed");
+    // Off the planner's list again, for what follows.
+    expect(set(alice, stand, "closed")).toBe("closed");
   });
 
   test("the planner may defer it behind the Later gate or replace it with a fresh issue, and then it is off the board", async () => {
