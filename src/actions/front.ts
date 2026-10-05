@@ -183,17 +183,22 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
       s: { awakeHours: 0, ships: 0, forks: 0, shippedAt: null },
       score: 0,
     };
+    // An app only signed-in readers may open keeps how it runs to itself:
+    // a stranger is told neither its state nor its hours awake (a pin can
+    // name a public repository whose app is private).
+    const open = record?.access === "public";
+    const signals = open ? scored.s : { ...scored.s, awakeHours: 0 };
     return {
       repo,
       app: record,
-      state: production?.state,
+      state: open ? production?.state : undefined,
       picture:
         thumb === undefined
           ? undefined
           : lookUrl(`/${repo.ownerName}/${repo.name}`, thumb),
       pinned: isPinned,
-      signals: scored.s,
-      score: scored.score,
+      signals,
+      score: open ? scored.score : frontScore(signals, now),
     };
   };
 
@@ -213,7 +218,9 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
   );
   // Featured is a card, not a tile: the first pin may be a repository with
   // no app, or one whose app strangers cannot open (the forge itself) —
-  // its crew at work is the picture. An app that is down is not featured.
+  // its crew at work is the picture. An app strangers can open that is
+  // down is not featured; a private app's state is never consulted, so the
+  // page does not tell a stranger whether it is up.
   const [first, ...rest] = pinnedEntries.filter(
     (e, at) => (at === 0 ? e.state === undefined || SHOWN.has(e.state) : tileable(e)),
   );

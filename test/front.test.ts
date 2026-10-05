@@ -588,4 +588,36 @@ describe("the front page", () => {
       await looks.stop();
     }
   }, 60_000);
+
+  test("a pinned repository whose app is private tells a stranger neither the app's state nor its hours awake, on the API and MCP, and is featured whatever its state", async () => {
+    const gated = await make(other, "gated-pin");
+    app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(gated.record.id);
+    states.set(gated.record.id, "failed");
+    app.db
+      .query(
+        `INSERT INTO meter (repo_id, env, placement, started_at, beat_at, ended_at)
+         VALUES (?1, 'production', 'owned', ?2, ?3, ?3)`,
+      )
+      .run(gated.repo.id, new Date(Date.now() - 5 * 3_600_000).toISOString(), new Date(Date.now() - 3_600_000).toISOString());
+    expect((await put(adminToken, { pinned: ["zed/gated-pin"], hidden: [] })).status).toBe(200);
+    forgetFrontScores(app);
+    const anonymous = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+    expect(anonymous.featured.repo).toBe("zed/gated-pin");
+    expect(anonymous.featured.state).toBeNull();
+    expect(anonymous.featured.signals.awakeHours).toBe(0);
+    expect(anonymous.featured.picture).toBeNull();
+    const told = (await mcp(memberToken, {})).value;
+    expect(told.featured.repo).toBe("zed/gated-pin");
+    expect(told.featured.state).toBeNull();
+    expect(told.featured.signals.awakeHours).toBe(0);
+    const body = await door();
+    expect(body).not.toContain("Failed");
+    // The same pin's state, for an app strangers can open, is told.
+    app.db.query(`UPDATE app SET access = 'public' WHERE id = ?1`).run(gated.record.id);
+    states.set(gated.record.id, "running");
+    forgetFrontScores(app);
+    const opened = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+    expect(opened.featured.state).toBe("running");
+    expect(opened.featured.signals.awakeHours).toBeGreaterThan(3);
+  });
 });
