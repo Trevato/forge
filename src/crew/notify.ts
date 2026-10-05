@@ -2,7 +2,8 @@
  * Something that newly needs you reaches your phone. A person may set one
  * HTTPS URL (an ntfy topic, or anything that takes a POST of plain text);
  * when the forge's events change what asks them — a pull the crew stopped
- * on, a green pull waiting for a look, a repository at its ceiling — one
+ * on, a green pull waiting for a look, a repository at its ceiling, and for
+ * the forge's admin a person who just joined — one
  * short line and a link to the asks screen is posted there.
  *
  * What asks a person is read the way the asks panel reads it
@@ -17,6 +18,7 @@
  * settings, is never logged, and the account page shows its host only.
  */
 
+import { newAccountLines } from "../actions/accounts.ts";
 import type { Database } from "bun:sqlite";
 import { lookup } from "node:dns/promises";
 import type { App } from "../app.ts";
@@ -45,6 +47,7 @@ const WAKES = new Set([
   "issue.commented",
   "repo.settings_updated",
   "account.notify_set",
+  "user.created",
 ]);
 
 export type NotifyUrlError =
@@ -184,7 +187,11 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       seen.delete(userId);
       return;
     }
-    const asks = askLinesFor(app.db, user);
+    // What asks them, and for an admin, who joined (`actions/accounts.ts`).
+    const asks: { id: string; line: string }[] = [
+      ...askLinesFor(app.db, user),
+      ...newAccountLines(app.db, user, now()),
+    ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by
     // the asks a row holds, so a new one under a collapsed row is still news.

@@ -14,7 +14,7 @@ import { join } from "node:path";
 import type { App as Forge } from "../app.ts";
 import { findKeyByFingerprint, touchKey } from "../core/keys.ts";
 import { canRead, canWrite, getRepo } from "../core/repos.ts";
-import { getUserById, type User } from "../core/users.ts";
+import { getUserById, isActive, type User } from "../core/users.ts";
 import { createRepo } from "../actions/repos.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -136,8 +136,10 @@ export function attachTui(
 /** Resolve the account a presented key belongs to, or a guest. */
 export function identityFor(forge: Forge, session: SshSession): TuiIdentity {
   const match = findKeyByFingerprint(forge.db, session.key.fingerprint);
-  const user =
+  const found =
     match === undefined ? undefined : getUserById(forge.db, match.userId);
+  // A suspended or removed account's key opens nothing: it is a guest.
+  const user = found !== undefined && isActive(found) ? found : undefined;
   if (match !== undefined && user !== undefined)
     touchKey(forge.db, match.keyId);
   return {

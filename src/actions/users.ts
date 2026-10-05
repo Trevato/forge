@@ -47,12 +47,21 @@ export type SignUpError = CreateUserError | "username_reserved";
 export async function signUp(
   app: App,
   input: SignUpInput,
+  /** Where the request came from, for the owner's audit of who joined. */
+  from: { address?: string | undefined } = {},
 ): Promise<Result<User, SignUpError>> {
   if (reservedName(app.db, input.username) !== undefined)
     return err("username_reserved");
   const created = await createUser(app.db, { ...input, adminIfFirst: true });
   if (!created.ok) return created;
-  app.bus.append({ kind: "user.created", actorId: created.value.id });
+  app.bus.append({
+    kind: "user.created",
+    actorId: created.value.id,
+    payload: {
+      via: "signup",
+      ...(from.address === undefined ? {} : { address: from.address }),
+    },
+  });
   return created;
 }
 
