@@ -8459,7 +8459,12 @@ describe("the studio can change what an app says it is (#230)", () => {
     expect(ownPage).toContain("a lamp that stays lit all night");
     expect(ownPage).toContain("Private");
 
-    const appHead = await (await get("/alice/lamp/app", ownerCookie)).text();
+    // `/app` has been a redirect to the studio app page since the dev app
+    // page was folded into it (#433): the head to read is that page's.
+    const moved = await get("/alice/lamp/app", ownerCookie);
+    expect(moved.status).toBe(302);
+    expect(moved.headers.get("location")).toBe("/alice/lamp");
+    const appHead = await (await get("/alice/lamp", ownerCookie)).text();
     expect(appHead).toContain("Private");
 
     const shelf = await (await get("/", ownerCookie)).text();
