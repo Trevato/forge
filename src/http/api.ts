@@ -22,7 +22,7 @@ import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
-import { mayDirectCrew } from "../crew/direct.ts";
+import { markReaders, mayDirectCrew } from "../crew/direct.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -328,8 +328,25 @@ function publicKey(key: UserKey) {
   };
 }
 
-function withLabels(ctx: Ctx, issue: Issue) {
-  return { ...issue, labels: labelsFor(ctx.app.db, issue.id) };
+function withLabels<T extends Issue>(ctx: Ctx, issue: T) {
+  return {
+    ...readerMarked(ctx, issue.repoId, [issue])[0]!,
+    labels: labelsFor(ctx.app.db, issue.id),
+  };
+}
+
+/**
+ * Things said in one repository, a reader's marked `untrusted` as the
+ * crew's brief marks them (`markReaders`): a builder that fetches a thread
+ * by hand reads the same warning (#619).
+ */
+function readerMarked<T extends { readonly authorName: string }>(
+  ctx: Ctx,
+  repoId: string,
+  items: readonly T[],
+): (T & { readonly untrusted?: string })[] {
+  const repo = getRepoById(ctx.app.db, repoId);
+  return repo === undefined ? [...items] : markReaders(ctx.app.db, repo, items);
 }
 
 /**
@@ -341,8 +358,17 @@ function withLabelsMany<T extends Issue>(ctx: Ctx, issues: T[]) {
   const ids = issues.map((i) => i.id);
   const labels = labelsForIssues(ctx.app.db, ids);
   const comments = commentCounts(ctx.app.db, ids);
+  const byRepo = new Map<string, T[]>();
+  for (const issue of issues)
+    byRepo.set(issue.repoId, [...(byRepo.get(issue.repoId) ?? []), issue]);
+  const marked = new Map<string, string | undefined>();
+  for (const [repoId, some] of byRepo)
+    for (const m of readerMarked(ctx, repoId, some)) marked.set(m.id, m.untrusted);
   return issues.map((issue) => ({
     ...issue,
+    ...(marked.get(issue.id) === undefined
+      ? {}
+      : { untrusted: marked.get(issue.id)! }),
     labels: labels.get(issue.id) ?? [],
     comments: comments.get(issue.id) ?? 0,
   }));
@@ -1896,7 +1922,11 @@ export function apiRoutes(router: Router<Handler>): void {
     if ("error" in found) return found.error;
     return json({
       ...withLabels(ctx, found.issue),
-      comments: listComments(ctx.app.db, found.issue.id),
+      comments: readerMarked(
+        ctx,
+        found.repo.id,
+        listComments(ctx.app.db, found.issue.id),
+      ),
     });
   });
 
@@ -2265,7 +2295,14 @@ export function apiRoutes(router: Router<Handler>): void {
       if ("error" in found) return found.error;
       const { diff } = await pullDiff(dirOf(ctx, found.repo), found.pull);
       return json(
-        withOutdated(listReviewComments(ctx.app.db, found.pull.id), diff).map(
+        withOutdated(
+          readerMarked(
+            ctx,
+            found.repo.id,
+            listReviewComments(ctx.app.db, found.pull.id),
+          ),
+          diff,
+        ).map(
           // The thread this comment belongs to, so a client can resolve it
           // without reassembling the key itself.
           (comment) => ({
@@ -2325,7 +2362,9 @@ export function apiRoutes(router: Router<Handler>): void {
     (ctx) => {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      return json(listReviews(ctx.app.db, found.pull.id));
+      return json(
+        readerMarked(ctx, found.repo.id, listReviews(ctx.app.db, found.pull.id)),
+      );
     },
   );
 
