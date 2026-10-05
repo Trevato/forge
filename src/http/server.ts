@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { closeStreamsOf, noteCaller } from "./caller.ts";
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
 import {
@@ -23,7 +24,12 @@ import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
-import { ensureEdgeUser, getUserByName, verifyPassword } from "../core/users.ts";
+import {
+  ensureEdgeUser,
+  getUserByName,
+  isActive,
+  verifyPassword,
+} from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
@@ -354,7 +360,12 @@ import { sseStream, viewerStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { appWebSocket, proxyApp, resolveAppHost } from "../apps/proxy.ts";
+import {
+  appWebSocket,
+  closeSocketsOf,
+  proxyApp,
+  resolveAppHost,
+} from "../apps/proxy.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -1289,6 +1300,13 @@ async function handleHook(app: App, request: Request): Promise<Response> {
           status: 403,
         });
       }
+      // A push that began before its account was suspended or removed does
+      // not land: standing is asked again here, at the ref update.
+      if (actor !== undefined && !isActive(actor)) {
+        return new Response("this account is suspended: the push is refused", {
+          status: 403,
+        });
+      }
       // Rule 1 in docs/APPS.md: the crew proposes, a person lands. An agent
       // never moves the default branch — protected or not — so production
       // changes only through a pull someone merged.
@@ -1455,6 +1473,18 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // An account suspended or removed ends what it has open on this
+  // listener: its event streams and the app sockets it was let into.
+  const endOpen = app.bus.subscribe((event) => {
+    if (event.kind !== "account.suspended" && event.kind !== "account.removed")
+      return;
+    const name = event.payload["username"];
+    const user =
+      typeof name === "string" ? getUserByName(app.db, name) : undefined;
+    if (user === undefined) return;
+    closeStreamsOf(user.id);
+    closeSocketsOf(user.id);
+  });
   // Who may say who the client is (\`http/peer.ts\`), settled once.
   const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
   if (!proxies.ok)
@@ -1532,6 +1562,7 @@ export async function serve(app: App): Promise<Servers> {
     url: `http://localhost:${port}`,
     port,
     stop() {
+      endOpen();
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.
@@ -1609,8 +1640,12 @@ async function answerGet(
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
-  // From here a body's cap depends on who is asking (\`http/limits.ts\`).
-  if (auth.user !== undefined) noteSignedIn(request);
+  // From here a body's cap depends on who is asking (`http/limits.ts`), and
+  // a stream this request opens is the account's, to end with it.
+  if (auth.user !== undefined) {
+    noteSignedIn(request);
+    noteCaller(request, auth.user.id);
+  }
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is
