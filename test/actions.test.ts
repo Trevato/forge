@@ -26,7 +26,7 @@ import {
   forkRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
+import { signUpProven as signUp } from "./helpers/verified.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getOrg, listTeams, OWNERS_TEAM } from "../src/core/orgs.ts";

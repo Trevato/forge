@@ -1270,4 +1270,34 @@ export const migrations: readonly string[] = [
     CHECK (budget_locked IN (0, 1));
   ALTER TABLE run ADD COLUMN budget_reserved_usd REAL;
   `,
+  // 53 — whether an account's email is proven, and its one-time link (#659).
+  // A row is written for every account a public way in makes, unproven; the
+  // accounts here before this migration are proven by it, so verification
+  // holds back newcomers, never the people already here.
+  `
+  CREATE TABLE IF NOT EXISTS email_check (
+    user_id      TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+    verified_at  TEXT,
+    token_hash   TEXT UNIQUE,
+    expires_at   TEXT,
+    last_sent_at TEXT,
+    sent_to      TEXT,
+    sends_day    TEXT,
+    sends        INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT OR IGNORE INTO email_check (user_id, verified_at)
+    SELECT id, created_at FROM user;
+  `,
+  // 54 — the people a private app names (#752): they may enter it, its
+  // previews and nothing else — no write, no crew, no settings.
+  `
+  CREATE TABLE IF NOT EXISTS app_member (
+    app_id   TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+    user_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    added_by TEXT REFERENCES user(id) ON DELETE SET NULL,
+    added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (app_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS app_member_user ON app_member(user_id);
+  `,
 ];

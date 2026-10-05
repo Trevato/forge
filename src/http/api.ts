@@ -21,6 +21,8 @@ import {
   suspendAccount,
   unsuspendAccount,
 } from "../actions/accounts.ts";
+import { resendVerification } from "../actions/verify.ts";
+import { emailVerified } from "../core/verify.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -281,9 +283,16 @@ import {
   str,
   unauthorized,
 } from "./respond.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+  type AppMembersError,
+} from "../actions/app_members.ts";
+
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
-import { clientAddress } from "./peer.ts";
+import { clientAddress, clientBucket } from "./peer.ts";
+import { manifestFor } from "../actions/here.ts";
 import {
   acceptReport,
   dismissReport,
@@ -929,6 +938,20 @@ const permissionOf = (raw: unknown): Permission => {
 
 // ---- routes ----
 
+/** An app-members answer: the list, or the refusal a stranger cannot read anything into. */
+function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
+  if (result.ok) return json(result.value);
+  switch (result.error.kind) {
+    case "invalid":
+      return apiError("invalid", 422, result.error.message);
+    case "forbidden":
+      return apiError("forbidden", 403, "the people an app names are its writers' to choose");
+    case "unauthorized":
+      return unauthorized();
+    default:
+      return notFound();
+  }
+}
 export function apiRoutes(router: Router<Handler>): void {
   // ── accounts ─────────────────────────────────────────────────────────
 
@@ -991,8 +1014,27 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user", (ctx) =>
-    ctx.auth.user ? json(publicUser(ctx.auth.user)) : unauthorized(),
+    ctx.auth.user
+      ? json({
+          ...publicUser(ctx.auth.user),
+          emailVerified: emailVerified(ctx.app.db, ctx.auth.user.id),
+        })
+      : unauthorized(),
   );
+
+  // Another verification link for the signed-in account; rate limited.
+  router.add("POST", "/api/v1/user/email/verify", async (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    const sent = await resendVerification(ctx.app, ctx.auth.user);
+    if (sent.ok)
+      return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
+    if (sent.error === "unauthorized") return unauthorized();
+    if (sent.error === "too_soon")
+      return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+    if (sent.error === "no_mail")
+      return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+    return apiError("failed", 502, "the link could not be sent; try again");
+  });
 
   router.add("PATCH", "/api/v1/user", async (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });
@@ -1338,6 +1380,10 @@ export function apiRoutes(router: Router<Handler>): void {
         : {}),
       ...(typeof input.defaultBranch === "string"
         ? { defaultBranch: input.defaultBranch }
+        : {}),
+      // "Outsiders may trigger the crew" (`crew/direct.ts`): an admin's, never an agent's.
+      ...(typeof input.crewOutsiders === "boolean"
+        ? { crewOutsiders: input.crewOutsiders }
         : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
@@ -1885,7 +1931,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.app,
       repo,
       { title: str(input.title), body: str(input.body), page: str(input.page) },
-      clientAddress(ctx.request),
+      clientBucket(ctx.request),
     );
     if (!filed.ok) {
       const refusal = filed.error;
@@ -3376,6 +3422,34 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({}, 200);
   });
 
+  // The people a private app names (#752): they may enter it and its
+  // previews, nothing else. Read and changed by people who can write the
+  // repository, never an agent; a change is planned unless dryRun is false.
+  router.add("GET", "/api/v1/repos/:owner/:name/app/members", (ctx) => {
+    const denied = requireScope(ctx, "ro");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return membersAnswer(readAppMembers(ctx.app, ctx.auth.user, repo));
+  });
+
+  router.add("PUT", "/api/v1/repos/:owner/:name/app/members", async (ctx) => {
+    const input = await body(ctx.request);
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const members = input.members;
+    if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
+      return apiError("invalid", 422, "send {members: [username, …], dryRun}");
+    return membersAnswer(
+      setAppMembersThrough(ctx.app, ctx.auth.user, repo, {
+        members,
+        dryRun: input.dryRun !== false,
+      }),
+    );
+  });
+
   // The app's own domains (docs/APPS.md, "Your own domain"). Admin scope
   // and admin over the repository, like the environment below; `:host` is
   // one path segment, dots included.
@@ -3681,6 +3755,24 @@ export function apiRoutes(router: Router<Handler>): void {
     const asked = fleetSelection(ctx.url.searchParams.getAll("repo"));
     if (!asked.ok) return apiError("invalid_selection", 422, asked.error);
     return json(readFleetGraph(ctx.app, ctx.auth.user, asked.value));
+  });
+
+  // What the caller can do on a forge page, as who they are (#604): the
+  // manifest every page links to. It differs by caller, so it is never cached.
+  router.add("GET", "/api/v1/here", (ctx) => {
+    const path = ctx.url.searchParams.get("path") ?? "/";
+    const found = manifestFor(
+      ctx.app,
+      ctx.auth.user,
+      ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+      ctx.url.origin,
+      path.startsWith("/") ? path : `/${path}`,
+    );
+    if (!found.ok) return notFound();
+    return json(found.value, 200, {
+      "cache-control": "no-store",
+      vary: "cookie, authorization",
+    });
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs", (ctx) => {

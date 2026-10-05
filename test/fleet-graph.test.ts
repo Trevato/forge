@@ -125,19 +125,19 @@ describe("the graph", () => {
     servers = await serve(app);
     // The first account is the site admin, who may write everything; the
     // owners below are ordinary accounts, so their spend is theirs alone.
-    const root = await createUser(app.db, {
+    const root = await createUser(app.db, { trusted: true,
       username: "root",
       email: "root@forge.local",
       password: "a-root-passphrase",
       adminIfFirst: true,
     });
     if (!root.ok) throw new Error("root");
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
     });
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "another-good-passphrase",

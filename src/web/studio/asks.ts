@@ -23,7 +23,7 @@ import {
   type Issue,
 } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { closesFromBody, joinMany, type Pull } from "../../core/pulls.ts";
+import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
   canWrite,
@@ -45,7 +45,7 @@ import {
 } from "../../crew/autonomy.ts";
 import { BREAKER_NOTE, breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
-import { isStalePull } from "../../crew/stale_asks.ts";
+import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
@@ -291,7 +291,9 @@ function askCandidatesFor(
       out.push({
         kind: "look",
         id: `look:${pull.id}`,
-        since: check.createdAt,
+        // New since its green check — or since it merged again, if later.
+        since: [check.createdAt, mergesAgainSince(db, pull.id, pull.headOid) ?? ""]
+          .reduce((a, b) => (a > b ? a : b)),
         repo,
         pull,
         who,
@@ -598,13 +600,16 @@ function lineOf(c: AskCandidate): string {
 }
 
 /** A collapsed row in a line: how many, and of what. */
-function rowLine(kind: DecisionKind, n: number): string {
-  if (kind === "parked")
-    return `the crew parked ${n} issues after three failed runs`;
-  if (kind === "declined") return `the planner declined ${n} times and waits for you`;
-  if (kind === "stopped") return `the crew stopped on ${n} changes`;
-  return `${n} green changes wait for your look`;
-}
+export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> = {
+  look: (n) => `${n} green changes wait for your look`,
+  stopped: (n) => `the crew stopped on ${n} changes`,
+  parked: (n) => `the crew parked ${n} issues after three failed runs`,
+  declined: (n) => `the planner declined ${n} times and waits for you`,
+  paused: (n) => `${n} pauses at the ceiling`,
+};
+
+/** Every kind has its own: a row never says "green changes" of something that is not one. */
+const rowLine = (kind: DecisionKind, n: number): string => ROW_PLURAL[kind](n);
 
 /** The anchor a row's card carries on `/asks`, so a link can land on it. */
 export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
@@ -942,13 +947,21 @@ export function askDismissedBy(db: Database, viewerId: string, issue: Issue): bo
   if (at === "") return false;
   const cause =
     issue.kind === "pull"
-      ? (latestRunsForIssues(db, [issue.id]).get(issue.id)?.createdAt ?? issue.createdAt)
+      ? pullCause(db, issue)
       : (db
           .query<{ at: string | null }, [string, string]>(
             "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body = ?2",
           )
           .get(issue.id, BREAKER_NOTE)?.at ?? issue.createdAt);
   return at > cause;
+}
+
+/** A pull ask's cause, as `askCandidatesFor` dates it: its green check, or merging again. */
+function pullCause(db: Database, issue: Issue): string {
+  const check = latestRunsForIssues(db, [issue.id]).get(issue.id)?.createdAt ?? issue.createdAt;
+  const pull = getPull(db, issue.repoId, issue.number);
+  const again = pull ? (mergesAgainSince(db, pull.id, pull.headOid) ?? "") : "";
+  return check > again ? check : again;
 }
 
 /**
