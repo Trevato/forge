@@ -10,7 +10,6 @@
 import { join } from "node:path";
 import type { Ctx } from "../../http/context.ts";
 import {
-  getOrg,
   listTeams,
   addTeamMember,
   OWNERS_TEAM,
@@ -213,9 +212,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     user: made.value.username,
   });
   const session = createSession(ctx.app.db, made.value.id);
-  const home = org !== undefined && getOrg(ctx.app.db, org) ? `/${org}` : "/";
+  // Home: where the crew's work shows (its first-login screen is #600).
   return redirect(
-    home,
+    "/",
     sessionCookie(session.token, session.expiresAt, ctx.url),
   );
 }

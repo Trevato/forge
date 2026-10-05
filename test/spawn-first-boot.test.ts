@@ -277,6 +277,7 @@ describe("a spawned child's first boot", () => {
   test("claiming makes the person the child's admin and an owner of its organisation, signed in", async () => {
     const res = await claim(token, maria);
     expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/");
     const cookie = res.headers.get("set-cookie") ?? "";
     expect(cookie).toContain("forge_session=");
     expect(cookie).toContain("HttpOnly");
