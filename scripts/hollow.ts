@@ -5,12 +5,19 @@
  *
  * Two things are hollow, and `audit` names each in one line:
  *
- * - An exported function in `src/actions/` that no surface reaches. Reach
- *   starts at every declaration under `SURFACES` and at each module's own
- *   top-level statements, and follows the names a reached declaration
- *   mentions: to a declaration of the same file, or through an import to
- *   another file's. So an action called only by another action, or through
- *   `src/fleet/`, is reached, and one that only its tests call is not.
+ * - An exported function in `src/actions/` that nothing that runs reaches.
+ *   What runs is followed from `ENTRIES`, the files something starts: a
+ *   module is loaded when an entry is, when a loaded module imports it, or
+ *   when code that runs `import()`s it; a loaded module's top-level
+ *   statements run; and what runs reaches the declarations it mentions, in
+ *   its own file or through an import in another's. So a route's handler
+ *   is reached through the table that registers it, an MCP tool through
+ *   the list of tools, and an action called only by another action, or
+ *   through `src/fleet/`, through that. One that only its tests call is
+ *   not reached, and neither is one called only from a page function no
+ *   route names, from an `import()` in such a function, or from the top
+ *   level of a file nothing loads (#739): where a caller sits does not
+ *   make it run.
  * - A screen no page links to. A screen is a GET route whose path takes no
  *   parameter and whose handler can draw the page (`page`, `web/layout.ts`).
  *   It is linked when its path stands in a string of a module that a
@@ -20,9 +27,9 @@
  *   that links only to itself, or two that link only to each other, are
  *   still orphans.
  *
- * Names are followed by spelling, not by scope, and a namespace or dynamic
- * import reaches the whole module: where it cannot tell, an action counts
- * as called.
+ * Names are followed by spelling, not by scope, and a namespace import or
+ * an `import()` that runs reaches the whole module: where it cannot tell,
+ * an action counts as called.
  *
  * `ALLOWED` (`scripts/hollow-allow.ts`) is the hollow work main carries
  * today, each entry with the issue that owns it. Whatever is hollow and not
@@ -42,19 +49,20 @@ import { posix } from "node:path";
 import ts from "typescript";
 import { ALLOWED, type Allowed } from "./hollow-allow.ts";
 
-/** Where a person or an agent comes in: routes and MCP tools, pages, the crew's workers, the CLI, the terminal. */
-const SURFACES: readonly string[] = [
-  "src/http/",
-  "src/web/",
-  "src/crew/",
-  "src/cli/",
-  "src/tui/",
-];
-/** "src/http, src/web, src/crew, src/cli or src/tui". */
-const SURFACE_WORDS = SURFACES.map((surface) => surface.slice(0, -1))
-  .join(", ")
-  .replace(/, ([^,]*)$/, " or $1");
 const ACTIONS = "src/actions/";
+/** The files something starts, each with who starts it. A new one is added here. */
+const ENTRIES: readonly string[] = [
+  // `bun src/main.ts`: the forge itself.
+  "src/main.ts",
+  // The `forge` command.
+  "src/cli/main.ts",
+  // The terminal, over stdio.
+  "src/tui/main.ts",
+  // What git runs for a hook (`git/hooks.ts` writes its path).
+  "src/git/hook-entry.ts",
+  // An operator's restore (docs/SNAPSHOT.md).
+  "src/snapshot/restore.ts",
+];
 /** The function every full page is drawn through. */
 const PAGE = "src/web/layout.ts#page";
 const ALLOW_FILE = "scripts/hollow-allow.ts";
@@ -68,17 +76,25 @@ interface Origin {
   name: string;
 }
 
+/** What a stretch of code mentions: names, and the files it loads with `import()`. */
+interface Mentions {
+  names: Set<string>;
+  loads: Set<string>;
+}
+
+const nothing = (): Mentions => ({ names: new Set(), loads: new Set() });
+
 interface Declaration {
-  /** The names its text mentions. */
-  refs: Set<string>;
+  /** What its text mentions. */
+  refs: Mentions;
   /** Declared as a function, or as a constant holding one. */
   fn: boolean;
 }
 
 interface Route {
   path: string;
-  /** The names its handler mentions. */
-  refs: Set<string>;
+  /** What its handler mentions. */
+  refs: Mentions;
 }
 
 interface Module {
@@ -90,12 +106,12 @@ interface Module {
   stars: string[];
   /** Local name to the export it was imported as. */
   imports: Map<string, Origin>;
-  /** Every file this one imports a value from. */
+  /** Every file this one imports a value from, `import()` included. */
   uses: Set<string>;
-  /** The names its top-level statements mention: they run when it loads. */
-  body: Set<string>;
-  /** Files it imports whole, with `import()`. */
-  whole: string[];
+  /** The files loading this one loads: its imports and re-exports, not its `import()`s. */
+  needs: Set<string>;
+  /** What its top-level statements mention: they run when it loads. */
+  body: Mentions;
   /** `.add("GET", path, handler)` calls. */
   routes: Route[];
   /** String and template text; `continued` is the part after an interpolation. */
@@ -124,8 +140,8 @@ function read(file: string, text: string): Module {
     stars: [],
     imports: new Map(),
     uses: new Set(),
-    body: new Set(),
-    whole: [],
+    needs: new Set(),
+    body: nothing(),
     routes: [],
     strings: [],
   };
@@ -136,8 +152,8 @@ function read(file: string, text: string): Module {
     return target;
   };
 
-  /** The names `node` mentions go to `refs`; strings, routes and `import()` go to the module. */
-  const walk = (node: ts.Node, refs: Set<string>): void => {
+  /** What `node` mentions goes to `refs`; strings and routes go to the module. */
+  const walk = (node: ts.Node, refs: Mentions): void => {
     if (ts.isIdentifier(node)) {
       // The name of a member, a parameter or a property is not a mention of
       // whatever else is spelled that way; `{ a }` is both.
@@ -149,7 +165,7 @@ function read(file: string, text: string): Module {
         ts.isShorthandPropertyAssignment(parent) ||
         (parent.name !== node && parent.propertyName !== node)
       )
-        refs.add(node.text);
+        refs.names.add(node.text);
       return;
     }
     if (
@@ -167,8 +183,9 @@ function read(file: string, text: string): Module {
         first !== undefined &&
         ts.isStringLiteralLike(first)
       ) {
+        // Loaded when the code around it runs, and not before.
         const target = resolve(first.text);
-        if (target !== undefined) mod.whole.push(target);
+        if (target !== undefined) refs.loads.add(target);
       }
       // `router.add("GET", path, handler)`: a route, and what its handler mentions.
       if (
@@ -181,9 +198,10 @@ function read(file: string, text: string): Module {
         ts.isStringLiteralLike(second) &&
         rest[0] !== undefined
       ) {
-        const handler = new Set<string>();
+        const handler = nothing();
         for (const argument of rest) walk(argument, handler);
-        for (const ref of handler) refs.add(ref);
+        for (const name of handler.names) refs.names.add(name);
+        for (const target of handler.loads) refs.loads.add(target);
         mod.routes.push({ path: second.text, refs: handler });
         walk(node.expression, refs);
         return;
@@ -198,13 +216,14 @@ function read(file: string, text: string): Module {
     fn: boolean,
     exported: boolean,
   ): void => {
-    const refs = new Set<string>();
+    const refs = nothing();
     walk(node, refs);
     for (const name of names) {
       // Overloads and merged declarations share one entry.
       const declaration = mod.declarations.get(name) ?? { refs, fn };
       mod.declarations.set(name, declaration);
-      for (const ref of refs) declaration.refs.add(ref);
+      for (const name of refs.names) declaration.refs.names.add(name);
+      for (const target of refs.loads) declaration.refs.loads.add(target);
       declaration.fn ||= fn;
       if (exported) mod.exports.set(name, { file, name });
     }
@@ -223,6 +242,7 @@ function read(file: string, text: string): Module {
       if (!ts.isStringLiteral(statement.moduleSpecifier)) continue;
       if (clause?.isTypeOnly) continue;
       const target = resolve(statement.moduleSpecifier.text);
+      if (target !== undefined) mod.needs.add(target);
       if (target === undefined || clause === undefined) continue;
       if (clause.name)
         mod.imports.set(clause.name.text, { file: target, name: "default" });
@@ -246,6 +266,7 @@ function read(file: string, text: string): Module {
           : undefined;
       // Re-exporting a package is nothing of ours.
       if (from !== undefined && target === undefined) continue;
+      if (target !== undefined) mod.needs.add(target);
       const clause = statement.exportClause;
       if (clause === undefined) {
         if (target !== undefined) mod.stars.push(target);
@@ -335,17 +356,20 @@ function meant(modules: Modules, file: string, mention: string): string[] {
 
 type Edges = ReadonlyMap<string, readonly string[]>;
 
+/** The declarations `said` leads to from inside `file`: what its names stand for, and every export of what it loads. */
+function leadsTo(modules: Modules, file: string, said: Mentions): string[] {
+  return [
+    ...[...said.names].flatMap((name) => meant(modules, file, name)),
+    ...[...said.loads].flatMap((target) => exportedAs(modules, target, "*")),
+  ];
+}
+
 /** Each declaration, as `file#name`, to the declarations its text mentions. */
 function graph(modules: Modules): Map<string, string[]> {
   const edges = new Map<string, string[]>();
   for (const [file, mod] of modules)
     for (const [name, declaration] of mod.declarations)
-      edges.set(
-        `${file}#${name}`,
-        [...declaration.refs].flatMap((mention) =>
-          meant(modules, file, mention),
-        ),
-      );
+      edges.set(`${file}#${name}`, leadsTo(modules, file, declaration.refs));
   return edges;
 }
 
@@ -367,19 +391,46 @@ export interface Hollow {
   line: string;
 }
 
-/** Exported functions in `src/actions/` that no surface reaches, as `file#name`. */
-function hollowActions(modules: Modules, edges: Edges): Hollow[] {
-  const starts: string[] = [];
-  for (const [file, mod] of modules) {
-    for (const mention of mod.body)
-      starts.push(...meant(modules, file, mention));
-    for (const target of mod.whole)
-      starts.push(...exportedAs(modules, target, "*"));
-    if (SURFACES.some((surface) => file.startsWith(surface)))
-      for (const name of mod.declarations.keys())
-        starts.push(`${file}#${name}`);
+/**
+ * Every declaration that runs, as `file#name`. A module is loaded when an
+ * entry is, when a loaded module imports it, or when code that runs
+ * `import()`s it. A loaded module's top-level statements run, and whatever
+ * runs reaches what it mentions. A file nothing loads runs nothing, and an
+ * `import()` in a function nothing calls loads nothing.
+ */
+function running(modules: Modules, entries: readonly string[]): Set<string> {
+  const reached = new Set<string>();
+  const loaded = new Set<string>();
+  const files = [...entries];
+  const ids: string[] = [];
+  const follow = (file: string, said: Mentions): void => {
+    ids.push(...leadsTo(modules, file, said));
+    files.push(...said.loads);
+  };
+  for (;;) {
+    const file = files.pop();
+    if (file !== undefined) {
+      const mod = modules.get(file);
+      if (mod === undefined || loaded.has(file)) continue;
+      loaded.add(file);
+      files.push(...mod.needs);
+      follow(file, mod.body);
+      continue;
+    }
+    const id = ids.pop();
+    if (id === undefined) return reached;
+    if (reached.has(id)) continue;
+    reached.add(id);
+    const at = id.lastIndexOf("#");
+    const from = id.slice(0, at);
+    const declaration = modules.get(from)?.declarations.get(id.slice(at + 1));
+    if (declaration !== undefined) follow(from, declaration.refs);
   }
-  const reached = reach(edges, starts);
+}
+
+/** Exported functions in `src/actions/` that nothing that runs reaches, as `file#name`. */
+function hollowActions(modules: Modules): Hollow[] {
+  const reached = running(modules, ENTRIES);
   const found: Hollow[] = [];
   for (const [file, mod] of modules) {
     if (!file.startsWith(ACTIONS)) continue;
@@ -390,7 +441,7 @@ function hollowActions(modules: Modules, edges: Edges): Hollow[] {
       const id = `${file}#${name}`;
       found.push({
         id,
-        line: `${id} is exported and nothing under ${SURFACE_WORDS} reaches it: call it from a route, a page or an MCP tool, or list it in ALLOWED (${ALLOW_FILE}) with the issue that owns it`,
+        line: `${id} is exported and nothing that runs reaches it: call it from a route, a routed page or an MCP tool, or list it in ALLOWED (${ALLOW_FILE}) with the issue that owns it`,
       });
     }
   }
@@ -440,7 +491,7 @@ function orphanScreens(modules: Modules, edges: Edges): Hollow[] {
   for (const [file, mod] of modules)
     for (const route of mod.routes) {
       const files = new Set<string>();
-      for (const mention of route.refs) {
+      for (const mention of route.refs.names) {
         const origin = mod.imports.get(mention);
         if (origin !== undefined) files.add(origin.file);
       }
@@ -448,9 +499,7 @@ function orphanScreens(modules: Modules, edges: Edges): Hollow[] {
         path: route.path,
         files,
         fixed: !/[:*]/.test(route.path),
-        draws: [...route.refs].some((mention) =>
-          meant(modules, file, mention).some((id) => drawers.has(id)),
-        ),
+        draws: leadsTo(modules, file, route.refs).some((id) => drawers.has(id)),
       });
     }
   const screens = pages.filter((page) => page.fixed && page.draws);
@@ -506,7 +555,7 @@ export function hollow(sources: Sources): Hollow[] {
   const modules = new Map<string, Module>();
   for (const [file, text] of sources) modules.set(file, read(file, text));
   const edges = graph(modules);
-  return [...hollowActions(modules, edges), ...orphanScreens(modules, edges)];
+  return [...hollowActions(modules), ...orphanScreens(modules, edges)];
 }
 
 /**

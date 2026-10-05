@@ -543,7 +543,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "working",
         path: `${repoPath}/runs/${runId}`,
         title: `scout on #${tellNumber} ${tellTitle} · vocab`,
-        devTitle: `scout on #${tellNumber} ${tellTitle} · vocab`,
       },
       {
         word: "look",
@@ -671,9 +670,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // The stopped run is not open and moving, so the bare list leaves it
         // out — the filter below is where it shows up.
         hides: [`href="${repoPath}/runs/${stoppedRunId}"`],
-        dev: ["Done"],
         title: "Every run · vocab",
-        devTitle: "Runs · vocab",
       },
       {
         word: "runs (stopped)",
@@ -683,7 +680,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
           `href="${repoPath}/runs/${runId}"`,
           `href="${repoPath}/runs/${workingRunId}"`,
         ],
-        dev: ["Done"],
       },
       {
         word: "runs (next page)",
@@ -692,7 +688,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/runs?cursor=${workingRunId}`,
         shows: [`href="${repoPath}/runs/${runId}"`],
         hides: [`href="${repoPath}/runs/${workingRunId}"`],
-        dev: ["Done"],
       },
       {
         // The studio's own settings: the crew, and how far it may go.
@@ -882,7 +877,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       ["/alice/plain/issues", "Everything told · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
       ["/alice/plain/pulls", "Every change · plain"],
-      ["/alice/plain/runs", "Runs · plain"],
+      ["/alice/plain/runs", "Every run · plain"],
     ]);
     for (const [path, title] of titles) {
       const res = await fetch(`${base}${path}`, {
