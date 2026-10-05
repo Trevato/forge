@@ -28,6 +28,7 @@ import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
 import { startNotifier } from "./crew/notify.ts";
+import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 import { dataHomeRefusal } from "./kernel/data_home.ts";
@@ -259,6 +260,12 @@ function positive(value: string | undefined, fallback: number): number {
 const syncTimer = setInterval(() => runSync(app), 60_000);
 runSync(app); // one pass on boot: a forge that was down has fetching to do
 
+// Which green pulls no longer merge as they stand, so the asks can leave
+// them out (`crew/stale_asks.ts`): git answers, off the request path, and an
+// unchanged pull costs two ref reads. Never throws into the timer.
+const staleTimer = setInterval(() => void sweepStaleAsks(app), 120_000);
+void sweepStaleAsks(app);
+
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
 if (apps)
   app.log.info("apps are up", {
@@ -317,6 +324,7 @@ function shutdown(): void {
   app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
+  clearInterval(staleTimer);
   clearInterval(leaseTimer);
   Promise.all([
     prompts.stop(),
