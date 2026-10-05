@@ -26,6 +26,30 @@ import {
 } from "./asks.ts";
 import { changeHref } from "./nouns.ts";
 
+/** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "stopped", "parked"]);
+
+/** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
+const pick = (d: Decision): Html | null =>
+  BULK_KINDS.has(d.kind)
+    ? html`<input
+        type="checkbox"
+        class="ask-pick"
+        name="item"
+        value="${d.id}"
+        form="asks-bulk"
+        aria-label="Select ${d.pull?.title ?? d.issue?.title ?? d.id}"
+      />`
+    : null;
+
+/** "Select all of this kind": the one box on a collapsed row's head. */
+const SELECT_ALL_JS = `document.addEventListener('change', function (e) {
+  var t = e.target;
+  if (!t || !t.matches || !t.matches('[data-select-all]')) return;
+  var card = t.closest('.card');
+  if (card) card.querySelectorAll('input[name="item"]').forEach(function (b) { b.checked = t.checked; });
+});`;
+
 /** The rows shown before "N more": the few that matter most. */
 export const ASKS_SHOWN = 5;
 
@@ -53,7 +77,7 @@ function decisionCard(ctx: Ctx, d: Decision): Html {
       <div class="bar mt">${decisionActions(ctx, d)}</div>`,
     {
       id: askAnchor(d.id),
-      head: html`${icon(d.kind === "look" ? "eye" : "pull")}
+      head: html`${pick(d) ?? icon(d.kind === "look" ? "eye" : "pull")}
         <h2>${title}</h2>
         <span class="muted small">${d.repo.ownerName}/${d.repo.name}</span>`,
     },
@@ -79,14 +103,23 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>): Html {
       const href = d.pull
         ? changeHref(base, d.pull.number)
         : `${base}/issues/${String(number)}`;
+      const box = pick(d);
       return row({
+        ...(box === null ? {} : { lead: box }),
         title: html`<a href="${href}">${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
         meta: html`<span class="bar">${decisionActions(ctx, d)}</span>`,
       });
     }),
     {
       id: askAnchor(r.id),
-      head: html`${icon(r.kind === "look" ? "eye" : "pull")}
+      head: html`${BULK_KINDS.has(r.kind)
+          ? html`<input
+              type="checkbox"
+              class="ask-pick"
+              data-select-all
+              aria-label="Select all ${r.items.length}"
+            />`
+          : icon(r.kind === "look" ? "eye" : "pull")}
         <h2>${rowHead(r.kind, r.items.length)}</h2>
         <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>`,
       foot: clause(undefined, r.kind, r.consequence),
@@ -117,7 +150,20 @@ export function asksPage(ctx: Ctx): Response {
   // the rest are one tap away, in the same order.
   const first = rows.slice(0, ASKS_SHOWN);
   const rest = rows.slice(ASKS_SHOWN);
+  const pickable = decisions.filter((d) => BULK_KINDS.has(d.kind)).length;
   const body = html`<h1 id="asks-sentence">${askSentence(count)}</h1>
+    ${pickable < 2
+      ? null
+      : html`<form id="asks-bulk" method="post" action="/asks/bulk" class="bar mb">
+          <select name="action" class="input" aria-label="What to do with the selected asks">
+            <option value="dismiss">Dismiss</option>
+            <option value="ship">Ship</option>
+            <option value="close">Close</option>
+            <option value="replan">Hand back to the planner</option>
+          </select>
+          ${btn("Preview", { size: "sm" })}
+          <span class="muted small">on the selected asks</span>
+        </form>`}
     <div class="stack">
       ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r))}
     </div>
@@ -128,5 +174,10 @@ export function asksPage(ctx: Ctx): Response {
           <div class="stack mt">${rest.map((r) => rowCard(ctx, r))}</div>
         </details>`}
     ${decisions.map((d) => decisionForm(d))}`;
-  return page({ ctx, title: askSentence(count), body });
+  return page({
+    ctx,
+    title: askSentence(count),
+    body,
+    ...(pickable < 2 ? {} : { scriptJs: SELECT_ALL_JS }),
+  });
 }

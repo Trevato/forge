@@ -127,6 +127,7 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
+import { asksBulkSubmit, asksBulkUndo } from "../web/studio/asks_bulk_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
@@ -436,6 +437,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  router.add("POST", "/asks/bulk", asksBulkSubmit);
+  router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
