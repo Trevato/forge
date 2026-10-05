@@ -19,24 +19,25 @@
  * not shown the roster or the day's spend. The forms that change any of
  * this are drawn only for who the actions themselves would let post — an
  * admin — so nothing here offers a control that would just come back
- * refused. Everything else about the repository — branches, labels,
- * webhooks, the app's own environment, deletion or disabling — stays
- * dev's, one link away.
+ * refused. These three lead the one settings page (`settingsPage`,
+ * `pages/settings.ts`), for every repository and every viewer; the rest —
+ * the default branch and its gates, secrets, the app's own environment,
+ * prompts, labels, webhooks, deletion — sits beneath them, an admin's.
  */
 
-import { listAllAgents } from "../../actions/crew.ts";
+import { listAllAgents, listCrew } from "../../actions/crew.ts";
 import { CREW_ROLES, listCrewRoles, type CrewRole } from "../../core/agents.ts";
-import type { AppRecord } from "../../core/apps.ts";
+import { getAppByRepo } from "../../core/apps.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { crewHasCredential } from "../../core/subscriptions.ts";
 import { autonomyStatus } from "../../crew/autonomy.ts";
 import { crewOffInPreview } from "../../crew/preview.ts";
 import type { Ctx } from "../../http/context.ts";
-import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
+import { repoBase } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
-import { page } from "../layout.ts";
-import { pageTitle } from "./nouns.ts";
+import { crewReadiness } from "../pages/crew.ts";
+import { grantsSection } from "../pages/subscriptions.ts";
 import {
   btn,
   card,
@@ -60,20 +61,29 @@ const ROLE_WORD: Record<CrewRole, string> = {
  * same one dev's General page uses), with hidden inputs carrying the branch
  * protection fields that form always sends so this save can't reset them.
  */
-function aboutCard(repo: Repo, base: string, admin: boolean): Html | null {
+function aboutCard(
+  repo: Repo,
+  base: string,
+  admin: boolean,
+  isApp: boolean,
+): Html | null {
   if (!admin) return null;
+  const noun = isApp ? "app" : "repository";
   return card(
     html`<form method="post" action="${base}/settings">
       ${field({
         label: "Description",
         name: "description",
         value: repo.description,
-        hint: "One line, shown wherever this app is listed.",
+        hint: `One line, shown wherever this ${noun} is listed.`,
       })}
       ${selectField({
         label: "Visibility",
         name: "visibility",
-        hint: "A private app and one that does not exist look identical to anyone else.",
+        hint:
+          repo.visibility === "private"
+            ? `A private ${noun} and one that does not exist look identical to anyone else. Making it public shows everyone its code, issues, pulls and run logs; a private app and its previews stay open only to people who can write here.`
+            : "Public: anyone can read the code, issues, pulls and run logs. A private app and its previews stay open only to people who can write here.",
         options: [
           {
             value: "private",
@@ -87,15 +97,7 @@ function aboutCard(repo: Repo, base: string, admin: boolean): Html | null {
           },
         ],
       })}
-      ${repo.protectDefault
-        ? html`<input type="hidden" name="protect" value="on" />`
-        : null}
-      ${repo.requireReview
-        ? html`<input type="hidden" name="requireReview" value="on" />`
-        : null}
-      ${repo.requireChecks
-        ? html`<input type="hidden" name="requireChecks" value="on" />`
-        : null}
+      <input type="hidden" name="card" value="about" />
       <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
     </form>`,
     { head: html`${icon("pencil")}<h2>About</h2>` },
@@ -144,7 +146,9 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
               lead: icon("bot"),
               title: html`${userLink(c.agent.user.username)}`,
               meta: html`<span title="${c.agent.brief}"
-                >${ROLE_WORD[c.role]}${c.agent.brief === ""
+                >${ROLE_WORD[c.role]}${c.agent.model === ""
+                  ? ""
+                  : ` · ${c.agent.model}`}${c.agent.brief === ""
                   ? ""
                   : ` · ${c.agent.brief}`}</span
               >`,
@@ -217,15 +221,34 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
           { head: html`<h2>Add an agent</h2>`, pad: false },
         );
 
-  return html`${card(html`${rows}`, {
-    head: html`${icon("bot")}
-      <h2>Crew</h2>`,
-    pad: false,
-  })}
-  ${add}`;
+  // Whose money the crew spends here is the forge admin's to say.
+  const grants =
+    admin && forgeAdmin
+      ? (() => {
+          const agents = listCrew(ctx.app, ctx.auth.user, repo);
+          return grantsSection(ctx, {
+            scopeId: repo.id,
+            agents: agents.ok ? agents.value : [],
+            action: `${base}/settings/crew/subscriptions`,
+            wider: "the owner's grant, or the forge's own token",
+          });
+        })()
+      : null;
+  return html`<div id="crew">
+    ${admin ? crewReadiness(ctx) : null}
+    ${card(html`${rows}`, {
+      head: html`${icon("bot")}
+        <h2>Crew</h2>`,
+      pad: false,
+    })}
+    ${add} ${grants}
+  </div>`;
 }
 
 function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
+  const planner = listCrewRoles(ctx.app.db, repo.id).find(
+    (c) => c.role === "planner",
+  );
   const status = repo.autonomy === "off" ? undefined : autonomyStatus(ctx.app, repo);
   const state = crewOffInPreview()
     ? html`<p class="muted small">
@@ -277,17 +300,32 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
             },
           ],
         })}
-        <input
-          type="hidden"
-          name="direction"
-          value="${repo.autonomyDirection}"
-        />
+        <div class="field">
+          <label for="f-direction">Direction</label>
+          <textarea
+            class="input"
+            id="f-direction"
+            name="direction"
+            rows="3"
+            placeholder="Pull the engine out of the game so a second game can use it."
+          >
+${repo.autonomyDirection}</textarea
+          >
+          <p class="hint">
+            One or two sentences. The planner turns this into issues and links
+            them when nothing is left to build.
+            ${planner
+              ? html`Planner here: ${userLink(planner.agent.user.username)}.`
+              : html`No planner on the crew yet — set one under Crew, or the
+                map is only what people write.`}
+          </p>
+        </div>
         ${field({
           label: "Ceiling per day",
           name: "ceiling",
           value: String(repo.autonomyCeilingUsd),
           type: "number",
-          hint: "Dollars of agent spend on this app per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.",
+          hint: `Dollars of agent spend on this ${getAppByRepo(ctx.app.db, repo.id) === undefined ? "repository" : "app"} per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.`,
         })}
         ${field({
           label: "Slots",
@@ -299,47 +337,35 @@ function autonomyCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html 
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;
   return card(html`${state}${form}`, {
+    id: "autonomy",
     head: html`${icon("play")}
       <h2>On its own</h2>`,
   });
 }
 
 /**
- * GET /:owner/:name/settings in studio mode, for an app: the crew and the
- * ceiling, over the same actions dev's Crew and Autonomy pages use.
+ * The settings page's lead, for anyone who can read the repository: what it
+ * says it is, the crew and how far it may go on its own — forms for an
+ * admin, the facts for a writer, and a line saying whose they are for
+ * anyone else.
  */
-export function studioCrewSettings(
-  ctx: Ctx,
-  repo: Repo,
-  _record: AppRecord,
-): Response {
+export function settingsLead(ctx: Ctx, repo: Repo): Html {
   const base = repoBase(repo);
   const ownerFacts = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const admin = ownerFacts && canAdmin(ctx.app.db, repo, ctx.auth.user);
-  const body = !ownerFacts
-    ? html`${repoHeader(ctx, repo, "settings", { compact: true })}
-      <div class="card">
-        <p class="muted small">
-          The crew and how this app runs itself are visible to people who can
-          write here.
-        </p>
-      </div>`
-    : html`${repoHeader(ctx, repo, "settings", { compact: true })}
-      <div class="stack">
-        ${aboutCard(repo, base, admin)}
-        ${crewCard(ctx, repo, base, admin)}
-        ${autonomyCard(ctx, repo, base, admin)}
-        <p class="muted small">
-          <a href="${base}/settings?mode=dev">The rest of the settings</a>
-        </p>
-      </div>`;
-  return page({
-    ctx,
-    title: pageTitle("settings", repo, true),
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body,
-  });
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  if (!ownerFacts)
+    return html`<div class="card">
+      <p class="muted small">
+        The crew and how this ${isApp ? "app" : "repository"} runs itself are
+        visible to people who can write here.
+      </p>
+    </div>`;
+  return html`<div class="stack">
+    ${aboutCard(repo, base, admin, isApp)}
+    ${crewCard(ctx, repo, base, admin)}
+    ${autonomyCard(ctx, repo, base, admin)}
+  </div>`;
 }
 
 /**

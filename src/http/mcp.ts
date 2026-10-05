@@ -29,7 +29,7 @@ import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { spawnDoor } from "../spawn/door.ts";
-import { tell, toldWords } from "../actions/tell.ts";
+import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import {
   readUsage,
   usageDays,
@@ -238,7 +238,11 @@ const TOOLS: readonly Tool[] = [
           told.error,
           told.error === "empty"
             ? "say something first"
-            : "that could not be told here",
+            : told.error === "forbidden"
+              ? DIRECTION_NOTE
+              : told.error === "unverified"
+                ? UNVERIFIED_WORDS
+                : "that could not be told here",
         );
       return good({
         says: toldWords(told.value),
@@ -611,6 +615,12 @@ const TOOLS: readonly Tool[] = [
     writes: true,
     dryByDefault: true,
     async run(ctx, user, args) {
+      // A secret never passes through an agent's conversation.
+      if (args["modelKey"] !== undefined)
+        return bad(
+          "invalid",
+          "a model key never travels through an agent: send it with POST /api/v1/forges, or add it on the child's Subscriptions page",
+        );
       const door = await spawnDoor(ctx, user, args);
       if (door.status >= 400)
         return bad(String(door.body["error"]), String(door.body["message"]));

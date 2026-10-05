@@ -106,7 +106,7 @@ export async function nowCard(
       i.id !== repo.directionIssueId &&
       !openByIssue.has(i.number),
   );
-  // With nobody on the crew to build, `tellCrew` cannot route a tell to
+  // With nobody on the crew to build, `tell` cannot route a tell to
   // anyone — it stays unassigned forever, not merely unpicked-up like
   // `waiting` below. Scoped to that one honest cause (never to a tell a
   // person simply hasn't assigned while builders exist), so widening this
