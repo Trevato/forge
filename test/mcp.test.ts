@@ -171,11 +171,13 @@ describe("the forge over MCP", () => {
       "take_updates",
       "converge",
       "asked",
+      "app_members",
       "front_page",
       "map",
       "usage",
       "link",
       "unlink",
+      "hold",
       "plan",
       "report",
     ]);

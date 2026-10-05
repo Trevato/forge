@@ -11,7 +11,7 @@ import type { App } from "../app.ts";
 import { createClient, parseRegistration } from "../core/oauth.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
-import { clientAddress } from "./peer.ts";
+import { clientBucket } from "./peer.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";
 
@@ -71,7 +71,7 @@ export function oauthRoutes(router: Router<Handler>): void {
     ),
   );
   router.add("POST", "/oauth/register", async (ctx) => {
-    const verdict = limiterOf(ctx.app).take(clientAddress(ctx.request), "ro");
+    const verdict = limiterOf(ctx.app).take(clientBucket(ctx.request), "ro");
     if (!verdict.allowed)
       return json(
         {

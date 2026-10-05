@@ -38,6 +38,7 @@ import {
   resolveOpen,
   stopStands,
 } from "../core/decisions.ts";
+import { getHold } from "../core/holds.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
@@ -710,7 +711,9 @@ function answeredWithoutChange(
  * issues back on the map unassigned with the same reason, and move on. A
  * repository on its own never waits for a person; a parked issue is the
  * planner's to split or drop on its next pass, and one parked twice is
- * left to the direction.
+ * left to the direction. A pull a person holds is not parked: closing it
+ * would hand its issue back to the crew, to build the same change again
+ * beside the one that was told to wait.
  */
 export function parkPull(
   app: App,
@@ -719,6 +722,7 @@ export function parkPull(
   why: string,
 ): boolean {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
+  if (getHold(app.db, pull.id) !== undefined) return false;
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by) return false;
   const issue = getIssueById(app.db, pull.id);
@@ -998,6 +1002,10 @@ export async function landIfGreen(
 ): Promise<boolean> {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
   if (pull.state !== "open" || pull.mergedAt !== null) return false;
+  // A person said "not this one yet": nothing below happens until it is
+  // released — no landing, no review sent, no run to bring the branch up
+  // to date (`core/holds.ts`).
+  if (getHold(app.db, pull.id) !== undefined) return false;
   // Only work the crew wrote, or a writer's, lands on green by itself: a
   // reader's pull — from a fork, say — waits for a person, outsiders
   // switch or not, and is never sent to the crew's reviewer (#619).
