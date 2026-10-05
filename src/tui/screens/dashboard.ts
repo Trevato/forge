@@ -59,9 +59,9 @@ import {
   relTime,
   runAsync,
   type ListRow,
+  openOnWeb,
 } from "./common.ts";
 import { describeEvent, type FeedLine } from "./activity.ts";
-import { accountScreen } from "./account.ts";
 import { exploreScreen } from "./explore.ts";
 import { issueScreen } from "./issue.ts";
 import { newRepoScreen } from "./newrepo.ts";
@@ -396,7 +396,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         return true;
       }
       if (e.key === "A" && f.user) {
-        ctx.push(accountScreen(f, ctx));
+        openOnWeb(f, ctx, "/settings", "Account settings");
         return true;
       }
       if (e.key === "o" && f.user) {
