@@ -1,14 +1,16 @@
 /**
- * Strikes against an issue: the crew's park notes since the last word that
- * re-planned it. A person's comment, or the planner's, starts the count
- * from zero — the issue as written now is not the one that was parked.
- * Two strikes and the clock stops dispatching it; the map's `parked` word
- * reads the same rule, so what blocks dispatch is what the map shows.
+ * Strikes against an issue: the crew's park notes since a person last spoke
+ * on it. A person's comment starts the count from zero — they have said
+ * what to try. Two strikes and the clock stops dispatching it; the map's
+ * `parked` word reads the same rule, so what blocks dispatch is what the
+ * map shows.
  *
  * Struck out is not forgotten: the park that takes an issue out of the
  * crew's hands says every reason and hands it to the planner
  * (`parkedTwice`), whose next pass is given the list, and the board shows
- * it until it is split, replaced or put behind something open.
+ * it until it is split, replaced or put behind something open. The
+ * planner's own comment is not a way out: an answer in words alone leaves
+ * the issue as it was.
  */
 
 import type { Database } from "bun:sqlite";
@@ -28,21 +30,17 @@ export const PLANNER_HINT =
   "Planner: split this smaller, or rewrite what done looks like; a person can also say what to try.";
 
 /**
- * The parks on `p.issue_id` that count: newer than the newest comment that
- * is not itself a park, by a person or by the repository's planner.
+ * The parks on `p.issue_id` that count: newer than the newest comment by a
+ * person that is not itself a park.
  */
 const COUNTED = `p.body LIKE '${PARK}' AND p.created_at > COALESCE((
     SELECT MAX(c.created_at) FROM comment c
       JOIN user u ON u.id = c.author_id
-      JOIN issue i ON i.id = c.issue_id
      WHERE c.issue_id = p.issue_id AND c.body NOT LIKE '${PARK}'
-       AND (u.is_agent = 0 OR EXISTS (
-         SELECT 1 FROM repo_crew rc
-          WHERE rc.repo_id = i.repo_id AND rc.user_id = c.author_id
-            AND rc.role = 'planner'))
+       AND u.is_agent = 0
   ), '')`;
 
-/** How many times the crew has parked this issue since it was last re-planned. */
+/** How many times the crew has parked this issue since a person last spoke. */
 export function parkedCount(db: Database, issueId: string): number {
   const row = db
     .query<{ n: number }, [string]>(
@@ -52,7 +50,7 @@ export function parkedCount(db: Database, issueId: string): number {
   return row?.n ?? 0;
 }
 
-/** Of these issues, the ones struck out: parked `PARK_STRIKES` times since the last word. */
+/** Of these issues, the ones struck out: `PARK_STRIKES` parks since a person spoke. */
 export function struckOut(
   db: Database,
   issueIds: readonly string[],
@@ -81,7 +79,9 @@ export function struckOut(
  */
 export function parkReason(note: string): string {
   const first = note.split(/\n\s*\n/, 1)[0] ?? "";
-  const said = first.startsWith(PARK_NOTE) ? first.slice(PARK_NOTE.length) : first;
+  const said = first.startsWith(PARK_NOTE)
+    ? first.slice(PARK_NOTE.length)
+    : first;
   const hint = said.indexOf(PLANNER_HINT);
   return (hint === -1 ? said : said.slice(0, hint))
     .replace(/\s+/g, " ")
@@ -89,7 +89,7 @@ export function parkReason(note: string): string {
     .replace(/\.$/, "");
 }
 
-/** Why the crew parked this issue, each time since it was last re-planned, oldest first. */
+/** Why the crew parked this issue, each time since a person spoke, oldest first. */
 export function parkReasons(db: Database, issueId: string): string[] {
   return db
     .query<{ body: string }, [string]>(
@@ -106,7 +106,7 @@ export interface ParkedTwice {
   readonly repoId: string;
   readonly number: number;
   readonly title: string;
-  /** Why the crew parked it, each time since it was last re-planned, oldest first. */
+  /** Why the crew parked it, each time since a person spoke, oldest first. */
   readonly reasons: readonly string[];
   /** When it was last parked: the hand-over, or a park after it. */
   readonly at: string;
@@ -118,8 +118,8 @@ export interface ParkedTwice {
  * open pull would close it, and it waits for nothing open. So an issue
  * leaves the list when it is closed (split, or replaced by a fresh one),
  * when it is put behind something open (its parts, or the Later gate), or
- * when a person or the planner says something on it, which is a re-plan.
- * One read for every repository, and one more for each that has any.
+ * when a person says what to try. One read for every repository, and one
+ * more for each that has any.
  */
 export function parkedTwice(
   db: Database,

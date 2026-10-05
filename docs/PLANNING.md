@@ -53,8 +53,8 @@ someone is, and one word:
   a large inline SVG repaints the whole drawing every frame.
 - _blocked_ — open, waiting for something open.
 - _waiting_ — an open pull would close it: proposed, not landed.
-- _parked_ — the last word on it is the crew parking it; a quiet warning
-  tint, for the planner's next pass.
+- _parked_ — the crew parked it twice since a person last spoke on it; a
+  quiet warning tint. It is the planner's now (below).
 - _done_ — closed, still on an edge; it recedes.
 
 Working outranks waiting, waiting outranks parked, and the rest is what
@@ -87,7 +87,8 @@ which is what an agent reads before it starts and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
 is: an issue with an agent run in flight is marked _working_ on the
 drawing and listed under `working` in the data; every issue in the data
-carries its `word`, and `counts` sums them.
+carries its `word`, and `counts` sums them. `parkedTwice` lists each issue
+the crew handed to the planner — its number, title and every reason.
 
 ### The global map
 
@@ -108,6 +109,33 @@ palette, and from the Apps card on either home. `GET /api/v1/map` is the
 same, one entry per repository, each the repository's map data plus
 `autonomy`, `spentTodayUsd`, `ceilingUsd`, `inFlight`, `workers` and
 `idle`.
+
+## Parked twice
+
+An issue the crew parked twice since a person last spoke on it is struck
+out: the clock no longer dispatches it. It is not dropped. The second park
+says every reason on the issue, in the one note, and hands it to the
+planner (`crew/parks.ts`):
+
+- **The planner's next pass is owed it.** A hand-over newer than the last
+  planning run asks the planner once — with a full map, and even when the
+  planner declined the direction and no person has spoken. Its task lists
+  _Parked twice: #n_ with every reason.
+- **The planner leaves it in one of three states**: split (closed as
+  `split` into its parts), replaced (a fresh issue, the old one closed as
+  split into it with "replaced by #m"), or deferred (linked to wait for the
+  Later gate — the open issue whose title starts _Later gate_, which the
+  owner closes to let deferred work start; where a repository has none,
+  the third state is closed as `dropped`, with why). To close an issue it
+  did not write, a planner has exactly this grant: an open issue the crew
+  parked twice, as `split` or `dropped` — never `done`, never a pull, never
+  a reopen.
+- **Until then it is listed**: on the board's line of what needs you, for
+  whoever owns the app, with its reasons and a link to the issue; and under
+  `parkedTwice` in the map's data and the MCP's `map`. A comment from the
+  planner or a builder does not take it off. What does: it is closed, it
+  waits for something open, someone takes it up (a run in flight, or an
+  open pull that would close it), or a person says on it what to try.
 
 ## Planning by the crew
 
@@ -157,7 +185,7 @@ asked, under **Settings → Autonomy**:
   could not be brought up to date, is _parked_ — closed with the reason,
   its issue put back on the map unassigned with the same note — and the
   crew moves on; the planner's next pass splits or rewrites a parked
-  issue, and one parked twice is left to the direction. A dry map is
+  issue, and one parked twice is handed to the planner (below). A dry map is
   planned again within twenty minutes, and the planner is told the
   direction is never finished: when what it names is built, it proposes
   the next increment and leaves at least three ready issues. The reviewer

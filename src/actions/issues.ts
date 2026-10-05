@@ -19,7 +19,7 @@
  */
 
 import type { App } from "../app.ts";
-import { isCrew } from "../core/agents.ts";
+import { crewRole, isCrew } from "../core/agents.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
   addComment as insertComment,
@@ -43,6 +43,7 @@ import {
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { struckOut } from "../crew/parks.ts";
 import {
   applyLabelNames,
   commentByRemoteId,
@@ -183,7 +184,10 @@ export function setIssueState(
   if (issue.repoId !== repo.id) return err("not_found");
   if (isMirror(app, repo)) return err("mirrored");
   const mayModerate =
-    user.value.id === issue.authorId || canWrite(app.db, repo, user.value);
+    user.value.id === issue.authorId ||
+    canWrite(app.db, repo, user.value) ||
+    (state === "closed" &&
+      handedToPlanner(app, repo, issue, user.value, closing));
   if (!mayModerate) return err("forbidden");
   if (
     issue.kind === "pull" &&
@@ -222,6 +226,29 @@ export function setIssueState(
     },
   });
   return ok(changed);
+}
+
+/**
+ * The one close a crew member may make on an issue it did not write: the
+ * repository's planner, on an open issue the crew parked twice and handed
+ * to it (`crew/parks.ts`), and only as split or dropped. Done is what a
+ * landed pull or a person says; a pull, a reopen, and every other issue
+ * stay with the people who can write here.
+ */
+function handedToPlanner(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actor: User,
+  closing: Closing,
+): boolean {
+  return (
+    issue.kind === "issue" &&
+    issue.state === "open" &&
+    (closing.reason === "split" || closing.reason === "dropped") &&
+    crewRole(app.db, repo.id, actor.id) === "planner" &&
+    struckOut(app.db, [issue.id]).has(issue.id)
+  );
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

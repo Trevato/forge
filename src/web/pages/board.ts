@@ -3,10 +3,11 @@
  * regions — what is being worked on now, what landed, what the decider
  * decided, and today's spend against each app's ceiling with what a shipped
  * change cost over the week — each a live region that swaps itself when a
- * matching event lands. A site admin also gets two strips above them: the
- * forge's health, and each subscription's windows. Nothing on it
- * needs a click, and everything on it links somewhere. It reads the same
- * tables as the studio and adds no state of its own.
+ * matching event lands. Above them, one line of what needs the viewer: the
+ * forge's health for a site admin, and each issue a crew parked twice for
+ * whoever owns the app; a site admin also gets each subscription's windows.
+ * Nothing on it needs a click, and everything on it links somewhere. It
+ * reads the same tables as the studio and adds no state of its own.
  *
  * `?wall` is its one wall mode, for a screen across the room that nobody
  * touches: the same regions in larger type, without the key hints or a
@@ -44,7 +45,12 @@ import {
 } from "../../core/repos.ts";
 import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { autonomyStatus, startOfTodayUtc } from "../../crew/autonomy.ts";
+import {
+  autonomyStatus,
+  startOfTodayUtc,
+  truncateAtWord,
+} from "../../crew/autonomy.ts";
+import { parkedTwice } from "../../crew/parks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
@@ -204,7 +210,7 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
-    ${forgeStrip(ctx)} ${windowsStrip(ctx)}
+    ${needsStrip(ctx, scope)} ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -279,13 +285,53 @@ function needHref(need: string, v: Vitals): string | undefined {
   return undefined;
 }
 
+/** A park reason on the board: one clause, cut at a word. */
+const REASON_MAX = 96;
+
+/** What swaps the strip: a run or an app for health; an issue or a pull for a park. */
+const NEEDS_LIVE = "run.*,app.*,issue.*,pull.*";
+
 /**
- * The forge's health as one line, for a site admin only: *All fine*, or
- * each thing that needs them. A live region of its own; nobody else gets
- * the element or pays for the reads.
+ * Each issue a crew parked twice, on the apps whose owner facts the viewer
+ * may see: the app, the issue, and why — a link to the issue, where the
+ * planner answers. It stays until the issue is split, replaced or deferred
+ * (`parkedTwice`).
  */
-function forgeStrip(ctx: Ctx): Html | null {
-  if (!ctx.auth.user?.isAdmin) return null;
+function parkedLines(ctx: Ctx, scope: BoardScope): Html[] {
+  return parkedTwice(ctx.app.db, [...scope.ownerFacts]).map((issue) => {
+    const repo = scope.byId.get(issue.repoId)!;
+    const why = issue.reasons
+      .map((reason) => truncateAtWord(reason, REASON_MAX))
+      .join("; ");
+    return html`<a
+      class="board-forge-need"
+      href="${repoBase(repo)}/issues/${issue.number}"
+      title="Open it: the planner answers on the issue"
+      >${`${repo.name} #${issue.number} parked twice: ${why}`}</a
+    >`;
+  });
+}
+
+/**
+ * What needs the viewer, as one line. For a site admin, the forge's health:
+ * *All fine*, or each thing that is off. For whoever owns an app here, each
+ * issue its crew parked twice. A live region of its own; a viewer with
+ * neither gets no element, and only an admin pays for the forge's reads.
+ */
+function needsStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const parked = parkedLines(ctx, scope);
+  if (!ctx.auth.user?.isAdmin)
+    return parked.length === 0
+      ? null
+      : html`<div
+          class="board-forge"
+          id="forge"
+          data-live="${NEEDS_LIVE}"
+          data-ok="no"
+          role="status"
+        >
+          ${parked}
+        </div>`;
   const app = ctx.app;
   const runtime = appsRuntime(app);
   const v = vitals({
@@ -300,11 +346,12 @@ function forgeStrip(ctx: Ctx): Html | null {
   const others = fh.incidents.filter(
     (i) => i.key !== "stuck" && i.key !== "held",
   );
-  const ok = v.ok && fh.ok;
+  const healthy = v.ok && fh.ok;
+  const ok = healthy && parked.length === 0;
   return html`<div
     class="board-forge"
     id="forge"
-    data-live="run.*,app.*"
+    data-live="${NEEDS_LIVE}"
     data-ok="${ok ? "yes" : "no"}"
     data-rollout="${fh.rollout.state}"
     role="status"
@@ -314,13 +361,16 @@ function forgeStrip(ctx: Ctx): Html | null {
     ${
       ok
         ? html`<span class="board-forge-ok">All fine</span>`
-        : v.needs.map((need) => {
-            const href = needHref(need, v);
-            return href === undefined
-              ? html`<span class="board-forge-need">${need}</span>`
-              : html`<a class="board-forge-need" href="${href}">${need}</a>`;
-          })
+        : healthy
+          ? null
+          : v.needs.map((need) => {
+              const href = needHref(need, v);
+              return href === undefined
+                ? html`<span class="board-forge-need">${need}</span>`
+                : html`<a class="board-forge-need" href="${href}">${need}</a>`;
+            })
     }
+    ${parked}
   </div>`;
 }
 

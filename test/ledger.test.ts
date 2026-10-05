@@ -456,8 +456,9 @@ describe("the decision ledger", () => {
     expect(conflict?.actorId).toBe(scout.id);
   });
 
-  test("a repository on its own never waits: past its tries a pull is parked, its issue goes back on the map, and an issue parked twice is left to the direction", async () => {
+  test("a repository on its own never waits: past its tries a pull is parked, its issue goes back on the map, and an issue parked twice is handed to the planner", async () => {
     const { parkPull, parkedCount } = await import("../src/crew/autonomy.ts");
+    const { parkedTwice } = await import("../src/crew/parks.ts");
     const { listComments, getIssueById: issueById } =
       await import("../src/core/issues.ts");
     const work = openIssue(app, alice, repo, { title: "Gift cards" });
@@ -495,8 +496,8 @@ describe("the decision ledger", () => {
       ),
     ).toBe(true);
     expect(parkedCount(app, work.value.id)).toBe(1);
-    // Parked once: the planner can re-plan it and the crew picks it again.
-    // Parked twice: left to the direction, never picked by itself.
+    // Parked once: the crew picks it again. Parked twice: never picked by
+    // itself, and the planner's, with both reasons as the notes gave them.
     addComment(
       app,
       alice,
@@ -508,6 +509,13 @@ describe("the decision ledger", () => {
     script["next"] = String(work.value.number);
     await driveRepo(app, fresh());
     expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
+    expect(
+      parkedTwice(app.db, [repo.id]).find((i) => i.number === work.value.number)
+        ?.reasons,
+    ).toEqual([
+      `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed)`,
+      "main moved under it twice",
+    ]);
     // Not a question for a person, in either case.
   });
 

@@ -79,6 +79,8 @@ import {
   whenText,
 } from "./limits.ts";
 import { interruptedSummary } from "./interrupted.ts";
+import { laterGate } from "./later.ts";
+import { parkedTwice } from "./parks.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
@@ -732,6 +734,13 @@ async function work(
           : undefined,
       ...(reason === "review" && pull
         ? await reviewInputs(app, repo, pull, record, bare)
+        : {}),
+      // A planning run is given what the crew handed over (`parks.ts`).
+      ...(brief.role === "planner" && issue.id === repo.directionIssueId
+        ? {
+            parkedTwice: parkedTwice(app.db, [repo.id]),
+            laterGate: laterGate(app.db, repo.id),
+          }
         : {}),
       checkKind:
         failedCheck?.run?.kind === "check" ||

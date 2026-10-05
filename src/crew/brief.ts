@@ -88,7 +88,7 @@ export function systemPrompt(input: BriefInput): string {
       "- The issue you were given is the direction. Turn it into a map: open issues, each small enough for one run by one builder, each with a title that says the outcome and a body that says what done looks like; then link what waits for what.",
       "- Read the repository first so the issues are true to it, and read the existing open issues so you extend the plan rather than repeat it.",
       "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with at least three ready issues, every time.",
-      '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was.',
+      '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was. One the crew parked twice is yours: your task lists it, with what you may do with it.',
       "- Assign nobody and push nothing: the map is the result. The direction issue stays open.",
       "- The forge's API works; open no issue to try it. Every issue you open is work a builder is given.",
       "- Finish with a short message that lists what you opened, in order, and what is ready now.",
@@ -148,6 +148,18 @@ export interface TaskInput extends BriefInput {
   readonly reviewDiff?: string | undefined;
   /** For `review`: pictures of the preview at this head, phone and desktop. */
   readonly looks?: readonly string[] | undefined;
+  /** For a planner: the issues the crew parked twice, with why. */
+  readonly parkedTwice?: readonly HandedOver[] | undefined;
+  /** For a planner: the issue deferred work waits behind, if there is one. */
+  readonly laterGate?: number | undefined;
+}
+
+/** An issue the crew parked twice, as the planner is told of it. */
+export interface HandedOver {
+  readonly number: number;
+  readonly title: string;
+  /** Why it was parked, each time, oldest first. */
+  readonly reasons: readonly string[];
 }
 
 /**
@@ -168,6 +180,7 @@ function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
   const isAgent = (name: string): boolean => name === input.agent.user.username;
+  const handed = parkedTwiceLines(input);
 
   if (
     input.reason === "assigned" &&
@@ -191,6 +204,7 @@ function taskBody(input: TaskInput): string {
       out.push("", "Discussion so far:");
       for (const c of talk) out.push(quote(c.authorName, c.body));
     }
+    if (handed.length > 0) out.push("", ...handed);
     out.push(
       "",
       `Work it on the branch \`${input.branch}\` and push when done.`,
@@ -328,8 +342,11 @@ function taskBody(input: TaskInput): string {
       out.push(`- ${c.path}:${c.line} — @${c.authorName}: ${oneLine(c.body)}`);
   }
   for (const c of news.comments) out.push("", quote(c.authorName, c.body));
+  // A hand-over is the news, in words, whether or not anyone wrote.
+  if (handed.length > 0) out.push("", ...handed);
   if (
     news.comments.length + news.reviews.length + news.lines.length === 0 &&
+    handed.length === 0 &&
     input.paused !== true
   ) {
     out.push(
@@ -346,6 +363,33 @@ function taskBody(input: TaskInput): string {
         : "Address it on the same branch and push again. If you disagree with something, say why in your last message.",
   );
   return out.join("\n");
+}
+
+/**
+ * What a planner is told of the issues the crew parked twice: each with
+ * every reason, and the states it may leave one in — split, replaced by a
+ * fresh issue, or deferred behind the Later gate (dropped, where the
+ * repository has no gate). Nothing for anyone else, or when there are none.
+ */
+function parkedTwiceLines(input: TaskInput): string[] {
+  const handed = input.role === "planner" ? (input.parkedTwice ?? []) : [];
+  if (handed.length === 0) return [];
+  const issues = `$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/issues`;
+  return [
+    "The crew tried each of these twice and could not finish it as written. They are yours now, before anything new:",
+    ...handed.flatMap((issue) => [
+      `- Parked twice: #${issue.number} ${issue.title}`,
+      ...issue.reasons.map((reason, n) => `    ${n + 1}. ${reason}`),
+    ]),
+    "Leave every one of them in exactly one of these states, and say which in a comment on it:",
+    `- Split: open the smaller issues, then close it as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]}.`,
+    '- Replaced: open one fresh issue that says what done looks like now, comment "replaced by #M" on the old one, and close it the same way with "into":[M].',
+    input.laterGate === undefined
+      ? '- Dropped: when the direction no longer needs it, say why on it and close it with {"state":"closed","reason":"dropped"}.'
+      : `- Deferred: when it serves the direction later rather than now, put it behind the Later gate — POST ${issues}/N/dependencies with {"blockedBy":${input.laterGate}}.`,
+    `If other issues wait for one you close, make them wait for what replaces it: DELETE ${issues}/D/dependencies/N, then POST ${issues}/D/dependencies with {"blockedBy":M}.`,
+    "Never leave one as it was: what you leave stays on the owner's board and comes back to you.",
+  ];
 }
 
 /**

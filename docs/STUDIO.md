@@ -405,7 +405,12 @@ against the ceiling, runs, shipped, and whether it is paused — plus any
 other app the crew spent on this week — and beneath it the efficiency
 signal: spend per shipped change over the last 7 days (the usage ledger's
 `cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped
-query), or "$4.10 spent, nothing shipped" when there is no ratio. A site
+query), or "$4.10 spent, nothing shipped" when there is no ratio. Above the
+regions, one line of what needs you: for a site admin the forge's health —
+_All fine_, or each thing that is off — and, for whoever owns an app, each
+issue its crew parked twice, with why, linking to the issue where the
+planner answers; it stays until the issue is split, replaced or deferred
+(`docs/PLANNING.md`). A site
 admin also gets a strip of the subscriptions above the regions: each
 account's 5-hour and weekly window — used, left, resets — in the words
 `windowWords` (`studio/words.ts`) gives them, with _inferred_ beside every
