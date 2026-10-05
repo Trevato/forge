@@ -1298,7 +1298,12 @@ export class AppsRuntime {
               home: base.home,
               hide: base.hide,
               egress: live.manifest.egress ?? [],
-              reach: [this.options.forgeUrl],
+              // A terminal is the app's own client: it reaches the app on
+              // its port, as it would beside it.
+              reach: [
+                this.options.forgeUrl,
+                `http://127.0.0.1:${live.handle.port}`,
+              ],
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,

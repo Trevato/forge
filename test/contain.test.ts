@@ -415,6 +415,9 @@ async function probe() {
 }
 if (process.argv[2] === "check") {
   console.log("PROBE " + JSON.stringify(await probe()));
+  // A terminal is the app's own client: its app answers it on its port.
+  if (process.env.FORGE_APP_TTY === "1")
+    console.log("OWNAPP " + (await attempt(() => answered("http://127.0.0.1:" + process.env.PORT + "/"))));
 } else {
   Bun.serve({
     port: Number(process.env.PORT),
@@ -635,6 +638,7 @@ describe.skipIf(noCells)(
       const shown = screen.split(/\r?\n/).find((l) => l.startsWith("PROBE "));
       expect(shown).toBeDefined();
       expectContained(JSON.parse(shown!.slice(6)) as Record<string, string>);
+      expect(screen.split(/\r?\n/).find((l) => l.startsWith("OWNAPP "))).toStartWith("OWNAPP reached");
 
 
       const check = await settled(
