@@ -82,6 +82,7 @@ describe("spawnForge", () => {
       upstream: "https://forge.test",
       name: "kid",
       org: "kids",
+      keepAccess: false,
     });
   });
 

@@ -6,6 +6,7 @@
 
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
@@ -223,6 +224,9 @@ const crew = appsOn && !crewHeldOff
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// A spawned child's first boot: its direction, opened once for its planner
+// (spawn/first-boot.ts). A forge that was not spawned is untouched.
+await firstBoot(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.

@@ -65,14 +65,24 @@ const SELECT_ALL_JS = `document.addEventListener('change', function (e) {
 /** The rows shown before "N more": the few that matter most. */
 export const ASKS_SHOWN = 5;
 
-/** Why it ranks high, when that is more than its kind: security, money, held-up work. */
-const weight = (c: Consequence): Html | null =>
-  c.score >= 60 ? html`<b>${c.why}</b> · ` : null;
+/**
+ * Why it ranks high, when that is more than its kind: security, money,
+ * held-up work — and, on a collapsed row, which of its asks that is.
+ */
+const weight = (c: Consequence, which?: string): Html | null =>
+  c.score >= 60
+    ? html`<b>${c.why}</b>${which === undefined ? null : html`: \u201c${which}\u201d`} · `
+    : null;
 
 /** One clause, and what happens if nobody acts — never the same sentence twice. */
-const clause = (d: Decision | undefined, kind: Decision["kind"], c: Consequence): Html =>
+const clause = (
+  d: Decision | undefined,
+  kind: Decision["kind"],
+  c: Consequence,
+  which?: string,
+): Html =>
   html`<p>
-    ${weight(c)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
+    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
       >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
     >
   </p>`;
@@ -134,7 +144,13 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
           : icon(r.kind === "look" ? "eye" : "pull")}
         <h2>${rowHead(r.kind, r.items.length)}</h2>
         <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>`,
-      foot: clause(undefined, r.kind, r.consequence),
+      // The row ranks by its weightiest ask (first, `askRows`): name it.
+      foot: clause(
+        undefined,
+        r.kind,
+        r.consequence,
+        r.items[0]?.pull?.title ?? r.items[0]?.issue?.title,
+      ),
     },
   );
 }

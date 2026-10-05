@@ -16,7 +16,13 @@ import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { recordInteraction } from "../src/core/interactions.ts";
-import { getIssueById } from "../src/core/issues.ts";
+import {
+  createLabel,
+  getIssueById,
+  setIssueLabels as setLabels,
+} from "../src/core/issues.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { candidatesFor } from "../src/feed/items.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -163,7 +169,8 @@ describe("asks that earn their place", () => {
   let security: Pull;
 
   test("security first, then what holds other work up, then the rest", async () => {
-    plain = await greenPull("plain", "Tidy the footer");
+    // A title is anyone's to write: "Security" in it lifts nothing.
+    plain = await greenPull("plain", "Security: tidy the footer");
     const repo = await repoNamed("blocking");
     const blocker = openIssue(app, alice, repo, {
       title: "The thing others wait on",
@@ -178,7 +185,10 @@ describe("asks that earn their place", () => {
       "Build the thing",
       `Closes #${blocker.value.number}`,
     );
-    security = await greenPull("security", "Security: widen the board id");
+    security = await greenPull("security", "Widen the board id");
+    const label = createLabel(app.db, security.repoId, "security", "d00000");
+    if (!label.ok) throw new Error(label.error);
+    setLabels(app.db, security.id, [label.value.id]);
     const rows = askLinesFor(app.db, alice);
     expect(rows.map((r) => r.id)).toEqual([
       `look:${security.id}`,
@@ -236,6 +246,39 @@ describe("asks that earn their place", () => {
     expect(res.status).toBe(401);
   });
 
+  test("the feed orders asks by the same consequence as /asks, and nothing else", () => {
+    const order = askLinesFor(app.db, alice).flatMap((r) => r.items);
+    const urgency = new Map(
+      candidatesFor(app.db, alice, Date.now())
+        .filter((c) => c.kind === "ask")
+        .map((c) => [c.id.slice("ask:".length), c.urgency]),
+    );
+    const ranked = [...urgency.keys()].sort((a, b) => urgency.get(b)! - urgency.get(a)!);
+    expect(ranked).toEqual(order);
+    // Every ask still sits above the news (a failed run is 4).
+    for (const u of urgency.values()) expect(u).toBeGreaterThan(4);
+  });
+
+  test("a wave of new accounts never pushes the owner out of the ledger", () => {
+    const insert = app.db.query(
+      "INSERT INTO user (id, username, email, password_hash) VALUES (?1, ?2, ?3, 'x')",
+    );
+    for (let i = 0; i < 210; i++) {
+      const id = `wave${String(i).padStart(4, "0")}`;
+      insert.run(id, id, `${id}@forge.local`);
+      createSession(app.db, id);
+    }
+    recordAskLedger(app.db);
+    const mine = app.db
+      .query<{ n: number }, [string]>(
+        "SELECT COUNT(*) AS n FROM ask_ledger WHERE viewer_id = ?1",
+      )
+      .get(alice.id)!.n;
+    expect(mine).toBeGreaterThan(0);
+    // Reset, so the next test counts from nothing.
+    app.db.query("DELETE FROM ask_ledger").run();
+  });
+
   test("the ledger counts raised, acted on, dismissed and gone by themselves, and the board shows it", async () => {
     recordAskLedger(app.db);
     const raised = askLinesFor(app.db, alice).length;
@@ -273,5 +316,13 @@ describe("asks that earn their place", () => {
     // Nothing changed: a second pass raises nothing new.
     recordAskLedger(app.db);
     expect((await mcpAsks()).measure.raised).toBe(6);
+  });
+  test("a collapsed row that ranks for security names which of its asks it is", async () => {
+    // The security pull went red above; a new green one joins it in a row of two.
+    check(security, "ok");
+    await greenPull("security", "Another change here");
+    const asks = await page("/asks");
+    expect(asks).toContain("2 green changes wait for your look");
+    expect(asks).toContain("<b>security</b>: \u201cWiden the board id\u201d");
   });
 });

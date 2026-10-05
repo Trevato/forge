@@ -775,7 +775,7 @@ export function truncateAtWord(text: string, limit: number): string {
  * The issue the planner works from: the direction, as an open issue the
  * run can be about. Made once, kept, and never counted as work.
  */
-function ensureDirectionIssue(
+export function ensureDirectionIssue(
   app: App,
   by: User,
   repo: Repo,

@@ -95,6 +95,44 @@ export function cleanReport(
   return ok({ title, body, page: pageOf(input.page.trim()) });
 }
 
+/**
+ * How an issue made from a report says where it came from: its title opens
+ * with `OUTSIDE_TITLE` and it carries the label `OUTSIDE_LABEL`, so neither
+ * a person nor an agent reads a stranger's words as the accepting person's.
+ */
+export const OUTSIDE_TITLE = "From outside: ";
+export const OUTSIDE_LABEL = "outside";
+export const OUTSIDE_COLOR = "b45309";
+
+/** Whether a title already says it came from outside. */
+export const saysOutside = (title: string): boolean =>
+  title.toLowerCase().startsWith(OUTSIDE_TITLE.trim().toLowerCase());
+
+/**
+ * A title's own words: one line of plain text, with any marker in front —
+ * the reporter's own, or one typed back in — taken off.
+ */
+export function outsideWords(title: string): string {
+  let words = plainText(title).replace(/\s+/g, " ").trim();
+  while (saysOutside(words))
+    words = words.slice(OUTSIDE_TITLE.trim().length).trim();
+  return words;
+}
+
+/**
+ * The title of the issue an accepted report becomes: the words as the
+ * accepting person left them, behind the marker. There is exactly one
+ * marker and no edit removes it.
+ */
+export function outsideTitle(
+  title: string,
+): Result<string, "empty_title" | "title_too_long"> {
+  const words = outsideWords(title);
+  if (words === "") return err("empty_title");
+  if (words.length > TITLE_MAX) return err("title_too_long");
+  return ok(`${OUTSIDE_TITLE}${words}`);
+}
+
 export function countWaiting(db: Database, repoId: string): number {
   return (
     db

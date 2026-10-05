@@ -6,7 +6,7 @@
  */
 
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
-import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
+import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -22,38 +22,20 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { liveClientJs, liveMount } from "../live.ts";
+import { btn, empty, icon, field as formField } from "../ui.ts";
 import {
-  btn,
-  empty,
-  icon,
-  labelCss,
-  originTag,
-  stateBadge,
-  time,
-  userLink,
-  field as formField,
-} from "../ui.ts";
-import {
-  assigneeCard,
-  dependenciesCard,
-  composer,
   conversation,
-  labelsCard,
   originError,
-  originGlyph,
   parseNumber,
   threadContext,
   threadFragment,
 } from "./thread.ts";
-import { crewActivityCard, workSpent } from "./runs.ts";
 import {
   PAGE_TITLES,
   pageTitle,
   studioRecord,
   tellsHref,
 } from "../studio/nouns.ts";
-import { studioTell } from "../studio/tell.ts";
 
 // ---- compose ----
 
@@ -207,113 +189,6 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, `${repoBase(repo)}/issues/${created.value.number}`, {
     message: `Issue #${created.value.number} opened.`,
   });
-}
-
-// ---- one issue ----
-
-// GET /:owner/:name/issues/:number
-export async function issuePage(ctx: Ctx): Promise<Response> {
-  const found = threadContext(ctx, "issue");
-  if (found instanceof Response) return found;
-  const { repo, issue } = found;
-  // In the studio a tell is one sentence someone said, not dev's labels and
-  // dependency form — the same rule `pullPage` follows for a change, and the
-  // same rule `tellPage` below asks before opening this very page under the
-  // studio's own noun. `?mode=dev` on the URL is the escape hatch to dev's
-  // page, resolved once for `ctx.mode`.
-  if (studioRecord(ctx, repo) !== undefined)
-    return await studioTell(ctx, repo, issue);
-  const base = repoBase(repo);
-  const thread = `${base}/issues/${issue.number}`;
-
-  const applied = labelsFor(ctx.app.db, issue.id);
-  const all = listLabels(ctx.app.db, repo.id);
-  const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
-
-  const body = html`${repoHeader(ctx, repo, "issues", {
-      compact: true,
-      ownTitle: true,
-    })}
-    <div class="issue-head">
-      <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
-      <div class="issue-meta">
-        ${stateBadge(issue.state)}
-        <span
-          >${issue.originAuthor
-            ? originTag(issue.originAuthor, originGlyph(repo))
-            : userLink(issue.authorName)}
-          opened this ${time(issue.createdAt)}</span
-        >
-        ${when(
-          issue.originUrl,
-          (url) =>
-            html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
-              >${icon("external")}view on origin</a
-            >`,
-        )}
-        ${workSpent(ctx, repo, issue.id)}
-      </div>
-    </div>
-    <div class="split">
-      <div>
-        ${talk.node}
-        ${composer(ctx, {
-          action: `${thread}/comments`,
-          stateAction: `${thread}/state`,
-          state: issue.state,
-          closeLabel: "Close issue",
-          reasons: true,
-        })}
-      </div>
-      <aside>
-        ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
-        ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
-        ${labelsCard(ctx, repo, issue, applied, all, `${thread}/labels`)}
-        ${crewActivityCard(ctx, repo, issue)}
-      </aside>
-    </div>
-    ${liveMount({
-      repo: base,
-      thread: "issue",
-      number: issue.number,
-      lastCommentId: talk.lastCommentId,
-    })}`;
-
-  return page({
-    ctx,
-    title: `${issue.title} · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body,
-    styleCss: labelCss([...all, ...applied]),
-    scriptJs: liveClientJs,
-  });
-}
-
-/**
- * GET /:owner/:name/tells/:number — the studio's own noun for the page
- * `/issues/:number` already reaches. The page is `studioTell`, rendered
- * from here exactly as `issuePage` renders it: one handler each, never a
- * second copy of the page, and the same `threadContext` for who may see it,
- * so a reader who may not gets the forge's not-found at either address.
- *
- * A viewer the studio's tell does not apply to — dev mode, `?mode=dev`, or
- * a repository that is not an app — is sent on to `/issues/:number`, dev's
- * own address, the same rule `tellsList` follows for the list. The other
- * direction never bounces: `/issues/:number` asked for in studio mode
- * answers the studio's page where it stands, so every link ever written to
- * it keeps working and no reader is redirected out of a URL they were
- * handed.
- */
-export async function tellPage(ctx: Ctx): Promise<Response> {
-  const found = threadContext(ctx, "issue");
-  if (found instanceof Response) return found;
-  const { repo, issue } = found;
-  if (studioRecord(ctx, repo) === undefined)
-    return redirect(
-      `${repoBase(repo)}/issues/${issue.number}${ctx.url.search}`,
-    );
-  return await studioTell(ctx, repo, issue);
 }
 
 // GET /:owner/:name/issues/:number/thread?after=<id>
