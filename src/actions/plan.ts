@@ -116,17 +116,18 @@ export function parsePlan(raw: unknown): Result<PlanItem[], PlanError> {
         "invalid",
         `"${key}" names a pillar and is for later: it is one or the other`,
       );
-    const why = o["why"] ?? "";
-    if (typeof why !== "string")
+    if (typeof (o["why"] ?? "") !== "string")
       return refuse("invalid", `"${key}": why must be text`);
-    if (!later && why.trim() !== "")
+    // One line: it becomes the first line of the issue.
+    const why = ((o["why"] ?? "") as string).trim().replace(/\s+/g, " ");
+    if (!later && why !== "")
       return refuse("invalid", `"${key}": why goes with later: true`);
-    if (later && why.trim() === "")
+    if (later && why === "")
       return refuse(
         "no_reason",
         `"${key}" is for later: say why it waits, in one sentence (why)`,
       );
-    if (why.trim().length > WHY_MAX)
+    if (why.length > WHY_MAX)
       return refuse(
         "why_too_long",
         `"${key}": why is one sentence, at most ${WHY_MAX} characters`,
@@ -137,7 +138,7 @@ export function parsePlan(raw: unknown): Result<PlanItem[], PlanError> {
       body,
       blockedBy: waits as (string | number)[],
       ...(pillar === undefined ? {} : { pillar: pillar.trim() }),
-      ...(later ? { later: why.trim() } : {}),
+      ...(later ? { later: why } : {}),
     });
   }
   return ok(items);
