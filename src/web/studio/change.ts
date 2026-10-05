@@ -42,6 +42,7 @@ import {
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
+import { holdCard } from "./hold.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /** What a conflicted change's own page says: the base it no longer merges
@@ -257,7 +258,8 @@ export async function studioPull(
       compact: true,
       ownTitle: true,
     })}
-    ${head} ${checkLine} ${decisionSection} ${takeBackSection}
+    ${head} ${checkLine} ${holdCard(ctx, repo, pull, { act: true })}
+    ${decisionSection} ${takeBackSection}
     ${lookCard(ctx, repo, record, pull, pull.headOid)}
     <div class="split">
       <div>
