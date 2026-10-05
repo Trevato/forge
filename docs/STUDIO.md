@@ -408,16 +408,32 @@ Run logs and the crew's transcript stream line by line over their own
 `?follow=1` answers; they are the streamed part of a page, not a region.
 
 Signed out, `/` is a stranger's front door in either mode — the studio's
-door, never a git pitch (`studioDoor` in `studio/home.ts`). It is a shelf of
-the public apps a signed-out reader can see, the live ones first — name, one
-line of description, live state, and production's own picture, linking
-straight to the app — read from the apps themselves (`listPublicApps`), so
-no number of plain repositories crowds an app off it. Sign in and Create an
+door, never a git pitch (`studioDoor` in `studio/home.ts`, decided in
+`actions/front.ts`). One path: the forge, a few live apps, open one or sign
+in.
+
+- **Featured**: the first repository a site admin pinned that a stranger can
+  read (with none, the best-ranked app), shown with what makes a forge
+  different — the crew at work on it right now, by issue — or when it last
+  shipped.
+- **The shelf**: the rest of the pins in order, then the public apps ranked
+  by real signals (forks, merged pulls and use over 30 days, how lately
+  production shipped; likes once they exist), at most two per owner in the
+  top eight. Only apps that are up or wake on a visit, and only those with a
+  picture — the thumb, taken as a stranger sees the app; one without waits
+  for the looks sweep rather than showing an empty box. Twelve tiles, then
+  one link to `/apps`.
+- **The owner's say**: `/front` is the same page for anyone; a site admin
+  there gets pin, hide and move controls and a box to pin any repository (a
+  private pin waits, unshown, until it is public). The studio home links it
+  for admins. The same setting is `GET`/`PUT /api/v1/front` and the MCP tool
+  `front_page`.
+
+What a stranger is shown is decided per request from what a stranger can
+read; only the scores are remembered, for a minute. Sign in and Create an
 account stay one click away, with the forge's ssh command beneath them when
-the terminal is on. A forge with nothing public up yet — most people's first
-visit — shows the same door with an empty shelf that says so. `/?mode=dev`
-answers a stranger with the same door; the repositories are a signed-in
-person's dev home.
+the terminal is on. A forge with nothing public up yet shows the same door
+with an empty shelf that says so.
 
 ## The board
 
