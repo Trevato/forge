@@ -73,16 +73,17 @@ const BUDGET_RECHECK_MS = 3_600_000;
 export const MIN_RUN_USD = 0.25;
 
 /**
- * What an account has committed, as SQL over its runs (`s` is the
- * subscription row, `?4` the run picking now): every run's cost, and for a
- * run still queued or running, its reservation when that is larger — never
- * the picking run's own reservation, which it is about to make again.
+ * What an account has committed, as SQL (`s` is the subscription row, `?4`
+ * the run picking now): what it has ever spent — `s.spent_usd`, a counter
+ * the run table's trigger only adds to, so deleting runs gives nothing back
+ * — and, for each run still queued or running, the part of its reservation
+ * it has not spent yet. Never the picking run's own reservation, which it is
+ * about to make again.
  */
-const COMMITTED = `(SELECT COALESCE(SUM(
-    CASE WHEN r.state IN ('queued', 'running') AND r.id <> ?4
-         THEN MAX(COALESCE(r.budget_reserved_usd, 0), r.cost_usd)
-         ELSE r.cost_usd END), 0)
-  FROM run r WHERE r.subscription_id = s.id)`;
+const COMMITTED = `(s.spent_usd + (SELECT COALESCE(SUM(
+    MAX(0, COALESCE(r.budget_reserved_usd, 0) - r.cost_usd)), 0)
+  FROM run r WHERE r.subscription_id = s.id
+    AND r.state IN ('queued', 'running') AND r.id <> ?4))`;
 export const BUDGET_MAX_USD = 100_000;
 
 /** An account's whole-life budget and what its runs have spent, in dollars. */
@@ -97,8 +98,7 @@ export interface Budget {
 export function budgetsOf(db: Database): Map<string, Budget> {
   const rows = db
     .query<{ id: string; budget_usd: number | null; spent_usd: number; budget_locked: number }, []>(
-      `SELECT s.id, s.budget_usd, s.budget_locked,
-              (SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = s.id) AS spent_usd
+      `SELECT s.id, s.budget_usd, s.budget_locked, s.spent_usd
        FROM subscription s WHERE s.id <> 'platform'`,
     )
     .all();
