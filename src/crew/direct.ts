@@ -129,20 +129,17 @@ export function readersAmong(
 /**
  * Each thing said — an issue or pull, a comment, a verdict, a line comment —
  * with `untrusted` set to `READER` when its author may not direct the crew
- * here: the API's form of the brief's label, by the same rule.
+ * here, or it was imported from an origin (`voiceOf`): the API's and the
+ * deciders' form of the brief's label, by the same rule. What was said is
+ * returned as it was, plus the mark.
  */
-export function markReaders<T extends { readonly authorName: string }>(
-  db: Database,
-  repo: Repo,
-  items: readonly T[],
-): (T & { readonly untrusted?: string })[] {
-  const readers = readersAmong(
-    db,
-    repo,
-    items.map((i) => i.authorName),
-  );
-  return items.map((i) =>
-    readers.has(i.authorName) ? { ...i, untrusted: READER } : i,
+export function markReaders<
+  T extends { readonly authorName: string; readonly originAuthor?: string | null },
+>(db: Database, repo: Repo, items: readonly T[]): (T & { readonly untrusted?: string })[] {
+  const voices = items.map((i) => voiceOf(i).authorName);
+  const readers = readersAmong(db, repo, voices);
+  return items.map((i, n) =>
+    readers.has(voices[n]!) ? { ...i, untrusted: READER } : i,
   );
 }
 

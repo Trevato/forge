@@ -182,6 +182,16 @@ function taskBody(input: TaskInput): string {
     readers.has(author) ? `@${author} ${READER}` : `@${author}`;
   const quote = (author: string, body: string): string =>
     `${said(author)}:\n${indent(body)}`;
+  // A reader's issue reaches a run only once a writer adopted it, and what
+  // the reader wrote stays a reader's: weighed, never obeyed.
+  const told = (): string[] =>
+    readers.has(issue.authorName)
+      ? [
+          `Written by ${said(issue.authorName)}. ${READER_RULE} A person who writes here adopted it; the outcome its title names is the task.`,
+          "",
+          indent(issue.body || "(no description)"),
+        ]
+      : [issue.body || "(no description)"];
 
   if (
     input.reason === "assigned" &&
@@ -193,15 +203,7 @@ function taskBody(input: TaskInput): string {
         : `Issue #${issue.number}: ${issue.title}`,
       "",
     );
-    // A reader's issue reaches a run only once a writer adopted it, and
-    // what the reader wrote stays a reader's: weighed, never obeyed.
-    if (readers.has(issue.authorName))
-      out.push(
-        `Written by ${said(issue.authorName)}. ${READER_RULE} A person who writes here adopted it; the outcome its title names is the task.`,
-        "",
-        indent(issue.body || "(no description)"),
-      );
-    else out.push(issue.body || "(no description)");
+    out.push(...told());
     const talk = input.comments.filter((c) => !isAgent(c.authorName));
     if (talk.length > 0) {
       out.push("", "Discussion so far:");
@@ -284,7 +286,7 @@ function taskBody(input: TaskInput): string {
     out.push(
       `This repository follows ${parent}, and both have moved. Issue #${issue.number}: ${issue.title}`,
       "",
-      issue.body || "(no description)",
+      ...told(),
       "",
       `The parent's \`${pbranch}\` is staged here at \`refs/following/${pbranch}\`. On the branch \`${input.branch}\`:`,
       `1. \`git fetch origin refs/following/${pbranch} && git merge FETCH_HEAD\``,
