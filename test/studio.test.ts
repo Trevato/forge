@@ -32,7 +32,11 @@ import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
-import { setDirectionIssue, type Repo } from "../src/core/repos.ts";
+import {
+  getRepoById,
+  setDirectionIssue,
+  type Repo,
+} from "../src/core/repos.ts";
 import {
   agentRunTotals,
   claimRun,
@@ -8316,5 +8320,175 @@ describe("the studio's empty lists", () => {
     expect(pulls).toContain("No change is look yet.");
     const runs = await get("/alice/busy/runs?word=stopped");
     expect(runs).toContain("No run is stopped yet.");
+  });
+});
+
+/**
+ * Issue #230: the studio's settings page can change the two facts it
+ * prints most about an app — description and visibility — by posting to
+ * the very same `/:owner/:name/settings` route dev's General page uses.
+ */
+describe("the studio can change what an app says it is (#230)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let ownerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie?: string) =>
+    fetch(`${base}${path}`, {
+      headers: {
+        cookie:
+          cookie === undefined
+            ? "forge_mode=studio"
+            : `${cookie}; forge_mode=studio`,
+      },
+      redirect: "manual",
+    });
+
+  const post = (path: string, body: Record<string, string>, cookie: string) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        cookie: `${cookie}; forge_mode=studio`,
+        origin: base,
+      },
+      body: new URLSearchParams(body),
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-about-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const alice = await createUser(app.db, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!alice.ok) throw new Error(alice.error);
+    const carol = await createUser(app.db, {
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    ownerCookie = await signIn("alice");
+    readerCookie = await signIn("carol");
+    const made = await createRepo(app, alice.value, {
+      name: "lamp",
+      visibility: "public",
+      description: "lights the hallway",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "lamp\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    // Branch protection is on and unexposed by the studio's form — proof
+    // that saving from here does not silently turn it off.
+    const protectedOn = await updateRepoSettings(app, alice.value, repo, {
+      protectDefault: true,
+      requireReview: true,
+      requireChecks: true,
+    });
+    if (!protectedOn.ok) throw new Error(String(protectedOn.error));
+    repo = protectedOn.value;
+    const enabled = await enableApp(app, alice.value, repo, { slug: "lamp" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a writer changes the description and visibility from the studio, and the app's page and the shelf row show it", async () => {
+    // The rendered form carries the branch-protection fields it never shows
+    // as hidden inputs, so a real submit of it — exactly what's posted here
+    // — cannot silently turn them off.
+    const before = await (
+      await get("/alice/lamp/settings", ownerCookie)
+    ).text();
+    expect(before).toContain('<input type="hidden" name="protect" value="on"');
+    expect(before).toContain(
+      '<input type="hidden" name="requireReview" value="on"',
+    );
+    expect(before).toContain(
+      '<input type="hidden" name="requireChecks" value="on"',
+    );
+
+    const saved = await post(
+      "/alice/lamp/settings",
+      {
+        description: "a lamp that stays lit all night",
+        visibility: "private",
+        protect: "on",
+        requireReview: "on",
+        requireChecks: "on",
+      },
+      ownerCookie,
+    );
+    expect(saved.status).toBe(303);
+    expect(saved.headers.get("location")).toBe("/alice/lamp/settings");
+
+    const ownPage = await (
+      await get("/alice/lamp?mode=dev", ownerCookie)
+    ).text();
+    expect(ownPage).toContain("a lamp that stays lit all night");
+    expect(ownPage).toContain("Private");
+
+    const appHead = await (await get("/alice/lamp/app", ownerCookie)).text();
+    expect(appHead).toContain("Private");
+
+    const shelf = await (await get("/", ownerCookie)).text();
+    expect(shelf).toContain("a lamp that stays lit all night");
+
+    const list = await (await get("/apps", ownerCookie)).text();
+    expect(list).toContain("a lamp that stays lit all night");
+
+    // Branch protection, never shown on this form, is exactly as it was.
+    const dbRepo = getRepoById(app.db, repo.id);
+    expect(dbRepo?.protectDefault).toBe(true);
+    expect(dbRepo?.requireReview).toBe(true);
+    expect(dbRepo?.requireChecks).toBe(true);
+  });
+
+  test("a reader gets neither control: no form on the settings page, and the post is refused", async () => {
+    const settings = await (
+      await get("/alice/lamp/settings", readerCookie)
+    ).text();
+    expect(settings).not.toContain('action="/alice/lamp/settings"');
+    expect(settings).not.toContain("<textarea");
+
+    const refused = await post(
+      "/alice/lamp/settings",
+      { description: "carol was here", visibility: "public" },
+      readerCookie,
+    );
+    expect(refused.status).toBe(404);
+    const dbRepo = getRepoById(app.db, repo.id);
+    expect(dbRepo?.description).not.toBe("carol was here");
   });
 });
