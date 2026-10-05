@@ -172,6 +172,7 @@ describe("the forge over MCP", () => {
       "converge",
       "asked",
       "app_members",
+      "explore",
       "front_page",
       "map",
       "usage",

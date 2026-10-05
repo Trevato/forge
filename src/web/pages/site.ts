@@ -10,6 +10,7 @@
 
 import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
+import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
@@ -760,7 +761,8 @@ function signinAllowed(ctx: Ctx, username: string): number | undefined {
 }
 
 export async function signinSubmit(ctx: Ctx): Promise<Response> {
-  const form = await readForm(ctx);
+  // Posted by people with no account yet: a stranger's form.
+  const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const wait = signinAllowed(ctx, username);
@@ -831,7 +833,8 @@ export function verifyPage(ctx: Ctx): Response {
 }
 
 export async function signupSubmit(ctx: Ctx): Promise<Response> {
-  const form = await readForm(ctx);
+  // Posted by people with no account yet: a stranger's form.
+  const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const email = field(form, "email");
@@ -870,7 +873,8 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
 // submit (redirect back to the referring page) and as a background fetch from
 // the switcher script; "system" clears the cookie so the OS decides again.
 export async function themeSubmit(ctx: Ctx): Promise<Response> {
-  const form = await readForm(ctx);
+  // Posted by people with no account yet: a stranger's form.
+  const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const choice = field(form, "theme");
   const secure = ctx.url.protocol === "https:" ? "; Secure" : "";

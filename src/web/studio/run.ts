@@ -94,6 +94,7 @@ export async function runView(
     runtime: appsRuntime(ctx.app),
     record: getAppByRepo(db, repo.id),
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const { word } = await runWord(wordCtx, run);
   const unfinished = !isTerminal(run.state);

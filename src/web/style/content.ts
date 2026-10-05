@@ -412,6 +412,12 @@ form.inline { display: inline; margin-left: auto; }
 .app-tile-name { font-weight: 600; font-size: 14px; }
 .app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
 
+/* Explore (#607): a row is a name, a line, its numbers, and one verb. */
+.explore-row { gap: 12px; }
+.explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.explore-name { font-weight: 600; }
+.explore-line .input { flex: 1; min-width: 0; }
+
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */
 .front-featured {

@@ -18,13 +18,13 @@ import { G } from "./term/screen.ts";
 import { fileIcon, icon, type IconName } from "./ui/icons.ts";
 import type { SessionOpts, Terminal } from "./term/terminal.ts";
 import { Session, type TuiIdentity } from "./session.ts";
-import { accountScreen } from "./screens/account.ts";
 import {
   ISSUE_MARK,
   ORIGIN_MARK,
   PULL_MARK,
   errorText,
   promptScreen,
+  openOnWeb,
 } from "./screens/common.ts";
 import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
@@ -36,7 +36,6 @@ import { newPullScreen } from "./screens/newpull.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { ownerScreen } from "./screens/owner.ts";
 import { repoScreen } from "./screens/repo.ts";
-import { settingsScreen } from "./screens/settings.ts";
 import { signInScreen } from "./screens/signin.ts";
 import { local } from "./screens/where.ts";
 
@@ -50,7 +49,8 @@ export function forgeRoot(session: Session): (ctx: Ctx) => Screen {
 const REPO_VERBS: readonly {
   id: string;
   title: string;
-  open: (f: Session, ctx: Ctx, repo: Repo) => Screen;
+  /** The screen to push, or nothing when the verb hands over to the web. */
+  open: (f: Session, ctx: Ctx, repo: Repo) => Screen | undefined;
 }[] = [
   {
     id: "repo",
@@ -69,7 +69,15 @@ const REPO_VERBS: readonly {
   },
   { id: "new-issue", title: "New issue", open: newIssueScreen },
   { id: "new-pull", title: "New pull request", open: newPullScreen },
-  { id: "settings", title: "Repository settings", open: settingsScreen },
+  {
+    id: "settings",
+    title: "Repository settings",
+    // One settings page, the web's (#635): the terminal hands over its address.
+    open: (f, ctx, repo) => {
+      openOnWeb(f, ctx, `/${repo.ownerName}/${repo.name}/settings`, "Settings");
+      return undefined;
+    },
+  },
 ];
 
 /**
@@ -121,7 +129,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // this check the palette would be a way around `canRead`.
               if (!repo || !canRead(session.db, repo, session.user))
                 return "not found";
-              ctx.push(verb.open(session, ctx, repo));
+              const next = verb.open(session, ctx, repo);
+              if (next !== undefined) ctx.push(next);
               return undefined;
             }),
           ),
@@ -146,7 +155,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         {
           id: "account",
           title: "Account settings",
-          run: () => ctx.push(accountScreen(session, ctx)),
+          run: () => openOnWeb(session, ctx, "/settings", "Account settings"),
         },
       );
     commands.push({

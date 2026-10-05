@@ -8,7 +8,7 @@
 
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
-import { appsRuntime, type EnvStatus } from "../apps/runtime.ts";
+import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
@@ -48,7 +48,6 @@ import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { sshCommand } from "../ssh/command.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   requireReader,
@@ -443,7 +442,8 @@ export function terminalFor(
   if (status?.tty === null) return { reason: "no_tty" };
   const command = sshCommandFor(app, record, env);
   if (command !== undefined) return { command };
-  return sshCommand(app) === undefined ? { reason: "no_listener" } : {};
+  const port = app.config.sshPort;
+  return port === undefined || port <= 0 ? { reason: "no_listener" } : {};
 }
 
 /** What is running, for anyone who can see the repository. */
@@ -459,7 +459,7 @@ export function appView(
   const runtime = appsRuntime(app);
   return ok({
     app: record,
-    environments: runtime === undefined ? [] : runtime.status(record),
+    environments: envsFor(app, actor, record),
     serving: runtime !== undefined,
   });
 }
