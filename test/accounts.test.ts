@@ -291,6 +291,86 @@ describe("accounts: the owner sees, suspends and removes", () => {
     expect(stderr).toContain("suspended");
   });
 
+  test("a live event stream already open ends when its account is suspended", async () => {
+    const { token } = await outsider("stella");
+    const res = await fetch(`${base}/events`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain(": connected");
+    const suspended = await api("/api/v1/admin/accounts/stella/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(suspended.status).toBe(200);
+    // Whatever was queued may still arrive; then the stream ends, well
+    // before its next heartbeat.
+    const ended = (async () => {
+      for (;;) if ((await reader.read()).done) return true;
+    })();
+    expect(
+      await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+    ).toBe(true);
+  });
+
+  test("a stream of someone else's stays open when one account is suspended", async () => {
+    const { token } = await outsider("otto");
+    await outsider("pia");
+    const res = await fetch(`${base}/events`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const reader = res.body!.getReader();
+    await reader.read();
+    const suspended = await api("/api/v1/admin/accounts/pia/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(suspended.status).toBe(200);
+    const next = await Promise.race([
+      reader.read().then((r) => (r.done ? "ended" : "data")),
+      Bun.sleep(500).then(() => "open"),
+    ]);
+    expect(next).not.toBe("ended");
+    await reader.cancel();
+  });
+
+  test("a push under way when its account is suspended does not land", async () => {
+    const { user } = await outsider("pusher");
+    const made = await createRepo(app, user, { name: "midway" });
+    if (!made.ok) throw new Error(made.error);
+    // What git's pre-receive hook asks the forge once the pack is in: the
+    // ref update, from the account that pushed it.
+    const ask = () =>
+      fetch("http://forge/internal/hook", {
+        unix: app.socketPath,
+        method: "POST",
+        body: JSON.stringify({
+          hook: "pre-receive",
+          repoId: made.value.id,
+          actorId: user.id,
+          updates: [
+            {
+              ref: "refs/heads/feature",
+              oldOid: "0".repeat(40),
+              newOid: "1".repeat(40),
+            },
+          ],
+          gitEnv: {},
+        }),
+      });
+    expect((await ask()).status).toBe(200);
+    const suspended = await api("/api/v1/admin/accounts/pusher/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(suspended.status).toBe(200);
+    const refused = await ask();
+    expect(refused.status).toBe(403);
+    expect(await refused.text()).toContain("suspended");
+  });
+
   test("a suspended account's repositories run nothing", async () => {
     const { user } = await outsider("trudy");
     const made = await createRepo(app, user, { name: "lab" });
