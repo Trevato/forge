@@ -14,7 +14,7 @@ import { search } from "../../actions/search.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canWrite, getRepo } from "../../core/repos.ts";
+import { canWrite, getRepo, getRepoById } from "../../core/repos.ts";
 import {
   cleanQuery,
   searchKind,
@@ -98,7 +98,15 @@ function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
   if (hit.source === "local") {
     const name = `${hit.owner}/${hit.name}`;
     const record = apps.byId.get(hit.id);
-    const live = record === undefined ? undefined : appState(ctx, record);
+    // A private app's state is its writers' to see, even on a repository
+    // anyone may read: anyone else gets the counts a plain repository shows.
+    const held = getRepoById(ctx.app.db, hit.id);
+    const showsState =
+      record !== undefined &&
+      (record.access === "public" ||
+        (held !== undefined && canWrite(ctx.app.db, held, ctx.auth.user)));
+    const live =
+      record === undefined || !showsState ? undefined : appState(ctx, record);
     return row({
       href: `/${name}`,
       nav: true,

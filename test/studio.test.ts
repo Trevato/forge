@@ -7591,6 +7591,63 @@ describe("finding things in the studio: /search", () => {
     expect(stranger).not.toContain("project-notes");
   });
 
+  test("a private app on a public repository: its state reaches only its writers, and anyone else sees a plain repository row", async () => {
+    const made = await createRepo(app, alice, {
+      name: "abacus",
+      visibility: "public",
+      description: "an abacus for chess clocks",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, alice, made.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, made.value, {
+      slug: "abacus",
+      access: "private",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const carol = await createUser(app.db, { trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    const carolCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "carol",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const rowOf = (html: string): string => {
+      const at = html.indexOf('href="/alice/abacus"');
+      return at === -1 ? "" : html.slice(at, html.indexOf("</a>", at));
+    };
+    for (const cookie of ["", `${carolCookie}; forge_mode=studio`]) {
+      const html = mainOf(
+        await (
+          await fetch(`${base}/search?q=abacus`, {
+            headers: cookie === "" ? {} : { cookie },
+          })
+        ).text(),
+      );
+      const row = rowOf(html);
+      expect(row).not.toBe("");
+      expect(row).not.toContain("not running");
+      expect(row).not.toContain('class="dot"');
+    }
+    expect(rowOf(mainOf(await (await asAlice("/search?q=abacus")).text()))).toContain(
+      "not running",
+    );
+  });
+
   test("code is a section of the same page, and narrowing to it is a chip, never a mode", async () => {
     const all = mainOf(await (await asAlice("/search?q=chess")).text());
     expect(all).toContain('id="repos"');
