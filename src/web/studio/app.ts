@@ -426,7 +426,7 @@ export async function studioApp(
   // An app that follows another says so before anything else: whether it
   // is in step is the first thing its owner wants to know.
   const following = await followingOf(ctx, repo);
-  const body = html`${repoHeader(ctx, repo, "code", {
+  const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
       ownTitle: true,
     })}

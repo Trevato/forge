@@ -63,6 +63,7 @@ export const GATE: readonly string[] = [
   "test/guard.test.ts",
   "test/asked.test.ts",
   "test/asks.test.ts",
+  "test/asks-expiry.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
   "test/feed-page.test.ts",
@@ -121,11 +122,13 @@ export const GATE: readonly string[] = [
   "test/origins-sync.test.ts",
   "test/origins.test.ts",
   "test/check-list.test.ts",
+  "test/hollow.test.ts",
   "test/oauth-discovery.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
   "test/reports.test.ts",
   "test/report-discovery.test.ts",
+  "test/apps-report.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
