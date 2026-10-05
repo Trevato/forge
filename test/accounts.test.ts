@@ -22,7 +22,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser as insertAgent, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { identityFor } from "../src/tui/ssh.ts";
+import { forgeSshSession, identityFor } from "../src/tui/ssh.ts";
 
 const EDGE = "edge-secret-for-accounts";
 const KEY_LINE =
@@ -233,6 +233,59 @@ describe("accounts: the owner sees, suspends and removes", () => {
         })
       ).status,
     ).toBe(401);
+  });
+
+  test("an SSH terminal already open ends when its account is suspended", async () => {
+    const { user } = await outsider("walter");
+    const parsed = parseAuthorizedKey(KEY_LINE.replace("outsider", "walter"));
+    if (!parsed.ok) throw new Error("key");
+    // A second key line for a second account: the same blob cannot be on two.
+    app.db.query("DELETE FROM user_key WHERE name = 'laptop'").run();
+    expect(addKey(app.db, user.id, "desk", parsed.value).ok).toBe(true);
+    const closers: (() => void)[] = [];
+    let exited: number | undefined;
+    let stderr = "";
+    const session = {
+      key: { fingerprint: fingerprint(parsed.value.blob), line: KEY_LINE },
+      username: "walter",
+      remoteAddress: "203.0.113.9",
+      kind: "shell" as const,
+      command: undefined,
+      term: "xterm-256color",
+      env: {},
+      cols: 80,
+      rows: 24,
+      widthPx: 0,
+      heightPx: 0,
+      ended: false,
+      pending: 0,
+      write() {},
+      writeStderr(data: Uint8Array | string) {
+        stderr += String(data);
+      },
+      onData() {},
+      onResize() {},
+      onEof() {},
+      onClose(cb: () => void) {
+        closers.push(cb);
+      },
+      // Like a real channel: the first exit closes it; later ones are no-ops.
+      exit(code: number) {
+        if (exited !== undefined) return;
+        exited = code;
+        for (const cb of closers) cb();
+      },
+      drained: async () => {},
+    };
+    forgeSshSession(app)(session as never);
+    expect(exited).toBeUndefined();
+    const res = await api("/api/v1/admin/accounts/walter/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(res.status).toBe(200);
+    expect(exited).toBe(1);
+    expect(stderr).toContain("suspended");
   });
 
   test("a suspended account's repositories run nothing", async () => {
