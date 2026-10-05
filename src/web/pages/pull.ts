@@ -100,6 +100,7 @@ import { lookCard } from "./looks.ts";
 import { pullState } from "./pulls.ts";
 import { crewActivityCard, workSpent } from "./runs.ts";
 import { studioPull } from "../studio/change.ts";
+import { holdCard } from "../studio/hold.ts";
 import { studioRecord } from "../studio/nouns.ts";
 
 /** The pull and its repo, or the response that refuses to say why not. */
@@ -866,6 +867,7 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
       </div>
     </div>
     ${when(wall, (w) => wallCard(w))}
+    ${holdCard(ctx, repo, pull, { act: false })}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, status.headOid))}
     <div class="split">

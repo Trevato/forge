@@ -23,6 +23,7 @@ export type Exclusion = {
 
 export const GATE: readonly string[] = [
   "test/accounts.test.ts",
+  "test/app-domains.test.ts",
   "test/client-address.test.ts",
   "test/crew.test.ts",
   "test/commit-identity.test.ts",
@@ -35,6 +36,7 @@ export const GATE: readonly string[] = [
   "test/crew-sandbox.test.ts",
   "test/crew-direction.test.ts",
   "test/crew-direction-autonomy.test.ts",
+  "test/scale.test.ts",
   "test/steer.test.ts",
   "test/session-settle.test.ts",
   "test/landing.test.ts",
@@ -138,6 +140,7 @@ export const GATE: readonly string[] = [
   "test/origins.test.ts",
   "test/outsiders-switch.test.ts",
   "test/check-list.test.ts",
+  "test/holds.test.ts",
   "test/hollow.test.ts",
   "test/oauth-discovery.test.ts",
   "test/data-home.test.ts",
@@ -156,7 +159,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 293,
   },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/app-domains.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/app-env.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/app.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
@@ -218,7 +220,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/reviews.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/runs-lease.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/scale.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/search.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/secret-store.test.ts", reason: "not yet admitted", issue: 261 },
   {
