@@ -585,7 +585,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {

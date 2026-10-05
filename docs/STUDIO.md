@@ -340,8 +340,10 @@ yet, oldest first, because the path is "open the oldest unmet ask": who
 asked and when, the pull that answers it, when the crew last ran or spoke on
 it, and one word — _Waiting_, _Building_ (a pull is open or the crew
 is running), _Shipped_ (a pull that closes it merged), _Closed_ (closed with
-nothing merged). An ask still waiting or building after three days carries
-_Nothing built_. `?show=flagged|all` changes the view, `?order=newest` flips it,
+nothing merged). An ask still waiting after three days carries _Nothing
+built_, in red: no pull for it is open or merged and nobody is on it. One
+whose pull is still open after three days says _Pull open_ and how long the
+pull has been open. `?show=flagged|all` changes the view, `?order=newest` flips it,
 `?repo=owner/name` keeps it to one repository. The rows are derived on read
 in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
 the same rows. Each row names its `source` (`issue` today) so thoughts can
