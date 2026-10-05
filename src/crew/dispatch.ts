@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
@@ -46,7 +47,7 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
-import { sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
+import { dataInTemp, sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
   AUTONOMY_TICK_MS,
@@ -130,6 +131,13 @@ export async function startCrew(
   } catch (error) {
     log.warn("could not sweep run temp directories", { error: String(error) });
   }
+  // The shell can be denied the machine's temp directory whole only when
+  // the forge's data is not inside it (`crew/sandbox.ts`, `tempDenied`).
+  if (dataInTemp(app.config.dataDir))
+    log.warn(
+      "the data directory is inside the temp directory: agents' shells are denied only the forge's own pieces of it, not all of it",
+      { dataDir: app.config.dataDir, tmpdir: tmpdir() },
+    );
   if (!sandbox.ok)
     log.warn("agent sandbox not available here; runs are unrestricted", {
       reason: sandbox.reason,

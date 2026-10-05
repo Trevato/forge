@@ -31,7 +31,7 @@ export const tellHref = (base: string, number: number): string =>
   `${base}/tells/${number}`;
 
 /** One change: the same page `/pulls/:number` reaches, under the studio's
- * own noun (`changePage`, `src/web/pages/pull.ts`). */
+ * own noun (`changePage`, `src/web/studio/change.ts`). */
 export const changeHref = (base: string, number: number): string =>
   `${base}/changes/${number}`;
 

@@ -22,6 +22,7 @@ import { createUser } from "../src/core/users.ts";
 import { sandboxLine } from "../src/web/studio/sandbox.ts";
 import { claudeSettings } from "../src/crew/claude.ts";
 import {
+  dataInTemp,
   SandboxListingError,
   sandboxAvailable,
   sandboxPolicy,
@@ -178,6 +179,8 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
     mkdirSync(join(tmpdir(), "fc-forge-sandbox-neighbour"), { recursive: true });
     expect(denied(join(tmpdir(), "fc-forge-sandbox-neighbour"), policy().denyRead)).toBe(true);
     expect(policy().denyRead).toContain(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`));
+    expect(dataInTemp(dataDir)).toBe(true);
+    expect(dataInTemp("/srv/forge-data-nowhere")).toBe(false);
     const elsewhere = sandboxPolicy({ dataDir: "/srv/forge-data-nowhere", agentName: "scout", urls: [] });
     expect(elsewhere.denyRead).toContain(tmpdir());
   });

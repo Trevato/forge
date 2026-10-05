@@ -26,6 +26,7 @@ import type { User } from "../core/users.ts";
 import { transact } from "../kernel/db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
+import { followLink } from "./pillars.ts";
 
 export const PLAN_MAX = 12;
 /** One sentence, with room. */
@@ -350,13 +351,16 @@ export function openPlan(
         },
       });
   }
-  for (const [waits, blocker] of purpose)
+  for (const [waits, blocker] of purpose) {
     app.bus.append({
       kind: "issue.blocked",
       repoId: repo.id,
       actorId: actor.id,
       payload: { number: waits.number, blockedBy: blocker.number },
     });
+    // What it serves is on the issue too, as its label (`actions/pillars.ts`).
+    followLink(app, actor, repo, waits, blocker);
+  }
   const deferred = items
     .filter((item) => item.later !== undefined)
     .map((item) => number.get(item.key)!);

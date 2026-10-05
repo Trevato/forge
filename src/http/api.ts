@@ -21,12 +21,13 @@ import {
   removeAccount,
   suspendAccount,
   unsuspendAccount,
+  verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
-import { spawnDoor } from "../spawn/door.ts";
+import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
@@ -223,6 +224,7 @@ import {
   confirmIssue,
 } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
+import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
@@ -245,6 +247,7 @@ import {
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
+import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
@@ -290,7 +293,11 @@ import {
   setAppMembersThrough,
   type AppMembersError,
 } from "../actions/app_members.ts";
-
+import {
+  explore,
+  exploreLine,
+  parseExploreQuery,
+} from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
@@ -1127,6 +1134,15 @@ export function apiRoutes(router: Router<Handler>): void {
     return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
   });
 
+  router.add("POST", "/api/v1/admin/accounts/:username/verify", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = verifyAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok
+      ? json({ username: done.value.username, verified: true })
+      : accountError(done.error);
+  });
+
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
@@ -1180,6 +1196,16 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.auth.user
     ) {
       if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+      // From a page, a site admin's token is minted only on purpose (#596).
+      if (ctx.auth.user.isAdmin && input.adminConfirm !== true)
+        return json(
+          {
+            error: "admin_confirm",
+            message:
+              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
+          },
+          422,
+        );
       user = ctx.auth.user;
     } else {
       const verified = await verifyPassword(
@@ -1188,6 +1214,16 @@ export function apiRoutes(router: Router<Handler>): void {
         str(input.password),
       );
       if (verified.ok) user = verified.value;
+      // With the password too, a site admin's token is minted on purpose.
+      if (user?.isAdmin && input.adminConfirm !== true)
+        return json(
+          {
+            error: "admin_confirm",
+            message:
+              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
+          },
+          422,
+        );
     }
     if (!user) return unauthorized();
     const scope = str(input.scope);
@@ -2181,6 +2217,7 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
+        pillarView(ctx.app.db, repo),
       ),
     );
   });
@@ -3269,6 +3306,15 @@ export function apiRoutes(router: Router<Handler>): void {
     json(readHealth(ctx.app, ctx.auth.user)),
   );
 
+  // Explore (#607): the rows /explore shows, for the same one line.
+  router.add("GET", "/api/v1/explore", async (ctx) => {
+    const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+    return json({
+      query: exploreLine(query),
+      items: await explore(ctx.app, ctx.auth.user, query),
+    });
+  });
+
   // The front page (#686): what a stranger is shown, for anyone; a site
   // admin also gets the picks, and sets them — pinned in order, hidden.
   router.add("GET", "/api/v1/front", (ctx) =>
@@ -3306,6 +3352,14 @@ export function apiRoutes(router: Router<Handler>): void {
     if (typeof input !== "object" || input === null || Array.isArray(input))
       return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
     const door = await spawnDoor(ctx, ctx.auth.user!, input as Record<string, unknown>);
+    return json(door.body, door.status);
+  });
+
+  // A new claim link for a child nobody has claimed (#729); the old one dies.
+  router.add("POST", "/api/v1/forges/:name/claim-link", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const door = await reissueDoor(ctx, ctx.auth.user!, ctx.params["name"] ?? "");
     return json(door.body, door.status);
   });
 
@@ -3793,6 +3847,41 @@ export function apiRoutes(router: Router<Handler>): void {
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.
   // Spend is the owner's own fact, so a reader who cannot write gets 403.
+  // What the tokens bought (`actions/returns.ts`): owner facts only, over
+  // every repository the viewer holds them for, or `?repo=owner/name`.
+  router.add("GET", "/api/v1/returns", (ctx) => {
+    const q = ctx.url.searchParams;
+    const raw = q.get("days");
+    const read = readReturns(ctx.app, ctx.auth.user, {
+      repo: q.get("repo"),
+      ...(raw === null ? {} : { days: Number(raw) }),
+    });
+    if (read.ok) return json(read.value, 200, { "cache-control": "private, no-store" });
+    if (read.error === "unauthorized") return unauthorized();
+    if (read.error === "bad_days")
+      return apiError("invalid_days", 422, `days is a whole number from 1 to ${RETURNS_DAYS.max}`);
+    return notFound();
+  });
+
+  // What an outside session spent on this repository's work: writers and
+  // its crew report it; it is kept apart from the crew's runs and no limit
+  // reads it (`actions/returns.ts`).
+  router.add("POST", "/api/v1/repos/:owner/:name/spend", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const made = reportSpend(ctx.app, ctx.auth.user, repo, await body(ctx.request));
+    if (made.ok) return json(made.value, 201);
+    if (made.error === "unauthorized") return unauthorized();
+    if (made.error === "not_found") return notFound();
+    return apiError(
+      "invalid",
+      422,
+      "who (1–100 characters) and some spend (tokensIn, tokensOut: whole numbers; usd: 0–10000); model, note (≤500) and issue (a number here) are optional",
+    );
+  });
+
   router.add("GET", "/api/v1/repos/:owner/:name/usage", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();

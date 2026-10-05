@@ -100,7 +100,7 @@ describe("parity: full control through actions and the API", () => {
   const mint = async (user: string, scope: string) =>
     (
       await call("POST", "/api/v1/tokens", {
-        body: { username: user, password: PASS, name: scope, scope },
+        body: { adminConfirm: true, username: user, password: PASS, name: scope, scope },
       })
     ).json.token as string;
 
@@ -288,7 +288,7 @@ describe("parity: full control through actions and the API", () => {
     expect(listed.list.every((t) => t.token === undefined)).toBe(true);
 
     const throwaway = await call("POST", "/api/v1/tokens", {
-      body: { username: "alice", password: PASS, name: "tmp", scope: "ro" },
+      body: { adminConfirm: true, username: "alice", password: PASS, name: "tmp", scope: "ro" },
     });
     const id = throwaway.json.id as string;
     expect(

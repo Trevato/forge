@@ -320,6 +320,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
+/* The everyday-account ask on the home: a form's width, not the page's. */
+.everyday-ask { max-width: 34rem; margin-bottom: 16px; }
 /* On a phone an account's controls go under its name, not over it. */
 @media (max-width: 640px) {
   .row:has(.headroom) { flex-wrap: wrap; }
@@ -411,6 +413,12 @@ form.inline { display: inline; margin-left: auto; }
 .app-tile-body { display: grid; gap: 6px; padding: 10px 12px; }
 .app-tile-name { font-weight: 600; font-size: 14px; }
 .app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
+
+/* Explore (#607): a row is a name, a line, its numbers, and one verb. */
+.explore-row { gap: 12px; }
+.explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.explore-name { font-weight: 600; }
+.explore-line .input { flex: 1; min-width: 0; }
 
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */

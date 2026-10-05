@@ -33,7 +33,7 @@ describe("commit via API (no git client)", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "contents-api-pass",
         name: "c",
@@ -141,7 +141,10 @@ describe("commit via API (no git client)", () => {
         headers: { cookie },
       })
     ).text();
-    expect(prPage).toContain("Ready to merge");
+    // The one change page (#703): a writer is offered Ship; before a check has
+    // run it says what the change waits on.
+    expect(prPage).toContain("Ship");
+    expect(prPage).toContain("ship");
   });
 
   test("a push event fires so the outbox/webhooks/SSE see API commits", async () => {
@@ -168,7 +171,7 @@ describe("commit via API (no git client)", () => {
     const roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "contents-api-pass",
         name: "ro",
