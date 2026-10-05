@@ -57,8 +57,9 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
-import { appsOf } from "../web/studio/asks.ts";
+import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
   askedIn,
@@ -258,6 +259,16 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "asks",
+    description:
+      "What waits on you, most consequential first: each row names the decision, its options and what happens if nobody acts, and why it ranks where it does (security, money, held-up work, then age). Rows of one kind in one app are collapsed with their item ids. Also the forge's own needs (for a site admin) and the last 7 days' asks raised, acted on, dismissed and gone by themselves.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      return good(asksAnswer(ctx, user));
     },
   },
   {
@@ -564,6 +575,7 @@ const TOOLS: readonly Tool[] = [
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
+      if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,
@@ -574,7 +586,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {
