@@ -24,18 +24,18 @@
  * told-but-stuck when nobody on the crew can take it.
  */
 
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
 import { reposWithUnclaimedTell } from "../../core/issues.ts";
 import { openPullsForRepos } from "../../core/pulls.ts";
-import { ownerFactRepoIds, type Repo } from "../../core/repos.ts";
+import { canEnterApp, ownerFactRepoIds, type Repo } from "../../core/repos.ts";
 import {
   getRunsByIds,
   isTerminal,
   latestAgentRunsForRepos,
 } from "../../core/runs.ts";
-import { getUsersByIds } from "../../core/users.ts";
+import { getUsersByIds, type User } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -84,7 +84,9 @@ export function productionFactsForRepos(
   for (const repo of repos) {
     const record = records.get(repo.id);
     const production = record
-      ? runtime.status(record).find((e) => e.env === "production")
+      ? envsFor(ctx.app, ctx.auth.user, record).find(
+          (e) => e.env === "production",
+        )
       : undefined;
     productions.set(repo.id, production);
     if (production?.runId !== undefined && production.createdAt !== undefined)
@@ -98,6 +100,30 @@ export function productionFactsForRepos(
     if (fact !== undefined) out.set(repoId, fact);
   }
   return out;
+}
+
+/** The row of a private app the viewer may not enter: its name, nothing it says. */
+function sealedRow(repo: Repo, user: User | undefined): Html {
+  const mine = user !== undefined && repo.ownerId === user.id;
+  return row({
+    href: repoBase(repo),
+    nav: true,
+    lead: dot("default"),
+    title: mine
+      ? repo.name
+      : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`,
+    titleAttr: repo.description || repo.name,
+    meta: html`<span class="shelf-meta"
+      >${repo.description
+        ? html`<span class="shelf-desc">${repo.description}</span>`
+        : null}<span class="shelf-facts"
+        >${repo.description ? "· " : null}<span class="muted"
+          >private app</span
+        ></span
+      ></span
+    >`,
+    trail: raw(`\n        <span class="badge" data-tone="default">private</span>`),
+  });
 }
 
 /**
@@ -157,10 +183,16 @@ export async function shelfRows(
   return await Promise.all(
     repos.map(async (repo) => {
       const record = records.get(repo.id);
+      // A private app the viewer may not enter is a name on a shelf: no
+      // state, no word, no crew — what it says about itself is its writers'
+      // and crew's (`envsFor`, `mayReadRuns`).
+      if (
+        record !== undefined &&
+        !canEnterApp(db, repo, record, user, { named: false })
+      )
+        return sealedRow(repo, user);
       const envs =
-        runtime === undefined || record === undefined
-          ? []
-          : runtime.status(record);
+        record === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record);
       const production = envs.find((e) => e.env === "production");
       const latest = latestRuns.get(repo.id);
       // A run still in flight is the thing that is moving, and outranks a
@@ -176,6 +208,7 @@ export async function shelfRows(
         runtime,
         record,
         history,
+        viewer: ctx.auth.user,
       };
       const agentWord =
         useOpenPull || latest === undefined

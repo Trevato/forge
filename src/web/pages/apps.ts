@@ -24,7 +24,7 @@ import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
@@ -48,6 +48,8 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { writableAppsOf } from "../studio/asks.ts";
+import { costLine } from "../studio/cost_line.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
@@ -99,7 +101,7 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
   for (const repo of repos) {
     const record = records.get(repo.id);
     if (record === undefined) continue;
-    const envs = runtime === undefined ? [] : runtime.status(record);
+    const envs = envsFor(ctx.app, ctx.auth.user, record);
     out.push({
       record,
       repo,
@@ -231,6 +233,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     shown.map((e) => e.repo),
   );
   const body = html`${pageHead("Apps", { actions: create })}
+    ${costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos)}
     ${filters}
     ${shown.length === 0
       ? empty({

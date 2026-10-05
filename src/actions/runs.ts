@@ -2,8 +2,10 @@
  * Run actions: look at a repository's runs and their logs, cancel one,
  * queue a finished agent run's task again, and — for the workers that produce runs — announce a run's state on the
  * outbox. Reading follows the repository's visibility (a run's log is as
- * private as the code it ran); cancelling takes write access; announcing
- * is the system's own voice and takes no actor.
+ * private as the code it ran), and a private app's runs follow the app: a
+ * deploy log carries the app's own output, so only someone who may enter
+ * the app reads them (#620). Cancelling takes write access; announcing is
+ * the system's own voice and takes no actor.
  */
 
 import { requireVerified } from "./verify.ts";
@@ -11,7 +13,8 @@ import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
 import { getIssueById } from "../core/issues.ts";
 import { addComment } from "./issues.ts";
-import type { Repo } from "../core/repos.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import { canEnterApp, type Repo } from "../core/repos.ts";
 import {
   cancelRun as markCancelled,
   getRun,
@@ -61,6 +64,23 @@ export function announceRun(app: App, run: Run, actorId?: string): void {
   });
 }
 
+/**
+ * Whether `actor` may read this repository's runs: anyone who can read it,
+ * unless it runs a private app — then only someone who may enter the app.
+ */
+export function mayReadRuns(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): boolean {
+  if (!requireReader(app, actor, repo).ok) return false;
+  const record = getAppByRepo(app.db, repo.id);
+  return (
+    record === undefined ||
+    canEnterApp(app.db, repo, record, actor, { named: false })
+  );
+}
+
 export function listRepoRuns(
   app: App,
   actor: User | undefined,
@@ -69,6 +89,7 @@ export function listRepoRuns(
 ): Result<Run[], "not_found"> {
   const reader = requireReader(app, actor, repo);
   if (!reader.ok) return reader;
+  if (!mayReadRuns(app, actor, repo)) return ok([]);
   return ok(queryRuns(app.db, repo.id, options));
 }
 
@@ -79,8 +100,7 @@ export function getRepoRun(
   repo: Repo,
   runId: string,
 ): Result<Run, "not_found"> {
-  const reader = requireReader(app, actor, repo);
-  if (!reader.ok) return reader;
+  if (!mayReadRuns(app, actor, repo)) return err("not_found");
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
   return ok(run);

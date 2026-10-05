@@ -72,7 +72,7 @@ describe("XSS through diff/highlight rendering (real server, real git)", () => {
     const minted = await api("/api/v1/tokens", {
       method: "POST",
       token: false,
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "alice",
         password: "correct-horse-battery",
         name: "cli",

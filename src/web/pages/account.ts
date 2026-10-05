@@ -50,6 +50,7 @@ import {
   time,
   field as uiField,
 } from "../ui.ts";
+import { everydayLine } from "./everyday.ts";
 
 type Section = "profile" | "password" | "tokens" | "keys";
 
@@ -219,7 +220,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
+    html`${everydayLine(ctx, ctx.auth.user)}${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
   );
 }
 
@@ -273,7 +274,9 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
           ? { email: "That doesn't look like an email address." }
           : updated.error === "display_name_reserved"
             ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : {};
+            : updated.error === "display_name_mixed_script"
+              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
+              : {};
     return accountShell(
       ctx,
       "profile",
@@ -454,6 +457,17 @@ function tokensView(ctx: Ctx): Html {
           ],
           hint: "A token can never mint another token, whatever its scope.",
         })}
+        ${ctx.auth.user?.isAdmin
+          ? html`<div class="field" id="ai-admin">
+              <label class="check">
+                <input type="checkbox" name="aiAdmin" required />
+                <span
+                  >I mean to give this token admin: you are the forge's admin,
+                  so whatever holds it — an AI included — acts as admin.</span
+                >
+              </label>
+            </div>`
+          : null}
         <div class="form-actions">
           ${btn("Generate token", { variant: "primary" })}
         </div>
@@ -478,6 +492,13 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
+  // A site admin's token acts as admin, whatever its scope: minted only on
+  // purpose (#596), never by a form left at its defaults.
+  if (ctx.auth.user.isAdmin && field(form, "aiAdmin") !== "on")
+    return flashTo(ctx, "/settings/tokens", {
+      tone: "danger",
+      message: "You are the forge's admin: tick that you mean to give this token admin, or make it from your everyday account.",
+    });
   const scope = field(form, "scope");
   const chosen: TokenScope = scope === "ro" || scope === "admin" ? scope : "rw";
   const minted = createToken(
@@ -515,17 +536,16 @@ function keysView(
   values: { name: string; key: string; error?: string },
 ): Html {
   const keys = listKeys(ctx.app.db, ctx.auth.user!.id);
-  return html`${when(
-      sshCommand(ctx.app),
-      (ssh) =>
-        html`<p class="mb terminal-line">
+  const ssh = sshCommand(ctx.app);
+  return html`${ssh === undefined
+      ? html`<p class="mb muted" id="terminal-off">The terminal is off on this forge.</p>`
+      : html`<p class="mb terminal-line">
           <code class="mono">${ssh}</code>
           ${when(
             ctx.app.config.sshHostKey,
             (fp) => html`<span class="muted small">host key ${fp}</span>`,
           )}
-        </p>`,
-    )}
+        </p>`}
     <p class="muted small mb">
       Keys that sign you in over SSH. Paste a public key (<span class="mono"
         >~/.ssh/id_ed25519.pub</span

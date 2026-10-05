@@ -28,7 +28,8 @@ import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
+import type { User } from "../core/users.ts";
 import {
   cancelRun,
   listRuns,
@@ -341,6 +342,29 @@ const runtimes = new WeakMap<App, AppsRuntime>();
 /** The runtime serving this forge, if apps are on. */
 export const appsRuntime = (app: App): AppsRuntime | undefined =>
   runtimes.get(app);
+
+/**
+ * An app's environments as `viewer` may see them. A private app's state,
+ * errors and runs are its writers' and crew's (`canEnterApp`, without the
+ * people it only names, who enter the app and nothing behind it); to
+ * anyone else who can read the repository it shows none — a deploy error
+ * can carry paths and configuration (#620). Every surface that shows a
+ * viewer an app's environments reads them here.
+ */
+export function envsFor(
+  app: App,
+  viewer: User | undefined,
+  record: AppRecord,
+): EnvStatus[] {
+  const runtime = runtimes.get(app);
+  if (runtime === undefined) return [];
+  if (record.access === "private") {
+    const repo = getRepoById(app.db, record.repoId);
+    if (repo === undefined || !canEnterApp(app.db, repo, record, viewer, { named: false }))
+      return [];
+  }
+  return runtime.status(record);
+}
 
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
@@ -1274,7 +1298,12 @@ export class AppsRuntime {
               home: base.home,
               hide: base.hide,
               egress: live.manifest.egress ?? [],
-              reach: [this.options.forgeUrl],
+              // A terminal is the app's own client: it reaches the app on
+              // its port, as it would beside it.
+              reach: [
+                this.options.forgeUrl,
+                `http://127.0.0.1:${live.handle.port}`,
+              ],
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,

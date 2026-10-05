@@ -10,16 +10,16 @@
 
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
-import { tellCrew } from "../../actions/crew.ts";
+import { tell } from "../../actions/tell.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
 import { getPull } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { field, readForm } from "../form.ts";
+import { field, readForm, type Form } from "../form.ts";
 import { flashOrJson, flashTo, redirect } from "../layout.ts";
 import { isMode, modeCookie } from "../mode.ts";
 import { changeHref } from "./nouns.ts";
@@ -35,6 +35,45 @@ function mergeWords(error: unknown): string {
   return String(error);
 }
 
+/**
+ * One tell, two doors: the sentence becomes work on `repo`, and the person
+ * lands back on `back` with the one tell's own answer — refused as the
+ * crew's direction says, or for an unverified email, or told.
+ */
+async function tellFrom(
+  ctx: Ctx,
+  repo: Repo,
+  form: Form,
+  back: string,
+): Promise<Response> {
+  const text = field(form, "text").trim();
+  if (text === "")
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message: "Say something first.",
+    });
+  const told = await tell(ctx.app, ctx.auth.user, repo, text);
+  if (!told.ok)
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message:
+        told.error === "forbidden"
+          ? DIRECTION_NOTE
+          : told.error === "unverified"
+            ? "Verify your email first."
+            : "That could not be told.",
+    });
+  const { routed } = told.value;
+  if (routed === undefined)
+    return flashTo(ctx, back, {
+      message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
+    });
+  const builder = routed.builder;
+  return flashTo(ctx, back, {
+    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
+  });
+}
+
 /** POST /:owner/:name/tell  { text } — a sentence becomes work. */
 export async function tellSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
@@ -42,32 +81,25 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const base = repoBase(repo);
-  const text = field(form, "text").trim();
-  if (text === "")
-    return flashTo(ctx, base, {
-      tone: "danger",
-      message: "Say something first.",
-    });
-  const told = await tellCrew(ctx.app, ctx.auth.user, repo, text);
-  if (!told.ok)
-    return flashTo(ctx, base, {
-      tone: "danger",
-      message:
-        told.error === "forbidden"
-          ? DIRECTION_NOTE
-          : "That could not be told.",
-    });
-  const { routed } = told.value;
-  if (routed === undefined)
-    return flashTo(ctx, base, {
-      message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
-    });
-  const builder = routed.builder;
-  return flashTo(ctx, base, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
-  });
+  return tellFrom(ctx, repo, form, repoBase(repo));
 }
+
+/**
+ * POST /tell  { app, text } — the home's composer without a script: the
+ * same tell, to the app the form names (`owner/name`), and back to the home.
+ * A repository the viewer cannot read is the answer one that does not exist
+ * gives.
+ */
+export async function composerSubmit(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const [owner = "", name = "", ...extra] = field(form, "app").split("/");
+  const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
+  return tellFrom(ctx, repo, form, "/");
+}
+
 
 /** POST /:owner/:name/pulls/:number/ship — land a green change. */
 export async function shipSubmit(ctx: Ctx): Promise<Response> {

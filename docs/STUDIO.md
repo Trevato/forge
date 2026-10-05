@@ -437,6 +437,20 @@ account stay one click away, with the forge's ssh command beneath them when
 the terminal is on. A forge with nothing public up yet shows the same door
 with an empty shelf that says so.
 
+## Explore
+
+`/explore` is every app and person the viewer can see, ranked by the front
+page's signals (`core/front.ts`: forks by people, pulls merged this month,
+hours in use, how lately it shipped) with the numbers on each row, and — for
+a site admin — the forges this one spawned. One line narrows it and stays in
+the URL: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`,
+and words to match. An agent's working fork is how the crew builds, not a
+find, and is left out; a private app's hours are told only to those who may
+enter it. Every app row offers **Make it yours** (a fork) to someone signed
+in. The same rows: `GET /api/v1/explore?q=…` and the MCP tool `explore`
+(`actions/explore.ts`). It is in the account menu and the palette, and the
+front page's "All public apps" leads here.
+
 ## The board
 
 `/board` is what is happening now across your apps, as a wall for a second monitor
@@ -444,7 +458,9 @@ with an empty shelf that says so.
 theme, four regions that fill the window. **Working now** is one card per
 run in flight — who, which app, what it is on, why, how long, what it has
 cost — ordered by when it started. **Landed** is the last dozen shipped
-changes across your apps, each with the app's production look on a phone.
+changes across your apps, each with the app's production look on a phone;
+for an app with pillars it leads with what merged in the last 7 days by
+pillar, each a link to that pillar's issues (`docs/PLANNING.md`).
 **Decided** is the last dozen entries in the decision ledger: which issue
 next, ship or show, try again — the answer, how sure the decider was, and
 what came of it. **Today** is one row per app that runs on its own: spend

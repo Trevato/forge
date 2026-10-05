@@ -1318,4 +1318,52 @@ export const migrations: readonly string[] = [
   CREATE UNIQUE INDEX IF NOT EXISTS pull_hold_standing
     ON pull_hold(issue_id) WHERE released_at IS NULL;
   `,
+  // 56 — what an account has spent, in a counter that only grows (#601's
+  // review): summing its runs let a deleted repository (its runs cascade)
+  // refill a budget. A trigger adds every increase in a run's cost to its
+  // account, so no route through the run table can take spend back; the
+  // counter starts from the runs there are today. A run that moves to
+  // another account brings its whole cost along: counted twice, never lost.
+  `
+  ALTER TABLE subscription ADD COLUMN spent_usd REAL NOT NULL DEFAULT 0;
+  UPDATE subscription SET spent_usd = (
+    SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = subscription.id
+  );
+  CREATE TRIGGER IF NOT EXISTS run_spend_to_subscription
+  AFTER UPDATE OF cost_usd, subscription_id ON run
+  WHEN NEW.subscription_id IS NOT NULL
+  BEGIN
+    UPDATE subscription SET spent_usd = spent_usd + (
+      CASE WHEN OLD.subscription_id IS NEW.subscription_id
+           THEN MAX(0, NEW.cost_usd - OLD.cost_usd)
+           ELSE NEW.cost_usd END)
+    WHERE id = NEW.subscription_id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS run_spend_on_insert
+  AFTER INSERT ON run
+  WHEN NEW.subscription_id IS NOT NULL AND NEW.cost_usd > 0
+  BEGIN
+    UPDATE subscription SET spent_usd = spent_usd + NEW.cost_usd WHERE id = NEW.subscription_id;
+  END;
+  `,
+  // 57 — spend reported from outside (`core/outside_spend.ts`): what a
+  // session the forge did not run (a build team, a person's own assistant)
+  // says a change cost it. Shown beside the crew's own runs, never added to
+  // them, and never read by a limit: it is a claim, not a measurement.
+  `
+  CREATE TABLE outside_spend (
+    id          TEXT PRIMARY KEY,
+    repo_id     TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    issue_id    TEXT REFERENCES issue(id) ON DELETE SET NULL,
+    reporter_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    who         TEXT NOT NULL,
+    model       TEXT NOT NULL DEFAULT '',
+    tokens_in   INTEGER NOT NULL DEFAULT 0,
+    tokens_out  INTEGER NOT NULL DEFAULT 0,
+    usd         REAL NOT NULL DEFAULT 0,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX outside_spend_repo ON outside_spend(repo_id, created_at);
+  `,
 ];

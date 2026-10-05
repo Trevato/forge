@@ -15,6 +15,17 @@ export const MAX_SUBSCRIPTIONS = 200;
 export const MAX_BRIEF_CHARS = 20_000;
 /** The spawner's words for what the child is for: its direction. */
 export const MAX_DIRECTION_CHARS = 2000;
+/** The whole-life budget on a child's model key, in dollars. */
+export const MIN_BUDGET_USD = 1;
+/**
+ * What a key's budget is, said plainly wherever a key is handed over: the
+ * forge enforces it for a child it hosts (whose admin has no shell or
+ * database), and only the provider's own limit binds a child on a machine
+ * its owner controls.
+ */
+export const KEY_BUDGET_NOTE =
+  "The budget holds while this forge hosts the child: its admin cannot raise it. On a machine the child's owner controls, only a spend limit set at the provider binds the key, so use a key from a workspace with its own spend limit.";
+export const MAX_BUDGET_USD = 1000;
 
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -42,6 +53,11 @@ export interface SpawnInput {
   readonly direction?: unknown;
   /** Whether the spawner keeps owner access once the child is claimed; false unless true. */
   readonly keepAccess?: unknown;
+  /**
+   * The whole-life budget on the child's model key, in dollars, when one is given.
+   * The key itself never enters the plan: only that there is one, capped.
+   */
+  readonly budgetUsd?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -68,6 +84,8 @@ export interface SpawnPlan {
   readonly direction: string;
   /** Whether the spawner stays an owner after the claim; the claim page says which. */
   readonly keepAccess: boolean;
+  /** The child's model key's whole-life budget in dollars; null when it gets no key. */
+  readonly budgetUsd: number | null;
 }
 
 export interface DryRun {
@@ -158,7 +176,15 @@ export function planSpawn(
     return refuse("keepAccess", "must be true or false");
   const keepAccess = input.keepAccess === true;
 
-  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess });
+  let budgetUsd: number | null = null;
+  if (input.budgetUsd !== undefined && input.budgetUsd !== null) {
+    const cap = input.budgetUsd;
+    if (typeof cap !== "number" || !Number.isFinite(cap) || cap < MIN_BUDGET_USD || cap > MAX_BUDGET_USD)
+      return refuse("budgetUsd", `a budget from $${MIN_BUDGET_USD} to $${MAX_BUDGET_USD}, for the key's whole life`);
+    budgetUsd = Math.round(cap * 100) / 100;
+  }
+
+  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess, budgetUsd });
 }
 
 const enc = new TextEncoder();
@@ -171,6 +197,9 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
     ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
+    ...(plan.budgetUsd === null
+      ? []
+      : [`its own model key (API-billed, sealed, never shown again), with a $${plan.budgetUsd} budget it cannot raise`]),
   ];
   const bytes =
     plan.apps.reduce((n, a) => n + a.bytes, 0) +
