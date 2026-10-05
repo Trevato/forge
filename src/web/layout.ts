@@ -22,6 +22,7 @@ import {
   type ThemeName,
 } from "../design/themes.ts";
 import { stylesheetAsset } from "./asset.ts";
+import { linkHeader, pageLinks } from "./standards.ts";
 import { shellJs } from "./client.ts";
 import {
   clearFlashCookie,
@@ -507,6 +508,7 @@ export function page(options: PageOptions, status = 200): Response {
   const { ctx } = options;
   const theme = ctx.theme ?? options.theme;
   const flash = readFlash(ctx.request);
+  const links = pageLinks(ctx);
   const scriptJs = options.scriptJs
     ? `${shellJs}\n${options.scriptJs}`
     : shellJs;
@@ -560,6 +562,15 @@ export function page(options: PageOptions, status = 200): Response {
         />
         <meta name="twitter:card" content="summary" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        ${links.map(
+          (l) =>
+            html`<link
+              rel="${l.rel}"
+              href="${l.href}"
+              ${l.title === undefined ? null : html`title="${l.title}"`}
+              ${l.type === undefined ? null : html`type="${l.type}"`}
+            />`,
+        )}
         <link rel="apple-touch-icon" href="/icons/forge-180.png" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="forge" />
@@ -625,6 +636,7 @@ export function page(options: PageOptions, status = 200): Response {
     // Markup is revalidated every time; only the hashed assets it names are
     // cached, so no cache can pair new HTML with an old stylesheet.
     "cache-control": "no-cache",
+    link: linkHeader(links),
   });
   // A flash is shown exactly once: rendering it is also what clears it.
   if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
