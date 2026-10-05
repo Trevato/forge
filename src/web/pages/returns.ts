@@ -1,6 +1,6 @@
 /**
  * `/board/returns`: the board's tokens line, opened — what the window's
- * dollars bought. Spent and landed first, then what landed nothing and why,
+ * dollars bought. Spent and landed first, then what did not land and why,
  * then the issues that cost the most with what came of each. Owner facts
  * only (`actions/returns.ts`); `?apps=` narrows as on the board, `?days=`
  * widens the window.
@@ -70,7 +70,7 @@ export function returnsPage(ctx: Ctx): Response {
         ? null
         : html`${usd(r.onLanded.perChange.median)} a landed change (median),
             ${usd(r.onLanded.usd)} in all ·`}
-      ${usd(nothing.usd)} landed nothing
+      ${usd(nothing.closed.usd)} closed with nothing · ${usd(nothing.open.usd)} still open
     </p>
     <div class="stack">
       ${listCard(
@@ -88,10 +88,11 @@ export function returnsPage(ctx: Ctx): Response {
       ${listCard(
         [
           line("Runs that failed", nothing.failed),
-          ...nothing.topFailures.map((f) => line(f.reason, f)),
+          // Reasons are a part of "Runs that failed", not beside it: said so.
+          ...nothing.topFailures.map((f) => line(`of which: ${f.reason}`, f)),
           line("Runs cancelled", nothing.cancelled),
         ],
-        { head: html`<h2>What landed nothing, and why</h2>` },
+        { head: html`<h2>What did not land, and why</h2>` },
       )}
       ${listCard(
         r.costliest.map((c) => {

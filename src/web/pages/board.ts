@@ -365,8 +365,11 @@ export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(
 
 /**
  * The week's spend against what it landed, in one line, owner facts only:
- * dollars spent, changes landed, what a landed change cost, and what landed
- * nothing — one tap to the breakdown (`/board/returns`). Absent when the
+ * dollars spent, changes landed, what a landed change cost, and what did
+ * not land, split in two: closed with nothing merged (spent, and gone) and
+ * still open (not yet an answer) — one tap to the breakdown
+ * (`/board/returns`). Where "Spend by credential…" says where the money
+ * went, this says what it bought. Absent when the
  * viewer holds no owner facts here or nothing ran.
  */
 function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
@@ -391,7 +394,8 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
     ${r.onLanded.perChange.changes === 0
       ? null
       : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
-    · <b>${usd(r.landedNothing.usd)}</b> landed nothing</a
+    · <b>${usd(r.landedNothing.closed.usd)}</b> closed with nothing
+    · <b>${usd(r.landedNothing.open.usd)}</b> still open</a
   >`;
 }
 

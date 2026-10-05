@@ -301,12 +301,17 @@ describe("what the tokens bought", () => {
       ?.replace(/\s+/g, " ");
     expect(line).toContain("<b>$4.00</b> → <b>1</b> landed");
     expect(line).toContain("<b>$1.50</b> a landed change");
-    expect(line).toContain("<b>$2.50</b> landed nothing");
+    // What did not land, split: closed with nothing is spent and gone; still
+    // open is not an answer yet, and is never counted as waste.
+    expect(line).toContain("<b>$2.40</b> closed with nothing");
+    expect(line).toContain("<b>$0.10</b> still open");
+    expect(line).not.toContain("landed nothing");
     const page = (
       await (await get("/board/returns", { cookie: aliceCookie })).text()
     ).replace(/\s+/g, " ");
     expect(page).toContain("What the tokens bought, 7 days");
-    expect(page).toContain("declined: I had no feedback to act on");
+    expect(page).toContain("of which: declined: I had no feedback to act on");
+    expect(page).toContain("$2.40 closed with nothing · $0.10 still open");
     expect(page).toContain("closed with nothing merged");
     const api = (await (
       await get("/api/v1/returns?repo=alice/mill", { token: aliceRw })
@@ -372,5 +377,18 @@ describe("what the tokens bought", () => {
     ).replace(/\s+/g, " ");
     expect(page).toContain("Reported from outside");
     expect(page).toContain("the build team");
+  });
+  test("an open change with nothing merged is still open, never closed with nothing", async () => {
+    const opened = openIssue(app, alice, repo, { title: "Open, with a pull" });
+    if (!opened.ok) throw new Error(String(opened.error));
+    run(opened.value, "ok", 0.7, { branch: "bot/9-open" });
+    await pullFrom(opened.value, "bot/9-open");
+    const now = new Date(Date.now() + 1000);
+    const r = tokenReturns(app.db, [repo.id], {
+      since: new Date(now.getTime() - 7 * 86_400_000).toISOString(),
+      until: now.toISOString(),
+    });
+    expect(r.landedNothing.open).toEqual({ runs: 2, usd: 0.8 });
+    expect(r.landedNothing.closed).toEqual({ runs: 2, usd: 2.4 });
   });
 });
