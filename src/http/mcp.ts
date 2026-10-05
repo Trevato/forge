@@ -605,6 +605,12 @@ const TOOLS: readonly Tool[] = [
     writes: true,
     dryByDefault: true,
     async run(ctx, user, args) {
+      // A secret never passes through an agent's conversation.
+      if (args["modelKey"] !== undefined)
+        return bad(
+          "invalid",
+          "a model key never travels through an agent: send it with POST /api/v1/forges, or add it on the child's Subscriptions page",
+        );
       const door = await spawnDoor(ctx, user, args);
       if (door.status >= 400)
         return bad(String(door.body["error"]), String(door.body["message"]));

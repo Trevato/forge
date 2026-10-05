@@ -8,6 +8,9 @@
 import type { App } from "../app.ts";
 
 export function sshCommand(app: App, login?: string): string | undefined {
+  // Hosted by another forge, this forge's own terminal is reached the way
+  // its host said, word for word; it has no listener of its own.
+  if (login === undefined && app.config.appSsh !== undefined) return app.config.appSsh;
   const port = app.config.sshPort;
   if (port === undefined || port <= 0) return undefined;
   const host =
