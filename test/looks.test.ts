@@ -24,7 +24,8 @@ import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
-import { looksForEnv, type Look } from "../src/core/looks.ts";
+import { looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
+import { encodePng } from "../src/design/image/png.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
@@ -48,6 +49,11 @@ const PASSWORD = "a-good-passphrase";
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
+);
+
+/** A blank page at desktop's size, as a browser would picture one. */
+const DESKTOP_PNG = Buffer.from(
+  encodePng(1280, 800, new Uint8Array(1280 * 800 * 4).fill(255)),
 );
 
 /** A PNG's width and height, from its IHDR. */
@@ -75,7 +81,7 @@ describe("the look", () => {
   const fake: Capture = async (input) => {
     calls.push(input);
     if (mode === "fail") return err("the browser fell over");
-    writeFileSync(input.out, PNG);
+    writeFileSync(input.out, input.width === 1280 ? DESKTOP_PNG : PNG);
     return ok();
   };
 
@@ -183,7 +189,7 @@ describe("the look", () => {
   let first = "";
   let second = "";
 
-  test("a green deploy is pictured at all three widths, as the owner, once per head; a newer head replaces", async () => {
+  test("a green deploy is pictured at all three widths, once per head — phone and desktop as the owner, the thumb as a stranger, reduced from the desktop page; a newer head replaces", async () => {
     const production = await settled((r) => r.env === "production");
     expect(production.state).toBe("ok");
     const rows = await pictured("production", production.commitOid);
@@ -209,8 +215,24 @@ describe("the look", () => {
     expect(readdirSync(join(dataDir, "looks", ".taking"))).toEqual([]);
     const phone = calls.find((c) => c.width === 390)!;
     expect(phone.height).toBe(844);
-    expect(calls.find((c) => c.width === 1280)?.height).toBe(800);
-    expect(calls.find((c) => c.width === 200)?.height).toBe(125);
+    // Desktop and thumb are both taken in desktop's window: a browser does
+    // not lay a page out at a tile's size.
+    const wide = calls.filter((c) => c.width === 1280);
+    expect(wide.map((c) => c.height)).toEqual([800, 800]);
+    const thumb = rows.find((l) => l.kind === "thumb")!;
+    expect(pngSize(join(dataDir, thumb.path))).toEqual([640, 400]);
+    const desktop = rows.find((l) => l.kind === "desktop")!;
+    expect(pngSize(join(dataDir, desktop.path))).toEqual([1280, 800]);
+    // The thumb's grant names nobody: the tile a stranger is shown is the
+    // page as a stranger sees it.
+    const thumbCall = calls.find((c) => c.out.endsWith("-thumb.png"))!;
+    const thumbGrant = readGrant(
+      dataDir,
+      new URL(thumbCall.url).searchParams.get("t") ?? "",
+      { app: record, env: "production" },
+    );
+    expect(thumbGrant).toBeDefined();
+    expect(thumbGrant?.who).toBeUndefined();
     const url = new URL(phone.url);
     expect(url.host).toBe(`hello.${DOMAIN}:${servers.port}`);
     expect(url.pathname).toBe("/__forge/grant");
@@ -635,6 +657,61 @@ describe("the look", () => {
     );
     expect(page).toContain(`alt="hello #${opened.value.number} on a phone"`);
   }, 120_000);
+
+  test("the sweep pictures a running production missing one: a thumb from before thumbs were the page is retaken as a stranger; one that failed is not retried each sweep", async () => {
+    const status = runtime.envStatus(record, "production")!;
+    expect(status.state).toBe("running");
+    const head = status.commitOid;
+    // Whatever production lacks at its head now (an earlier test dropped
+    // its thumb), the sweep takes.
+    looks.sweep();
+    await looks.idle();
+    const thumbAtHead = (): Look | undefined =>
+      looksForEnv(app.db, record.id, "production").find(
+        (l) => l.kind === "thumb" && l.commitOid === head && l.page === "/",
+      );
+    const thumb = thumbAtHead()!;
+    expect(thumb.error).toBeNull();
+
+    // A thumb taken the old way: a 200×125 corner of the page.
+    writeFileSync(
+      join(dataDir, thumb.path),
+      Buffer.from(encodePng(200, 125, new Uint8Array(200 * 125 * 4))),
+    );
+    const before = calls.length;
+    looks.sweep();
+    await looks.idle();
+    expect(calls).toHaveLength(before + 1);
+    const retaken = calls.at(-1)!;
+    expect(retaken.out.endsWith("-thumb.png")).toBe(true);
+    expect([retaken.width, retaken.height]).toEqual([1280, 800]);
+    expect(
+      readGrant(dataDir, new URL(retaken.url).searchParams.get("t") ?? "", {
+        app: record,
+        env: "production",
+      })?.who,
+    ).toBeUndefined();
+    expect(pngSize(join(dataDir, thumbAtHead()!.path))).toEqual([640, 400]);
+
+    // A whole set: nothing to take.
+    looks.sweep();
+    await looks.idle();
+    expect(calls).toHaveLength(before + 1);
+
+    // A picture that failed at this head had its turn: the sweep leaves
+    // it to the next deploy rather than starting a browser every time.
+    recordLook(app.db, {
+      appId: record.id,
+      env: "production",
+      commitOid: head,
+      kind: "thumb",
+      path: "",
+      error: "the browser fell over",
+    });
+    looks.sweep();
+    await looks.idle();
+    expect(calls).toHaveLength(before + 1);
+  }, 60_000);
 
   test("memory pressure is what the container truly holds, never its page cache", async () => {
     const { cgroupMemoryPressure, memoryPressure } =

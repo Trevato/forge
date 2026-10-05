@@ -1338,7 +1338,7 @@ describe("the studio", () => {
     // A look for each app's production, so the picture route has something
     // real to answer for and refuse.
     const dropLook = (appId: string, env: "production", commit: string) => {
-      const rel = join("looks", appId, `${env}-desktop.png`);
+      const rel = join("looks", appId, `${env}-thumb.png`);
       const abs = join(app.config.dataDir, rel);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, PNG);
@@ -1346,7 +1346,7 @@ describe("the studio", () => {
         appId,
         env,
         commitOid: commit,
-        kind: "desktop",
+        kind: "thumb",
         path: rel,
       });
     };
@@ -1363,7 +1363,7 @@ describe("the studio", () => {
     expect(anon).toContain("beacon");
     expect(anon).toContain("a lighthouse in the fog");
     expect(anon).toContain(
-      `/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      `/looks/production/${seededPublic.value.commitOid}/thumb.png`,
     );
     expect(anon).toContain('href="/signin"');
     expect(anon).toContain('href="/signup"');
@@ -1372,13 +1372,13 @@ describe("the studio", () => {
 
     // The private app's picture 404s for a stranger — asserted, not assumed.
     const privateLook = await fetch(
-      `${base}/alice/notes/looks/production/${"0".repeat(40)}/desktop.png`,
+      `${base}/alice/notes/looks/production/${"0".repeat(40)}/thumb.png`,
       { headers: { cookie: "forge_mode=studio" } },
     );
     expect(privateLook.status).toBe(404);
     // The public one's does not.
     const publicLook = await fetch(
-      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/thumb.png`,
       { headers: { cookie: "forge_mode=studio" } },
     );
     expect(publicLook.status).toBe(200);
@@ -1452,11 +1452,11 @@ describe("the studio", () => {
       );
     expect(tile).toBeDefined();
     expect(tile).toContain(`/looks/production/${commit}/thumb.png`);
-    expect(tile).toContain('width="200"');
-    expect(tile).toContain('height="125"');
+    expect(tile).toContain('width="640"');
+    expect(tile).toContain('height="400"');
   });
 
-  test("the front door's tile still renders at desktop's size for a commit from before thumbs existed (#287)", async () => {
+  test("the front door never shows a stranger the owner's desktop picture: no thumb, no picture", async () => {
     const created = await createRepo(app, alice, {
       name: "oldtile",
       visibility: "public",
@@ -1507,10 +1507,10 @@ describe("the studio", () => {
           `/${created.value.ownerName}/${created.value.name}/looks/`,
         ),
       );
-    expect(tile).toBeDefined();
-    expect(tile).toContain(`/looks/production/${commit}/desktop.png`);
-    expect(tile).toContain('width="1280"');
-    expect(tile).toContain('height="800"');
+    // The desktop picture is taken as the owner; the door's tiles are for
+    // strangers, so without a thumb the tile has no picture at all.
+    expect(tile).toBeUndefined();
+    expect(anon).not.toContain(`/looks/production/${commit}/desktop.png`);
   });
 
   test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
