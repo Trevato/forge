@@ -200,8 +200,9 @@ describe("asks that expire, hold and collapse", () => {
       actorId: null,
     });
     expect(sentence(await get("/asks"))).toBe("All fine");
+    // The merge box is the change's Files step (#628).
     const change = await get(
-      `/${repo.ownerName}/${repo.name}/pulls/${apples.number}`,
+      `/${repo.ownerName}/${repo.name}/pulls/${apples.number}/files`,
     );
     expect(change).toContain(`/pulls/${apples.number}/merge`);
   });
