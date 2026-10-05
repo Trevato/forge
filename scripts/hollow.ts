@@ -5,12 +5,16 @@
  *
  * Two things are hollow, and `audit` names each in one line:
  *
- * - An exported function in `src/actions/` that no surface reaches. Reach
- *   starts at every declaration under `SURFACES` and at each module's own
- *   top-level statements, and follows the names a reached declaration
- *   mentions: to a declaration of the same file, or through an import to
- *   another file's. So an action called only by another action, or through
- *   `src/fleet/`, is reached, and one that only its tests call is not.
+ * - An exported function in `src/actions/` that nothing that runs reaches.
+ *   Reach starts at each module's own top-level statements, which is where
+ *   `src/main.ts`, the CLI and the terminal begin, and follows the names a
+ *   reached declaration mentions: to a declaration of the same file, or
+ *   through an import to another file's. So a route's handler is reached
+ *   through the table that registers it, an MCP tool through the list of
+ *   tools, and an action called only by another action, or through
+ *   `src/fleet/`, through that. One that only its tests call is not
+ *   reached, and neither is one called only from a page function that no
+ *   route names (#739): where the caller sits does not make it run.
  * - A screen no page links to. A screen is a GET route whose path takes no
  *   parameter and whose handler can draw the page (`page`, `web/layout.ts`).
  *   It is linked when its path stands in a string of a module that a
@@ -42,18 +46,6 @@ import { posix } from "node:path";
 import ts from "typescript";
 import { ALLOWED, type Allowed } from "./hollow-allow.ts";
 
-/** Where a person or an agent comes in: routes and MCP tools, pages, the crew's workers, the CLI, the terminal. */
-const SURFACES: readonly string[] = [
-  "src/http/",
-  "src/web/",
-  "src/crew/",
-  "src/cli/",
-  "src/tui/",
-];
-/** "src/http, src/web, src/crew, src/cli or src/tui". */
-const SURFACE_WORDS = SURFACES.map((surface) => surface.slice(0, -1))
-  .join(", ")
-  .replace(/, ([^,]*)$/, " or $1");
 const ACTIONS = "src/actions/";
 /** The function every full page is drawn through. */
 const PAGE = "src/web/layout.ts#page";
@@ -367,17 +359,16 @@ export interface Hollow {
   line: string;
 }
 
-/** Exported functions in `src/actions/` that no surface reaches, as `file#name`. */
+/** Exported functions in `src/actions/` that nothing that runs reaches, as `file#name`. */
 function hollowActions(modules: Modules, edges: Edges): Hollow[] {
+  // What runs: every module's top-level statements, and whatever a module
+  // loads whole.
   const starts: string[] = [];
   for (const [file, mod] of modules) {
     for (const mention of mod.body)
       starts.push(...meant(modules, file, mention));
     for (const target of mod.whole)
       starts.push(...exportedAs(modules, target, "*"));
-    if (SURFACES.some((surface) => file.startsWith(surface)))
-      for (const name of mod.declarations.keys())
-        starts.push(`${file}#${name}`);
   }
   const reached = reach(edges, starts);
   const found: Hollow[] = [];
@@ -390,7 +381,7 @@ function hollowActions(modules: Modules, edges: Edges): Hollow[] {
       const id = `${file}#${name}`;
       found.push({
         id,
-        line: `${id} is exported and nothing under ${SURFACE_WORDS} reaches it: call it from a route, a page or an MCP tool, or list it in ALLOWED (${ALLOW_FILE}) with the issue that owns it`,
+        line: `${id} is exported and nothing that runs reaches it: call it from a route, a routed page or an MCP tool, or list it in ALLOWED (${ALLOW_FILE}) with the issue that owns it`,
       });
     }
   }
