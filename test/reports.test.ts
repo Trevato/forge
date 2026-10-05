@@ -9,10 +9,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { acceptedBody } from "../src/actions/reports.ts";
+import { acceptReport, acceptedBody } from "../src/actions/reports.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { getIssue } from "../src/core/issues.ts";
 import { OUTSIDE_TITLE, outsideTitle } from "../src/core/reports.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -449,6 +450,46 @@ describe("reports from outside", () => {
       "From outside: The menu covers the board at 390 px",
     );
     expect(issue.labels.map((l: any) => l.name)).toEqual(["outside"]);
+  });
+
+  test("if the label cannot be put on, the report still has its issue's number and the outbox still heard", async () => {
+    await report("alice/game", { title: "the label will fail", body: "b" });
+    const id = (await waiting("the label will fail"))!;
+    const events = (): number =>
+      (
+        app.db
+          .query(
+            "SELECT count(*) AS n FROM event WHERE kind = 'report.accepted' AND payload LIKE ?1",
+          )
+          .get(`%${id}%`) as { n: number }
+      ).n;
+    expect(events()).toBe(0);
+    // Labelling fails after the issue has opened.
+    app.db.exec(
+      "CREATE TRIGGER refuse_label BEFORE INSERT ON issue_label BEGIN SELECT RAISE(ABORT, 'no labels today'); END",
+    );
+    try {
+      await expect(acceptReport(app, alice, game, id)).rejects.toThrow();
+    } finally {
+      app.db.exec("DROP TRIGGER refuse_label");
+    }
+    const row = app.db
+      .query("SELECT state, issue_number FROM report WHERE id = ?1")
+      .get(id) as { state: string; issue_number: number | null };
+    expect(row.state).toBe("accepted");
+    expect(row.issue_number).not.toBeNull();
+    expect(getIssue(app.db, game.id, row.issue_number!)?.title).toBe(
+      "From outside: the label will fail",
+    );
+    expect(events()).toBe(1);
+    // It is decided: it no longer waits, and a second try opens no second issue.
+    expect(await waiting("the label will fail")).toBeUndefined();
+    const issues = count("issue");
+    expect(await acceptReport(app, alice, game, id)).toEqual({
+      ok: false,
+      error: "decided",
+    });
+    expect(count("issue")).toBe(issues);
   });
 
   test("a hostile report renders no link and no image once accepted", () => {
