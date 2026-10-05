@@ -19,6 +19,7 @@ import {
 } from "../core/tokens.ts";
 import {
   changePassword as rehash,
+  cleanDisplayName,
   createUser,
   updateProfile as writeProfile,
   verifyPassword,
@@ -103,10 +104,15 @@ export function updateProfile(
   if (!user.ok) return user;
   // A display name is read beside every comment: nobody else may wear the
   // crew's, the owner's or the forge's.
+  // Judged as it will be stored (\`cleanDisplayName\`), not as it was typed.
+  const displayName =
+    patch.displayName === undefined
+      ? undefined
+      : cleanDisplayName(patch.displayName);
   if (
-    patch.displayName !== undefined &&
-    patch.displayName.trim() !== user.value.displayName &&
-    reservedName(app.db, patch.displayName, user.value.id) !== undefined
+    displayName !== undefined &&
+    displayName !== user.value.displayName &&
+    reservedName(app.db, displayName, user.value.id) !== undefined
   )
     return err("display_name_reserved");
   const updated = writeProfile(app.db, user.value.id, patch);

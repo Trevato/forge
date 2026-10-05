@@ -181,6 +181,50 @@ describe("reserved names", () => {
     );
   });
 
+  test("look-alike letters from other scripts and accents fold to Latin", () => {
+    const ada = getUserByName(app.db, "ada")!;
+    for (const displayName of [
+      "trеvato", // Cyrillic е
+      "trevаto", // Cyrillic а
+      "Ѕcout", // Cyrillic Ѕ
+      "Sсout", // Cyrillic с
+      "τorque", // Greek τ
+      "Scουt", // Greek ο and υ
+      "trevató", // an accent
+      "tre\u0301vato", // a combining mark
+      "Ꮪcout", // Cherokee Ꮪ
+      "ＳＣＯＵＴ", // fullwidth
+    ]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(false);
+      if (!patched.ok) expect(patched.error).toBe("display_name_reserved");
+    }
+  });
+
+  test("a name mixing Latin with an unknown script is refused; one script is fine", () => {
+    const ada = getUserByName(app.db, "ada")!;
+    // Not in the fold table, so it cannot be judged: refused, not dropped.
+    expect(updateProfile(app, ada, { displayName: "scoutж" }).ok).toBe(false);
+    expect(updateProfile(app, ada, { displayName: "Sc中out" }).ok).toBe(false);
+    expect(updateProfile(app, ada, { displayName: "张伟" }).ok).toBe(true);
+    expect(updateProfile(app, ada, { displayName: "José" }).ok).toBe(true);
+  });
+
+  test("a display name is judged as it is stored, after the cut", () => {
+    const ada = getUserByName(app.db, "ada")!;
+    const padded = `trevato${" ".repeat(75)}x`;
+    const patched = updateProfile(app, ada, { displayName: padded });
+    expect(patched.ok).toBe(false);
+    expect(getUserByName(app.db, "ada")?.displayName).not.toBe("trevato");
+  });
+
+  test("the forge's own nouns are reserved too", async () => {
+    for (const name of ["users", "orgs", "repos", "git", "ssh", "status", "docs", "open-platform", "asked"]) {
+      const res = await signup(name);
+      expect(res.status).toBe(422);
+    }
+  });
+
   test("the owner may keep their own name as a display name", () => {
     const owner = getUserByName(app.db, "trevato")!;
     expect(updateProfile(app, owner, { displayName: "Trevato" }).ok).toBe(true);

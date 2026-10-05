@@ -174,6 +174,14 @@ export interface ProfilePatch {
   commitEmail?: CommitEmail;
 }
 
+/**
+ * A display name as it is stored: trimmed, cut to its limit, and trimmed
+ * again — so a name padded past the cut is judged by what is kept.
+ */
+export function cleanDisplayName(raw: string): string {
+  return raw.trim().slice(0, MAX_DISPLAY_NAME).trim();
+}
+
 export type UpdateProfileError =
   | "email_taken"
   | "invalid_email"
@@ -197,9 +205,7 @@ export function updateProfile(
       .get(email, userId);
     if (taken) return err("email_taken");
   }
-  const displayName = (patch.displayName ?? current.displayName)
-    .trim()
-    .slice(0, MAX_DISPLAY_NAME);
+  const displayName = cleanDisplayName(patch.displayName ?? current.displayName);
   const commitEmail = patch.commitEmail ?? current.commitEmail;
   if (commitEmail !== "noreply" && commitEmail !== "account")
     return err("invalid_commit_email");
