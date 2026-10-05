@@ -73,6 +73,10 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+} from "../actions/app_members.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
@@ -706,6 +710,44 @@ const TOOLS: readonly Tool[] = [
       if (spec !== null && repos.length === 0)
         return bad("not_found", "no such app or repository you can write (owner/name)");
       return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
+    },
+  },
+  {
+    name: "app_members",
+    description:
+      "The people a private app names: they may enter the app and its previews, and nothing else (no code, no crew, no settings, no terminal). Without `members`, the list. With `members` (usernames; the whole list), the change it would make; with dryRun false, made — by a person who can write the repository, never an agent, with an admin-scope token. Removing a name ends that person's way in at once. The same as the app's settings page and /api/v1/repos/:owner/:name/app/members.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const members = args["members"];
+      const answer = (
+        result: ReturnType<typeof readAppMembers> | ReturnType<typeof setAppMembersThrough>,
+      ): Answer =>
+        result.ok
+          ? good(result.value)
+          : result.error.kind === "invalid"
+            ? bad("invalid", result.error.message)
+            : result.error.kind === "forbidden"
+              ? bad("forbidden", "the people an app names are its writers' to choose")
+              : bad("not_found", "no such app or repository (owner/name)");
+      if (members === undefined) return answer(readAppMembers(ctx.app, user, repo));
+      if (!Array.isArray(members) || !members.every((m) => typeof m === "string"))
+        return bad("invalid", "members is a list of usernames");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing who may enter an app needs an admin-scope token");
+      return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
     },
   },
   {

@@ -23,7 +23,7 @@ import {
   lookVersion,
 } from "../../core/looks.ts";
 import type { Pull } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canEnterApp, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
 import { keepLook } from "../../looks/service.ts";
@@ -107,7 +107,9 @@ export function mayFetchLook(
   const user = ctx.auth.user;
   if (canSeeOwnerFacts(ctx.app.db, repo, user)) return true;
   if (look.kind !== "thumb") return false;
-  if (record.access === "private" && user === undefined) return false;
+  // A private app's thumb is for whoever may enter it (#620, #752): a
+  // person it names sees it; a reader who is not named does not.
+  if (!canEnterApp(ctx.app.db, repo, record, user)) return false;
   return keepLook(ctx.app.config.dataDir, look);
 }
 
