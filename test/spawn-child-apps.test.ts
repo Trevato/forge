@@ -66,7 +66,8 @@ describe("a spawned child's apps", () => {
       ],
       ["recipes", [{ path: "README.md", content: "# recipes\n" }]],
     ] as const) {
-      const repo = await createRepo(parent, alice, { name });
+      // Public: so a stranger can open the app page, and must not see owner facts.
+      const repo = await createRepo(parent, alice, { name, visibility: "public" });
       if (!repo.ok) throw new Error("repo");
       const c = await commitFiles(repoDir(parent.reposRoot, "alice", name), {
         branch: "main",
@@ -177,6 +178,43 @@ describe("a spawned child's apps", () => {
       await fetch(`${servers.url}/marias/bakery`, { headers: { cookie } })
     ).text();
     expect(appPage).toContain("The crew has no model key yet");
+  });
+
+  test("on the app page the key note is an owner fact: not for a stranger or a plain reader", async () => {
+    const anonymous = await (await fetch(`${servers.url}/marias/bakery`)).text();
+    expect(anonymous).toContain("bakery");
+    expect(anonymous).not.toContain("The crew has no model key yet");
+    const reader = await createUser(child.db, {
+      username: "reader",
+      email: "reader@x.test",
+      password: "a-long-reader-passphrase",
+    });
+    if (!reader.ok) throw new Error("reader");
+    const { createSession } = await import("../src/core/sessions.ts");
+    const session = createSession(child.db, reader.value.id);
+    const asReader = await (
+      await fetch(`${servers.url}/marias/bakery`, {
+        headers: { cookie: `forge_session=${session.token}` },
+      })
+    ).text();
+    expect(asReader).toContain("bakery");
+    expect(asReader).not.toContain("The crew has no model key yet");
+  });
+
+  test("first boot registers apps as the founder, an account with no verified email", () => {
+    // The founder is the spawner's name only: a placeholder address, no
+    // password, and no email check of any kind. Registering the apps at
+    // first boot must not depend on a check it can never pass (#710).
+    const founder = getUserByName(child.db, "alice")!;
+    expect(founder.email.endsWith("@spawn.forge.invalid")).toBe(true);
+    const checks = child.db
+      .query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'email_check'")
+      .get();
+    if (checks !== null)
+      expect(
+        child.db.query("SELECT COUNT(*) AS n FROM email_check WHERE user_id = ?1").get(founder.id),
+      ).toEqual({ n: 0 });
+    expect(getAppByRepo(child.db, getRepo(child.db, "marias", "bakery")!.id)).toBeDefined();
   });
 
   test("the MCP `apps` tool lists the child's app", async () => {

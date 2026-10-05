@@ -432,7 +432,7 @@ export async function studioApp(
     })}
     ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
-    ${await policyLine(ctx, repo, record)} ${crewKeyNote(ctx)}
+    ${await policyLine(ctx, repo, record)} ${ownerFacts ? crewKeyNote(ctx) : null}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}
