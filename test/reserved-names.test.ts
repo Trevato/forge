@@ -69,28 +69,34 @@ describe("reserved names", () => {
     expect(skeleton("ada")).not.toBe(skeleton("admin"));
   });
 
-  test("signup refuses an agent's name and its look-alikes", async () => {
-    for (const name of [
-      "scout",
-      "Scout",
-      "sc0ut",
-      "s-cout",
-      "torque",
-      "T0RQUE",
-    ]) {
+  test("signup refuses an agent's name (taken) and its look-alikes (reserved)", async () => {
+    // The name itself belongs to the agent, so it is taken; a look-alike of
+    // it is no one's, so it is reserved.
+    for (const [name, error] of [
+      ["scout", "username_taken"],
+      ["Scout", "username_taken"],
+      ["sc0ut", "username_reserved"],
+      ["s-cout", "username_reserved"],
+      ["torque", "username_taken"],
+      ["T0RQUE", "username_reserved"],
+    ] as const) {
       const res = await signup(name);
       expect(res.status).toBe(422);
-      expect(await res.json()).toEqual({ error: "username_reserved" });
+      expect(await res.json()).toEqual({ error });
       // No person account was made: the name still answers only to the agent.
       expect(getUserByName(app.db, name)?.kind ?? "none").not.toBe("user");
     }
   });
 
-  test("signup refuses the owner's name and its look-alikes", async () => {
-    for (const name of ["Trevato", "trevat0", "tre-vato"]) {
+  test("signup refuses the owner's name (taken) and its look-alikes (reserved)", async () => {
+    for (const [name, error] of [
+      ["Trevato", "username_taken"],
+      ["trevat0", "username_reserved"],
+      ["tre-vato", "username_reserved"],
+    ] as const) {
       const res = await signup(name);
       expect(res.status).toBe(422);
-      expect(await res.json()).toEqual({ error: "username_reserved" });
+      expect(await res.json()).toEqual({ error });
     }
   });
 
@@ -154,10 +160,15 @@ describe("reserved names", () => {
 
   test("an organization cannot take a reserved name", () => {
     const ada = getUserByName(app.db, "ada")!;
-    for (const name of ["scout", "trevat0", "security", "settings"]) {
+    for (const [name, error] of [
+      ["scout", "name_taken"],
+      ["trevat0", "name_reserved"],
+      ["security", "name_reserved"],
+      ["settings", "name_reserved"],
+    ] as const) {
       const made = createOrg(app, ada, name);
       expect(made.ok).toBe(false);
-      if (!made.ok) expect(made.error).toBe("name_reserved");
+      if (!made.ok) expect(made.error).toBe(error);
     }
     expect(createOrg(app, ada, "ada-labs").ok).toBe(true);
   });
