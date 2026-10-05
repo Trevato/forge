@@ -68,7 +68,7 @@ describe("branches on a native repo", () => {
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password, name: scope, scope }),
+        body: JSON.stringify({ adminConfirm: true, username, password, name: scope, scope }),
       }),
     );
     return made.token;
@@ -85,7 +85,7 @@ describe("branches on a native repo", () => {
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify({ adminConfirm: true,
           username: "alice",
           password: "alice-branch-secret",
           name: "a",

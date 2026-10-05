@@ -69,7 +69,7 @@ describe("review comments on diff lines", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "rev",
         password: "review-me-please",
         name: "cli",
@@ -177,7 +177,7 @@ describe("review comments on diff lines", () => {
     const roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "rev",
         password: "review-me-please",
         name: "ro",

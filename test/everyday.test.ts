@@ -243,4 +243,33 @@ describe("the everyday account", () => {
     expect(said).toContain("root-me, their everyday account");
     expect(await init(kimToken)).not.toContain("acts as admin");
   });
+
+  test("with the password too, an admin's token needs adminConfirm; anyone else's does not", async () => {
+    const mint = (username: string, extra: Record<string, unknown> = {}) =>
+      fetch(url("/api/v1/tokens"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username, password: PASSWORD, name: "cli", scope: "ro", ...extra }),
+      });
+    const refused = await mint("root");
+    expect(refused.status).toBe(422);
+    expect(await refused.text()).toContain("adminConfirm");
+    expect((await mint("root", { adminConfirm: true })).status).toBe(201);
+    expect((await mint("kim")).status).toBe(201);
+  });
+
+  test("the terminal's New token prompt asks an admin for admin-ok, and no one else", async () => {
+    const { readTokenPrompt } = await import("../src/tui/screens/account.ts");
+    expect(readTokenPrompt("ci rw", true)).toEqual({ error: expect.stringContaining("admin-ok") });
+    expect(readTokenPrompt("ci rw admin-ok", true)).toEqual({ name: "ci", scope: "rw" });
+    expect(readTokenPrompt("ci admin-ok", true)).toEqual({ name: "ci", scope: "ro" });
+    expect(readTokenPrompt("ci rw", false)).toEqual({ name: "ci", scope: "rw" });
+    expect(readTokenPrompt("", false)).toEqual({ error: "a name is required" });
+  });
+
+  test("an everyday account may not take a name the forge reserves", async () => {
+    const boss = await signIn("boss");
+    await post(boss, "/settings/everyday", { username: "settings", email: "s@x.test", password: PASSWORD });
+    expect(getUserByName(app.db, "settings")).toBeUndefined();
+  });
 });

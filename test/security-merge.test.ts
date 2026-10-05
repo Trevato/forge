@@ -70,7 +70,7 @@ describe("security: read-only token scope bypass on web mutation routes", () => 
       headers: {
         "content-type": "application/json",
       },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "alice",
         password: "password12345",
         name: "rw",
@@ -92,7 +92,7 @@ describe("security: read-only token scope bypass on web mutation routes", () => 
     roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ name: "ro", scope: "ro" }),
+      body: JSON.stringify({ adminConfirm: true, name: "ro", scope: "ro" }),
     })
       .then((r) => r.json())
       .then((j) => (j as { token: string }).token);
@@ -275,7 +275,7 @@ describe("merge correctness (clean results, recorded for regression)", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "bob",
         password: "merge-test-pass",
         name: "cli",

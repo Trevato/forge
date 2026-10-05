@@ -166,7 +166,7 @@ describe("onboarding: a person with just a login", () => {
     const roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "nora",
         password: "nora-login-secret",
         name: "ro",

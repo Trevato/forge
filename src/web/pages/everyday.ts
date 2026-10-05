@@ -15,6 +15,7 @@ import {
   keepAdmin,
   linkEveryday,
 } from "../../core/everyday.ts";
+import { reservedName } from "../../core/reserved.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -129,6 +130,9 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
     flashTo(ctx, "/", { tone: "danger", message });
   if (!USERNAME.test(username))
     return say("Usernames are letters, digits, dots, dashes.");
+  // The same names a sign-up may not take: a crew member's, a page's.
+  if (reservedName(ctx.app.db, username) !== undefined)
+    return say("That name is taken by the forge itself; pick another.");
   if (password.length < MIN_PASSWORD)
     return say("Passwords need at least 10 characters.");
   const made = await createUser(ctx.app.db, { username, email, password });

@@ -41,6 +41,28 @@ import {
 
 const TABS = ["Profile", "Tokens", "SSH keys"] as const;
 
+/**
+ * What the terminal's "New token" prompt asked for: `name [ro|rw|admin]`,
+ * and for a site admin the word `admin-ok` as well — their token acts as
+ * admin whatever its scope, so it is minted only on purpose (#596).
+ */
+export function readTokenPrompt(
+  value: string,
+  isAdmin: boolean,
+): { readonly name: string; readonly scope: TokenScope } | { readonly error: string } {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  const ok = words.includes(ADMIN_OK);
+  const [name, scope] = words.filter((w) => w !== ADMIN_OK);
+  if (!name) return { error: "a name is required" };
+  if (isAdmin && !ok)
+    return {
+      error: `you are the forge's admin: add ${ADMIN_OK} to mean a token that acts as admin, or make it from your everyday account`,
+    };
+  return { name, scope: scope === "rw" || scope === "admin" ? scope : "ro" };
+}
+
+const ADMIN_OK = "admin-ok";
+
 export function accountScreen(f: Session, ctx: Ctx): Screen {
   let tokens: TokenInfo[] = [];
   let keys: UserKey[] = [];
@@ -93,7 +115,7 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
           ["username", f.user.username],
           ["display name", f.user.displayName || "(none)"],
           ["email", f.user.email],
-          ["role", f.user.isAdmin ? "site admin" : "user"],
+          ["role", f.user?.isAdmin ? "site admin" : "user"],
           ["joined", ago(f.user.createdAt)],
         ]);
         return;
@@ -199,19 +221,16 @@ export function accountScreen(f: Session, ctx: Ctx): Screen {
       ctx.push(
         promptScreen(ctx, screen, {
           title: "New token",
-          label: "name [ro|rw|admin]",
-          placeholder: "ci rw",
+          // A site admin's token acts as admin whatever its scope: minted
+          // only with the word that says so (#596).
+          label: f.user?.isAdmin
+            ? "name [ro|rw|admin] admin-ok"
+            : "name [ro|rw|admin]",
+          placeholder: f.user?.isAdmin ? "ci rw admin-ok" : "ci rw",
           onSubmit: (value) => {
-            const [name, scope] = value.split(/\s+/);
-            if (!name) return "a name is required";
-            const minted = createToken(
-              f.app,
-              f.user,
-              name,
-              (scope === "rw" || scope === "admin"
-                ? scope
-                : "ro") as TokenScope,
-            );
+            const read = readTokenPrompt(value, f.user?.isAdmin === true);
+            if ("error" in read) return read.error;
+            const minted = createToken(f.app, f.user, read.name, read.scope);
             if (!minted.ok) return errorText(minted.error);
             reload();
             ctx.push(

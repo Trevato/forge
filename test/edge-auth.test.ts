@@ -112,7 +112,7 @@ describe("a forge behind the platform edge", () => {
   test("the account has no password: the forge's own sign-in refuses it", async () => {
     const attempt = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
-      body: JSON.stringify({ username: "ada", password: "", name: "x" }),
+      body: JSON.stringify({ adminConfirm: true, username: "ada", password: "", name: "x" }),
     });
     expect(attempt.status).toBe(401);
   });

@@ -1188,6 +1188,16 @@ export function apiRoutes(router: Router<Handler>): void {
         str(input.password),
       );
       if (verified.ok) user = verified.value;
+      // With the password too, a site admin's token is minted on purpose.
+      if (user?.isAdmin && input.adminConfirm !== true)
+        return json(
+          {
+            error: "admin_confirm",
+            message:
+              "you are the forge's admin: send adminConfirm: true to mean a token that acts as admin, or mint it from your everyday account",
+          },
+          422,
+        );
     }
     if (!user) return unauthorized();
     const scope = str(input.scope);
