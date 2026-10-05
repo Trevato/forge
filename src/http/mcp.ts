@@ -70,6 +70,7 @@ import {
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { mayReadRuns } from "../actions/runs.ts";
 import { clientAddress } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -279,7 +280,11 @@ const TOOLS: readonly Tool[] = [
     run(ctx, user) {
       const { repos } = appsOf(ctx, user);
       const byId = new Map(repos.map((r) => [r.id, r]));
-      const runs = listActiveRuns(ctx.app.db, [...byId.keys()]);
+      // A private app's runs are for those who may enter it (`mayReadRuns`).
+      const runs = listActiveRuns(
+        ctx.app.db,
+        repos.filter((r) => mayReadRuns(ctx.app, user, r)).map((r) => r.id),
+      );
       const actors = getUsersByIds(
         ctx.app.db,
         runs.map((r) => r.actorId).filter((id): id is string => id !== null),
@@ -318,7 +323,8 @@ const TOOLS: readonly Tool[] = [
             why: r.reason,
             state: r.state,
             since: r.startedAt ?? r.createdAt,
-            costUsd: r.costUsd,
+            // What a run costs is the owner's fact (`canSeeOwnerFacts`).
+            costUsd: owned.has(r.repoId) ? r.costUsd : 0,
           };
         }),
       ]);

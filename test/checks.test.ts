@@ -659,6 +659,7 @@ describe("a check its forge died under", () => {
         runtime: undefined,
         record: undefined,
         history: servingHistory(),
+        viewer: undefined,
       },
       pull,
     );

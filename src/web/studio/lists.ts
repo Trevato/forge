@@ -293,6 +293,7 @@ function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   return { options, record, wordCtx };
 }
@@ -557,6 +558,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     runtime: appsRuntime(ctx.app),
     record: getAppByRepo(db, repo.id),
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const actors = actorsFor(ctx, fetched);
   const issues = issuesFor(ctx, fetched);

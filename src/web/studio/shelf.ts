@@ -176,6 +176,7 @@ export async function shelfRows(
         runtime,
         record,
         history,
+        viewer: ctx.auth.user,
       };
       const agentWord =
         useOpenPull || latest === undefined

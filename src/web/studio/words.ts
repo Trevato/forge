@@ -12,6 +12,8 @@ import type { Database } from "bun:sqlite";
 import { ancestorsOf } from "../../git/merge.ts";
 import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import { canEnterApp, getRepoById } from "../../core/repos.ts";
+import type { User } from "../../core/users.ts";
 import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
@@ -82,6 +84,8 @@ export interface WordCtx {
   readonly runtime: AppsRuntime | undefined;
   readonly record: AppRecord | undefined;
   readonly history: ServingHistory;
+  /** Who is reading: a private app's production is theirs only if they may enter it. */
+  readonly viewer: User | undefined;
 }
 
 /**
@@ -188,6 +192,14 @@ export async function pullWord(
   if (pull.mergedAt !== null) {
     const commitOid = pull.mergedOid ?? pull.headOid;
     if (ctx.runtime === undefined || ctx.record === undefined)
+      return { word: "shipped", note: "merged" };
+    // A private app's production — its state, its deploy's error — is for
+    // those who may enter it (`canEnterApp`); anyone else reads "merged".
+    const repo = getRepoById(ctx.db, ctx.record.repoId);
+    if (
+      repo === undefined ||
+      !canEnterApp(ctx.db, repo, ctx.record.access, ctx.viewer)
+    )
       return { word: "shipped", note: "merged" };
     const production = ctx.runtime
       .status(ctx.record)

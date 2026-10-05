@@ -344,6 +344,7 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
       runtime: appsRuntime(ctx.app),
       record,
       history: servingHistory(),
+      viewer: ctx.auth.user,
     },
     // The one fact Now borrows from the head card, decided where the head
     // card decides it, so the two never disagree about what is tailing.

@@ -21,7 +21,11 @@ import { runAppTty, type TtyHost } from "../src/apps/tty.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { audienceFilter } from "../src/core/event_audience.ts";
-import { listRuns } from "../src/core/runs.ts";
+import { createRun, listRuns } from "../src/core/runs.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { pullWord } from "../src/web/studio/words.ts";
+import { servingHistory } from "../src/web/studio/words.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -308,6 +312,73 @@ describe("a private app on a public repository stays private", () => {
     }
     // The repository's own events stay the readers'.
     expect(audienceFilter(app.db, carol)(event("issue.opened") as any)).toBe(true);
+  });
+
+  test("a merged pull's word tells a reader only that it merged", async () => {
+    const commit = "a".repeat(40);
+    const fakeRuntime = {
+      status: () => [
+        { env: "production", state: "running", commitOid: commit, error: "SECRET-ERROR" },
+      ],
+    } as never;
+    const merged = {
+      mergedAt: new Date().toISOString(),
+      mergedOid: commit,
+      headOid: commit,
+      state: "closed",
+    } as never;
+    const ctxFor = (viewer: User | undefined) => ({
+      db: app.db,
+      dir: "",
+      runtime: fakeRuntime,
+      record,
+      history: servingHistory(),
+      viewer,
+    });
+    expect(await pullWord(ctxFor(carol), merged)).toEqual({ word: "shipped", note: "merged" });
+    expect(await pullWord(ctxFor(undefined), merged)).toEqual({ word: "shipped", note: "merged" });
+    expect((await pullWord(ctxFor(alice), merged)).note).toBe("production is serving it");
+  });
+
+  test("the MCP's now and the tell page show a private app's runs only to those who may enter it", async () => {
+    const issue = openIssue(app, alice, repo(), { title: "Count the books" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const run = createRun(app.db, {
+      repoId: record.repoId,
+      kind: "agent",
+      issueId: issue.value.id,
+      actorId: bot.id,
+      reason: "assigned",
+      summary: "SECRET-SUMMARY of the books",
+    });
+    const now = async (who: User) => {
+      const token = createToken(app.db, who.id, "t", "ro").token;
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "now", arguments: {} },
+        }),
+      });
+      return ((await res.json()) as any).result.content[0].text as string;
+    };
+    expect(await now(carol)).not.toContain(run.id);
+    expect(await now(alice)).toContain(run.id);
+    const tell = async (cookie: string) =>
+      (
+        await fetch(`${servers.url}/alice/ledger/issues/${issue.value.number}`, {
+          headers: cookie === "" ? {} : { cookie },
+        })
+      ).text();
+    for (const cookie of [carolCookie, ""]) {
+      const page = await tell(cookie);
+      expect(page).not.toContain("SECRET-SUMMARY");
+      expect(page).not.toContain(run.id);
+    }
+    expect(await tell(aliceCookie)).toContain(run.id);
   });
 
   test("the settings page says, before saving, what stays private", async () => {

@@ -81,6 +81,7 @@ export async function studioPull(
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const { word, note: checkNote } = await pullWord(wordCtx, pull);
   // Whether this change still merges into its base is asked here, on its own
