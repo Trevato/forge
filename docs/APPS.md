@@ -965,3 +965,13 @@ next layer, and the process boundary here is where it will attach. TLS
 termination and an approve-and-land gate are additions of the same kind:
 the shapes above hold, and a new column or listener carries each of them —
 as one column carried a domain of the app's own.
+
+## The `service` kind
+
+`app.kind: "service"` in `forge.json` declares a long-running app that is not
+an HTTP child: `ports` (TCP, 1024–65535, required), `always_on` (true; false is
+refused), `placement` (`"metal"` or `"cloud"`, optional) and `volumes`
+(`{ "path": "world", "sync": 300 }`, a relative path under the app's data and a
+sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
+manifest carries it as `service`, `null` for a web app. Running it, exposing
+the ports and syncing volumes are not built yet (issue #391).
