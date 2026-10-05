@@ -51,10 +51,14 @@ function askedRow(a: Asked): Html {
     title: a.issue.title,
     meta: html`${a.repo.ownerName}/${a.repo.name} #${a.issue.number} ·
     ${a.askedBy} · ${time(a.askedAt)} · ${pullNote(a)}`,
-    trail: html`${a.flagged
-      ? badge(`Nothing built in ${STALE_DAYS} days`, { tone: "danger" })
-      : null}
-    ${badge(word.text, { tone: word.tone })}`,
+    // One badge per row: a flagged ask says only that nothing was built
+    // (the meta line still names its pull), so a phone keeps the title.
+    trail: a.flagged
+      ? badge("Nothing built", { tone: "danger" })
+      : badge(word.text, { tone: word.tone }),
+    titleAttr: a.flagged
+      ? `${word.text}, and nothing built in ${STALE_DAYS} days`
+      : a.issue.title,
   });
 }
 

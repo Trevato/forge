@@ -328,7 +328,7 @@ in every repository the viewer can write: who asked and when, the pull that
 answers it, and one word — _Waiting_, _Building_ (a pull is open or the crew
 is running), _Shipped_ (a pull that closes it merged), _Closed_ (closed with
 nothing merged). An ask still waiting or building after three days carries
-_Nothing built in 3 days_. `?show=unshipped|flagged` narrows it,
+_Nothing built_. `?show=unshipped|flagged` narrows it,
 `?repo=owner/name` keeps it to one repository. The rows are derived on read
 in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
 the same rows. Each row names its `source` (`issue` today) so thoughts can

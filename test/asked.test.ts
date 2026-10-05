@@ -227,7 +227,7 @@ describe("what you asked for", () => {
     const page = (await res.text()).replace(/\s+/g, " ");
     expect(page).toContain("What you asked for");
     expect(page).toContain("Plant tomatoes");
-    expect(page).toContain("Nothing built in 3 days");
+    expect(page).toContain("nothing built in 3 days");
     expect(page).not.toContain("Refactor the watering module");
     const flagged = (
       await (
