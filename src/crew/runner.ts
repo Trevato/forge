@@ -716,7 +716,9 @@ async function work(
       readers: readersAmong(
         app.db,
         repo,
-        [...comments, ...reviews, ...reviewComments].map((c) => c.authorName),
+        [issue, ...comments, ...reviews, ...reviewComments].map(
+          (c) => c.authorName,
+        ),
       ),
       since,
       checkSummary: failedCheck?.run?.summary,

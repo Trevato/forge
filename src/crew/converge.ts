@@ -102,7 +102,7 @@ export function convergeState(
     )?.agent;
     return { kind: "working", issue, agent };
   }
-  if (parkedCount(app, issue.id) >= PARK_STRIKES) return { kind: "parked", issue };
+  if (parkedCount(app, fork, issue.id) >= PARK_STRIKES) return { kind: "parked", issue };
   return { kind: "working", issue, agent: undefined };
 }
 
