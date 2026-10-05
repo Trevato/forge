@@ -698,7 +698,7 @@ describe("the studio", () => {
     expect(studioCookie).toContain("Merge pull request");
   });
 
-  test("a tell renders as one page — who has it, its runs, what blocks it — with labels, the assignee and the dependency form in a closed Details; ?mode=dev changes nothing", async () => {
+  test("a tell renders as one page — who has it, its runs, what blocks it with its form — and labels and the assignee in a closed Details; ?mode=dev changes nothing", async () => {
     const blocker = openIssue(app, alice, repo, {
       title: "Ground work",
       body: "Do this first.",
@@ -748,7 +748,9 @@ describe("the studio", () => {
     expect(details).toMatch(/^<details class="quiet-details mt">/);
     expect(details).toContain("<h2>Labels</h2>");
     expect(details).toContain("<h2>Assignee</h2>");
-    expect(details).toContain(`action="/alice/notes/issues/${issue.number}/dependencies"`);
+    // What it waits for stays in view, with the form beside it.
+    expect(details).not.toContain("/dependencies");
+    expect(studio).toContain(`action="/alice/notes/issues/${issue.number}/dependencies"`);
     // The close keeps its reasons (done, dropped, split).
     expect(studio).toContain('name="reason"');
 

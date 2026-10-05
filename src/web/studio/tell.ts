@@ -10,7 +10,6 @@
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
-import { dependenciesOf } from "../../core/dependencies.ts";
 import { listEvents } from "../../core/events.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
@@ -119,40 +118,6 @@ export async function tellWord(
   return { word: "told", note: "not picked up yet" };
 }
 
-/** Every open issue this one waits for, and every one that waits for it —
- * read-only; the form that changes it is in Details (`dependenciesCard`,
- * thread.ts). */
-function tellDependencies(base: string, issue: Issue, db: Ctx["app"]["db"]): Html {
-  const { blockedBy, blocks } = dependenciesOf(db, issue.id);
-  const list = (items: readonly Issue[]) =>
-    html`<ul class="dep-list">
-      ${items.map(
-        (i) =>
-          html`<li data-state="${i.state}">
-            ${icon(i.state === "closed" ? "issueClosed" : "issue")}
-            <a href="${tellHref(base, i.number)}">${i.title}</a>
-            <span class="muted small">#${i.number}</span>
-          </li>`,
-      )}
-    </ul>`;
-  if (blockedBy.length === 0 && blocks.length === 0)
-    return card(
-      html`<p class="muted small">Waits for nothing, holds up nothing.</p>`,
-      { head: html`${icon("map")} <h2>Depends on</h2>` },
-    );
-  return card(
-    html`${blockedBy.length === 0
-        ? html`<p class="muted small">Waits for nothing.</p>`
-        : html`<p class="small">Waits for ${blockedBy.length}</p>
-            ${list(blockedBy)}`}
-      ${blocks.length === 0
-        ? null
-        : html`<p class="small mt">Holds up ${blocks.length}</p>
-            ${list(blocks)}`}`,
-    { head: html`${icon("map")} <h2>Depends on</h2>` },
-  );
-}
-
 /** Every agent run for this tell, newest first: who, how long, what it
  * cost, and its state in the studio's own word — the title opens the
  * transcript. Empty when the crew has not touched it yet. */
@@ -235,7 +200,7 @@ export async function tellPage(ctx: Ctx): Promise<Response> {
  * A tell is one sentence someone said, and the page answers three
  * questions up front — who has it, what it is waiting on, and what the
  * crew has done with it. The rest a person sometimes changes — who has it,
- * its labels, what it waits for — sits in one quiet Details section,
+ * its labels — sits in one quiet Details section,
  * closed until asked for; the conversation, the reply and the close (with
  * its reason) are the very same actions as always (`conversation`,
  * `composer`, thread.ts).
@@ -308,13 +273,14 @@ async function studioTell(
   const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
   const applied = labelsFor(db, issue.id);
   const allLabels = listLabels(db, repo.id);
-  // Closed until asked for: none of it is the next thing a person does
-  // here, and all of it is one tap away when it is.
+  // Closed until asked for: neither is the next thing a person does here,
+  // and both are one tap away when it is. What it waits for stays in view
+  // above them — one of the three questions the page answers — with its
+  // form for whoever may change it.
   const details = html`<details class="quiet-details mt">
     <summary>Details</summary>
     ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
     ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
-    ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
   </details>`;
 
   const body = html`${repoHeader(ctx, repo, "issues", {
@@ -336,7 +302,8 @@ async function studioTell(
       <aside>
         ${runsCard}
         ${closingCard}
-        ${tellDependencies(base, issue, db)} ${details}
+        ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
+        ${details}
       </aside>
     </div>
     ${liveMount({
