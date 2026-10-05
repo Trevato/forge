@@ -412,6 +412,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
   if (!created.ok) {
     const messages: Record<string, string> = {
       name_taken: "That name is already taken.",
+      name_reserved: "That name is reserved.",
       invalid_name: "Letters, digits, dots and dashes only.",
       unauthorized: "Sign in to create an organization.",
     };

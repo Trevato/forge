@@ -228,7 +228,7 @@ describe("web ui", () => {
     expect(page).toContain('data-state="closed"');
     expect(page).toContain("Closed without merging.");
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
-      "No open pull requests",
+      "Nothing open.",
     );
 
     await fetch(`${at}/state`, {
@@ -533,7 +533,8 @@ describe("web ui", () => {
       await fetch(`${base}/mel/proj/issues?q=nothing-matches-this&state=all`)
     ).text();
     expect(miss).not.toContain("needs a label");
-    expect(miss).toContain("No issues match those filters");
+    expect(miss).toContain("Nothing here");
+    expect(miss).toContain("nothing-matches-this in the title ✕");
 
     // A LIKE wildcard typed into the box is a literal character, not a glob.
     const wildcard = await (
@@ -613,19 +614,18 @@ describe("web ui", () => {
     }
   });
 
-  test("an issue row carries its author inside the meta line", async () => {
+  test("an issue row leads with who has it and trails its word", async () => {
     const html = await (
       await fetch(`${base}/mel/proj/issues`, { headers: { cookie: owner } })
     ).text();
-    const start = html.indexOf('<span class="row-meta"');
+    const start = html.indexOf('<span class="row-lead"');
     expect(start).toBeGreaterThan(-1);
-    // From the meta to the end of the row it belongs to.
-    const meta = html.slice(start, html.indexOf("</a", start));
-    expect(meta).toContain("opened");
-    expect(meta).toContain('class="avatar"');
-    expect(meta).toContain('class="byline-name"');
-    expect(meta).toContain("mel");
-    // The state is the leading glyph's colour, not a badge repeating the filter.
+    // From the lead to the end of the row it belongs to.
+    const row = html.slice(start, html.indexOf("</a", start));
+    expect(row).toContain('class="avatar"');
+    expect(row).toContain('<span class="row-meta">');
+    expect(row).toContain('data-word="told"');
+    // The word is the row's state; no dev state badge repeats it.
     expect(html).not.toContain('class="badge" data-state="open"');
   });
 

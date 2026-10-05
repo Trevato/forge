@@ -239,6 +239,12 @@ describe("a page ships each drawing once", () => {
         body: new URLSearchParams({ title: `bug ${n}`, body: "a body" }),
         redirect: "manual",
       });
+      await fetch(`${base}/ada/engine/issues/1/comments`, {
+        method: "POST",
+        headers: { cookie, origin: base },
+        body: new URLSearchParams({ body: `comment ${n}` }),
+        redirect: "manual",
+      });
     }
   });
 
@@ -248,14 +254,14 @@ describe("a page ships each drawing once", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("a list of a dozen rows sends the row's drawing once, not a dozen times", async () => {
+  test("a timeline of a dozen comments sends the comment's drawing once, not a dozen times", async () => {
     const text = await (
-      await fetch(`${base}/ada/engine/issues`, { headers: { cookie } })
+      await fetch(`${base}/ada/engine/issues/1`, { headers: { cookie } })
     ).text();
-    expect(text.match(/<use href="#i-issue"\/>/g)!.length).toBeGreaterThan(11);
-    // The drawing itself — the issue glyph's inner dot — exactly once.
-    expect(text.match(/<circle cx="12" cy="12" r="1"\/>/g)).toHaveLength(1);
-    expect(text.match(/<symbol id="i-issue"/g)).toHaveLength(1);
+    expect(text.match(/<use href="#i-comment"\/>/g)!.length).toBeGreaterThan(
+      11,
+    );
+    expect(text.match(/<symbol id="i-comment"/g)).toHaveLength(1);
   });
 
   test("what a page defines is exactly what it used — no more, no less", async () => {

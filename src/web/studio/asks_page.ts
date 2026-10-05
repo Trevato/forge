@@ -164,6 +164,7 @@ export function asksPage(ctx: Ctx): Response {
           ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
+    <p class="muted small"><a href="/asked">What you asked for</a>, and what became of it.</p>
     <div class="stack">
       ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r))}
     </div>

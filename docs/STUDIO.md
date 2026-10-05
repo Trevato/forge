@@ -245,9 +245,18 @@ production has not caught up to yet, or a run with nothing to show —
 still read as _working_: still moving, not one of the five a list links to
 on its own. Paging is the underlying list's own cursor, unchanged; a word
 filter narrows the page it lands on rather than inventing a second scheme.
-`?mode=dev` on any of the three is dev's list, exactly as it always has
-been; a repository that is not an app renders dev's list here regardless
-of mode, since there is no studio to switch to.
+Told and changes are the only lists of issues and pulls: every repository,
+app or not, and every viewer, whatever the mode, at `/issues` and `/tells`,
+`/pulls` and `/changes` alike (`?mode=dev` changes nothing there). Besides
+the word they narrow by `?label=` (the repository's labels are chips under
+the words), `?assignee=`, `?author=` and `?q=` (a piece of the title), each
+shown as a chip that clears itself; an older `?state=closed|all` address
+still answers with what it asked for. Told carries one verb besides opening
+a row — compose, for a signed-in person; a stranger on a public repository
+gets "Report a problem" instead, and its writers see how many reports from
+outside wait for them. A row wears its labels; a change's
+branches, diff and reviews are one step deeper, on the change. The runs
+list keeps `?mode=dev` to dev's runs until that list is contracted too.
 
 ## A tell, on its own page
 
@@ -319,6 +328,24 @@ defined once, in `src/web/studio/asks.ts`: the header's **Asks** count, the
 page, the dashboard's _Needs you_ link and the phone notifier all read it,
 so the numbers agree. It is server-rendered and every button is a form post,
 so it works without JavaScript.
+
+## What you asked for
+
+`/asked` (`askedPage`, `src/web/studio/asked_page.ts`) is the other
+direction: not what waits on you, but what you and your people asked of the
+crew, and whether it happened. One row per issue a person opened (an
+agent's issue is not an ask; neither is the direction issue) in every
+repository the viewer can write — by default only what has nothing merged
+yet, oldest first, because the path is "open the oldest unmet ask": who
+asked and when, the pull that answers it, when the crew last ran or spoke on
+it, and one word — _Waiting_, _Building_ (a pull is open or the crew
+is running), _Shipped_ (a pull that closes it merged), _Closed_ (closed with
+nothing merged). An ask still waiting or building after three days carries
+_Nothing built_. `?show=flagged|all` changes the view, `?order=newest` flips it,
+`?repo=owner/name` keeps it to one repository. The rows are derived on read
+in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
+the same rows. Each row names its `source` (`issue` today) so thoughts can
+join the same list. It is reached from the feed's header, the board, the asks page and the palette.
 
 ## The home
 
