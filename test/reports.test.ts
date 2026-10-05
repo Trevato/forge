@@ -9,6 +9,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { acceptedBody } from "../src/actions/reports.ts";
+import { renderMarkdown } from "../src/web/markdown.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -292,7 +294,9 @@ describe("reports from outside", () => {
     expect(issue.title).toBe("The game is down");
     expect(issue.authorName).toBe("alice");
     expect(issue.body).toContain("from outside");
-    expect(issue.body).toContain("```\nSECRET-PHRASE in the body\n```");
+    expect(issue.body).toContain(
+      "```\nSent from: https://game.example/\n\nSECRET-PHRASE in the body\n```",
+    );
     // A decided report is decided once.
     const again = await as(
       aliceToken,
@@ -304,6 +308,36 @@ describe("reports from outside", () => {
       await as(aliceToken, "/api/v1/repos/alice/game/reports")
     ).json()) as any;
     expect(after.items.some((r: any) => r.id === target.id)).toBe(false);
+  });
+
+  test("a hostile report renders no link and no image once accepted", () => {
+    const hostile = [
+      "```",
+      "[click](https://evil.example/a)",
+      "![pic](https://evil.example/b.png)",
+      "````",
+      "<a href=\"https://evil.example/c\">x</a>",
+      "~~~",
+      "<https://evil.example/d>",
+    ].join("\n");
+    const body = acceptedBody(
+      {
+        id: "r",
+        repoId: game.id,
+        title: "t",
+        body: hostile,
+        page: "https://x.example/#[click](https://evil.example/e)",
+        state: "pending",
+        createdAt: "2026-10-05T00:00:00.000Z",
+      },
+      alice,
+    );
+    const rendered = String(renderMarkdown(body));
+    expect(rendered).not.toContain("<img");
+    expect(rendered).not.toMatch(/<a [^>]*evil\.example/);
+    // Everything the stranger wrote is there, as text in one block.
+    expect(rendered).toContain("[click](https://evil.example/a)");
+    expect(rendered).toContain("#[click](https://evil.example/e)");
   });
 
   test("dismissing removes a report from the queue without an issue", async () => {

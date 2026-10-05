@@ -73,7 +73,7 @@ function reportForm(
             something is wrong. You need no account. A person reads it first;
             nothing acts on it before they do.
           </p>
-          <form method="post" action="${base}/report">
+          <form class="mt" method="post" action="${base}/report">
             ${when(error, (m) => html`<p class="error-note">${m}</p>`)}
             ${formField({
               label: "What is wrong",

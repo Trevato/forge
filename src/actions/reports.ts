@@ -151,15 +151,21 @@ function fenced(text: string): string {
 
 /**
  * The issue an accepted report becomes: the person's own, saying where the
- * words came from, with the words fenced so they show as plain text — no
- * link or image of a stranger's renders live.
+ * words came from, with everything the stranger chose — the page it was
+ * sent from and the words — inside one fence, so it shows as plain text and
+ * no link or image of theirs renders live.
  */
 export function acceptedBody(report: Report, by: User): string {
-  const from = report.page === null ? "" : ` on ${report.page}`;
+  const quoted = [
+    ...(report.page === null ? [] : [`Sent from: ${report.page}`, ""]),
+    report.body,
+  ]
+    .join("\n")
+    .trim();
   const lines = [
-    `Reported from outside, without an account${from}, ${report.createdAt.slice(0, 10)}. Accepted by @${by.username}; the words below are the reporter's, unchecked.`,
+    `Reported from outside, without an account, ${report.createdAt.slice(0, 10)}. Accepted by @${by.username}; what is below is the reporter's, unchecked.`,
   ];
-  if (report.body !== "") lines.push("", fenced(report.body));
+  if (quoted !== "") lines.push("", fenced(quoted));
   return lines.join("\n");
 }
 
