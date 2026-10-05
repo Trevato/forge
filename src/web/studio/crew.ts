@@ -80,7 +80,10 @@ function aboutCard(
       ${selectField({
         label: "Visibility",
         name: "visibility",
-        hint: `A private ${noun} and one that does not exist look identical to anyone else; a private app and its previews stay open only to people who can write here.`,
+        hint:
+          repo.visibility === "private"
+            ? `A private ${noun} and one that does not exist look identical to anyone else. Making it public shows everyone its code, issues, pulls and run logs; a private app and its previews stay open only to people who can write here.`
+            : "Public: anyone can read the code, issues, pulls and run logs. A private app and its previews stay open only to people who can write here.",
         options: [
           {
             value: "private",

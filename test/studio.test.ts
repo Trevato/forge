@@ -5737,7 +5737,13 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(owner).toMatch(/\$42\.50\s+of\s+\$25/);
     expect(owner).toContain("Remove");
     expect(owner).toContain("Save");
-    expect(owner).toContain("The rest of the settings");
+    // The rest is beneath, on the same page and in the same frame.
+    expect(owner).toContain("<h2>Branch and gates</h2>");
+    expect(owner.indexOf(">On its own<")).toBeLessThan(
+      owner.indexOf("<h2>Branch and gates</h2>"),
+    );
+    expect(owner).toContain('href="/alice/beacon/settings/labels"');
+    expect(owner).not.toContain("?mode=dev");
   });
 
   test("a reader without write sees no crew and no controls on the settings page; one who cannot read gets not-found", async () => {
@@ -5775,7 +5781,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     );
     expect(roleChange.status).toBe(303);
     expect(roleChange.headers.get("location")).toBe(
-      "/alice/beacon/settings/crew",
+      "/alice/beacon/settings#crew",
     );
     const after = await (
       await get("/alice/beacon/settings", ownerCookie)
@@ -5783,13 +5789,27 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(after).toContain("reviews");
   });
 
-  test("?mode=dev on the settings route still renders dev's settings pages", async () => {
+  test("?mode=dev on the settings route is the same one page; dev's Crew and Autonomy addresses land on its cards", async () => {
     const dev = await (
       await get("/alice/beacon/settings?mode=dev", ownerCookie)
     ).text();
     expect(dev).toContain(">General<");
+    expect(dev).toContain(">Crew<");
     expect(dev).toContain("Description");
-    expect(dev).not.toContain("Add to crew");
+    expect(dev).toContain("<h2>Branch and gates</h2>");
+    expect(dev).toContain('id="f-direction"');
+
+    for (const [old, to] of [
+      ["/alice/beacon/settings/crew", "/alice/beacon/settings#crew"],
+      ["/alice/beacon/settings/autonomy", "/alice/beacon/settings#autonomy"],
+    ]) {
+      const res = await get(old!, ownerCookie);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(to!);
+    }
+    // A reader who cannot see the repository gets not-found, not a hint.
+    const hidden = await get("/alice/no-such-app/settings/crew", ownerCookie);
+    expect(hidden.status).toBe(404);
   });
 });
 
