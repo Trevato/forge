@@ -2018,8 +2018,8 @@ describe("a start that fails reports the message, not its last line (issue #270)
     health: "/",
     ready: 2,
     tty: null,
-    looks: ["/"],
     service: null,
+    looks: ["/"],
   };
 
   // A realistic crash: the message, a blank line, three frames, then the

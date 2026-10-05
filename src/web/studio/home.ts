@@ -225,7 +225,9 @@ export function studioDoor(ctx: Ctx): Response {
         l.env === "production" &&
         l.page === DEFAULT_PAGE,
     );
-    const look = pictured(ofApp, "thumb") ?? pictured(ofApp, "desktop");
+    // The thumb alone: it is the one picture taken as a stranger sees the
+    // app. The desktop picture is the owner's view, never a stranger's.
+    const look = pictured(ofApp, "thumb");
     const base = repoBase(repo);
     return html`<a class="app-tile" href="${base}">
       ${look

@@ -16,12 +16,16 @@
  */
 
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import type { App } from "../app.ts";
@@ -33,17 +37,23 @@ import type { ForgeEvent } from "../core/events.ts";
 import {
   deleteLooks,
   DEFAULT_PAGE,
+  LEGACY_THUMB_WIDTH,
   LOOK_KINDS,
   LOOK_SIZES,
+  LOOK_WINDOWS,
   lookSlot,
   looksForEnv,
   recordLook,
+  type Look,
   type LookKind,
 } from "../core/looks.ts";
 import { getPull } from "../core/pulls.ts";
 import { getRepoById } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
+import { thumbnail } from "../design/image/image.ts";
+import { decodePng, encodePng, pngHeader } from "../design/image/png.ts";
 import { createLog } from "../kernel/log.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import { findChromium, takeLook, type Capture } from "./capture.ts";
 
 const log = createLog("looks");
@@ -105,11 +115,17 @@ const PRESSURE_CEILING = 0.7;
 export interface LooksHandle {
   /** Settles once every look queued so far is taken or dropped. */
   idle(): Promise<void>;
+  /** Check production for a missing picture now, as the timer does. */
+  sweep(): void;
   stop(): Promise<void>;
 }
 
 /** A look that has waited longer than this is stale, and is dropped. */
 const MAX_WAIT_MS = 10 * 60_000;
+/** How often production is checked for a picture it lacks. */
+const SWEEP_MS = 10 * 60_000;
+/** The first check, once a booted forge's apps have had a moment. */
+const FIRST_SWEEP_MS = 60_000;
 /** The browser's whole allowance for one picture. */
 const CAPTURE_TIMEOUT_MS = 20_000;
 /** How long the grant in the URL is good for — the browser uses it at once. */
@@ -132,6 +148,40 @@ export const lookPath = (
 ): string =>
   join("looks", appId, env, `${commitOid}-${lookSlot(page, kind)}.png`);
 
+/**
+ * Whether a picture on record is one to keep. Every one is, except a
+ * thumb from before thumbs were the page reduced (`LEGACY_THUMB_WIDTH`):
+ * that one is retaken, and shown until it is.
+ */
+export function keepLook(dataDir: string, look: Look): boolean {
+  if (look.error !== null) return false;
+  if (look.kind !== "thumb") return true;
+  let fd: number | undefined;
+  try {
+    fd = openSync(join(dataDir, look.path), "r");
+    const head = new Uint8Array(33);
+    readSync(fd, head, 0, 33, 0);
+    const parsed = pngHeader(head);
+    return !parsed.ok || parsed.value.width !== LEGACY_THUMB_WIDTH;
+  } catch {
+    // No file behind the row: nothing to show, so nothing to keep.
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+/** A desktop picture reduced to a thumb, in place. */
+export function reduceToThumb(path: string): Result<void, string> {
+  const decoded = decodePng(new Uint8Array(readFileSync(path)));
+  if (!decoded.ok) return err(`the picture could not be read: ${decoded.error}`);
+  const { width, height, rgba } = decoded.value;
+  const size = LOOK_SIZES.thumb;
+  const small = thumbnail(rgba, width, height, size.width, size.height);
+  writeFileSync(path, encodePng(small.width, small.height, small.rgba));
+  return ok();
+}
+
 interface Pending {
   readonly appId: string;
   readonly env: EnvName;
@@ -153,6 +203,13 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
   let stopped = false;
 
   prune();
+  // Production missing a picture at its head — one never taken, or a
+  // thumb from before thumbs were the page — gets one while it is up.
+  // A woken app says nothing on the bus, so this is how it is pictured.
+  const firstSweep = setTimeout(sweep, FIRST_SWEEP_MS);
+  const sweeping = setInterval(sweep, SWEEP_MS);
+  firstSweep.unref?.();
+  sweeping.unref?.();
 
   const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
     try {
@@ -274,22 +331,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
-    const pages = status.looks ?? [DEFAULT_PAGE];
-    const have = new Set(
-      looksForEnv(app.db, item.appId, item.env)
-        .filter((l) => l.commitOid === item.commitOid && l.error === null)
-        .map((l) => lookSlot(l.page, l.kind)),
-    );
-    const wanted = pages.flatMap((page) =>
-      LOOK_KINDS.filter((kind) => !have.has(lookSlot(page, kind))).map(
-        (kind) => ({ page, kind }),
-      ),
-    );
+    const wanted = missing(item.appId, item.env, item.commitOid, status.looks);
     if (wanted.length === 0) return;
-    // The picture is what the owner sees: the app renders for a signed-in
-    // admin, exactly as when they open it from the forge.
+    // The phone and desktop pictures are what the owner sees: the app
+    // renders for a signed-in admin, exactly as when they open it from the
+    // forge. The thumb is what a stranger sees — it is the picture on the
+    // tiles a signed-out visitor is shown — so it is taken as nobody.
     const owner = getUserById(app.db, repo.ownerId);
-    const who: GrantWho | undefined =
+    const asOwner: GrantWho | undefined =
       owner === undefined
         ? undefined
         : { id: owner.id, name: owner.username, role: "admin" };
@@ -302,7 +351,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        who,
+        kind === "thumb" ? undefined : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind);
@@ -316,12 +365,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         `${item.appId}-${item.env}-${item.commitOid}-${lookSlot(page, kind)}.png`,
       );
       mkdirSync(dirname(staged), { recursive: true });
-      const taken = await capture({
+      const shot = await capture({
         url,
         out: staged,
-        ...LOOK_SIZES[kind],
+        ...LOOK_WINDOWS[kind],
         timeoutMs: CAPTURE_TIMEOUT_MS,
       });
+      const taken =
+        shot.ok && kind === "thumb" ? reduceToThumb(staged) : shot;
       const row = {
         appId: item.appId,
         env: item.env,
@@ -366,6 +417,54 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         repoId: record.repoId,
         payload: { env: item.env, commitOid: item.commitOid },
       });
+  }
+
+  /**
+   * The pictures one head still wants: every page at every kind, less
+   * those on record to keep — and, when `failedCounts`, less those that
+   * failed too.
+   */
+  function missing(
+    appId: string,
+    env: EnvName,
+    commitOid: string,
+    pages: readonly string[] | undefined,
+    failedCounts = false,
+  ): { page: string; kind: LookKind }[] {
+    const have = new Set(
+      looksForEnv(app.db, appId, env)
+        .filter(
+          (l) =>
+            l.commitOid === commitOid &&
+            (keepLook(dataDir, l) || (failedCounts && l.error !== null)),
+        )
+        .map((l) => lookSlot(l.page, l.kind)),
+    );
+    return (pages ?? [DEFAULT_PAGE]).flatMap((page) =>
+      LOOK_KINDS.filter((kind) => !have.has(lookSlot(page, kind))).map(
+        (kind) => ({ page, kind }),
+      ),
+    );
+  }
+
+  /** Queue every running production whose head lacks a picture to keep. */
+  function sweep(): void {
+    if (stopped) return;
+    const runtime = appsRuntime(app);
+    if (runtime === undefined) return;
+    try {
+      for (const record of listApps(app.db)) {
+        const status = runtime.envStatus(record, "production");
+        if (status?.state !== "running") continue;
+        // A picture that failed at this head had its turn: the next
+        // deploy tries again, not every sweep.
+        const { commitOid, looks: pages } = status;
+        if (missing(record.id, "production", commitOid, pages, true).length > 0)
+          enqueue({ appId: record.id, env: "production", commitOid, at: Date.now() });
+      }
+    } catch (error) {
+      log.error("looks sweep failed", { error: String(error) });
+    }
   }
 
   /** An environment is gone: so are its pictures, waiting or taken. */
@@ -419,8 +518,11 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
 
   return {
     idle: () => pump,
+    sweep,
     stop: async () => {
       stopped = true;
+      clearTimeout(firstSweep);
+      clearInterval(sweeping);
       unsubscribe();
       queue.length = 0;
       await pump;
