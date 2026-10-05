@@ -7,7 +7,16 @@
 
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
-import { armClose, mustClose, REQUEST_MAX, settleBody } from "./limits.ts";
+import {
+  armClose,
+  BODY_MAX,
+  carryNotes,
+  mustClose,
+  noteSignedIn,
+  readBounded,
+  REQUEST_MAX,
+  settleBody,
+} from "./limits.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
@@ -1146,7 +1155,12 @@ async function withIdempotency(
   // Read the body once and hand the handler a request carrying the same
   // bytes. Cloning would work too; this way there is exactly one copy, and
   // exactly one thing that can be hashed.
-  const raw = await request.text();
+  // Counted like any body (\`http/limits.ts\`): a key does not buy a read
+  // past the cap.
+  const bytes = await readBounded(request, BODY_MAX);
+  if (bytes === "too_large")
+    return apiError("too_large", 413, `at most ${BODY_MAX} bytes`);
+  const raw = new TextDecoder().decode(bytes);
   const fingerprint = requestFingerprint(request.method, url.pathname, raw);
   const replay = (): Request => {
     const again = new Request(request.url, {
@@ -1154,8 +1168,10 @@ async function withIdempotency(
       headers: request.headers,
       ...(raw === "" ? {} : { body: raw }),
     });
-    // The replay is the same caller: limits and the audit still see them.
+    // The replay is the same caller: limits, the audit and the body caps
+    // still see what was noted of the original.
     carryPeer(request, again);
+    carryNotes(request, again);
     return again;
   };
 
@@ -1579,6 +1595,8 @@ async function answerGet(
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
+  // From here a body's cap depends on who is asking (\`http/limits.ts\`).
+  if (auth.user !== undefined) noteSignedIn(request);
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is

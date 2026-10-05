@@ -4,7 +4,7 @@
  * before it reaches an action.
  */
 
-import { BODY_MAX, readBounded } from "./limits.ts";
+import { bodyCapFor, readBounded } from "./limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import { crossOrigin, type Ctx } from "./context.ts";
@@ -167,11 +167,13 @@ function asObject(bytes: Uint8Array): Record<string, unknown> {
 }
 
 /**
- * A JSON object body, at most \`BODY_MAX\` bytes (\`http/limits.ts\`); past
- * that, or malformed, \`{}\` — and an over-limit body closes its connection.
+ * A JSON object body, at most \`BODY_MAX\` bytes for a signed-in caller and
+ * \`STRANGER_MAX\` for anyone else (\`http/limits.ts\`) — a route reads its
+ * body before it asks who is calling, so the cap cannot wait for that. Past
+ * the cap, or malformed, \`{}\`; an over-limit body closes its connection.
  */
 export async function body(request: Request): Promise<Record<string, unknown>> {
-  const bytes = await readBounded(request, BODY_MAX);
+  const bytes = await readBounded(request, bodyCapFor(request));
   return bytes === "too_large" ? {} : asObject(bytes);
 }
 

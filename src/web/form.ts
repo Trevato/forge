@@ -8,7 +8,7 @@
  * enforce. Auth routes (sign in / up) pass no scope.
  */
 
-import { BODY_MAX, readBounded } from "../http/limits.ts";
+import { BODY_MAX, readBounded, STRANGER_MAX } from "../http/limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import { crossOrigin, type Ctx } from "../http/context.ts";
 
@@ -17,8 +17,11 @@ export type Form = Awaited<ReturnType<Request["formData"]>>;
 export async function readForm(
   ctx: Ctx,
   minScope?: TokenScope,
-  /** The most bytes this form may be; a form a stranger posts wants less. */
-  max: number = BODY_MAX,
+  /**
+   * The most bytes this form may be: by default BODY_MAX for a signed-in
+   * caller and STRANGER_MAX for anyone else (\`http/limits.ts\`).
+   */
+  max: number = ctx.auth.user === undefined ? STRANGER_MAX : BODY_MAX,
 ): Promise<Form | Response> {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });

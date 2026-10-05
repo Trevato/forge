@@ -183,6 +183,36 @@ describe("request body limits", () => {
     expect(next.status).toBe(401);
   });
 
+  test("a stranger gets the stranger's cap on a route that reads its body before asking who is calling", async () => {
+    // POST /api/v1/fleet/ops reads its body, then refuses an anonymous
+    // caller. 3 MiB is under the signed-in cap (16 MiB) and well past the
+    // stranger's (64 KiB) plus the drain budget: the forge stops reading
+    // and ends the connection instead of reading it all to say 401.
+    const body = "x".repeat(3 * 1024 * 1024);
+    const out = await raw((s) =>
+      s.write(
+        `POST /api/v1/fleet/ops HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n` +
+          `${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`,
+      ),
+    10_000);
+    expect(out.text).toMatch(/^HTTP\/1\.1 (401|413)/);
+    expect(out.text.toLowerCase()).toContain("connection: close");
+    expect(out.closedByServer).toBe(true);
+  });
+
+  test("an Idempotency-Key does not buy a read past the cap", async () => {
+    const res = await fetch(`${base}/api/v1/repos`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${ownerToken}`,
+        "idempotency-key": "big-body-once",
+      },
+      body: chunked(20 * 1024 * 1024),
+    });
+    expect(res.status).toBe(413);
+  });
+
   test("a chunked body that never ends is cut off, not read until the idle timeout", async () => {
     const chunk = "x".repeat(4096);
     const out = await raw((s) => {

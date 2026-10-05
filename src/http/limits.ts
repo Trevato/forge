@@ -37,6 +37,27 @@ export const DRAIN_MAX = 1024 * 1024;
 export const GZIP_MAX = 1024 * 1024;
 
 const closing = new WeakSet<Request>();
+const signedIn = new WeakSet<Request>();
+
+/**
+ * The request carries a signed-in person or a token. A body is read before
+ * a route checks who is asking, so the cap is decided here: anyone else is
+ * a stranger and gets STRANGER_MAX, whatever route they call.
+ */
+export const noteSignedIn = (request: Request): void => {
+  signedIn.add(request);
+};
+
+/** The most a shared reader keeps of this request's body. */
+export const bodyCapFor = (request: Request): number =>
+  signedIn.has(request) ? BODY_MAX : STRANGER_MAX;
+
+/** A request rebuilt from another (a replay) keeps what was noted of it. */
+export const carryNotes = (from: Request, to: Request): void => {
+  if (signedIn.has(from)) signedIn.add(to);
+  const close = closers.get(from);
+  if (close !== undefined) closers.set(to, close);
+};
 const closers = new WeakMap<Request, () => void>();
 
 /** The listener says how to close a request's connection (\`server.timeout\`). */
