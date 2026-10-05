@@ -77,6 +77,9 @@ import {
   userTag,
 } from "../ui.ts";
 import { appsCard } from "./apps.ts";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { hasAdmin } from "../../spawn/claim.ts";
 
 export function sessionCookie(value: string, expires: Date, url: URL): string {
   const secure = url.protocol === "https:" ? "; Secure" : "";
@@ -716,9 +719,18 @@ function authForm(
       </div>
     </form>`;
 
+  // A spawned forge nobody has claimed yet: its person may arrive here with
+  // the code from their link but not the link itself (#730).
+  const claimable =
+    existsSync(join(ctx.app.config.dataDir, "parent.json")) && !hasAdmin(ctx.app.db);
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
     ${card(body)}
+    ${claimable
+      ? html`<p class="muted small mt" id="claim-door">
+          Was this forge made for you? <a href="/claim">Claim it with your code</a>.
+        </p>`
+      : null}
   </div>`;
 }
 

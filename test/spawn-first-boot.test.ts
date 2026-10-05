@@ -143,7 +143,7 @@ describe("a spawned child's first boot", () => {
     if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
     bodyId = spawned.value.bodyId;
     claimUrl = spawned.value.claimUrl ?? "";
-    token = claimUrl.split("/claim/")[1] ?? "";
+    token = claimUrl.split("/claim#")[1] ?? "";
 
     child = createApp({ dataDir: childDirOf(parent, bodyId), port: 0 });
     await firstBoot(child);
@@ -159,7 +159,7 @@ describe("a spawned child's first boot", () => {
 
   test("the spawner sees one claim link; neither forge keeps it in the clear", async () => {
     expect(claimUrl).toMatch(
-      /^https:\/\/maria\.forge\.test\/claim\/[A-Za-z0-9_-]{43}$/,
+      /^https:\/\/maria\.forge\.test\/claim#[A-Za-z0-9_-]{43}$/,
     );
     let everything = "";
     for (const root of [join(dir, "spawn"), childDirOf(parent, bodyId)])
@@ -409,7 +409,7 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
     const first = await send();
     expect(first.status).toBe(201);
     const made = (await first.json()) as { claimUrl: string; bodyId: string };
-    const token = made.claimUrl.split("/claim/")[1]!;
+    const token = made.claimUrl.split("/claim#")[1]!;
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     const stored = parent.db.query("SELECT body FROM idempotency").all() as { body: string }[];
     expect(stored.length).toBe(1);

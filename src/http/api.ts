@@ -27,7 +27,7 @@ import { resendVerification } from "../actions/verify.ts";
 import { emailVerified } from "../core/verify.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
-import { spawnDoor } from "../spawn/door.ts";
+import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
@@ -3360,6 +3360,14 @@ export function apiRoutes(router: Router<Handler>): void {
     if (typeof input !== "object" || input === null || Array.isArray(input))
       return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
     const door = await spawnDoor(ctx, ctx.auth.user!, input as Record<string, unknown>);
+    return json(door.body, door.status);
+  });
+
+  // A new claim link for a child nobody has claimed (#729); the old one dies.
+  router.add("POST", "/api/v1/forges/:name/claim-link", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const door = await reissueDoor(ctx, ctx.auth.user!, ctx.params["name"] ?? "");
     return json(door.body, door.status);
   });
 
