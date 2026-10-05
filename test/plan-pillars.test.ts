@@ -278,6 +278,20 @@ describe("a plan says what each issue is for", () => {
     );
   });
 
+  test("work for a pillar cannot wait on the gate, or on work that is for later", async () => {
+    const before = (await mapOf("alice/forge")).issues.length;
+    const onGate = await plan("alice/forge", [
+      { key: "x", title: "X", pillar: "P0", blockedBy: [gate.number] },
+    ]);
+    expect(onGate.error).toContain('"x" cannot serve P0 Trust: cycle');
+    const onLater = await plan("alice/forge", [
+      { key: "a", title: "A", later: true, why: "Not now." },
+      { key: "b", title: "B", pillar: "P0", blockedBy: ["a"] },
+    ]);
+    expect(onLater.error).toContain('"b" cannot serve P0 Trust: cycle');
+    expect((await mapOf("alice/forge")).issues.length).toBe(before);
+  });
+
   test("a pillar the repository does not have is refused, with the ones it has", async () => {
     const refused = await plan("alice/forge", [
       { key: "x", title: "X", pillar: "P9 Moon" },
