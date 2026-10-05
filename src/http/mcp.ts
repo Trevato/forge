@@ -57,7 +57,7 @@ import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
-import { appsOf } from "../web/studio/asks.ts";
+import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
   askedIn,
@@ -257,6 +257,16 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "asks",
+    description:
+      "What waits on you, most consequential first: each row names the decision, its options and what happens if nobody acts, and why it ranks where it does (security, money, held-up work, then age). Rows of one kind in one app are collapsed with their item ids. Also the forge's own needs (for a site admin) and the last 7 days' asks raised, acted on, dismissed and gone by themselves.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      return good(asksAnswer(ctx, user));
     },
   },
   {
