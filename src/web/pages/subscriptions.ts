@@ -192,7 +192,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
               )}${when(
                 budget?.budgetUsd != null,
                 () =>
-                  html` · <span class="budget-line"
+                  html`<br /><span class="budget-line"
                       >spent ${dollars(budget!.spentUsd)} of a
                       ${dollars(budget!.budgetUsd!)} budget</span
                     >`,
