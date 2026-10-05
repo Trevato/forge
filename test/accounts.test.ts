@@ -444,6 +444,53 @@ describe("accounts: the owner sees, suspends and removes", () => {
     }
   });
 
+  test("the owner can verify a newcomer's email, and it can create at once", async () => {
+    // Made first: the helper proves every account waiting on a link.
+    const { token: other } = await outsider("mallet");
+    // A way in that vouches for nothing: the account starts unproven.
+    const made = await insertAgent(app.db, {
+      username: "nadia",
+      email: "nadia@outsider.test",
+      password: "outsider-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const token = createToken(app.db, made.value.id, "t", "admin").token;
+    const create = () =>
+      api("/api/v1/repos", { method: "POST", token, body: JSON.stringify({ name: "first" }) });
+    expect((await create()).status).toBe(403);
+
+    // Nobody but the owner may say so.
+    expect(
+      (await api("/api/v1/admin/accounts/nadia/verify", { method: "POST", token: other })).status,
+    ).toBe(404);
+
+    const listed = (await (await api("/api/v1/admin/accounts", { token: ownerToken })).json()) as {
+      items: { username: string; verified: boolean }[];
+    };
+    expect(listed.items.find((i) => i.username === "nadia")?.verified).toBe(false);
+    const page = await fetch(`${base}/settings/accounts`, {
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    const html = await page.text();
+    expect(html).toContain("Verify email");
+    expect(html).toContain("Mail is not configured");
+
+    const res = await api("/api/v1/admin/accounts/nadia/verify", { method: "POST", token: ownerToken });
+    expect(res.status).toBe(200);
+    expect((await create()).status).toBe(201);
+    expect(
+      listEvents(app.db, { kind: "account.email_verified" }).some(
+        (e) => e.payload["username"] === "nadia" && e.payload["by"] === "owner",
+      ),
+    ).toBe(true);
+  });
+
+  test("the owner cannot verify an agent", async () => {
+    expect(
+      (await api("/api/v1/admin/accounts/builder/verify", { method: "POST", token: ownerToken })).status,
+    ).toBe(422);
+  });
+
   test("the audit records suspensions and removals", () => {
     const kinds = listEvents(app.db, {}).map((e) => e.kind);
     expect(kinds).toContain("account.suspended");

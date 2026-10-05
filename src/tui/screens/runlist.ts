@@ -26,9 +26,9 @@ import {
   drawList,
   hitList,
   metaOf,
-  openLink,
   relTime,
   type ListRow,
+  openOnWeb,
 } from "./common.ts";
 
 /** The tone a run's state wears — the same reading on every surface. */
@@ -198,11 +198,10 @@ export function openRunLog(
   repo: Repo,
   run: Run,
 ): void {
-  const path = `/${repo.ownerName}/${repo.name}/runs/${run.id}`;
-  const base = f.app.config.url;
-  if (base === undefined) {
-    ctx.toast(`the run's log is on the web at ${path}`, "attn");
-    return;
-  }
-  openLink(ctx, `${base.replace(/\/+$/, "")}${path}`);
+  openOnWeb(
+    f,
+    ctx,
+    `/${repo.ownerName}/${repo.name}/runs/${run.id}`,
+    "the run's log",
+  );
 }

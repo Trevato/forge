@@ -1971,6 +1971,7 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
         runtime: undefined,
         record: undefined,
         history: servingHistory(),
+        viewer: undefined,
       },
       finished!,
     );

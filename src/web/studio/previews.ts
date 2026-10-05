@@ -12,8 +12,7 @@ import { envPull, previewEnv } from "../../apps/data.ts";
 import {
   appsRuntime,
   type AppsRuntime,
-  type EnvStatus,
-} from "../../apps/runtime.ts";
+  type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { listPulls, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -271,7 +270,7 @@ export function appPanels(
   const db = ctx.app.db;
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
-  const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
+  const envs: EnvStatus[] = envsFor(ctx.app, ctx.auth.user, record);
   const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
   const previews = previewsPanel(base, runtime, record, openPulls, envs, writer);
   const production = envs.find((e) => e.env === "production");

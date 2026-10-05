@@ -43,8 +43,7 @@ import { previewEnv } from "../../apps/data.ts";
 import {
   appsRuntime,
   type EnvState,
-  type EnvStatus,
-} from "../../apps/runtime.ts";
+  type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
@@ -252,7 +251,9 @@ export function pullScreen(
     preview =
       record === undefined
         ? undefined
-        : appsRuntime(f.app)?.envStatus(record, previewEnv(number));
+        : envsFor(f.app, f.user, record).find(
+            (e) => e.env === previewEnv(number),
+          );
     check =
       row === undefined
         ? NO_CHECK

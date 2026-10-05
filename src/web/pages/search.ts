@@ -11,10 +11,10 @@
  */
 
 import { search } from "../../actions/search.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canWrite, getRepo, getRepoById } from "../../core/repos.ts";
+import { canEnterApp, canWrite, getRepo, getRepoById } from "../../core/repos.ts";
 import {
   cleanQuery,
   searchKind,
@@ -68,10 +68,22 @@ const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
 
 /** Whether an app is live. No query — `runtime.status` reads what is
- * already in memory. */
-function appState(ctx: Ctx, record: AppRecord): { tone: Tone; word: string } {
-  const runtime = appsRuntime(ctx.app);
-  const envs = runtime === undefined ? [] : runtime.status(record);
+ * already in memory. Undefined for a private app the viewer may not enter:
+ * its state is its writers' and crew's (`envsFor`), and "not running" would
+ * be a guess dressed as a fact. */
+function appState(
+  ctx: Ctx,
+  record: AppRecord,
+): { tone: Tone; word: string } | undefined {
+  if (record.access === "private") {
+    const repo = getRepoById(ctx.app.db, record.repoId);
+    if (
+      repo === undefined ||
+      !canEnterApp(ctx.app.db, repo, record, ctx.auth.user, { named: false })
+    )
+      return undefined;
+  }
+  const envs = envsFor(ctx.app, ctx.auth.user, record);
   const state = envs.find((e) => e.env === "production")?.state ?? "stopped";
   const tone: Tone =
     state === "running" ? "success" : state === "failed" ? "danger" : "default";
@@ -98,15 +110,9 @@ function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
   if (hit.source === "local") {
     const name = `${hit.owner}/${hit.name}`;
     const record = apps.byId.get(hit.id);
-    // A private app's state is its writers' to see, even on a repository
-    // anyone may read: anyone else gets the counts a plain repository shows.
-    const held = getRepoById(ctx.app.db, hit.id);
-    const showsState =
-      record !== undefined &&
-      (record.access === "public" ||
-        (held !== undefined && canWrite(ctx.app.db, held, ctx.auth.user)));
-    const live =
-      record === undefined || !showsState ? undefined : appState(ctx, record);
+    // A private app's state is its writers' and crew's (`appState`): anyone
+    // else gets the counts a plain repository shows.
+    const live = record === undefined ? undefined : appState(ctx, record);
     return row({
       href: `/${name}`,
       nav: true,

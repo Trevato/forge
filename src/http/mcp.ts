@@ -24,10 +24,11 @@ import {
   linkIssue,
   unlinkIssue,
 } from "../actions/dependencies.ts";
+import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { spawnDoor } from "../spawn/door.ts";
-import { tell, toldWords } from "../actions/tell.ts";
+import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import {
   readUsage,
   usageDays,
@@ -37,8 +38,9 @@ import {
 import { ITEM_ID } from "../core/interactions.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
-import { appsRuntime } from "../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
+import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
@@ -77,10 +79,16 @@ import {
   readAppMembers,
   setAppMembersThrough,
 } from "../actions/app_members.ts";
+import {
+  explore,
+  exploreLine,
+  parseExploreQuery,
+} from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { mayReadRuns } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
@@ -169,9 +177,9 @@ const TOOLS: readonly Tool[] = [
       return good(
         repos.map((repo) => {
           const record = records.get(repo.id)!;
-          const production = runtime
-            ?.status(record)
-            .find((e) => e.env === "production");
+          const production = envsFor(ctx.app, user, record).find(
+            (e) => e.env === "production",
+          );
           return {
             app: `${repo.ownerName}/${repo.name}`,
             description: repo.description,
@@ -230,7 +238,11 @@ const TOOLS: readonly Tool[] = [
           told.error,
           told.error === "empty"
             ? "say something first"
-            : "that could not be told here",
+            : told.error === "forbidden"
+              ? DIRECTION_NOTE
+              : told.error === "unverified"
+                ? UNVERIFIED_WORDS
+                : "that could not be told here",
         );
       return good({
         says: toldWords(told.value),
@@ -341,7 +353,11 @@ const TOOLS: readonly Tool[] = [
     run(ctx, user) {
       const { repos } = appsOf(ctx, user);
       const byId = new Map(repos.map((r) => [r.id, r]));
-      const runs = listActiveRuns(ctx.app.db, [...byId.keys()]);
+      // A private app's runs are for those who may enter it (`mayReadRuns`).
+      const runs = listActiveRuns(
+        ctx.app.db,
+        repos.filter((r) => mayReadRuns(ctx.app, user, r)).map((r) => r.id),
+      );
       const actors = getUsersByIds(
         ctx.app.db,
         runs.map((r) => r.actorId).filter((id): id is string => id !== null),
@@ -380,7 +396,8 @@ const TOOLS: readonly Tool[] = [
             why: r.reason,
             state: r.state,
             since: r.startedAt ?? r.createdAt,
-            costUsd: r.costUsd,
+            // What a run costs is the owner's fact (`canSeeOwnerFacts`).
+            costUsd: owned.has(r.repoId) ? r.costUsd : 0,
           };
         }),
       ]);
@@ -603,6 +620,12 @@ const TOOLS: readonly Tool[] = [
     writes: true,
     dryByDefault: true,
     async run(ctx, user, args) {
+      // A secret never passes through an agent's conversation.
+      if (args["modelKey"] !== undefined)
+        return bad(
+          "invalid",
+          "a model key never travels through an agent: send it with POST /api/v1/forges, or add it on the child's Subscriptions page",
+        );
       const door = await spawnDoor(ctx, user, args);
       if (door.status >= 400)
         return bad(String(door.body["error"]), String(door.body["message"]));
@@ -748,6 +771,23 @@ const TOOLS: readonly Tool[] = [
       if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
         return bad("forbidden", "changing who may enter an app needs an admin-scope token");
       return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
+    },
+  },
+  {
+    name: "explore",
+    description:
+      "The apps, people (and, for a site admin, spawned forges) you can see, ranked by forks by people, pulls merged this month, hours in use and how lately they shipped, each with its numbers. `query` is one line: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`, and words to match. The same rows as /explore and /api/v1/explore.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", maxLength: 200 } },
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const query = parseExploreQuery(str(args["query"]));
+      return good({
+        query: exploreLine(query),
+        items: await explore(ctx.app, user, query),
+      });
     },
   },
   {
@@ -902,6 +942,82 @@ const TOOLS: readonly Tool[] = [
             says: `#${issue.number} no longer waits for #${blocker.number}.`,
           })
         : bad(unlinked.error, "you need write access to plan here");
+    },
+  },
+  {
+    name: "hold",
+    description:
+      "Hold a pull, or let it go. While a pull is held, no rule sends it to the crew's reviewer and no rule lands it; a person may still merge it themselves. For a person who can write the app: an agent is refused. Give `why` in one line to hold; `release: true` lets it go. It plans first — `dryRun` is true unless you say false — and says what would happen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        pull: { type: "integer", description: "The pull's number." },
+        why: {
+          type: "string",
+          description: "To hold: why, in one line. It shows on the pull.",
+        },
+        release: {
+          type: "boolean",
+          description: "True to let the pull go instead of holding it.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to do it.",
+        },
+      },
+      required: ["app", "pull"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["pull"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined)
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const dry = args["dryRun"] !== false;
+      const name = `${repo.ownerName}/${repo.name}#${pull.number}`;
+      const hint = "Nothing changed; send dryRun: false to do it.";
+      if (args["release"] === true) {
+        const released = releasePull(ctx.app, user, repo, pull, dry);
+        if (!released.ok)
+          return bad(
+            released.error,
+            "holding and releasing are for a person who can write this app",
+          );
+        return good({
+          says: !released.value
+            ? `Nothing holds ${name}.`
+            : dry
+              ? `Would release ${name}. ${hint}`
+              : `Released ${name}. The rules take it from here.`,
+          held: dry ? released.value : false,
+          dryRun: dry,
+        });
+      }
+      const held = holdPull(ctx.app, user, repo, pull, str(args["why"]), dry);
+      if (!held.ok)
+        return bad(
+          held.error,
+          held.error === "not_open"
+            ? "only an open pull can be held"
+            : held.error === "empty_why" || held.error === "why_too_long"
+              ? "say why in one line, at most 200 characters (why)"
+              : "holding and releasing are for a person who can write this app",
+        );
+      return good({
+        says: dry
+          ? `Would hold ${name}: "${held.value.why}". ${hint}`
+          : `Held ${name}. No rule reviews or lands it until it is released.`,
+        held: !dry,
+        hold: { by: held.value.heldByName, why: held.value.why },
+        dryRun: dry,
+      });
     },
   },
   {
