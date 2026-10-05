@@ -42,7 +42,7 @@ import { listAllAgents } from "./crew.ts";
 import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
-import { canWrite, getRepo, type Repo } from "../core/repos.ts";
+import { canEnterApp, canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -476,6 +476,11 @@ export function openEnvUrl(
   const record = getAppByRepo(app.db, repo.id);
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");
+  // A private app is for its writers and crew; anyone else who can read the
+  // repository gets the answer a stranger gets, and nobody is told why.
+  if (record.access === "private" && actor !== undefined)
+    if (!canEnterApp(app.db, repo, record.access, actor))
+      return err("not_found");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
   // A grant names a person, so the app hears who they are: a signed-in

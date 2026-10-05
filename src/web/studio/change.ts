@@ -109,7 +109,7 @@ export async function studioPull(
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
-  const crewDecision = decisionsFor(ctx, [repo]).find(
+  const crewDecision = decisionsFor(ctx, [repo], { evenDismissed: true }).find(
     (d) => d.pull?.id === pull.id,
   );
   // A person's own change carries no crew decision (`decisionsFor` reads

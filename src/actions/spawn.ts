@@ -15,15 +15,30 @@
 import { mkdir, readdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { createApp, type App } from "../app.ts";
-import { getAgentByName, createAgentRow, updateAgent, BRIEF_MAX } from "../core/agents.ts";
+import {
+  addCrew,
+  BRIEF_MAX,
+  createAgentRow,
+  getAgentByName,
+  listCrewRoles,
+  setCrewRole,
+  updateAgent,
+} from "../core/agents.ts";
 import { createOrg, getOrg } from "../core/orgs.ts";
-import { canRead, createRepo, getRepo } from "../core/repos.ts";
+import {
+  canRead,
+  createRepo,
+  getRepo,
+  updateRepoSettings,
+  type Repo,
+} from "../core/repos.ts";
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { crossOrigin } from "../http/context.ts";
+import { mintClaim } from "../spawn/claim.ts";
 import type { Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { requireUser } from "./access.ts";
@@ -35,6 +50,12 @@ export interface Spawned {
   readonly bodyId: string;
   /** True when this call found the child already made and changed nothing. */
   readonly existed: boolean;
+  /**
+   * The link that hands the child to its person: shown once, here, when
+   * the child is made. Absent when the child already existed; the child
+   * keeps only its hash (`spawn/claim.ts`).
+   */
+  readonly claimUrl?: string;
 }
 
 export type SpawnError =
@@ -155,6 +176,7 @@ async function make(
 
   const copied = await copyInto(app, owner, plan, ledger);
   if (!copied.ok) return fail(copied.error);
+  const claimUrl = `${ledger.url}/claim/${copied.value}`;
 
   ledger.done = true;
   await writeLedger(app, ledger);
@@ -163,16 +185,26 @@ async function make(
     actorId: owner.id,
     payload: { name: plan.name, org: plan.org, url: ledger.url, apps: plan.apps.map((a) => a.ref) },
   });
-  return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: false });
+  return ok({
+    name: plan.name,
+    org: plan.org,
+    url: ledger.url,
+    bodyId: ledger.bodyId,
+    existed: false,
+    claimUrl,
+  });
 }
 
-/** Every step skips what is already there, so a resumed child is finished, not doubled. */
+/**
+ * Every step skips what is already there, so a resumed child is finished,
+ * not doubled. Answers the child's claim token, minted afresh each time.
+ */
 async function copyInto(
   app: App,
   owner: User,
   plan: SpawnPlan,
   ledger: Ledger,
-): Promise<Result<void, string>> {
+): Promise<Result<string, string>> {
   const dir = childDirOf(app, ledger.bodyId);
   await mkdir(dir, { recursive: true });
   const child = createApp({ dataDir: dir });
@@ -197,6 +229,7 @@ async function copyInto(
       org = made.value;
     }
 
+    const copiedRepos: { parent: Repo; child: Repo }[] = [];
     for (const a of plan.apps) {
       const [o, n] = a.ref.split("/") as [string, string];
       const parent = getRepo(app.db, o, n);
@@ -225,6 +258,11 @@ async function copyInto(
         { cwd: repoDir(child.reposRoot, org.username, n), timeoutMs: 600_000 },
       );
       if (!fetched.ok) return err(`could not copy ${a.ref}: ${fetched.error.stderr}`);
+      // The spawner's words are each app's direction; the child's first
+      // boot opens the direction issue from them (`spawn/first-boot.ts`).
+      if (plan.direction !== "" && repo.autonomyDirection !== plan.direction)
+        repo = updateRepoSettings(child.db, repo, { autonomyDirection: plan.direction });
+      copiedRepos.push({ parent, child: repo });
     }
 
     for (const b of plan.briefs) {
@@ -242,12 +280,29 @@ async function copyInto(
       createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });
     }
 
+    // A carried crew member keeps its place on each app: the role it had on
+    // the parent's copy (planner, builder, reviewer), so the child's planner
+    // is known before its first boot.
+    for (const { parent, child: repo } of copiedRepos)
+      for (const { agent, role } of listCrewRoles(app.db, parent.id)) {
+        if (!plan.briefs.some((b) => b.agent === agent.user.username)) continue;
+        const theirs = getAgentByName(child.db, agent.user.username);
+        if (!theirs) continue;
+        addCrew(child.db, repo.id, theirs.user.id, founder.id);
+        setCrewRole(child.db, repo.id, theirs.user.id, role);
+      }
+
     const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
     await Bun.write(
       join(dir, "parent.json"),
-      JSON.stringify({ upstream, name: plan.name, org: plan.org }),
+      JSON.stringify({
+        upstream,
+        name: plan.name,
+        org: plan.org,
+        keepAccess: plan.keepAccess,
+      }),
     );
-    return ok();
+    return ok(mintClaim(child.db, org.id));
   } finally {
     child.close();
   }

@@ -245,17 +245,56 @@ describe("the studio", () => {
     }
   });
 
-  test("an app's home is the app in the studio, and the code in dev", async () => {
+  test("an app's home is the app for every viewer, and its code is the Files step one tab over", async () => {
     const studio = await (await get("/alice/notes")).text();
     expect(studio).toContain("Tell the crew");
     expect(studio).toContain("<h2>Crew</h2>");
     expect(studio).toContain(">Studio<");
+    expect(studio).toContain('href="/alice/notes/files"');
     expect(studio).not.toContain(">Commits<");
-    const dev = await (
-      await get("/alice/notes", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).not.toContain("Tell the crew");
-    expect(dev).toContain(">Commits<");
+    // No second home behind the mode: the cookie and the query both get
+    // the app.
+    for (const dev of [
+      await get("/alice/notes", { cookie: `${cookie}; forge_mode=dev` }),
+      await get("/alice/notes?mode=dev"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain("Tell the crew");
+      expect(text).toContain('href="/alice/notes/files"');
+      expect(text).not.toContain("?mode=studio");
+    }
+
+    // The Files step is the code page: the tree, the README, the rail.
+    const files = await (await get("/alice/notes/files")).text();
+    expect(files).toContain("package.json");
+    expect(files).toContain("server.ts");
+    expect(files).not.toContain("Tell the crew");
+    // An older `?ref=` link to the app's code is handed on to it.
+    const old = await get("/alice/notes?ref=main");
+    expect(old.status).toBe(303);
+    expect(old.headers.get("location")).toBe("/alice/notes/files?ref=main");
+  });
+
+  test("/files on a repository that is not an app is its home, which already is its code", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainfiles",
+      visibility: "private",
+      description: "",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const res = await get("/alice/plainfiles/files?ref=main");
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/alice/plainfiles?ref=main");
+    // And a reader who cannot see it gets the forge's not-found, never a
+    // redirect that says it exists.
+    const anon = await fetch(`${base}/alice/plainfiles/files`, {
+      redirect: "manual",
+    });
+    expect(anon.status).toBe(404);
+    const anonApp = await fetch(`${base}/alice/notes/files`, {
+      redirect: "manual",
+    });
+    expect(anonApp.status).toBe(404);
   });
 
   test("a repository with no app record keeps the studio's framing: one card, one door to make it one; ?mode=dev is unchanged, and an app itself never shows the card", async () => {
@@ -698,7 +737,7 @@ describe("the studio", () => {
     expect(studioCookie).toContain("Merge pull request");
   });
 
-  test("a tell on an app renders as a studio page — who has it, its runs, what blocks it, and no label form; ?mode=dev still renders today's page", async () => {
+  test("a tell renders as one page — who has it, its runs, what blocks it with its form — and labels and the assignee in a closed Details; ?mode=dev changes nothing", async () => {
     const blocker = openIssue(app, alice, repo, {
       title: "Ground work",
       body: "Do this first.",
@@ -739,20 +778,48 @@ describe("the studio", () => {
     expect(studio).toContain('data-word="working"');
     expect(studio).toContain("$0.12");
     expect(studio).toContain('id="comment-body"');
-    expect(studio).not.toContain("<h2>Labels</h2>");
-    expect(studio).not.toContain("Apply labels");
-    expect(studio).toContain(
-      `href="/alice/notes/issues/${issue.number}?mode=dev"`,
+    expect(studio).not.toContain("?mode=dev");
+    // Dev's controls, folded in: closed until asked for, never a mode.
+    const details = studio.slice(
+      studio.indexOf('<details class="quiet-details'),
+      studio.indexOf("</details>", studio.indexOf('<details class="quiet-details')),
     );
+    expect(details).toMatch(/^<details class="quiet-details mt">/);
+    expect(details).toContain("<h2>Labels</h2>");
+    expect(details).toContain("<h2>Assignee</h2>");
+    // What it waits for stays in view, with the form beside it.
+    expect(details).not.toContain("/dependencies");
+    expect(studio).toContain(`action="/alice/notes/issues/${issue.number}/dependencies"`);
+    // The close keeps its reasons (done, dropped, split).
+    expect(studio).toContain('name="reason"');
 
-    const dev = await (
+    for (const dev of [
       await get(`/alice/notes/issues/${issue.number}`, {
         cookie: `${cookie}; forge_mode=dev`,
-      })
-    ).text();
-    expect(dev).toContain("<h2>Labels</h2>");
-    expect(dev).toContain("<h2>Assignee</h2>");
-    expect(dev).toContain("<h2>Depends on</h2>");
+      }),
+      await get(`/alice/notes/issues/${issue.number}?mode=dev`),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="working"');
+      expect(text).toContain('<details class="quiet-details mt">');
+    }
+  });
+
+  test("a reader of a public tell sees its Details but none of the forms that change it", async () => {
+    const open = await createRepo(app, alice, {
+      name: "publictell",
+      visibility: "public",
+      description: "",
+    });
+    if (!open.ok) throw new Error(String(open.error));
+    const told = openIssue(app, alice, open.value, { title: "Anyone may read" });
+    if (!told.ok) throw new Error(String(told.error));
+    const at = `/alice/publictell/issues/${told.value.number}`;
+    const anon = await (await fetch(`${base}${at}`)).text();
+    expect(anon).toContain("Anyone may read");
+    expect(anon).toContain('<details class="quiet-details mt">');
+    for (const verb of ["assignee", "labels", "dependencies", "state", "comments"])
+      expect(anon, verb).not.toContain(`action="${at}/${verb}"`);
   });
 
   test("the repository's direction never reads as waiting forever", async () => {
@@ -1160,18 +1227,16 @@ describe("the studio", () => {
     expect(viaTell.status).toBe(200);
     const tellHtml = await viaTell.text();
     const viaIssue = await (await get(`/alice/notes/issues/${n}`)).text();
-    // The same page: the studio's tell, never dev's labels or dependency
-    // form, and never a second copy of the markup.
+    // The same page, never a second copy of the markup.
     expect(tellHtml).toContain("Door test: one tell");
     expect(tellHtml).toContain('data-word="told"');
     // Still waiting, nobody assigned: the one case the line is true (#214).
     expect(tellHtml).toContain("nobody has it yet");
-    expect(tellHtml).not.toContain("<h2>Labels</h2>");
     expect(viaIssue).toContain('data-word="told"');
     // The write surface does not move with the noun: the reply, the close
-    // and the escape to dev all still point at /issues/:number.
+    // and every Details form still point at /issues/:number.
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/comments"`);
-    expect(tellHtml).toContain(`href="/alice/notes/issues/${n}?mode=dev"`);
+    expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/assignee"`);
     // An anchor into the conversation still lands — the composer is on the
     // page either door was used.
     expect(tellHtml).toContain('id="comment-body"');
@@ -1225,22 +1290,20 @@ describe("the studio", () => {
     expect(appPage).toContain('"studio":true');
   });
 
-  test("/tells/:number and /changes/:number send a dev-mode viewer, ?mode=dev, and a repository that is not an app on to /issues/:number and /pulls/:number", async () => {
+  test("/tells/:number answers a dev-mode viewer, ?mode=dev, and a repository that is not an app with the same page, never a bounce", async () => {
     const told = openIssue(app, alice, repo, { title: "Door test: dev's way" });
     if (!told.ok) throw new Error(String(told.error));
     const n = told.value.number;
 
-    const devTell = await get(`/alice/notes/tells/${n}`, {
-      cookie: `${cookie}; forge_mode=dev`,
-    });
-    expect(devTell.status).toBe(303);
-    expect(devTell.headers.get("location")).toBe(`/alice/notes/issues/${n}`);
-
-    const escape = await get(`/alice/notes/tells/${n}?mode=dev`);
-    expect(escape.status).toBe(303);
-    expect(escape.headers.get("location")).toBe(
-      `/alice/notes/issues/${n}?mode=dev`,
-    );
+    for (const res of [
+      await get(`/alice/notes/tells/${n}`, {
+        cookie: `${cookie}; forge_mode=dev`,
+      }),
+      await get(`/alice/notes/tells/${n}?mode=dev`),
+    ]) {
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("Door test: dev");
+    }
 
     const plain = await createRepo(app, alice, {
       name: "doorpages",
@@ -1255,10 +1318,8 @@ describe("the studio", () => {
     const plainTell = await get(
       `/alice/doorpages/tells/${plainTold.value.number}`,
     );
-    expect(plainTell.status).toBe(303);
-    expect(plainTell.headers.get("location")).toBe(
-      `/alice/doorpages/issues/${plainTold.value.number}`,
-    );
+    expect(plainTell.status).toBe(200);
+    expect(await plainTell.text()).toContain("Not an app");
   });
 
   test("a reader without access gets the forge's not-found on /tells/:number and /changes/:number, exactly as /issues/:number and /pulls/:number", async () => {
@@ -1357,13 +1418,17 @@ describe("the studio", () => {
     expect(studio).not.toContain("not serving");
     expect(studio).toContain('href="/apps?live=1"');
 
-    const dev = await (
-      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(
-      "Repositories that run. Production follows the default branch",
-    );
-    expect(dev).not.toContain('href="/apps?live=1"');
+    // One list (#630): dev's table is gone, and the cookie and the query
+    // both answer the shelf.
+    for (const dev of [
+      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` }),
+      await bobGet("/apps?mode=dev"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('href="/apps?live=1"');
+      expect(text).not.toContain('href="/alice/notes"');
+      expect(text).not.toContain("Repositories that run.");
+    }
   });
 
   test("clicking your own name in the studio lands on /:owner, which leads with your apps on the shelf and New app as the primary action; dev mode is unchanged, and a stranger never sees a private one", async () => {
@@ -8020,7 +8085,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     ).toBeGreaterThan(0);
   });
 
-  test("dev mode: Stop comes back to the page it was pressed on, Redeploy goes to the run", async () => {
+  test("dev mode is the same: Stop and Redeploy both come back to the page they were pressed on", async () => {
     const stopped = await press("stop", "dev", `${base}/alice/notes/pulls/1`);
     expect(stopped.status).toBe(303);
     expect(stopped.headers.get("location")).toBe("/alice/notes/pulls/1");
@@ -8028,8 +8093,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
 
     const queued = await press("redeploy", "dev", `${base}/alice/notes`);
     expect(queued.status).toBe(303);
-    const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 1 })[0];
-    expect(queued.headers.get("location")).toBe(`/alice/notes/runs/${run?.id}`);
+    expect(queued.headers.get("location")).toBe("/alice/notes");
     expect(flashOf(queued)).toContain("Redeploying production.");
   });
 
@@ -8037,7 +8101,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
   // answering — a redirect to the studio app page — and the environment
   // controls it carried (each preview's Redeploy and Stop, the way to the
   // environment settings) are drawn here instead.
-  test("GET /:owner/:name/app redirects to the studio app page, switching a dev browser over", async () => {
+  test("GET /:owner/:name/app redirects to the app page, for a dev browser too", async () => {
     const asStudio = await fetch(`${base}/alice/notes/app`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
       redirect: "manual",
@@ -8050,8 +8114,8 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       redirect: "manual",
     });
     expect(asDev.status).toBe(302);
-    expect(asDev.headers.get("location")).toBe("/alice/notes?mode=studio");
-    const landed = await fetch(`${base}/alice/notes?mode=studio`, {
+    expect(asDev.headers.get("location")).toBe("/alice/notes");
+    const landed = await fetch(`${base}/alice/notes`, {
       headers: { cookie: `${cookie}; forge_mode=dev` },
       redirect: "manual",
     });

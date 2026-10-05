@@ -1501,10 +1501,9 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     // `unauthorized` is reachable only through the other combination: a
     // *public* repository (so `canRead` already passes for anyone) whose
     // app access is explicitly overridden to "private". There, an
-    // anonymous visitor has nothing to be vouched with, but any signed-in
-    // account — even a stranger's — can read the (public) code, so it gets
-    // a working grant. That is the documented contract (`canRead` plus
-    // "the forge can name you"), not a bypass of crew/collaborator status.
+    // anonymous visitor has nothing to be vouched with, and a signed-in
+    // stranger who can read the public code is still not let in: a private
+    // app answers to its writers and crew only (#620).
     const overrideMade = await newApp(app, alice, {
       name: "publicwithprivateapp",
       visibility: "public",
@@ -1530,7 +1529,9 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       overrideMade.value.repo,
       "production",
     );
-    expect(strangerOnPublicRepo.ok).toBe(true);
+    expect(strangerOnPublicRepo.ok).toBe(false);
+    if (!strangerOnPublicRepo.ok)
+      expect(strangerOnPublicRepo.error).toBe("not_found");
   }, 60_000);
 
   test("the proxy: hop-by-hop headers are stripped, an upstream that dies mid-request yields a clean error, a claimed upgrade is a request", async () => {

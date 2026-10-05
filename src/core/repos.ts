@@ -659,6 +659,22 @@ export function canWrite(
 }
 
 /**
+ * Who may enter an app, its previews and its terminal. A public app is open
+ * to anyone. A private one answers to the people who can write the
+ * repository and to its crew — never to everyone who can read it, so making
+ * a repository public changes nobody's way into its app (#620).
+ */
+export function canEnterApp(
+  db: Database,
+  repo: Repo,
+  access: "public" | "private",
+  user: User | undefined,
+): boolean {
+  if (access === "public") return true;
+  return canWrite(db, repo, user) || onCrew(db, repo, user);
+}
+
+/**
  * Money, the crew roster, autonomy limits and a run's own cost describe
  * running the app, not what it is — a stranger who can only read a public
  * app sees what it does and what it has shipped, never what it costs or

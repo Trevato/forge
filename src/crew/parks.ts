@@ -20,12 +20,14 @@ const PARK = "Parked by the crew%";
 /**
  * The parks on `p.issue_id` that count: newer than the newest comment that
  * is not itself a park, by a person who may direct the crew (the ids in
- * the JSON array `?1`) or by the repository's planner.
+ * the JSON array `?1`) or by the repository's planner — never one imported
+ * from an origin, whose `author_id` is only the connecting user.
  */
 const COUNTED = `p.body LIKE '${PARK}' AND p.created_at > COALESCE((
     SELECT MAX(c.created_at) FROM comment c
       JOIN issue i ON i.id = c.issue_id
      WHERE c.issue_id = p.issue_id AND c.body NOT LIKE '${PARK}'
+       AND c.origin_author IS NULL
        AND (c.author_id IN (SELECT value FROM json_each(?1)) OR EXISTS (
          SELECT 1 FROM repo_crew rc
           WHERE rc.repo_id = i.repo_id AND rc.user_id = c.author_id

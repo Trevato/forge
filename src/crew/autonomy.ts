@@ -493,10 +493,12 @@ function stalled(app: App, repo: Repo, issue: Issue): boolean {
     return false;
   // A word since then — from someone who may direct the crew, or the
   // planner's when it re-planned a parked issue — is what un-stalls it. A
-  // reader's comment stays on the thread (#619).
+  // reader's comment stays on the thread, and so does one imported from
+  // an origin, whoever connected it (#619).
   return !app.db
     .query<{ id: string }, [string, string]>(
-      "SELECT DISTINCT author_id AS id FROM comment WHERE issue_id = ?1 AND created_at > ?2",
+      `SELECT DISTINCT author_id AS id FROM comment
+        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
     )
     .all(issue.id, last.created_at)
     .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
@@ -540,7 +542,7 @@ function declineOf(
   const spoke = db
     .query<{ id: string }, [string, string]>(
       `SELECT DISTINCT author_id AS id FROM comment
-       WHERE issue_id = ?1 AND created_at > ?2
+       WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
          AND body NOT LIKE 'Parked by the crew%'`,
     )
     .all(issueId, last.created_at)
@@ -783,7 +785,7 @@ export function truncateAtWord(text: string, limit: number): string {
  * The issue the planner works from: the direction, as an open issue the
  * run can be about. Made once, kept, and never counted as work.
  */
-function ensureDirectionIssue(
+export function ensureDirectionIssue(
   app: App,
   by: User,
   repo: Repo,
