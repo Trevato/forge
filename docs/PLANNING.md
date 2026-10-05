@@ -118,6 +118,23 @@ a task too big for one run splits it into linked issues instead of leaving
 half of it. Either way the plan is where everyone can see it, and closing
 an issue is what frees the next.
 
+## Pillars and the Later gate
+
+A direction can name what the work is for. Each such _pillar_ is an open
+umbrella issue whose title starts with its name — `P0 Trust: …` — and an
+issue serves the pillar whose umbrella waits for it; nothing else records
+it (`src/core/pillars.ts`). Work that serves no pillar is not dropped and
+is not ready either: it waits behind the _Later gate_, the open issue whose
+title starts `Later gate:`, opens with one sentence that says why it waits,
+and stands under the `Later: …` umbrella where the repository keeps one.
+The owner moves an item out by unlinking it from the gate, or opens them
+all by closing the gate.
+
+A plan says which it is for every issue. The planner's brief tells it to
+link each issue it opens under its pillar or behind the gate, and the MCP
+`plan` tool refuses an item that says neither. A repository with no
+umbrella issues has no pillars, and plans as it always did.
+
 ## A repository on its own
 
 A repository has one setting for how much the crew does without being
