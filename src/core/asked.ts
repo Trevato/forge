@@ -67,8 +67,17 @@ export const ASKED_LIMIT = 200;
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** The newest asks read before filtering: a bound on one page's work. */
-const SCAN_LIMIT = 2000;
+/** Asks read per step of the scan. */
+const SCAN_STEP = 500;
+
+/** An ask with everything but the crew's last activity, which is read per page. */
+type Scanned = Omit<Asked, "lastCrewAt">;
+
+const shown = (a: Scanned, show: AskedShow): boolean =>
+  show === "all" ||
+  (show === "flagged"
+    ? a.flagged
+    : a.state === "waiting" || a.state === "building");
 
 interface AskRow {
   id: string;
@@ -109,47 +118,25 @@ export function askedRepos(
 }
 
 /**
- * The asks in these repositories, oldest first unless `order` says newest.
- * The caller decides which repositories the viewer may read this about
- * (writers of each).
+ * Every ask in these repositories, in `order`, with its state. It reads a
+ * step at a time and in the order asked for, so a caller that stops when
+ * its page is full reads no further, and one that reads on misses nothing:
+ * however many asks there are, the oldest are the first out.
  */
-export function askedIn(
+function* scan(
   db: Database,
   repos: readonly Repo[],
-  options: {
-    show?: AskedShow;
-    order?: AskedOrder;
-    now?: Date;
-    limit?: number;
-  } = {},
-): Asked[] {
-  if (repos.length === 0) return [];
-  const show = options.show ?? "unshipped";
-  const order = options.order ?? "oldest";
-  const now = (options.now ?? new Date()).getTime();
-  const limit = Math.min(
-    Math.max(options.limit ?? ASKED_LIMIT, 1),
-    ASKED_LIMIT,
-  );
+  order: AskedOrder,
+  now: number,
+): Generator<Scanned> {
+  if (repos.length === 0) return;
   const byId = new Map(repos.map((r) => [r.id, r]));
   const repoIds = [...byId.keys()];
-  const direction = repos.flatMap((r) =>
-    r.directionIssueId === null ? [] : [r.directionIssueId],
+  const direction = new Set(
+    repos.flatMap((r) =>
+      r.directionIssueId === null ? [] : [r.directionIssueId],
+    ),
   );
-
-  // A person's issues: the author is not an agent and the row is native.
-  const ids = db
-    .query<AskRow, string[]>(
-      `SELECT issue.id FROM issue JOIN user ON user.id = issue.author_id
-       WHERE issue.repo_id IN (${placeholders(repoIds.length)})
-         AND issue.kind = 'issue' AND user.is_agent = 0
-         AND issue.origin_author IS NULL
-       ORDER BY issue.created_at DESC, issue.number DESC
-       LIMIT ${SCAN_LIMIT}`,
-    )
-    .all(...repoIds)
-    .map((r) => r.id)
-    .filter((id) => !direction.includes(id));
 
   const pulls = new Map<string, AskedPull[]>();
   const rows = db
@@ -185,42 +172,80 @@ export function askedIn(
     ),
   );
 
-  const out: Omit<Asked, "lastCrewAt">[] = [];
-  for (const issue of getIssuesByIds(db, ids).values()) {
-    const repo = byId.get(issue.repoId);
-    if (repo === undefined) continue;
-    const its = pulls.get(`${issue.repoId}#${issue.number}`) ?? [];
-    const state: AskedState = its.some((p) => p.state === "merged")
-      ? "shipped"
-      : its.some((p) => p.state === "open") || running.has(issue.id)
-        ? "building"
-        : issue.state === "closed"
-          ? "closed"
-          : "waiting";
-    const flagged =
-      (state === "waiting" || state === "building") &&
-      now - Date.parse(issue.createdAt) > STALE_DAYS * DAY;
-    if (show === "unshipped" && (state === "shipped" || state === "closed"))
-      continue;
-    if (show === "flagged" && !flagged) continue;
-    out.push({
-      source: "issue",
-      repo,
-      issue,
-      askedBy: issue.authorName,
-      askedAt: issue.createdAt,
-      pulls: its,
-      state,
-      flagged,
-    });
-  }
-  const sign = order === "oldest" ? 1 : -1;
-  out.sort(
-    (a, b) =>
-      sign * a.askedAt.localeCompare(b.askedAt) ||
-      sign * (a.issue.number - b.issue.number),
+  // A person's issues: the author is not an agent and the row is native.
+  const way = order === "oldest" ? "ASC" : "DESC";
+  const step = db.query<AskRow, (string | number)[]>(
+    `SELECT issue.id FROM issue JOIN user ON user.id = issue.author_id
+     WHERE issue.repo_id IN (${placeholders(repoIds.length)})
+       AND issue.kind = 'issue' AND user.is_agent = 0
+       AND issue.origin_author IS NULL
+     ORDER BY issue.created_at ${way}, issue.number ${way}, issue.id ${way}
+     LIMIT ?${repoIds.length + 1} OFFSET ?${repoIds.length + 2}`,
   );
-  const page = out.slice(0, limit);
+  for (let offset = 0; ; offset += SCAN_STEP) {
+    const ids = step.all(...repoIds, SCAN_STEP, offset).map((r) => r.id);
+    const issues = getIssuesByIds(db, ids);
+    for (const id of ids) {
+      const issue = issues.get(id);
+      const repo = issue === undefined ? undefined : byId.get(issue.repoId);
+      if (issue === undefined || repo === undefined || direction.has(id))
+        continue;
+      const its = pulls.get(`${issue.repoId}#${issue.number}`) ?? [];
+      const state: AskedState = its.some((p) => p.state === "merged")
+        ? "shipped"
+        : its.some((p) => p.state === "open") || running.has(issue.id)
+          ? "building"
+          : issue.state === "closed"
+            ? "closed"
+            : "waiting";
+      yield {
+        source: "issue",
+        repo,
+        issue,
+        askedBy: issue.authorName,
+        askedAt: issue.createdAt,
+        pulls: its,
+        state,
+        flagged:
+          (state === "waiting" || state === "building") &&
+          now - Date.parse(issue.createdAt) > STALE_DAYS * DAY,
+      };
+    }
+    if (ids.length < SCAN_STEP) return;
+  }
+}
+
+/**
+ * The asks in these repositories, oldest first unless `order` says newest:
+ * the first `limit` that `show` lets through. The caller decides which
+ * repositories the viewer may read this about (writers of each).
+ */
+export function askedIn(
+  db: Database,
+  repos: readonly Repo[],
+  options: {
+    show?: AskedShow;
+    order?: AskedOrder;
+    now?: Date;
+    limit?: number;
+  } = {},
+): Asked[] {
+  const show = options.show ?? "unshipped";
+  const limit = Math.min(
+    Math.max(options.limit ?? ASKED_LIMIT, 1),
+    ASKED_LIMIT,
+  );
+  const page: Scanned[] = [];
+  for (const ask of scan(
+    db,
+    repos,
+    options.order ?? "oldest",
+    (options.now ?? new Date()).getTime(),
+  )) {
+    if (!shown(ask, show)) continue;
+    page.push(ask);
+    if (page.length === limit) break;
+  }
   const last = lastCrewActivity(
     db,
     page.flatMap((a) => [a.issue.id, ...a.pulls.map((p) => p.id)]),
@@ -233,6 +258,32 @@ export function askedIn(
     }
     return { ...a, lastCrewAt: at };
   });
+}
+
+export interface AskedCounts {
+  /** Every ask. */
+  readonly asked: number;
+  readonly shipped: number;
+  /** Waiting or building: what `show=unshipped` lists. */
+  readonly unshipped: number;
+  /** What `show=flagged` lists. */
+  readonly flagged: number;
+}
+
+/** How many asks there are of each kind, over all of them, not one page. */
+export function askedCounts(
+  db: Database,
+  repos: readonly Repo[],
+  now: Date = new Date(),
+): AskedCounts {
+  const counts = { asked: 0, shipped: 0, unshipped: 0, flagged: 0 };
+  for (const ask of scan(db, repos, "oldest", now.getTime())) {
+    counts.asked++;
+    if (ask.state === "shipped") counts.shipped++;
+    if (shown(ask, "unshipped")) counts.unshipped++;
+    if (ask.flagged) counts.flagged++;
+  }
+  return counts;
 }
 
 /** The newest agent run or agent comment per issue, in two grouped reads. */

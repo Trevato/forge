@@ -8,6 +8,7 @@
  */
 
 import {
+  askedCounts,
   askedIn,
   askedRepos,
   isAskedOrder,
@@ -31,12 +32,6 @@ const WORD: Record<AskedState, { text: string; tone: Tone }> = {
   closed: { text: "Closed", tone: "default" },
 };
 
-const shows = (a: Asked, show: AskedShow): boolean =>
-  show === "all" ||
-  (show === "flagged"
-    ? a.flagged
-    : a.state === "waiting" || a.state === "building");
-
 function pullNote(a: Asked): string {
   const merged = a.pulls.find((p) => p.state === "merged");
   if (merged) return `pull #${merged.number} merged`;
@@ -51,11 +46,13 @@ function askedRow(a: Asked): Html {
     href: `${repoBase(a.repo)}/issues/${a.issue.number}`,
     nav: true,
     title: a.issue.title,
-    meta: html`${a.repo.ownerName}/${a.repo.name} #${a.issue.number} ·
-    ${a.askedBy} · ${time(a.askedAt)} · ${pullNote(a)} ·
-    ${a.lastCrewAt === null
+    // What became of it comes first: the line is cut at a phone's width, and
+    // what is cut is where and who, which the ask's own page says.
+    meta: html`${a.lastCrewAt === null
       ? "crew not on it yet"
-      : html`crew ${time(a.lastCrewAt)}`}`,
+      : html`crew ${time(a.lastCrewAt)}`}
+    · ${pullNote(a)} · ${a.repo.ownerName}/${a.repo.name} #${a.issue.number} ·
+    ${a.askedBy} · ${time(a.askedAt)}`,
     // One badge per row: a flagged ask says only that nothing was built
     // (the meta line still names its pull), so a phone keeps the title.
     trail: a.flagged
@@ -80,9 +77,8 @@ export function askedPage(ctx: Ctx): Response {
   const order: AskedOrder = isAskedOrder(rawOrder) ? rawOrder : "oldest";
   const repoSpec = q.get("repo");
   const repos = askedRepos(ctx.app.db, ctx.auth.user, repoSpec);
-  const all = askedIn(ctx.app.db, repos, { show: "all" });
+  const counts = askedCounts(ctx.app.db, repos);
   const listed = askedIn(ctx.app.db, repos, { show, order });
-  const count = (s: AskedShow) => all.filter((a) => shows(a, s)).length;
   const href = (s: AskedShow, o: AskedOrder = order) => {
     const parts = [
       s === "unshipped" ? "" : `show=${s}`,
@@ -91,12 +87,11 @@ export function askedPage(ctx: Ctx): Response {
     ].filter(Boolean);
     return `/asked${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
   };
-  const shipped = all.filter((a) => a.state === "shipped").length;
-  const flagged = count("flagged");
+  const { asked, shipped, unshipped, flagged } = counts;
   const sentence =
-    all.length === 0
+    asked === 0
       ? "Nothing asked yet"
-      : `${all.length} asked · ${shipped} shipped${flagged > 0 ? ` · ${flagged} with nothing built` : ""}`;
+      : `${asked} asked · ${shipped} shipped${flagged > 0 ? ` · ${flagged} with nothing built` : ""}`;
 
   const body = html`<h1 id="asked-sentence">What you asked for</h1>
     <p class="muted">${sentence}</p>
@@ -106,7 +101,7 @@ export function askedPage(ctx: Ctx): Response {
           label: "Not shipped",
           href: href("unshipped"),
           current: show === "unshipped",
-          count: count("unshipped"),
+          count: unshipped,
         },
         {
           label: "Nothing built",
@@ -118,7 +113,7 @@ export function askedPage(ctx: Ctx): Response {
           label: "All",
           href: href("all"),
           current: show === "all",
-          count: all.length,
+          count: asked,
         },
       ])}
       <span class="spacer"></span>
@@ -129,9 +124,9 @@ export function askedPage(ctx: Ctx): Response {
     ${listed.length === 0
       ? empty({
           icon: "issue",
-          title: all.length === 0 ? "Nothing asked yet" : "Nothing here",
+          title: asked === 0 ? "Nothing asked yet" : "Nothing here",
           note:
-            all.length === 0
+            asked === 0
               ? "What a person tells the crew shows up here, with what became of it."
               : "Every ask in this view has something built for it.",
         })
