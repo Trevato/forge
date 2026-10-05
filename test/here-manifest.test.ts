@@ -36,6 +36,7 @@ describe("the manifest: what you can do here, as who you are", () => {
       ["carol", false],
     ] as const) {
       const made = await createUser(app.db, {
+        trusted: true,
         username: name,
         email: `${name}@forge.local`,
         password: "a-good-passphrase",

@@ -14,7 +14,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { listEvents } from "../../core/events.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
+import { canEnterApp, type Repo } from "../../core/repos.ts";
 import { activeRunFor, listRuns } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -102,6 +102,9 @@ export async function tellWord(
     return pull ? await pullWord(wordCtx, pull) : undefined;
   }
   if (closingPull !== undefined) return await pullWord(wordCtx, closingPull);
+  // A private app's runs are for those who may enter it: anyone else reads
+  // that it was told, never how the crew is getting on with it.
+  if (!runsOpenTo(wordCtx, repo)) return { word: "told", note: "told" };
   if (activeRunFor(db, "agent", issue.id) !== undefined)
     return { word: "working", note: "working now" };
   const last = listRuns(db, repo.id, {
@@ -119,6 +122,15 @@ export async function tellWord(
   return { word: "told", note: "not picked up yet" };
 }
 
+/** Whether the reader may see this repository's runs (`mayReadRuns`). */
+function runsOpenTo(wordCtx: WordCtx, repo: Repo): boolean {
+  const record = wordCtx.record;
+  return (
+    record === undefined ||
+    canEnterApp(wordCtx.db, repo, record, wordCtx.viewer, { named: false })
+  );
+}
+
 /** Every agent run for this tell, newest first: who, how long, what it
  * cost, and its state in the studio's own word — the title opens the
  * transcript. Empty when the crew has not touched it yet. */
@@ -127,6 +139,7 @@ async function tellRuns(
   repo: Repo,
   issue: Issue,
 ): Promise<Html | null> {
+  if (!runsOpenTo(wordCtx, repo)) return null;
   const runs = listRuns(wordCtx.db, repo.id, {
     kind: "agent",
     issueId: issue.id,
@@ -226,6 +239,7 @@ async function studioTell(
     runtime: appsRuntime(ctx.app),
     record: getAppByRepo(db, repo.id),
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const [wordInfo, runsCard, closingCard] = await Promise.all([
     direction ? undefined : tellWord(wordCtx, repo, issue, closingPull),

@@ -22,7 +22,7 @@ import {
 import { canRead, type Repo } from "../../core/repos.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
-import { clientAddress } from "../../http/peer.ts";
+import { clientBucket } from "../../http/peer.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -151,9 +151,8 @@ const REFUSED: Record<string, string> = {
 export async function reportSubmit(ctx: Ctx): Promise<Response> {
   const repo = publicRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  if (Number(ctx.request.headers.get("content-length") ?? 0) > REQUEST_MAX)
-    return new Response("too large", { status: 413 });
-  const form = await readForm(ctx);
+  // A stranger's form: counted as it arrives, declared length or not.
+  const form = await readForm(ctx, undefined, REQUEST_MAX);
   if (form instanceof Response) return form;
   const values = {
     title: field(form, "title"),
@@ -165,7 +164,7 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
   // person is told, and nothing is kept.
   if (field(form, "website") !== "")
     return flashTo(ctx, sent, { message: "Report sent." });
-  const filed = fileReport(ctx.app, repo, values, clientAddress(ctx.request));
+  const filed = fileReport(ctx.app, repo, values, clientBucket(ctx.request));
   if (filed.ok) return flashTo(ctx, sent, { message: "Report sent." });
   const refusal = filed.error;
   if (refusal.error === "not_found") return notFoundPage(ctx);

@@ -10,7 +10,7 @@
  */
 
 import { threadNote } from "../../crew/direct.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import {
   getPull,
@@ -71,6 +71,7 @@ import {
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
+import { holdCard } from "./hold.ts";
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
@@ -272,6 +273,7 @@ async function changeConversation(
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const { word, note: checkNote } = await pullWord(wordCtx, pull);
   // Whether this change still merges into its base is asked here, on its own
@@ -309,7 +311,9 @@ async function changeConversation(
     const production =
       record === undefined
         ? undefined
-        : wordCtx.runtime?.status(record).find((e) => e.env === "production");
+        : envsFor(ctx.app, ctx.auth.user, record).find(
+            (e) => e.env === "production",
+          );
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
@@ -460,7 +464,8 @@ async function changeConversation(
       ownTitle: true,
     })}
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
-    ${checkLine} ${when(wall, (w) => wallCard(w))} ${decisionSection}
+    ${checkLine} ${holdCard(ctx, repo, pull, { act: true })}
+    ${when(wall, (w) => wallCard(w))} ${decisionSection}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}
     <div class="split">

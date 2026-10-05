@@ -690,13 +690,10 @@ describe("dev's vocabulary never reaches a studio page", () => {
         shows: [`href="${repoPath}/runs/${runId}"`],
         hides: [`href="${repoPath}/runs/${workingRunId}"`],
       },
-      {
-        // The studio's own settings: the crew, and how far it may go.
-        word: "crew",
-        path: `${repoPath}/settings`,
-        shows: ["scout"],
-        title: "Settings · vocab",
-      },
+      // Settings (#631) is one page now: the studio's own cards lead it —
+      // the crew, and how far it may go — and the branch, its gates and the
+      // rest sit beneath in git's own words on purpose, so it is not a row
+      // here; studio.test.ts holds its order.
     ];
   });
 

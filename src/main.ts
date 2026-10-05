@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
@@ -79,6 +80,20 @@ if (refusal !== null) {
   process.exit(1);
 }
 
+// FORGE_TRUSTED_PROXIES is checked here so a typo fails the boot, not a
+// limit that quietly counts every stranger as one.
+const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s !== "");
+{
+  const parsed = parseCidrs(trustedProxies.join(","));
+  if (!parsed.ok) {
+    console.error(`FORGE_TRUSTED_PROXIES: "${parsed.error}" is not an address or range`);
+    process.exit(1);
+  }
+}
+
 const app = createApp({
   dataDir,
   port: Number(process.env.PORT ?? 3000),
@@ -87,6 +102,11 @@ const app = createApp({
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // Hosted, the host says how this forge's terminal is reached; printed
+  // verbatim wherever the forge tells people how to connect.
+  ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
+    ? { appSsh: (process.env.FORGE_APP_SSH ?? "").trim() }
+    : {}),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
@@ -101,6 +121,11 @@ const app = createApp({
           from: process.env.FORGE_MAIL_FROM!.trim(),
         },
       }
+    : {}),
+  // Who may say who the client is: the ingress in front of a hosted forge.
+  ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
+  ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
+    ? { clientIpHeader: process.env.FORGE_CLIENT_IP_HEADER!.trim().toLowerCase() }
     : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }

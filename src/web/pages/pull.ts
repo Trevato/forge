@@ -26,6 +26,7 @@ import {
   type PullReviewStatus,
   type PullStatus,
 } from "../../core/pulls.ts";
+import { pullMayRun } from "../../core/pull_trust.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
@@ -80,6 +81,7 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard } from "./runs.ts";
+import { holdCard } from "../studio/hold.ts";
 import {
   changeHead,
   changeTabs,
@@ -181,6 +183,10 @@ function reviewsChip(
 
 // ---- the checks ----
 
+/** What a reader's unapproved head shows where its checks would be. */
+const WAITING_WORDS =
+  "Checks and the preview wait for a writer to approve this head";
+
 /**
  * The checks line: where the deploy of this head stands (docs/APPS.md, rule
  * 4). Rendered whenever the repository runs as an app or requires checks —
@@ -192,8 +198,10 @@ function checksLine(
   check: CheckSummary,
   required: boolean,
   isApp: boolean,
+  /** The head is a reader's and no writer has approved it yet. */
+  waiting = false,
 ): Html {
-  if (!isApp && !required && check.state === "none") return html``;
+  if (!isApp && !required && check.state === "none" && !waiting) return html``;
   const run = check.run;
   const link =
     run === null
@@ -217,7 +225,9 @@ function checksLine(
                 >${link}`
             : check.state === "cancelled"
               ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
-              : html`<span>${icon("clock")}No checks on this head yet</span>`;
+              : waiting
+                ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
+                : html`<span>${icon("clock")}No checks on this head yet</span>`;
   return html`<p class="checks-line">
     ${body}${when(
       required,
@@ -245,7 +255,15 @@ function mergeBox(
   isApp: boolean,
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
-  const checks = checksLine(repoBase(repo), check, repo.requireChecks, isApp);
+  // A reader's head runs nothing until a writer approves it; say so rather
+  // than leave "no checks yet" waiting for something that will not come.
+  const checks = checksLine(
+    repoBase(repo),
+    check,
+    repo.requireChecks,
+    isApp,
+    !pullMayRun(ctx.app.db, repo, pull, status.headOid),
+  );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}
@@ -523,11 +541,16 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   const isAuthor = pull.authorId === user.id;
   const options: { value: string; label: string; hint: string; key: string }[] =
     [];
+  // A reader's change runs nothing here until a writer approves it: the
+  // approval is also what lets its code run, and the reviewer should know.
+  const runsOnApproval = !pullMayRun(ctx.app.db, repo, pull, "");
   if (writer && !isAuthor)
     options.push({
       value: "approved",
       label: "Approve",
-      hint: "This is good to merge.",
+      hint: runsOnApproval
+        ? "This is good to merge — and its check and preview then run this code here, holding the repository owner's app token."
+        : "This is good to merge.",
       key: "v a",
     });
   if (writer)
@@ -726,6 +749,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
       )}
     </p>
     ${when(wall, (w) => wallCard(w))}
+    ${holdCard(ctx, repo, pull, { act: false })}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
     <div class="split">
       <div>${reviewCard(ctx, repo, pull, `${thread}/review-state`)}</div>
