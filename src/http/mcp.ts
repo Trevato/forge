@@ -59,6 +59,13 @@ import { convergeFork, convergeState } from "../crew/converge.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
+import {
+  askedIn,
+  askedJson,
+  askedRepos,
+  isAskedOrder,
+  isAskedShow,
+} from "../core/asked.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -548,6 +555,33 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "asked",
+    description:
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        show: { type: "string", enum: ["unshipped", "flagged", "all"] },
+        order: { type: "string", enum: ["oldest", "newest"] },
+      },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const show = args["show"] ?? "unshipped";
+      if (!isAskedShow(show))
+        return bad("invalid_show", "show is unshipped, flagged or all");
+      const order = args["order"] ?? "oldest";
+      if (!isAskedOrder(order))
+        return bad("invalid_order", "order is oldest or newest");
+      const spec = args["repo"] === undefined ? null : str(args["repo"]);
+      const repos = askedRepos(ctx.app.db, user, spec);
+      if (spec !== null && repos.length === 0)
+        return bad("not_found", "no such app or repository you can write (owner/name)");
+      return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
     },
   },
   {

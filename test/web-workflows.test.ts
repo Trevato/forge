@@ -775,19 +775,20 @@ describe("verdicts, threads, and the gate they open", () => {
     expect(words(stale)).not.toContain("1 approval");
   });
 
-  test("the pull list marks where each pull stands", async () => {
+  test("the pull list shows each pull in its word; where it stands on review is one step deeper, on the change", async () => {
+    // One list (#627): a row is the pull's word, never a review badge.
     const list = await bodyOf("ada", "/acme/lib/pulls");
-    expect(words(list)).toContain("Needs review");
-
-    await web("bob", `${at()}/review-state`, { form: { state: "approved" } });
-    expect(words(await bodyOf("ada", "/acme/lib/pulls"))).toContain("1 approval");
+    expect(list).toContain(`href="/acme/lib/changes/${pullNumber}"`);
+    expect(list).toContain("data-word=");
+    expect(words(list)).not.toContain("Needs review");
 
     await web("bob", `${at()}/review-state`, {
       form: { state: "changes_requested" },
     });
-    expect(await bodyOf("ada", "/acme/lib/pulls")).toContain("Changes requested");
+    expect(words(await bodyOf("ada", at()))).toContain("changes requested by bob");
     // Put it back so the thread tests below have a sane pull.
     await web("bob", `${at()}/review-state`, { form: { state: "approved" } });
+    expect(words(await bodyOf("ada", at()))).toContain("1 approval");
   });
 
   // ---- threads ----
