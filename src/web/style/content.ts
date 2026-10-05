@@ -320,6 +320,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
+/* The everyday-account ask on the home: a form's width, not the page's. */
+.everyday-ask { max-width: 34rem; margin-bottom: 16px; }
 /* On a phone an account's controls go under its name, not over it. */
 @media (max-width: 640px) {
   .row:has(.headroom) { flex-wrap: wrap; }
