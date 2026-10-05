@@ -381,7 +381,8 @@ export async function startProcess(
             home: input.cell.home,
             hide: input.cell.hide,
             egress: manifest.egress ?? [],
-            reach: [input.forgeUrl],
+            // The forge, and the app itself at its public address.
+            reach: [input.forgeUrl, input.url],
             limits: resolveLimits("app", manifest.limits),
             listen: port,
             onUndeclared: input.cell.onUndeclared,
