@@ -38,6 +38,7 @@ import {
   decisionActions,
   decisionForm,
   decisionsFor,
+  KIND_TIER,
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
@@ -137,6 +138,7 @@ export async function studioPull(
             ? "The check is green. Look at the preview, then ship it or say what is off."
             : "This app does not wait on the check to ship. Look at the preview, then ship it or say what is off.",
         short: word === "look" ? "the check is green" : "ready to ship",
+        consequence: KIND_TIER.look,
       }
     : undefined;
   const decision = crewDecision ?? own;

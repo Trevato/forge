@@ -19,6 +19,7 @@ import {
   parseCursor,
   readFeed,
 } from "../feed/feed.ts";
+import { asksAnswer } from "../web/studio/asks.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import {
@@ -55,6 +56,15 @@ export function feedRoutes(router: Router<Handler>): void {
       200,
       { "cache-control": "private, no-store" },
     );
+  });
+
+  // What asks the viewer, ranked, with the week's measure (`asksAnswer`).
+  router.add("GET", "/api/v1/asks", (ctx) => {
+    const viewer = ctx.auth.user;
+    if (!viewer) return unauthorized();
+    return json(asksAnswer(ctx, viewer), 200, {
+      "cache-control": "private, no-store",
+    });
   });
 
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {

@@ -16,7 +16,7 @@ import {
   forkParentFor,
   getRepo,
   getRepoById,
-  listForks,
+  visibleForks,
 } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -250,7 +250,8 @@ export function scopeHeader(
   // to the tree — where each fork stands against what it follows. One with
   // neither has no family to show, and the tab stays away.
   if (repo !== undefined) {
-    const forks = listForks(ctx.app.db, repo.id).length;
+    // Only the forks this viewer may read: a private fork is not counted.
+    const forks = visibleForks(ctx.app.db, repo.id, ctx.auth.user).length;
     if (forks > 0 || repo.forkParentId !== null)
       items.splice(3, 0, {
         label: "Forks",
