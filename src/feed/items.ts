@@ -50,7 +50,7 @@ const clip = (s: string, n = 120): string =>
 const slug = (r: Repo): string => `${r.ownerName}/${r.name}`;
 const base = (r: Repo): string => `/${r.ownerName}/${r.name}`;
 
-const URGENCY = { stopped: 10, look: 8, parked: 7, paused: 6 } as const;
+const URGENCY = { stopped: 10, declined: 9, look: 8, parked: 7, paused: 6 } as const;
 
 export function candidatesFor(
   db: Database,

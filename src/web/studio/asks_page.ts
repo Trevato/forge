@@ -28,7 +28,9 @@ function decisionCard(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
   const title = d.pull
     ? html`<a href="${changeHref(base, d.pull.number)}">${d.pull.title}</a>`
-    : html`<a href="${base}/settings/autonomy">Paused</a>`;
+    : d.issue
+      ? html`<a href="${base}/issues/${d.issue.number}">${d.issue.title}</a>`
+      : html`<a href="${base}/settings/autonomy">Paused</a>`;
   return card(
     html`<p>${d.says}</p>
       <div class="bar mt">${decisionActions(ctx, d)}</div>`,

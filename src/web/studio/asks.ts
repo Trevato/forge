@@ -35,7 +35,11 @@ import {
   latestRunsForIssues,
 } from "../../core/runs.ts";
 import type { User } from "../../core/users.ts";
-import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
+import {
+  isPausedAtCeiling,
+  plannerDeclines,
+  spentTodayForRepos,
+} from "../../crew/autonomy.ts";
 import { breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull } from "../../crew/stale_asks.ts";
@@ -83,7 +87,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "paused" | "parked";
+export type DecisionKind = "stopped" | "look" | "paused" | "parked" | "declined";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -95,7 +99,8 @@ export interface Decision {
   readonly id: string;
   readonly repo: Repo;
   readonly pull?: Pull | undefined;
-  /** For "parked": the issue the breaker stopped. */
+  /** For "parked": the issue the breaker stopped; for "declined": the
+   * direction issue the planner declined. */
   readonly issue?: Issue | undefined;
   readonly who: string;
   /** Three sentences at most: what, why, what happens next. */
@@ -142,6 +147,8 @@ interface AskCandidate {
   /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
   readonly tries?: number;
   readonly stoppedByDecider?: boolean;
+  /** For "declined": the declining run and what the planner said. */
+  readonly decline?: { readonly runId: string; readonly words: string };
 }
 
 /**
@@ -269,6 +276,19 @@ function askCandidatesFor(
         who: "the crew",
       });
   }
+  // A planner that declined the direction plans nothing more until a person
+  // answers on the direction issue: the crew has gone quiet on purpose.
+  for (const d of plannerDeclines(db, repos))
+    out.push({
+      kind: "declined",
+      // The run, not the issue: each new decline is new, and pages once.
+      id: `declined:${d.runId}`,
+      since: d.at,
+      repo: d.repo,
+      issue: d.issue,
+      who: "the planner",
+      decline: { runId: d.runId, words: d.words },
+    });
   return out;
 }
 
@@ -337,6 +357,8 @@ function lineOf(c: AskCandidate): string {
   if (c.kind === "paused") return "is paused at its ceiling";
   if (c.kind === "parked")
     return `the crew parked #${c.issue!.number} after three failed runs`;
+  if (c.kind === "declined")
+    return "the planner declined the direction and waits for you";
   const title = c.pull?.title ?? "";
   return c.kind === "stopped"
     ? `the crew stopped on "${title}"`
@@ -347,6 +369,7 @@ function lineOf(c: AskCandidate): string {
 function rowLine(kind: DecisionKind, n: number): string {
   if (kind === "parked")
     return `the crew parked ${n} issues after three failed runs`;
+  if (kind === "declined") return `the planner declined ${n} times and waits for you`;
   if (kind === "stopped") return `the crew stopped on ${n} changes`;
   return `${n} green changes wait for your look`;
 }
@@ -394,7 +417,7 @@ export function askLinesFor(
     const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
     if (only.kind === "paused")
       return { ...about, line, link: `${base}/settings/autonomy` };
-    if (only.kind === "parked")
+    if (only.kind === "parked" || only.kind === "declined")
       return {
         ...about,
         line,
@@ -452,6 +475,16 @@ export function decisionsFor(
         who: c.who,
         says: `Three runs on #${c.issue.number} failed or were declined within an hour, so the crew parked it. Say what to try and it starts again.`,
         short: `#${c.issue.number} parked after three failed runs`,
+      };
+    if (c.kind === "declined" && c.issue && c.decline)
+      return {
+        kind: "declined",
+        id: `declined:${c.decline.runId}`,
+        repo: c.repo,
+        issue: c.issue,
+        who: c.who,
+        says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
+        short: `the planner declined: ${c.decline.words}`,
       };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
@@ -570,6 +603,12 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
     ${btn("Not like this", {
       href: `${changeHref(base, pull.number)}#comment-body`,
       size: "sm",
+    })}`;
+  if (d.kind === "declined" && d.issue)
+    return html`${btn("Answer", {
+      href: `${base}/issues/${d.issue.number}#comment-body`,
+      size: "sm",
+      variant: "primary",
     })}`;
   if (d.kind === "parked" && d.issue)
     return html`${btn("Tell them", {
