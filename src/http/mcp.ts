@@ -56,6 +56,7 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -573,6 +574,7 @@ const TOOLS: readonly Tool[] = [
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
+      if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,

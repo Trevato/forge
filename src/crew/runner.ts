@@ -98,6 +98,7 @@ import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
+import { readersAmong, voiceOf } from "./direct.ts";
 
 const log = createLog("crew");
 
@@ -703,16 +704,33 @@ async function work(
               pull.headOid,
           )
         : undefined;
+    // Imported words speak as their origin author (`voiceOf`), so the
+    // brief marks a stranger's as a reader's, not the connecting user's.
+    const comments = listComments(app.db, issue.id, { kind: "comment" }).map(
+      voiceOf,
+    );
+    const reviews = pull ? listReviews(app.db, pull.id).map(voiceOf) : [];
+    const reviewComments = pull
+      ? listReviewComments(app.db, pull.id).map(voiceOf)
+      : [];
     const prompt = taskPrompt({
       ...brief,
+      issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
-      comments: listComments(app.db, issue.id, { kind: "comment" }),
+      comments,
       labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
         (label) => label.name,
       ),
-      reviews: pull ? listReviews(app.db, pull.id) : [],
-      reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
+      reviews,
+      reviewComments,
+      readers: readersAmong(
+        app.db,
+        repo,
+        [voiceOf(issue), ...comments, ...reviews, ...reviewComments].map(
+          (c) => c.authorName,
+        ),
+      ),
       since,
       checkSummary: failedCheck?.run?.summary,
       conflictFiles:
