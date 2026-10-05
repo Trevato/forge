@@ -6,6 +6,7 @@
  * nothing private is ever shown, pinned or not.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +28,7 @@ import {
   type FrontSignals,
 } from "../src/core/front.ts";
 import { recordLook } from "../src/core/looks.ts";
+import { encodePng } from "../src/design/image/png.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun } from "../src/core/runs.ts";
 import { createIssue } from "../src/core/issues.ts";
@@ -38,6 +40,12 @@ import { quietLogs } from "./helpers/globals.ts";
 quietLogs();
 
 const NOW = Date.parse("2026-10-05T12:00:00Z");
+/** Every app's production serves this commit, and its thumb is of it. */
+const HEAD = "a".repeat(40);
+/** A thumb's stand-in file: one pixel, not the legacy 200 px width. */
+const PNG = Buffer.from(
+  encodePng(1, 1, new Uint8Array([255, 255, 255, 255])),
+);
 const none: FrontSignals = {
   awakeHours: 0,
   ships: 0,
@@ -139,14 +147,17 @@ describe("the front page", () => {
     });
     if (!record.ok) throw new Error(record.error);
     states.set(record.value.id, "running");
-    if (o.picture !== false)
+    if (o.picture !== false) {
+      mkdirSync(join(dataDir, "looks", record.value.id), { recursive: true });
+      writeFileSync(join(dataDir, "looks", record.value.id, "thumb.png"), PNG);
       recordLook(app.db, {
         appId: record.value.id,
         env: "production",
-        commitOid: "a".repeat(40),
+        commitOid: HEAD,
         kind: "thumb",
         path: `looks/${record.value.id}/thumb.png`,
       });
+    }
     return { repo: made.value, record: record.value };
   };
 
@@ -234,6 +245,7 @@ describe("the front page", () => {
         {
           env: "production",
           state: states.get(record.id) ?? "stopped",
+          commitOid: HEAD,
         } as EnvStatus,
       ],
     );
@@ -349,6 +361,18 @@ describe("the front page", () => {
     // stranger would meet a sign-in page, so it is not offered to them.
     const gated = await make(admin, "gated");
     app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(gated.record.id);
+    // A thumb from before thumbs were taken as a stranger (200 px, the
+    // owner's view), and a thumb of a commit production no longer serves:
+    // neither is shown, so neither app is.
+    const legacy = await make(admin, "legacy");
+    writeFileSync(
+      join(dataDir, "looks", legacy.record.id, "thumb.png"),
+      Buffer.from(encodePng(200, 125, new Uint8Array(200 * 125 * 4))),
+    );
+    const moved = await make(admin, "moved");
+    app.db
+      .query(`UPDATE look SET commit_oid = ?1 WHERE app_id = ?2`)
+      .run("b".repeat(40), moved.record.id);
     forgetFrontScores(app);
     const body = await door();
     // The most-forked app is featured — a stranger's, ahead of the owner's.
@@ -361,6 +385,8 @@ describe("the front page", () => {
     expect(body).not.toContain('href="/owner/bare"');
     expect(body).not.toContain("hush");
     expect(body).not.toContain('href="/owner/gated"');
+    expect(body).not.toContain('href="/owner/legacy"');
+    expect(body).not.toContain('href="/owner/moved"');
     // The shelf's tiles are the stranger's picture, at the thumb's size.
     expect(body).toContain('width="640"');
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
@@ -411,6 +437,8 @@ describe("the front page", () => {
     expect((await put(adminToken, { pinned: ["owner/nope"] })).status).toBe(
       422,
     );
+    // A body naming neither list is a mistake, not "no change".
+    expect((await put(adminToken, { pin: ["owner/two"] })).status).toBe(422);
     expect(
       (await put(adminToken, { pinned: ["owner/two"], hidden: ["owner/two"] }))
         .status,

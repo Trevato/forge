@@ -36,7 +36,7 @@ import {
 import { setCrewRole } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
-import { recordLook } from "../src/core/looks.ts";
+import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import {
   getRepoById,
@@ -95,7 +95,12 @@ async function serving(
   });
   const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
     (record: AppRecord): EnvStatus[] => [
-      { env: "production", state: stateOf(record) } as EnvStatus,
+      {
+        env: "production",
+        state: stateOf(record),
+        // Serving the commit its newest picture is of.
+        commitOid: looksForEnv(app.db, record.id, "production")[0]?.commitOid ?? "",
+      } as EnvStatus,
     ],
   );
   return async () => {
@@ -1843,7 +1848,9 @@ describe("the studio", () => {
         if (!r.ok) throw new Error(String(r.error));
       }
       // Each with a picture, so only liveness decides.
-      for (const record of [older, quiet])
+      for (const record of [older, quiet]) {
+        mkdirSync(join(dataDir2, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir2, "looks", record.id, "thumb.png"), PNG);
         recordLook(app2.db, {
           appId: record.id,
           env: "production",
@@ -1851,6 +1858,7 @@ describe("the studio", () => {
           kind: "thumb",
           path: `looks/${record.id}/thumb.png`,
         });
+      }
       // `older` is serving, `quiet` is stopped: a stranger is shown what is
       // up, never what is down.
       const done = await serving(app2, servers2, (record) =>

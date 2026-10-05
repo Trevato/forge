@@ -50,7 +50,7 @@ export function setFrontPicks(
 
 /** What a public app is ranked by, read in grouped queries. */
 export interface FrontSignals {
-  /** Hours any environment was awake, last 30 days. */
+  /** Hours awake, last 30 days, every environment's summed. */
   readonly awakeHours: number;
   /** Pulls merged, last 30 days. */
   readonly ships: number;

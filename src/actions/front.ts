@@ -29,7 +29,13 @@ import {
   type FrontSignals,
 } from "../core/front.ts";
 import { getIssuesByIds } from "../core/issues.ts";
-import { DEFAULT_PAGE, looksForApps, lookSlot } from "../core/looks.ts";
+import {
+  DEFAULT_PAGE,
+  looksForApps,
+  lookSlot,
+  type Look,
+} from "../core/looks.ts";
+import { keepLook } from "../looks/service.ts";
 import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
@@ -74,6 +80,21 @@ export interface FrontPage {
   readonly shelf: readonly FrontEntry[];
   /** Every public app a stranger could find on `/apps`. */
   readonly total: number;
+}
+
+/**
+ * Whether a thumb is one taken as a stranger: not one from before thumbs
+ * were (`keepLook`), which was the owner's view. A picture's file never
+ * changes under its path, so each is read once.
+ */
+const kept = new Map<string, boolean>();
+function strangersThumb(app: App, look: Look): boolean {
+  let keep = kept.get(look.path);
+  if (keep === undefined) {
+    keep = keepLook(app.config.dataDir, look);
+    if (look.error === null) kept.set(look.path, keep);
+  }
+  return keep;
 }
 
 type Scores = Map<string, { s: FrontSignals; score: number }>;
@@ -153,9 +174,10 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
             (l) =>
               l.appId === record.id &&
               l.env === "production" &&
+              l.commitOid === production?.commitOid &&
               l.page === DEFAULT_PAGE &&
               l.kind === "thumb" &&
-              l.error === null,
+              strangersThumb(app, l),
           );
     const scored = scores.get(repo.id) ?? {
       s: { awakeHours: 0, ships: 0, forks: 0, shippedAt: null },
@@ -308,7 +330,8 @@ export function setFront(
 
 /**
  * `{pinned, hidden}` from a request body or tool call: each an array of
- * `owner/name` strings; one left out keeps what is set now.
+ * `owner/name` strings; one left out keeps what is set now, and a body
+ * with neither is refused rather than taken for "no change".
  */
 export function frontInput(
   app: App,
@@ -317,6 +340,8 @@ export function frontInput(
   if (typeof input !== "object" || input === null || Array.isArray(input))
     return undefined;
   const record = input as Record<string, unknown>;
+  if (record["pinned"] === undefined && record["hidden"] === undefined)
+    return undefined;
   const current = frontPicksJson(app);
   const names = (v: unknown, kept: readonly string[]) =>
     v === undefined
