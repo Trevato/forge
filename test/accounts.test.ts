@@ -23,6 +23,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser as insertAgent, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession, identityFor } from "../src/tui/ssh.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const EDGE = "edge-secret-for-accounts";
 const KEY_LINE =
@@ -96,6 +97,8 @@ describe("accounts: the owner sees, suspends and removes", () => {
       }),
     });
     expect(res.status).toBe(201);
+    // This suite is about standing, not email: its outsiders are proven.
+    proveAll(app);
     const user = getUserByName(app.db, name)!;
     return { user, token: createToken(app.db, user.id, "o", "admin").token };
   };

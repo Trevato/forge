@@ -99,7 +99,7 @@ describe("the planner declined, waiting for a person", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-declined-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: PASSWORD,
@@ -107,7 +107,7 @@ describe("the planner declined, waiting for a person", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: PASSWORD,

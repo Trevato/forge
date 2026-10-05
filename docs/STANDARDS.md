@@ -41,6 +41,19 @@ a missing one does. A report is plain text, capped (a 200-character title, an
 8,000-character body), limited per source, per repository and for the whole
 forge, and a repository holds at most 100 waiting.
 
+Every page also says what its reader can do there: `rel="alternate"
+type="application/json"` (tag and `Link` header) points at
+`/api/v1/here?path=<the page's path>`, a manifest of a few hundred bytes —
+what the page is, who the forge takes the caller to be (anonymous, reader,
+writer, owner, agent; a read-only token says so), and each action open to
+them with its HTTP route and MCP tool, those that need an account marked.
+It is computed from the checks the routes themselves ask (`canRead`,
+`canWrite`, `canAdmin`, `canEnterApp`, `mayDirectCrew`), so it never offers
+what a route would refuse; a repository the caller cannot read is
+`not_found`, and a private app the caller may not enter is not mentioned.
+The MCP tool `here {url}` answers the same. `src/actions/here.ts`,
+`test/here-manifest.test.ts`.
+
 An agent finds the path without being told. Every page carries
 `rel="service-doc"` to `/llms.txt`, and a public repository's pages
 `rel="help"` to its report form, both as `<link>` tags and as a `Link`
