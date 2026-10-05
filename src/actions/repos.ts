@@ -160,6 +160,7 @@ export async function updateRepoSettings(
       "defaultBranch",
       "requireReview",
       "requireChecks",
+      "crewOutsiders",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
   app.bus.append({
@@ -168,6 +169,15 @@ export async function updateRepoSettings(
     actorId: admin.value.id,
     payload: { changed },
   });
+  // Who may start and steer the crew is its own line in the record, on and
+  // off: on is a door opened to everyone who can read (`crew/direct.ts`).
+  if (changed.includes("crewOutsiders"))
+    app.bus.append({
+      kind: "repo.crew_outsiders",
+      repoId: repo.id,
+      actorId: admin.value.id,
+      payload: { on: updated.crewOutsiders },
+    });
   return ok(updated);
 }
 

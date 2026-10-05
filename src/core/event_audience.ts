@@ -28,7 +28,8 @@ export function eventAudience(kind: string): EventAudience {
     kind.startsWith("app.domain.") ||
     kind.startsWith("prompt.") ||
     kind.startsWith("secret.") ||
-    kind === "repo.settings_updated"
+    kind === "repo.settings_updated" ||
+    kind === "repo.crew_outsiders"
   )
     return "admins";
   // A fleet operation spans repositories; its receipt is its actor's.

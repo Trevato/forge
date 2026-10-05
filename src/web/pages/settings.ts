@@ -320,6 +320,22 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="crewOutsiders"
+            ${repo.crewOutsiders ? html`checked` : null}
+          />
+          <span
+            >Outsiders may trigger the crew — anyone signed in who can read
+            this repository starts and steers runs by commenting, on your
+            budget. Off, only people who can write here direct the crew;
+            anyone else's words stay on the thread. Turning it on or off is
+            recorded in the activity.</span
+          >
+        </label>
+      </div>
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
@@ -349,6 +365,7 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
     protectDefault: form.get("protect") !== null,
     requireReview: form.get("requireReview") !== null,
     requireChecks: form.get("requireChecks") !== null,
+    crewOutsiders: form.get("crewOutsiders") !== null,
     ...(branch !== "" ? { defaultBranch: branch } : {}),
   });
   const flash: Flash = updated.ok

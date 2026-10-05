@@ -4,6 +4,7 @@
  * post to its own endpoint. Mobile-first, no JavaScript required.
  */
 
+import { threadNote } from "../../crew/direct.ts";
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
 import {
   issueCounts,
@@ -552,6 +553,7 @@ export async function issuePage(ctx: Ctx): Promise<Response> {
           state: issue.state,
           closeLabel: "Close issue",
           reasons: true,
+          crewNote: threadNote(ctx.app.db, repo, issue),
         })}
       </div>
       <aside>

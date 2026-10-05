@@ -329,6 +329,8 @@ export interface ComposerOptions {
    * ("pull request", "issue") or the studio's ("change", "tell"). The
    * caller knows which page it is drawing; the composer does not have to. */
   closeLabel: string;
+  /** Who directs the crew here, on a thread an agent holds (`crew/direct.ts`). */
+  crewNote?: string | undefined;
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -399,6 +401,9 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         placeholder="Leave a comment"
         required
       ></textarea>
+      ${o.crewNote === undefined
+        ? null
+        : html`<p class="muted small crew-note">${o.crewNote}</p>`}
       <div class="form-actions">
         <span class="muted small"
           >${icon("file")} Markdown is supported — <code>**bold**</code>,

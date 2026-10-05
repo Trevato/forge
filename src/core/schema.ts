@@ -1189,4 +1189,9 @@ export const migrations: readonly string[] = [
     created_at    TEXT NOT NULL
   );
   `,
+  // 46 — "outsiders may trigger the crew" (#619): off, so only people who
+  // can write to a repository start or steer its crew.
+  `
+  ALTER TABLE repo ADD COLUMN crew_outsiders INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

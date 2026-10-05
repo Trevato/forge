@@ -7,6 +7,7 @@
  * `?mode=dev` reads the code, unchanged (`pages/pull.ts`).
  */
 
+import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { pullStatus, revertOf, toldBy, type Pull } from "../../core/pulls.ts";
@@ -259,6 +260,7 @@ export async function studioPull(
           state: pull.state,
           locked: pull.mergedAt !== null,
           closeLabel: "Close change",
+          crewNote: threadNote(ctx.app.db, repo, pull),
         })}
       </div>
       <aside>${previewCard(ctx, repo, pull)}</aside>

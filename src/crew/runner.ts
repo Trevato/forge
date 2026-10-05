@@ -97,6 +97,7 @@ import { sandboxPolicy } from "./sandbox.ts";
 import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
+import { readersAmong } from "./direct.ts";
 
 const log = createLog("crew");
 
@@ -702,13 +703,21 @@ async function work(
               pull.headOid,
           )
         : undefined;
+    const comments = listComments(app.db, issue.id, { kind: "comment" });
+    const reviews = pull ? listReviews(app.db, pull.id) : [];
+    const reviewComments = pull ? listReviewComments(app.db, pull.id) : [];
     const prompt = taskPrompt({
       ...brief,
       reason,
       paused: run.attempt > 0,
-      comments: listComments(app.db, issue.id, { kind: "comment" }),
-      reviews: pull ? listReviews(app.db, pull.id) : [],
-      reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
+      comments,
+      reviews,
+      reviewComments,
+      readers: readersAmong(
+        app.db,
+        repo,
+        [...comments, ...reviews, ...reviewComments].map((c) => c.authorName),
+      ),
       since,
       checkSummary: failedCheck?.run?.summary,
       conflictFiles:

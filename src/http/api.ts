@@ -15,6 +15,7 @@ import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import {
   addCommentThrough,
   openIssueThrough,
@@ -1371,7 +1372,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
-      if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+      if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("forbidden", 403);
       const parent =
         repo.forkParentId === null
@@ -1387,7 +1388,7 @@ export function apiRoutes(router: Router<Handler>): void {
             ? 200
             : outcome.kind === "ceiling"
               ? 429
-              : outcome.kind === "nobody"
+              : outcome.kind === "nobody" || outcome.kind === "forbidden"
                 ? 403
                 : 409;
       return json(

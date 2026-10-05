@@ -7,6 +7,7 @@
  * (`pages/runs.ts`); `?mode=dev` reads the same log there, unchanged.
  */
 
+import { directionNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssueById } from "../../core/issues.ts";
@@ -219,6 +220,10 @@ export async function studioRun(
           newer below
         </button>`,
       })}
+      ${when(
+        run.kind === "agent",
+        () => html`<p class="muted small crew-note">${directionNote(repo)}</p>`,
+      )}
       ${when(
         writer && run.kind === "agent" && issue !== undefined,
         () =>

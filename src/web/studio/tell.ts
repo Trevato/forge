@@ -7,6 +7,7 @@
  * dependency form) belongs here; `?mode=dev` reads that page, unchanged.
  */
 
+import { threadNote } from "../../crew/direct.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -299,6 +300,7 @@ export async function studioTell(
           stateAction: `${thread}/state`,
           state: issue.state,
           closeLabel: "Close tell",
+          crewNote: threadNote(ctx.app.db, repo, issue),
         })}
       </div>
       <aside>
