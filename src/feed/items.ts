@@ -103,10 +103,7 @@ export function candidatesFor(
       actorId: null,
       actor: null,
       at: new Date(now).toISOString(),
-      link:
-        a.number === undefined
-          ? `${base(repo)}/settings/autonomy`
-          : `${base(repo)}/${a.kind === "parked" ? "issues" : "changes"}/${a.number}`,
+      link: a.link,
       what: a.line,
       urgency: URGENCY[a.kind],
     });

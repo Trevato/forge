@@ -13,6 +13,7 @@ import { crewForRepos } from "../../core/agents.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
+import { askDismissals } from "../../core/interactions.ts";
 import {
   getIssueById,
   listComments,
@@ -37,6 +38,7 @@ import type { User } from "../../core/users.ts";
 import { isPausedAtCeiling, spentTodayForRepos } from "../../crew/autonomy.ts";
 import { breakerParked } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
+import { isStalePull } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
@@ -125,6 +127,10 @@ function lastHumanWord(db: Database, issue: Issue, agentName: string): string {
  */
 interface AskCandidate {
   readonly kind: DecisionKind;
+  /** The ask's own id, `kind:what` (see `Decision.id`). */
+  readonly id: string;
+  /** When its cause last changed: a dismissal before this no longer holds. */
+  readonly since: string;
   readonly repo: Repo;
   readonly pull?: Pull;
   readonly issue?: Issue;
@@ -194,6 +200,8 @@ function askCandidatesFor(
       )
         out.push({
           kind: "stopped",
+          id: `stopped:${pull.id}`,
+          since: check.createdAt,
           repo,
           pull,
           who,
@@ -201,13 +209,21 @@ function askCandidatesFor(
           tries,
           stoppedByDecider: stopped,
         });
-    } else if (check?.state === "ok" && repo.autonomy !== "autonomous") {
+    } else if (
+      check?.state === "ok" &&
+      repo.autonomy !== "autonomous" &&
+      // A green pull that no longer merges as it stands cannot be shipped:
+      // bringing it up to date is work, not a person's decision.
+      !isStalePull(db, pull.id, pull.headOid)
+    ) {
       // Autonomous repositories look at their own green pulls: the decider,
       // then the crew's reviewer. Everything else waits for a person —
       // whoever opened it, since a green change asks to be looked at
       // whether the crew wrote it or a person did.
       out.push({
         kind: "look",
+        id: `look:${pull.id}`,
+        since: check.createdAt,
         repo,
         pull,
         who,
@@ -225,9 +241,17 @@ function askCandidatesFor(
   );
   // Only a ceiling pause is an ask — "nobody" and "no crew" are settings
   // problems, not a decision, so neither needs its own card.
+  // A ceiling pause is today's: tomorrow it is a new one.
+  const today = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
   for (const repo of repos)
     if (isPausedAtCeiling(repo, crew, spent))
-      out.push({ kind: "paused", repo, who: "the crew" });
+      out.push({
+        kind: "paused",
+        id: `paused:${repo.id}`,
+        since: today,
+        repo,
+        who: "the crew",
+      });
   // An issue the breaker parked waits for a person's word.
   for (const p of breakerParked(
     db,
@@ -235,15 +259,107 @@ function askCandidatesFor(
   )) {
     const issue = getIssueById(db, p.issueId);
     const repo = byId.get(p.repoId);
-    if (issue && repo) out.push({ kind: "parked", repo, issue, who: "the crew" });
+    if (issue && repo)
+      out.push({
+        kind: "parked",
+        id: `parked:${issue.id}`,
+        since: p.at,
+        repo,
+        issue,
+        who: "the crew",
+      });
   }
   return out;
 }
 
+/** The row an ask collapses into: one kind in one repository. */
+const groupId = (a: { kind: DecisionKind; repo: Repo }): string =>
+  `${a.kind}:${a.repo.id}`;
+
 /**
- * What asks `user` right now, as a stable id and one plain line each — the
- * panel's own candidates (same visibility, same bounds), without the
- * pictures. What the phone's notifier compares from one moment to the next.
+ * The asks the viewer has not set aside: a dismissal — of the ask, or of
+ * the row it collapsed into — holds until the ask's cause is newer than it
+ * (a check ran again, it was parked again, a new day's pause).
+ */
+function notDismissed<T extends AskCandidate>(
+  db: Database,
+  user: User,
+  asks: readonly T[],
+): T[] {
+  const dismissed = askDismissals(db, user.id);
+  if (dismissed.size === 0) return [...asks];
+  const holds = (id: string, since: string): boolean =>
+    (dismissed.get(`ask:${id}`) ?? "") > since;
+  return asks.filter(
+    (a) => !holds(a.id, a.since) && !holds(groupId(a), a.since),
+  );
+}
+
+/** Asks as the rows a person sees: the same kind in the same repository is one. */
+export interface AskRow<T> {
+  /** The ask's own id when it is alone, else the row's (`kind:repoId`). */
+  readonly id: string;
+  readonly kind: DecisionKind;
+  readonly repo: Repo;
+  readonly items: readonly T[];
+}
+
+export function askRows<T extends { id: string; kind: DecisionKind; repo: Repo }>(
+  asks: readonly T[],
+): AskRow<T>[] {
+  const rows = new Map<string, T[]>();
+  for (const a of asks) {
+    const key = groupId(a);
+    const row = rows.get(key);
+    if (row) row.push(a);
+    else rows.set(key, [a]);
+  }
+  return [...rows.entries()].map(([key, items]) => ({
+    id: items.length === 1 ? items[0]!.id : key,
+    kind: items[0]!.kind,
+    repo: items[0]!.repo,
+    items,
+  }));
+}
+
+/** What asks the viewer now: candidates, less what they set aside. */
+function waitingOn(
+  db: Database,
+  user: User | undefined,
+  repos: readonly Repo[],
+): AskCandidate[] {
+  if (!user) return [];
+  return notDismissed(db, user, askCandidatesFor(db, user, repos));
+}
+
+/** One ask in a line, without its repository's name (the row adds that). */
+function lineOf(c: AskCandidate): string {
+  if (c.kind === "paused") return "is paused at its ceiling";
+  if (c.kind === "parked")
+    return `the crew parked #${c.issue!.number} after three failed runs`;
+  const title = c.pull?.title ?? "";
+  return c.kind === "stopped"
+    ? `the crew stopped on "${title}"`
+    : `"${title}" is green, waiting for your look`;
+}
+
+/** A collapsed row in a line: how many, and of what. */
+function rowLine(kind: DecisionKind, n: number): string {
+  if (kind === "parked")
+    return `the crew parked ${n} issues after three failed runs`;
+  if (kind === "stopped") return `the crew stopped on ${n} changes`;
+  return `${n} green changes wait for your look`;
+}
+
+/** The anchor a row's card carries on `/asks`, so a link can land on it. */
+export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
+
+/**
+ * What asks `user` right now, one row each — the panel's own candidates
+ * (same visibility, same bounds, less what they dismissed), collapsed the
+ * way the page collapses them, without the pictures. `items` are the ids
+ * of the asks a row holds: what the phone's notifier compares from one
+ * moment to the next, so a new ask under an old row is still news.
  */
 export function askLinesFor(
   db: Database,
@@ -253,47 +369,61 @@ export function askLinesFor(
   line: string;
   kind: DecisionKind;
   repoId: string;
-  /** The pull's number, for the asks that are about one. */
+  /** Where a person decides it: the pull or issue, or the row on `/asks`. */
+  link: string;
+  /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
+  items: string[];
 }[] {
   const repos = listReposVisibleTo(db, user, { limit: 200 });
-  return askCandidatesFor(db, user, repos).map((c) => {
-    const repo = `${c.repo.name}`;
-    const about = { kind: c.kind, repoId: c.repo.id };
-    if (c.kind === "paused")
+  return askRows(waitingOn(db, user, repos)).map((row) => {
+    const base = `/${row.repo.ownerName}/${row.repo.name}`;
+    const about = {
+      id: row.id,
+      kind: row.kind,
+      repoId: row.repo.id,
+      items: row.items.map((c) => c.id),
+    };
+    const only = row.items.length === 1 ? row.items[0]! : undefined;
+    if (only === undefined)
       return {
         ...about,
-        id: `paused:${c.repo.id}`,
-        line: `${repo} is paused at its ceiling`,
+        line: `${row.repo.name}: ${rowLine(row.kind, row.items.length)}`,
+        link: `/asks#${askAnchor(row.id)}`,
       };
-    if (c.kind === "parked")
+    const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
+    if (only.kind === "paused")
+      return { ...about, line, link: `${base}/settings/autonomy` };
+    if (only.kind === "parked")
       return {
         ...about,
-        number: c.issue!.number,
-        id: `parked:${c.issue!.id}`,
-        line: `${repo}: the crew parked #${c.issue!.number} after three failed runs`,
+        line,
+        number: only.issue!.number,
+        link: `${base}/issues/${only.issue!.number}`,
       };
-    const title = c.pull?.title ?? "";
-    const number = c.pull!.number;
-    return c.kind === "stopped"
-      ? {
-          ...about,
-          number,
-          id: `stopped:${c.pull!.id}`,
-          line: `${repo}: the crew stopped on "${title}"`,
-        }
-      : {
-          ...about,
-          number,
-          id: `look:${c.pull!.id}`,
-          line: `${repo}: "${title}" is green, waiting for your look`,
-        };
+    return {
+      ...about,
+      line,
+      number: only.pull!.number,
+      link: `${base}/changes/${only.pull!.number}`,
+    };
   });
 }
 
-export function decisionsFor(ctx: Ctx, allRepos: readonly Repo[]): Decision[] {
+/**
+ * The decisions waiting on the viewer, worded and pictured. A change's own
+ * page passes `evenDismissed`: setting an ask aside quiets the lists, never
+ * the decision on the thing itself.
+ */
+export function decisionsFor(
+  ctx: Ctx,
+  allRepos: readonly Repo[],
+  options: { evenDismissed?: boolean } = {},
+): Decision[] {
   const db = ctx.app.db;
-  const candidates = askCandidatesFor(db, ctx.auth.user, allRepos);
+  const candidates = options.evenDismissed
+    ? askCandidatesFor(db, ctx.auth.user, allRepos)
+    : waitingOn(db, ctx.auth.user, allRepos);
   // The pictures, in one read: a green pull's row leads with its preview.
   const repoIds = [...new Set(candidates.map((c) => c.repo.id))];
   const records = appsForRepos(db, repoIds);
@@ -473,15 +603,15 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
 
 /**
  * How many things ask the viewer: the one number the studio header and the
- * asks page both show. It counts the same candidates the cards are made
- * from (`askCandidatesFor`) plus the forge's own needs, so the two cannot
- * disagree.
+ * asks page both show. It counts the rows the cards are made into
+ * (`askRows` over `waitingOn`) plus the forge's own needs, so the two
+ * cannot disagree.
  */
 export function askCountFor(ctx: Ctx, user: User | undefined): number {
   if (!user) return 0;
   const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
   return (
-    askCandidatesFor(ctx.app.db, user, repos).length +
+    askRows(waitingOn(ctx.app.db, user, repos)).length +
     forgeNeedsFor(ctx, user).length
   );
 }
