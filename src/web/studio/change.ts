@@ -8,7 +8,7 @@
  */
 
 import { threadNote } from "../../crew/direct.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { pullStatus, revertOf, toldBy, type Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
@@ -42,6 +42,7 @@ import {
   type Decision,
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
+import { holdCard } from "./hold.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
 /** What a conflicted change's own page says: the base it no longer merges
@@ -81,6 +82,7 @@ export async function studioPull(
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const { word, note: checkNote } = await pullWord(wordCtx, pull);
   // Whether this change still merges into its base is asked here, on its own
@@ -104,9 +106,9 @@ export async function studioPull(
     const run = checkSummary(db, pull.id, pull.headOid).run;
     if (run) deploy = { id: run.id, commitOid: run.commitOid };
   } else {
-    const production = wordCtx.runtime
-      ?.status(record)
-      .find((e) => e.env === "production");
+    const production = envsFor(ctx.app, ctx.auth.user, record).find(
+      (e) => e.env === "production",
+    );
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
@@ -257,7 +259,8 @@ export async function studioPull(
       compact: true,
       ownTitle: true,
     })}
-    ${head} ${checkLine} ${decisionSection} ${takeBackSection}
+    ${head} ${checkLine} ${holdCard(ctx, repo, pull, { act: true })}
+    ${decisionSection} ${takeBackSection}
     ${lookCard(ctx, repo, record, pull, pull.headOid)}
     <div class="split">
       <div>

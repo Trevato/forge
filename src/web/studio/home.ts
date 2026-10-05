@@ -45,6 +45,7 @@ import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
 import { feedJs, feedNote, feedRegion } from "./feed.ts";
 import { crewKeyNote } from "./crew.ts";
+import { spawnedOrg } from "../../spawn/claim.ts";
 
 /** The events that can change a row on the shelf. */
 const APPS_LIVE =
@@ -168,15 +169,24 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     </p>`;
   });
 
+  // A spawned forge says where it lives: the address its person shares.
+  const spawned = await spawnedOrg(ctx.app);
+  const address = when(
+    spawned?.url,
+    (url) =>
+      html`<p class="small muted" id="forge-address">
+        Your forge: <a href="${url}">${new URL(url).host}</a>
+      </p>`,
+  );
   const body = html`<h1 class="sr-only">Studio</h1>
-    ${costLine}
+    ${address} ${costLine}
     <div class="dash">
       <div class="dash-main stack">
         <div class="bar feed-head">
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
         </div>
-        ${crewKeyNote(ctx)}
+        ${user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null}
         ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}
@@ -397,7 +407,7 @@ export function studioDoor(ctx: Ctx): Response {
             front.total > tiles.length + (front.featured === undefined ? 0 : 1),
             () =>
               html`<p class="mt front-more">
-                <a href="/apps">All ${front.total} public apps</a>
+                <a href="/explore?q=kind%3Aapp">All ${front.total} public apps</a>
               </p>`,
           )}`
       : front.featured === undefined

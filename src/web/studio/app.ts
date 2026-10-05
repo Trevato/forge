@@ -203,6 +203,7 @@ export async function studioApp(
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);

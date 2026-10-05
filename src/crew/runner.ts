@@ -970,6 +970,8 @@ async function work(
           until.toISOString(),
           said,
         );
+        // Only a look at who could take over: no reservation is made here.
+        // The run pauses, and on resume it picks again with its reserve.
         const next = pickSubscription(
           app.db,
           app.config.dataDir,
