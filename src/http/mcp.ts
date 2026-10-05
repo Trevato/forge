@@ -58,6 +58,7 @@ import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
+import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, json } from "./respond.ts";
@@ -257,6 +258,28 @@ const TOOLS: readonly Tool[] = [
     writes: false,
     run(ctx, user) {
       return good(asksAnswer(ctx, user));
+    },
+  },
+  {
+    name: "asks_act",
+    description:
+      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). With preview (the default) nothing changes: the answer is each row's before and after and the rows refused with why. With preview false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Every row is checked against your admin of its app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
+        items: { type: "array", items: { type: "string" }, maxItems: 100 },
+        preview: { type: "boolean" },
+      },
+      required: ["action", "items"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const answer =
+        args["preview"] === false
+          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
+          : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
+      return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
     },
   },
   {
