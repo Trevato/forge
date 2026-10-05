@@ -21,6 +21,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
   cellsAvailable,
+  ownAddress,
   secretMounts,
   WATCH,
   type CellSpec,
@@ -227,6 +228,49 @@ describe("egress: the proxy forwards what is allowed, byte for byte, and refuses
       const reply = await exchange(`CONNECT localhost:${port} HTTP/1.1\r\n\r\n`);
       expect(reply).toStartWith("HTTP/1.1 403");
       expect(reply).toContain(`localhost:${port} is not in this repository's egress`);
+    }
+  });
+});
+
+describe("an app's own public address is a declared host, held to the public check", () => {
+  test("written as an egress entry: the host, with its port when it is not a web port", () => {
+    expect(ownAddress("https://notes--forge.example.com")).toEqual(["notes--forge.example.com"]);
+    expect(ownAddress("http://notes.apps.test:3999")).toEqual(["notes.apps.test:3999"]);
+    expect(ownAddress("not a url")).toEqual([]);
+  });
+
+  test("an own domain pointed at a private address gives no reach", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-egress-own-"));
+    const socket = join(dir, "out.sock");
+    const upstream = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("inside") });
+    // `localhost` stands for a custom domain its owner repointed at this machine.
+    const egress = startEgress(socket, {
+      hosts: ownAddress(`http://localhost:${upstream.port}`),
+      origins: [],
+    });
+    try {
+      let got = "";
+      const done = Promise.withResolvers<void>();
+      const conn = await Bun.connect({
+        unix: socket,
+        socket: {
+          data(_s, chunk) {
+            got += new TextDecoder().decode(chunk);
+            done.resolve();
+          },
+          close: () => done.resolve(),
+          error: () => done.resolve(),
+        },
+      });
+      conn.write(`CONNECT localhost:${upstream.port} HTTP/1.1\r\n\r\n`);
+      await Promise.race([done.promise, Bun.sleep(5_000)]);
+      conn.end();
+      expect(got).toStartWith("HTTP/1.1 403");
+      expect(got).toContain("localhost resolves to a private address");
+    } finally {
+      egress.close();
+      upstream.stop(true);
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

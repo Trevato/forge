@@ -80,7 +80,12 @@ import {
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
-import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
+import {
+  cellsAvailable,
+  ownAddress,
+  resolveLimits,
+  type CellSpec,
+} from "./contain.ts";
 import {
   startProcess,
   type CellBase,
@@ -1254,12 +1259,16 @@ export class AppsRuntime {
               writable: [dataDir],
               home: base.home,
               hide: base.hide,
-              egress: live.manifest.egress ?? [],
               // A terminal is the app's own client: it reaches the app on
-              // its port, as it would beside it, and at its public address.
+              // its port, as it would beside it, and at its public address —
+              // a declared host like any other, held to the public check
+              // (an owner's domain may be pointed anywhere).
+              egress: [
+                ...(live.manifest.egress ?? []),
+                ...ownAddress(this.urlFor(record, env)),
+              ],
               reach: [
                 this.options.forgeUrl,
-                this.urlFor(record, env),
                 `http://127.0.0.1:${live.handle.port}`,
               ],
               limits: resolveLimits("app", live.manifest.limits),
