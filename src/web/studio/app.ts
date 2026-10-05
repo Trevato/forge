@@ -30,6 +30,7 @@ import { appTailJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { followingCard, followingOf } from "../pages/following.ts";
 import {
   avatar,
   btn,
@@ -421,10 +422,14 @@ export async function studioApp(
     )}
   </p>`;
 
+  // An app that follows another says so before anything else: whether it
+  // is in step is the first thing its owner wants to know.
+  const following = await followingOf(ctx, repo);
   const body = html`${repoHeader(ctx, repo, "code", {
       compact: true,
       ownTitle: true,
     })}
+    ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${await policyLine(ctx, repo, record)}
     <div class="dash">

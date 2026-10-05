@@ -324,6 +324,11 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   const parentName = `${parent.ownerName}/${parent.name}`;
 
   if (field(form, "do") === "converge") {
+    if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+      return flashOrJson(ctx, base, {
+        tone: "danger",
+        message: "Only a writer can ask the crew to converge.",
+      });
     const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
     return flashOrJson(ctx, base, convergeWords(outcome, parentName));
   }

@@ -167,6 +167,15 @@ reader sees none of this. Both surfaces call the one function that knows
 the fact, `terminalFor` (`src/actions/apps.ts`), so the pull's card and
 the studio page never carry two ideas of what the command is.
 
+**Following** comes first when the app is a fork of another: one sentence on
+where it stands against what it follows — in step, behind, ahead, or diverged
+— and one thing to do about it. Behind, or diverged where git merges cleanly,
+is **Take updates**, a click. Diverged where both sides changed the same file
+is **Converge with the crew**: a builder merges the parent's branch, keeps
+this app's direction where the two cannot both be kept, and the result comes
+back as a change to look at, or lands on its own when the app runs on its
+own. The words are the studio's; the mechanics are `docs/FOLLOWING.md`.
+
 **The box** is the front door. A sentence becomes an issue — the first line
 its title, the rest its body — and the routing decision hands it to a
 builder: the builder with the least in flight, then by name. That is one

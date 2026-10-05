@@ -32,7 +32,7 @@ import { getIssueById, listIssues } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -241,6 +241,22 @@ describe("a fork that follows its parent", () => {
     }).then((p) => p.text());
     expect(page).toContain("one file needs a decision: README.md");
     expect(page).toContain("Nobody is on the crew");
+  });
+
+  test("the page form refuses a reader who cannot write, and opens nothing", async () => {
+    const eve = getUserByName(app.db, "eve")!;
+    const before = listIssues(app.db, fork.id, { state: "open" }).length;
+    const res = await fetch(`${base}/bob/game/following`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createToken(app.db, eve.id, "form", "rw").token}`,
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body: "do=converge",
+    });
+    expect(res.status).toBe(422);
+    expect(listIssues(app.db, fork.id, { state: "open" }).length).toBe(before);
   });
 
   test("without a crew, converging is refused honestly", async () => {
