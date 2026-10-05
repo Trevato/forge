@@ -23,6 +23,7 @@ export type Exclusion = {
 
 export const GATE: readonly string[] = [
   "test/accounts.test.ts",
+  "test/agents.test.ts",
   "test/app-domains.test.ts",
   "test/body-limits.test.ts",
   "test/client-address.test.ts",
@@ -159,11 +160,6 @@ export const GATE: readonly string[] = [
 
 export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/actions.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/agents.test.ts",
-    reason: "red: fifty concurrent pushes come back 'auth required'",
-    issue: 293,
-  },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/app-env.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/app.test.ts", reason: "not yet admitted", issue: 261 },
