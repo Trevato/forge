@@ -13,6 +13,8 @@ export const MAX_APPS = 50;
 export const MAX_BRIEFS = 100;
 export const MAX_SUBSCRIPTIONS = 200;
 export const MAX_BRIEF_CHARS = 20_000;
+/** The spawner's words for what the child is for: its direction. */
+export const MAX_DIRECTION_CHARS = 2000;
 
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -36,6 +38,8 @@ export interface SpawnInput {
   readonly apps: unknown;
   readonly carryBriefs: unknown;
   readonly carrySubscriptions: unknown;
+  /** What the child is for, in the spawner's words; optional. */
+  readonly direction?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -58,6 +62,8 @@ export interface SpawnPlan {
   readonly apps: readonly PlannedApp[];
   readonly briefs: readonly CrewBrief[];
   readonly subscriptions: readonly string[];
+  /** The child's direction; empty when the spawner wrote none. */
+  readonly direction: string;
 }
 
 export interface DryRun {
@@ -136,7 +142,15 @@ export function planSpawn(
     subscriptions = [...new Set(source.subscriptions)].sort(byText);
   }
 
-  return ok({ name, org, apps, briefs, subscriptions });
+  let direction = "";
+  if (input.direction !== undefined) {
+    if (typeof input.direction !== "string") return refuse("direction", "must be text");
+    direction = input.direction.trim();
+    if (direction.length > MAX_DIRECTION_CHARS)
+      return refuse("direction", `at most ${MAX_DIRECTION_CHARS} characters`);
+  }
+
+  return ok({ name, org, apps, briefs, subscriptions, direction });
 }
 
 const enc = new TextEncoder();
@@ -147,6 +161,7 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...plan.apps.map((a) => `app ${a.ref} (full history, forge.json)`),
     ...plan.briefs.map((b) => `crew brief for ${b.agent}`),
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
+    ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),
   ];
   const bytes =
     plan.apps.reduce((n, a) => n + a.bytes, 0) +

@@ -80,6 +80,7 @@ export const GATE: readonly string[] = [
   "test/spawn-plan.test.ts",
   "test/spawn.test.ts",
   "test/spawn-api.test.ts",
+  "test/spawn-first-boot.test.ts",
   "test/web-apps.test.ts",
   "test/fleet-ops.test.ts",
   "test/meter.test.ts",

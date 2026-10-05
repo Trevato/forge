@@ -126,6 +126,7 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
@@ -425,6 +426,9 @@ export function buildRouter(): Router<Handler> {
   // cached by the browser's HTTP cache or an update would wait a day.
   router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
+  // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
+  router.add("GET", "/claim/:token", claimPage);
+  router.add("POST", "/claim/:token", claimSubmit);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);

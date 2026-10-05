@@ -441,7 +441,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make.",
+      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make. A made child comes back with `claimUrl`, shown once: the link that hands the child to its person.",
     inputSchema: {
       type: "object",
       properties: {
@@ -458,6 +458,11 @@ const TOOLS: readonly Tool[] = [
           type: "array",
           items: { type: "string" },
           description: "The crew members whose briefs go along, by name.",
+        },
+        direction: {
+          type: "string",
+          description:
+            "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
         },
         dryRun: {
           type: "boolean",

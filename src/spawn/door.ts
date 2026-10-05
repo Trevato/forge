@@ -121,6 +121,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     apps,
     carryBriefs: briefs.length > 0,
     carrySubscriptions: false,
+    direction: raw["direction"],
   };
 
   if (dry) {
