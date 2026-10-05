@@ -647,7 +647,7 @@ function personalOrDirect(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
 }
 
-function onCrew(db: Database, repo: Repo, user: User | undefined): boolean {
+export function onCrew(db: Database, repo: Repo, user: User | undefined): boolean {
   if (user === undefined || user.kind !== "agent") return false;
   return (
     db

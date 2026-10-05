@@ -49,6 +49,7 @@ export const GATE: readonly string[] = [
   "test/forks.test.ts",
   "test/front.test.ts",
   "test/fork-flow.test.ts",
+  "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
