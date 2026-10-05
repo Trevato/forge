@@ -807,7 +807,14 @@ export function dependenciesCard(
           ${btn("Waits for", { type: "submit", size: "sm" })}
         </form>`
       : null}
-    <p class="muted small mt"><a href="${base}/map">See the map</a></p>`;
+    <p class="muted small mt">
+      ${blockedBy.length === 0
+        ? null
+        : html`<a href="${base}/milestones/${issue.number}"
+              >See how far it is</a
+            >
+            · `}<a href="${base}/map">See the map</a>
+    </p>`;
   return card(body, {
     head: html`${icon("map")}
       <h2>Depends on</h2>`,

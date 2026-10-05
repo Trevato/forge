@@ -37,6 +37,7 @@ import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
+  LATER,
   NO_PILLAR,
   PILLAR_DAYS,
   pillarView,
@@ -68,6 +69,7 @@ import {
   type FigureWords,
 } from "../studio/words.ts";
 import { lookUrl, thumbLook } from "./looks.ts";
+import { milestoneHref } from "./milestones.ts";
 
 // ---- words ----
 
@@ -647,6 +649,16 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
     const view = pillarView(db, repo.id);
     if (view === undefined) return [];
     const base = repoBase(repo);
+    // One tap to how far a pillar is: its umbrella's milestone.
+    const umbrella = new Map<string, number>(
+      view.set.pillars.map((p) => [p.name, p.umbrella.number]),
+    );
+    if (view.set.later !== undefined)
+      umbrella.set(LATER, view.set.later.number);
+    const hrefOf = (name: string): string =>
+      umbrella.has(name)
+        ? milestoneHref(base, umbrella.get(name)!)
+        : `${base}/issues?label=${encodeURIComponent(name)}`;
     return [
       html`<p class="board-pillars" data-app="${repo.name}">
         <span class="board-pillars-h"
@@ -661,7 +673,7 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
             : html`<a
                 class="board-pillar"
                 data-zero="${count.merged === 0 ? "yes" : "no"}"
-                href="${base}/issues?label=${encodeURIComponent(count.pillar)}"
+                href="${hrefOf(count.pillar)}"
                 >${count.pillar} <b>${count.merged}</b></a
               >`,
         )}

@@ -134,7 +134,10 @@ function tellDependencies(base: string, issue: Issue, db: Ctx["app"]["db"]): Htm
   return card(
     html`${blockedBy.length === 0
         ? html`<p class="muted small">Waits for nothing.</p>`
-        : html`<p class="small">Waits for ${blockedBy.length}</p>
+        : html`<p class="small">
+              Waits for ${blockedBy.length} ·
+              <a href="${base}/milestones/${issue.number}">see how far it is</a>
+            </p>
             ${list(blockedBy)}`}
       ${blocks.length === 0
         ? null

@@ -56,6 +56,7 @@ import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import { struckOut } from "../../crew/parks.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
+import { milestoneHref } from "./milestones.ts";
 import {
   isStructural,
   LATER,
@@ -905,9 +906,9 @@ export const pillarHref = (base: string, name: string): string =>
 
 /**
  * The map by pillar: is the crew building what was asked. One row a
- * pillar — a link to its issues — with what is open, ready and blocked;
- * then the issues that name no pillar, each a link, since they are the
- * ones to file.
+ * pillar — a link to its milestone, where its issues and how far they are
+ * can be read — with what is open, ready and blocked; then the issues that
+ * name no pillar, each a link, since they are the ones to file.
  */
 function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
   const base = repoBase(repo);
@@ -933,7 +934,12 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
               >
             </li>`
           : html`<li data-pillar="${r.name}">
-              <a href="${pillarHref(base, r.name)}">${r.name}</a>
+              <a
+                href="${r.umbrella === undefined
+                  ? pillarHref(base, r.name)
+                  : milestoneHref(base, r.umbrella)}"
+                >${r.name}</a
+              >
               <span class="muted small">${counts(r)}</span>
             </li>`,
       )}
@@ -1313,6 +1319,7 @@ export function mapPage(ctx: Ctx): Response {
       <p class="muted">
         What waits for what. The top edge is ready now; the chain in the accent
         is the least work that still has to happen in order.
+        <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
       </p>
       ${autonomyLine(ctx, repo)}
     </div>

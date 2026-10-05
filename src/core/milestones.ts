@@ -91,16 +91,20 @@ export interface Milestone extends Limb {
   }[];
   /** A plain sentence: when it lands at this week's pace, or why nobody can say. */
   readonly estimate: string;
-  /** What it waits for directly that is itself a milestone. */
+  /** What it waits for directly that has a tree of its own. */
   readonly limbs: readonly Limb[];
-  /** What it waits for directly that waits for nothing. */
+  /** What it waits for directly that brings none: at most an order among these. */
   readonly leaves: readonly { readonly issue: Issue; readonly state: LeafState }[];
 }
 
 export interface Plan {
   /** The top-level limbs, in order: the pillars and Later, or the plan's roots. */
   readonly limbs: readonly Limb[];
-  /** One milestone by its issue's number; nothing for an issue that waits for nothing. */
+  /**
+   * One milestone by its issue's number; nothing for an issue that waits for
+   * nothing. An issue that waits only for the plan's furniture has a
+   * milestone with nothing beneath it, which says so.
+   */
   milestone(number: number): Milestone | undefined;
 }
 
@@ -136,7 +140,9 @@ export function readPlan(
   // What each issue waits for directly, furniture left out.
   const waitsFor = new Map<string, string[]>();
   const waitedBy = new Map<string, string[]>();
+  const waits = new Set<string>();
   for (const edge of graph.edges) {
+    waits.add(edge.issueId);
     if (isStructural(set, edge.blockedById)) continue;
     waitsFor.set(edge.issueId, [
       ...(waitsFor.get(edge.issueId) ?? []),
@@ -279,9 +285,14 @@ export function readPlan(
     const closedThisWeek = under.some(
       (i) => i.state === "closed" && (i.closedAt ?? "") >= since,
     );
+    // Still for a week means it has been here a week: a limb made today
+    // with nothing landed yet is new, not stuck.
     const trim = deferred
       ? undefined
-      : weight.open > 0 && weight.merged === 0 && !closedThisWeek
+      : weight.open > 0 &&
+          weight.merged === 0 &&
+          !closedThisWeek &&
+          issue.createdAt < since
         ? `nothing landed in ${PILLAR_DAYS} days`
         : weight.open >= TRIM_OPEN && weight.building === 0
           ? `${weight.open} open and nobody building`
@@ -317,7 +328,7 @@ export function readPlan(
     limbs: top.map(limbOf),
     milestone(number: number): Milestone | undefined {
       const issue = byNumber.get(number);
-      if (issue === undefined || !isMilestone(issue.id)) return undefined;
+      if (issue === undefined || !waits.has(issue.id)) return undefined;
       const limb = limbOf(issue);
       const under = [...beneath(issue.id)]
         .map((id) => byId.get(id))
@@ -327,6 +338,11 @@ export function readPlan(
         .map((id) => byId.get(id))
         .filter((i): i is Issue => i !== undefined)
         .sort((a, b) => a.number - b.number);
+      // A child is a limb when it brings a tree of its own; one that only
+      // waits for its siblings is a leaf in an order.
+      const siblings = new Set(children.map((c) => c.id));
+      const isLimb = (child: Issue): boolean =>
+        (waitsFor.get(child.id) ?? []).some((id) => !siblings.has(id));
       const closedThisWeek = under.filter(
         (i) =>
           i.state === "closed" && counted(i) && (i.closedAt ?? "") >= since,
@@ -369,9 +385,9 @@ export function readPlan(
           .filter((pull) => pull.closes.some((n) => numbers.has(n)))
           .map(({ number: n, title, at }) => ({ number: n, title, at })),
         estimate,
-        limbs: children.filter((c) => isMilestone(c.id)).map(limbOf),
+        limbs: children.filter(isLimb).map(limbOf),
         leaves: children
-          .filter((c) => !isMilestone(c.id))
+          .filter((c) => !isLimb(c))
           .map((c) => ({ issue: c, state: stateOf(c) }))
           .sort(
             (a, b) =>

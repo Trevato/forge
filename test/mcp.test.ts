@@ -168,6 +168,7 @@ describe("the forge over MCP", () => {
       "converge",
       "asked",
       "map",
+      "milestones",
       "usage",
       "link",
       "unlink",
