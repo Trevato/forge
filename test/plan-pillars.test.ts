@@ -186,7 +186,7 @@ describe("a plan says what each issue is for", () => {
         title: "The profit slider",
         body: "One control trading cost against responsiveness.",
         later: true,
-        why: "Money lines serve no pillar now.",
+        why: "  Money lines serve\n no pillar now. ",
       },
       {
         key: "bare",
