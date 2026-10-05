@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { inCidrs, parseCidrs } from "../src/kernel/cidr.ts";
-import { resolveClient, type ProxyTrust } from "../src/http/peer.ts";
+import {
+  bucketOf,
+  carryPeer,
+  clientAddress,
+  notePeer,
+  resolveClient,
+  type ProxyTrust,
+} from "../src/http/peer.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 const headers = (h: Record<string, string>) => new Headers(h);
@@ -140,6 +147,54 @@ describe("the client behind the proxy", () => {
   });
 });
 
+describe("this machine is not a proxy once the proxies are named", () => {
+  const listed = (): ProxyTrust => {
+    const parsed = parseCidrs("10.42.0.0/16");
+    if (!parsed.ok) throw new Error("cidr");
+    return { proxies: parsed.value, header: "cf-connecting-ip" };
+  };
+
+  test("an app on this machine cannot choose its address with forwarded headers", () => {
+    // Every app and crew run is a process beside the forge: it can call
+    // 127.0.0.1 and say anything. With the ingress listed, it is itself.
+    const h = headers({ "x-forwarded-for": "1.1.1.1", "cf-connecting-ip": "2.2.2.2" });
+    expect(resolveClient("127.0.0.1", h, listed())).toBe("127.0.0.1");
+    expect(resolveClient("::1", h, listed())).toBe("::1");
+  });
+
+  test("this machine counts only when it is listed", () => {
+    const parsed = parseCidrs("127.0.0.0/8");
+    if (!parsed.ok) throw new Error("cidr");
+    const h = headers({ "x-forwarded-for": "198.51.100.30" });
+    expect(resolveClient("127.0.0.1", h, { proxies: parsed.value })).toBe("198.51.100.30");
+  });
+
+  test("with no proxies named, the named header is never read, even from this machine", () => {
+    const h = headers({ "cf-connecting-ip": "2.2.2.2", "x-forwarded-for": "198.51.100.31" });
+    expect(resolveClient("127.0.0.1", h, { proxies: [], header: "cf-connecting-ip" })).toBe("198.51.100.31");
+  });
+});
+
+describe("limit keys", () => {
+  test("an IPv6 client is keyed by its /64; IPv4 by its address", () => {
+    expect(bucketOf("2001:db8:1:2:aaaa::1")).toBe("2001:db8:1:2::/64");
+    expect(bucketOf("2001:db8:1:2:ffff:ffff:ffff:ffff")).toBe("2001:db8:1:2::/64");
+    expect(bucketOf("2001:db8:1:3::1")).toBe("2001:db8:1:3::/64");
+    expect(bucketOf("198.51.100.7")).toBe("198.51.100.7");
+    expect(bucketOf("::ffff:198.51.100.7")).toBe("::ffff:198.51.100.7");
+    expect(bucketOf("unknown")).toBe("unknown");
+  });
+
+  test("a replayed request keeps the client noted on the original", () => {
+    const first = new Request("http://x/api/v1/repos", { method: "POST" });
+    notePeer(first, "203.0.113.40");
+    const again = new Request("http://x/api/v1/repos", { method: "POST" });
+    expect(clientAddress(again)).toBe("unknown");
+    carryPeer(first, again);
+    expect(clientAddress(again)).toBe("203.0.113.40");
+  });
+});
+
 // Two outside clients behind the trusted ingress are counted apart by the
 // limiter on reports from outside.
 describe("limits see each outside client", () => {
@@ -149,7 +204,9 @@ describe("limits see each outside client", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-client-addr-"));
-    app = createApp({ dataDir, port: 0, trustedProxies: ["127.0.0.0/8"] });
+    // The test client is this machine, over either loopback: name both, as
+    // an operator must once proxies are named.
+    app = createApp({ dataDir, port: 0, trustedProxies: ["127.0.0.0/8", "::1"] });
     servers = await serve(app);
   });
   afterAll(async () => {

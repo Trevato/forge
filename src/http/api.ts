@@ -285,7 +285,7 @@ import {
 } from "./respond.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
-import { clientAddress } from "./peer.ts";
+import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
 import {
   acceptReport,
@@ -1911,7 +1911,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.app,
       repo,
       { title: str(input.title), body: str(input.body), page: str(input.page) },
-      clientAddress(ctx.request),
+      clientBucket(ctx.request),
     );
     if (!filed.ok) {
       const refusal = filed.error;

@@ -4,13 +4,16 @@
  * record where a signup came from; never an identity.
  *
  * The socket's peer is the answer unless that peer is a proxy the operator
- * trusts — this machine, or a range in `FORGE_TRUSTED_PROXIES` (the ingress
- * in front of a hosted forge). Only then are forwarded headers read: a named
- * header the edge sets (`FORGE_CLIENT_IP_HEADER`, e.g. Cloudflare's
- * `cf-connecting-ip`), else `X-Forwarded-For` walked from the right, past
- * each trusted hop, to the first address no trusted proxy vouches for. The
- * left end of that header is whatever the client wrote and is never read
- * as such. Every limit keyed on this keeps a whole-forge cap beside it.
+ * trusts. With `FORGE_TRUSTED_PROXIES` set, those ranges are the proxies and
+ * nothing else is — not even this machine, where every app and crew run is
+ * a process that could call the forge and claim to be anyone. Unset, this
+ * machine alone may say (a local proxy in development). From a trusted
+ * proxy, `X-Forwarded-For` is walked from the right, past each trusted hop,
+ * to the first address no trusted proxy vouches for; the left end is
+ * whatever the client wrote and is never read as such. A named header the
+ * edge sets (`FORGE_CLIENT_IP_HEADER`, e.g. Cloudflare's `cf-connecting-ip`)
+ * is read first, and only from a listed proxy. Every limit keyed on this
+ * keeps a whole-forge cap beside it, and keys an IPv6 client by its /64.
  */
 
 import { addressBytes, inCidrs, type Cidr } from "../kernel/cidr.ts";
@@ -35,10 +38,11 @@ export function resolveClient(
   trust: ProxyTrust,
 ): string {
   if (peer === undefined) return "unknown";
+  const listed = trust.proxies.length > 0;
   const trusted = (address: string): boolean =>
-    LOOPBACK.has(address) || inCidrs(address, trust.proxies);
+    listed ? inCidrs(address, trust.proxies) : LOOPBACK.has(address);
   if (!trusted(peer)) return peer;
-  if (trust.header !== undefined) {
+  if (trust.header !== undefined && listed) {
     const named = headers.get(trust.header)?.trim() ?? "";
     if (isAddress(named)) return named;
   }
@@ -69,3 +73,27 @@ export const notePeer = (
 export function clientAddress(request: Request): string {
   return clients.get(request) ?? "unknown";
 }
+
+/**
+ * The key a limit counts a client under: its address, or for IPv6 its /64 —
+ * one subscriber's whole allocation, which a single client can walk through
+ * an address at a time.
+ */
+export function bucketOf(address: string): string {
+  const bytes = addressBytes(address);
+  if (bytes === undefined || bytes.length === 4) return address;
+  const words: string[] = [];
+  for (let i = 0; i < 8; i += 2)
+    words.push(((bytes[i]! << 8) | bytes[i + 1]!).toString(16));
+  return `${words.join(":")}::/64`;
+}
+
+/** The limit key for this request's client (\`bucketOf\`). */
+export const clientBucket = (request: Request): string =>
+  bucketOf(clientAddress(request));
+
+/** A request rebuilt from another (an idempotent replay) keeps its client. */
+export const carryPeer = (from: Request, to: Request): void => {
+  const client = clients.get(from);
+  if (client !== undefined) clients.set(to, client);
+};

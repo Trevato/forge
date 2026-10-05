@@ -300,7 +300,7 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
 import {
   reportAcceptSubmit,
@@ -1141,12 +1141,16 @@ async function withIdempotency(
   // exactly one thing that can be hashed.
   const raw = await request.text();
   const fingerprint = requestFingerprint(request.method, url.pathname, raw);
-  const replay = (): Request =>
-    new Request(request.url, {
+  const replay = (): Request => {
+    const again = new Request(request.url, {
       method: request.method,
       headers: request.headers,
       ...(raw === "" ? {} : { body: raw }),
     });
+    // The replay is the same caller: limits and the audit still see them.
+    carryPeer(request, again);
+    return again;
+  };
 
   const stored = lookupIdempotent(app.db, credential, key);
   if (stored !== undefined) {

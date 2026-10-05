@@ -106,8 +106,10 @@ proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
 client is; limits for strangers and the signup audit then see each outside
 client, read from `X-Forwarded-For` right to left past the trusted hops, or
 from `FORGE_CLIENT_IP_HEADER` when the edge sets one (`cf-connecting-ip`
-behind a Cloudflare tunnel, where the ingress rewrites `X-Forwarded-For`).
-Unset, only this machine may say so. Everything a forge
+behind a Cloudflare tunnel, where the ingress rewrites `X-Forwarded-For`;
+read only from a listed proxy). Once set, only the listed ranges are proxies:
+this machine is not one unless listed, since every app runs beside the forge.
+Unset, only this machine may say so, and the named header is never read. Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
