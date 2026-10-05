@@ -205,7 +205,7 @@ function fromEvent(
         kind: "run",
         link,
         urgency: state === "failed" ? 4 : 0,
-        what: `a ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
+        what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
       };
     }
     case "pull.opened":

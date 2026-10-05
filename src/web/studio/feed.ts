@@ -55,19 +55,22 @@ export function feedCard(item: FeedItem): Html {
       <strong class="fcard-who">${item.actor ?? item.app}</strong>
       <span class="badge">${KIND_LABEL[item.kind]}</span>
       <span class="fcard-app muted small">${item.app}</span>
-      <span class="spacer"></span>
-      <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-      ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
     </div>
     <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
     ${item.reason === item.what ? null : html`<p class="fcard-why small muted">${item.reason}</p>`}
-    <details class="fcard-say">
-      <summary class="small">${target ? "Steer" : "Tell the crew"}</summary>
-      <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
-        <textarea name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
-        ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
-      </form>
-    </details>
+    <div class="fcard-foot">
+      <details class="fcard-say">
+        <summary class="small">${target ? "Steer" : "Tell the crew"}</summary>
+        <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
+          <textarea name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
+          ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
+        </form>
+      </details>
+      <span class="fcard-acts">
+        <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
+        ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
+      </span>
+    </div>
   </article>`;
 }
 
@@ -85,7 +88,8 @@ export function composer(ctx: Ctx, user: User): Html {
       icon: "rocket",
       title: "No apps yet",
       note: "Make one, tell the crew what it is, and watch it come up here.",
-      action: btn("New app", { href: "/apps/new", variant: "primary" }),
+      action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
+        ${btn("Repositories", { href: "/?mode=dev" })}`,
     });
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const first = slug(repos[0]!);

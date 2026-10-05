@@ -8,6 +8,11 @@ export const feedCss = /* css */ `
 .fcard-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .fcard-reason { margin: 8px 0 4px; font-size: 1.05em; overflow-wrap: anywhere; }
 .fcard-who { font-weight: 600; }
+/* Under the post: say something (it opens across the card), then dismiss and mute. */
+.fcard-foot { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.fcard-foot .fcard-say { flex: 1 1 auto; min-width: 0; }
+.fcard-foot .fcard-say[open] { flex-basis: 100%; }
+.fcard-acts { display: inline-flex; gap: 4px; margin-left: auto; }
 .fcard-why { margin: 0 0 4px; }
 /* The composer: the home's one primary action, on top of the timeline. */
 .composer { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--card, var(--bg)); }
@@ -27,7 +32,7 @@ export const feedCss = /* css */ `
 .fcard-form textarea { width: 100%; min-height: 56px; resize: vertical; }
 @media (max-width: 600px) {
   .fcard { padding: 12px; }
-  .fcard-head .btn { padding: 8px 10px; }
+  .fcard-acts .btn { padding: 8px 10px; }
   .fcard-say summary { padding: 10px 0; }
 }
 `;
