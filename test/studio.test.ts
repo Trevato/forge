@@ -3219,6 +3219,34 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(red).toContain(runLink);
     expect(red).toContain("serving · tests failed: 2 failing");
     expect(red).toContain("live 3.4s after the push");
+    // One badge, not green, and the row still links to the preview.
+    expect(red).toMatch(/data-variant="attn"[^]*?serving · tests failed<\/span/);
+    expect(red).not.toContain('data-variant="success"');
+    expect(red).not.toContain(">live<");
+
+    putEnv(env, {
+      deploying: {
+        run: { id: deployRun.id, commitOid: pull.headOid },
+        abort: new AbortController(),
+      },
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        manifest: { tty: null },
+      },
+    });
+    const verifying = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(verifying).toContain(open);
+    expect(verifying).toContain("serving · verifying</span");
+    expect(verifying).not.toContain('data-variant="success"');
+    expect(verifying).not.toContain('data-variant="attn"');
 
     putEnv(env, {
       live: {
