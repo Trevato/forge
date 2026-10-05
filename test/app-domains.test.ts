@@ -301,7 +301,7 @@ describe("an app gets its own domain", () => {
       dns,
     });
     await runtime.start();
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -309,7 +309,7 @@ describe("an app gets its own domain", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",

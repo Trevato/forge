@@ -3,11 +3,11 @@
  * it. Pure data: the actions send the mail and decide what an unproven
  * account may not do (`actions/verify.ts`).
  *
- * An account is held back only once a public way in has asked it to prove
- * its address: signing up, an edge sign-in that made it, or changing the
- * address writes an unproven row. No row means a trusted path made it — an
- * account that predates verification, the forge's first, a spawned child's
- * seeded admin. An agent is never held back (no mail reaches it), nor an
+ * Fail closed: an account without a proven row is unproven. \`createUser\`
+ * writes an unproven row for every person unless its caller vouches for the
+ * address (\`trusted\`: a seeded admin, a claim, a fixture), and the
+ * migration that made this table proved every account that already
+ * existed. An agent is never held back (no mail reaches it), nor an
  * organization, which cannot sign in. A link's secret is stored only as its
  * hash, works once, and expires.
  */
@@ -29,19 +29,22 @@ export function emailVerified(db: Database, userId: string): boolean {
       {
         kind: string;
         is_agent: number;
-        checked: string | null;
         verified_at: string | null;
       },
       [string]
     >(
-      `SELECT u.kind, u.is_agent, c.user_id AS checked, c.verified_at
+      `SELECT u.kind, u.is_agent, c.verified_at
        FROM user u LEFT JOIN email_check c ON c.user_id = u.id WHERE u.id = ?1`,
     )
     .get(userId);
   if (row === null) return false;
   if (row.is_agent === 1 || row.kind === "org") return true;
-  // No row: a trusted path made the account. A row: proven once it says so.
-  return row.checked === null || row.verified_at !== null;
+  return row.verified_at !== null;
+}
+
+/** A new account's row: unproven until a link is followed or an owner says so. */
+export function markUnproven(db: Database, userId: string): void {
+  db.query("INSERT OR IGNORE INTO email_check (user_id) VALUES (?1)").run(userId);
 }
 
 /** Mark proven without a link: the forge's first account, an owner's word. */

@@ -53,7 +53,7 @@ describe("the sandbox on a run's record", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-sandbox-run-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

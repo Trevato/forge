@@ -2,11 +2,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { createApp, type App } from "../src/app.ts";
+import { migrations } from "../src/core/schema.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
+import { setSecret } from "../src/core/secret_store.ts";
 import { emailVerified } from "../src/core/verify.ts";
+import { missing } from "./helpers/tools.ts";
 import { sendMail, type Mail } from "../src/kernel/mail.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -34,8 +38,8 @@ describe("verified email", () => {
     base = servers.url;
     // The owner predates verification; the first account is never held back.
     const owner = await signUp(app, {
-      username: "owner",
-      email: "owner@f.dev",
+      username: "olive",
+      email: "olive@f.dev",
       password: "owner-passphrase",
     });
     if (!owner.ok) throw new Error(owner.error);
@@ -88,7 +92,7 @@ describe("verified email", () => {
   });
 
   test("the first account on a fresh forge is verified", () => {
-    expect(emailVerified(app.db, getUserByName(app.db, "owner")!.id)).toBe(
+    expect(emailVerified(app.db, getUserByName(app.db, "olive")!.id)).toBe(
       true,
     );
   });
@@ -218,8 +222,27 @@ describe("verified email", () => {
     edged.close();
   });
 
-  test("an account a trusted path made (no signup) is not held back", async () => {
+  test("a way in that does not vouch for the address is held back (fail closed)", async () => {
+    // Any future path that makes a person without saying "trusted" — a
+    // linked sign-in, an invite — starts unproven.
     const made = await createUser(app.db, {
+      username: "unvouched",
+      email: "unvouched@f.dev",
+      password: "unvouched-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    expect(emailVerified(app.db, made.value.id)).toBe(false);
+    const token = createToken(app.db, made.value.id, "t", "admin").token;
+    const res = await api("/api/v1/repos", token, {
+      method: "POST",
+      body: JSON.stringify({ name: "nope" }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("an account a caller vouches for (a seed, a claim) is not held back", async () => {
+    const made = await createUser(app.db, {
+      trusted: true,
       username: "seeded",
       email: "seeded@f.dev",
       password: "seeded-passphrase",
@@ -228,8 +251,21 @@ describe("verified email", () => {
     expect(emailVerified(app.db, made.value.id)).toBe(true);
   });
 
+  test("accounts that existed before verification are proven by the migration", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE user (id TEXT PRIMARY KEY, created_at TEXT)");
+    db.exec("INSERT INTO user VALUES ('u1', '2026-01-01T00:00:00.000Z')");
+    db.exec(migrations.find((m) => m.includes("TABLE IF NOT EXISTS email_check"))!);
+    const row = db
+      .query<{ verified_at: string | null }, []>(
+        "SELECT verified_at FROM email_check WHERE user_id = 'u1'",
+      )
+      .get();
+    expect(row?.verified_at).toBe("2026-01-01T00:00:00.000Z");
+  });
+
   test("agents are never held back by email", async () => {
-    const made = await createUser(app.db, {
+    const made = await createUser(app.db, { trusted: true,
       username: "crewbot",
       email: "crewbot@agents.invalid",
       agent: true,
@@ -328,5 +364,184 @@ describe("mail over SMTP", () => {
       { to: "a@b.test", subject: "Verify", text: "x" },
     );
     expect(ok).toBe(false);
+  });
+});
+
+// Over TLS the forge says nothing — above all not the password — to a server
+// whose certificate does not verify and name the host it dialled.
+describe.skipIf(missing("openssl"))("mail over SMTP, TLS", () => {
+  let dir: string;
+  /** A self-signed certificate (key + cert PEM) for `name`. */
+  const certFor = async (name: string) => {
+    const key = join(dir, `${name}.key`);
+    const cert = join(dir, `${name}.pem`);
+    const made = await Bun.spawn(
+      [
+        "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+        "-keyout", key, "-out", cert, "-days", "1",
+        "-subj", `/CN=${name}`, "-addext", `subjectAltName=DNS:${name}`,
+      ],
+      { stdout: "ignore", stderr: "ignore" },
+    ).exited;
+    if (made !== 0) throw new Error("openssl");
+    return { key: await Bun.file(key).text(), cert: await Bun.file(cert).text() };
+  };
+
+  /** An SMTP stand-in over TLS that records every line it is sent. */
+  const standIn = (pem: { key: string; cert: string }) => {
+    const seen: string[] = [];
+    let inData = false;
+    const server = Bun.listen<undefined>({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { key: pem.key, cert: pem.cert },
+      socket: {
+        open(s) {
+          s.write("220 test ESMTP\r\n");
+        },
+        data(s, chunk) {
+          const text = new TextDecoder().decode(chunk);
+          if (inData) {
+            if (text.endsWith("\r\n.\r\n")) {
+              inData = false;
+              s.write("250 queued\r\n");
+            }
+            return;
+          }
+          for (const line of text.split("\r\n").filter((l) => l !== "")) {
+            seen.push(line);
+            if (line.startsWith("EHLO")) s.write("250-test\r\n250 AUTH PLAIN\r\n");
+            else if (line.startsWith("AUTH")) s.write("235 ok\r\n");
+            else if (line.startsWith("MAIL") || line.startsWith("RCPT")) s.write("250 ok\r\n");
+            else if (line === "DATA") {
+              inData = true;
+              s.write("354 go\r\n");
+            } else if (line === "QUIT") {
+              s.write("221 bye\r\n");
+              s.end();
+            }
+          }
+        },
+      },
+    });
+    return { server, seen };
+  };
+
+  const mail = { to: "ada@outsider.test", subject: "Verify", text: "x" };
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-mail-tls-"));
+  });
+  afterAll(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a self-signed certificate is refused before AUTH", async () => {
+    const { server, seen } = standIn(await certFor("localhost"));
+    try {
+      const ok = await sendMail(
+        { url: `smtps://user:secret@localhost:${server.port}`, from: "forge@f.dev" },
+        mail,
+      );
+      expect(ok).toBe(false);
+      expect(seen.some((l) => l.startsWith("AUTH"))).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a certificate that verifies but names another host is refused before AUTH", async () => {
+    const other = await certFor("other.example");
+    const { server, seen } = standIn(other);
+    try {
+      const ok = await sendMail(
+        {
+          url: `smtps://user:secret@localhost:${server.port}`,
+          from: "forge@f.dev",
+          ca: other.cert,
+        },
+        mail,
+      );
+      expect(ok).toBe(false);
+      expect(seen.some((l) => l.startsWith("AUTH"))).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a certificate that verifies and names the host is talked to", async () => {
+    const good = await certFor("localhost");
+    const { server, seen } = standIn(good);
+    try {
+      const ok = await sendMail(
+        {
+          url: `smtps://user:secret@localhost:${server.port}`,
+          from: "forge@f.dev",
+          ca: good.cert,
+        },
+        mail,
+      );
+      expect(ok).toBe(true);
+      expect(seen.some((l) => l.startsWith("AUTH PLAIN"))).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+// The owner configures mail live, in the forge-level secrets store.
+describe("mail settings come from the secrets store first", () => {
+  test("a signup's link goes to the relay the secrets name, with no restart", async () => {
+    const rcpts: string[] = [];
+    let inData = false;
+    const relay = Bun.listen<undefined>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) {
+          s.write("220 relay\r\n");
+        },
+        data(s, chunk) {
+          const text = new TextDecoder().decode(chunk);
+          if (inData) {
+            if (text.endsWith("\r\n.\r\n")) {
+              inData = false;
+              s.write("250 queued\r\n");
+            }
+            return;
+          }
+          for (const line of text.split("\r\n").filter((l) => l !== "")) {
+            if (line.startsWith("EHLO")) s.write("250 relay\r\n");
+            else if (line.startsWith("RCPT TO:")) {
+              rcpts.push(line);
+              s.write("250 ok\r\n");
+            } else if (line.startsWith("MAIL")) s.write("250 ok\r\n");
+            else if (line === "DATA") {
+              inData = true;
+              s.write("354 go\r\n");
+            } else if (line === "QUIT") {
+              s.write("221 bye\r\n");
+              s.end();
+            }
+          }
+        },
+      },
+    });
+    const dir = await mkdtemp(join(tmpdir(), "forge-mail-secrets-"));
+    const live = createApp({ dataDir: dir, port: 0, url: "https://forge.example" });
+    try {
+      // Before the secrets are set the forge sends nothing.
+      const first = await signUp(live, { username: "founder", email: "f@f.dev", password: "founder-passphrase" });
+      expect(first.ok).toBe(true);
+      setSecret(live.db, live.config.dataDir, "forge", "", "MAIL_SMTP_URL", `smtp://127.0.0.1:${relay.port}`);
+      setSecret(live.db, live.config.dataDir, "forge", "", "MAIL_FROM", "forge@f.dev");
+      const made = await signUp(live, { username: "newcomer", email: "newcomer@outsider.test", password: "newcomer-passphrase" });
+      expect(made.ok).toBe(true);
+      expect(rcpts).toContain("RCPT TO:<newcomer@outsider.test>");
+    } finally {
+      relay.stop(true);
+      live.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

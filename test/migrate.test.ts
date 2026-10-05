@@ -594,13 +594,13 @@ describe("migrate", () => {
     const strictDir = await mkdtemp(join(tmpdir(), "forge-migrate-strict-"));
     const strict = createApp({ dataDir: strictDir, port: 0 });
     try {
-      const a = await createUser(strict.db, {
+      const a = await createUser(strict.db, { trusted: true,
         username: "ann",
         email: "ann@forge.local",
         password: "a-good-passphrase",
         adminIfFirst: true,
       });
-      const b = await createUser(strict.db, {
+      const b = await createUser(strict.db, { trusted: true,
         username: "ben",
         email: "ben@forge.local",
         password: "a-good-passphrase",

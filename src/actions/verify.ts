@@ -15,6 +15,7 @@ import {
   markVerified,
   resetVerification,
 } from "../core/verify.ts";
+import { resolveSecrets } from "../core/secret_store.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { sendMail, type Mailer } from "../kernel/mail.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -31,9 +32,29 @@ export function requireVerified(
   return emailVerified(app.db, user.id) ? ok(user) : err("unverified");
 }
 
-function mailerOf(app: App): Mailer | undefined {
+/** The forge-level secrets that configure mail, set live at /settings/secrets. */
+export const MAIL_SECRETS = ["MAIL_SMTP_URL", "MAIL_FROM"] as const;
+
+/**
+ * Where mail goes: the forge-level secrets first (the owner sets them at
+ * /settings/secrets, no restart), else FORGE_SMTP_URL / FORGE_MAIL_FROM read
+ * at boot. Both of a pair, or neither. Read per message, so a changed secret
+ * takes effect on the next mail; each read is audited by the store.
+ */
+function mailerOf(app: App, forUser: User): Mailer | undefined {
   if (app.config.mailer !== undefined) return app.config.mailer;
-  const config = app.config.mail;
+  const stored = resolveSecrets(
+    app.db,
+    app.config.dataDir,
+    app.bus,
+    MAIL_SECRETS,
+    // The store's audit names who a read was for: the person mailed.
+    { actor: forUser.id },
+  );
+  const url = stored["MAIL_SMTP_URL"];
+  const from = stored["MAIL_FROM"];
+  const config =
+    url !== undefined && from !== undefined ? { url, from } : app.config.mail;
   return config === undefined ? undefined : (mail) => sendMail(config, mail);
 }
 
@@ -51,7 +72,7 @@ export async function sendVerification(
   user: User,
   now: number = Date.now(),
 ): Promise<"sent" | "too_soon" | "no_mail" | "failed"> {
-  const mailer = mailerOf(app);
+  const mailer = mailerOf(app, user);
   if (mailer === undefined) {
     app.log.warn("mail is not configured; a verification link was not sent", {
       user: user.username,

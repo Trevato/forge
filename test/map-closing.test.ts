@@ -36,7 +36,7 @@ describe("closing with a reason", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-closing-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

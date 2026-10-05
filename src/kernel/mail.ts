@@ -10,6 +10,8 @@
  * carry a one-time link.
  */
 
+import { checkServerIdentity, type PeerCertificate } from "node:tls";
+
 export interface Mail {
   readonly to: string;
   readonly subject: string;
@@ -21,6 +23,11 @@ export interface MailConfig {
   readonly url: string;
   /** The envelope and header sender, e.g. `forge@example.com`. */
   readonly from: string;
+  /**
+   * PEM roots to trust instead of the system's — a private relay with its
+   * own CA. The certificate must still verify and name the host.
+   */
+  readonly ca?: string;
 }
 
 /** What the forge hands a message to: SMTP in production, a capture in tests. */
@@ -98,30 +105,58 @@ export async function sendMail(
       resolve(ok);
     };
     const timer = setTimeout(() => finish(false), TIMEOUT_MS);
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    // Nothing is said to a TLS peer until its certificate has verified and
+    // names the host: Bun completes a handshake with a bad certificate
+    // unless told otherwise, so the handshake is judged here, and replies
+    // that arrive before it are held, not answered.
+    let trusted = !tls;
+    const advance = (socket: { write(data: string): unknown; end(): void }): void => {
+      // A reply is complete at a line whose code is followed by a space;
+      // "250-" lines are a multi-line reply's continuation.
+      for (;;) {
+        const lines = buffer.split("\r\n");
+        const last = lines.findIndex(
+          (l) => /^\d{3} /.test(l) || /^\d{3}$/.test(l),
+        );
+        if (last === -1) return;
+        const code = Number(lines[last]!.slice(0, 3));
+        buffer = lines.slice(last + 1).join("\r\n");
+        const expected = steps[step]!.expect;
+        if (code !== expected) return finish(false, socket);
+        step += 1;
+        if (step === steps.length) return finish(true, socket);
+        socket.write(`${steps[step]!.send}\r\n`);
+      }
+    };
     Bun.connect({
-      hostname: url.hostname.replace(/^\[|\]$/g, ""),
+      hostname: host,
       port,
-      ...(tls ? { tls: true } : {}),
+      ...(tls
+        ? {
+            tls: {
+              serverName: host,
+              rejectUnauthorized: true,
+              ...(config.ca === undefined ? {} : { ca: config.ca }),
+            },
+          }
+        : {}),
       socket: {
+        handshake(socket, success, authorizationError) {
+          if (!success || authorizationError) return finish(false, socket);
+          const named = checkServerIdentity(
+            host,
+            socket.getPeerCertificate() as PeerCertificate,
+          );
+          if (named !== undefined) return finish(false, socket);
+          trusted = true;
+          advance(socket);
+        },
         data(socket, chunk) {
           buffer += new TextDecoder().decode(chunk);
-          // A reply is complete at a line whose code is followed by a space;
-          // "250-" lines are a multi-line reply's continuation.
-          for (;;) {
-            const lines = buffer.split("\r\n");
-            const last = lines.findIndex(
-              (l) => /^\d{3} /.test(l) || /^\d{3}$/.test(l),
-            );
-            if (last === -1) return;
-            const code = Number(lines[last]!.slice(0, 3));
-            buffer = lines.slice(last + 1).join("\r\n");
-            const expected = steps[step]!.expect;
-            if (code !== expected) return finish(false, socket);
-            step += 1;
-            if (step === steps.length) return finish(true, socket);
-            socket.write(`${steps[step]!.send}\r\n`);
-          }
+          if (trusted) advance(socket);
         },
+
         error() {
           finish(false);
         },
