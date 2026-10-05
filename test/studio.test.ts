@@ -8687,28 +8687,20 @@ describe("the studio can change what an app says it is (#230)", () => {
   });
 
   test("a writer changes the description and visibility from the studio, and the app's page and the shelf row show it", async () => {
-    // The rendered form carries the branch-protection fields it never shows
-    // as hidden inputs, so a real submit of it — exactly what's posted here
-    // — cannot silently turn them off.
+    // The About card names itself (`card=about`), so a real submit of it —
+    // exactly what's posted here — changes its own fields and cannot touch
+    // the branch protection it never shows.
     const before = await (
       await get("/alice/lamp/settings", ownerCookie)
     ).text();
-    expect(before).toContain('<input type="hidden" name="protect" value="on"');
-    expect(before).toContain(
-      '<input type="hidden" name="requireReview" value="on"',
-    );
-    expect(before).toContain(
-      '<input type="hidden" name="requireChecks" value="on"',
-    );
+    expect(before).toContain('<input type="hidden" name="card" value="about"');
 
     const saved = await post(
       "/alice/lamp/settings",
       {
+        card: "about",
         description: "a lamp that stays lit all night",
         visibility: "private",
-        protect: "on",
-        requireReview: "on",
-        requireChecks: "on",
       },
       ownerCookie,
     );
