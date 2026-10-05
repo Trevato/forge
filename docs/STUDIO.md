@@ -252,7 +252,9 @@ the word they narrow by `?label=` (the repository's labels are chips under
 the words), `?assignee=`, `?author=` and `?q=` (a piece of the title), each
 shown as a chip that clears itself; an older `?state=closed|all` address
 still answers with what it asked for. Told carries one verb besides opening
-a row — compose, for a signed-in person. A row wears its labels; a change's
+a row — compose, for a signed-in person; a stranger on a public repository
+gets "Report a problem" instead, and its writers see how many reports from
+outside wait for them. A row wears its labels; a change's
 branches, diff and reviews are one step deeper, on the change. The runs
 list keeps `?mode=dev` to dev's runs until that list is contracted too.
 

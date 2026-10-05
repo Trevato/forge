@@ -1122,6 +1122,9 @@ describe("the studio", () => {
       await fetch(`${base}/alice/composelists/issues`, { redirect: "manual" })
     ).text();
     expect(anon).not.toContain('href="/alice/composelists/issues/new"');
+    // A stranger on a public repository can still report a problem.
+    expect(anon).toContain('href="/alice/composelists/report"');
+    expect(signedIn).not.toContain('href="/alice/composelists/report"');
     // The pull list has no compose of its own: a change starts from a branch.
     const pulls = await (await get("/alice/composelists/pulls")).text();
     expect(pulls).not.toContain('href="/alice/composelists/pulls/new"');
