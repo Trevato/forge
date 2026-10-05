@@ -6,7 +6,7 @@
  * Every minute the clock is compared with each source's hour; a source
  * whose hour has passed and that has not run today runs. A run reads the
  * latest Reel, takes its most-liked comment, and tells the crew as a
- * person would from the studio box — `tellCrew` opens the issue and routes
+ * person would from the studio box — `tell` opens the issue and routes
  * it. Nothing is invented: no Reel, no new Reel, or no comment yet is a
  * sentence on the settings page and another look tomorrow. One source runs
  * at a time, `Fetch now` included, and a run that fails is a sentence too,
@@ -14,7 +14,7 @@
  */
 
 import type { App } from "../app.ts";
-import { tellCrew } from "../actions/crew.ts";
+import { tell } from "../actions/tell.ts";
 import {
   duePromptSources,
   getPromptSource,
@@ -143,7 +143,7 @@ function shortly(text: string): string {
 }
 
 /**
- * The tell, as the crew reads it: the comment itself first — `tellCrew`
+ * The tell, as the crew reads it: the comment itself first — `tell`
  * makes its first line the title — and where it came from beneath.
  */
 export function tellText(reel: Reel, comment: Comment): string {
@@ -226,13 +226,15 @@ async function runSource(
       source.createdBy === null
         ? undefined
         : getUserById(app.db, source.createdBy);
-    const told = await tellCrew(app, creator, repo, tellText(reel, top));
+    const told = await tell(app, creator, repo, tellText(reel, top));
     if (!told.ok)
       return record({
         said:
           told.error === "unauthorized"
             ? "The person who connected the account is gone; connect it again."
-            : `The crew could not be told (${told.error}).`,
+            : told.error === "unverified"
+              ? "The person who connected the account has not verified their email yet."
+              : `The crew could not be told (${told.error}).`,
       });
 
     const number = told.value.issue.number;

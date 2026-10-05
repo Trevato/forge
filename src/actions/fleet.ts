@@ -554,8 +554,14 @@ export async function undoFleetOp(
   const verb = Object.hasOwn(VERBS, op.verb) ? VERBS[op.verb] : undefined;
   if (!op.reversible || verb === undefined)
     return fail("not_reversible", `${op.verb} cannot be undone`);
-  // A personal verb changed the actor's own state: nobody else undoes it.
-  if (verb.personal && op.actorId !== person.value.id)
+  // A personal verb changed the actor's own state, and rows named one by
+  // one (the asks' bulk actions, `applyFleetIds`) were the actor's own
+  // selection: nobody else undoes either, a site admin included. Only an
+  // operation over a fleet query is a site admin's to reverse.
+  if (
+    op.actorId !== person.value.id &&
+    (verb.personal || !parseQuery(op.query).ok)
+  )
     return fail("not_found", "no such operation here");
   if (!claimUndo(app.db, op.id))
     return fail("already_undone", "this operation was undone already");

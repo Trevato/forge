@@ -70,6 +70,7 @@ function paperGraph(n: number, edges: [number, number][]): Graph {
     held: [],
     deferred: new Set(),
     unadopted: new Set(),
+    structural: new Set(),
   };
 }
 

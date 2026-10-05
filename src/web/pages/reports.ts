@@ -151,9 +151,8 @@ const REFUSED: Record<string, string> = {
 export async function reportSubmit(ctx: Ctx): Promise<Response> {
   const repo = publicRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  if (Number(ctx.request.headers.get("content-length") ?? 0) > REQUEST_MAX)
-    return new Response("too large", { status: 413 });
-  const form = await readForm(ctx);
+  // A stranger's form: counted as it arrives, declared length or not.
+  const form = await readForm(ctx, undefined, REQUEST_MAX);
   if (form instanceof Response) return form;
   const values = {
     title: field(form, "title"),

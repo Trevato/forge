@@ -273,7 +273,9 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
           ? { email: "That doesn't look like an email address." }
           : updated.error === "display_name_reserved"
             ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : {};
+            : updated.error === "display_name_mixed_script"
+              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
+              : {};
     return accountShell(
       ctx,
       "profile",
@@ -515,17 +517,16 @@ function keysView(
   values: { name: string; key: string; error?: string },
 ): Html {
   const keys = listKeys(ctx.app.db, ctx.auth.user!.id);
-  return html`${when(
-      sshCommand(ctx.app),
-      (ssh) =>
-        html`<p class="mb terminal-line">
+  const ssh = sshCommand(ctx.app);
+  return html`${ssh === undefined
+      ? html`<p class="mb muted" id="terminal-off">The terminal is off on this forge.</p>`
+      : html`<p class="mb terminal-line">
           <code class="mono">${ssh}</code>
           ${when(
             ctx.app.config.sshHostKey,
             (fp) => html`<span class="muted small">host key ${fp}</span>`,
           )}
-        </p>`,
-    )}
+        </p>`}
     <p class="muted small mb">
       Keys that sign you in over SSH. Paste a public key (<span class="mono"
         >~/.ssh/id_ed25519.pub</span

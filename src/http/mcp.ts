@@ -28,7 +28,7 @@ import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { spawnDoor } from "../spawn/door.ts";
-import { tell, toldWords } from "../actions/tell.ts";
+import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import {
   readUsage,
   usageDays,
@@ -38,7 +38,7 @@ import {
 import { ITEM_ID } from "../core/interactions.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
-import { appsRuntime } from "../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
@@ -86,10 +86,16 @@ import {
   readAppMembers,
   setAppMembersThrough,
 } from "../actions/app_members.ts";
+import {
+  explore,
+  exploreLine,
+  parseExploreQuery,
+} from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { mayReadRuns } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
@@ -178,9 +184,9 @@ const TOOLS: readonly Tool[] = [
       return good(
         repos.map((repo) => {
           const record = records.get(repo.id)!;
-          const production = runtime
-            ?.status(record)
-            .find((e) => e.env === "production");
+          const production = envsFor(ctx.app, user, record).find(
+            (e) => e.env === "production",
+          );
           return {
             app: `${repo.ownerName}/${repo.name}`,
             description: repo.description,
@@ -239,7 +245,11 @@ const TOOLS: readonly Tool[] = [
           told.error,
           told.error === "empty"
             ? "say something first"
-            : "that could not be told here",
+            : told.error === "forbidden"
+              ? DIRECTION_NOTE
+              : told.error === "unverified"
+                ? UNVERIFIED_WORDS
+                : "that could not be told here",
         );
       return good({
         says: toldWords(told.value),
@@ -350,7 +360,11 @@ const TOOLS: readonly Tool[] = [
     run(ctx, user) {
       const { repos } = appsOf(ctx, user);
       const byId = new Map(repos.map((r) => [r.id, r]));
-      const runs = listActiveRuns(ctx.app.db, [...byId.keys()]);
+      // A private app's runs are for those who may enter it (`mayReadRuns`).
+      const runs = listActiveRuns(
+        ctx.app.db,
+        repos.filter((r) => mayReadRuns(ctx.app, user, r)).map((r) => r.id),
+      );
       const actors = getUsersByIds(
         ctx.app.db,
         runs.map((r) => r.actorId).filter((id): id is string => id !== null),
@@ -389,7 +403,8 @@ const TOOLS: readonly Tool[] = [
             why: r.reason,
             state: r.state,
             since: r.startedAt ?? r.createdAt,
-            costUsd: r.costUsd,
+            // What a run costs is the owner's fact (`canSeeOwnerFacts`).
+            costUsd: owned.has(r.repoId) ? r.costUsd : 0,
           };
         }),
       ]);
@@ -612,6 +627,12 @@ const TOOLS: readonly Tool[] = [
     writes: true,
     dryByDefault: true,
     async run(ctx, user, args) {
+      // A secret never passes through an agent's conversation.
+      if (args["modelKey"] !== undefined)
+        return bad(
+          "invalid",
+          "a model key never travels through an agent: send it with POST /api/v1/forges, or add it on the child's Subscriptions page",
+        );
       const door = await spawnDoor(ctx, user, args);
       if (door.status >= 400)
         return bad(String(door.body["error"]), String(door.body["message"]));
@@ -757,6 +778,23 @@ const TOOLS: readonly Tool[] = [
       if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
         return bad("forbidden", "changing who may enter an app needs an admin-scope token");
       return answer(setAppMembersThrough(ctx.app, user, repo, { members, dryRun }));
+    },
+  },
+  {
+    name: "explore",
+    description:
+      "The apps, people (and, for a site admin, spawned forges) you can see, ranked by forks by people, pulls merged this month, hours in use and how lately they shipped, each with its numbers. `query` is one line: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`, and words to match. The same rows as /explore and /api/v1/explore.",
+    inputSchema: {
+      type: "object",
+      properties: { query: { type: "string", maxLength: 200 } },
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const query = parseExploreQuery(str(args["query"]));
+      return good({
+        query: exploreLine(query),
+        items: await explore(ctx.app, user, query),
+      });
     },
   },
   {
