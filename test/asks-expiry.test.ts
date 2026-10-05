@@ -21,7 +21,7 @@ import { getUserByName, type User } from "../src/core/users.ts";
 import { sweepStaleAsks } from "../src/crew/stale_asks.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { askLinesFor } from "../src/web/studio/asks.ts";
+import { ASK_WORDS, ROW_PLURAL, askLinesFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -121,6 +121,7 @@ describe("asks that expire, hold and collapse", () => {
   });
 
   let apples: Pull;
+  let plums: Pull;
   let pears: Pull;
 
   test("two green pulls in one repository are one row, and every surface counts it once", async () => {
@@ -207,7 +208,7 @@ describe("asks that expire, hold and collapse", () => {
   });
 
   test("a green pull that conflicts with main is no ask once the sweep has seen it", async () => {
-    const plums = await botPull("plums", [
+    plums = await botPull("plums", [
       { path: "README.md", content: "# plums\n" },
     ]);
     green(plums);
@@ -232,5 +233,32 @@ describe("asks that expire, hold and collapse", () => {
       `/${repo.ownerName}/${repo.name}/pulls/${plums.number}`,
     );
     expect(change).toContain("README.md");
+  });
+  test("a row dismissed while a pull conflicted asks again when it merges again, with no new check", async () => {
+    await tick();
+    recordInteraction(app.db, {
+      viewerId: aliceUser.id,
+      itemId: `ask:look:${repo.id}`,
+      kind: "dismissed",
+      repoId: repo.id,
+      actorId: null,
+    });
+    expect(askLinesFor(app.db, aliceUser)).toHaveLength(0);
+    await tick();
+    // main goes back to what plums branched from: plums merges cleanly again.
+    await commitToBranch(app, aliceUser, repo, {
+      message: "main moves back",
+      files: [{ path: "README.md", content: "# orchard\n" }],
+    });
+    await sweepStaleAsks(app);
+    expect(askLinesFor(app.db, aliceUser).map((l) => l.id)).toEqual([`look:${plums.id}`]);
+  });
+
+  test("every kind of ask has its own plural", () => {
+    const kinds = Object.keys(ASK_WORDS) as (keyof typeof ASK_WORDS)[];
+    const lines = kinds.map((k) => ROW_PLURAL[k](3));
+    expect(new Set(lines).size).toBe(kinds.length);
+    for (const k of kinds.filter((k) => k !== "look"))
+      expect(ROW_PLURAL[k](3)).not.toContain("green changes");
   });
 });

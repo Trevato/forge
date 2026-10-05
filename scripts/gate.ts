@@ -133,6 +133,7 @@ export const GATE: readonly string[] = [
   "test/origins-security-push.test.ts",
   "test/origins-sync.test.ts",
   "test/origins.test.ts",
+  "test/outsiders-switch.test.ts",
   "test/check-list.test.ts",
   "test/hollow.test.ts",
   "test/oauth-discovery.test.ts",

@@ -58,7 +58,11 @@ import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import { struckOut } from "../../crew/parks.ts";
-import { proposedWork, READER_SUGGESTION } from "../../crew/direct.ts";
+import {
+  OUTSIDERS_NOTE,
+  proposedWork,
+  READER_SUGGESTION,
+} from "../../crew/direct.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
 import { milestoneHref } from "./milestones.ts";
 import {
@@ -1279,7 +1283,10 @@ export const mapViewJs = /* js */ `
 
 /** One line on how the repository runs itself, when it does. */
 function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
-  if (repo.autonomy === "off") return null;
+  if (repo.autonomy === "off")
+    return repo.crewOutsiders
+      ? html`<p class="small map-autonomy">${OUTSIDERS_NOTE}</p>`
+      : null;
   const s = autonomyStatus(ctx.app, repo);
   const paused =
     s.paused === "ceiling"
@@ -1289,7 +1296,7 @@ function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
         : s.paused === "nobody"
           ? " · paused: nobody to act as"
           : "";
-  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused}`;
+  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused} · ${repo.crewOutsiders ? "anyone signed in directs the crew" : "only writers direct the crew"}`;
   return html`<p class="small map-autonomy">
     ${icon("play")} ${line} ·
     <a href="${repoBase(repo)}/settings/autonomy">settings</a>
@@ -1429,6 +1436,8 @@ export function mapJson(
   });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
+    // Who the crew takes direction from (`crew/direct.ts`).
+    crewOutsiders: repo.crewOutsiders,
     ready: ready.map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
