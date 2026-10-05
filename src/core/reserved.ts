@@ -81,6 +81,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "organizations",
   "origins",
   "robots.txt",
+  "llms.txt",
   "runs",
   "search",
   "settings",

@@ -418,6 +418,15 @@ without a grant; a public app admits everyone, and names those who have one.
 An app of a forge hosted here (a nested hostname) routes both paths through
 to that forge, which speaks for its own apps.
 
+A third path, `/__forge/report?from=<path>`, is for a public app of a public
+repository: it sends anyone, with no account, to the repository's report
+form (STANDARDS.md, "Reports from outside") with the page they came from,
+and is answered without waking the app, since the app being down is the
+usual reason to ask. Such an app's HTML responses, and the forge's own "not
+running" page for it, carry `Link: </__forge/report>; rel="help"`, and the
+template's footer links to it. A private app or repository offers none of
+this.
+
 What each of them may do is a table, not code: the app's `contract.json`,
 decided by the forge's own evaluator carried into the app. See
 [CONTRACT.md](CONTRACT.md).
