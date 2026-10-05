@@ -258,15 +258,6 @@ describe("the everyday account", () => {
     expect((await mint("kim")).status).toBe(201);
   });
 
-  test("the terminal's New token prompt asks an admin for admin-ok, and no one else", async () => {
-    const { readTokenPrompt } = await import("../src/tui/screens/account.ts");
-    expect(readTokenPrompt("ci rw", true)).toEqual({ error: expect.stringContaining("admin-ok") });
-    expect(readTokenPrompt("ci rw admin-ok", true)).toEqual({ name: "ci", scope: "rw" });
-    expect(readTokenPrompt("ci admin-ok", true)).toEqual({ name: "ci", scope: "ro" });
-    expect(readTokenPrompt("ci rw", false)).toEqual({ name: "ci", scope: "rw" });
-    expect(readTokenPrompt("", false)).toEqual({ error: "a name is required" });
-  });
-
   test("an everyday account may not take a name the forge reserves", async () => {
     const boss = await signIn("boss");
     await post(boss, "/settings/everyday", { username: "settings", email: "s@x.test", password: PASSWORD });

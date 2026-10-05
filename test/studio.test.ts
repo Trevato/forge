@@ -3675,6 +3675,8 @@ describe("words come from facts, not from run.summary", () => {
       runtime,
       record,
       history: servingHistory(),
+      // The owner reads it: production's facts are theirs to see.
+      viewer: alice,
     };
   });
 
@@ -4803,7 +4805,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
 });
 
 /**
- * Issue #183: `tellCrew` cannot route a tell to anyone with nobody on the
+ * Issue #183: `tell` cannot route a tell to anyone with nobody on the
  * crew — the issue it opens stays unassigned forever, not merely
  * unpicked-up like an agent-held tell. Both surfaces that used to call this
  * "quiet" or "nothing yet" must say the honest reason instead, and both
@@ -4870,7 +4872,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     const enabled = await enableApp(app, alice, repo, { slug: "pad" });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    // No crew at all — the exact state `tellCrew` cannot route out of.
+    // No crew at all — the exact state `tell` cannot route out of.
   });
 
   afterAll(async () => {
@@ -5763,6 +5765,9 @@ describe("a stranger sees the app, not the owner's books", () => {
         defaultBranch: before.defaultBranch,
         protect: "on",
         requireReview: "on",
+        // The settings page sends this marker beside the switch; without it a
+        // save leaves the switch as it is (#822).
+        crewOutsidersShown: "1",
         crewOutsiders: "on",
       },
       ownerCookie,
@@ -5787,7 +5792,11 @@ describe("a stranger sees the app, not the owner's books", () => {
     // Put it back for the tests that follow.
     await post(
       "/alice/beacon/settings",
-      { card: "gates", defaultBranch: before.defaultBranch },
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        crewOutsidersShown: "1",
+      },
       ownerCookie,
     );
     await post(
