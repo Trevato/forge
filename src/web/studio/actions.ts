@@ -9,7 +9,7 @@
  */
 
 import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
-import { tellCrew } from "../../actions/crew.ts";
+import { tell } from "../../actions/tell.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
@@ -46,7 +46,7 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
       tone: "danger",
       message: "Say something first.",
     });
-  const told = await tellCrew(ctx.app, ctx.auth.user, repo, text);
+  const told = await tell(ctx.app, ctx.auth.user, repo, text);
   if (!told.ok)
     return flashTo(ctx, base, {
       tone: "danger",

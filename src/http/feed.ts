@@ -3,7 +3,7 @@
  * are the signed-in viewer's own — there is no way to ask for another's.
  */
 
-import { tellCrew } from "../actions/crew.ts";
+import { tell } from "../actions/tell.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { getEvent } from "../core/events.ts";
@@ -166,7 +166,7 @@ export function feedRoutes(router: Router<Handler>): void {
         ? getRepo(ctx.app.db, owner, name)
         : undefined;
     if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
-    const told = await tellCrew(ctx.app, viewer, repo, text);
+    const told = await tell(ctx.app, viewer, repo, text);
     if (!told.ok)
       return told.error === "forbidden"
         ? apiError("forbidden", 403, DIRECTION_NOTE)

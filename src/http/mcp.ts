@@ -193,7 +193,9 @@ const TOOLS: readonly Tool[] = [
           told.error,
           told.error === "empty"
             ? "say something first"
-            : "that could not be told here",
+            : told.error === "forbidden"
+              ? DIRECTION_NOTE
+              : "that could not be told here",
         );
       return good({
         says: toldWords(told.value),

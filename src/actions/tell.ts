@@ -1,20 +1,22 @@
 /**
  * Tell the crew: a sentence becomes an issue, the issue is routed to a
- * builder, and the builder is assigned, which is what starts a run. The
- * studio's box and the forge's MCP `tell` tool are the same act, so it
- * lives here once.
+ * builder, and the builder is assigned, which is what starts a run. Every
+ * door says it through this one action — the studio's box, the feed's
+ * tells, a share to an agent, the MCP `tell` tool and the prompts that
+ * turn a comment into a tell — so the rule of who may is asked once.
  */
 
 import type { App } from "../app.ts";
 import { listCrewRoles } from "../core/agents.ts";
-import type { Issue } from "../core/issues.ts";
+import type { Issue, TitleError } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { listRuns } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { assignIssue, openIssue } from "./issues.ts";
+import { requireParticipant } from "./access.ts";
+import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
 
 export interface Told {
   readonly issue: Issue;
@@ -24,7 +26,15 @@ export interface Told {
   readonly assigned: boolean;
 }
 
-export type TellError = "empty" | "refused";
+export type TellError =
+  | "empty"
+  | "not_found"
+  | "unauthorized"
+  /** Someone who may not direct the crew here (`crew/direct.ts`). */
+  | "forbidden"
+  | TitleError
+  | "body_too_long"
+  | MirrorError;
 
 export async function tell(
   app: App,
@@ -32,11 +42,13 @@ export async function tell(
   repo: Repo,
   said: string,
 ): Promise<Result<Told, TellError>> {
-  const text = said.trim();
-  if (text === "") return err("empty");
   // A tell is a run: only someone who may direct the crew here says one,
   // and a refused tell opens nothing (`crew/direct.ts`).
-  if (!mayDirectCrew(app.db, repo, actor)) return err("refused");
+  const participant = requireParticipant(app, actor, repo);
+  if (!participant.ok) return participant;
+  if (!mayDirectCrew(app.db, repo, participant.value)) return err("forbidden");
+  const text = said.trim();
+  if (text === "") return err("empty");
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
@@ -44,7 +56,7 @@ export async function tell(
     title,
     body: text === firstLine ? "" : text,
   });
-  if (!opened.ok) return err("refused");
+  if (!opened.ok) return opened;
   const crew = listCrewRoles(app.db, repo.id);
   const inFlight = new Map<string, number>();
   for (const r of listRuns(app.db, repo.id, { kind: "agent", limit: 50 }))

@@ -15,7 +15,6 @@ import {
   getAgentByName,
   listAgents,
   listCrew as queryCrew,
-  listCrewRoles,
   removeCrew as deleteCrew,
   updateAgent as patchAgent,
   type Agent,
@@ -24,20 +23,10 @@ import {
   BUDGET_MAX_USD,
   MODEL_MAX,
 } from "../core/agents.ts";
-import type { Issue, TitleError } from "../core/issues.ts";
-import { listRuns } from "../core/runs.ts";
 import type { Repo } from "../core/repos.ts";
 import { createUser, type CreateUserError, type User } from "../core/users.ts";
-import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import {
-  requireParticipant,
-  requireReader,
-  requireRepoAdmin,
-  requireUser,
-} from "./access.ts";
-import { mayDirectCrew } from "../crew/direct.ts";
-import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
+import { requireReader, requireRepoAdmin, requireUser } from "./access.ts";
 
 export interface CreateAgentInput {
   username: string;
@@ -234,54 +223,6 @@ export function removeFromCrew(
     });
   }
   return ok();
-}
-
-export interface TellCrewResult {
-  readonly issue: Issue;
-  /** Who took it, when somebody on the crew builds here. */
-  readonly routed: Routed | undefined;
-}
-
-/**
- * A sentence becomes work: open it as an issue, and hand it to whichever
- * builder on the crew `routeIssue` picks. The one call behind the web's
- * "Tell the crew" box and the terminal's — a repository with nobody on its
- * crew still opens the issue, just with nobody to route it to.
- */
-export async function tellCrew(
-  app: App,
-  actor: User | undefined,
-  repo: Repo,
-  text: string,
-): Promise<
-  Result<
-    TellCrewResult,
-    "not_found" | "unauthorized" | "forbidden" | TitleError | "body_too_long" | MirrorError
-  >
-> {
-  // A tell is a run: only someone who may direct the crew here may say
-  // one (`crew/direct.ts`), and a refused tell opens nothing.
-  const participant = requireParticipant(app, actor, repo);
-  if (!participant.ok) return participant;
-  if (!mayDirectCrew(app.db, repo, participant.value)) return err("forbidden");
-  const trimmed = text.trim();
-  const firstLine = trimmed.split(/\n/)[0]!.trim();
-  const title =
-    firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
-  const opened = openIssue(app, actor, repo, {
-    title,
-    body: trimmed === firstLine ? "" : trimmed,
-  });
-  if (!opened.ok) return opened;
-  const crew = listCrewRoles(app.db, repo.id);
-  const inFlight = new Map<string, number>();
-  for (const r of listRuns(app.db, repo.id, { kind: "agent", limit: 50 }))
-    if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
-      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const routed = await routeIssue(app, repo, opened.value, crew, inFlight);
-  if (routed === undefined) return ok({ issue: opened.value, routed: undefined });
-  assignIssue(app, actor, repo, opened.value, routed.builder.user);
-  return ok({ issue: opened.value, routed });
 }
 
 export { getAgent };

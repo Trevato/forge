@@ -4802,7 +4802,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
 });
 
 /**
- * Issue #183: `tellCrew` cannot route a tell to anyone with nobody on the
+ * Issue #183: `tell` cannot route a tell to anyone with nobody on the
  * crew — the issue it opens stays unassigned forever, not merely
  * unpicked-up like an agent-held tell. Both surfaces that used to call this
  * "quiet" or "nothing yet" must say the honest reason instead, and both
@@ -4869,7 +4869,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     const enabled = await enableApp(app, alice, repo, { slug: "pad" });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    // No crew at all — the exact state `tellCrew` cannot route out of.
+    // No crew at all — the exact state `tell` cannot route out of.
   });
 
   afterAll(async () => {
