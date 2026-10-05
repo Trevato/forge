@@ -279,8 +279,12 @@ open pull, with one line that says why (`src/core/holds.ts`,
 it is not sent to the crew's reviewer, not landed on green or on an
 approval, not brought up to date by the crew, and not parked (parking
 would close it and hand its issue back to be built again). A person's own
-merge still works; the hold is on the rules, not on people. An agent cannot hold
-or release, on the crew or not, and neither can a reader.
+merge still works; the hold is on the rules, not on people. One word that
+ships many changes at once is the exception: a batch from the asks leaves
+a held pull where it is and says who holds it and why, since whoever sent
+the batch may never have seen the hold. They ship it from its own page, or
+release it first. An agent cannot hold or release, on the crew or not,
+and neither can a reader.
 
 Releasing starts the review clock again: review is owed from when the head
 went green or from when the pull was last let go, whichever is later, so a
