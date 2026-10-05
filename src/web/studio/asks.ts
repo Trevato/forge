@@ -460,6 +460,9 @@ export function decisionsFor(
     if (record === undefined) return undefined;
     const env = previewEnv(pull.number);
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === env),
     );
     return (

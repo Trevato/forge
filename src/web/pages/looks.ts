@@ -39,14 +39,23 @@ export const pictured = (
 
 /**
  * The picture for a small slot: the dedicated thumb, or — for a commit
- * taken before it existed — the phone shot a thumbnail loaded before.
- * Always the home page: a slot this small has room for one picture of an
- * app, and the home page is the one everyone means by it.
+ * taken before it existed — the phone shot a thumbnail loaded before,
+ * whichever this viewer may fetch (`mayFetchLook`: the phone shot is the
+ * owner's view, so a reader gets the thumb or nothing, never a broken
+ * image). Always the home page: a slot this small has room for one picture
+ * of an app, and the home page is the one everyone means by it.
  */
-export const thumbLook = (looks: readonly Look[]): Look | undefined => {
+export function thumbLook(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+  looks: readonly Look[],
+): Look | undefined {
   const home = looks.filter((l) => l.page === DEFAULT_PAGE);
-  return pictured(home, "thumb") ?? pictured(home, "phone");
-};
+  return [pictured(home, "thumb"), pictured(home, "phone")].find(
+    (l) => l !== undefined && mayFetchLook(ctx, repo, record, l),
+  );
+}
 
 // GET /:owner/:name/looks/:env/:commit/:kind.png — the last segment is
 // really a slot (`lookSlot`): the kind alone for the home page, the page

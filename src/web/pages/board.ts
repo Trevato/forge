@@ -566,6 +566,9 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     const record = scope.records.get(repo.id);
     if (record === undefined) return undefined;
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === "production"),
     );
     return (
