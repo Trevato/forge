@@ -29,6 +29,7 @@ import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
 import { feedJs, feedNote, feedRegion } from "./feed.ts";
+import { crewKeyNote } from "./crew.ts";
 
 /** The events that can change a row on the shelf. */
 const APPS_LIVE =
@@ -157,6 +158,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
         </div>
+        ${crewKeyNote(ctx)}
         ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}

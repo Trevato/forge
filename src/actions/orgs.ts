@@ -29,7 +29,13 @@ export function createOrg(
   const user = requireUser(actor);
   if (!user.ok) return user;
   // An org shares the account namespace: it may not take a reserved name.
-  if (reservedName(app.db, name) !== undefined) return err("name_reserved");
+  // A name someone already holds is taken (foundOrg says so); only a new
+  // name can be a reserved one.
+  if (
+    getUserByName(app.db, name) === undefined &&
+    reservedName(app.db, name) !== undefined
+  )
+    return err("name_reserved");
   const created = foundOrg(app.db, name, user.value.id);
   if (!created.ok) return created;
   app.bus.append({

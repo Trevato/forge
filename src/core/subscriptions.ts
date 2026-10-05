@@ -529,3 +529,19 @@ export function grantedAccounts(
   const own = rows.filter((r) => r.scope_id === repoId);
   return (own.length > 0 ? own : rows).map((r) => ({ id: r.id, name: r.name }));
 }
+
+/**
+ * Whether the crew has any model credential to run on: a sealed account,
+ * or a token or signed-in Claude config in the forge's own environment —
+ * the places `credentialEnv` and the runner read. A spawned child starts
+ * with none (its parent's credentials never travel), and its pages say so.
+ */
+export function crewHasCredential(
+  db: Database,
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (listSubscriptions(db).length > 0) return true;
+  return ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "FORGE_CLAUDE_CONFIG_DIR"].some(
+    (name) => (env[name] ?? "").trim() !== "",
+  );
+}
