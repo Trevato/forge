@@ -8,7 +8,13 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { askedIn, askedJson, askedRepos, isAskedShow } from "../core/asked.ts";
+import {
+  askedIn,
+  askedJson,
+  askedRepos,
+  isAskedOrder,
+  isAskedShow,
+} from "../core/asked.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -1880,17 +1886,23 @@ export function apiRoutes(router: Router<Handler>): void {
       ),
     );
   });
-  // What people asked of the crew in the repositories the caller can write,
-  // newest first, and what became of each (core/asked.ts, the /asked page).
+  // What people asked of the crew in the repositories the caller can write —
+  // by default what has nothing merged yet, oldest first — and what became of each (core/asked.ts, the /asked page).
   router.add("GET", "/api/v1/asked", (ctx) => {
     const denied = requireScope(ctx, "ro");
     if (denied) return denied;
     const raw = ctx.url.searchParams.get("show");
     if (raw !== null && !isAskedShow(raw))
       return apiError("invalid_show", 422, "show is all, unshipped or flagged");
+    const order = ctx.url.searchParams.get("order");
+    if (order !== null && !isAskedOrder(order))
+      return apiError("invalid_order", 422, "order is oldest or newest");
     const repos = askedRepos(ctx.app.db, ctx.auth.user, ctx.url.searchParams.get("repo"));
     return json({
-      asked: askedIn(ctx.app.db, repos, { show: raw ?? "all" }).map(askedJson),
+      asked: askedIn(ctx.app.db, repos, {
+        show: raw ?? "unshipped",
+        order: order ?? "oldest",
+      }).map(askedJson),
     });
   });
   // Every repository the caller can see, one entry each: the global map.

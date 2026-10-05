@@ -190,6 +190,7 @@ export function boardPage(ctx: Ctx): Response {
             : `${repos.length} app${repos.length === 1 ? "" : "s"}`
         }</span
       >
+      <a class="board-asked" href="/asked">What you asked for</a>
       <span class="spacer"></span>
       <span class="board-keys" aria-hidden="true"
         ><kbd>f</kbd> fullscreen <kbd>1</kbd>–<kbd>4</kbd> one region
@@ -750,6 +751,8 @@ export const boardCss = /* css */ `
 .board-live[data-state="open"] .board-dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
 .board-live[data-state="reconnecting"] .board-dot { background: var(--attn); }
 .board-clock { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted-fg); min-width: 5ch; text-align: right; }
+.board-asked { font-size: 13px; color: var(--muted-fg); text-decoration: none; }
+.board-asked:hover { color: var(--fg); }
 .board-forge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 28px; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); }
 .board-forge[data-ok="no"] { color: var(--attn); }
 a.board-forge-need { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

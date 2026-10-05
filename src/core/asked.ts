@@ -25,6 +25,8 @@ import type { User } from "./users.ts";
 export type AskedState = "waiting" | "building" | "shipped" | "closed";
 
 export interface AskedPull {
+  /** The pull's issue id, for reads; not part of the JSON. */
+  readonly id: string;
   readonly number: number;
   readonly title: string;
   readonly state: "open" | "merged" | "closed";
@@ -41,12 +43,21 @@ export interface Asked {
   readonly state: AskedState;
   /** Not shipped or closed, and older than the stale window. */
   readonly flagged: boolean;
+  /** The crew's last word on it: its newest agent run or agent comment, on
+   * the ask or a pull that closes it. Null when the crew never touched it. */
+  readonly lastCrewAt: string | null;
 }
 
 export type AskedShow = "all" | "unshipped" | "flagged";
 
 export const isAskedShow = (value: unknown): value is AskedShow =>
   value === "all" || value === "unshipped" || value === "flagged";
+
+/** Oldest first is the default: the path is "open the oldest unmet ask". */
+export type AskedOrder = "oldest" | "newest";
+
+export const isAskedOrder = (value: unknown): value is AskedOrder =>
+  value === "oldest" || value === "newest";
 
 /** How long an ask may wait with nothing built before it is flagged. */
 export const STALE_DAYS = 3;
@@ -64,6 +75,7 @@ interface AskRow {
 }
 
 interface PullRow {
+  id: string;
   number: number;
   title: string;
   body: string;
@@ -103,10 +115,16 @@ export function askedRepos(
 export function askedIn(
   db: Database,
   repos: readonly Repo[],
-  options: { show?: AskedShow; now?: Date; limit?: number } = {},
+  options: {
+    show?: AskedShow;
+    order?: AskedOrder;
+    now?: Date;
+    limit?: number;
+  } = {},
 ): Asked[] {
   if (repos.length === 0) return [];
-  const show = options.show ?? "all";
+  const show = options.show ?? "unshipped";
+  const order = options.order ?? "oldest";
   const now = (options.now ?? new Date()).getTime();
   const limit = Math.min(
     Math.max(options.limit ?? ASKED_LIMIT, 1),
@@ -135,7 +153,7 @@ export function askedIn(
   const pulls = new Map<string, AskedPull[]>();
   const rows = db
     .query<PullRow & { repo_id: string }, string[]>(
-      `SELECT issue.repo_id, issue.number, issue.title, issue.body, issue.state,
+      `SELECT issue.id, issue.repo_id, issue.number, issue.title, issue.body, issue.state,
               pull.merged_at
        FROM issue JOIN pull ON pull.issue_id = issue.id
        WHERE issue.repo_id IN (${placeholders(repoIds.length)})
@@ -147,6 +165,7 @@ export function askedIn(
       const key = `${row.repo_id}#${n}`;
       const list = pulls.get(key) ?? [];
       list.push({
+        id: row.id,
         number: row.number,
         title: row.title,
         state:
@@ -165,7 +184,7 @@ export function askedIn(
     ),
   );
 
-  const out: Asked[] = [];
+  const out: Omit<Asked, "lastCrewAt">[] = [];
   for (const issue of getIssuesByIds(db, ids).values()) {
     const repo = byId.get(issue.repoId);
     if (repo === undefined) continue;
@@ -194,11 +213,55 @@ export function askedIn(
       flagged,
     });
   }
+  const sign = order === "oldest" ? 1 : -1;
   out.sort(
     (a, b) =>
-      b.askedAt.localeCompare(a.askedAt) || b.issue.number - a.issue.number,
+      sign * a.askedAt.localeCompare(b.askedAt) ||
+      sign * (a.issue.number - b.issue.number),
   );
-  return out.slice(0, limit);
+  const page = out.slice(0, limit);
+  const last = lastCrewActivity(
+    db,
+    page.flatMap((a) => [a.issue.id, ...a.pulls.map((p) => p.id)]),
+  );
+  return page.map((a) => {
+    let at: string | null = last.get(a.issue.id) ?? null;
+    for (const p of a.pulls) {
+      const t = last.get(p.id);
+      if (t !== undefined && (at === null || t > at)) at = t;
+    }
+    return { ...a, lastCrewAt: at };
+  });
+}
+
+/** The newest agent run or agent comment per issue, in two grouped reads. */
+function lastCrewActivity(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const marks = placeholders(batch.length);
+    const rows = db
+      .query<{ issue_id: string; at: string }, string[]>(
+        `SELECT issue_id, MAX(created_at) AS at FROM run
+         WHERE kind = 'agent' AND issue_id IN (${marks}) GROUP BY issue_id
+         UNION ALL
+         SELECT comment.issue_id, MAX(comment.created_at) AS at
+         FROM comment JOIN user ON user.id = comment.author_id
+         WHERE user.is_agent = 1 AND comment.issue_id IN (${marks})
+         GROUP BY comment.issue_id`,
+      )
+      .all(...batch);
+    for (const r of rows) {
+      const seen = out.get(r.issue_id);
+      if (seen === undefined || r.at > seen) out.set(r.issue_id, r.at);
+    }
+  }
+  return out;
 }
 
 /** The row as JSON, for the API and the MCP. */
@@ -213,6 +276,7 @@ export function askedJson(a: Asked) {
     issueState: a.issue.state,
     state: a.state,
     flagged: a.flagged,
-    pulls: a.pulls,
+    lastCrewAt: a.lastCrewAt,
+    pulls: a.pulls.map((p) => ({ number: p.number, title: p.title, state: p.state })),
   };
 }

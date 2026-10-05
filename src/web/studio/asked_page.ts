@@ -10,9 +10,11 @@
 import {
   askedIn,
   askedRepos,
+  isAskedOrder,
   isAskedShow,
   STALE_DAYS,
   type Asked,
+  type AskedOrder,
   type AskedShow,
   type AskedState,
 } from "../../core/asked.ts";
@@ -50,7 +52,10 @@ function askedRow(a: Asked): Html {
     nav: true,
     title: a.issue.title,
     meta: html`${a.repo.ownerName}/${a.repo.name} #${a.issue.number} ·
-    ${a.askedBy} · ${time(a.askedAt)} · ${pullNote(a)}`,
+    ${a.askedBy} · ${time(a.askedAt)} · ${pullNote(a)} ·
+    ${a.lastCrewAt === null
+      ? "crew not on it yet"
+      : html`crew ${time(a.lastCrewAt)}`}`,
     // One badge per row: a flagged ask says only that nothing was built
     // (the meta line still names its pull), so a phone keeps the title.
     trail: a.flagged
@@ -62,18 +67,29 @@ function askedRow(a: Asked): Html {
   });
 }
 
+/**
+ * GET /asked — `?show=unshipped` (the default: nothing merged yet),
+ * `flagged` or `all`; oldest first unless `?order=newest`; `?repo=` for one.
+ */
 export function askedPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  const raw = ctx.url.searchParams.get("show");
-  const show: AskedShow = isAskedShow(raw) ? raw : "all";
-  const repoSpec = ctx.url.searchParams.get("repo");
-  const all = askedIn(ctx.app.db, askedRepos(ctx.app.db, ctx.auth.user, repoSpec));
-  const listed = all.filter((a) => shows(a, show));
+  const q = ctx.url.searchParams;
+  const rawShow = q.get("show");
+  const show: AskedShow = isAskedShow(rawShow) ? rawShow : "unshipped";
+  const rawOrder = q.get("order");
+  const order: AskedOrder = isAskedOrder(rawOrder) ? rawOrder : "oldest";
+  const repoSpec = q.get("repo");
+  const repos = askedRepos(ctx.app.db, ctx.auth.user, repoSpec);
+  const all = askedIn(ctx.app.db, repos, { show: "all" });
+  const listed = askedIn(ctx.app.db, repos, { show, order });
   const count = (s: AskedShow) => all.filter((a) => shows(a, s)).length;
-  const keep = repoSpec ? `repo=${encodeURIComponent(repoSpec)}` : "";
-  const href = (s: AskedShow) => {
-    const q = [s === "all" ? "" : `show=${s}`, keep].filter(Boolean).join("&");
-    return `/asked${q ? `?${q}` : ""}`;
+  const href = (s: AskedShow, o: AskedOrder = order) => {
+    const parts = [
+      s === "unshipped" ? "" : `show=${s}`,
+      o === "oldest" ? "" : "order=newest",
+      repoSpec ? `repo=${encodeURIComponent(repoSpec)}` : "",
+    ].filter(Boolean);
+    return `/asked${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
   };
   const shipped = all.filter((a) => a.state === "shipped").length;
   const flagged = count("flagged");
@@ -84,14 +100,8 @@ export function askedPage(ctx: Ctx): Response {
 
   const body = html`<h1 id="asked-sentence">What you asked for</h1>
     <p class="muted">${sentence}</p>
-    <div class="filters mb mt">
+    <div class="filters bar mb mt">
       ${seg([
-        {
-          label: "All",
-          href: href("all"),
-          current: show === "all",
-          count: all.length,
-        },
         {
           label: "Not shipped",
           href: href("unshipped"),
@@ -104,7 +114,17 @@ export function askedPage(ctx: Ctx): Response {
           current: show === "flagged",
           count: flagged,
         },
+        {
+          label: "All",
+          href: href("all"),
+          current: show === "all",
+          count: all.length,
+        },
       ])}
+      <span class="spacer"></span>
+      <a class="small muted" href="${href(show, order === "oldest" ? "newest" : "oldest")}"
+        >${order === "oldest" ? "Show newest first" : "Show oldest first"}</a
+      >
     </div>
     ${listed.length === 0
       ? empty({

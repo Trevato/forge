@@ -323,16 +323,18 @@ so it works without JavaScript.
 `/asked` (`askedPage`, `src/web/studio/asked_page.ts`) is the other
 direction: not what waits on you, but what you and your people asked of the
 crew, and whether it happened. One row per issue a person opened (an
-agent's issue is not an ask; neither is the direction issue), newest first,
-in every repository the viewer can write: who asked and when, the pull that
-answers it, and one word — _Waiting_, _Building_ (a pull is open or the crew
+agent's issue is not an ask; neither is the direction issue) in every
+repository the viewer can write — by default only what has nothing merged
+yet, oldest first, because the path is "open the oldest unmet ask": who
+asked and when, the pull that answers it, when the crew last ran or spoke on
+it, and one word — _Waiting_, _Building_ (a pull is open or the crew
 is running), _Shipped_ (a pull that closes it merged), _Closed_ (closed with
 nothing merged). An ask still waiting or building after three days carries
-_Nothing built_. `?show=unshipped|flagged` narrows it,
+_Nothing built_. `?show=flagged|all` changes the view, `?order=newest` flips it,
 `?repo=owner/name` keeps it to one repository. The rows are derived on read
 in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
 the same rows. Each row names its `source` (`issue` today) so thoughts can
-join the same list. It is reached from the asks page and the palette.
+join the same list. It is reached from the feed's header, the board, the asks page and the palette.
 
 ## The home
 

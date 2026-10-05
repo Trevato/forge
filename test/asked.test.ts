@@ -16,6 +16,7 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { askedIn, askedRepos, STALE_DAYS } from "../src/core/asked.ts";
 import type { Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -36,6 +37,7 @@ describe("what you asked for", () => {
   let bobRo = "";
   const asks: Record<string, Issue> = {};
   let nextId = 1;
+  let crewAt = "";
 
   const ask = (who: User, title: string): Issue => {
     const made = openIssue(app, who, repo, { title });
@@ -138,7 +140,11 @@ describe("what you asked for", () => {
     asks["stale"] = ask(alice, "Fix the gate");
     backdate(asks["stale"], STALE_DAYS + 1);
     asks["building"] = ask(alice, "A watering schedule");
-    await pullFor(asks["building"], "work/building");
+    const building = await pullFor(asks["building"], "work/building");
+    // The crew worked the pull an hour ago: that is the row's last activity.
+    const run = createRun(app.db, { repoId: repo.id, kind: "agent", issueId: building.id });
+    crewAt = new Date(Date.now() - 3_600_000).toISOString();
+    app.db.query("UPDATE run SET created_at = ?1 WHERE id = ?2").run(crewAt, run.id);
     asks["shipped"] = ask(alice, "Prune the roses");
     const merged = await pullFor(asks["shipped"], "work/shipped");
     // A merge, as the row records it: the pull and the issue close.
@@ -167,7 +173,7 @@ describe("what you asked for", () => {
 
   const states = () =>
     Object.fromEntries(
-      askedIn(app.db, [repo]).map((a) => [a.issue.title, a.state]),
+      askedIn(app.db, [repo], { show: "all" }).map((a) => [a.issue.title, a.state]),
     );
 
   test("each ask gets one state word from its pulls and its issue", () => {
@@ -184,20 +190,33 @@ describe("what you asked for", () => {
     expect(states()["Refactor the watering module"]).toBeUndefined();
   });
 
-  test("newest first, and an ask with nothing built past the window is flagged", () => {
+  test("by default: nothing merged yet, oldest first; newest first on request", () => {
     const rows = askedIn(app.db, [repo]);
-    expect(rows[rows.length - 1]!.issue.title).toBe("Fix the gate");
-    expect(rows.filter((a) => a.flagged).map((a) => a.issue.title)).toEqual([
+    expect(rows.map((a) => a.issue.title)).toEqual([
       "Fix the gate",
+      "Plant tomatoes",
+      "A watering schedule",
     ]);
+    expect(
+      askedIn(app.db, [repo], { order: "newest" }).map((a) => a.issue.title),
+    ).toEqual(["A watering schedule", "Plant tomatoes", "Fix the gate"]);
+  });
+
+  test("an ask with nothing built past the window is flagged", () => {
+    expect(
+      askedIn(app.db, [repo], { show: "all" })
+        .filter((a) => a.flagged)
+        .map((a) => a.issue.title),
+    ).toEqual(["Fix the gate"]);
     expect(
       askedIn(app.db, [repo], { show: "flagged" }).map((a) => a.issue.title),
     ).toEqual(["Fix the gate"]);
-    expect(
-      askedIn(app.db, [repo], { show: "unshipped" })
-        .map((a) => a.state)
-        .sort(),
-    ).toEqual(["building", "waiting", "waiting"]);
+  });
+
+  test("each row carries the crew's last activity, from the ask or its pulls", () => {
+    const rows = new Map(askedIn(app.db, [repo]).map((a) => [a.issue.title, a]));
+    expect(rows.get("A watering schedule")!.lastCrewAt).toBe(crewAt);
+    expect(rows.get("Plant tomatoes")!.lastCrewAt).toBeNull();
   });
 
   test("a person who cannot write the repository reads nothing about it", () => {
@@ -229,6 +248,13 @@ describe("what you asked for", () => {
     expect(page).toContain("Plant tomatoes");
     expect(page).toContain("nothing built in 3 days");
     expect(page).not.toContain("Refactor the watering module");
+    // The default view is what has nothing merged yet: the shipped ask waits behind "All".
+    expect(page).not.toContain("Prune the roses");
+    expect(page).toContain("crew not on it yet");
+    expect(page.indexOf("Fix the gate")).toBeLessThan(page.indexOf("Plant tomatoes"));
+    // Reached from the board and the feed's header, not only the asks page.
+    expect(await (await fetch(`${servers.url}/board`, { headers: { cookie } })).text()).toContain('href="/asked"');
+    expect(await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()).toContain('href="/asked"');
     const flagged = (
       await (
         await fetch(`${servers.url}/asked?show=flagged`, {
@@ -242,7 +268,7 @@ describe("what you asked for", () => {
 
   test("the API answers the same rows, only to a token, and nothing to a stranger", async () => {
     expect((await api(null, "/api/v1/asked")).status).toBe(401);
-    const mine = await api(aliceRo, "/api/v1/asked?show=unshipped");
+    const mine = await api(aliceRo, "/api/v1/asked");
     expect(mine.status).toBe(200);
     expect(mine.body.asked.map((a: any) => a.title).sort()).toEqual([
       "A watering schedule",
@@ -255,6 +281,9 @@ describe("what you asked for", () => {
     expect(building.pulls[0].state).toBe("open");
     expect((await api(bobRo, "/api/v1/asked")).body.asked).toEqual([]);
     expect((await api(aliceRo, "/api/v1/asked?show=nope")).status).toBe(422);
+    expect((await api(aliceRo, "/api/v1/asked?order=nope")).status).toBe(422);
+    expect(building.lastCrewAt).toBe(crewAt);
+    expect(Object.keys(building.pulls[0]).sort()).toEqual(["number", "state", "title"]);
   });
 
   test("the MCP `asked` tool reads the same rows, with an ro token", async () => {
