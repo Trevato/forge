@@ -10,11 +10,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newApp, updateAppSettings } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/core/orgs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { markVerified, resetVerification } from "../src/core/verify.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
+import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("the manifest: what you can do here, as who you are", () => {
@@ -23,6 +26,7 @@ describe("the manifest: what you can do here, as who you are", () => {
   let servers: Servers;
   let base: string;
   const tokens: Record<string, string> = {};
+  let usersByName: Record<string, User> = {};
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-here-"));
@@ -34,6 +38,7 @@ describe("the manifest: what you can do here, as who you are", () => {
       ["alice", true],
       ["wes", false],
       ["carol", false],
+      ["una", false],
     ] as const) {
       const made = await createUser(app.db, {
         trusted: true,
@@ -73,7 +78,11 @@ describe("the manifest: what you can do here, as who you are", () => {
     if (!bot.ok) throw new Error(String(bot.error));
     expect(addToCrew(app, alice, game.value.repo, "bot").ok).toBe(true);
 
-    for (const name of ["alice", "wes", "carol"])
+    // Carol proved her email; Una has not yet.
+    markVerified(app.db, users["carol"]!.id, new Date().toISOString());
+    resetVerification(app.db, users["una"]!.id);
+    usersByName = users;
+    for (const name of ["alice", "wes", "carol", "una"])
       tokens[name] = createToken(app.db, users[name]!.id, "t", "rw").token;
     tokens["bot"] = createToken(app.db, bot.value.user.id, "run", "rw").token;
   }, 60_000);
@@ -257,5 +266,57 @@ describe("the manifest: what you can do here, as who you are", () => {
     ).json()) as any;
     expect(hidden.result.isError).toBe(true);
     expect(hidden.result.content[0].text).toStartWith("not_found");
+  });
+
+  // ── follow-ups from the first review ──────────────────────────────────
+
+  test("an account whose email is unproven is told that offering a change needs a verified email", async () => {
+    const una = (await manifest("/acme/game", "una")).body;
+    const offer = una.actions.find((a: any) => a.do === "offer a change");
+    expect(offer.verify).toBe(true);
+    const carol = (await manifest("/acme/game", "carol")).body;
+    expect(carol.actions.find((a: any) => a.do === "offer a change").verify).toBeUndefined();
+  });
+
+  test("an org's own pages are the forge's, not a missing repository", async () => {
+    const res = await here("/acme/-/teams/Writers", "alice");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).here.kind).toBe("forge");
+  });
+
+  test("a pull page says whether the pull's code runs, or waits for a writer's approval", async () => {
+    const game = getRepo(app.db, "acme", "game")!;
+    const carol = usersByName["carol"]!;
+    const forked = await forkRepo(app, carol, game);
+    if (!forked.ok) throw new Error(String(forked.error));
+    const committed = await commitToBranch(app, carol, forked.value, {
+      branch: "idea",
+      message: "An idea",
+      files: [{ path: "IDEA.md", content: "idea\n" }],
+    });
+    if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+    const opened = await openPull(app, carol, game, {
+      title: "An idea",
+      baseBranch: "main",
+      headBranch: "idea",
+      headRepo: forked.value,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const { body } = await manifest(`/acme/game/pulls/${opened.value.number}`, "carol");
+    expect(body.here.pull).toEqual({ number: opened.value.number, runs: false });
+    const mine = await commitToBranch(app, usersByName["alice"]!, game, {
+      branch: "mine",
+      message: "Mine",
+      files: [{ path: "MINE.md", content: "mine\n" }],
+    });
+    if (!mine.ok) throw new Error(JSON.stringify(mine.error));
+    const own = await openPull(app, usersByName["alice"]!, game, {
+      title: "Mine",
+      baseBranch: "main",
+      headBranch: "mine",
+    });
+    if (!own.ok) throw new Error(String(own.error));
+    const ownBody = (await manifest(`/acme/game/changes/${own.value.number}`)).body;
+    expect(ownBody.here.pull).toEqual({ number: own.value.number, runs: true });
   });
 });
