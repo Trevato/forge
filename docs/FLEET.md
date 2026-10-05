@@ -26,7 +26,11 @@ works on every kind.
 | ----- | ----------------------------------------------------------- |
 | repo  | `repo` `owner` `name` `id` `autonomy` `visibility`          |
 | run   | `repo` `owner` `name` `id` `state` `kind` `agent` `issue`   |
-| issue | `repo` `owner` `name` `id` `number` `state` `assignee` (`none`) `label` |
+| issue | `repo` `owner` `name` `id` `number` `state` `assignee` (`none`) `label` `limb` |
+
+`limb:<number>` selects a limb: the issue of that number and everything
+beneath it that only it needs, top down, and never what something outside
+the limb also waits for. It needs `repo:owner/name`.
 
 Only rows you can read are selected. More than 500 rows is refused
 (`too_many`), never cut. This grammar is `src/fleet/selection.ts`; the fleet
@@ -48,6 +52,8 @@ table (#446) grows it.
 | issue | `assign`    | a username, or `none`     | yes  |
 | issue | `label`     | a label's name (added)    | yes  |
 | issue | `link`      | the number they wait for  | yes  |
+| issue | `file`      | `later`, a pillar, or `none` | yes |
+| issue | `drop`      | the reason, one sentence  | yes  |
 
 ## Who may
 
@@ -68,4 +74,12 @@ operations; `GET /api/v1/fleet/ops/:id` is one receipt.
 
 Undo is a new operation that writes each `ok` row's value from before,
 only where the row still holds what the operation left; a row someone
-changed since is refused as `changed since: it is … now`.
+changed since is refused as `changed since: it is … now`. It writes the
+rows backwards, so what was done last is undone first.
+
+`file` says where an issue stands in the plan: `later` puts it behind the
+Later gate and under the Later umbrella, out from under any pillar; a
+pillar's name or short form puts it under that pillar and out from behind
+the gate; `none` takes it out of both. `drop` closes an issue as dropped
+and says the reason on it; its undo opens it again. The actions on a whole
+limb (`docs/PLANNING.md`) are these two verbs over a limb.

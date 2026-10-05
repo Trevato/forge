@@ -201,8 +201,38 @@ of anything that waits for others says _see how far it is_. The same
 numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
 `…/milestones/:number`, and in the MCP's `milestones`. An agent's name and
 the spend are the owner's to see: a reader gets "the crew" and no cost.
-Read-only: watching a milestone (#732) and acting on a whole limb (#733)
-come after.
+Watching a milestone (#732) comes after.
+
+### Trimming at a limb
+
+Whoever administers the repository acts on a whole limb from its milestone,
+not on each leaf (#733). Each action is one fleet operation
+(`docs/FLEET.md`): a preview that lists every row it writes and every
+issue it takes along, nothing written until it is confirmed, a receipt, and
+one undo.
+
+- **Defer** files the limb for later: out from under its pillar, under
+  Later, behind the Later gate. One row is written. What is beneath it
+  follows by the graph's own rule — an open issue that only deferred work
+  waits for is deferred too, and is never ready — so the crew picks none of
+  it, and what something active still waits for stays pickable and is
+  listed as staying.
+- **Resume** is the reverse: out from behind the gate, under the pillar
+  named, or under none.
+- **Close as not doing** closes every open issue that only the limb needs,
+  the limb included, as `dropped`, with the reason said on each. What
+  something outside the limb also waits for is not the limb's to close.
+
+An umbrella or the gate is the plan's own and is not filed. A leaf beneath
+a limb that is not deferred cannot be deferred alone: defer the limb. A
+candidate to trim offers Defer first. Raising and lowering a limb against
+its siblings is #760; handing one to the planner is #761.
+
+The same is `POST /api/v1/repos/:owner/:name/milestones/:number/limb`
+`{ "action": "defer" | "resume" | "close", "reason"?, "pillar"?, "dryRun"? }`
+and the MCP's `limb`, both a dry run unless `dryRun` is false. Applying and
+undoing take an admin token of a person who administers the repository; an
+agent may look and never apply.
 
 ## A repository on its own
 

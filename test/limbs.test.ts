@@ -116,6 +116,22 @@ describe("limb actions", () => {
       },
       body: JSON.stringify(body),
     });
+  const cookies: Record<string, string> = {};
+  const get = (who: string, path: string) =>
+    fetch(`${base}${path}`, {
+      headers: who === "" ? {} : { cookie: cookies[who]! },
+      redirect: "manual",
+    });
+  const submit = (who: string, path: string, form: Record<string, string>) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        ...(who === "" ? {} : { cookie: cookies[who]! }),
+        origin: base,
+      },
+      body: new URLSearchParams(form),
+      redirect: "manual",
+    });
   let nextId = 1;
   const tool = async (token: string, args: unknown) => {
     const res = await post(token, "/mcp", {
@@ -150,6 +166,19 @@ describe("limb actions", () => {
     }
     alice = getUserByName(app.db, "alice")!;
     bob = getUserByName(app.db, "bob")!;
+    for (const name of ["alice", "bob"])
+      cookies[name] = (
+        (
+          await fetch(`${base}/signin`, {
+            method: "POST",
+            body: new URLSearchParams({
+              username: name,
+              password: "a-good-passphrase",
+            }),
+            redirect: "manual",
+          })
+        ).headers.get("set-cookie") ?? ""
+      ).split(";")[0]!;
     const repoOf = async (name: string, visibility: "public" | "private") => {
       const made = await createRepo(app, alice, { name, visibility });
       if (!made.ok) throw new Error(String(made.error));
@@ -523,5 +552,89 @@ describe("limb actions", () => {
       (await tool(admin, { app: "alice/engine", action: "undo", operation: receipt["id"] }))
         .error,
     ).toBe("invalid: undo is not a dry run: pass dryRun false");
+  });
+
+  test("on the page: the actions for an admin only, a preview before anything is written, a receipt, and one undo", async () => {
+    const at = `/alice/engine/milestones/${iface.number}`;
+    const mine = await (await get("alice", at)).text();
+    expect(mine).toContain('id="limb-actions"');
+    expect(mine).toContain(`href="${at}/limb?action=defer"`);
+    expect(mine).toContain(`href="${at}/limb?action=close"`);
+    // A reader sees the milestone and no way to act on it.
+    const theirs = await (await get("bob", at)).text();
+    expect(theirs).toContain("<h1>One interface</h1>");
+    expect(theirs).not.toContain('id="limb-actions"');
+    // An umbrella is not filed: it offers the close alone.
+    const pillar = await (
+      await get("alice", `/alice/engine/milestones/${feed.number}`)
+    ).text();
+    expect(pillar).toContain("limb?action=close");
+    expect(pillar).not.toContain("limb?action=defer");
+
+    const before = snapshot();
+    const preview = await (await get("alice", `${at}/limb?action=defer`)).text();
+    expect(preview).toContain("Defer “One interface”?");
+    expect(preview).toContain("4 stop being picked");
+    expect(preview).toMatch(/1 stays: something\s+outside this limb still waits for\s+it/);
+    expect(preview).toContain("A shared toolbar");
+    expect(preview).toContain(
+      `under #${feed.number} → behind #${gate.number}, under #${later.number}`,
+    );
+    expect(preview).toContain("Defer this limb");
+    // A reader's preview says so, and offers nothing to confirm.
+    const looked = await (await get("bob", `${at}/limb?action=defer`)).text();
+    expect(looked).toContain("Nothing here is yours to change.");
+    expect(looked).not.toContain("Defer this limb");
+    expect((await get("", `${at}/limb?action=defer`)).status).toBe(303);
+    expect((await get("alice", `${at}/limb?action=burn`)).status).toBe(404);
+    expect(snapshot()).toBe(before);
+
+    // Nobody signed in, a reader, and a post from another origin write nothing.
+    expect((await submit("", `${at}/limb`, { action: "defer" })).status).toBe(303);
+    const readers = await submit("bob", `${at}/limb`, { action: "defer" });
+    expect(readers.status).toBe(303);
+    expect(
+      await (await get("bob", readers.headers.get("location")!)).text(),
+    ).toContain("0 written, 1 left as they were.");
+    const foreign = await fetch(`${base}${at}/limb`, {
+      method: "POST",
+      headers: { cookie: cookies["alice"]!, origin: "https://evil.test" },
+      body: new URLSearchParams({ action: "defer" }),
+      redirect: "manual",
+    });
+    expect(foreign.status).toBe(403);
+    // A close without its reason goes back to the preview.
+    const bare = await submit("alice", `${at}/limb`, { action: "close" });
+    expect(bare.headers.get("location")).toBe(`${at}/limb?action=close`);
+    expect(snapshot()).toBe(before);
+
+    const applied = await submit("alice", `${at}/limb`, { action: "defer" });
+    expect(applied.status).toBe(303);
+    const receiptAt = applied.headers.get("location")!;
+    expect(receiptAt).toStartWith(`${at}/limb/`);
+    expect(deferred()).toContain(home.number);
+    const receipt = await (await get("alice", receiptAt)).text();
+    expect(receipt).toContain("<h1>Deferred</h1>");
+    expect(receipt).toContain("1 written.");
+    expect(receipt).toContain(`action="${receiptAt}/undo"`);
+    // The receipt is its actor's: a reader gets the one 404.
+    expect((await get("bob", receiptAt)).status).toBe(404);
+    // The milestone now offers Resume.
+    expect(await (await get("alice", at)).text()).toContain(
+      `href="${at}/limb?action=resume"`,
+    );
+
+    const undone = await submit("alice", `${receiptAt}/undo`, {});
+    expect(undone.status).toBe(303);
+    const undoneAt = undone.headers.get("location")!;
+    expect(undoneAt).not.toBe(receiptAt);
+    expect(await (await get("alice", undoneAt)).text()).toContain(
+      "<h1>Undone</h1>",
+    );
+    expect(snapshot()).toBe(before);
+    // The first receipt no longer offers an undo.
+    expect(await (await get("alice", receiptAt)).text()).not.toContain(
+      `action="${receiptAt}/undo"`,
+    );
   });
 });

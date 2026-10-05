@@ -18,8 +18,9 @@ import {
   type Limb,
   type Milestone,
 } from "../../core/milestones.ts";
-import { PILLAR_DAYS } from "../../core/pillars.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import type { LimbAction } from "../../actions/limbs.ts";
+import { isStructural, PILLAR_DAYS, pillarsOf } from "../../core/pillars.ts";
+import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -31,11 +32,51 @@ import {
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { time } from "../ui.ts";
+import { btn, time } from "../ui.ts";
 
 /** Where a milestone is: its own page. */
 export const milestoneHref = (base: string, number: number): string =>
   `${base}/milestones/${number}`;
+
+/** Where an action on the whole limb is previewed and confirmed (`limb.ts`). */
+export const limbHref = (
+  base: string,
+  number: number,
+  action: LimbAction,
+): string => `${milestoneHref(base, number)}/limb?action=${action}`;
+
+/**
+ * The actions on a whole limb, for whoever administers the repository:
+ * defer it (or resume it, when it is deferred), or close it as not doing.
+ * Each opens its preview; nothing is written from here. The plan's own
+ * furniture cannot be filed, so an umbrella offers only the close.
+ */
+function limbActions(
+  base: string,
+  m: Milestone,
+  furniture: boolean,
+): Html {
+  const number = m.issue.number;
+  return html`<p class="bar ms-actions" id="limb-actions">
+    ${furniture
+      ? null
+      : m.deferred
+        ? btn("Resume", {
+            href: limbHref(base, number, "resume"),
+            size: "sm",
+            variant: "primary",
+          })
+        : btn("Defer", {
+            href: limbHref(base, number, "defer"),
+            size: "sm",
+            ...(m.trim === undefined ? {} : { variant: "primary" as const }),
+          })}
+    ${btn("Close as not doing", {
+      href: limbHref(base, number, "close"),
+      size: "sm",
+    })}
+  </p>`;
+}
 
 const dollars = (n: number): string => `$${n.toFixed(2)}`;
 
@@ -134,6 +175,7 @@ function milestoneBody(
   repo: Repo,
   m: Milestone,
   names: boolean,
+  actions: Html | null,
 ): Html {
   const base = repoBase(repo);
   const issue = (number: number, title: string): Html =>
@@ -168,6 +210,7 @@ function milestoneBody(
           >Read the issue #${m.issue.number}</a
         >
       </p>
+      ${actions}
     </div>
     ${when(
       m.limbs.length > 0,
@@ -294,13 +337,21 @@ export function milestonePage(ctx: Ctx): Response {
     ? readPlan(ctx.app.db, repo, { spend: owner }).milestone(number)
     : undefined;
   if (milestone === undefined) return notFoundPage(ctx);
+  // Acting on the whole limb is for whoever administers the repository.
+  const actions = canAdmin(ctx.app.db, repo, ctx.auth.user)
+    ? limbActions(
+        repoBase(repo),
+        milestone,
+        isStructural(pillarsOf(ctx.app.db, repo.id), milestone.issue.id),
+      )
+    : null;
   return page({
     ctx,
     title: `${milestone.name} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}
-    ${milestoneBody(repo, milestone, owner)}`,
+    ${milestoneBody(repo, milestone, owner, actions)}`,
     styleCss: milestonesCss,
   });
 }
@@ -353,6 +404,7 @@ export const milestonesCss = /* css */ `
 .ms-top { display: grid; gap: 8px; max-width: 640px; }
 .ms-top h1, .ms-top p { margin: 0; }
 .ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.ms-actions { margin-top: 4px; }
 .ms-section { margin-top: 22px; }
 .ms-section h2 { font-size: 13px; margin: 0 0 6px; }
 .ms-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }

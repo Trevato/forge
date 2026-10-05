@@ -122,6 +122,12 @@ import {
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
 import {
+  limbPreviewPage,
+  limbReceiptPage,
+  limbSubmit,
+  limbUndo,
+} from "../web/pages/limb.ts";
+import {
   modeSubmit,
   saySubmit,
   shipSubmit,
@@ -739,6 +745,18 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
+  router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
+  router.add(
+    "GET",
+    "/:owner/:name/milestones/:number/limb/:op",
+    limbReceiptPage,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/milestones/:number/limb/:op/undo",
+    limbUndo,
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   // One list of pulls, at `/pulls` and `/changes` alike; one change under
