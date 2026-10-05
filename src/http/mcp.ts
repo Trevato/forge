@@ -27,7 +27,7 @@ import {
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
-import { spawnDoor } from "../spawn/door.ts";
+import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import {
   readUsage,
@@ -636,6 +636,25 @@ const TOOLS: readonly Tool[] = [
           : "This is the plan; nothing was made. Send dryRun: false to spawn.",
         ...door.body,
       });
+    },
+  },
+  {
+    name: "claim_link",
+    description:
+      "A new claim link for a child forge you spawned that nobody has claimed yet; the old link stops working at once. Only an admin of this forge, and never for a claimed child. The secret is in the link's #fragment: send the link whole.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The child's name, as spawned." },
+      },
+      required: ["name"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const door = await reissueDoor(ctx, user, str(args["name"]));
+      if (door.status >= 400)
+        return bad(String(door.body["error"]), String(door.body["message"]));
+      return good(door.body);
     },
   },
   {

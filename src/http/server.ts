@@ -142,7 +142,7 @@ import {
   releaseSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
@@ -477,6 +477,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
+  router.add("GET", "/claim", claimFragmentPage);
+  router.add("POST", "/claim", claimSubmit);
   router.add("GET", "/claim/:token", claimPage);
   router.add("POST", "/claim/:token", claimSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
