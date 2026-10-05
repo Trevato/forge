@@ -186,12 +186,13 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     }
     const asks = askLinesFor(app.db, user);
     const before = seen.get(userId);
-    // What is gone may ask again later, and then it is new again.
-    seen.set(userId, new Set(asks.map((a) => a.id)));
+    // What is gone may ask again later, and then it is new again. Seen by
+    // the asks a row holds, so a new one under a collapsed row is still news.
+    seen.set(userId, new Set(asks.flatMap((a) => a.items)));
     if (before === undefined && !baseline) baseline = true;
     if (baseline) return;
     for (const ask of asks) {
-      if (before!.has(ask.id)) continue;
+      if (ask.items.every((id) => before!.has(id))) continue;
       const t = now();
       const recent = (sent.get(userId) ?? []).filter((s) => t - s < HOUR_MS);
       sent.set(userId, recent);

@@ -463,7 +463,7 @@ function appSettingsView(
           })}
           ${when(record !== undefined, () =>
             btn("Environments", {
-              href: appHref(ctx, repo),
+              href: appHref(repo),
               variant: "ghost",
               icon: "rocket",
             }),
@@ -759,7 +759,7 @@ export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
   return flashTo(
     ctx,
     record === undefined
-      ? appHref(ctx, repo)
+      ? appHref(repo)
       : `${repoBase(repo)}/settings/app`,
     {
       message:
