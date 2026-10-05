@@ -59,9 +59,9 @@ describe("the everyday account", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     for (const [username, isAdmin] of [
-      ["root", true],
+      ["ada", true],
       ["kim", false],
-      ["boss", true],
+      ["bea", true],
     ] as const) {
       const made = await createUser(app.db, {
         trusted: true,
@@ -81,10 +81,10 @@ describe("the everyday account", () => {
   });
 
   test("an admin's home asks for an everyday account and says why; anyone else's does not", async () => {
-    const admin = await page(await signIn("root"), "/");
+    const admin = await page(await signIn("ada"), "/");
     expect(admin).toContain("Make your everyday account");
     expect(admin).toContain(WHY);
-    expect(admin).toContain('value="root-me"');
+    expect(admin).toContain('value="ada-me"');
     expect(admin).toContain("Keep using admin");
     expect(await page(await signIn("kim"), "/")).not.toContain(
       "Make your everyday account",
@@ -99,7 +99,7 @@ describe("the everyday account", () => {
       password: PASSWORD,
     });
     expect(refused.status).toBe(403);
-    const root = await signIn("root");
+    const root = await signIn("ada");
     const crossed = await post(
       root,
       "/settings/everyday",
@@ -112,9 +112,9 @@ describe("the everyday account", () => {
   });
 
   test("a weak password or a taken name makes nothing", async () => {
-    const root = await signIn("root");
+    const root = await signIn("ada");
     await post(root, "/settings/everyday", {
-      username: "root-me",
+      username: "ada-me",
       email: "me@x.test",
       password: "short",
     });
@@ -123,14 +123,14 @@ describe("the everyday account", () => {
       email: "me@x.test",
       password: PASSWORD,
     });
-    expect(getUserByName(app.db, "root-me")).toBeUndefined();
-    expect(everydayOf(app.db, getUserByName(app.db, "root")!)).toBeUndefined();
+    expect(getUserByName(app.db, "ada-me")).toBeUndefined();
+    expect(everydayOf(app.db, getUserByName(app.db, "ada")!)).toBeUndefined();
   });
 
   test("Make it: an ordinary account, linked both ways, and the person is signed in as it", async () => {
-    const root = await signIn("root");
+    const root = await signIn("ada");
     const res = await post(root, "/settings/everyday", {
-      username: "root-me",
+      username: "ada-me",
       email: "me@x.test",
       password: PASSWORD,
     });
@@ -138,11 +138,11 @@ describe("the everyday account", () => {
     expect(res.headers.get("location")).toBe("/");
     const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(cookie).toContain("forge_session=");
-    const daily = getUserByName(app.db, "root-me")!;
+    const daily = getUserByName(app.db, "ada-me")!;
     expect(daily.isAdmin).toBe(false);
-    const admin = getUserByName(app.db, "root")!;
-    expect(everydayOf(app.db, admin)?.username).toBe("root-me");
-    expect(adminOf(app.db, daily)?.username).toBe("root");
+    const admin = getUserByName(app.db, "ada")!;
+    expect(everydayOf(app.db, admin)?.username).toBe("ada-me");
+    expect(adminOf(app.db, daily)?.username).toBe("ada");
     // Signed in as the everyday account now.
     expect(await page(cookie, "/settings")).toContain(
       "This is the everyday account of",
@@ -153,10 +153,10 @@ describe("the everyday account", () => {
   });
 
   test("Keep using admin is recorded; the account page still offers the way, without asking again", async () => {
-    const boss = await signIn("boss");
+    const boss = await signIn("bea");
     const res = await post(boss, "/settings/everyday/keep", {});
     expect(res.status).toBe(303);
-    expect(keptAdmin(app.db, getUserByName(app.db, "boss")!)).toBe(true);
+    expect(keptAdmin(app.db, getUserByName(app.db, "bea")!)).toBe(true);
     expect(await page(boss, "/")).not.toContain("Make your everyday account");
     const settings = await page(boss, "/settings");
     expect(settings).toContain("Make your everyday account");
@@ -164,14 +164,14 @@ describe("the everyday account", () => {
   });
 
   test("an admin's token from the page is minted only when they tick that they mean it", async () => {
-    const root = await signIn("root");
+    const root = await signIn("ada");
     const form = await page(root, "/settings/tokens");
     expect(form).toContain("I mean to give this token admin");
     const count = () =>
       (
         app.db
           .query("SELECT COUNT(*) AS n FROM token WHERE user_id = ?1")
-          .get(getUserByName(app.db, "root")!.id) as { n: number }
+          .get(getUserByName(app.db, "ada")!.id) as { n: number }
       ).n;
     const before = count();
     await post(root, "/settings/tokens", { name: "laptop", scope: "rw" });
@@ -189,7 +189,7 @@ describe("the everyday account", () => {
   });
 
   test("from a page's session, the API refuses an admin's token without adminConfirm", async () => {
-    const root = await signIn("root");
+    const root = await signIn("ada");
     const mint = (body: Record<string, unknown>) =>
       fetch(url("/api/v1/tokens"), {
         method: "POST",
@@ -228,7 +228,7 @@ describe("the everyday account", () => {
     };
     const rootToken = createToken(
       app.db,
-      getUserByName(app.db, "root")!.id,
+      getUserByName(app.db, "ada")!.id,
       "t",
       "ro",
     ).token;
@@ -240,7 +240,7 @@ describe("the everyday account", () => {
     ).token;
     const said = await init(rootToken);
     expect(said).toContain("acts as admin");
-    expect(said).toContain("root-me, their everyday account");
+    expect(said).toContain("ada-me, their everyday account");
     expect(await init(kimToken)).not.toContain("acts as admin");
   });
 
@@ -251,15 +251,15 @@ describe("the everyday account", () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username, password: PASSWORD, name: "cli", scope: "ro", ...extra }),
       });
-    const refused = await mint("root");
+    const refused = await mint("ada");
     expect(refused.status).toBe(422);
     expect(await refused.text()).toContain("adminConfirm");
-    expect((await mint("root", { adminConfirm: true })).status).toBe(201);
+    expect((await mint("ada", { adminConfirm: true })).status).toBe(201);
     expect((await mint("kim")).status).toBe(201);
   });
 
   test("an everyday account may not take a name the forge reserves", async () => {
-    const boss = await signIn("boss");
+    const boss = await signIn("bea");
     await post(boss, "/settings/everyday", { username: "settings", email: "s@x.test", password: PASSWORD });
     expect(getUserByName(app.db, "settings")).toBeUndefined();
   });

@@ -131,11 +131,19 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   if (!USERNAME.test(username))
     return say("Usernames are letters, digits, dots, dashes.");
   // The same names a sign-up may not take: a crew member's, a page's.
-  if (reservedName(ctx.app.db, username) !== undefined)
+  // The admin naming their own everyday account may use their own name in it.
+  if (reservedName(ctx.app.db, username, admin.id) !== undefined)
     return say("That name is taken by the forge itself; pick another.");
   if (password.length < MIN_PASSWORD)
     return say("Passwords need at least 10 characters.");
-  const made = await createUser(ctx.app.db, { username, email, password });
+  // The reserved-name rule was applied above with the admin as \`self\`:
+  // their own handle may appear in their everyday name ("ada-me").
+  const made = await createUser(ctx.app.db, {
+    username,
+    email,
+    password,
+    allowReserved: true,
+  });
   if (!made.ok)
     return say(
       made.error === "username_taken"
