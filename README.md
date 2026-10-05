@@ -428,6 +428,15 @@ file never sits outside the gate silently. A file joins the gate by moving
 from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
 proof it passes.
 
+The gate also refuses hollow work. `test/hollow.test.ts` runs
+`scripts/hollow.ts`, which names an exported function in `src/actions/` that
+no route, page, MCP tool, crew worker, CLI command or terminal screen
+reaches, and a screen — a GET path with no parameter that draws a page —
+that no reachable page links to. `scripts/hollow-allow.ts` lists what main
+carries today, each entry under the issue that owns it; an entry that is no
+longer hollow turns the check red, so the list only shrinks.
+`bun scripts/hollow.ts` prints the same lines on their own.
+
 ## Shape
 
 ```
