@@ -1,22 +1,14 @@
 /**
- * Issue pages: the list with its filters, one issue with its timeline, and
- * the compose form. Prose is markdown; every state change is a plain form
- * post to its own endpoint. Mobile-first, no JavaScript required.
+ * Issue pages: one issue with its timeline, and the compose form. The list
+ * is the studio's (`tellsList`, `src/web/studio/lists.ts`). Prose is
+ * markdown; every state change is a plain form post to its own endpoint.
+ * Mobile-first, no JavaScript required.
  */
 
 import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
-import {
-  issueCounts,
-  labelsFor,
-  listLabels,
-  type Issue,
-  type IssueState,
-  type Label,
-} from "../../core/issues.ts";
+import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
-import { waitingCount } from "../../actions/reports.ts";
 import type { Ctx } from "../../http/context.ts";
-import type { IssueQuery, IssueSummary } from "../../view/source.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -24,32 +16,23 @@ import {
   repoBase,
   repoHeader,
   repoPalette,
-  scopeHeader,
   signInFirst,
   signInHref,
-  stickyAction,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
-import { localScope, type RepoScope } from "../scope.ts";
 import {
   btn,
   empty,
   icon,
-  labelChip,
   labelCss,
-  listCard,
-  pager,
-  seg,
   originTag,
   stateBadge,
   time,
   userLink,
-  userTag,
   field as formField,
-  type IconName,
 } from "../ui.ts";
 import {
   assigneeCard,
@@ -64,7 +47,6 @@ import {
   threadFragment,
 } from "./thread.ts";
 import { crewActivityCard, workSpent } from "./runs.ts";
-import { studioTells } from "../studio/lists.ts";
 import {
   PAGE_TITLES,
   pageTitle,
@@ -72,324 +54,6 @@ import {
   tellsHref,
 } from "../studio/nouns.ts";
 import { studioTell } from "../studio/tell.ts";
-
-const PER_PAGE = 25;
-
-// ---- the list ----
-
-export interface ListQuery {
-  state: IssueState | "all";
-  label: string;
-  author: string;
-  q: string;
-  cursor: number | undefined;
-}
-
-export function readQuery(ctx: Ctx): ListQuery {
-  const params = ctx.url.searchParams;
-  const raw = params.get("state");
-  const cursor = Number(params.get("cursor"));
-  return {
-    state: raw === "closed" ? "closed" : raw === "all" ? "all" : "open",
-    label: params.get("label") ?? "",
-    author: params.get("author") ?? "",
-    q: params.get("q") ?? "",
-    cursor: Number.isSafeInteger(cursor) && cursor > 0 ? cursor : undefined,
-  };
-}
-
-/** Rebuild the current URL with one facet changed — filters compose instead
- * of replacing each other. */
-export function withFacet(
-  base: string,
-  query: ListQuery,
-  patch: Partial<Record<"state" | "label" | "author" | "q", string>>,
-  cursor?: number,
-): string {
-  const params = new URLSearchParams();
-  const state = patch.state ?? query.state;
-  if (state !== "open") params.set("state", state);
-  const label = patch.label ?? query.label;
-  if (label !== "") params.set("label", label);
-  const author = patch.author ?? query.author;
-  if (author !== "") params.set("author", author);
-  const q = patch.q ?? query.q;
-  if (q !== "") params.set("q", q);
-  if (cursor !== undefined) params.set("cursor", String(cursor));
-  const text = params.toString();
-  return text === "" ? base : `${base}?${text}`;
-}
-
-export function filterBar(
-  base: string,
-  query: ListQuery,
-  labels: Label[],
-  counts: { open: number; closed: number } | undefined,
-): Html {
-  return html`<div class="filters">
-      ${seg([
-        {
-          label: "Open",
-          href: withFacet(base, query, { state: "open" }),
-          current: query.state === "open",
-          ...(counts === undefined ? {} : { count: counts.open }),
-        },
-        {
-          label: "Closed",
-          href: withFacet(base, query, { state: "closed" }),
-          current: query.state === "closed",
-          ...(counts === undefined ? {} : { count: counts.closed }),
-        },
-        {
-          label: "All",
-          href: withFacet(base, query, { state: "all" }),
-          current: query.state === "all",
-        },
-      ])}
-      <form method="get" action="${base}" role="search">
-        ${when(query.state !== "open", () => hidden("state", query.state))}
-        ${when(query.label !== "", () => hidden("label", query.label))}
-        ${when(query.author !== "", () => hidden("author", query.author))}
-        <input
-          class="input search"
-          type="search"
-          name="q"
-          value="${query.q}"
-          placeholder="Search titles"
-          aria-label="Search titles"
-        />
-        ${btn("Search", { size: "sm", variant: "outline" })}
-      </form>
-      <span class="spacer"></span>
-      ${when(query.author !== "" || query.label !== "" || query.q !== "", () =>
-        btn("Clear filters", {
-          href: withFacet(base, query, { label: "", author: "", q: "" }),
-          size: "sm",
-          variant: "ghost",
-          icon: "x",
-        }),
-      )}
-    </div>
-    ${when(
-      labels.length > 0,
-      () =>
-        html`<div class="bar mb">
-          ${labels.map((l) =>
-            query.label.toLowerCase() === l.name.toLowerCase()
-              ? html`<a
-                  class="label lc-${l.color}"
-                  href="${withFacet(base, query, { label: "" })}"
-                  aria-current="true"
-                  title="Remove this filter"
-                  >${l.name} ✕</a
-                >`
-              : labelChip(l, withFacet(base, query, { label: l.name })),
-          )}
-        </div>`,
-    )}`;
-}
-
-function hidden(name: string, value: string): Html {
-  return html`<input type="hidden" name="${name}" value="${value}" />`;
-}
-
-/**
- * One issue or pull row: state as the colour of the leading icon, title with
- * its label chips, one metadata line, and the comment count trailing. There
- * is no state badge — the list is already filtered by state, and a badge that
- * repeats the filter is noise. Nothing inside is a link: the row *is* one.
- */
-export function threadRow(
-  base: string,
-  segment: "issues" | "pulls",
-  issue: { number: number; title: string },
-  labels: readonly Label[],
-  state: "open" | "closed" | "merged",
-  meta: Html,
-  comments = 0,
-): Html {
-  return html`<li>
-    <a
-      class="row"
-      data-state="${state}"
-      data-nav
-      tabindex="-1"
-      href="${base}/${segment}/${issue.number}"
-    >
-      <span class="row-lead"
-        >${icon(
-          state === "merged"
-            ? "merge"
-            : segment === "pulls"
-              ? "pull"
-              : state === "closed"
-                ? "issueClosed"
-                : "issue",
-        )}</span
-      >
-      <span class="row-main">
-        <span class="row-title" title="${issue.title}"
-          >${issue.title}${labels.map((l) => html` ${labelChip(l)}`)}</span
-        >
-        <span class="row-meta">${meta}</span>
-      </span>
-      ${when(
-        comments > 0,
-        () =>
-          html`<span class="row-trail"
-            ><span class="count" title="${`${comments} comments`}"
-              >${icon("comment")}${comments}</span
-            ></span
-          >`,
-      )}
-    </a>
-  </li>`;
-}
-
-/**
- * One row from a `RepoSource` summary — the shape both sides speak. A live
- * browse and a repository we hold produce byte-identical rows; only the base
- * of the href differs.
- */
-export function summaryRow(
-  base: string,
-  segment: "issues" | "pulls",
-  item: IssueSummary,
-  glyph: IconName,
-  state: "open" | "closed" | "merged",
-  extraMeta?: Html,
-): Html {
-  return threadRow(
-    base,
-    segment,
-    item,
-    item.labels,
-    state,
-    html`#${item.number}${extraMeta ?? null} opened ${time(item.createdAt)} by
-    ${item.originAuthor
-      ? originTag(item.originAuthor, glyph)
-      : userTag(item.authorName)}`,
-    item.commentCount,
-  );
-}
-
-/** The mark an imported author wears on this scope. */
-export function scopeGlyph(scope: RepoScope): IconName {
-  return scope.origin?.kind ?? scope.repo?.origin?.kind ?? "globe";
-}
-
-/** A `ListQuery` as the source's own query shape. */
-export function sourceQuery(
-  query: ListQuery,
-  kind: "issue" | "pull",
-  limit: number,
-): IssueQuery {
-  return {
-    kind,
-    state: query.state,
-    limit,
-    ...(query.label !== "" ? { label: query.label } : {}),
-    ...(query.author !== "" ? { author: query.author } : {}),
-    ...(query.q !== "" ? { query: query.q } : {}),
-    ...(query.cursor !== undefined ? { cursor: String(query.cursor) } : {}),
-  };
-}
-
-// GET /:owner/:name/issues
-export async function issuesList(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  // In the studio "everything told" is the issue list in the studio's own
-  // words — the same rule `issuePage` follows for one tell. `?mode=dev` is
-  // the one-off way to dev's list without switching the browser.
-  const record = studioRecord(ctx, repo);
-  if (record !== undefined) return await studioTells(ctx, repo, record);
-  const scope = localScope(ctx, repo);
-  const base = scope.base;
-  const query = readQuery(ctx);
-  const db = ctx.app.db;
-
-  const listed = await scope.source.issues(
-    sourceQuery(query, "issue", PER_PAGE),
-  );
-  const issues = listed.ok ? listed.value.items : [];
-  const nextCursor = listed.ok ? listed.value.next : null;
-  const repoLabels = listLabels(db, repo.id);
-  const glyph = scopeGlyph(scope);
-  // One grouped read for both numbers the seg control above the list shows.
-  const counts = issueCounts(db, repo.id, "issue");
-
-  const newIssue = ctx.auth.user
-    ? btn("New issue", {
-        href: `${base}/issues/new`,
-        variant: "primary",
-        icon: "plus",
-        shortcut: "c",
-      })
-    : btn("Sign in to open an issue", { href: "/signin" });
-  // A stranger can still say something is wrong on a public repository;
-  // its writers see how many such reports wait for them.
-  const outside = canRead(db, repo, undefined)
-    ? btn("Report a problem", { href: `${base}/report`, variant: "ghost" })
-    : null;
-  const waiting = waitingCount(ctx.app, ctx.auth.user, repo);
-  const reports =
-    waiting > 0
-      ? btn(`${waiting} from outside`, { href: `${base}/reports` })
-      : null;
-
-  const list =
-    issues.length === 0
-      ? empty({
-          icon: "issue",
-          title:
-            query.q !== "" || query.label !== "" || query.author !== ""
-              ? "No issues match those filters"
-              : query.state === "closed"
-                ? "No closed issues"
-                : query.state === "all"
-                  ? "No issues yet"
-                  : "No open issues",
-          note:
-            query.state === "open" && counts.closed > 0
-              ? "Everything here is closed."
-              : "Issues are how work gets described before it gets done.",
-          action: newIssue,
-        })
-      : listCard(
-          issues.map((issue) =>
-            summaryRow(base, "issues", issue, glyph, issue.state),
-          ),
-        );
-
-  const body = html`${scopeHeader(ctx, scope, "issues")}
-    <div class="mt">
-      ${when(
-        ctx.auth.user === undefined || reports !== null,
-        () => html`<div class="form-actions">${reports} ${ctx.auth.user === undefined ? outside : null}</div>`,
-      )}
-      ${filterBar(`${base}/issues`, query, repoLabels, counts)} ${list}
-      ${pager(
-        nextCursor === null
-          ? {}
-          : {
-              next: withFacet(`${base}/issues`, query, {}, Number(nextCursor)),
-            },
-      )}
-    </div>
-    ${when(ctx.auth.user !== undefined, () => stickyAction(newIssue))}
-    ${liveMount({ repo: base })}`;
-
-  return page({
-    ctx,
-    title: pageTitle("tells", repo, false),
-    crumbs: scope.crumbs,
-    palette: scope.palette,
-    body,
-    styleCss: labelCss([...repoLabels, ...issues.flatMap((i) => i.labels)]),
-    scriptJs: liveClientJs,
-  });
-}
 
 // ---- compose ----
 
