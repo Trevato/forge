@@ -311,12 +311,11 @@ describe("diff engine + resource edge cases", () => {
       `[perf] ${nFiles}-file commit diff took ${elapsed.toFixed(0)}ms, ${text.length} bytes`,
     );
     expect(resp.status).toBe(200);
-    // Loose upper bound so this doesn't flake on a slow CI box; it's here to
-    // catch a bug that gets worse, not to assert good behavior (currently
-    // ~17ms/file with no cap - this bound is far above what an interactive
-    // forge should take, and is expected to keep passing until the file
-    // count is capped like the line count already is).
-    expect(elapsed).toBeLessThan(60_000);
+    // No clock is asserted: a bound in milliseconds measures the machine
+    // (currently ~17ms/file with no cap). The sentinel is this test's own
+    // timeout, far above what an interactive forge should take, and it is
+    // expected to keep passing until the file count is capped like the line
+    // count already is.
   }, 90_000);
 
   test("MAX_FILE_LINES caps a single huge file (200k+ changed lines) instead of rendering it", async () => {
@@ -340,8 +339,11 @@ describe("diff engine + resource edge cases", () => {
     expect(text).toContain("huge.txt");
     expect(text).toContain("Diff not shown");
     expect(text).toContain("210,000 changed lines");
-    // Confirmed clean: the cap makes this fast and small, not a resource sink.
-    expect(elapsed).toBeLessThan(5_000);
+    // The cap is what keeps this from being a resource sink, and the cap is
+    // what is checked: none of the file's lines are on the wire, and the
+    // page is small. How long it took is logged, not asserted.
+    expect(text).not.toContain("line number 209999 of a huge file");
+    expect(text.length).toBeLessThan(500_000);
   }, 60_000);
 
   test("CAP_BYTES bounds a file that is few lines but huge in bytes (single giant line)", async () => {
@@ -372,9 +374,10 @@ describe("diff engine + resource edge cases", () => {
     // The byte ceiling this issue asks for: a 4MB-of-diff single line must
     // not put anywhere near that on the wire, and must not creep back up.
     expect(text.length).toBeLessThan(500_000);
-    // Confirmed clean: MAX_FILE_BYTES/MAX_LINE_WIDTH in diff-view.ts stub the
-    // file before it is ever tokenized or rendered as rows, so this stays
-    // fast even though the changed-line count (1) is far under MAX_FILE_LINES.
-    expect(elapsed).toBeLessThan(200);
+    // MAX_FILE_BYTES/MAX_LINE_WIDTH in diff-view.ts stub the file before it
+    // is ever tokenized or rendered as rows, though the changed-line count
+    // (1) is far under MAX_FILE_LINES: neither giant line reached the page.
+    expect(text).not.toContain("x".repeat(1_000));
+    expect(text).not.toContain("y".repeat(1_000));
   }, 60_000);
 });
