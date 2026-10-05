@@ -55,8 +55,9 @@ export interface FrontSignals {
   /** Pulls merged, last 30 days. */
   readonly ships: number;
   /**
-   * Repositories a person forked from it — not an agent's working fork,
-   * which is how the crew builds, not someone making it theirs.
+   * Public repositories a person forked from it — not an agent's working
+   * fork, which is how the crew builds, not someone making it theirs, and
+   * not a private fork, whose existence is its owner's to tell.
    */
   readonly forks: number;
   /**
@@ -122,7 +123,8 @@ export function frontSignals(
     .query<{ parent: string; n: number }, string[]>(
       `SELECT repo.fork_parent_id AS parent, COUNT(*) AS n
        FROM repo JOIN user ON user.id = repo.owner_id
-       WHERE user.is_agent = 0 AND repo.fork_parent_id IN (${list(0)})
+       WHERE user.is_agent = 0 AND repo.visibility = 'public'
+         AND repo.fork_parent_id IN (${list(0)})
        GROUP BY repo.fork_parent_id`,
     )
     .all(...ids);

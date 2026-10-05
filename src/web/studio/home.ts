@@ -193,22 +193,23 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   });
 }
 
-/** A shelf tile: picture, name, one clamped line, how it is. */
+/**
+ * A shelf tile: picture, name, one clamped line, how it is. The shelf
+ * holds only apps with a picture (`frontPage`), so there is no tile
+ * without one.
+ */
 function tile(entry: FrontEntry): Html {
   const { repo, state, picture } = entry;
+  if (picture === undefined) return html``;
   return html`<a class="app-tile" href="${repoBase(repo)}">
-    ${picture !== undefined
-      ? html`<img
-          class="app-tile-look"
-          src="${picture}"
-          width="${LOOK_SIZES.thumb.width}"
-          height="${LOOK_SIZES.thumb.height}"
-          alt=""
-          loading="lazy"
-        />`
-      : html`<span class="app-tile-blank" aria-hidden="true"
-          >${repo.name.slice(0, 1).toUpperCase()}</span
-        >`}
+    <img
+      class="app-tile-look"
+      src="${picture}"
+      width="${LOOK_SIZES.thumb.width}"
+      height="${LOOK_SIZES.thumb.height}"
+      alt=""
+      loading="lazy"
+    />
     <span class="app-tile-body">
       <span class="app-tile-name">${repo.name}</span>
       <span class="app-tile-desc truncate" title="${repo.description}"

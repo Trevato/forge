@@ -197,21 +197,26 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
     };
   };
 
+  // A tile is a live app's picture, pinned or not: one that is down, or
+  // has no picture taken as a stranger yet, waits (the looks sweep takes
+  // one, waking a pinned app to do it) — never a letter in a box.
+  const tileable = (e: FrontEntry): boolean =>
+    e.state !== undefined && SHOWN.has(e.state) && e.picture !== undefined;
   const pinnedEntries = pinned.map((repo) => entry(repo, true));
   const pinnedIds = new Set(pinned.map((r) => r.id));
   const ranked = rankFront(
     publicApps
       .filter((r) => !pinnedIds.has(r.repoId) && !picks.hidden.has(r.repoId))
       .map((r) => entry(repos.get(r.repoId)!, false))
-      .filter(
-        (e) =>
-          e.state !== undefined &&
-          SHOWN.has(e.state) &&
-          e.picture !== undefined,
-      )
+      .filter(tileable)
       .map((e) => ({ ...e, id: e.repo.id, owner: e.repo.ownerName })),
   );
-  const [first, ...rest] = pinnedEntries;
+  // Featured is a card, not a tile: the first pin may be a repository with
+  // no app, or one whose app strangers cannot open (the forge itself) —
+  // its crew at work is the picture. An app that is down is not featured.
+  const [first, ...rest] = pinnedEntries.filter(
+    (e, at) => (at === 0 ? e.state === undefined || SHOWN.has(e.state) : tileable(e)),
+  );
   const featuredEntry = first ?? ranked[0];
   const shelf = [
     ...(first === undefined ? [] : rest),

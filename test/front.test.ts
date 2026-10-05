@@ -18,6 +18,7 @@ import {
   AppsRuntime,
   type EnvState,
   type EnvStatus,
+  type LiveEnv,
 } from "../src/apps/runtime.ts";
 import { createApp as insertApp, type AppRecord } from "../src/core/apps.ts";
 import {
@@ -35,6 +36,7 @@ import { createIssue } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { startLooks } from "../src/looks/service.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -127,6 +129,7 @@ describe("the front page", () => {
   let memberToken: string;
   let runtime: AppsRuntime;
   const states = new Map<string, EnvState>();
+  const woken: string[] = [];
   let restore: () => void;
 
   const make = async (
@@ -249,7 +252,28 @@ describe("the front page", () => {
         } as EnvStatus,
       ],
     );
-    restore = () => status.mockRestore();
+    const one = spyOn(AppsRuntime.prototype, "envStatus").mockImplementation(
+      (record: AppRecord): EnvStatus =>
+        ({
+          env: "production",
+          state: states.get(record.id) ?? "stopped",
+          commitOid: HEAD,
+        }) as EnvStatus,
+    );
+    // Waking an app is what the looks sweep asks of a pinned app asleep
+    // without a picture: here it simply comes up.
+    const wake = spyOn(AppsRuntime.prototype, "wake").mockImplementation(
+      async (record: AppRecord) => {
+        woken.push(record.slug);
+        states.set(record.id, "running");
+        return { env: "production", commitOid: HEAD } as LiveEnv;
+      },
+    );
+    restore = () => {
+      status.mockRestore();
+      one.mockRestore();
+      wake.mockRestore();
+    };
   }, 30_000);
 
   afterAll(async () => {
@@ -270,6 +294,15 @@ describe("the front page", () => {
     app.db
       .query(`UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2`)
       .run(repo.id, fork.value.id);
+    // A private fork is its owner's to tell of: not counted.
+    const hidden = await createRepo(app, other, {
+      name: "signal-private-fork",
+      visibility: "private",
+    });
+    if (!hidden.ok) throw new Error(String(hidden.error));
+    app.db
+      .query(`UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2`)
+      .run(repo.id, hidden.value.id);
     // An agent's working fork is how the crew builds, not a fork.
     const agentFork = await createRepo(app, member, {
       name: "signal-agent-fork",
@@ -305,6 +338,15 @@ describe("the front page", () => {
     merged("2026-08-01T09:00:00.000Z"); // outside the window: not a ship now
     const signals = frontSignals(app.db, [repo.id], NOW).get(repo.id)!;
     expect(signals.forks).toBe(1);
+    // The repository's own Forks tab counts what the reader may see: a
+    // stranger is not told the private fork exists (nor the agent's,
+    // which is public here and so counts).
+    const nav = await (
+      await fetch(`${base}/owner/signal/forks`, { headers: { cookie: "forge_mode=dev" } })
+    ).text();
+    const tab = nav.slice(nav.indexOf('href="/owner/signal/forks"'), nav.indexOf("</a>", nav.indexOf('href="/owner/signal/forks"')));
+    expect(tab).toContain(">2<");
+    expect(tab).not.toContain(">3<");
     expect(signals.awakeHours).toBeCloseTo(3, 5);
     expect(signals.ships).toBe(1);
     expect(signals.shippedAt).toBe("2026-10-03T09:00:00.000Z");
@@ -504,4 +546,46 @@ describe("the front page", () => {
       issues: [{ number: issue.value.number, title: "Make the board faster" }],
     });
   });
+
+  test("never a letter tile: a pin without a stranger's picture, or one that is down, waits; the sweep wakes a pinned app asleep to picture it", async () => {
+    const bare = await make(admin, "pinned-bare", { picture: false });
+    const down = await make(admin, "pinned-down");
+    states.set(down.record.id, "failed");
+    const sleepy = await make(admin, "pinned-sleepy", { picture: false });
+    states.set(sleepy.record.id, "asleep");
+    expect(
+      (
+        await put(adminToken, {
+          pinned: ["owner/two", "owner/pinned-bare", "owner/pinned-down", "owner/pinned-sleepy"],
+          hidden: [],
+        })
+      ).status,
+    ).toBe(200);
+    const body = await door();
+    for (const name of ["pinned-bare", "pinned-down", "pinned-sleepy"])
+      expect(body).not.toContain(`href="/owner/${name}"`);
+    expect(body).not.toContain("app-tile-blank");
+
+    // The sweep wakes the pinned app asleep without a picture, and its
+    // picture is taken as nobody; then it takes its place.
+    const looks = startLooks(app, {
+      localUrl: servers.url,
+      capture: async (input) => {
+        writeFileSync(input.out, Buffer.from(encodePng(4, 4, new Uint8Array(64).fill(255))));
+        return { ok: true, value: undefined };
+      },
+    });
+    try {
+      looks.sweep();
+      const deadline = Date.now() + 20_000;
+      while (Date.now() < deadline && !(await door()).includes('href="/owner/pinned-sleepy"'))
+        await Bun.sleep(100);
+      expect(woken).toContain("pinned-sleepy");
+      // Not woken: a pin with a picture, a pin already up.
+      expect(woken).not.toContain("two");
+      expect(await door()).toContain('href="/owner/pinned-sleepy"');
+    } finally {
+      await looks.stop();
+    }
+  }, 60_000);
 });

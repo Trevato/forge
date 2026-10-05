@@ -403,14 +403,9 @@ form.inline { display: inline; margin-left: auto; }
 }
 .app-tile:hover { border-color: var(--accent); }
 .app-tile-look { display: block; width: 100%; height: auto; background: var(--muted); }
-.app-tile-blank {
-  display: flex; align-items: center; justify-content: center;
-  aspect-ratio: 1280 / 800; background: var(--muted); color: var(--muted-fg);
-}
 .app-tile-body { display: grid; gap: 6px; padding: 10px 12px; }
 .app-tile-name { font-weight: 600; font-size: 14px; }
 .app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
-.app-tile-blank { font-size: 40px; font-weight: 600; }
 
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */
