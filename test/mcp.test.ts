@@ -175,6 +175,8 @@ describe("the forge over MCP", () => {
       "explore",
       "front_page",
       "map",
+      "returns",
+      "spend",
       "usage",
       "link",
       "unlink",

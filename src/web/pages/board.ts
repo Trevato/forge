@@ -15,6 +15,8 @@
 
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
+import { tokenReturns } from "../../core/returns.ts";
+import { returnsRepos } from "../../actions/returns.ts";
 import {
   listDecisionsForRepos,
   type Decision,
@@ -218,6 +220,7 @@ export function boardPage(ctx: Ctx): Response {
       <time class="board-clock" id="board-clock"></time>
     </header>
     ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${asksStrip(ctx)}
+    ${returnsStrip(ctx, scope)}
     ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
@@ -363,6 +366,47 @@ function asksStrip(ctx: Ctx): Html | null {
   return html`<a class="board-asks" id="asks-measure" href="/asks"
     >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
     on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
+  >`;
+}
+
+// ---- what the tokens bought ----
+
+/** Dollars as the board writes them: cents under ten, whole above. */
+export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
+
+/**
+ * The week's spend against what it landed, in one line, owner facts only:
+ * dollars spent, changes landed, what a landed change cost, and what did
+ * not land, split in two: closed with nothing merged (spent, and gone) and
+ * still open (not yet an answer) — one tap to the breakdown
+ * (`/board/returns`). Where "Spend by credential…" says where the money
+ * went, this says what it bought. Absent when the
+ * viewer holds no owner facts here or nothing ran.
+ */
+function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const user = ctx.auth.user;
+  if (!user) return null;
+  // The crew spends on every repository, app or not: the whole of the
+  // viewer's own unless `?apps=` narrows the board.
+  const apps = ctx.url.searchParams.get("apps");
+  const ids = apps
+    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
+    : returnsRepos(ctx.app, user).map((r) => r.id);
+  if (ids.length === 0) return null;
+  const now = Date.now();
+  const r = tokenReturns(ctx.app.db, ids, {
+    since: new Date(now - ASKS_WINDOW_DAYS * 86_400_000).toISOString(),
+    until: new Date(now).toISOString(),
+  });
+  if (r.spent.runs === 0) return null;
+  const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
+  return html`<a class="board-asks" id="returns-line" href="${href}"
+    >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
+    ${r.onLanded.perChange.changes === 0
+      ? null
+      : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
+    · <b>${usd(r.landedNothing.closed.usd)}</b> closed with nothing
+    · <b>${usd(r.landedNothing.open.usd)}</b> still open</a
   >`;
 }
 

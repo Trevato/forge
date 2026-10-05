@@ -193,6 +193,7 @@ import {
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
+import { returnsPage } from "../web/pages/returns.ts";
 import {
   fleetGraphCsv,
   fleetGraphLive,
@@ -496,6 +497,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/mode", modeSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
+  // The board's tokens line, opened: what the spend bought (core/returns.ts).
+  router.add("GET", "/board/returns", returnsPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
   router.add("POST", "/asks/bulk", asksBulkSubmit);
