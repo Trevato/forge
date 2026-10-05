@@ -283,6 +283,21 @@ import {
 } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
+/** The 401 a stranger gets where an account is needed but a report is not. */
+function reportInstead(ctx: Ctx, repo: Repo): Response {
+  const page = `${ctx.url.origin}/${repo.ownerName}/${repo.name}/report`;
+  const api = `${ctx.url.origin}/api/v1/repos/${repo.ownerName}/${repo.name}/reports`;
+  return json(
+    {
+      error: "unauthorized",
+      message: `opening an issue needs an account; to report a problem without one, POST ${api} with {title, body?, page?}`,
+      report: { page, api, method: "POST", fields: ["title", "body", "page"] },
+    },
+    401,
+    { link: `<${page}>; rel="help"; title="Report a problem (no account needed)"` },
+  );
+}
+
 /** What a refused report is told: the shape that would have been taken. */
 const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
 
@@ -1754,6 +1769,13 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/issues", async (ctx) => {
+    // A stranger on a public repository is told the door that is open to
+    // them, in the body and as a link relation, not only that this one is shut.
+    if (ctx.auth.user === undefined) {
+      const repo = loadRepo(ctx);
+      if (repo !== undefined && canRead(ctx.app.db, repo, undefined))
+        return reportInstead(ctx, repo);
+    }
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = loadRepo(ctx);

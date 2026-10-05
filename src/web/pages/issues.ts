@@ -26,6 +26,7 @@ import {
   repoPalette,
   scopeHeader,
   signInFirst,
+  signInHref,
   stickyAction,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -468,8 +469,39 @@ function newIssueForm(
 export function newIssuePage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user)
+    return canRead(ctx.app.db, repo, undefined)
+      ? accountOrReport(ctx, repo)
+      : signInFirst(ctx);
   return composePage(ctx, repo, { title: "", body: "" });
+}
+
+/**
+ * A stranger who asked to open an issue on a public repository: both doors,
+ * the one that needs an account and the one that does not, rather than a
+ * sign-in page that never says the second exists.
+ */
+function accountOrReport(ctx: Ctx, repo: Repo): Response {
+  const base = repoBase(repo);
+  return page({
+    ctx,
+    title: `New issue · ${repo.ownerName}/${repo.name}`,
+    crumbs: crumbsFor(repo),
+    body: html`${repoHeader(ctx, repo, "issues", {
+        compact: true,
+        ownTitle: true,
+      })}
+      ${empty({
+        icon: "issue",
+        title: "Opening an issue needs an account",
+        note: "Something wrong? You can report it without one; a person who keeps this repository reads it.",
+        action: html`${btn("Report a problem", {
+          href: `${base}/report`,
+          variant: "primary",
+        })}
+        ${btn("Sign in", { href: signInHref(ctx), variant: "ghost" })}`,
+      })}`,
+  });
 }
 
 // GET /:owner/:name/tells/new — the studio's own door onto the compose page
