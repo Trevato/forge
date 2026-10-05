@@ -18,6 +18,7 @@
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { listCrewRoles, type Agent } from "../core/agents.ts";
+import { getHold, lastRelease } from "../core/holds.ts";
 import { getIssueById } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
@@ -107,6 +108,11 @@ export function reviewStage(
 /**
  * When the pull's head first went green, and the review runs sent for it
  * since — read from the run table, so a restart forgets nothing.
+ *
+ * A hold stops this clock. Review is owed from when the head went green or
+ * from when the pull was last let go, whichever is later, and only runs
+ * sent since then count: a pull held past the lapse and then released is
+ * sent to review like any newly green one, never landed as "lapsed".
  */
 export function reviewAttempts(
   db: Database,
@@ -119,17 +125,19 @@ export function reviewAttempts(
     )
     .get(pull.id, pull.headOid)?.at;
   if (green === null || green === undefined) return undefined;
+  const released = lastRelease(db, pull.id);
+  const since = released !== undefined && released > green ? released : green;
   const attempts = db
     .query<{ created_at: string; state: string }, [string, string]>(
       `SELECT created_at, state FROM run WHERE issue_id = ?1 AND kind = 'agent'
          AND reason = 'review' AND created_at >= ?2 ORDER BY created_at, id`,
     )
-    .all(pull.id, green)
+    .all(pull.id, since)
     .map((r) => ({
       createdAt: r.created_at,
       active: r.state === "queued" || r.state === "running",
     }));
-  return { greenAt: green, attempts };
+  return { greenAt: since, attempts };
 }
 
 /**
@@ -137,14 +145,16 @@ export function reviewAttempts(
  * when it is due (`reviewStage`), and say where it stands. `none` when
  * there is nothing to wait for — no reviewer on the crew — and `done`
  * when a verdict is on the head. A run the pull's builder still has open
- * does not stop a send — the review queues behind it.
+ * does not stop a send — the review queues behind it. `held` when a person
+ * holds the pull: nothing is sent, whoever asks.
  */
 export async function sendToReview(
   app: App,
   repo: Repo,
   pull: Pull,
   now = new Date(),
-): Promise<"none" | "done" | "sent" | "wait" | "lapsed"> {
+): Promise<"none" | "done" | "sent" | "wait" | "lapsed" | "held"> {
+  if (getHold(app.db, pull.id) !== undefined) return "held";
   const reviewers = reviewersOf(app.db, repo.id);
   if (reviewers.length === 0) return "none";
   const seen = reviewSummary(app.db, pull.id, pull.headOid);

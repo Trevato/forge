@@ -10,7 +10,9 @@ import {
   removeAccount,
   suspendAccount,
   unsuspendAccount,
+  verifyAccount,
 } from "../../actions/accounts.ts";
+import { mailConfigured } from "../../actions/verify.ts";
 import type { AccountRow } from "../../core/accounts.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -47,6 +49,7 @@ function shell(ctx: Ctx, body: Html, status = 200): Response {
 function standing(a: AccountRow): Html {
   if (a.removedAt !== null) return badge("Removed", { variant: "outline" });
   if (a.suspendedAt !== null) return badge("Suspended", { tone: "danger" });
+  if (!a.verified) return badge("Email not verified", { variant: "outline" });
   return html``;
 }
 
@@ -78,6 +81,11 @@ function row(a: AccountRow): Html {
     </div>
     ${actionable
       ? html`<div class="row-actions">
+          ${a.verified
+            ? null
+            : html`<form method="post" action="${at}/verify">
+                ${btn("Verify email", { type: "submit", size: "sm" })}
+              </form>`}
           ${a.suspendedAt === null
             ? confirmAction({
                 action: `${at}/suspend`,
@@ -103,9 +111,21 @@ export function accountsPage(ctx: Ctx): Response {
   const listed = listAccounts(ctx.app, ctx.auth.user);
   if (!listed.ok) return notFoundPage(ctx);
   const people = listed.value;
+  // Without mail a newcomer cannot prove an address; the owner's word is
+  // the only way in, and the page says so where it is given.
+  const noMail = mailConfigured(ctx.app)
+    ? null
+    : card(
+        html`<p>
+          Mail is not configured, so newcomers cannot verify their email
+          themselves. Verify them here, or set <code>MAIL_SMTP_URL</code> and
+          <code>MAIL_FROM</code> under <a href="/settings/secrets">Secrets</a>.
+        </p>`,
+        { tone: "attn" },
+      );
   return shell(
     ctx,
-    card(
+    html`${noMail}${card(
       people.length === 0
         ? empty({ icon: "users", title: "Nobody has joined yet." })
         : html`<ul class="rows">
@@ -119,16 +139,17 @@ export function accountsPage(ctx: Ctx): Response {
             everything its repositories run; removing deletes what it owns.
           </p>`,
       },
-    ),
+    )}`,
   );
 }
 
-type Act = "suspend" | "unsuspend" | "remove";
+type Act = "suspend" | "unsuspend" | "remove" | "verify";
 
 const DONE: Readonly<Record<Act, string>> = {
   suspend: "suspended",
   unsuspend: "unsuspended",
   remove: "removed",
+  verify: "verified",
 };
 
 // POST /settings/accounts/:username/(suspend|unsuspend|remove)
@@ -144,7 +165,9 @@ export function accountAct(act: Act) {
         ? await suspendAccount(ctx.app, ctx.auth.user, username)
         : act === "unsuspend"
           ? unsuspendAccount(ctx.app, ctx.auth.user, username)
-          : await removeAccount(ctx.app, ctx.auth.user, username);
+          : act === "verify"
+            ? verifyAccount(ctx.app, ctx.auth.user, username)
+            : await removeAccount(ctx.app, ctx.auth.user, username);
     if (!done.ok) {
       if (done.error === "not_found") return notFoundPage(ctx);
       return flashTo(ctx, "/settings/accounts", {

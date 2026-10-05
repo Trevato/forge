@@ -13,6 +13,7 @@ import { crewForRepos } from "../../core/agents.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
+import { getHold, holdsFor } from "../../core/holds.ts";
 import { askDismissals } from "../../core/interactions.ts";
 import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
@@ -244,10 +245,17 @@ function askCandidatesFor(
     pulls.map((p) => p.id),
   );
   const joined = new Map(joinMany(db, pulls).map((p) => [p.id, p]));
+  const held = holdsFor(
+    db,
+    pulls.map((p) => p.id),
+  );
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
     if (!pull) continue;
+    // Whoever holds a pull has already answered it: "not yet". It asks
+    // them nothing until they let it go.
+    if (held.get(issue.id)?.heldBy === user.id) continue;
     const check = checks.get(issue.id);
     const who = issue.authorName;
     // The crew is on it: that is working, not a question for a person.
@@ -515,12 +523,19 @@ function waitingOn(
 }
 
 /** How an ask that is no longer asked ended, when nobody dismissed it. */
-function endOf(db: Database, askId: string, raisedAt: string): Exclude<AskEnd, "dismissed"> {
+function endOf(
+  db: Database,
+  viewerId: string,
+  askId: string,
+  raisedAt: string,
+): Exclude<AskEnd, "dismissed"> {
   const [kind, what] = askId.split(":") as [DecisionKind, string];
   if (kind === "look" || kind === "stopped") {
     const pull = getIssueById(db, what);
-    // Shipped or closed: someone decided. Still open: the cause went away.
-    return pull !== undefined && pull.state !== "open" ? "acted" : "expired";
+    // Shipped or closed: someone decided. Held by the one it asked: they
+    // answered "not yet". Still open otherwise: the cause went away.
+    if (pull !== undefined && pull.state !== "open") return "acted";
+    return getHold(db, what)?.heldBy === viewerId ? "acted" : "expired";
   }
   if (kind === "parked") {
     const issue = getIssueById(db, what);
@@ -580,7 +595,7 @@ export function recordAskLedger(db: Database, now = new Date()): void {
       user.id,
       all.map(brief),
       shown.map(brief),
-      (askId, raisedAt) => endOf(db, askId, raisedAt),
+      (askId, raisedAt) => endOf(db, user.id, askId, raisedAt),
       at,
     );
   }

@@ -6,6 +6,17 @@
  */
 
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import { defect } from "../kernel/error.ts";
+import {
+  armClose,
+  BODY_MAX,
+  carryNotes,
+  mustClose,
+  noteSignedIn,
+  readBounded,
+  REQUEST_MAX,
+  settleBody,
+} from "./limits.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
@@ -127,6 +138,8 @@ import {
   saySubmit,
   shipSubmit,
   takeBackSubmit,
+  holdSubmit,
+  releaseSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
@@ -138,6 +151,7 @@ import {
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
+import { explorePage } from "../web/studio/explore.ts";
 import {
   frontUpdate,
   liveAppsFragment,
@@ -300,7 +314,8 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { clientAddress, notePeer } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { parseCidrs } from "../kernel/cidr.ts";
 import {
   reportAcceptSubmit,
   reportDismissSubmit,
@@ -467,6 +482,8 @@ export function buildRouter(): Router<Handler> {
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
   router.add("GET", "/front", studioDoor);
+  // Apps and people ranked by real numbers, narrowed in one line (#607).
+  router.add("GET", "/explore", explorePage);
   router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
@@ -580,6 +597,7 @@ export function buildRouter(): Router<Handler> {
     accountAct("unsuspend"),
   );
   router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
+  router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);
@@ -771,6 +789,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/hold", holdSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/release", releaseSubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",
@@ -1139,14 +1159,25 @@ async function withIdempotency(
   // Read the body once and hand the handler a request carrying the same
   // bytes. Cloning would work too; this way there is exactly one copy, and
   // exactly one thing that can be hashed.
-  const raw = await request.text();
+  // Counted like any body (\`http/limits.ts\`): a key does not buy a read
+  // past the cap.
+  const bytes = await readBounded(request, BODY_MAX);
+  if (bytes === "too_large")
+    return apiError("too_large", 413, `at most ${BODY_MAX} bytes`);
+  const raw = new TextDecoder().decode(bytes);
   const fingerprint = requestFingerprint(request.method, url.pathname, raw);
-  const replay = (): Request =>
-    new Request(request.url, {
+  const replay = (): Request => {
+    const again = new Request(request.url, {
       method: request.method,
       headers: request.headers,
       ...(raw === "" ? {} : { body: raw }),
     });
+    // The replay is the same caller: limits, the audit and the body caps
+    // still see what was noted of the original.
+    carryPeer(request, again);
+    carryNotes(request, again);
+    return again;
+  };
 
   const stored = lookupIdempotent(app.db, credential, key);
   if (stored !== undefined) {
@@ -1352,6 +1383,18 @@ function refusedByDatabase(error: unknown): string | undefined {
   return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
 }
 
+/** A response with one header set, copying it when its headers are frozen. */
+function withHeader(response: Response, name: string, value: string): Response {
+  try {
+    response.headers.set(name, value);
+    return response;
+  } catch {
+    const copy = new Response(response.body, response);
+    copy.headers.set(name, value);
+    return copy;
+  }
+}
+
 /** The hook sockets a data directory may hold: this forge's, and others'. */
 const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
 
@@ -1402,10 +1445,24 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // Who may say who the client is (\`http/peer.ts\`), settled once.
+  const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
+  if (!proxies.ok)
+    defect("config.trusted_proxies", `not an address or range: ${proxies.error}`);
+  const trust: ProxyTrust = {
+    proxies: proxies.value,
+    ...(app.config.clientIpHeader === undefined
+      ? {}
+      : { header: app.config.clientIpHeader }),
+  };
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
     idleTimeout: 120,
+    // The largest thing anyone may send — a git push. Every reader below it
+    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
+    // this one only on a declared length.
+    maxRequestBodySize: REQUEST_MAX,
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
     websocket: appWebSocket,
@@ -1423,12 +1480,20 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
-      notePeer(request, server.requestIP(request)?.address);
+      notePeer(request, server.requestIP(request)?.address, trust);
+      // A body refused part-way, or one left unread with no declared length,
+      // ends its connection once answered (`http/limits.ts`).
+      armClose(request, () => server.timeout(request, 1));
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
-      return securityFloor(
+      const response = securityFloor(
         await answer(app, router, apiRouter, limiter, request),
       );
+      await settleBody(request);
+      if (!mustClose(request)) return response;
+      // Said, so no client or proxy reuses it; then done, so none can.
+      server.timeout(request, 1);
+      return withHeader(response, "connection", "close");
     },
     error(error) {
       const refused = refusedByDatabase(error);
@@ -1534,6 +1599,8 @@ async function answerGet(
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
+  // From here a body's cap depends on who is asking (\`http/limits.ts\`).
+  if (auth.user !== undefined) noteSignedIn(request);
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is

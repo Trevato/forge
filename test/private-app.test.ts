@@ -16,10 +16,16 @@ import { newApp, openEnvUrl } from "../src/actions/apps.ts";
 import { updateRepoSettings } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { grantUrl } from "../src/apps/proxy.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import { AppsRuntime, envsFor } from "../src/apps/runtime.ts";
 import { runAppTty, type TtyHost } from "../src/apps/tty.ts";
 import type { AppRecord } from "../src/core/apps.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { audienceFilter } from "../src/core/event_audience.ts";
+import { createRun, listRuns } from "../src/core/runs.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { pullWord } from "../src/web/studio/words.ts";
+import { servingHistory } from "../src/web/studio/words.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -240,6 +246,165 @@ describe("a private app on a public repository stays private", () => {
       expect(through.ok).toBe(false);
       if (!through.ok) expect(through.error.refusal).toBe("no_pty");
     }
+  });
+
+  test("a reader sees none of a private app's state or errors; a writer sees it", async () => {
+    // The runtime knows production from the first deploy on.
+    expect(envsFor(app, alice, record).length).toBeGreaterThan(0);
+    expect(envsFor(app, bot, record).length).toBeGreaterThan(0);
+    expect(envsFor(app, carol, record)).toEqual([]);
+    expect(envsFor(app, undefined, record)).toEqual([]);
+    const as = (cookie: string) =>
+      fetch(`${servers.url}/api/v1/repos/alice/ledger/app`, {
+        headers: { cookie },
+      }).then((r) => r.json() as Promise<any>);
+    expect((await as(carolCookie)).environments).toEqual([]);
+    expect((await as(aliceCookie)).environments.length).toBeGreaterThan(0);
+  });
+
+  test("a private app's runs and logs are refused to a reader and an anonymous visitor; a writer reads them", async () => {
+    const run = listRuns(app.db, record.repoId, { kind: "deploy", limit: 1 })[0];
+    expect(run).toBeDefined();
+    if (run === undefined) return;
+    const base = `${servers.url}/alice/ledger`;
+    const api = `${servers.url}/api/v1/repos/alice/ledger`;
+    const paths = [
+      `${base}/runs/${run.id}`,
+      `${base}/runs/${run.id}?all=1`,
+      `${api}/runs/${run.id}`,
+      `${api}/runs/${run.id}/log`,
+    ];
+    for (const cookie of [carolCookie, ""]) {
+      const headers = cookie === "" ? {} : { cookie };
+      for (const path of paths) {
+        const res = await fetch(path, { headers, redirect: "manual" });
+        expect(`${path} ${res.status}`).toBe(`${path} 404`);
+      }
+      const listed = (await (
+        await fetch(`${api}/runs`, { headers })
+      ).json()) as any;
+      expect(listed.items).toEqual([]);
+      const page = await (
+        await fetch(`${base}/runs`, { headers: { ...headers, cookie: `${cookie}; forge_mode=dev` } })
+      ).text();
+      expect(page).not.toContain(run.id);
+    }
+    for (const path of paths) {
+      const res = await fetch(path, { headers: { cookie: aliceCookie } });
+      expect(`${path} ${res.status}`).toBe(`${path} 200`);
+    }
+  });
+
+  test("a private app's run and serving events reach only those who may enter it", () => {
+    const event = (kind: string) => ({
+      id: 1,
+      kind,
+      repoId: record.repoId,
+      actorId: null,
+      payload: { summary: "deploy failed: a secret path" },
+      createdAt: new Date().toISOString(),
+    });
+    for (const kind of ["run.finished", "app.serving", "app.stopped"]) {
+      expect(audienceFilter(app.db, carol)(event(kind) as any)).toBe(false);
+      expect(audienceFilter(app.db, undefined)(event(kind) as any)).toBe(false);
+      expect(audienceFilter(app.db, alice)(event(kind) as any)).toBe(true);
+      expect(audienceFilter(app.db, bot)(event(kind) as any)).toBe(true);
+    }
+    // The repository's own events stay the readers'.
+    expect(audienceFilter(app.db, carol)(event("issue.opened") as any)).toBe(true);
+  });
+
+  test("a merged pull's word tells a reader only that it merged", async () => {
+    const commit = "a".repeat(40);
+    const fakeRuntime = {
+      status: () => [
+        { env: "production", state: "running", commitOid: commit, error: "SECRET-ERROR" },
+      ],
+    } as never;
+    const merged = {
+      mergedAt: new Date().toISOString(),
+      mergedOid: commit,
+      headOid: commit,
+      state: "closed",
+    } as never;
+    const ctxFor = (viewer: User | undefined) => ({
+      db: app.db,
+      dir: "",
+      runtime: fakeRuntime,
+      record,
+      history: servingHistory(),
+      viewer,
+    });
+    expect(await pullWord(ctxFor(carol), merged)).toEqual({ word: "shipped", note: "merged" });
+    expect(await pullWord(ctxFor(undefined), merged)).toEqual({ word: "shipped", note: "merged" });
+    expect((await pullWord(ctxFor(alice), merged)).note).toBe("production is serving it");
+  });
+
+  test("the MCP's now and the tell page show a private app's runs only to those who may enter it", async () => {
+    const issue = openIssue(app, alice, repo(), { title: "Count the books" });
+    if (!issue.ok) throw new Error(String(issue.error));
+    const run = createRun(app.db, {
+      repoId: record.repoId,
+      kind: "agent",
+      issueId: issue.value.id,
+      actorId: bot.id,
+      reason: "assigned",
+      summary: "SECRET-SUMMARY of the books",
+    });
+    const now = async (who: User) => {
+      const token = createToken(app.db, who.id, "t", "ro").token;
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "now", arguments: {} },
+        }),
+      });
+      return ((await res.json()) as any).result.content[0].text as string;
+    };
+    expect(await now(carol)).not.toContain(run.id);
+    expect(await now(alice)).toContain(run.id);
+    const tell = async (cookie: string) =>
+      (
+        await fetch(`${servers.url}/alice/ledger/issues/${issue.value.number}`, {
+          headers: cookie === "" ? {} : { cookie },
+        })
+      ).text();
+    for (const cookie of [carolCookie, ""]) {
+      const page = await tell(cookie);
+      expect(page).not.toContain("SECRET-SUMMARY");
+      expect(page).not.toContain(run.id);
+    }
+    expect(await tell(aliceCookie)).toContain(run.id);
+  });
+
+  test("the owner page's shelf and search show a reader the private app's name, never its state or word", async () => {
+    const rowOf = (page: string): string => {
+      const at = page.indexOf('href="/alice/ledger"');
+      expect(at).toBeGreaterThan(-1);
+      return page.slice(at, page.indexOf("</a>", at));
+    };
+    const fetchAs = (path: string, cookie: string) =>
+      fetch(`${servers.url}${path}`, {
+        headers: cookie === "" ? {} : { cookie },
+      }).then((r) => r.text());
+    for (const cookie of [carolCookie, ""]) {
+      const shelf = rowOf(await fetchAs("/alice", cookie));
+      expect(shelf).toContain("private app");
+      expect(shelf).not.toContain("data-word");
+      expect(shelf).not.toMatch(/serving|not running|not up|starting|asleep|live/);
+      expect(shelf).not.toContain('data-tone="success"');
+      const hit = rowOf(await fetchAs("/search?q=ledger", cookie));
+      expect(hit).not.toMatch(/serving|not running|not up|starting|asleep|\blive\b/);
+      expect(hit).not.toContain('data-tone="success"');
+    }
+    const owners = rowOf(await fetchAs("/alice", aliceCookie));
+    expect(owners).not.toContain("private app");
+    expect(owners).toContain("data-word");
+    expect(owners).toMatch(/serving|not running|not up|starting|asleep|live/);
   });
 
   test("the settings page says, before saving, what stays private", async () => {

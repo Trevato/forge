@@ -84,12 +84,26 @@ export interface ForgeConfig {
   /** Stand-in for `mail` in tests: receives each message instead of SMTP. */
   mailer?: Mailer;
   /**
+   * Proxies whose forwarded headers say who the client is
+   * (\`FORGE_TRUSTED_PROXIES\`, CIDR ranges). Empty or absent, only this
+   * machine is trusted to say so (\`http/peer.ts\`).
+   */
+  trustedProxies?: readonly string[];
+  /** A header a trusted edge sets to the client's address (\`FORGE_CLIENT_IP_HEADER\`). */
+  clientIpHeader?: string;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.
    * Undefined means the forge is running without SSH.
    */
   sshPort?: number;
+  /**
+   * The exact command the host forge gave this one to reach its terminal
+   * (`FORGE_APP_SSH`), when it runs as an app of another forge (a spawned
+   * child). Printed verbatim wherever the forge says how to connect.
+   */
+  appSsh?: string;
 }
 
 export interface App {

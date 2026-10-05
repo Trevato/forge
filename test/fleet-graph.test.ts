@@ -130,6 +130,8 @@ describe("the graph", () => {
       email: "root@forge.local",
       password: "a-root-passphrase",
       adminIfFirst: true,
+      // A fixture that names its admin "root" on purpose.
+      allowReserved: true,
     });
     if (!root.ok) throw new Error("root");
     const a = await createUser(app.db, { trusted: true,

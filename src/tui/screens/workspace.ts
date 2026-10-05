@@ -106,6 +106,7 @@ import {
   promptScreen,
   runAsync,
   slug,
+  openOnWeb,
 } from "./common.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
@@ -114,7 +115,6 @@ import { liveBindings, liveKey } from "./mirror.ts";
 import { forkScreen } from "./newrepo.ts";
 import { pullScreen } from "./pull.ts";
 import { branchesScreen } from "./refs.ts";
-import { settingsScreen } from "./settings.ts";
 import {
   hostOf,
   knownDefaultRef,
@@ -1662,7 +1662,12 @@ export function workspaceScreen(
         return true;
       }
       if (plain && e.key === "," && repo !== undefined && admin()) {
-        ctx.push(settingsScreen(f, ctx, repo));
+        openOnWeb(
+          f,
+          ctx,
+          `/${repo.ownerName}/${repo.name}/settings`,
+          "Settings",
+        );
         return true;
       }
       if (plain && e.key === "r") {

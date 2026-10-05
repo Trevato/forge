@@ -8,7 +8,7 @@
  */
 
 import { envPull } from "../../apps/data.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
@@ -19,6 +19,7 @@ import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readRunLogTail } from "../../runs/log.ts";
+import { mayReadRuns } from "../../actions/runs.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
@@ -106,7 +107,7 @@ export async function nowCard(
       i.id !== repo.directionIssueId &&
       !openByIssue.has(i.number),
   );
-  // With nobody on the crew to build, `tellCrew` cannot route a tell to
+  // With nobody on the crew to build, `tell` cannot route a tell to
   // anyone — it stays unassigned forever, not merely unpicked-up like
   // `waiting` below. Scoped to that one honest cause (never to a tell a
   // person simply hasn't assigned while builders exist), so widening this
@@ -162,7 +163,8 @@ export async function nowCard(
   const activeRun = rowsNow.find(
     (r) => r.kind === "agent" && r.state === "running",
   );
-  const activeTail = activeRun
+  const activeTail =
+    activeRun && mayReadRuns(ctx.app, ctx.auth.user, repo)
     ? logBox({
         id: "app-run-tail",
         who: voiceFor(runActor(activeRun), ownerFacts),
@@ -207,7 +209,7 @@ export async function nowCard(
 
   // An environment the sleep sweep is sparing because it is mid-work:
   // that is something going on in the app, and the reason it is awake.
-  const busyRows = (wordCtx.runtime?.status(record) ?? []).flatMap((env) => {
+  const busyRows = envsFor(ctx.app, ctx.auth.user, record).flatMap((env) => {
     if (env.busy === undefined) return [];
     const number = envPull(env.env);
     return [
@@ -342,6 +344,7 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
       runtime: appsRuntime(ctx.app),
       record,
       history: servingHistory(),
+      viewer: ctx.auth.user,
     },
     // The one fact Now borrows from the head card, decided where the head
     // card decides it, so the two never disagree about what is tailing.

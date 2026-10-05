@@ -24,7 +24,7 @@ import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
@@ -99,7 +99,7 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
   for (const repo of repos) {
     const record = records.get(repo.id);
     if (record === undefined) continue;
-    const envs = runtime === undefined ? [] : runtime.status(record);
+    const envs = envsFor(ctx.app, ctx.auth.user, record);
     out.push({
       record,
       repo,

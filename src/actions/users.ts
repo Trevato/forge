@@ -22,7 +22,6 @@ import {
   changePassword as rehash,
   cleanDisplayName,
   createUser,
-  getUserByName,
   updateProfile as writeProfile,
   verifyPassword,
   type CreateUserError,
@@ -39,7 +38,7 @@ export interface SignUpInput {
   password: string;
 }
 
-export type SignUpError = CreateUserError | "username_reserved";
+export type SignUpError = CreateUserError;
 
 /**
  * The first account on a fresh forge is the admin — no setup wizard. A name
@@ -52,13 +51,6 @@ export async function signUp(
   /** Where the request came from, for the owner's audit of who joined. */
   from: { address?: string | undefined } = {},
 ): Promise<Result<User, SignUpError>> {
-  // A name someone already holds is taken (createUser says so); only a new
-  // name can be a reserved one.
-  if (
-    getUserByName(app.db, input.username) === undefined &&
-    reservedName(app.db, input.username) !== undefined
-  )
-    return err("username_reserved");
   const created = await createUser(app.db, { ...input, adminIfFirst: true });
   if (!created.ok) return created;
   app.bus.append({
@@ -118,7 +110,13 @@ export function updateProfile(
   app: App,
   actor: User | undefined,
   patch: ProfilePatch,
-): Result<User, "unauthorized" | "display_name_reserved" | UpdateProfileError> {
+): Result<
+  User,
+  | "unauthorized"
+  | "display_name_reserved"
+  | "display_name_mixed_script"
+  | UpdateProfileError
+> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   // A display name is read beside every comment: nobody else may wear the
@@ -128,12 +126,13 @@ export function updateProfile(
     patch.displayName === undefined
       ? undefined
       : cleanDisplayName(patch.displayName);
-  if (
-    displayName !== undefined &&
-    displayName !== user.value.displayName &&
-    reservedName(app.db, displayName, user.value.id) !== undefined
-  )
-    return err("display_name_reserved");
+  const reserved =
+    displayName !== undefined && displayName !== user.value.displayName
+      ? reservedName(app.db, displayName, user.value.id)
+      : undefined;
+  // A mix of alphabets is refused for what it is, not as someone's name.
+  if (reserved === "mixed") return err("display_name_mixed_script");
+  if (reserved !== undefined) return err("display_name_reserved");
   const updated = writeProfile(app.db, user.value.id, patch);
   if (!updated.ok) return updated;
   // A new address is unproven at once; its link follows (and can be asked

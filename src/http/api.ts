@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
   askedJson,
@@ -20,6 +21,7 @@ import {
   removeAccount,
   suspendAccount,
   unsuspendAccount,
+  verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
 import { emailVerified } from "../core/verify.ts";
@@ -84,6 +86,8 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { holdPull, releasePull } from "../actions/holds.ts";
+import { getHold, type Hold } from "../core/holds.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -222,7 +226,7 @@ import {
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
-import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
+import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { isCrew, type Agent } from "../core/agents.ts";
@@ -288,10 +292,14 @@ import {
   setAppMembersThrough,
   type AppMembersError,
 } from "../actions/app_members.ts";
-
+import {
+  explore,
+  exploreLine,
+  parseExploreQuery,
+} from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import type { Router } from "./router.ts";
-import { clientAddress } from "./peer.ts";
+import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
 import {
   acceptReport,
@@ -819,7 +827,7 @@ function repoQuery(ctx: Ctx) {
  * and the domains of its own that are verified — the ones the forge serves.
  */
 function appJson(
-  db: Database,
+  ctx: Ctx,
   record: AppRecord,
   repo: Repo,
   runtime: AppsRuntime | undefined,
@@ -828,11 +836,12 @@ function appJson(
     ...record,
     repo: { owner: repo.ownerName, name: repo.name },
     url: runtime?.urlFor(record, "production") ?? null,
-    domains: listDomains(db, record.id)
+    domains: listDomains(ctx.app.db, record.id)
       .filter((d) => d.verifiedAt !== null)
       .map((d) => d.host),
     serving: runtime !== undefined,
-    environments: runtime?.status(record) ?? [],
+    environments:
+      runtime === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record),
   };
 }
 
@@ -903,6 +912,13 @@ function loadIssue(ctx: Ctx): Found<{ issue: Issue }> {
   return found.issue.kind === "issue" ? found : { error: notFound() };
 }
 
+/** A hold as the API says it: who, why and since when. */
+const holdJson = (hold: Hold) => ({
+  by: hold.heldByName,
+  why: hold.why,
+  at: hold.heldAt,
+});
+
 function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
   const repo = loadRepo(ctx);
   if (!repo) return { error: notFound() };
@@ -956,7 +972,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
-    const input = await body(ctx.request);
+    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
     const created = await signUp(
       ctx.app,
       {
@@ -989,7 +1008,10 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
-    const input = await body(ctx.request);
+    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
     const verified = await verifyPassword(
       ctx.app.db,
       str(input.username),
@@ -1111,6 +1133,15 @@ export function apiRoutes(router: Router<Handler>): void {
     return done.ok ? json({ username: done.value.username, suspendedAt: null }) : accountError(done.error);
   });
 
+  router.add("POST", "/api/v1/admin/accounts/:username/verify", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = verifyAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    return done.ok
+      ? json({ username: done.value.username, verified: true })
+      : accountError(done.error);
+  });
+
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
@@ -1154,7 +1185,10 @@ export function apiRoutes(router: Router<Handler>): void {
   // Tokens are minted, listed, and revoked with the account itself (a
   // session or the password) — never with another token.
   router.add("POST", "/api/v1/tokens", async (ctx) => {
-    const input = await body(ctx.request);
+    // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
     let user: User | undefined;
     if (
       (ctx.auth.via === "session" || ctx.auth.via === "edge") &&
@@ -1931,7 +1965,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.app,
       repo,
       { title: str(input.title), body: str(input.body), page: str(input.page) },
-      clientAddress(ctx.request),
+      clientBucket(ctx.request),
     );
     if (!filed.ok) {
       const refusal = filed.error;
@@ -2316,7 +2350,13 @@ export function apiRoutes(router: Router<Handler>): void {
       found.pull,
       { db: ctx.app.db, requireReview: found.repo.requireReview },
     );
-    return json({ ...withLabels(ctx, found.pull), status, diff });
+    const hold = getHold(ctx.app.db, found.pull.id);
+    return json({
+      ...withLabels(ctx, found.pull),
+      status,
+      diff,
+      hold: hold === undefined ? null : holdJson(hold),
+    });
   });
 
   router.add(
@@ -2342,6 +2382,49 @@ export function apiRoutes(router: Router<Handler>): void {
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
       );
+    },
+  );
+
+  // Hold a pull, or let it go (`actions/holds.ts`): a person who writes the
+  // repository says "not this one yet", and no rule sends it to review or
+  // lands it until it is released. A person's own merge is untouched.
+  router.add(
+    "PUT",
+    "/api/v1/repos/:owner/:name/pulls/:number/hold",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const held = holdPull(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        str(input.why),
+      );
+      if (!held.ok)
+        return respondAccess(held.error, held.error === "not_open" ? 409 : 422);
+      return json({ held: true, hold: holdJson(held.value) });
+    },
+  );
+  router.add(
+    "DELETE",
+    "/api/v1/repos/:owner/:name/pulls/:number/hold",
+    (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const released = releasePull(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+      );
+      if (!released.ok) return respondAccess(released.error, 422);
+      return json({ held: false, released: released.value });
     },
   );
 
@@ -3211,6 +3294,15 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({ ...v, ...forge, ok: forge.ok && v.ok });
   });
 
+  // Explore (#607): the rows /explore shows, for the same one line.
+  router.add("GET", "/api/v1/explore", async (ctx) => {
+    const query = parseExploreQuery(ctx.url.searchParams.get("q") ?? "");
+    return json({
+      query: exploreLine(query),
+      items: await explore(ctx.app, ctx.auth.user, query),
+    });
+  });
+
   // The front page (#686): what a stranger is shown, for anyone; a site
   // admin also gets the picks, and sets them — pinned in order, hidden.
   router.add("GET", "/api/v1/front", (ctx) =>
@@ -3262,7 +3354,7 @@ export function apiRoutes(router: Router<Handler>): void {
     for (const record of records) {
       const repo = repos.get(record.repoId);
       if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) continue;
-      items.push(appJson(ctx.app.db, record, repo, runtime));
+      items.push(appJson(ctx, record, repo, runtime));
     }
     return json({ items, next_cursor: null });
   });
@@ -3287,7 +3379,7 @@ export function apiRoutes(router: Router<Handler>): void {
       {
         repo: repoJson(ctx, made.value.repo),
         app: appJson(
-          ctx.app.db,
+          ctx,
           made.value.app,
           made.value.repo,
           appsRuntime(ctx.app),
@@ -3381,7 +3473,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const view = appView(ctx.app, ctx.auth.user, repo);
     if (!view.ok) return notFound();
     return json(
-      appJson(ctx.app.db, view.value.app, repo, appsRuntime(ctx.app)),
+      appJson(ctx, view.value.app, repo, appsRuntime(ctx.app)),
     );
   });
 
@@ -3394,7 +3486,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const enabled = enableApp(ctx.app, ctx.auth.user, repo, appPatch(input));
     if (!enabled.ok) return respondAccess(enabled.error, 422);
     return json(
-      appJson(ctx.app.db, enabled.value, repo, appsRuntime(ctx.app)),
+      appJson(ctx, enabled.value, repo, appsRuntime(ctx.app)),
       201,
     );
   });
@@ -3412,7 +3504,7 @@ export function apiRoutes(router: Router<Handler>): void {
       appPatch(input),
     );
     if (!updated.ok) return respondAccess(updated.error, 422);
-    return json(appJson(ctx.app.db, updated.value, repo, appsRuntime(ctx.app)));
+    return json(appJson(ctx, updated.value, repo, appsRuntime(ctx.app)));
   });
 
   router.add("DELETE", "/api/v1/repos/:owner/:name/app", (ctx) => {

@@ -45,6 +45,8 @@ export interface Spawned {
   readonly org: User;
   /** Whether the spawner keeps owner access after the claim. */
   readonly keepAccess: boolean;
+  /** The child's own address, `<name>.<parent's host>`, when recorded. */
+  readonly url: string | undefined;
 }
 
 /** The organisation this forge was spawned as, or undefined if it was not spawned. */
@@ -55,12 +57,20 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
     const parsed = (await file.json()) as {
       org?: unknown;
       keepAccess?: unknown;
+      url?: unknown;
     };
     const org =
       typeof parsed.org === "string" ? getOrg(app.db, parsed.org) : undefined;
     return org === undefined
       ? undefined
-      : { org, keepAccess: parsed.keepAccess === true };
+      : {
+          org,
+          keepAccess: parsed.keepAccess === true,
+          url:
+            typeof parsed.url === "string" && /^https?:\/\//.test(parsed.url)
+              ? parsed.url
+              : undefined,
+        };
   } catch {
     return undefined;
   }

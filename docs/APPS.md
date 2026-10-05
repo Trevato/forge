@@ -60,6 +60,11 @@ around it. None is advisory.
    Pushed: redeployed at the new head. Closed or merged: stopped, and its
    data deleted. There is no orphan state; the sweep on boot rebuilds the
    set of previews from the set of open pulls.
+   A pull from someone who cannot write the repository is the exception:
+   its preview and its check run nothing until a person who can write
+   approves that exact head, and each new push waits for a new approval
+   (`core/pull_trust.ts`). A writer's own fork, and the crew's, run as
+   before; an approval by the crew does not count.
 3. **Preview data is a copy, never a window.** When a preview is created its
    data directory is cloned from production's at that moment (copy-on-write
    where the filesystem offers it — APFS, XFS, btrfs — a plain copy
@@ -115,7 +120,10 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    the terminal stays its writers' and crew's. Making the repository public
    changes nobody's way in. A person the app names enters it and its
    previews and gets nothing else: no code of a private repository, no
-   crew, no settings, no owner facts.
+   crew, no settings, no owner facts. What the app says about itself
+   follows the same rule: its environments' state and errors (`envsFor`),
+   its runs and their logs (`mayReadRuns`) and its run and serving events
+   reach only those who may enter it.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never

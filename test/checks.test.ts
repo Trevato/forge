@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { openPull } from "../src/actions/pulls.ts";
+import { openPull, submitReview } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
@@ -328,7 +328,7 @@ describe("checks", () => {
     );
   }, 30_000);
 
-  test("a fork's pull is checked at the base's snapshot, and follows the fork's pushes", async () => {
+  test("a reader's fork pull is checked at the base's snapshot once a writer approves each head", async () => {
     const forked = await forkRepo(app, bob, repo);
     if (!forked.ok) throw new Error(String(forked.error));
     const fork = forked.value;
@@ -347,6 +347,11 @@ describe("checks", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     const pull = opened.value;
     expect(pull.crossRepo).toBe(true);
+    // Bob cannot write: nothing of his runs until Alice approves the head.
+    const approved = await submitReview(app, alice, repo, pull, {
+      state: "approved",
+    });
+    if (!approved.ok) throw new Error(String(approved.error));
     const first = await settled(
       (r) => r.issueId === pull.id && r.commitOid === committed.value.commitOid,
     );
@@ -358,6 +363,17 @@ describe("checks", () => {
       files: [{ path: "FORK.md", content: "hi again\n" }],
     });
     if (!again.ok) throw new Error(JSON.stringify(again.error));
+    // A new head waits for its own approval.
+    await Bun.sleep(300);
+    expect(
+      listRuns(app.db, repo.id, { kind: "check" }).some(
+        (r) => r.issueId === pull.id && r.commitOid === again.value.commitOid,
+      ),
+    ).toBe(false);
+    const reapproved = await submitReview(app, alice, repo, pull, {
+      state: "approved",
+    });
+    if (!reapproved.ok) throw new Error(String(reapproved.error));
     const second = await settled(
       (r) => r.issueId === pull.id && r.commitOid === again.value.commitOid,
     );
@@ -659,6 +675,7 @@ describe("a check its forge died under", () => {
         runtime: undefined,
         record: undefined,
         history: servingHistory(),
+        viewer: undefined,
       },
       pull,
     );
