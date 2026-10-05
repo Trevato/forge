@@ -15,7 +15,7 @@ import {
   markVerified,
   resetVerification,
 } from "../core/verify.ts";
-import { resolveSecrets } from "../core/secret_store.ts";
+import { listSecretNames, resolveSecrets } from "../core/secret_store.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { sendMail, type Mailer } from "../kernel/mail.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -41,6 +41,17 @@ export const MAIL_SECRETS = ["MAIL_SMTP_URL", "MAIL_FROM"] as const;
  * at boot. Both of a pair, or neither. Read per message, so a changed secret
  * takes effect on the next mail; each read is audited by the store.
  */
+/**
+ * Whether the forge can send mail at all — both secrets set, or the boot
+ * configuration. Asked by name only: nothing is opened to answer it.
+ */
+export function mailConfigured(app: App): boolean {
+  if (app.config.mailer !== undefined || app.config.mail !== undefined)
+    return true;
+  const set = new Set(listSecretNames(app.db, "forge").map((s) => s.name));
+  return MAIL_SECRETS.every((name) => set.has(name));
+}
+
 function mailerOf(app: App, forUser: User): Mailer | undefined {
   if (app.config.mailer !== undefined) return app.config.mailer;
   const stored = resolveSecrets(

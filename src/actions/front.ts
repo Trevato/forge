@@ -38,7 +38,7 @@ import {
 import { keepLook } from "../looks/service.ts";
 import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
-import type { User } from "../core/users.ts";
+import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** How many public apps are read, and how many the shelf shows. */
@@ -134,8 +134,14 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
     records.map((r) => r.repoId),
   );
   // A stranger's reading, asked of every repository, pinned or not.
+  // A suspended or removed account's repositories are offered to nobody.
+  const owners = getUsersByIds(db, [
+    ...new Set([...pinnedRepos.values(), ...repos.values()].map((r) => r.ownerId)),
+  ]);
   const readable = (repo: Repo | undefined): repo is Repo =>
-    repo !== undefined && canRead(db, repo, undefined);
+    repo !== undefined &&
+    canRead(db, repo, undefined) &&
+    (owners.get(repo.ownerId) === undefined || isActive(owners.get(repo.ownerId)!));
   const pinned = picks.pinned
     .map((id) => pinnedRepos.get(id))
     .filter(readable)

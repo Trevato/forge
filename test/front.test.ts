@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { suspendAccount } from "../src/actions/accounts.ts";
 import { forgetFrontScores } from "../src/actions/front.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
@@ -38,6 +39,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startLooks } from "../src/looks/service.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
 
@@ -223,6 +225,8 @@ describe("the front page", () => {
     const user = async (username: string) => {
       const made = await createUser(app.db, { trusted: true,
         username,
+        // Fixtures may name an account after a reserved word on purpose.
+        allowReserved: true,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",
         adminIfFirst: true,
@@ -619,5 +623,26 @@ describe("the front page", () => {
     const opened = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(opened.featured.state).toBe("running");
     expect(opened.featured.signals.awakeHours).toBeGreaterThan(3);
+  });
+
+  test("a suspended account's app is not on the front page, ranked or pinned", async () => {
+    const sus = await createUser(app.db, {
+      username: "suspended-maker",
+      email: "suspended-maker@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!sus.ok) throw new Error(sus.error);
+    proveAll(app);
+    await make(sus.value, "sus-app");
+    expect((await put(adminToken, { pinned: ["suspended-maker/sus-app"], hidden: [] })).status).toBe(200);
+    forgetFrontScores(app);
+    expect(await door()).toContain('href="/suspended-maker/sus-app"');
+    expect((await suspendAccount(app, admin, "suspended-maker")).ok).toBe(true);
+    forgetFrontScores(app);
+    const body = await door();
+    expect(body).not.toContain('href="/suspended-maker/sus-app"');
+    const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+    expect(JSON.stringify(json)).not.toContain("suspended-maker/sus-app\"");
+    expect(json.featured?.repo).not.toBe("suspended-maker/sus-app");
   });
 });

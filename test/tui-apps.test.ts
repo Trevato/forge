@@ -45,7 +45,6 @@ import type { App, Screen } from "../src/tui/app/app.ts";
 import { createForgeApp, forgeCommands } from "../src/tui/forge.ts";
 import { issueScreen } from "../src/tui/screens/issue.ts";
 import { pullScreen } from "../src/tui/screens/pull.ts";
-import { settingsScreen } from "../src/tui/screens/settings.ts";
 import { local } from "../src/tui/screens/where.ts";
 import type { Session, TuiIdentity } from "../src/tui/session.ts";
 import {
@@ -402,39 +401,6 @@ describe("terminal: apps, runs and the crew", () => {
     }
   }, 30_000);
 
-  test("settings: the app tab, require checks, and the crew", async () => {
-    const h = boot(forge, identityFor(alice));
-    try {
-      await h.push((s, ctx) => settingsScreen(s, ctx, site));
-      // The screen was handed the row from before the pull test turned the
-      // gate on; it reads the row live rather than trusting the snapshot.
-      await h.until("a pull needs a passing deploy");
-      await h.press("C");
-      await h.until("settings saved");
-      expect(getRepoById(forge.db, site.id)?.requireChecks).toBe(false);
-      expect(h.text()).not.toContain("a pull needs a passing deploy");
-
-      await h.press("tab", "tab", "tab");
-      await h.until("this repository runs");
-      expect(h.text()).toContain("site");
-      expect(h.text()).toContain(`http://site.${DOMAIN}:${servers.port}`);
-
-      await h.press("tab");
-      await h.until("robo");
-      expect(h.text()).toContain("sonnet");
-      await h.press("d");
-      await h.until("Remove robo from the crew");
-      await h.press("right", "enter");
-      await h.until("robo is off the crew");
-      await h.press("a");
-      await h.until("Add to the crew");
-      await h.press("enter");
-      await h.until("robo is on the crew");
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
   test("the dashboard: an On you pane, enterable, and no Apps pane", async () => {
     const mine = openIssue(forge, alice, site, {
       title: "Tune the drums",
@@ -477,17 +443,12 @@ describe("terminal: apps, runs and the crew", () => {
         expect(h.text()).toBe(before);
       }
 
+      // The account key hands over the web's settings page (#635).
       await h.press("A");
-      await h.until("Account");
-      expect(h.text()).not.toContain("crew");
-      const account = h.text();
-      await h.press("c");
-      expect(h.text()).toBe(account);
+      await h.until("Account settings is on the web at /settings");
 
       // What stays first-class is one key away: the workspace opens on the
       // repository, its tree and its README.
-      await h.press("esc");
-      await h.until("On you");
       await h.select("alice/site");
       await h.press("enter");
       await h.until("README.md");
@@ -496,13 +457,12 @@ describe("terminal: apps, runs and the crew", () => {
     }
   }, 30_000);
 
-  test("a non-admin's account screen names no crew either", async () => {
+  test("a non-admin's account key hands over the same web page", async () => {
     const bob = getUserByName(forge.db, "bob")!;
     const h = boot(forge, identityFor(bob));
     try {
       await h.press("A");
-      await h.until("Account");
-      expect(h.text()).not.toContain("crew");
+      await h.until("Account settings is on the web at /settings");
     } finally {
       h.stop();
     }

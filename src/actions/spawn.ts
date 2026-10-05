@@ -38,6 +38,16 @@ import { repoDir } from "../git/repos.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { crossOrigin } from "../http/context.ts";
+import {
+  addSubscription,
+  getSubscriptionByName,
+  lockBudget,
+  setGrants,
+  subscriptionAad,
+} from "../core/subscriptions.ts";
+import { Database } from "bun:sqlite";
+import { loadKey, open } from "../kernel/secret.ts";
+import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { mintClaim } from "../spawn/claim.ts";
 import type { Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
@@ -70,6 +80,14 @@ export interface SpawnDeps {
   /** The request that asked, for the same-origin check on this mutation. */
   readonly request: Request;
   readonly url: URL;
+  /**
+   * The child's own model key, when the spawner gives it one: an API-billed
+   * key (never a person's subscription token), sealed in the child with the
+   * child's own `secret.key`, granted to its organisation, and never shown
+   * again or kept by the parent. Its whole-life budget is the plan's
+   * `budgetUsd`, locked in the child.
+   */
+  readonly modelKey?: string;
 }
 
 interface Ledger {
@@ -81,6 +99,8 @@ interface Ledger {
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+/** The name the child's sealed model key goes by. */
+export const STARTER_KEY = "starter";
 const inFlight = new Set<string>();
 
 const fail = (message: string) => err<SpawnError>({ kind: "failed", message });
@@ -161,6 +181,16 @@ async function make(
   if (ledger) {
     if (ledger.planHash !== planHash)
       return err({ kind: "exists", message: `a different child named ${plan.name} already exists` });
+    // The plan names that there is a key, never which: a retry with another
+    // key is refused plainly rather than quietly keeping the first.
+    if (deps.modelKey !== undefined) {
+      const held = heldKey(childDirOf(app, ledger.bodyId));
+      if (held !== undefined && held !== deps.modelKey)
+        return err({
+          kind: "exists",
+          message: `${plan.name} was already given a different model key; a key is given once`,
+        });
+    }
     if (ledger.done)
       return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
   } else {
@@ -174,7 +204,7 @@ async function make(
     await writeLedger(app, ledger);
   }
 
-  const copied = await copyInto(app, owner, plan, ledger);
+  const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
   if (!copied.ok) return fail(copied.error);
   const claimUrl = `${ledger.url}/claim/${copied.value}`;
 
@@ -204,6 +234,7 @@ async function copyInto(
   owner: User,
   plan: SpawnPlan,
   ledger: Ledger,
+  modelKey: string | undefined,
 ): Promise<Result<string, string>> {
   const dir = childDirOf(app, ledger.bodyId);
   await mkdir(dir, { recursive: true });
@@ -294,6 +325,33 @@ async function copyInto(
         setCrewRole(child.db, repo.id, theirs.user.id, role);
       }
 
+    // The child's own keys, made in its own directory now, so they exist
+    // before its first boot and are provably not the parent's: the key that
+    // seals its secrets, and its SSH host key.
+    loadKey(dir);
+    loadOrCreateHostKey(join(dir, "ssh"));
+
+    // A model key the spawner handed over: sealed with the child's key,
+    // offered to its organisation's crew, and bound to a whole-life budget
+    // the child cannot raise — enforced where every run picks its account,
+    // whoever started the run and on whichever repository.
+    if (modelKey !== undefined && plan.budgetUsd !== null) {
+      const sealed =
+        getSubscriptionByName(child.db, STARTER_KEY) ??
+        (() => {
+          const added = addSubscription(child.db, dir, {
+            name: STARTER_KEY,
+            token: modelKey,
+            createdBy: founder.id,
+          });
+          return added.ok ? added.value : undefined;
+        })();
+      if (!sealed) return err("could not seal the child's model key");
+      setGrants(child.db, org.id, "", [sealed.id]);
+      if (!lockBudget(child.db, sealed.id, plan.budgetUsd))
+        return err("could not set the key's budget");
+    }
+
     const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
     await Bun.write(
       join(dir, "parent.json"),
@@ -301,12 +359,37 @@ async function copyInto(
         upstream,
         name: plan.name,
         org: plan.org,
+        // The child's own address, from the placement: <name>.<parent's host>.
+        url: ledger.url,
         keepAccess: plan.keepAccess,
       }),
     );
     return ok(mintClaim(child.db, org.id));
   } finally {
     child.close();
+  }
+}
+
+/**
+ * The model key a child already holds, opened with the child's own key; or
+ * undefined when it has none yet (or the child's database is not there).
+ */
+function heldKey(dir: string): string | undefined {
+  let db: Database | undefined;
+  try {
+    db = new Database(join(dir, "forge.db"), { readonly: true });
+    const row = db
+      .query<{ id: string; token_enc: string }, [string]>(
+        "SELECT id, token_enc FROM subscription WHERE name = ?1",
+      )
+      .get(STARTER_KEY);
+    if (!row) return undefined;
+    const opened = open(dir, row.token_enc, subscriptionAad(row.id));
+    return opened.ok ? opened.value : "";
+  } catch {
+    return undefined;
+  } finally {
+    db?.close();
   }
 }
 
