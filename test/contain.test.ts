@@ -279,6 +279,15 @@ describe("egress, reported: an undeclared public host goes through and is counte
     expect(seen).toEqual([]);
   });
 
+  test("an undeclared host on any port but 80 and 443 is refused in report mode too, and not counted", async () => {
+    for (const port of [25, 22, 6443]) {
+      const reply = await head(`CONNECT example.com:${port} HTTP/1.1\r\n\r\n`);
+      expect(reply).toStartWith("HTTP/1.1 403");
+      expect(reply).toContain(`example.com:${port} is not in this repository's egress`);
+    }
+    expect(seen).toEqual([]);
+  });
+
   test("an undeclared public host is let through and counted", async () => {
     const reply = await head(`CONNECT example.com:443 HTTP/1.1\r\n\r\n`);
     // Through: a tunnel, or the host not answering — never the refusal.

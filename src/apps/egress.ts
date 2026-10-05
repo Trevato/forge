@@ -106,9 +106,10 @@ async function decide(
     (o) => o.host.toLowerCase() === name && o.port === port,
   );
   const declared = origin || hostAllowed(policy.hosts, name, port);
-  // Reporting lets an undeclared host through (and says so); it never lets
-  // a private address through — that check below holds in both modes.
-  if (!declared && policy.report === undefined)
+  // Reporting lets an undeclared host through (and says so) on the web
+  // ports alone; any other port, and any private address (below), is
+  // refused in both modes.
+  if (!declared && (policy.report === undefined || !WEB_PORTS.includes(port)))
     return {
       ok: false,
       why: `${name}:${port} is not in this repository's egress (forge.json "egress")`,

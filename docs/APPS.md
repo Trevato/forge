@@ -225,7 +225,8 @@ holds at most 256 MiB.
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:
-`FORGE_CELLS_EGRESS=report` lets an undeclared public host through and
+`FORGE_CELLS_EGRESS=report` lets an undeclared public host through (on 80
+and 443 only) and
 counts it per repository (`<data>/egress/<repo id>.json`, under the
 forge's data where no cell sees it), and the app's page tells its writers
 which hosts it reached and the `egress` line to add. The default,
