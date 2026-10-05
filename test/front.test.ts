@@ -223,6 +223,8 @@ describe("the front page", () => {
     const user = async (username: string) => {
       const made = await createUser(app.db, { trusted: true,
         username,
+        // Fixtures may name an account after a reserved word on purpose.
+        allowReserved: true,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",
         adminIfFirst: true,

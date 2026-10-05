@@ -273,7 +273,9 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
           ? { email: "That doesn't look like an email address." }
           : updated.error === "display_name_reserved"
             ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : {};
+            : updated.error === "display_name_mixed_script"
+              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
+              : {};
     return accountShell(
       ctx,
       "profile",
