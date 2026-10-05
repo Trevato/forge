@@ -510,10 +510,10 @@ describe("an issue parked twice is the planner's", () => {
     expect(mine).toContain('id="declined"');
     expect(mine).toMatch(
       new RegExp(
-        `the crew parked #${work.number}\\s+Scene graph twice, and the planner has\\s+it\\.`,
+        `the crew parked #${work.number} twice and\\s+handed it to the planner —\\s+Scene graph\\.`,
       ),
     );
-    expect(mine).toContain(`<q>${declined}; ${nothing}</q>`);
+    expect(mine).toContain(`<q>${declined}</q> <q>${nothing}</q>`);
     expect(mine).toContain(
       `<a class="btn" href="/alice/engine/issues/${work.number}">Open</a>`,
     );
@@ -547,9 +547,9 @@ describe("an issue parked twice is the planner's", () => {
     }
     const own = await board("bob");
     expect(own).toContain(`href="/bob/tool/issues/${hinge.number}"`);
-    expect(own).toContain("A &lt;b&gt;hinge&lt;/b&gt; twice");
+    expect(own).toContain("A &lt;b&gt;hinge&lt;/b&gt;.");
     expect(own).toContain(
-      "<q>the check stayed red; main moved under it &lt;twice&gt;</q>",
+      "<q>the check stayed red</q> <q>main moved under it &lt;twice&gt;</q>",
     );
     expect(own).not.toContain('id="forge"');
     expect(own).not.toContain("All fine");

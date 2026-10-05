@@ -383,14 +383,14 @@ function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
     })}
     ${parked.map((issue) => {
       const repo = scope.byId.get(issue.repoId)!;
-      const why = issue.reasons
-        .map((reason) => truncateAtWord(reason, REASON_MAX))
-        .join("; ");
       return html`<div class="board-declined-row board-parked-row">
         <span class="board-declined-says"
-          ><b>${repo.name}</b>: the crew parked #${issue.number}
-          ${truncateAtWord(issue.title, TITLE_MAX)} twice, and the planner has
-          it. <q>${why}</q></span
+          ><b>${repo.name}</b>: the crew parked #${issue.number} twice and
+          handed it to the planner —
+          ${truncateAtWord(issue.title, TITLE_MAX)}.
+          ${issue.reasons.map(
+            (reason) => html`<q>${truncateAtWord(reason, REASON_MAX)}</q> `,
+          )}</span
         >
         <a class="btn" href="${repoBase(repo)}/issues/${issue.number}">Open</a>
       </div>`;
