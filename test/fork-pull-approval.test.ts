@@ -16,6 +16,7 @@ import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
+import type { AppRecord } from "../src/core/apps.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
@@ -39,6 +40,7 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
   let bot: User;
   let lib: Repo;
   let notes: Repo;
+  let notesApp: AppRecord;
 
   const runsFor = (
     repo: Repo,
@@ -148,6 +150,7 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     });
     if (!madeApp.ok) throw new Error(String(madeApp.error));
     notes = madeApp.value.repo;
+    notesApp = madeApp.value.app;
   }, 120_000);
 
   afterAll(async () => {
@@ -237,4 +240,50 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
       runsFor(lib, "check", crews.pull, crews.head).length,
     ).toBeGreaterThan(0);
   }, 60_000);
+
+  test("a writer asking for changes on the approved head stops it running again", async () => {
+    const { pull, head } = await forkPull(carol, lib, "turned");
+    await approve(alice, lib, pull);
+    await settle();
+    expect(runsFor(lib, "check", pull, head).length).toBeGreaterThan(0);
+    const turned = await submitReview(app, alice, lib, pull, {
+      state: "changes_requested",
+      body: "Not this.",
+    });
+    expect(turned.ok).toBe(true);
+    const { pullMayRun } = await import("../src/core/pull_trust.ts");
+    expect(pullMayRun(app.db, lib, pull, head)).toBe(false);
+  });
+
+  test("a preview asleep at a head nobody approved is taken down, not woken", async () => {
+    const { pull, head } = await forkPull(carol, notes, "sleeper");
+    await approve(alice, notes, pull);
+    const env = `pull-${pull.number}`;
+    const deadline = Date.now() + 90_000;
+    while (
+      !listRuns(app.db, notes.id, { kind: "deploy", limit: 100 }).some(
+        (r) => r.env === env && r.commitOid === head && r.state === "ok",
+      )
+    ) {
+      if (Date.now() > deadline) throw new Error("preview did not deploy");
+      await Bun.sleep(200);
+    }
+    // As if it had been deployed before the gate: no approval stands.
+    app.db.run("DELETE FROM review WHERE issue_id = ?1", [pull.id]);
+    // The forge comes back over the same data: the preview is asleep.
+    await runtime.stop();
+    runtime = new AppsRuntime(app, {
+      domain: "apps.test",
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    await runtime.start();
+    expect(
+      runtime.status(notesApp).find((e) => e.env === env)?.state,
+    ).toBe("asleep");
+    expect(await runtime.wake(notesApp, env as never)).toBeUndefined();
+    expect(runtime.status(notesApp).find((e) => e.env === env)).toBeUndefined();
+  }, 120_000);
 });

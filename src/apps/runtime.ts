@@ -833,21 +833,7 @@ export class AppsRuntime {
     // A suspended or removed owner's app does not deploy.
     if (this.stopped || !accountActive(this.app.db, repo.ownerId))
       return undefined;
-    // A preview runs a pull's code: from someone who cannot write, only
-    // once a writer has approved this exact head (`core/pull_trust.ts`).
-    if (env !== "production") {
-      const number = envPull(env);
-      const pull =
-        number === undefined ? undefined : getPull(this.app.db, repo.id, number);
-      if (pull === undefined || !pullMayRun(this.app.db, repo, pull, commitOid)) {
-        log.info("preview waits for a writer's approval", {
-          app: record.slug,
-          env,
-          commit: commitOid.slice(0, 7),
-        });
-        return undefined;
-      }
-    }
+    if (!this.mayRun(record, repo, env, commitOid)) return undefined;
     const state = this.envFor(record, env);
     state.dormant = undefined;
     if (
@@ -1310,6 +1296,31 @@ export class AppsRuntime {
    * kept; one start serves every request that arrives while it happens.
    * Returns once it is live, or once it is clear it will not be.
    */
+  /**
+   * A preview runs a pull's code: from someone who cannot write, only once
+   * a writer has approved this exact head (`core/pull_trust.ts`). Asked by
+   * every door that starts one — a deploy and a wake.
+   */
+  private mayRun(
+    record: AppRecord,
+    repo: Repo,
+    env: EnvName,
+    commitOid: string,
+  ): boolean {
+    if (env === "production") return true;
+    const number = envPull(env);
+    const pull =
+      number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, commitOid))
+      return true;
+    log.info("preview waits for a writer's approval", {
+      app: record.slug,
+      env,
+      commit: commitOid.slice(0, 7),
+    });
+    return false;
+  }
+
   async wake(record: AppRecord, env: EnvName): Promise<LiveEnv | undefined> {
     const state = this.envs.get(key(record.id, env));
     if (state === undefined) return undefined;
@@ -1320,6 +1331,14 @@ export class AppsRuntime {
     const repo = getRepoById(this.app.db, record.repoId);
     // Waking runs code without a run row: the owner's standing is asked here.
     if (!repo || !accountActive(this.app.db, repo.ownerId)) return undefined;
+    // So is whose code it is: a preview asleep at a head nobody who can
+    // write approved — built before the gate, or approved by someone who
+    // can no longer write — is taken down, not woken. Approving the head
+    // deploys it again.
+    if (!this.mayRun(record, repo, env, asleep.commitOid)) {
+      await this.teardown(record, env);
+      return undefined;
+    }
     state.waking = (async () => {
       const write = (line: string): void => {
         if (asleep.runId !== "")

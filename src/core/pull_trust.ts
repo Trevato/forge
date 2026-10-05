@@ -41,7 +41,11 @@ export function pullMayRun(
   return approvedAt(db, repo, pull, headOid);
 }
 
-/** A person — never an agent — who can write the repository approved this head. */
+/**
+ * A person — never an agent — who can write the repository approved this
+ * head, and no such person asked for changes to it since: the latest of
+ * their verdicts on this exact head decides.
+ */
 function approvedAt(
   db: Database,
   repo: Repo,
@@ -49,17 +53,20 @@ function approvedAt(
   headOid: string,
 ): boolean {
   if (headOid === "") return false;
-  return listReviews(db, pull.id).some((review) => {
-    if (review.state !== "approved" || review.commitOid !== headOid)
-      return false;
-    if (review.originAuthor !== null) return false;
+  let verdict: "approved" | "changes_requested" | undefined;
+  for (const review of listReviews(db, pull.id)) {
+    if (review.commitOid !== headOid || review.state === "commented") continue;
+    if (review.originAuthor !== null) continue;
     const reviewer = getUserById(db, review.authorId);
-    return (
-      reviewer !== undefined &&
-      reviewer.kind === "user" &&
-      canWrite(db, repo, reviewer)
-    );
-  });
+    if (
+      reviewer === undefined ||
+      reviewer.kind !== "user" ||
+      !canWrite(db, repo, reviewer)
+    )
+      continue;
+    verdict = review.state;
+  }
+  return verdict === "approved";
 }
 
 /**

@@ -641,11 +641,16 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   const isAuthor = pull.authorId === user.id;
   const options: { value: string; label: string; hint: string; key: string }[] =
     [];
+  // A reader's change runs nothing here until a writer approves it: the
+  // approval is also what lets its code run, and the reviewer should know.
+  const runsOnApproval = !pullMayRun(ctx.app.db, repo, pull, "");
   if (writer && !isAuthor)
     options.push({
       value: "approved",
       label: "Approve",
-      hint: "This is good to merge.",
+      hint: runsOnApproval
+        ? "This is good to merge — and its check and preview then run this code here, holding the repository owner's app token."
+        : "This is good to merge.",
       key: "v a",
     });
   if (writer)
