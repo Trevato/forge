@@ -2019,6 +2019,7 @@ describe("a start that fails reports the message, not its last line (issue #270)
     ready: 2,
     tty: null,
     looks: ["/"],
+    service: null,
   };
 
   // A realistic crash: the message, a blank line, three frames, then the
