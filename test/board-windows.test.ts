@@ -288,6 +288,8 @@ describe("efficiency and standing, grouped", () => {
     merged(live, ago(20));
     merged(live, ago(1));
     merged(live, ago(9 * 24));
+    // An app with autonomy off: spent on this week, nothing merged.
+    spend(seedRepo("idle"), ago(5), 0.4);
     const full = account();
     spend(live, ago(1), 0.5, full);
     noteLimit(app.db, full, {
