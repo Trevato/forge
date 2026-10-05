@@ -203,8 +203,31 @@ of anything that waits for others says _see how far it is_. The same
 numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
 `…/milestones/:number`, and in the MCP's `milestones`. An agent's name and
 the spend are the owner's to see: a reader gets "the crew" and no cost.
-Read-only: watching a milestone (#732) and acting on a whole limb (#733)
-come after.
+Acting on a whole limb (#733) comes after.
+
+### Watching a milestone
+
+A person who is signed in presses **Watch** on a milestone, once (#732);
+pressing it again stops. A watch is theirs alone: one row per person and
+issue (`core/watches.ts`), no event, nobody else told. What it says is read
+from the plan each time, as that person:
+
+- **In the feed**, one item for each milestone they watch, and only when
+  there is something new: how far it is and what merged since they last
+  opened it from the feed, or began to watch. The item is renamed as the
+  milestone moves, so it is one item however many pulls merge, and a
+  dismissal holds only until the next one does. Muting the app does not
+  mute it.
+- **On the phone**, one line when it lands, with a link to the milestone,
+  through the notify URL (`crew/notify.ts`). Landed means its issue closed
+  as done, or the last open issue beneath it closed. Progress never pages,
+  and neither does a milestone that was dropped or split: the feed says
+  that it will not land as written.
+
+A watch on a repository the person can no longer read says nothing, in the
+feed or on the phone. An agent does not watch. The same is `PUT` and
+`DELETE /api/v1/repos/:owner/:name/milestones/:number/watch` with a write
+token, `watching` on the milestone's read, and the MCP's `watch`.
 
 ## A repository on its own
 

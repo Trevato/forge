@@ -984,6 +984,8 @@ address that takes a POST of plain text (an [ntfy](https://ntfy.sh) topic
 does). When the forge's events change what asks them — a pull the crew
 stopped on, a green pull waiting for a look, a repository at its ceiling —
 one line and a link to the asks screen is posted there (`src/crew/notify.ts`).
+A milestone the person watches says one line too, once, when it lands, with
+a link to the milestone (`docs/PLANNING.md`); its progress never does.
 
 - *New only.* What asks a person is read as that person, the way the asks
   panel reads it, so a private repository's titles never go to someone who
