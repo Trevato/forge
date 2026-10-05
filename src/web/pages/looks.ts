@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { isEnvName, previewEnv, type EnvName } from "../../apps/data.ts";
+import { isEnvName, previewEnv } from "../../apps/data.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import {
@@ -24,20 +24,25 @@ import type { Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
+import { keepLook } from "../../looks/service.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { card, icon, sha, time } from "../ui.ts";
 
+/**
+ * Which taking of a picture this is: a picture retaken at the same commit
+ * (a thumb from before thumbs were the page, or one that failed) is a new
+ * file under the same name, so the name alone cannot be cached for good.
+ */
+export const lookVersion = (look: Look): string =>
+  look.createdAt.replace(/\D/g, "");
+
 /** Where a picture is served. Named by page and kind, unless the page is
  * the home page, when it is the kind alone — exactly the URL from before
- * `app.looks` existed. */
-export const lookUrl = (
-  base: string,
-  env: EnvName,
-  commitOid: string,
-  page: string,
-  kind: LookKind,
-): string => `${base}/looks/${env}/${commitOid}/${lookSlot(page, kind)}.png`;
+ * `app.looks` existed — and by which taking of it, so a browser that kept
+ * the last one for a year asks for the new one. */
+export const lookUrl = (base: string, look: Look): string =>
+  `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind)}.png?v=${lookVersion(look)}`;
 
 /** The newest picture at one width, when there is one. */
 export const pictured = (
@@ -72,19 +77,42 @@ export function lookImage(ctx: Ctx): Response {
     (l) => l.commitOid === commit && lookSlot(l.page, l.kind) === slot,
   );
   if (look === undefined || look.error !== null) return notFound();
-  // Phone and desktop are taken as the owner, signed in as an admin: what
-  // they show is the writers' to see. The thumb is taken as a stranger.
-  if (look.kind !== "thumb" && !canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user))
-    return notFound();
+  if (!mayFetchLook(ctx, repo, record, look)) return notFound();
   const path = join(ctx.app.config.dataDir, look.path);
   if (!existsSync(path)) return notFound();
   return new Response(Bun.file(path), {
     headers: {
       "content-type": "image/png",
-      // Named by its commit: the same URL never shows a different picture.
-      "cache-control": "private, max-age=31536000, immutable",
+      // Kept for good only under the name of this taking (`lookVersion`);
+      // asked for by its bare name, it is checked again every time, so a
+      // retake at the same commit is never hidden behind a cached old one.
+      "cache-control":
+        ctx.url.searchParams.get("v") === lookVersion(look)
+          ? "private, max-age=31536000, immutable"
+          : "private, no-cache",
     },
   });
+}
+
+/**
+ * Who may fetch a picture (#727). Phone and desktop are taken signed in as
+ * the owner, an admin: they are the writers' alone. The thumb is taken as
+ * nobody, and is shown to whoever may open the app — anyone for a public
+ * app, a signed-in reader for a private one — but a thumb from before
+ * thumbs were taken as nobody (`keepLook`) was the owner's view, and is
+ * the writers' until it is retaken.
+ */
+export function mayFetchLook(
+  ctx: Ctx,
+  repo: Repo,
+  record: AppRecord,
+  look: Look,
+): boolean {
+  const user = ctx.auth.user;
+  if (canSeeOwnerFacts(ctx.app.db, repo, user)) return true;
+  if (look.kind !== "thumb") return false;
+  if (record.access === "private" && user === undefined) return false;
+  return keepLook(ctx.app.config.dataDir, look);
 }
 
 /**
@@ -125,7 +153,7 @@ export function lookCard(
   );
   const labelled = pages.length > 1;
   const picture = (look: Look, kind: LookKind, page: string): Html => {
-    const url = lookUrl(base, env, look.commitOid, page, kind);
+    const url = lookUrl(base, look);
     return html`<a class="look look-${kind}" href="${url}">
       <img
         src="${url}"
@@ -195,11 +223,9 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
     (l) => l.page === DEFAULT_PAGE,
   );
   // The desktop picture is the owner's view: only a writer falls back to it.
-  const look =
-    pictured(looks, "thumb") ??
-    (canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)
-      ? pictured(looks, "desktop")
-      : undefined);
+  const look = [pictured(looks, "thumb"), pictured(looks, "desktop")].find(
+    (l) => l !== undefined && mayFetchLook(ctx, repo, record, l),
+  );
   if (look === undefined) return html``;
   const base = repoBase(repo);
   const size = LOOK_SIZES[look.kind];
@@ -209,7 +235,7 @@ export function lookNow(ctx: Ctx, repo: Repo, record: AppRecord): Html {
     title="How it looks now, at ${look.commitOid.slice(0, 7)}"
   >
     <img
-      src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+      src="${lookUrl(base, look)}"
       width="${size.width}"
       height="${size.height}"
       alt="${repo.name} as it looks now"

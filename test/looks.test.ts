@@ -307,15 +307,14 @@ describe("the look", () => {
       await web(`${base}/pulls/${pull.number}`, aliceCookie)
     ).text();
     expect(page).toContain("<h2>Look</h2>");
-    expect(page).toContain(`src="${base}/looks/${env}/${second}/phone.png"`);
-    expect(page).toContain(`src="${base}/looks/${env}/${second}/desktop.png"`);
+    expect(page).toContain(`src="${base}/looks/${env}/${second}/phone.png?v=`);
+    expect(page).toContain(`src="${base}/looks/${env}/${second}/desktop.png?v=`);
     expect(page).toContain(second.slice(0, 7));
     expect(page).not.toContain("the head has moved");
 
-    const image = await web(
-      `${base}/looks/${env}/${second}/phone.png`,
-      aliceCookie,
-    );
+    // The page names the picture with its taking: that URL is kept for good.
+    const src = new RegExp(`src="(${base}/looks/${env}/${second}/phone\\.png\\?v=\\d+)"`).exec(page)![1]!;
+    const image = await web(src, aliceCookie);
     expect(image.status).toBe(200);
     expect(image.headers.get("content-type")).toBe("image/png");
     expect(image.headers.get("cache-control")).toContain("immutable");
@@ -555,7 +554,7 @@ describe("the look", () => {
     )!;
     expect(page).toContain(`class="look-now"`);
     expect(page).toContain(
-      `src="/alice/hello/looks/production/${production.commitOid}/thumb.png"`,
+      `src="/alice/hello/looks/production/${production.commitOid}/thumb.png?v=`,
     );
 
     // A commit pictured before the thumb kind existed has only its phone
@@ -577,7 +576,7 @@ describe("the look", () => {
       (l) => l.kind === "desktop",
     )!;
     expect(fallback).toContain(
-      `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png"`,
+      `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png?v=`,
     );
   }, 120_000);
 
@@ -647,10 +646,10 @@ describe("the look", () => {
     expect(page).toContain(`<p class="muted small look-page">/</p>`);
     expect(page).toContain(`<p class="muted small look-page">/board</p>`);
     expect(page).toContain(
-      `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png"`,
+      `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png?v=`,
     );
     expect(page).toContain(
-      `src="/alice/hello/looks/${env}/${commitOid}/phone.png"`,
+      `src="/alice/hello/looks/${env}/${commitOid}/phone.png?v=`,
     );
     expect(page).toContain(
       `alt="hello /board #${opened.value.number} on a phone"`,
@@ -713,32 +712,75 @@ describe("the look", () => {
     expect(calls).toHaveLength(before + 1);
   }, 60_000);
 
-  test("a public app's owner-view pictures are its writers' alone: a stranger and a reader get the thumb, never phone or desktop", async () => {
+  test("pictures are shown only to those allowed to see them (#727): on a public repository hosting a private app, a stranger gets none, a signed-in reader the thumb, a writer all", async () => {
+    // `hello` is a private app; its repository is made public here.
+    expect(record.access).toBe("private");
     app.db.query(`UPDATE repo SET visibility = 'public' WHERE id = ?1`).run(repo.id);
     try {
       const head = runtime.envStatus(record, "production")!.commitOid;
       // The test before left this head's thumb failed; picture it again.
       const thumbPath = `looks/${record.id}/production/${head}-thumb.png`;
+      const retake = () =>
+        recordLook(app.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: head,
+          kind: "thumb",
+          path: thumbPath,
+        });
       writeFileSync(join(dataDir, thumbPath), PNG);
-      recordLook(app.db, {
-        appId: record.id,
-        env: "production",
-        commitOid: head,
-        kind: "thumb",
-        path: thumbPath,
-      });
+      retake();
       const at = (kind: string) => `/alice/hello/looks/production/${head}/${kind}.png`;
-      for (const cookie of ["", bobCookie]) {
-        expect((await web(at("desktop"), cookie)).status).toBe(404);
-        expect((await web(at("phone"), cookie)).status).toBe(404);
-        expect((await web(at("thumb"), cookie)).status).toBe(200);
-      }
-      expect((await web(at("desktop"), aliceCookie)).status).toBe(200);
-      // The app's page shows a reader the thumb, never the owner's desktop.
-      const page = await (await web("/alice/hello", `${bobCookie}; forge_mode=studio`)).text();
-      expect(page).not.toContain("/desktop.png");
-      expect(page).not.toContain("/phone.png");
+      const status = async (kind: string, cookie: string) =>
+        (await web(at(kind), cookie)).status;
+
+      // A stranger cannot open a private app: no picture of it at all.
+      for (const kind of ["desktop", "phone", "thumb"])
+        expect(await status(kind, "")).toBe(404);
+      const strangers = await (await web("/alice/hello", "forge_mode=studio")).text();
+      expect(strangers).not.toContain("/looks/production/");
+      // A signed-in reader may open it: the thumb, taken as nobody — never
+      // the owner's phone or desktop.
+      expect(await status("desktop", bobCookie)).toBe(404);
+      expect(await status("phone", bobCookie)).toBe(404);
+      expect(await status("thumb", bobCookie)).toBe(200);
+      const readers = await (await web("/alice/hello", `${bobCookie}; forge_mode=studio`)).text();
+      expect(readers).toContain("/thumb.png?v=");
+      expect(readers).not.toContain("/desktop.png");
+      expect(readers).not.toContain("/phone.png");
+      // A writer: all three.
+      for (const kind of ["desktop", "phone", "thumb"])
+        expect(await status(kind, aliceCookie)).toBe(200);
+
+      // A public app: a stranger gets the thumb — but not one taken before
+      // thumbs were taken as nobody (200 px wide, the owner's view).
+      app.db.query(`UPDATE app SET access = 'public' WHERE id = ?1`).run(record.id);
+      expect(await status("thumb", "")).toBe(200);
+      expect(await status("desktop", "")).toBe(404);
+      writeFileSync(
+        join(dataDir, thumbPath),
+        Buffer.from(encodePng(200, 125, new Uint8Array(200 * 125 * 4))),
+      );
+      expect(await status("thumb", "")).toBe(404);
+      expect(await status("thumb", aliceCookie)).toBe(200);
+      writeFileSync(join(dataDir, thumbPath), PNG);
+
+      // Kept for good only under the name of this taking: a retake at the
+      // same commit is a new URL, and the bare name is checked every time.
+      const named = await (await web("/alice/hello", "forge_mode=studio")).text();
+      const src = /src="([^"]*\/thumb\.png\?v=\d+)"/.exec(named)![1]!;
+      const versioned = await web(src, "");
+      expect(versioned.headers.get("cache-control")).toContain("immutable");
+      expect((await web(at("thumb"), "")).headers.get("cache-control")).toBe(
+        "private, no-cache",
+      );
+      await Bun.sleep(5);
+      retake();
+      const after = await (await web("/alice/hello", "forge_mode=studio")).text();
+      expect(after).not.toContain(src);
+      expect(after).toContain("/thumb.png?v=");
     } finally {
+      app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(record.id);
       app.db.query(`UPDATE repo SET visibility = 'private' WHERE id = ?1`).run(repo.id);
     }
   });
