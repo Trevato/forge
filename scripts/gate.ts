@@ -65,6 +65,7 @@ export const GATE: readonly string[] = [
   "test/asks.test.ts",
   "test/asks-expiry.test.ts",
   "test/planner-declined.test.ts",
+  "test/plan-pillars.test.ts",
   "test/feed.test.ts",
   "test/feed-page.test.ts",
   "test/offline.test.ts",
