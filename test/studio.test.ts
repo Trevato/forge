@@ -250,7 +250,7 @@ describe("the studio", () => {
    * move the page.
    */
   test("an app is one row on the shelf: a dot, its name and line, what the crew last did, the way in", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/notes"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
@@ -267,7 +267,7 @@ describe("the studio", () => {
     expect(long.length).toBeGreaterThanOrEqual(399);
     app.db.run("UPDATE repo SET description = ?1 WHERE id = ?2", [long, repo.id]);
     try {
-      const home = await (await get("/")).text();
+      const home = await (await get("/apps")).text();
       const at = home.indexOf('href="/alice/notes"');
       const shelfRow = home.slice(home.lastIndexOf("<li>", at), home.indexOf("</li>", at));
       expect(shelfRow).toContain(`title="${long}"`);
@@ -2726,14 +2726,20 @@ describe("the studio home keeps itself current", () => {
   });
 
   test("a card leaves On you once its issue closes", async () => {
-    const before = await (await get()).text();
+    // The On you region alone: the timeline still tells of the issue, as a
+    // post does after it is done (#599).
+    const onYou = () =>
+      fetch(`${base}/live/on-you`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      }).then((r) => r.text());
+    const before = await onYou();
     expect(before).toContain("Write the README");
 
     const merged = await mergePull(app, alice, repo, pull, "squash");
     expect(merged.ok).toBe(true);
     expect(setIssueState(app, alice, repo, readme, "closed").ok).toBe(true);
 
-    const after = await (await get()).text();
+    const after = await onYou();
     expect(after).not.toContain("Write the README");
   });
 });
@@ -2761,9 +2767,10 @@ describe("the studio head says why the app is not up", () => {
     }).then((r) => r.text());
 
   /** The home's own shelf row for this app — the badge issue #201 is about. */
+  // The shelf's rows are `/apps` (#599: home is the feed).
   const shelfBadge = async (cookie: string): Promise<string> => {
     const home = await (
-      await fetch(`${base}/`, {
+      await fetch(`${base}/apps`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
         redirect: "manual",
       })
@@ -5180,7 +5187,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
   });
 
   test('the shelf row for that app is not "quiet"', async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/pad"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
@@ -5444,7 +5451,7 @@ describe("an open change is never quiet on the front door", () => {
   });
 
   test("the shelf row carries the change's own word, its badge and dot kept", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/pad"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
@@ -5456,7 +5463,7 @@ describe("an open change is never quiet on the front door", () => {
   });
 
   test("an app with nothing open still reads quiet", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/quiet"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
@@ -5624,7 +5631,7 @@ describe("a deploy that just landed is news on the front door", () => {
   });
 
   test("the shelf row reads shipped, with who and when, not quiet", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, "/alice/sap");
     expect(shelfRow).not.toContain("quiet — tell the crew something");
     expect(shelfRow).toContain('data-word="shipped"');
@@ -5632,7 +5639,7 @@ describe("a deploy that just landed is news on the front door", () => {
   });
 
   test("an app with no recent deploy still reads quiet", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, `/alice/${quietRepo.name}`);
     expect(shelfRow).toContain("quiet — tell the crew something");
   });
@@ -5651,7 +5658,7 @@ describe("a deploy that just landed is news on the front door", () => {
         manifest: { tty: null },
       },
     });
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, "/alice/sap");
     expect(shelfRow).not.toContain('data-word="shipped"');
     expect(shelfRow).toContain("quiet — tell the crew something");
@@ -5670,7 +5677,7 @@ describe("a deploy that just landed is news on the front door", () => {
         manifest: { tty: null },
       },
     });
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, "/alice/sap");
     expect(shelfRow).not.toContain('data-word="shipped"');
     expect(shelfRow).toContain("quiet — tell the crew something");
@@ -5939,10 +5946,10 @@ describe("a stranger sees the app, not the owner's books", () => {
   });
 
   test("the studio home names the crew for the owner, but only 'the crew' for a signed-in reader of the same public app", async () => {
-    const asStranger = await (await get("/", strangerCookie)).text();
+    const asStranger = await (await get("/apps", strangerCookie)).text();
     expect(asStranger).not.toContain("keeper");
     expect(asStranger).toContain("beacon");
-    const asOwner = await (await get("/", ownerCookie)).text();
+    const asOwner = await (await get("/apps", ownerCookie)).text();
     expect(asOwner).toContain("keeper");
     expect(asOwner).toContain("beacon");
   });
@@ -8049,8 +8056,9 @@ describe("the studio home says what the crew cost you today", () => {
       ).headers.get("set-cookie") ?? ""
     ).split(";")[0]!;
 
+  // The cost line is the apps list's (#599: home is the feed).
   const home = (cookie: string) =>
-    fetch(`${base}/`, {
+    fetch(`${base}/apps`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
       redirect: "manual",
     }).then((r) => r.text());
@@ -8296,7 +8304,7 @@ describe("every studio page's headings form one outline", () => {
     const outline = headingOutline(html);
     expect(outline.levels.filter((l) => l === 1).length).toBe(1);
     expect(outline.ok).toBe(true);
-    expect(html).toMatch(/<h1 class="sr-only">Studio<\/h1>/);
+    expect(html).toMatch(/<h1 class="sr-only">Home<\/h1>/);
   });
 
   test("the app page, the three lists, a tell, a change and a run each have one outline with no skipped level", async () => {
@@ -9081,7 +9089,7 @@ describe("the studio can change what an app says it is (#230)", () => {
     const appHead = await (await get("/alice/lamp", ownerCookie)).text();
     expect(appHead).toContain("Private");
 
-    const shelf = await (await get("/", ownerCookie)).text();
+    const shelf = await (await get("/apps", ownerCookie)).text();
     expect(shelf).toContain("a lamp that stays lit all night");
 
     const list = await (await get("/apps", ownerCookie)).text();

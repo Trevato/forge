@@ -27,7 +27,7 @@ import {
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
-import { spawnDoor } from "../spawn/door.ts";
+import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
@@ -37,6 +37,12 @@ import {
   USAGE_DAYS_MAX,
 } from "../actions/usage.ts";
 import { ITEM_ID } from "../core/interactions.ts";
+import {
+  FEED_LIMIT_DEFAULT,
+  FEED_LIMIT_MAX,
+  parseCursor,
+  readFeed,
+} from "../feed/feed.ts";
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
@@ -642,6 +648,25 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "claim_link",
+    description:
+      "A new claim link for a child forge you spawned that nobody has claimed yet; the old link stops working at once. Only an admin of this forge, and never for a claimed child. The secret is in the link's #fragment: send the link whole.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "The child's name, as spawned." },
+      },
+      required: ["name"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const door = await reissueDoor(ctx, user, str(args["name"]));
+      if (door.status >= 400)
+        return bad(String(door.body["error"]), String(door.body["message"]));
+      return good(door.body);
+    },
+  },
+  {
     name: "take_updates",
     description:
       "Take the parent's updates into a fork: a fast-forward, or a merge when git merges cleanly. A conflict is refused with its files; use `converge` then.",
@@ -791,6 +816,35 @@ const TOOLS: readonly Tool[] = [
         query: exploreLine(query),
         items: await explore(ctx.app, user, query),
       });
+    },
+  },
+  {
+    name: "feed",
+    description:
+      "Your home timeline, as the forge's home shows it: tells, replies, runs, changes and looks across the apps you can see, ranked, each with who did it, what it says, why it is there and a link to its thing. Pass `cursor` (next_cursor from the last answer) for the next page. The same items as GET /api/v1/feed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "integer", minimum: 1, maximum: FEED_LIMIT_MAX },
+        cursor: { type: "string" },
+      },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const raw = args["limit"];
+      const limit = raw === undefined ? FEED_LIMIT_DEFAULT : Number(raw);
+      if (!Number.isInteger(limit) || limit < 1 || limit > FEED_LIMIT_MAX)
+        return bad("invalid", `limit is 1 to ${FEED_LIMIT_MAX}`);
+      const given = args["cursor"];
+      const cursor = given === undefined ? undefined : parseCursor(str(given));
+      if (given !== undefined && cursor === undefined)
+        return bad("invalid", "that cursor was not issued here");
+      return good(
+        readFeed(ctx.app.db, user, {
+          limit,
+          ...(cursor === undefined ? {} : { cursor }),
+        }),
+      );
     },
   },
   {

@@ -101,9 +101,7 @@ const phone = part(/* css */ `
   .studio-head form, .studio-head form .btn { flex: 1 1 auto; }
   .studio-tell .bar { flex-wrap: wrap; }
   .studio-tell .bar .btn, .studio-ask-actions .btn { min-height: 44px; }
-  .fcard-head .btn, .fcard-form .btn { min-height: 44px; }
-  .fcard-head { flex-direction: column; align-items: stretch; }
-  .fcard-head .badge, .fcard-head .fcard-app { align-self: flex-start; }
+  .fcard-acts .btn, .fcard-form .btn { min-height: 44px; }
   .studio-ask-actions { display: flex; flex-direction: column; align-items: stretch; white-space: normal; width: 100%; }
   .studio-list li { grid-template-columns: 18px minmax(0, 1fr); row-gap: 2px; }
   .studio-list li > :nth-child(n+3) { grid-column: 2; }

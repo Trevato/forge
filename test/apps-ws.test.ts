@@ -19,6 +19,7 @@ import {
   stopEnv,
   updateAppSettings,
 } from "../src/actions/apps.ts";
+import { suspendAccount } from "../src/actions/accounts.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
@@ -53,6 +54,7 @@ export const server = Bun.serve<{ seen: string }>({
         path: url.pathname + url.search,
         host: request.headers.get("host"),
         cookie: request.headers.get("cookie"),
+        identity: request.headers.get("x-forge-identity"),
         forwardedHost: request.headers.get("x-forwarded-host"),
         forwardedProto: request.headers.get("x-forwarded-proto"),
         upgrade: request.headers.get("upgrade"),
@@ -440,6 +442,42 @@ describe("apps: websockets through the proxy", () => {
       expect(elsewhere.status).toBe(404);
     } finally {
       updateAppSettings(app, alice, repo, { access: "public" });
+    }
+  });
+
+  test("a visitor's socket closes when their account is suspended; the app and others' sockets go on", async () => {
+    const made = await createUser(app.db, { trusted: true,
+      username: "visitor",
+      email: "visitor@forge.local",
+      password: "a-visitor-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const link = openEnvUrl(app, made.value, repo, "production");
+    if (!link.ok) throw new Error(String(link.error));
+    const url = new URL(link.value);
+    const granted = await viaHost(url.host, `${url.pathname}${url.search}`);
+    expect(granted.status).toBe(303);
+    const cookie = (granted.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const visitor = connect("/ws", { headers: { cookie } });
+    expect(await visitor.opened).toBe(true);
+    await seenBy(visitor.next);
+    const stranger = connect("/ws");
+    expect(await stranger.opened).toBe(true);
+    await seenBy(stranger.next);
+
+    expect((await suspendAccount(app, alice, "visitor")).ok).toBe(true);
+    expect((await visitor.closed).code).toBe(1008);
+    // Only that account's: the app is not the suspended one's, and a
+    // stranger's socket on it still talks.
+    stranger.ws.send("still here");
+    expect(await stranger.next()).toBe("still here");
+    stranger.ws.close();
+    // And the grant it still holds opens nothing for a person who may not.
+    const again = connect("/ws", { headers: { cookie } });
+    if (await again.opened) {
+      const seen = await seenBy(again.next);
+      expect(seen["identity"]).toBeNull();
+      again.ws.close();
     }
   });
 

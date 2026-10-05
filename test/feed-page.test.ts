@@ -107,11 +107,13 @@ describe("the feed on the home page", () => {
       actor: null,
       at: new Date().toISOString(),
       link: "/a/b/runs/r",
+      what: "<i>y</i>",
       reason: "<b>x</b>",
       score: 1,
     }).text;
     expect(card).not.toContain("<img");
     expect(card).not.toContain("<b>x</b>");
+    expect(card).not.toContain("<i>y</i>");
   });
 
   test("a viewer sees only their own feed: no leak from a private app", async () => {
