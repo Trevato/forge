@@ -50,6 +50,7 @@ import {
   importIssue,
 } from "../origins/import.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { inheritPillar } from "./pillars.ts";
 import {
   requireParticipant,
   requireWriter,
@@ -221,6 +222,8 @@ export function setIssueState(
       ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
     },
   });
+  // The parts serve what the whole served.
+  inheritPillar(app, user.value, repo, issue, children);
   return ok(changed);
 }
 

@@ -40,6 +40,7 @@ import { parseTargets } from "./feed.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import { getIssue, getIssueById } from "../core/issues.ts";
 import { repoGraph } from "../core/dependencies.ts";
+import { pillarView } from "../core/pillars.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
@@ -574,6 +575,11 @@ const TOOLS: readonly Tool[] = [
             graph,
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
+          pillarView(
+            ctx.app.db,
+            repo,
+            graph.issues.map((i) => i.id),
+          ),
         ),
       );
     },
@@ -674,7 +680,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, and what is ready now.`,
+    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open, and pillar, the name of the pillar it serves. A bad link (loop, unknown key) or an unknown pillar refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, and what is ready now.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -696,6 +702,11 @@ const TOOLS: readonly Tool[] = [
                 type: "array",
                 items: { type: ["string", "integer"] },
                 description: "Keys in this plan, or numbers of open issues.",
+              },
+              pillar: {
+                type: "string",
+                description:
+                  "The pillar this issue serves, by name as `map` lists them (for example P0 Trust, or Later): it is filed under that pillar's umbrella and carries its label.",
               },
             },
             required: ["key", "title"],

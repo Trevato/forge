@@ -49,9 +49,17 @@ export function pillarName(title: string): string | undefined {
   return UMBRELLA.exec(title)?.[1];
 }
 
-/** Whether an issue is the plan's own furniture — an umbrella or the gate — and not work. */
-export function isStructural(title: string): boolean {
-  return UMBRELLA.test(title) || GATE.test(title);
+/**
+ * Whether an issue is the plan's own furniture — a pillar's umbrella, or
+ * the gate — and not work: it is under no pillar and counted in none.
+ */
+export function isStructural(
+  pillars: readonly Pillar[],
+  issue: { readonly id: string; readonly title: string },
+): boolean {
+  return (
+    GATE.test(issue.title) || pillars.some((p) => p.issueId === issue.id)
+  );
 }
 
 /** `P0` before `P1` before `P10`, and `Later` last. */
@@ -239,7 +247,7 @@ export function underUmbrellas(
     .all(...pillars.map((p) => p.issueId));
   const place = new Map(pillars.map((p, n) => [p.issueId, n]));
   for (const row of rows) {
-    if (isStructural(row.title)) continue;
+    if (isStructural(pillars, row)) continue;
     const had = out.get(row.id);
     if (
       had === undefined ||
@@ -324,4 +332,60 @@ export function mergedByPillar(
     ...pillars.map((p) => ({ pillar: p.name, merged: counts.get(p.name)! })),
     ...(none === undefined ? [] : [{ pillar: null, merged: none }]),
   ];
+}
+
+/** Of these repositories, the ones with an issue titled like an umbrella: one read. */
+export function reposWithUmbrellas(
+  db: Database,
+  repoIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const CHUNK = 400;
+  for (let i = 0; i < repoIds.length; i += CHUNK) {
+    const chunk = repoIds.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ repo_id: string }, string[]>(
+        `SELECT DISTINCT repo_id FROM issue
+          WHERE repo_id IN (${chunk.map((_, n) => `?${n + 1}`).join(",")})
+            AND kind = 'issue'
+            AND (title GLOB 'P[0-9]*' OR title LIKE 'Later:%')`,
+      )
+      .all(...chunk);
+    for (const row of rows) out.add(row.repo_id);
+  }
+  return out;
+}
+
+/** When the window the map and the board count merged work over began. */
+export function pillarWindowStart(now = new Date()): string {
+  return new Date(now.getTime() - PILLAR_DAYS * 86_400_000).toISOString();
+}
+
+/** A repository's pillars as a surface reads them. */
+export interface PillarView {
+  readonly pillars: readonly Pillar[];
+  /** The pillar each issue asked about carries, by issue id. */
+  readonly of: ReadonlyMap<string, string>;
+  /** Pulls merged in the last `PILLAR_DAYS` days, by pillar. */
+  readonly merged: readonly MergedCount[];
+}
+
+/**
+ * The pillars of one repository, which of them each of these issues
+ * carries, and the week's merged work by pillar — or nothing, for a
+ * repository that has no pillars.
+ */
+export function pillarView(
+  db: Database,
+  repo: Repo,
+  issueIds: readonly string[],
+  now = new Date(),
+): PillarView | undefined {
+  const pillars = pillarsOf(db, repo);
+  if (pillars.length === 0) return undefined;
+  return {
+    pillars,
+    of: pillarOfIssues(db, pillars, issueIds),
+    merged: mergedByPillar(db, repo, pillars, pillarWindowStart(now)),
+  };
 }

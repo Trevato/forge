@@ -204,6 +204,7 @@ import {
   confirmIssue,
 } from "../actions/dependencies.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
+import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
@@ -1996,6 +1997,11 @@ export function apiRoutes(router: Router<Handler>): void {
           repo.id,
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
+        ),
+        pillarView(
+          ctx.app.db,
+          repo,
+          graph.issues.map((i) => i.id),
         ),
       ),
     );

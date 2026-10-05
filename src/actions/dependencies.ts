@@ -18,6 +18,7 @@ import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { AccessError } from "./access.ts";
+import { followUmbrella } from "./pillars.ts";
 
 /** What a refused link says, in the words the API and the MCP share. */
 export const dependencyWords: Record<string, string> = {
@@ -59,6 +60,8 @@ export function linkIssue(
     actorId: who.value.id,
     payload: { number: issue.number, blockedBy: blocker.number },
   });
+  // Under a pillar's umbrella, the issue carries the pillar's label.
+  followUmbrella(app, who.value, repo, issue, blocker);
   return ok(undefined);
 }
 
@@ -80,6 +83,7 @@ export function unlinkIssue(
     actorId: who.value.id,
     payload: { number: issue.number, blockedBy: blocker.number },
   });
+  followUmbrella(app, who.value, repo, issue, blocker);
   return ok(undefined);
 }
 

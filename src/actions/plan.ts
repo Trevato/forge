@@ -1,7 +1,9 @@
 /**
  * Opening a plan: several small issues and the links between them, all or
  * nothing. Every refusal names the item that was wrong, and nothing is
- * written (or announced) until the whole plan is known to be good.
+ * written (or announced) until the whole plan is known to be good. An item
+ * may name its pillar: it is then filed under that pillar's umbrella and
+ * carries its label (`core/pillars.ts`).
  */
 
 import type { App } from "../app.ts";
@@ -14,11 +16,13 @@ import {
   MAX_TITLE,
   type Issue,
 } from "../core/issues.ts";
+import { pillarsOf, type Pillar, type PillarChange } from "../core/pillars.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { transact } from "../kernel/db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
+import { announcePillar, fileUnder } from "./pillars.ts";
 
 export const PLAN_MAX = 12;
 const KEY = /^[A-Za-z][A-Za-z0-9_.-]{0,39}$/;
@@ -29,6 +33,8 @@ export interface PlanItem {
   readonly body: string;
   /** Keys of this plan, or numbers of issues already open in the repository. */
   readonly blockedBy: readonly (string | number)[];
+  /** The pillar this issue serves, by name, when the plan says. */
+  readonly pillar?: string;
 }
 
 /** A refusal: a stable code, and a sentence that names the item at fault. */
@@ -89,7 +95,19 @@ export function parsePlan(raw: unknown): Result<PlanItem[], PlanError> {
           `"${key}": blockedBy takes keys or issue numbers`,
         );
     }
-    items.push({ key, title, body, blockedBy: waits as (string | number)[] });
+    const pillar = o["pillar"];
+    if (
+      pillar !== undefined &&
+      (typeof pillar !== "string" || pillar.trim() === "")
+    )
+      return refuse("invalid", `"${key}": pillar must be a pillar's name`);
+    items.push({
+      key,
+      title,
+      body,
+      blockedBy: waits as (string | number)[],
+      ...(pillar === undefined ? {} : { pillar: pillar.trim() }),
+    });
   }
   return ok(items);
 }
@@ -167,8 +185,31 @@ export function openPlan(
   const loop = loopAt(items);
   if (loop !== undefined)
     return refuse("cycle", `"${loop}" is on a loop: that would make a loop`);
+  // A pillar is one of the repository's own, by name: a plan cannot invent one.
+  const pillars = items.some((i) => i.pillar !== undefined)
+    ? pillarsOf(app.db, repo)
+    : [];
+  const pillarOf = new Map<string, Pillar>();
+  for (const item of items) {
+    if (item.pillar === undefined) continue;
+    const wanted = item.pillar.toLowerCase();
+    const found = pillars.find((p) => p.name.toLowerCase() === wanted);
+    if (found === undefined)
+      return refuse(
+        "unknown_pillar",
+        pillars.length === 0
+          ? `"${item.key}": this repository has no pillars`
+          : `"${item.key}": no pillar "${item.pillar}" here; the pillars are ${pillars.map((p) => p.name).join(", ")}`,
+      );
+    pillarOf.set(item.key, found);
+  }
 
   const opened: { key: string; number: number }[] = [];
+  const filings: {
+    issue: Issue;
+    umbrella: number;
+    change: PillarChange | undefined;
+  }[] = [];
   const failed = transact(app.db, (): PlanError | undefined => {
     app.db.exec("SAVEPOINT plan");
     const made = new Map<string, Issue>();
@@ -206,6 +247,16 @@ export function openPlan(
             message: `"${item.key}" cannot wait for ${String(w)}: ${linked.error}`,
           });
       }
+    for (const [key, pillar] of pillarOf) {
+      const issue = made.get(key)!;
+      const filed = fileUnder(app, repo, pillars, pillar, issue, actor);
+      if (filed === undefined)
+        return undo({
+          error: "cycle",
+          message: `"${key}" cannot be filed under ${pillar.name}: that would make a loop`,
+        });
+      filings.push({ issue, ...filed });
+    }
     app.db.exec("RELEASE plan");
     for (const item of items)
       opened.push({ key: item.key, number: made.get(item.key)!.number });
@@ -232,6 +283,16 @@ export function openPlan(
           blockedBy: typeof w === "string" ? number.get(w)! : w,
         },
       });
+  }
+  for (const filed of filings) {
+    app.bus.append({
+      kind: "issue.blocked",
+      repoId: repo.id,
+      actorId: actor.id,
+      payload: { number: filed.umbrella, blockedBy: filed.issue.number },
+    });
+    if (filed.change !== undefined)
+      announcePillar(app, actor, repo, filed.issue, filed.change);
   }
   return ok({
     opened,
