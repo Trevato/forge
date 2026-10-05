@@ -7828,10 +7828,20 @@ describe("finding things in the studio: /search", () => {
     expect(html).not.toContain("secret");
   });
 
-  test("?mode=dev on the same route still answers in dev's own words", async () => {
-    const html = await (await asAlice("/search?q=chess&mode=dev")).text();
-    expect(html).toContain("Repositories");
-    expect(html).toContain("Issues and pull requests");
+  test("?mode=dev on the same route answers the same one page", async () => {
+    for (const html of [
+      await (await asAlice("/search?q=chess&mode=dev")).text(),
+      await (
+        await fetch(`${base}/search?q=chess`, {
+          headers: { cookie: `${aliceCookie}; forge_mode=dev` },
+        })
+      ).text(),
+    ]) {
+      expect(html).toContain("Apps and repositories");
+      expect(html).toContain("Tells and changes");
+      expect(html).toContain(`/alice/widgets/tells/${tellNumber}`);
+      expect(mainOf(html)).not.toContain('name="mode"');
+    }
   });
 
   // #397, carrying #241's rule: the one search finds every repository the
@@ -7864,19 +7874,75 @@ describe("finding things in the studio: /search", () => {
     expect(stranger).not.toContain("project-notes");
   });
 
-  test("the studio face leaves the code to dev, one link away, and ?mode=dev rides every link and the form", async () => {
-    const studio = mainOf(await (await asAlice("/search?q=chess")).text());
-    expect(studio).not.toContain('id="code"');
-    expect(studio).toContain("/search?q=chess&amp;kind=code&amp;mode=dev");
-    // A hand-written kind=code in the studio is its everything, not an error.
-    const code = await asAlice("/search?q=chess&kind=code");
-    expect(code.status).toBe(200);
-    expect(mainOf(await code.text())).toContain('id="repos"');
+  test("a private app on a public repository: its state reaches only its writers, and anyone else sees a plain repository row", async () => {
+    const made = await createRepo(app, alice, {
+      name: "abacus",
+      visibility: "public",
+      description: "an abacus for chess clocks",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, alice, made.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, made.value, {
+      slug: "abacus",
+      access: "private",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const carol = await createUser(app.db, { trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    const carolCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "carol",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const rowOf = (html: string): string => {
+      const at = html.indexOf('href="/alice/abacus"');
+      return at === -1 ? "" : html.slice(at, html.indexOf("</a>", at));
+    };
+    for (const cookie of ["", `${carolCookie}; forge_mode=studio`]) {
+      const html = mainOf(
+        await (
+          await fetch(`${base}/search?q=abacus`, {
+            headers: cookie === "" ? {} : { cookie },
+          })
+        ).text(),
+      );
+      const row = rowOf(html);
+      expect(row).not.toBe("");
+      expect(row).not.toContain("not running");
+      expect(row).not.toContain('class="dot"');
+    }
+    expect(rowOf(mainOf(await (await asAlice("/search?q=abacus")).text()))).toContain(
+      "not running",
+    );
+  });
 
-    const dev = mainOf(await (await asAlice("/search?q=chess&mode=dev")).text());
-    expect(dev).toContain('id="code"');
-    expect(dev).toContain('name="mode" value="dev"');
-    expect(dev).toContain("/search?q=chess&amp;kind=repos&amp;mode=dev");
+  test("code is a section of the same page, and narrowing to it is a chip, never a mode", async () => {
+    const all = mainOf(await (await asAlice("/search?q=chess")).text());
+    expect(all).toContain('id="repos"');
+    expect(all).toContain('id="issues"');
+    expect(all).toContain('id="code"');
+    expect(all).toContain("/search?q=chess&amp;kind=code");
+    expect(all).not.toContain("mode=dev");
+    expect(all).not.toContain("Search the code");
+
+    const code = mainOf(await (await asAlice("/search?q=chess&kind=code")).text());
+    expect(code).toContain('id="code"');
+    expect(code).not.toContain('id="repos"');
   });
 });
 
