@@ -100,7 +100,14 @@ signed in by the platform, with an account made on first sight. Mail out
 configured by the forge-level secrets `MAIL_SMTP_URL`
 (`smtps://user:pass@host:465`) and `MAIL_FROM`, set live under Settings →
 Secrets, or at boot by `FORGE_SMTP_URL` / `FORGE_MAIL_FROM`. With neither, no
-mail is sent and a newcomer waits for the owner to verify them. Everything a forge
+mail is sent and a newcomer waits for the owner to verify them. Behind a
+proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
+`10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the
+client is; limits for strangers and the signup audit then see each outside
+client, read from `X-Forwarded-For` right to left past the trusted hops, or
+from `FORGE_CLIENT_IP_HEADER` when the edge sets one (`cf-connecting-ip`
+behind a Cloudflare tunnel, where the ingress rewrites `X-Forwarded-For`).
+Unset, only this machine may say so. Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 

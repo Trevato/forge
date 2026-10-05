@@ -6,6 +6,7 @@
  */
 
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import { defect } from "../kernel/error.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
@@ -299,7 +300,8 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { clientAddress, notePeer } from "./peer.ts";
+import { clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { parseCidrs } from "../kernel/cidr.ts";
 import {
   reportAcceptSubmit,
   reportDismissSubmit,
@@ -1400,6 +1402,16 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // Who may say who the client is (\`http/peer.ts\`), settled once.
+  const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
+  if (!proxies.ok)
+    defect("config.trusted_proxies", `not an address or range: ${proxies.error}`);
+  const trust: ProxyTrust = {
+    proxies: proxies.value,
+    ...(app.config.clientIpHeader === undefined
+      ? {}
+      : { header: app.config.clientIpHeader }),
+  };
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
@@ -1421,7 +1433,7 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
-      notePeer(request, server.requestIP(request)?.address);
+      notePeer(request, server.requestIP(request)?.address, trust);
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
       return securityFloor(
