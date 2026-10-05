@@ -35,7 +35,7 @@ describe("repo settings", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    ownerCookie = await signup("owner");
+    ownerCookie = await signup("olive");
     strangerCookie = await signup("stranger");
     await fetch(`${base}/new`, {
       method: "POST",
@@ -54,7 +54,7 @@ describe("repo settings", () => {
   test("only the owner can reach settings", async () => {
     expect(
       (
-        await fetch(`${base}/owner/proj/settings`, {
+        await fetch(`${base}/olive/proj/settings`, {
           headers: { cookie: ownerCookie },
         })
       ).status,
@@ -62,16 +62,16 @@ describe("repo settings", () => {
     // A stranger can't even see the private repo exists.
     expect(
       (
-        await fetch(`${base}/owner/proj/settings`, {
+        await fetch(`${base}/olive/proj/settings`, {
           headers: { cookie: strangerCookie },
         })
       ).status,
     ).toBe(404);
-    expect((await fetch(`${base}/owner/proj/settings`)).status).toBe(404);
+    expect((await fetch(`${base}/olive/proj/settings`)).status).toBe(404);
   });
 
   test("owner updates visibility, description, and protection", async () => {
-    const res = await fetch(`${base}/owner/proj/settings`, {
+    const res = await fetch(`${base}/olive/proj/settings`, {
       method: "POST",
       headers: { cookie: ownerCookie },
       body: form({
@@ -82,55 +82,55 @@ describe("repo settings", () => {
       redirect: "manual",
     });
     expect(res.status).toBe(303);
-    const repo = getRepo(app.db, "owner", "proj")!;
+    const repo = getRepo(app.db, "olive", "proj")!;
     expect(repo.visibility).toBe("public");
     expect(repo.description).toBe("now public");
     expect(repo.protectDefault).toBe(true);
   });
 
   test("a stranger cannot change settings", async () => {
-    const res = await fetch(`${base}/owner/proj/settings`, {
+    const res = await fetch(`${base}/olive/proj/settings`, {
       method: "POST",
       headers: { cookie: strangerCookie },
       body: form({ visibility: "private", description: "hijacked" }),
       redirect: "manual",
     });
     expect(res.status).toBe(404);
-    expect(getRepo(app.db, "owner", "proj")!.description).toBe("now public");
+    expect(getRepo(app.db, "olive", "proj")!.description).toBe("now public");
   });
 
   test("create and delete labels", async () => {
-    await fetch(`${base}/owner/proj/settings/labels`, {
+    await fetch(`${base}/olive/proj/settings/labels`, {
       method: "POST",
       headers: { cookie: ownerCookie },
       body: form({ name: "bug", color: "d73a4a" }),
       redirect: "manual",
     });
-    let labels = listLabels(app.db, getRepo(app.db, "owner", "proj")!.id);
+    let labels = listLabels(app.db, getRepo(app.db, "olive", "proj")!.id);
     expect(labels.map((l) => l.name)).toContain("bug");
     const labelId = labels.find((l) => l.name === "bug")!.id;
 
     // The label shows on the Labels pane with its color bound via nonce'd CSS.
     const pageHtml = await (
-      await fetch(`${base}/owner/proj/settings/labels`, {
+      await fetch(`${base}/olive/proj/settings/labels`, {
         headers: { cookie: ownerCookie },
       })
     ).text();
     expect(pageHtml).toContain("lc-d73a4a");
     expect(pageHtml).toContain(".lc-d73a4a{--label:#d73a4a}");
 
-    await fetch(`${base}/owner/proj/settings/labels/${labelId}/delete`, {
+    await fetch(`${base}/olive/proj/settings/labels/${labelId}/delete`, {
       method: "POST",
       headers: { cookie: ownerCookie },
       body: form({}),
       redirect: "manual",
     });
-    labels = listLabels(app.db, getRepo(app.db, "owner", "proj")!.id);
+    labels = listLabels(app.db, getRepo(app.db, "olive", "proj")!.id);
     expect(labels.map((l) => l.name)).not.toContain("bug");
   });
 
   test("cross-origin settings update is refused", async () => {
-    const res = await fetch(`${base}/owner/proj/settings`, {
+    const res = await fetch(`${base}/olive/proj/settings`, {
       method: "POST",
       headers: { cookie: ownerCookie, origin: "http://evil.example" },
       body: form({ visibility: "private" }),
