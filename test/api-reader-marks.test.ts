@@ -76,7 +76,7 @@ beforeAll(async () => {
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
   alice = ok(
-    await createUser(app.db, {
+    await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -84,7 +84,7 @@ beforeAll(async () => {
     }),
   );
   mallory = ok(
-    await createUser(app.db, {
+    await createUser(app.db, { trusted: true,
       username: "mallory",
       email: "mallory@forge.local",
       password: "a-good-passphrase",

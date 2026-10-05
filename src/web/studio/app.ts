@@ -9,6 +9,7 @@
  * for a viewer who can write here; a stranger sees the app.
  */
 
+import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -433,6 +434,13 @@ export async function studioApp(
     ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
     ${await policyLine(ctx, repo, record)} ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts
+      ? egressNote(
+          ctx.app.config.dataDir,
+          repo.id,
+          appsRuntime(ctx.app)?.liveFor(record, "production")?.cell?.egress ?? [],
+        )
+      : null}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}

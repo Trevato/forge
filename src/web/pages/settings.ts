@@ -71,6 +71,10 @@ import {
   type AppRecord,
 } from "../../core/apps.ts";
 import { listLabels, type Label } from "../../core/issues.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+} from "../../actions/app_members.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
 import { listRefs } from "../../git/read.ts";
@@ -419,6 +423,11 @@ function appSettingsView(
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
   const domain = runtime?.options.domain;
+  const listed =
+    record === undefined
+      ? undefined
+      : readAppMembers(ctx.app, ctx.auth.user, repo);
+  const named = listed?.ok === true ? listed.value.members : [];
   const form = card(
     html`${when(
         record === undefined,
@@ -451,7 +460,7 @@ function appSettingsView(
           hint:
             values.access === "public"
               ? `Right now anyone with the link can open it, signed in or not. The code stays as ${repo.visibility} as the repository is: the two are set separately.`
-              : `Right now a visitor is asked to sign in and let through only if they can write this repository, or are on its crew; reading the code is not enough, so it stays this way if the repository is made public. Everyone else sees not found. Choose Public to share it with anyone.`,
+              : `Right now a visitor is asked to sign in and let through only if they can write this repository, are on its crew, or are named under Who may enter (${named.length === 0 ? "nobody is" : named.join(", ")}); reading the code is not enough, so it stays this way if the repository is made public. Everyone else sees not found. Choose Public to share it with anyone.`,
           options: [
             {
               value: "private",
@@ -504,6 +513,7 @@ function appSettingsView(
   if (record === undefined) return form;
   const domains = listAppDomains(ctx.app, ctx.auth.user, repo);
   return html`${form}
+    ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
     </div>
@@ -625,6 +635,46 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
  * `undefined` is a forge where nothing serves apps: a domain would have
  * nowhere to point, so the card says so and offers no form.
  */
+/**
+ * Who may enter a private app beyond its writers and crew (#752): one
+ * username a line. Being named opens the app and its previews and nothing
+ * else — no code, no crew, no settings, no terminal.
+ */
+function appMembersView(
+  base: string,
+  access: AppAccess,
+  named: readonly string[],
+): Html {
+  return card(
+    html`<form method="post" action="${base}/settings/app/members">
+      <div class="field">
+        <label for="f-members">People</label>
+        <textarea
+          class="input mono"
+          id="f-members"
+          name="members"
+          rows="${Math.min(10, Math.max(3, named.length + 1))}"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="one username a line"
+        >
+${named.join("\n")}</textarea
+        >
+        <p class="hint">
+          ${access === "private"
+            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."
+            : "The app is public, so anyone may open it now; these names matter once it is private."}
+        </p>
+      </div>
+      <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
+    </form>`,
+    {
+      head: html`${icon("users")}
+        <h2>Who may enter</h2>`,
+    },
+  );
+}
+
 function appDomainsView(
   base: string,
   domains: AppDomainView[] | undefined,
@@ -796,6 +846,39 @@ export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
             : `${repo.name} is starting at ${url}.`,
     },
   );
+}
+
+// POST /:owner/:name/settings/app/members — the whole list, one a line.
+export async function appMembersUpdate(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const members = field(form, "members").split(/[\s,]+/).filter((n) => n !== "");
+  const set = setAppMembersThrough(ctx.app, ctx.auth.user, repo, {
+    members,
+    dryRun: false,
+  });
+  const to = `${repoBase(repo)}/settings/app`;
+  if (!set.ok)
+    return flashTo(ctx, to, {
+      tone: "danger",
+      message:
+        set.error.kind === "invalid"
+          ? set.error.message
+          : "Only a person who can write here chooses who may enter.",
+    });
+  const { added, removed } = set.value;
+  return flashTo(ctx, to, {
+    message:
+      added.length === 0 && removed.length === 0
+        ? "Nobody changed."
+        : [
+            added.length > 0 ? `${added.join(", ")} may enter` : "",
+            removed.length > 0 ? `${removed.join(", ")} no longer may` : "",
+          ]
+            .filter((s) => s !== "")
+            .join("; ") + ".",
+  });
 }
 
 // POST /:owner/:name/settings/app/disable

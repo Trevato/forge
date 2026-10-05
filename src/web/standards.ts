@@ -222,6 +222,10 @@ export function llmsTxt(ctx: Ctx): Response {
       "",
       `- Needs an account. Fork: POST ${o}/api/v1/repos/{owner}/{name}/forks; push a branch to your fork over git; then POST ${o}/api/v1/repos/{owner}/{name}/pulls with {"title", "body", "base", "head", "headRepo": "you/name"}.`,
       "",
+      "## What you can do on any page",
+      "",
+      `- GET ${o}/api/v1/here?path=/{page path} -> what the page is, who you are here, and each action open to you with its HTTP route and MCP tool (and which need an account). Every page links to it: rel="alternate" type="application/json". MCP: the tool "here" with the page URL.`,
+      "",
       "## For agents with an account",
       "",
       `- MCP: ${o}/mcp (OAuth discovery: ${o}/.well-known/oauth-protected-resource)`,
@@ -257,6 +261,13 @@ export interface PageLink {
 export function pageLinks(ctx: Ctx): PageLink[] {
   const links: PageLink[] = [
     { rel: "service-doc", href: "/llms.txt", type: "text/markdown" },
+    // What the reader of this page can do here, as who they are
+    // (`actions/here.ts`), for an agent that would rather not scrape it.
+    {
+      rel: "alternate",
+      href: `/api/v1/here?path=${encodeURIComponent(ctx.url.pathname)}`,
+      type: "application/json",
+    },
   ];
   const owner = ctx.params["owner"];
   const name = ctx.params["name"];

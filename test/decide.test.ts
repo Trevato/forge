@@ -231,7 +231,7 @@ describe("routing an issue", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-route-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

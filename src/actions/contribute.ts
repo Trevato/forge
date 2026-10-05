@@ -32,6 +32,7 @@
  * rather than assuming.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   findOriginFork,
@@ -75,6 +76,7 @@ const FORK_BACKOFF = [250, 500, 1_000, 2_000, 3_000] as const;
 
 export type ForkOriginError =
   | "unauthorized"
+  | "unverified"
   | "not_found"
   | "origin_unreachable"
   | "origin_refused"
@@ -118,9 +120,11 @@ export async function forkOrigin(
   originId: string,
   fullName: string,
   options: ForkOriginOptions = {},
-): Promise<Result<ForkOriginResult, ForkOriginError>> {
+): Promise<Result<ForkOriginResult, ForkOriginError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   // Somebody else's connected account does not exist for you (invariant 9).
   const origin = getOriginFor(app.db, user.value.id, originId);
   if (!origin) return err("not_found");
@@ -356,9 +360,11 @@ export async function contribute(
   app: App,
   actor: User | undefined,
   input: ContributeInput,
-): Promise<Result<ContributeResult, ContributeError>> {
+): Promise<Result<ContributeResult, ContributeError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const origin = getOriginFor(app.db, user.value.id, input.originId);
   if (!origin) return err("not_found");
   const branch = input.branch.trim();

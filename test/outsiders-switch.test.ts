@@ -89,6 +89,7 @@ beforeAll(async () => {
   const make = async (username: string) =>
     ok(
       await createUser(app.db, {
+        trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

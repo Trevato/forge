@@ -23,6 +23,7 @@ import {
   type FakeOAuth,
 } from "./fake-origin.ts";
 import { fastFirstFetch, withoutEnv } from "./helpers/globals.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 /**
  * Adversarial review of the origins surface: OAuth (state, PKCE, redirect
@@ -150,6 +151,7 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     base = servers.url;
     api = callerFor(base);
     await createUsers(base, ["alice", "bob"]);
+    proveAll(app);
     resetConnectLimit();
     forgetProviders(dataDir);
     await api("/api/v1/user/origin-apps", {
@@ -450,6 +452,7 @@ describe("OAuth device flow: a flow is private to the user who started it", () =
     servers = await serve(app);
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice", "bob"]);
+    proveAll(app);
     resetConnectLimit();
     forgetProviders(dataDir);
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
@@ -562,6 +565,7 @@ describe("refresh serialisation and needs_reauth", () => {
     servers = await serve(app);
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice"]);
+    proveAll(app);
     resetConnectLimit();
     forgetProviders(dataDir);
     await api("/api/v1/user/origin-apps", {
@@ -775,6 +779,7 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     // writer of every repo — the one kind of non-owner writer a personal
     // mirror can have.
     await createUsers(base, ["bob", "alice", "carol"]);
+    proveAll(app);
     resetConnectLimit();
     forgetProviders(dataDir);
 
