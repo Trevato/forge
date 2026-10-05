@@ -81,7 +81,8 @@ convenience and exists only there: over SSH, the key decides who you are and
 nothing else can.
 
 Configuration is environment variables, all with defaults: `FORGE_DATA`
-(`data/`), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
+(`data/`; the forge refuses to boot when it is the checkout itself or a path
+inside it that git does not ignore), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
 `FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and

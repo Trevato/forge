@@ -30,6 +30,7 @@ import { graphInstagram } from "./crew/instagram.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
+import { dataHomeRefusal } from "./kernel/data_home.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -63,11 +64,20 @@ const canonicalUrl = hosted ? hostedAt : (process.env.FORGE_URL ?? "").trim();
 // identity headers sign people in; without it they are ignored.
 const edgeToken = (process.env.FORGE_EDGE_TOKEN ?? "").trim();
 
+const dataDir =
+  process.env.FORGE_DATA ??
+  (hosted ? process.env.FORGE_APP_DATA : undefined) ??
+  "data";
+// State never lands in the tree the forge runs from (#622): a database or a
+// host key there is one `git add -A` from every clone.
+const refusal = dataHomeRefusal(dataDir, import.meta.dir);
+if (refusal !== null) {
+  console.error(refusal);
+  process.exit(1);
+}
+
 const app = createApp({
-  dataDir:
-    process.env.FORGE_DATA ??
-    (hosted ? process.env.FORGE_APP_DATA : undefined) ??
-    "data",
+  dataDir,
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
     ? {}
