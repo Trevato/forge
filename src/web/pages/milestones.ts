@@ -119,16 +119,13 @@ const STATE_WORDS: Record<LeafState, string> = {
   gone: "not doing",
 };
 
-/** How many rows a list shows before the rest folds away. */
-const SHOWN = 8;
-
-/** A list that shows its first rows and folds the rest. */
-function folded(rows: Html[], what: string): Html {
-  if (rows.length <= SHOWN) return html`<ul class="ms-rows">${rows}</ul>`;
-  return html`<ul class="ms-rows">${rows.slice(0, SHOWN)}</ul>
+/** A list that shows its first `shown` rows and folds the rest. */
+function folded(rows: Html[], what: string, shown: number): Html {
+  if (rows.length <= shown) return html`<ul class="ms-rows">${rows}</ul>`;
+  return html`<ul class="ms-rows">${rows.slice(0, shown)}</ul>
     <details class="ms-more">
-      <summary class="small">${rows.length - SHOWN} more ${what}</summary>
-      <ul class="ms-rows">${rows.slice(SHOWN)}</ul>
+      <summary class="small">${rows.length - shown} more ${what}</summary>
+      <ul class="ms-rows">${rows.slice(shown)}</ul>
     </details>`;
 }
 
@@ -144,7 +141,7 @@ function milestoneBody(
   const w = m.weight;
   const open = m.leaves.filter((l) => l.issue.state === "open");
   const closed = m.leaves.filter((l) => l.issue.state !== "open");
-  return html`<div class="page-head mt">
+  return html`<div class="ms-top mt">
       <p class="small muted">
         <a href="${base}/milestones">Milestones</a>
       </p>
@@ -224,6 +221,7 @@ function milestoneBody(
                 </li>`,
             ),
             "blocked",
+            5,
           )}
         </section>`,
     )}
@@ -240,6 +238,7 @@ function milestoneBody(
                 </li>`,
             ),
             "merged",
+            3,
           )}
     </section>
     ${when(
@@ -260,6 +259,7 @@ function milestoneBody(
                     </li>`,
                 ),
                 "open",
+                8,
               )}
           ${when(
             closed.length > 0,
@@ -338,7 +338,7 @@ export function milestoneData(
 
 export const milestonesCss = /* css */ `
 .ms-limbs { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
-.ms-limb { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.ms-limb { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--border); }
 .ms-limb:last-child { border-bottom: 0; }
 .ms-name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ms-count { font-variant-numeric: tabular-nums; color: var(--muted-fg); white-space: nowrap; }
@@ -349,7 +349,9 @@ export const milestonesCss = /* css */ `
 .ms-bar::-moz-progress-bar { background: var(--success); }
 .ms-weight, .ms-trim { grid-column: 1 / -1; }
 .ms-trim { color: var(--attn); margin: 0; }
-.ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 8px 0; max-width: 520px; }
+.ms-top { display: grid; gap: 8px; max-width: 640px; }
+.ms-top h1, .ms-top p { margin: 0; }
+.ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .ms-section { margin-top: 22px; }
 .ms-section h2 { font-size: 13px; margin: 0 0 6px; }
 .ms-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
