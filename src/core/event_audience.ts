@@ -72,7 +72,7 @@ export function audienceFilter(
     const yes =
       repo !== undefined &&
       (record === undefined ||
-        canEnterApp(db, repo, record, viewer));
+        canEnterApp(db, repo, record, viewer, { named: false }));
     entrants.set(repoId, yes);
     return yes;
   };

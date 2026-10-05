@@ -198,7 +198,7 @@ export async function pullWord(
     const repo = getRepoById(ctx.db, ctx.record.repoId);
     if (
       repo === undefined ||
-      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer)
+      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
     )
       return { word: "shipped", note: "merged" };
     const production = ctx.runtime

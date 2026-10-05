@@ -77,7 +77,7 @@ export function mayReadRuns(
   const record = getAppByRepo(app.db, repo.id);
   return (
     record === undefined ||
-    canEnterApp(app.db, repo, record, actor)
+    canEnterApp(app.db, repo, record, actor, { named: false })
   );
 }
 

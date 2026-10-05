@@ -345,7 +345,8 @@ export const appsRuntime = (app: App): AppsRuntime | undefined =>
 
 /**
  * An app's environments as `viewer` may see them. A private app's state,
- * errors and runs are for the people who may enter it (`canEnterApp`); to
+ * errors and runs are its writers' and crew's (`canEnterApp`, without the
+ * people it only names, who enter the app and nothing behind it); to
  * anyone else who can read the repository it shows none — a deploy error
  * can carry paths and configuration (#620). Every surface that shows a
  * viewer an app's environments reads them here.
@@ -359,7 +360,7 @@ export function envsFor(
   if (runtime === undefined) return [];
   if (record.access === "private") {
     const repo = getRepoById(app.db, record.repoId);
-    if (repo === undefined || !canEnterApp(app.db, repo, record, viewer))
+    if (repo === undefined || !canEnterApp(app.db, repo, record, viewer, { named: false }))
       return [];
   }
   return runtime.status(record);

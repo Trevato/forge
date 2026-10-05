@@ -15,7 +15,7 @@ import { search } from "../../actions/search.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canWrite, getRepo } from "../../core/repos.ts";
+import { canEnterApp, canWrite, getRepo, getRepoById } from "../../core/repos.ts";
 import {
   cleanQuery,
   searchKind,
@@ -75,8 +75,21 @@ const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
 
 /** Whether an app is live. No query — `runtime.status` reads what is
- * already in memory. */
-function appState(ctx: Ctx, record: AppRecord): { tone: Tone; word: string } {
+ * already in memory. Undefined for a private app the viewer may not enter:
+ * its state is its writers' and crew's (`envsFor`), and "not running" would
+ * be a guess dressed as a fact. */
+function appState(
+  ctx: Ctx,
+  record: AppRecord,
+): { tone: Tone; word: string } | undefined {
+  if (record.access === "private") {
+    const repo = getRepoById(ctx.app.db, record.repoId);
+    if (
+      repo === undefined ||
+      !canEnterApp(ctx.app.db, repo, record, ctx.auth.user, { named: false })
+    )
+      return undefined;
+  }
   const envs = envsFor(ctx.app, ctx.auth.user, record);
   const state = envs.find((e) => e.env === "production")?.state ?? "stopped";
   const tone: Tone =

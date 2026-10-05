@@ -381,6 +381,32 @@ describe("a private app on a public repository stays private", () => {
     expect(await tell(aliceCookie)).toContain(run.id);
   });
 
+  test("the owner page's shelf and search show a reader the private app's name, never its state or word", async () => {
+    const rowOf = (page: string): string => {
+      const at = page.indexOf('href="/alice/ledger"');
+      expect(at).toBeGreaterThan(-1);
+      return page.slice(at, page.indexOf("</a>", at));
+    };
+    const fetchAs = (path: string, cookie: string) =>
+      fetch(`${servers.url}${path}`, {
+        headers: cookie === "" ? {} : { cookie },
+      }).then((r) => r.text());
+    for (const cookie of [carolCookie, ""]) {
+      const shelf = rowOf(await fetchAs("/alice", cookie));
+      expect(shelf).toContain("private app");
+      expect(shelf).not.toContain("data-word");
+      expect(shelf).not.toMatch(/serving|not running|not up|starting|asleep|live/);
+      expect(shelf).not.toContain('data-tone="success"');
+      const hit = rowOf(await fetchAs("/search?q=ledger", cookie));
+      expect(hit).not.toMatch(/serving|not running|not up|starting|asleep|\blive\b/);
+      expect(hit).not.toContain('data-tone="success"');
+    }
+    const owners = rowOf(await fetchAs("/alice", aliceCookie));
+    expect(owners).not.toContain("private app");
+    expect(owners).toContain("data-word");
+    expect(owners).toMatch(/serving|not running|not up|starting|asleep|live/);
+  });
+
   test("the settings page says, before saving, what stays private", async () => {
     const page = await fetch(`${servers.url}/alice/ledger/settings`, {
       headers: { cookie: `${aliceCookie}; forge_mode=dev` },
