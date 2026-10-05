@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
@@ -80,6 +81,20 @@ if (refusal !== null) {
   process.exit(1);
 }
 
+// FORGE_TRUSTED_PROXIES is checked here so a typo fails the boot, not a
+// limit that quietly counts every stranger as one.
+const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s !== "");
+{
+  const parsed = parseCidrs(trustedProxies.join(","));
+  if (!parsed.ok) {
+    console.error(`FORGE_TRUSTED_PROXIES: "${parsed.error}" is not an address or range`);
+    process.exit(1);
+  }
+}
+
 const app = createApp({
   dataDir,
   port: Number(process.env.PORT ?? 3000),
@@ -102,6 +117,11 @@ const app = createApp({
           from: process.env.FORGE_MAIL_FROM!.trim(),
         },
       }
+    : {}),
+  // Who may say who the client is: the ingress in front of a hosted forge.
+  ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
+  ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
+    ? { clientIpHeader: process.env.FORGE_CLIENT_IP_HEADER!.trim().toLowerCase() }
     : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }

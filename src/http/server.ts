@@ -6,6 +6,7 @@
  */
 
 import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import { defect } from "../kernel/error.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
@@ -128,6 +129,8 @@ import {
   saySubmit,
   shipSubmit,
   takeBackSubmit,
+  holdSubmit,
+  releaseSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
@@ -204,6 +207,7 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appMembersUpdate,
   appDomainAdd,
   appDomainCheck,
   appDomainDelete,
@@ -300,7 +304,8 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
-import { clientAddress, notePeer } from "./peer.ts";
+import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { parseCidrs } from "../kernel/cidr.ts";
 import {
   reportAcceptSubmit,
   reportDismissSubmit,
@@ -771,6 +776,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/hold", holdSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/release", releaseSubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",
@@ -915,6 +922,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
   router.add("POST", "/:owner/:name/settings/app/env", appEnvSet);
   router.add(
     "POST",
@@ -1142,12 +1150,16 @@ async function withIdempotency(
   // exactly one thing that can be hashed.
   const raw = await request.text();
   const fingerprint = requestFingerprint(request.method, url.pathname, raw);
-  const replay = (): Request =>
-    new Request(request.url, {
+  const replay = (): Request => {
+    const again = new Request(request.url, {
       method: request.method,
       headers: request.headers,
       ...(raw === "" ? {} : { body: raw }),
     });
+    // The replay is the same caller: limits and the audit still see them.
+    carryPeer(request, again);
+    return again;
+  };
 
   const stored = lookupIdempotent(app.db, credential, key);
   if (stored !== undefined) {
@@ -1403,6 +1415,16 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // Who may say who the client is (\`http/peer.ts\`), settled once.
+  const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
+  if (!proxies.ok)
+    defect("config.trusted_proxies", `not an address or range: ${proxies.error}`);
+  const trust: ProxyTrust = {
+    proxies: proxies.value,
+    ...(app.config.clientIpHeader === undefined
+      ? {}
+      : { header: app.config.clientIpHeader }),
+  };
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
@@ -1424,7 +1446,7 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
-      notePeer(request, server.requestIP(request)?.address);
+      notePeer(request, server.requestIP(request)?.address, trust);
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
       return securityFloor(

@@ -1288,4 +1288,34 @@ export const migrations: readonly string[] = [
   INSERT OR IGNORE INTO email_check (user_id, verified_at)
     SELECT id, created_at FROM user;
   `,
+  // 54 — the people a private app names (#752): they may enter it, its
+  // previews and nothing else — no write, no crew, no settings.
+  `
+  CREATE TABLE IF NOT EXISTS app_member (
+    app_id   TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+    user_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    added_by TEXT REFERENCES user(id) ON DELETE SET NULL,
+    added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (app_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS app_member_user ON app_member(user_id);
+  `,
+  // 55 — a hold on a pull (#773, `core/holds.ts`): a person who writes the
+  // repository says "not this one yet", and while it stands no rule sends
+  // the pull to review or lands it. A release is kept, not deleted: the
+  // review clock starts again from it. At most one hold stands per pull.
+  `
+  CREATE TABLE IF NOT EXISTS pull_hold (
+    id          TEXT PRIMARY KEY,
+    issue_id    TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    held_by     TEXT NOT NULL REFERENCES user(id),
+    why         TEXT NOT NULL,
+    held_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    released_by TEXT REFERENCES user(id),
+    released_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS pull_hold_issue ON pull_hold(issue_id, released_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS pull_hold_standing
+    ON pull_hold(issue_id) WHERE released_at IS NULL;
+  `,
 ];
