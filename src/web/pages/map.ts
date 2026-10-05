@@ -1312,7 +1312,7 @@ export function mapPage(ctx: Ctx): Response {
   const counts = countWords(
     graph.issues.map((i) => wordFor(i, readySet, marks)),
   );
-  const pillars = pillarView(db, repo.id);
+  const pillars = pillarView(db, repo);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>

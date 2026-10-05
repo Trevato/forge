@@ -25,6 +25,7 @@ import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
   getIssue,
   getIssueById,
+  labelsForIssues,
   listComments,
   type Issue,
 } from "../core/issues.ts";
@@ -707,6 +708,9 @@ async function work(
       reason,
       paused: run.attempt > 0,
       comments: listComments(app.db, issue.id, { kind: "comment" }),
+      labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
+        (label) => label.name,
+      ),
       reviews: pull ? listReviews(app.db, pull.id) : [],
       reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
       since,

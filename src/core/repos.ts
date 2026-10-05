@@ -6,6 +6,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { rmSync } from "node:fs";
 import { isSafeName } from "../git/guard.ts";
 import { installHooks } from "../git/hooks.ts";
 import { closeReader } from "../git/read.ts";
@@ -268,16 +269,20 @@ export async function createRepo(
   await installHooks(dir);
 
   const repoId = id();
-  db.query(
-    `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-  ).run(
-    repoId,
-    input.ownerId,
-    input.name,
-    input.visibility ?? "private",
-    input.description ?? "",
-    branch,
+  rowOrUndo(dir, () =>
+    db
+      .query(
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+      )
+      .run(
+        repoId,
+        input.ownerId,
+        input.name,
+        input.visibility ?? "private",
+        input.description ?? "",
+        branch,
+      ),
   );
   return ok(getRepoById(db, repoId)!);
 }
@@ -336,19 +341,37 @@ export async function forkRepo(
   await installHooks(forkDir);
 
   const repoId = id();
-  db.query(
-    `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
-  ).run(
-    repoId,
-    ownerId,
-    forkName,
-    parent.visibility,
-    parent.description,
-    parent.defaultBranch,
-    parent.id,
+  rowOrUndo(forkDir, () =>
+    db
+      .query(
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      )
+      .run(
+        repoId,
+        ownerId,
+        forkName,
+        parent.visibility,
+        parent.description,
+        parent.defaultBranch,
+        parent.id,
+      ),
   );
   return ok(getRepoById(db, repoId)!);
+}
+
+/**
+ * Git first, row second — and when the row is refused (a constraint, an
+ * operator's trigger), the directory git just made goes with it, so a
+ * refusal leaves nothing on disk for anyone to fill it with.
+ */
+function rowOrUndo(dir: string, insert: () => unknown): void {
+  try {
+    insert();
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 /** Repos forked directly from this one. */
@@ -423,6 +446,14 @@ export function getRepoById(db: Database, repoId: string): Repo | undefined {
     .query<RepoRow, [string]>(`${SELECT} WHERE repo.id = ?1`)
     .get(repoId);
   return row ? toRepo(row) : undefined;
+}
+
+/** Every repository one account owns, whatever its visibility. */
+export function listReposOwnedBy(db: Database, ownerId: string): Repo[] {
+  return db
+    .query<RepoRow, [string]>(`${SELECT} WHERE repo.owner_id = ?1`)
+    .all(ownerId)
+    .map(toRepo);
 }
 
 /**
@@ -648,6 +679,22 @@ export function canWrite(
 ): boolean {
   if (personalOrDirect(repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
+}
+
+/**
+ * Who may enter an app, its previews and its terminal. A public app is open
+ * to anyone. A private one answers to the people who can write the
+ * repository and to its crew — never to everyone who can read it, so making
+ * a repository public changes nobody's way into its app (#620).
+ */
+export function canEnterApp(
+  db: Database,
+  repo: Repo,
+  access: "public" | "private",
+  user: User | undefined,
+): boolean {
+  if (access === "public") return true;
+  return canWrite(db, repo, user) || onCrew(db, repo, user);
 }
 
 /**

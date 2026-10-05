@@ -14,7 +14,7 @@ import { join } from "node:path";
 import type { App as Forge } from "../app.ts";
 import { findKeyByFingerprint, touchKey } from "../core/keys.ts";
 import { canRead, canWrite, getRepo } from "../core/repos.ts";
-import { getUserById, type User } from "../core/users.ts";
+import { getUserById, isActive, type User } from "../core/users.ts";
 import { createRepo } from "../actions/repos.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -136,8 +136,10 @@ export function attachTui(
 /** Resolve the account a presented key belongs to, or a guest. */
 export function identityFor(forge: Forge, session: SshSession): TuiIdentity {
   const match = findKeyByFingerprint(forge.db, session.key.fingerprint);
-  const user =
+  const found =
     match === undefined ? undefined : getUserById(forge.db, match.userId);
+  // A suspended or removed account's key opens nothing: it is a guest.
+  const user = found !== undefined && isActive(found) ? found : undefined;
   if (match !== undefined && user !== undefined)
     touchKey(forge.db, match.keyId);
   return {
@@ -152,6 +154,31 @@ export function identityFor(forge: Forge, session: SshSession): TuiIdentity {
 }
 
 /**
+ * Standing is checked when a key signs in, and again for as long as the
+ * session lasts: when the owner suspends or removes the account, its open
+ * sessions — a terminal, an app's tty, a clone still streaming — end there
+ * and then, instead of acting on as a person who no longer may.
+ */
+export function endOnSuspension(
+  forge: Forge,
+  session: SshSession,
+  user: User,
+): void {
+  const stop = forge.bus.subscribe((event) => {
+    if (
+      (event.kind === "account.suspended" || event.kind === "account.removed") &&
+      event.payload["username"] === user.username
+    ) {
+      stop();
+      if (session.ended) return;
+      session.writeStderr(`${CRLF}forge: this account was suspended${CRLF}`);
+      session.exit(1);
+    }
+  });
+  session.onClose(stop);
+}
+
+/**
  * What a forge does with an inbound SSH session: a shell is the TUI, an exec
  * is git or nothing. Never throws — a fault here would take the listener with
  * it, and one bad client must not.
@@ -160,6 +187,8 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
   return (session) => {
     try {
       const identity = identityFor(forge, session);
+      if (identity.user !== undefined)
+        endOnSuspension(forge, session, identity.user);
       if (session.kind === "shell") {
         // The login name is decorative for the forge — any name opens the
         // terminal UI — unless it names an app, in which case it opens

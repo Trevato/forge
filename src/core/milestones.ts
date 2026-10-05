@@ -133,7 +133,7 @@ export function readPlan(
   const now = options.now ?? new Date();
   const since = pillarWindowStart(now);
   const graph: Graph = repoGraph(db, repo.id);
-  const set: Pillars = pillarsOf(db, repo.id);
+  const set: Pillars = pillarsOf(db, repo);
   const byId = new Map(graph.issues.map((i) => [i.id, i]));
   const byNumber = new Map(graph.issues.map((i) => [i.number, i]));
 

@@ -7,7 +7,7 @@ import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getUserById, type User } from "./users.ts";
+import { getUserById, isActive, type User } from "./users.ts";
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -36,7 +36,7 @@ export function sessionUser(
   if (!row || row.expires_at <= new Date().toISOString())
     return err("invalid_session");
   const user = getUserById(db, row.user_id);
-  return user ? ok(user) : err("invalid_session");
+  return user && isActive(user) ? ok(user) : err("invalid_session");
 }
 
 export function destroySession(db: Database, token: string): void {

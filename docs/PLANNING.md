@@ -123,7 +123,11 @@ an issue is what frees the next.
 A direction can name what the work is for. Each such _pillar_ is an open
 umbrella issue whose title starts with its name — `P0 Trust: …` — and an
 issue serves the pillar whose umbrella waits for it; nothing else records
-it (`src/core/pillars.ts`). Work that serves no pillar is not dropped and
+it (`src/core/pillars.ts`). A title alone does not make one: the umbrella,
+the gate and the Later umbrella count only when a person who writes the
+repository opened them here — not an agent, not a reader, not an issue
+imported from an origin — so on a public repository a stranger's "P0 …"
+makes no pillar and their "Later gate: …" holds nothing. Work that serves no pillar is not dropped and
 is not ready either: it waits behind the _Later gate_, the open issue whose
 title starts `Later gate:`, opens with one sentence that says why it waits,
 and stands under the `Later: …` umbrella where the repository keeps one.
@@ -135,13 +139,11 @@ link each issue it opens under its pillar or behind the gate, and the MCP
 `plan` tool refuses an item that says neither. A repository with no
 umbrella issues has no pillars, and plans as it always did.
 
-An umbrella, the gate and the Later umbrella count only when someone who
-can write the repository opened them: a stranger's issue with the same
-title names nothing. `P0` comes first; two umbrellas with one name are one
-pillar, the older. Membership is direct: an issue the umbrella itself
-waits for. Under two umbrellas an issue serves the first, and a pillar
-outranks _Later_. Umbrellas and the gate are the plan's furniture: one
-umbrella waiting for another is an order between pillars, not membership.
+Membership is direct: an issue the umbrella itself waits for. Under two
+umbrellas an issue serves the first, and a pillar outranks _Later_, which
+is what waits behind the gate or stands under the Later umbrella.
+Umbrellas and the gate are the plan's furniture: one umbrella waiting for
+another is an order between pillars, not membership.
 
 **What a person sees** (#610). `core/pillars.ts` is the one reader of all
 this; three surfaces show what it reads.

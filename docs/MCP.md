@@ -20,7 +20,7 @@ for a tunnel and a forge that sleeps.
   cross-site page could ride, and this door has no page. An `ro` token reads;
   an `rw` token acts; the tools say which they are (`readOnlyHint`).
 - **What you may not do on a page you may not do here.** A private app is
-  "no such app" to someone who cannot read it; stopping a run, and knocking
+  "no such app" to someone who cannot write its repository; stopping a run, and knocking
   on an app with `probe`, are a writer's.
 
 ## Tools
