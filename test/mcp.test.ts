@@ -155,6 +155,7 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual([
       "apps",
+      "here",
       "tell",
       "share",
       "say",
