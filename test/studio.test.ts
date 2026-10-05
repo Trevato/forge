@@ -19,11 +19,13 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import {
   assignIssue,
   openIssue,
+  setIssueLabels,
   setIssueState,
 } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
+  createLabel,
   createRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
@@ -795,7 +797,7 @@ describe("the studio", () => {
     expect(studioCookie).toContain("<h2>Depends on</h2>");
   });
 
-  test("everything told is the issue list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+  test("everything told is the one issue list, in the studio's own words; the word filter narrows it, and ?mode=dev changes nothing", async () => {
     const told = openIssue(app, alice, repo, {
       title: "List test: not picked up yet",
       body: "waits for the crew",
@@ -815,14 +817,22 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/issues?word=shipped")).text();
     expect(other).not.toContain("List test: not picked up yet");
 
-    const dev = await (
-      await get("/alice/notes/issues", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(`>#${told.value.number} opened`);
-    expect(dev).not.toContain("data-word=");
+    // There is no second list behind the mode: the cookie and the escape
+    // hatch both answer the same rows in the same words.
+    for (const dev of [
+      await get("/alice/notes/issues", { cookie: `${cookie}; forge_mode=dev` }),
+      await get("/alice/notes/issues?mode=dev"),
+    ]) {
+      expect(dev.status).toBe(200);
+      const text = await dev.text();
+      expect(text).toContain("List test: not picked up yet");
+      expect(text).toContain('data-word="told"');
+      expect(text).not.toContain(`>#${told.value.number} opened`);
+      expect(text).not.toContain("See dev's list");
+    }
   });
 
-  test("every change is the pull list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+  test("every change is the one pull list, in the studio's own words; the word filter narrows it, and ?mode=dev changes nothing", async () => {
     const branch = await commitToBranch(app, alice, repo, {
       branch: "feature/list-change",
       base: "main",
@@ -860,11 +870,17 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/pulls?word=shipped")).text();
     expect(other).not.toContain("List test: a green change");
 
-    const dev = await (
-      await get("/alice/notes/pulls", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(pull.headBranch);
-    expect(dev).not.toContain("data-word=");
+    for (const dev of [
+      await get("/alice/notes/pulls", { cookie: `${cookie}; forge_mode=dev` }),
+      await get("/alice/notes/pulls?mode=dev"),
+    ]) {
+      expect(dev.status).toBe(200);
+      const text = await dev.text();
+      expect(text).toContain("List test: a green change");
+      expect(text).toContain('data-word="look"');
+      expect(text).not.toContain(pull.headBranch);
+      expect(text).not.toContain("See dev's list");
+    }
     // A green pull left open now asks the front door too (#208) — close it
     // so it does not linger into a later test's own count of asks.
     expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
@@ -897,21 +913,38 @@ describe("the studio", () => {
     expect(dev).not.toContain("data-word=");
   });
 
-  test("issues, pulls and runs on a repository that is not an app render exactly what they render today, even in studio mode", async () => {
+  test("issues and pulls on a repository that is not an app are the same one list; runs still render what they render today", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainlists",
       visibility: "private",
       description: "no app here",
     });
     if (!plain.ok) throw new Error(String(plain.error));
+    const told = openIssue(app, alice, plain.value, {
+      title: "Plain list: an issue",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
 
-    const issues = await (await get("/alice/plainlists/issues")).text();
-    expect(issues).not.toContain(">Told<");
-    expect(issues).not.toContain("See dev's list");
+    for (const mode of ["studio", "dev"]) {
+      const viewer = `${cookie}; forge_mode=${mode}`;
+      const issues = await (
+        await get("/alice/plainlists/issues", { cookie: viewer })
+      ).text();
+      expect(issues).toContain("Plain list: an issue");
+      expect(issues).toContain('data-word="told"');
+      expect(issues).toContain(`href="/alice/plainlists/issues?word=told"`);
+      expect(issues).toContain(
+        `href="/alice/plainlists/tells/${told.value.number}"`,
+      );
+      expect(issues).not.toContain("See dev's list");
 
-    const pulls = await (await get("/alice/plainlists/pulls")).text();
-    expect(pulls).not.toContain(">Look<");
-    expect(pulls).not.toContain("See dev's list");
+      const pulls = await (
+        await get("/alice/plainlists/pulls", { cookie: viewer })
+      ).text();
+      expect(pulls).toContain(`href="/alice/plainlists/pulls?word=look"`);
+      expect(pulls).not.toContain("See dev's list");
+    }
 
     const runs = await (await get("/alice/plainlists/runs")).text();
     expect(runs).not.toContain(">Working<");
@@ -986,30 +1019,7 @@ describe("the studio", () => {
     expect(setIssueState(app, alice, repo, doorPull, "closed").ok).toBe(true);
   });
 
-  test("/tells and /changes send a dev-mode viewer, or ?mode=dev, on to /issues and /pulls — the one canonical dev address", async () => {
-    const devTells = await get("/alice/notes/tells", {
-      cookie: `${cookie}; forge_mode=dev`,
-    });
-    expect(devTells.status).toBe(303);
-    expect(devTells.headers.get("location")).toBe("/alice/notes/issues");
-
-    const devChanges = await get("/alice/notes/changes", {
-      cookie: `${cookie}; forge_mode=dev`,
-    });
-    expect(devChanges.status).toBe(303);
-    expect(devChanges.headers.get("location")).toBe("/alice/notes/pulls");
-
-    const escapeTells = await fetch(`${base}/alice/notes/tells?mode=dev`, {
-      headers: { cookie: `${cookie}; forge_mode=studio` },
-      redirect: "manual",
-    });
-    expect(escapeTells.status).toBe(303);
-    expect(escapeTells.headers.get("location")).toBe(
-      "/alice/notes/issues?mode=dev",
-    );
-  });
-
-  test("/tells and /changes on a repository that is not an app send a studio viewer on to /issues and /pulls too", async () => {
+  test("/tells and /changes answer a dev-mode viewer, ?mode=dev, and a repository that is not an app with the same list, never a bounce", async () => {
     const plain = await createRepo(app, alice, {
       name: "doorlists",
       visibility: "private",
@@ -1017,13 +1027,111 @@ describe("the studio", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
 
-    const tells = await get("/alice/doorlists/tells");
-    expect(tells.status).toBe(303);
-    expect(tells.headers.get("location")).toBe("/alice/doorlists/issues");
+    for (const [path, viewer] of [
+      ["/alice/notes/tells", `${cookie}; forge_mode=dev`],
+      ["/alice/notes/changes", `${cookie}; forge_mode=dev`],
+      ["/alice/notes/tells?mode=dev", `${cookie}; forge_mode=studio`],
+      ["/alice/doorlists/tells", cookie],
+      ["/alice/doorlists/changes", cookie],
+    ] as const) {
+      const res = await get(path, { cookie: viewer });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toContain(`href="${path.split("?")[0]}?word=`);
+    }
+  });
 
-    const changes = await get("/alice/doorlists/changes");
-    expect(changes.status).toBe(303);
-    expect(changes.headers.get("location")).toBe("/alice/doorlists/pulls");
+  test("the one list keeps what dev's list could narrow by: labels as chips, and who has it, who opened it, a piece of the title, and the older ?state= address", async () => {
+    const shelf = await createRepo(app, alice, {
+      name: "facetlists",
+      visibility: "private",
+      description: "labels and narrowings",
+    });
+    if (!shelf.ok) throw new Error(String(shelf.error));
+    const r = shelf.value;
+    const bug = createLabel(app, alice, r, "bug", "d73a4a");
+    if (!bug.ok) throw new Error(String(bug.error));
+    const a = openIssue(app, alice, r, { title: "Facet: a broken thing", body: "" });
+    const b = openIssue(app, alice, r, { title: "Facet: a wish", body: "" });
+    const c = openIssue(app, alice, r, { title: "Facet: long done", body: "" });
+    if (!a.ok || !b.ok || !c.ok) throw new Error("open failed");
+    expect(setIssueLabels(app, alice, r, a.value, ["bug"]).ok).toBe(true);
+    expect(assignIssue(app, alice, r, b.value, alice).ok).toBe(true);
+    expect(setIssueState(app, alice, r, c.value, "closed").ok).toBe(true);
+
+    const list = await (await get("/alice/facetlists/issues")).text();
+    // The row wears its label, and the repository's labels narrow the list.
+    expect(list).toContain('class="label lc-d73a4a">bug</span>');
+    expect(list).toContain(`href="/alice/facetlists/issues?label=bug"`);
+    expect(list).toContain(".lc-d73a4a{--label:#d73a4a}");
+    expect(list).not.toContain("Facet: long done");
+
+    const labelled = await (await get("/alice/facetlists/issues?label=bug")).text();
+    expect(labelled).toContain("Facet: a broken thing");
+    expect(labelled).not.toContain("Facet: a wish");
+    // The chip in force clears itself, and a word keeps the label.
+    expect(labelled).toMatch(
+      /href="\/alice\/facetlists\/issues"\s+aria-current="true"/,
+    );
+    expect(labelled).toContain(`href="/alice/facetlists/issues?word=told&amp;label=bug"`);
+
+    const mine = await (await get("/alice/facetlists/issues?assignee=alice")).text();
+    expect(mine).toContain("Facet: a wish");
+    expect(mine).not.toContain("Facet: a broken thing");
+    expect(mine).toContain("alice has it ✕");
+
+    const titled = await (await get("/alice/facetlists/issues?q=wish")).text();
+    expect(titled).toContain("Facet: a wish");
+    expect(titled).not.toContain("Facet: a broken thing");
+    expect(titled).toContain("wish in the title ✕");
+
+    const bySomeone = await (await get("/alice/facetlists/issues?author=nobody")).text();
+    expect(bySomeone).not.toContain("Facet: a wish");
+    expect(bySomeone).toContain("nobody opened it ✕");
+
+    // `?state=closed` from an older link still means what it said.
+    const closed = await (await get("/alice/facetlists/issues?state=closed")).text();
+    expect(closed).toContain("Facet: long done");
+    expect(closed).not.toContain("Facet: a wish");
+    // Closed with nothing merged is not dropped from the list: it reads
+    // done, under shipped, where whoever closed it would look.
+    const shipped = await (await get("/alice/facetlists/issues?word=shipped")).text();
+    expect(shipped).toContain("Facet: long done");
+    expect(shipped).toContain('data-word="done"');
+    const all = await (await get("/alice/facetlists/issues?state=all")).text();
+    expect(all).toContain("Facet: long done");
+    expect(all).toContain("Facet: a wish");
+  });
+
+  test("the list's one verb besides opening a row is compose, for a signed-in person only, in the repository's own words", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "composelists",
+      visibility: "public",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+
+    const signedIn = await (await get("/alice/composelists/issues")).text();
+    expect(signedIn).toContain('href="/alice/composelists/issues/new"');
+    expect(signedIn).toContain("New issue");
+    const app_ = await (await get("/alice/notes/issues")).text();
+    expect(app_).toContain('href="/alice/notes/issues/new"');
+    expect(app_).toContain("Tell the crew");
+
+    const anon = await (
+      await fetch(`${base}/alice/composelists/issues`, { redirect: "manual" })
+    ).text();
+    expect(anon).not.toContain('href="/alice/composelists/issues/new"');
+    // A stranger on a public repository can still report a problem.
+    expect(anon).toContain('href="/alice/composelists/report"');
+    // Someone signed in composes instead: no visible report link (the page's
+    // head still names the report path for agents that read it).
+    expect(signedIn).not.toMatch(
+      /<a\b[^>]*href="\/alice\/composelists\/report"/,
+    );
+    // The pull list has no compose of its own: a change starts from a branch.
+    const pulls = await (await get("/alice/composelists/pulls")).text();
+    expect(pulls).not.toContain('href="/alice/composelists/pulls/new"');
   });
 
   test("a reader without access gets the forge's not-found on /tells and /changes, exactly as /issues and /pulls", async () => {

@@ -72,6 +72,7 @@ export const GATE: readonly string[] = [
   "test/share.test.ts",
   "test/cloud.test.ts",
   "test/run-secrets.test.ts",
+  "test/reserved-names.test.ts",
   "test/forge-cloudflare.test.ts",
   "test/forge-cloudflare-celld.test.ts",
   "test/branch_tell.test.ts",
@@ -119,10 +120,13 @@ export const GATE: readonly string[] = [
   "test/origins-sync.test.ts",
   "test/origins.test.ts",
   "test/check-list.test.ts",
+  "test/hollow.test.ts",
   "test/oauth-discovery.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
   "test/reports.test.ts",
+  "test/report-discovery.test.ts",
+  "test/apps-report.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
