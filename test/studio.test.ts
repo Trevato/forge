@@ -7545,10 +7545,20 @@ describe("finding things in the studio: /search", () => {
     expect(html).not.toContain("secret");
   });
 
-  test("?mode=dev on the same route still answers in dev's own words", async () => {
-    const html = await (await asAlice("/search?q=chess&mode=dev")).text();
-    expect(html).toContain("Repositories");
-    expect(html).toContain("Issues and pull requests");
+  test("?mode=dev on the same route answers the same one page", async () => {
+    for (const html of [
+      await (await asAlice("/search?q=chess&mode=dev")).text(),
+      await (
+        await fetch(`${base}/search?q=chess`, {
+          headers: { cookie: `${aliceCookie}; forge_mode=dev` },
+        })
+      ).text(),
+    ]) {
+      expect(html).toContain("Apps and repositories");
+      expect(html).toContain("Tells and changes");
+      expect(html).toContain(`/alice/widgets/tells/${tellNumber}`);
+      expect(mainOf(html)).not.toContain('name="mode"');
+    }
   });
 
   // #397, carrying #241's rule: the one search finds every repository the
@@ -7581,19 +7591,18 @@ describe("finding things in the studio: /search", () => {
     expect(stranger).not.toContain("project-notes");
   });
 
-  test("the studio face leaves the code to dev, one link away, and ?mode=dev rides every link and the form", async () => {
-    const studio = mainOf(await (await asAlice("/search?q=chess")).text());
-    expect(studio).not.toContain('id="code"');
-    expect(studio).toContain("/search?q=chess&amp;kind=code&amp;mode=dev");
-    // A hand-written kind=code in the studio is its everything, not an error.
-    const code = await asAlice("/search?q=chess&kind=code");
-    expect(code.status).toBe(200);
-    expect(mainOf(await code.text())).toContain('id="repos"');
+  test("code is a section of the same page, and narrowing to it is a chip, never a mode", async () => {
+    const all = mainOf(await (await asAlice("/search?q=chess")).text());
+    expect(all).toContain('id="repos"');
+    expect(all).toContain('id="issues"');
+    expect(all).toContain('id="code"');
+    expect(all).toContain("/search?q=chess&amp;kind=code");
+    expect(all).not.toContain("mode=dev");
+    expect(all).not.toContain("Search the code");
 
-    const dev = mainOf(await (await asAlice("/search?q=chess&mode=dev")).text());
-    expect(dev).toContain('id="code"');
-    expect(dev).toContain('name="mode" value="dev"');
-    expect(dev).toContain("/search?q=chess&amp;kind=repos&amp;mode=dev");
+    const code = mainOf(await (await asAlice("/search?q=chess&kind=code")).text());
+    expect(code).toContain('id="code"');
+    expect(code).not.toContain('id="repos"');
   });
 });
 
