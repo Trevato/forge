@@ -737,6 +737,23 @@ describe("the look", () => {
       // A stranger cannot open a private app: no picture of it at all.
       for (const kind of ["desktop", "phone", "thumb"])
         expect(await status(kind, "")).toBe(404);
+      // However the path is spelled, the same answer: every spelling the
+      // route resolves reaches the one rule.
+      for (const spelled of [
+        `/ALICE/Hello/looks/production/${head}/desktop.png`,
+        `//alice/hello/looks/production/${head}/desktop.png`,
+        `/alice//hello/looks/production/${head}/desktop.png`,
+        `/alice/hello.git/looks/production/${head}/desktop.png`,
+        `/alice/%68ello/looks/production/${head}/desktop.png`,
+        `/alice/hello/looks/production/${head}/%64esktop.png`,
+        `/alice/hello/looks/production/${head.toUpperCase()}/desktop.png`,
+        `/alice/hello/looks/production/${head}/desktop.png?v=1`,
+        `/alice/hello/looks/production/${head}/thumb.png`,
+      ]) {
+        const answer = await web(spelled, "");
+        expect(answer.status === 404 || answer.status >= 300).toBe(true);
+        expect(answer.headers.get("content-type")).not.toBe("image/png");
+      }
       const strangers = await (await web("/alice/hello", "forge_mode=studio")).text();
       expect(strangers).not.toContain("/looks/production/");
       // A signed-in reader may open it: the thumb, taken as nobody — never
