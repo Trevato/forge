@@ -41,6 +41,7 @@ import { onYouCard } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { crewKeyNote } from "./crew.ts";
+import { everydayCard } from "../pages/everyday.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 
 /** The events that can change what is on you. */
@@ -151,7 +152,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
       </p>`,
   );
   const body = html`<h1 class="sr-only">Home</h1>
-    ${address}
+    ${everydayCard(ctx, user)} ${address}
     <nav class="home-tabs seg" aria-label="Home">
       <a href="/" aria-current="page">Feed</a>
       <a href="/apps">Your apps</a>
