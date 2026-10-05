@@ -58,16 +58,22 @@ describe("acting on many asks at once", () => {
     return { status: res.status, body: (await res.json()) as any };
   };
 
+  /** Post a form as alice; a redirect is followed, as a browser would, to the one screen. */
   const form = async (path: string, fields: [string, string][]) => {
+    const headers = { cookie: `${aliceCookie}; forge_mode=studio`, origin: servers.url };
     const res = await fetch(`${servers.url}${path}`, {
       method: "POST",
-      headers: {
-        cookie: `${aliceCookie}; forge_mode=studio`,
-        origin: servers.url,
-      },
+      headers,
       body: new URLSearchParams(fields),
       redirect: "manual",
     });
+    const location = res.headers.get("location");
+    if (res.status === 303 && location !== null) {
+      expect(location).toStartWith("/asks?op=");
+      const next = await fetch(`${servers.url}${location}`, { headers, redirect: "manual" });
+      expect(next.status).toBe(200);
+      return (await next.text()).replace(/\s+/g, " ");
+    }
     expect(res.status).toBe(200);
     return (await res.text()).replace(/\s+/g, " ");
   };
@@ -350,6 +356,9 @@ describe("acting on many asks at once", () => {
     const preview = await form("/asks/bulk", fields([]));
     expect(preview).toContain(`Dismiss: ${picked.length} of ${picked.length}`);
     expect(preview).toContain('name="apply" value="1"');
+    // One screen: the preview sits on top of the asks, the picked ones still ticked.
+    expect(preview).toContain('id="asks-sentence"');
+    expect((preview.match(/form="asks-bulk" checked/g) ?? []).length).toBe(picked.length);
     expect(items(alice).filter((i) => i.startsWith("look:"))).toHaveLength(
       picked.length,
     );

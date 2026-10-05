@@ -127,8 +127,11 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
-import { asksPage } from "../web/studio/asks_page.ts";
-import { asksBulkSubmit, asksBulkUndo } from "../web/studio/asks_bulk_page.ts";
+import {
+  asksBulkSubmit,
+  asksBulkUndo,
+  asksPage,
+} from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
