@@ -356,8 +356,9 @@ describe("pillars", () => {
       // One under the Later umbrella; two behind the gate, which is open.
       { pillar: "Later", umbrella: later.number, open: 3, ready: 1, blocked: 2 },
       // The loose issue, the footer (which waits for the composer), and the
-      // stranger's three (one of which waits for the loose issue).
-      { pillar: null, open: 5, ready: 3, blocked: 2 },
+      // stranger's three: one waits for the loose issue, and the other two
+      // are a reader's suggestions, open and never ready (`crew/direct.ts`).
+      { pillar: null, open: 5, ready: 1, blocked: 2 },
     ]);
     const pillarOf = new Map<number, string | null>(
       data.issues.map((i: { number: number; pillar: string | null }) => [
