@@ -11,6 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
+import { pillarsOf, structuralIds } from "./pillars.ts";
 import { getRepoById } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
 
@@ -202,6 +203,12 @@ export interface Graph {
    * adopted (`crew/direct.ts`): on the map, never ready for the crew.
    */
   readonly unadopted: ReadonlySet<string>;
+  /**
+   * The plan's own furniture (`pillars.ts`): each pillar's umbrella, the
+   * Later umbrella and the Later gate. They say what the work is for and
+   * are never work themselves, so never ready.
+   */
+  readonly structural: ReadonlySet<string>;
 }
 
 const GRAPH_MAX = 400;
@@ -249,6 +256,8 @@ export function repoGraph(db: Database, repoId: string): Graph {
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
+    structural:
+      repo === undefined ? new Set() : structuralIds(pillarsOf(db, repo)),
     edges: edges.filter(
       (e) => present.has(e.issueId) && present.has(e.blockedById),
     ),
@@ -335,12 +344,8 @@ function waitsForMap(
   return memo;
 }
 
-/**
- * Open issues nothing open stands in front of, first the ones whose finishing
- * frees the most, then the oldest — a reader's suggestion only once someone
- * who writes here adopted it. What a free crew slot takes next.
- */
-export function readyNow(graph: Graph): Ranked[] {
+/** Open issues nothing open stands in front of, whoever they are for, in the ready order. */
+function clearNow(graph: Graph): Ranked[] {
   const open = openIds(graph);
   const holds = holdsUpMap(graph, open);
   const waits = waitsForMap(graph, open);
@@ -350,7 +355,6 @@ export function readyNow(graph: Graph): Ranked[] {
       (i) =>
         open.has(i.id) &&
         !held.has(i.id) &&
-        !graph.unadopted.has(i.id) &&
         (waits.get(i.id)?.size ?? 0) === 0,
     )
     .map((issue) => ({
@@ -363,6 +367,30 @@ export function readyNow(graph: Graph): Ranked[] {
         b.holdsUp - a.holdsUp ||
         a.issue.createdAt.localeCompare(b.issue.createdAt),
     );
+}
+
+/**
+ * Open issues nothing open stands in front of, first the ones whose finishing
+ * frees the most, then the oldest — a reader's suggestion only once someone
+ * who writes here adopted it, and never the plan's own furniture: an
+ * umbrella or the Later gate is not work. What a free crew slot takes next.
+ */
+export function readyNow(graph: Graph): Ranked[] {
+  return clearNow(graph).filter(
+    (r) =>
+      !graph.unadopted.has(r.issue.id) && !graph.structural.has(r.issue.id),
+  );
+}
+
+/**
+ * The plan's furniture that nothing open stands in front of: an umbrella
+ * whose work is done, or one nothing serves yet. A person's to close; the
+ * map says so rather than calling it ready.
+ */
+export function idleFurniture(graph: Graph): Issue[] {
+  return clearNow(graph)
+    .filter((r) => graph.structural.has(r.issue.id))
+    .map((r) => r.issue);
 }
 
 /** Open issues that hold others up, the widest blockage first. */

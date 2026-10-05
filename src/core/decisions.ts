@@ -9,10 +9,14 @@
 import type { Database } from "bun:sqlite";
 import { id as newId } from "../kernel/id.ts";
 
-/** `lean` was which option on a studio ask card a careful owner would pick.
+/** `guard` is the crew's rule not starting a run it can see is waste —
+ * a follow-up with nothing new (`skipped`), an issue at its run cap
+ * (`capped`) — counted by `guardCounts` (`crew/guard.ts`).
+ *
+ * `lean` was which option on a studio ask card a careful owner would pick.
  * Nothing records one any more; older ledgers still hold rows of it, and the
  * summaries that read them keep the word. */
-export type DecisionKind = "next" | "land" | "retry" | "lean";
+export type DecisionKind = "next" | "land" | "retry" | "lean" | "guard";
 
 export interface Decision {
   readonly id: string;
@@ -200,8 +204,11 @@ export function listDecisionsForRepos(
   if (unique.length === 0) return [];
   return db
     .query<Row, (string | number)[]>(
+      // A guard's skips and caps are counted, not shown one by one: they
+      // would crowd out the decisions a person reads (`crew/guard.ts`).
       `SELECT * FROM decision
        WHERE repo_id IN (${unique.map((_, n) => `?${n + 1}`).join(",")})
+         AND kind != 'guard'
        ORDER BY created_at DESC, id DESC LIMIT ?${unique.length + 1}`,
     )
     .all(...unique, Math.min(500, Math.max(1, limit)))

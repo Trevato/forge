@@ -15,6 +15,8 @@
 
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
+import { tokenReturns } from "../../core/returns.ts";
+import { returnsRepos } from "../../actions/returns.ts";
 import {
   listDecisionsForRepos,
   type Decision,
@@ -37,6 +39,12 @@ import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
+import {
+  NO_PILLAR,
+  PILLAR_DAYS,
+  pillarView,
+  reposWithUmbrellas,
+} from "../../core/pillars.ts";
 import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
@@ -99,6 +107,8 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   land: "ship or show",
   retry: "try again",
   lean: "which way",
+  // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
+  guard: "not started",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
@@ -212,6 +222,7 @@ export function boardPage(ctx: Ctx): Response {
       <time class="board-clock" id="board-clock"></time>
     </header>
     ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${asksStrip(ctx)}
+    ${returnsStrip(ctx, scope)}
     ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
@@ -228,7 +239,10 @@ export function boardPage(ctx: Ctx): Response {
   });
 }
 
-/** One region: a heading with its key and count, then the list or a quiet line. */
+/**
+ * One region: a heading with its key and count, then the list or a quiet
+ * line; `lead`, when a region has one, is a line of its own above them.
+ */
 function region(
   id: string,
   key: string,
@@ -236,6 +250,7 @@ function region(
   live: string,
   rows: Html[],
   quiet: string,
+  lead: Html | null = null,
 ): Html {
   return html`<section
     class="board-region"
@@ -250,6 +265,7 @@ function region(
         () => html`<span class="board-count">${rows.length}</span>`,
       )}
     </h2>
+    ${lead}
     ${
       rows.length === 0
         ? html`<p class="board-quiet">${quiet}</p>`
@@ -352,6 +368,47 @@ function asksStrip(ctx: Ctx): Html | null {
   return html`<a class="board-asks" id="asks-measure" href="/asks"
     >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
     on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
+  >`;
+}
+
+// ---- what the tokens bought ----
+
+/** Dollars as the board writes them: cents under ten, whole above. */
+export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
+
+/**
+ * The week's spend against what it landed, in one line, owner facts only:
+ * dollars spent, changes landed, what a landed change cost, and what did
+ * not land, split in two: closed with nothing merged (spent, and gone) and
+ * still open (not yet an answer) — one tap to the breakdown
+ * (`/board/returns`). Where "Spend by credential…" says where the money
+ * went, this says what it bought. Absent when the
+ * viewer holds no owner facts here or nothing ran.
+ */
+function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const user = ctx.auth.user;
+  if (!user) return null;
+  // The crew spends on every repository, app or not: the whole of the
+  // viewer's own unless `?apps=` narrows the board.
+  const apps = ctx.url.searchParams.get("apps");
+  const ids = apps
+    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
+    : returnsRepos(ctx.app, user).map((r) => r.id);
+  if (ids.length === 0) return null;
+  const now = Date.now();
+  const r = tokenReturns(ctx.app.db, ids, {
+    since: new Date(now - ASKS_WINDOW_DAYS * 86_400_000).toISOString(),
+    until: new Date(now).toISOString(),
+  });
+  if (r.spent.runs === 0) return null;
+  const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
+  return html`<a class="board-asks" id="returns-line" href="${href}"
+    >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
+    ${r.onLanded.perChange.changes === 0
+      ? null
+      : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
+    · <b>${usd(r.landedNothing.closed.usd)}</b> closed with nothing
+    · <b>${usd(r.landedNothing.open.usd)}</b> still open</a
   >`;
 }
 
@@ -641,7 +698,46 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     "pull.merged,run.finished",
     rows,
     scope.repos.length === 0 ? "No apps to watch." : "Nothing has shipped yet.",
+    byPillar(ctx, scope),
   );
+}
+
+/**
+ * What merged in the last 7 days, by pillar, for each app that has
+ * pillars: is the crew building what was asked. Every pillar is named,
+ * zero or not — a pillar nothing merged for is the answer too — and each
+ * is a link to its issues. Nothing for a board whose apps have no pillars.
+ */
+function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
+  const db = ctx.app.db;
+  const having = reposWithUmbrellas(db, scope.ids);
+  const lines = scope.repos.flatMap((repo) => {
+    if (!having.has(repo.id)) return [];
+    const view = pillarView(db, repo);
+    if (view === undefined) return [];
+    const base = repoBase(repo);
+    return [
+      html`<p class="board-pillars" data-app="${repo.name}">
+        <span class="board-pillars-h"
+          >${scope.repos.length === 1 ? "" : `${repo.name} · `}merged in
+          ${PILLAR_DAYS} days</span
+        >
+        ${view.merged.map((count) =>
+          count.pillar === null
+            ? html`<span class="board-pillar" data-zero="no"
+                >${NO_PILLAR} <b>${count.merged}</b></span
+              >`
+            : html`<a
+                class="board-pillar"
+                data-zero="${count.merged === 0 ? "yes" : "no"}"
+                href="${base}/issues?label=${encodeURIComponent(count.pillar)}"
+                >${count.pillar} <b>${count.merged}</b></a
+              >`,
+        )}
+      </p>`,
+    ];
+  });
+  return lines.length === 0 ? null : html`${lines}`;
 }
 
 // ---- decided ----
@@ -847,6 +943,11 @@ a.board-forge-need { color: inherit; text-decoration: underline; text-underline-
 .board-region[data-fresh] .board-h { color: var(--accent); }
 .board-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .board-quiet { margin: 2px 0 0; color: var(--faint); font-size: 1em; }
+.board-pillars { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 12px; font-size: 13px; color: var(--muted-fg); }
+.board-pillars-h { color: var(--faint); }
+.board-pillar b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.board-pillar[data-zero="yes"], .board-pillar[data-zero="yes"] b { color: var(--faint); }
+a.board-pillar:hover { color: var(--fg); }
 .board-card {
   display: grid; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--card); color: inherit; transition: border-color 140ms var(--ease);

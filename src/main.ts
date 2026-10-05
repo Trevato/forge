@@ -7,6 +7,7 @@
 import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
@@ -136,6 +137,12 @@ const app = createApp({
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
     : {}),
+  // FORGE_CREW_ISSUE_RUNS: runs one issue may start in a day before it is
+  // parked for a person (`crew/guard.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_CREW_ISSUE_RUNS)) &&
+  Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
+    ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
+    : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
     : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),
@@ -154,6 +161,9 @@ const app = createApp({
 });
 
 await reconcile(app);
+// Issues linked under a pillar's umbrella before pillars had labels.
+const labelled = syncAllPillars(app);
+if (labelled > 0) app.log.info("pillars labelled", { issues: labelled });
 const servers = await serve(app);
 const sshStarted =
   sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;

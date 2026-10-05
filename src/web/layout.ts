@@ -204,6 +204,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     // The "+" menu is hidden on a phone to keep the topbar inside the
@@ -276,6 +277,7 @@ function helpButton(): Html {
 const STATIC_PALETTE_DEV: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -297,6 +299,7 @@ const STATIC_PALETTE_DEV: PaletteItem[] = [
 const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "Asks you", h: "/asks", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },

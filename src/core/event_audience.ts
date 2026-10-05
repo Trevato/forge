@@ -41,9 +41,11 @@ export function eventAudience(kind: string): EventAudience {
   // A fleet operation spans repositories; its receipt is its actor's.
   if (kind === "repo.pinned" || kind === "repo.unpinned" || kind.startsWith("fleet."))
     return "actor";
-  // A run's summary and an app's serving state can carry the app's own
-  // output: for a private app they are for those who may enter it (#620).
-  if (kind.startsWith("run.") || kind.startsWith("app.")) return "app";
+  // A run's summary, an app's serving state and its pictures can carry the
+  // app's own output: for a private app they are for those who may enter it
+  // (#620, #599).
+  if (kind.startsWith("run.") || kind.startsWith("app.") || kind.startsWith("look."))
+    return "app";
   return "readers";
 }
 

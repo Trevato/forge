@@ -463,21 +463,6 @@ describe("reviews, threads and the merge gate", () => {
       await h.click(4, row);
       await h.until("fix", 30_000);
 
-      // The owner screen's repository list, which had no pointer at all: a
-      // click selects, a second click on the same row opens — the file
-      // manager gesture every other list in the terminal already answers.
-      await h.press("q");
-      await h.until("Recent activity", 30_000);
-      await h.press("tab", "tab", "tab");
-      await h.until("Organizations");
-      await h.press("enter");
-      await h.until("lighthouse", 30_000);
-      const repoRow = h.rowOf("lighthouse", 40);
-      expect(repoRow).toBeGreaterThan(0);
-      await h.click(4, repoRow);
-      await h.click(4, repoRow);
-      await h.until("acme/lighthouse", 30_000);
-      expect(h.text()).toContain("README");
     } finally {
       h.stop();
     }

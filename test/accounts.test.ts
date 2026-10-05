@@ -291,6 +291,86 @@ describe("accounts: the owner sees, suspends and removes", () => {
     expect(stderr).toContain("suspended");
   });
 
+  test("a live event stream already open ends when its account is suspended", async () => {
+    const { token } = await outsider("stella");
+    const res = await fetch(`${base}/events`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain(": connected");
+    const suspended = await api("/api/v1/admin/accounts/stella/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(suspended.status).toBe(200);
+    // Whatever was queued may still arrive; then the stream ends, well
+    // before its next heartbeat.
+    const ended = (async () => {
+      for (;;) if ((await reader.read()).done) return true;
+    })();
+    expect(
+      await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+    ).toBe(true);
+  });
+
+  test("a stream of someone else's stays open when one account is suspended", async () => {
+    const { token } = await outsider("otto");
+    await outsider("pia");
+    const res = await fetch(`${base}/events`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const reader = res.body!.getReader();
+    await reader.read();
+    const suspended = await api("/api/v1/admin/accounts/pia/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(suspended.status).toBe(200);
+    const next = await Promise.race([
+      reader.read().then((r) => (r.done ? "ended" : "data")),
+      Bun.sleep(500).then(() => "open"),
+    ]);
+    expect(next).not.toBe("ended");
+    await reader.cancel();
+  });
+
+  test("a push under way when its account is suspended does not land", async () => {
+    const { user } = await outsider("pusher");
+    const made = await createRepo(app, user, { name: "midway" });
+    if (!made.ok) throw new Error(made.error);
+    // What git's pre-receive hook asks the forge once the pack is in: the
+    // ref update, from the account that pushed it.
+    const ask = () =>
+      fetch("http://forge/internal/hook", {
+        unix: app.socketPath,
+        method: "POST",
+        body: JSON.stringify({
+          hook: "pre-receive",
+          repoId: made.value.id,
+          actorId: user.id,
+          updates: [
+            {
+              ref: "refs/heads/feature",
+              oldOid: "0".repeat(40),
+              newOid: "1".repeat(40),
+            },
+          ],
+          gitEnv: {},
+        }),
+      });
+    expect((await ask()).status).toBe(200);
+    const suspended = await api("/api/v1/admin/accounts/pusher/suspend", {
+      method: "POST",
+      token: ownerToken,
+    });
+    expect(suspended.status).toBe(200);
+    const refused = await ask();
+    expect(refused.status).toBe(403);
+    expect(await refused.text()).toContain("suspended");
+  });
+
   test("a suspended account's repositories run nothing", async () => {
     const { user } = await outsider("trudy");
     const made = await createRepo(app, user, { name: "lab" });
@@ -442,6 +522,53 @@ describe("accounts: the owner sees, suspends and removes", () => {
     } finally {
       app.db.exec("DROP TRIGGER test_refuse");
     }
+  });
+
+  test("the owner can verify a newcomer's email, and it can create at once", async () => {
+    // Made first: the helper proves every account waiting on a link.
+    const { token: other } = await outsider("mallet");
+    // A way in that vouches for nothing: the account starts unproven.
+    const made = await insertAgent(app.db, {
+      username: "nadia",
+      email: "nadia@outsider.test",
+      password: "outsider-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const token = createToken(app.db, made.value.id, "t", "admin").token;
+    const create = () =>
+      api("/api/v1/repos", { method: "POST", token, body: JSON.stringify({ name: "first" }) });
+    expect((await create()).status).toBe(403);
+
+    // Nobody but the owner may say so.
+    expect(
+      (await api("/api/v1/admin/accounts/nadia/verify", { method: "POST", token: other })).status,
+    ).toBe(404);
+
+    const listed = (await (await api("/api/v1/admin/accounts", { token: ownerToken })).json()) as {
+      items: { username: string; verified: boolean }[];
+    };
+    expect(listed.items.find((i) => i.username === "nadia")?.verified).toBe(false);
+    const page = await fetch(`${base}/settings/accounts`, {
+      headers: { authorization: `Bearer ${ownerToken}` },
+    });
+    const html = await page.text();
+    expect(html).toContain("Verify email");
+    expect(html).toContain("Mail is not configured");
+
+    const res = await api("/api/v1/admin/accounts/nadia/verify", { method: "POST", token: ownerToken });
+    expect(res.status).toBe(200);
+    expect((await create()).status).toBe(201);
+    expect(
+      listEvents(app.db, { kind: "account.email_verified" }).some(
+        (e) => e.payload["username"] === "nadia" && e.payload["by"] === "owner",
+      ),
+    ).toBe(true);
+  });
+
+  test("the owner cannot verify an agent", async () => {
+    expect(
+      (await api("/api/v1/admin/accounts/builder/verify", { method: "POST", token: ownerToken })).status,
+    ).toBe(422);
   });
 
   test("the audit records suspensions and removals", () => {

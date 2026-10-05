@@ -48,7 +48,7 @@ import {
 import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
-import { mintClaim } from "../spawn/claim.ts";
+import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import type { Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { requireUser } from "./access.ts";
@@ -206,7 +206,7 @@ async function make(
 
   const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
   if (!copied.ok) return fail(copied.error);
-  const claimUrl = `${ledger.url}/claim/${copied.value}`;
+  const claimUrl = claimLink(ledger.url, copied.value);
 
   ledger.done = true;
   await writeLedger(app, ledger);
@@ -390,6 +390,38 @@ function heldKey(dir: string): string | undefined {
     return undefined;
   } finally {
     db?.close();
+  }
+}
+
+/**
+ * A new claim link for a child nobody has claimed yet (#729): the spawner's
+ * — an admin of this forge — when the first went unused or was lost. The
+ * child keeps one claim row, so minting replaces it and the old link dies
+ * at once. A claimed child (one with a person as admin) is refused.
+ */
+export async function reissueClaim(
+  app: App,
+  actor: User | undefined,
+  name: string,
+  deps: { readonly request: Request; readonly url: URL },
+): Promise<Result<{ readonly name: string; readonly claimUrl: string }, SpawnError | { readonly kind: "not_found" }>> {
+  if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
+  const user = requireUser(actor);
+  if (!user.ok) return err({ kind: "unauthorized" });
+  if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const ledger = /^[a-z0-9-]{1,39}$/.test(name) ? await readLedger(app, name) : undefined;
+  if (!ledger || !ledger.done) return err({ kind: "not_found" });
+  const child = createApp({ dataDir: childDirOf(app, ledger.bodyId) });
+  try {
+    const spawned = await spawnedOrg(child);
+    if (!spawned) return fail("the child has no organisation to claim");
+    if (hasAdmin(child.db))
+      return err({ kind: "refused", reason: "claimed", message: `${name} is already claimed; ask its owner to invite you` });
+    const token = mintClaim(child.db, spawned.org.id);
+    app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
+    return ok({ name, claimUrl: claimLink(ledger.url, token) });
+  } finally {
+    child.close();
   }
 }
 

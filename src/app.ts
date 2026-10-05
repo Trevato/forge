@@ -71,6 +71,11 @@ export interface ForgeConfig {
    */
   crewCeilingUsd?: number;
   /**
+   * How many runs one issue may start in a day before the crew parks it
+   * and asks a person (`crew/guard.ts`). Undefined is `ISSUE_RUN_CAP`.
+   */
+  issueRunCap?: number;
+  /**
    * Where mail goes out: SMTP submission (`FORGE_SMTP_URL`, `FORGE_MAIL_FROM`).
    * Undefined is a forge that sends no mail; a newcomer's email then waits
    * for the owner's word.

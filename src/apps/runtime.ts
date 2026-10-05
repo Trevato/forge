@@ -675,6 +675,12 @@ export class AppsRuntime {
       // restart used to cost.
       // One idle past the age stays stopped: a restart never wakes it.
       if (reason === "boot") {
+        // A preview at a head nobody who can write approved — built before
+        // the gate, or its approval withdrawn — does not come back at all.
+        if (!this.mayRun(record, repo, env, head)) {
+          await this.teardown(record, env);
+          continue;
+        }
         const idleSince = this.idleSince(repo, pull, env);
         if (idleSince !== undefined) {
           this.hibernateAtBoot(record, env, head, idleSince);
@@ -807,6 +813,22 @@ export class AppsRuntime {
       }
       // An approval is what lets a reader's pull run: deploy its head now.
       case "pull.reviewed": {
+        // A writer asking for changes may withdraw what let the preview run:
+        // if the code it serves may no longer run, it stops now, not at its
+        // next sleep or restart.
+        if (event.payload["state"] === "changes_requested") {
+          const pull = this.pullFromEvent(repo, event);
+          if (!pull) return;
+          const env = previewEnv(pull.number);
+          const state = this.envs.get(key(record.id, env));
+          const serving =
+            state?.live?.commitOid ??
+            state?.deploying?.run.commitOid ??
+            state?.asleep?.commitOid;
+          if (serving !== undefined && !this.mayRun(record, repo, env, serving))
+            await this.teardown(record, env);
+          return;
+        }
         if (event.payload["state"] !== "approved") return;
         const pull = this.pullFromEvent(repo, event);
         if (!pull || pull.state !== "open") return;
@@ -1298,7 +1320,12 @@ export class AppsRuntime {
               home: base.home,
               hide: base.hide,
               egress: live.manifest.egress ?? [],
-              reach: [this.options.forgeUrl],
+              // A terminal is the app's own client: it reaches the app on
+              // its port, as it would beside it.
+              reach: [
+                this.options.forgeUrl,
+                `http://127.0.0.1:${live.handle.port}`,
+              ],
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,

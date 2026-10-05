@@ -14,6 +14,7 @@
  * timer.
  */
 
+import { holdForCaller } from "./caller.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
 import { listEventsVisibleTo } from "../core/events.ts";
@@ -100,9 +101,12 @@ export function eventStream(
         // Assigned before `register` runs: a source that finishes immediately
         // (a job that is already done) must find a cleanup that works.
         let unsubscribe = () => {};
+        // An account suspended or removed ends its open streams then.
+        let release = () => {};
         cleanup = () => {
           if (!open) return;
           open = false;
+          release();
           unsubscribe();
           clearInterval(heartbeat);
           try {
@@ -113,6 +117,7 @@ export function eventStream(
         };
 
         request.signal.addEventListener("abort", cleanup);
+        release = holdForCaller(request, () => cleanup());
         write(`: connected\n\n`);
         unsubscribe = register(emit, () => cleanup());
         // A registration that closed the stream synchronously leaves an
