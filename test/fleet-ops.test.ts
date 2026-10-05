@@ -47,7 +47,7 @@ describe("fleet operations", () => {
   let bobsPrivate: Repo;
 
   const person = async (username: string, adminIfFirst = false) => {
-    const made = await createUser(app.db, {
+    const made = await createUser(app.db, { trusted: true,
       username,
       email: `${username}@forge.local`,
       password: "a-good-passphrase",

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "X",
@@ -77,6 +78,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
     base = servers.url;
     ({ token: aliceToken, cookie: aliceCookie } = await mkUser("alice"));
     ({ token: bobToken, cookie: bobCookie } = await mkUser("bob"));
+    proveAll(app);
 
     // Alice's upstream repo with a seed commit.
     await fetch(`${base}/api/v1/repos`, {

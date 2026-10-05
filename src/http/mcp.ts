@@ -56,9 +56,15 @@ import { getUsersByIds, type User } from "../core/users.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
-import { DIRECTION_NOTE } from "../crew/direct.ts";
+import {
+  DIRECTION_NOTE,
+  directionNote,
+  OUTSIDERS_NOTE,
+} from "../crew/direct.ts";
+import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
+import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
   askedIn,
@@ -67,9 +73,11 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { manifestFor } from "../actions/here.ts";
 import { clientAddress } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -173,6 +181,33 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "here",
+    description:
+      "What you can do on a forge page, as who you are: what it is, and each action open to you with its HTTP route and MCP tool. Give the page's URL or path.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", maxLength: 2000 } },
+      required: ["url"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const raw = str(args["url"]);
+      const parsed = URL.parse(raw, ctx.url.origin);
+      if (parsed === null || parsed.origin !== ctx.url.origin)
+        return bad("not_found", "not a page of this forge");
+      const found = manifestFor(
+        ctx.app,
+        user,
+        ctx.auth.via === "token" ? ctx.auth.scope : undefined,
+        ctx.url.origin,
+        parsed.pathname,
+      );
+      return found.ok
+        ? good(found.value)
+        : bad("not_found", "no such page here, or it is not visible to you");
+    },
+  },
+  {
     name: "tell",
     description:
       "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick.",
@@ -268,6 +303,29 @@ const TOOLS: readonly Tool[] = [
     writes: false,
     run(ctx, user) {
       return good(asksAnswer(ctx, user));
+    },
+  },
+  {
+    name: "asks_act",
+    description:
+      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
+        items: { type: "array", items: { type: "string" }, maxItems: 100 },
+        dryRun: { type: "boolean" },
+      },
+      required: ["action", "items"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const answer =
+        args["dryRun"] === false
+          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
+          : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
+      return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
     },
   },
   {
@@ -375,6 +433,8 @@ const TOOLS: readonly Tool[] = [
         audited.map((a) => ({
           app: `${a.repo.ownerName}/${a.repo.name}`,
           commit: a.oid ?? null,
+          // Who may direct the crew is part of who can do what here.
+          crewOutsiders: a.repo.crewOutsiders,
           standing: a.standing.kind,
           ...(a.standing.kind === "unsound"
             ? { problems: a.standing.problems }
@@ -392,6 +452,45 @@ const TOOLS: readonly Tool[] = [
               : {}),
         })),
       );
+    },
+  },
+  {
+    name: "outsiders",
+    description:
+      "Whether people who cannot write an app may direct its crew (start or steer a run by speaking): the owner's \"outsiders may trigger the crew\" switch, off by default. Without `on`, says which way it is set. With `on`, it plans — `dryRun` is true unless you say false — and only an admin of the app, with an admin token and never as an agent, sets it. Each change is recorded in the app's activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        on: { type: "boolean" },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to set it.",
+        },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      if (typeof args["on"] !== "boolean")
+        return good({ on: repo.crewOutsiders, says: directionNote(repo) });
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "setting who directs the crew needs an admin token");
+      const set = await setCrewOutsiders(ctx.app, user, repo, args["on"], dryRun);
+      if (!set.ok)
+        return bad("forbidden", "only an admin of this app sets who directs its crew");
+      return good({
+        ...set.value,
+        says: dryRun
+          ? `This is the plan; nothing changed. Outsiders ${set.value.was ? "may" : "may not"} trigger the crew now; send dryRun: false to ${set.value.on ? "let them" : "stop them"}.`
+          : set.value.on
+            ? OUTSIDERS_NOTE
+            : DIRECTION_NOTE,
+      });
     },
   },
   {
@@ -607,6 +706,38 @@ const TOOLS: readonly Tool[] = [
       if (spec !== null && repos.length === 0)
         return bad("not_found", "no such app or repository you can write (owner/name)");
       return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
+    },
+  },
+  {
+    name: "front_page",
+    description:
+      "The forge's front page as a stranger is shown it: the featured repository with the crew at work on it, then the public apps ranked by forks, ships, use and freshness, each with its numbers. A site admin also gets the picks; with `pinned` (in order; the first public one is featured) and/or `hidden`, each a list of owner/name, and dryRun false, sets them. The same data as /front and /api/v1/front.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
+        hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        dryRun: { type: "boolean" },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      if (args["pinned"] === undefined && args["hidden"] === undefined)
+        return good(frontJson(ctx.app, user));
+      const picks = frontInput(ctx.app, args);
+      if (picks === undefined)
+        return bad("invalid", "pinned and hidden are lists of owner/name");
+      const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
+      if (!set.ok)
+        return set.error.kind === "forbidden"
+          ? bad("forbidden", "the front page is a site admin's to set")
+          : bad("invalid", set.error.message);
+      return good({
+        dryRun: args["dryRun"] !== false,
+        picks: set.value,
+        ...(args["dryRun"] === false ? { front: frontJson(ctx.app, user) } : {}),
+      });
     },
   },
   {

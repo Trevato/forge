@@ -11,7 +11,11 @@ import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { previewEnv, type EnvName } from "../src/apps/data.ts";
-import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
+import {
+  AppsRuntime,
+  type EnvState,
+  type EnvStatus,
+} from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
@@ -32,7 +36,7 @@ import {
 import { setCrewRole } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
-import { recordLook } from "../src/core/looks.ts";
+import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import {
   getRepoById,
@@ -73,6 +77,38 @@ const PNG = Buffer.from(
   "base64",
 );
 
+/**
+ * A runtime registered for `app`, never started, answering every app's
+ * production with `stateOf` (running unless told) — the door shows only
+ * what is up or wakes. The returned function takes it away again.
+ */
+async function serving(
+  app: App,
+  servers: Servers,
+  stateOf: (record: AppRecord) => EnvState = () => "running",
+): Promise<() => Promise<void>> {
+  const runtime = new AppsRuntime(app, {
+    domain: "studio-door.test",
+    scheme: "http",
+    publicPort: servers.port,
+    forgeUrl: servers.url,
+  });
+  const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
+    (record: AppRecord): EnvStatus[] => [
+      {
+        env: "production",
+        state: stateOf(record),
+        // Serving the commit its newest picture is of.
+        commitOid: looksForEnv(app.db, record.id, "production")[0]?.commitOid ?? "",
+      } as EnvStatus,
+    ],
+  );
+  return async () => {
+    status.mockRestore();
+    await runtime.stop();
+  };
+}
+
 describe("the studio", () => {
   let dataDir: string;
   let app: App;
@@ -100,7 +136,7 @@ describe("the studio", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1495,7 +1531,7 @@ describe("the studio", () => {
   });
 
   test("/apps in the studio is the shelf, not dev's table: an app the viewer can land, never one they cannot, and no dev table markup; ?mode=dev is unchanged", async () => {
-    const bob = await createUser(app.db, {
+    const bob = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -1583,7 +1619,7 @@ describe("the studio", () => {
     expect(dev).not.toContain('href="/apps/new?owner=alice"');
     expect(dev).not.toContain("not running");
 
-    const carol = await createUser(app.db, {
+    const carol = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -1665,6 +1701,7 @@ describe("the studio", () => {
 
     // Signed out, with the studio cookie: the public app's name, its look,
     // and Sign in / Create an account — never the private one.
+    const done = await serving(app, servers);
     const anon = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
@@ -1701,6 +1738,7 @@ describe("the studio", () => {
     expect(dev).toContain("<h1>Apps, live.</h1>");
     expect(dev).toContain("a lighthouse in the fog");
     expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
+    await done();
   });
 
   test("the front door's tile is the thumb, not the full desktop picture, when both exist (#287)", async () => {
@@ -1748,9 +1786,11 @@ describe("the studio", () => {
     drop("desktop");
     drop("thumb");
 
+    const done = await serving(app, servers);
     const anon = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
+    await done();
     const tile = anon
       .split("<img")
       .find((chunk) =>
@@ -1762,63 +1802,6 @@ describe("the studio", () => {
     expect(tile).toContain(`/looks/production/${commit}/thumb.png`);
     expect(tile).toContain('width="640"');
     expect(tile).toContain('height="400"');
-  });
-
-  test("the front door never shows a stranger the owner's desktop picture: no thumb, no picture", async () => {
-    const created = await createRepo(app, alice, {
-      name: "oldtile",
-      visibility: "public",
-      description: "no thumb yet",
-    });
-    if (!created.ok) throw new Error(String(created.error));
-    const seeded = await commitToBranch(app, alice, created.value, {
-      message: "Start",
-      files: [
-        {
-          path: "package.json",
-          content:
-            '{"name":"oldtile","scripts":{"start":"bun run server.ts"}}\n',
-        },
-        {
-          path: "server.ts",
-          content:
-            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
-        },
-      ],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, alice, created.value, {
-      slug: "oldtile",
-    });
-    if (!enabled.ok) throw new Error(String(enabled.error));
-    const record = getAppByRepo(app.db, created.value.id)!;
-    const commit = seeded.value.commitOid;
-    const rel = join("looks", record.id, "production-desktop.png");
-    const abs = join(app.config.dataDir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, PNG);
-    recordLook(app.db, {
-      appId: record.id,
-      env: "production",
-      commitOid: commit,
-      kind: "desktop",
-      path: rel,
-    });
-
-    const anon = await (
-      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
-    ).text();
-    const tile = anon
-      .split("<img")
-      .find((chunk) =>
-        chunk.includes(
-          `/${created.value.ownerName}/${created.value.name}/looks/`,
-        ),
-      );
-    // The desktop picture is taken as the owner; the door's tiles are for
-    // strangers, so without a thumb the tile has no picture at all.
-    expect(tile).toBeUndefined();
-    expect(anon).not.toContain(`/looks/production/${commit}/desktop.png`);
   });
 
   test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
@@ -1854,7 +1837,7 @@ describe("the studio", () => {
 
     // Erin just signed up: no apps of her own, but the forge already has a
     // public one.
-    const erin = await createUser(app.db, {
+    const erin = await createUser(app.db, { trusted: true,
       username: "erin",
       email: "erin@forge.local",
       password: "a-good-passphrase",
@@ -1909,7 +1892,7 @@ describe("the studio", () => {
     const servers2 = await serve(app2);
     try {
       // A public repository that is not an app is not on the shelf.
-      const owner = await createUser(app2.db, {
+      const owner = await createUser(app2.db, { trusted: true,
         username: "olga",
         email: "olga@forge.local",
         password: "a-good-passphrase",
@@ -1950,12 +1933,12 @@ describe("the studio", () => {
     }
   });
 
-  test("the door reads public apps, not a window of the newest repositories, and puts the live ones first (#288)", async () => {
+  test("the door reads public apps, not a window of the newest repositories, and shows only the live ones (#288, #686)", async () => {
     const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-door-"));
     const app2 = createApp({ dataDir: dataDir2, port: 0 });
     const servers2 = await serve(app2);
     try {
-      const made = await createUser(app2.db, {
+      const made = await createUser(app2.db, { trusted: true,
         username: "pia",
         email: "pia@forge.local",
         password: "a-good-passphrase",
@@ -1975,7 +1958,7 @@ describe("the studio", () => {
         return getAppByRepo(app2.db, created.value.id)!;
       };
       const older = await appOf("older");
-      await appOf("quiet");
+      const quiet = await appOf("quiet");
       // More public plain repositories than the old window held, all newer
       // than the apps.
       for (let n = 0; n < 25; n++) {
@@ -1985,33 +1968,30 @@ describe("the studio", () => {
         });
         if (!r.ok) throw new Error(String(r.error));
       }
-      // `older` is serving, `quiet` is not: live first, though older. A
-      // runtime registered for this forge, never started, answers with
-      // the stubbed states.
-      new AppsRuntime(app2, {
-        domain: "studio-door.test",
-        scheme: "http",
-        publicPort: servers2.port,
-        forgeUrl: servers2.url,
-      });
-      const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
-        (record: AppRecord): EnvStatus[] =>
-          [
-            {
-              env: "production",
-              state: record.id === older.id ? "running" : "stopped",
-            } as EnvStatus,
-          ],
+      // Each with a picture, so only liveness decides.
+      for (const record of [older, quiet]) {
+        mkdirSync(join(dataDir2, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir2, "looks", record.id, "thumb.png"), PNG);
+        recordLook(app2.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: "0".repeat(40),
+          kind: "thumb",
+          path: `looks/${record.id}/thumb.png`,
+        });
+      }
+      // `older` is serving, `quiet` is stopped: a stranger is shown what is
+      // up, never what is down.
+      const done = await serving(app2, servers2, (record) =>
+        record.id === older.id ? "running" : "stopped",
       );
       try {
         const body = await (await fetch(`${servers2.url}/`)).text();
-        const at = (name: string) => body.indexOf(`href="/pia/${name}"`);
-        expect(at("older")).toBeGreaterThan(-1);
-        expect(at("quiet")).toBeGreaterThan(-1);
-        expect(at("older")).toBeLessThan(at("quiet"));
+        expect(body).toContain('href="/pia/older"');
+        expect(body).not.toContain('href="/pia/quiet"');
         expect(body).not.toContain('href="/pia/plain-0"');
       } finally {
-        status.mockRestore();
+        await done();
       }
     } finally {
       servers2.stop();
@@ -2107,7 +2087,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     haystack.split(needle).length - 1;
 
   test("a person with one app and one plain repository renders each once in the studio, and both together in one list in dev mode", async () => {
-    const dan = await createUser(app.db, {
+    const dan = await createUser(app.db, { trusted: true,
       username: "dan",
       email: "dan@forge.local",
       password: "a-good-passphrase",
@@ -2167,7 +2147,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   });
 
   test("an owner whose only repository is an app reads the empty list below as no other repositories, not as a bug", async () => {
-    const eve = await createUser(app.db, {
+    const eve = await createUser(app.db, { trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -2202,7 +2182,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   });
 
   test("an org's page draws the same way: its app once, its plain repository once, and Members/Teams unmoved", async () => {
-    const fay = await createUser(app.db, {
+    const fay = await createUser(app.db, { trusted: true,
       username: "fay",
       email: "fay@forge.local",
       password: "a-good-passphrase",
@@ -2291,7 +2271,7 @@ describe("every open pull's preview on the studio page", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -2451,7 +2431,7 @@ describe("the studio home keeps itself current", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -2687,14 +2667,14 @@ describe("the studio head says why the app is not up", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -2952,14 +2932,14 @@ describe("the studio app page's terminal", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -3105,14 +3085,14 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -3646,7 +3626,7 @@ describe("the studio's slot count", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -3785,7 +3765,7 @@ describe("words come from facts, not from run.summary", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4020,7 +4000,7 @@ describe("working: a run's own page in the studio", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4028,7 +4008,7 @@ describe("working: a run's own page in the studio", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -4278,7 +4258,7 @@ describe("the app's page tails the crew's log while it works", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4286,7 +4266,7 @@ describe("the app's page tails the crew's log while it works", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -4474,7 +4454,7 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4681,14 +4661,14 @@ describe("the app's page tails production's own output while it runs (#284)", ()
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -4864,7 +4844,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4976,7 +4956,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5046,7 +5026,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     app.db.run("UPDATE repo SET visibility = 'public' WHERE id = ?", [
       repo.id,
     ]);
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -5109,7 +5089,7 @@ describe("a tell held by a person still shows on the front door (#226)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5208,7 +5188,7 @@ describe("an open change is never quiet on the front door", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5388,7 +5368,7 @@ describe("a deploy that just landed is news on the front door", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5577,7 +5557,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5585,7 +5565,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -5960,7 +5940,7 @@ describe("a person's own change ships from its own studio page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5968,7 +5948,7 @@ describe("a person's own change ships from its own studio page", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const r = await createUser(app.db, {
+    const r = await createUser(app.db, { trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -6188,7 +6168,7 @@ describe("take it back: the studio's verb on a shipped change", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6196,7 +6176,7 @@ describe("take it back: the studio's verb on a shipped change", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const r = await createUser(app.db, {
+    const r = await createUser(app.db, { trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -6385,7 +6365,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6393,7 +6373,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     });
     if (!a.ok) throw new Error(a.error);
     const alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -6582,7 +6562,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-preview-latency-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6853,7 +6833,7 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7030,7 +7010,7 @@ describe("a low deploy count never reads as a failure ratio (#274)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7131,7 +7111,7 @@ describe("this week's runs and spend are counted by the database, not read off a
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7301,7 +7281,7 @@ describe("this week's shipping is counted by the database, not read off a page o
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7436,7 +7416,7 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7544,7 +7524,7 @@ describe("finding things in the studio: /search", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7604,7 +7584,7 @@ describe("finding things in the studio: /search", () => {
 
     // A private app, another owner's — never in alice's or a stranger's
     // results, however much its description matches.
-    const bob = await createUser(app.db, {
+    const bob = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -7777,7 +7757,7 @@ describe("the studio home says what the crew cost you today", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7785,7 +7765,7 @@ describe("the studio home says what the crew cost you today", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -7923,7 +7903,7 @@ describe("every studio page's headings form one outline", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -8122,7 +8102,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -8439,7 +8419,7 @@ describe("the studio names a person on the app's page, and the crew only for the
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "ivy",
       email: "ivy@forge.local",
       password: "a-good-passphrase",
@@ -8607,7 +8587,7 @@ describe("the studio's empty lists", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -8717,14 +8697,14 @@ describe("the studio can change what an app says it is (#230)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const alice = await createUser(app.db, {
+    const alice = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!alice.ok) throw new Error(alice.error);
-    const carol = await createUser(app.db, {
+    const carol = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",

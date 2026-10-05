@@ -182,7 +182,7 @@ describe("checks", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -190,7 +190,7 @@ describe("checks", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -590,7 +590,7 @@ describe("a check its forge died under", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-checks-abandoned-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
