@@ -210,3 +210,36 @@ describe("the map and audit say which way it is set", () => {
     expect(mapTool.value.crewOutsiders).toBe(outsiders());
   });
 });
+
+describe("no door flips the switch by leaving it out", () => {
+  test("a settings form without the switch (the studio's About card) leaves it as it is; the settings page's form sets it", async () => {
+    const post = (fields: Record<string, string>) =>
+      fetch(`${servers.url}/acme/svc/settings`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${admin["founder"]}` },
+        body: new URLSearchParams(fields),
+        redirect: "manual",
+      });
+    const before = outsiders();
+    expect(before).toBe(true);
+    // Saved from a form that does not show the switch: unchanged.
+    expect(
+      (await post({ description: "About", visibility: "public" })).status,
+    ).toBe(303);
+    expect(outsiders()).toBe(true);
+    // The PATCH without the field: unchanged.
+    expect((await patch(admin["founder"]!, { description: "Again" })).status).toBe(200);
+    expect(outsiders()).toBe(true);
+    // The settings page shows it: unchecked there turns it off.
+    expect(
+      (
+        await post({
+          description: "About",
+          visibility: "public",
+          crewOutsidersShown: "1",
+        })
+      ).status,
+    ).toBe(303);
+    expect(outsiders()).toBe(false);
+  });
+});

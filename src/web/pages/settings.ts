@@ -324,6 +324,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         </label>
       </div>
       <div class="field">
+        <input type="hidden" name="crewOutsidersShown" value="1" />
         <label class="check">
           <input
             type="checkbox"
@@ -368,7 +369,12 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
     protectDefault: form.get("protect") !== null,
     requireReview: form.get("requireReview") !== null,
     requireChecks: form.get("requireChecks") !== null,
-    crewOutsiders: form.get("crewOutsiders") !== null,
+    // Who directs the crew changes only from a form that shows the switch:
+    // a form without it (the studio's About card) never turns it off by
+    // leaving it out.
+    ...(form.get("crewOutsidersShown") !== null
+      ? { crewOutsiders: form.get("crewOutsiders") !== null }
+      : {}),
     ...(branch !== "" ? { defaultBranch: branch } : {}),
   });
   const flash: Flash = updated.ok
