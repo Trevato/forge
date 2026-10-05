@@ -72,6 +72,7 @@ import {
   subscriptionAdd,
   subscriptionDelete,
   subscriptionsPage,
+  subscriptionBudget,
   subscriptionHeadroom,
   subscriptionWake,
 } from "../web/pages/subscriptions.ts";
@@ -136,10 +137,19 @@ import {
 } from "../web/studio/actions.ts";
 import { claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
-import { asksPage } from "../web/studio/asks_page.ts";
+import {
+  asksBulkSubmit,
+  asksBulkUndo,
+  asksPage,
+} from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
-import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
+import {
+  frontUpdate,
+  liveAppsFragment,
+  liveOnYouFragment,
+  studioDoor,
+} from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
@@ -458,6 +468,10 @@ export function buildRouter(): Router<Handler> {
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim/:token", claimPage);
   router.add("POST", "/claim/:token", claimSubmit);
+  // The front page as a stranger sees it, for anyone; a site admin there
+  // also gets the controls that decide it (#686).
+  router.add("GET", "/front", studioDoor);
+  router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
@@ -469,6 +483,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  router.add("POST", "/asks/bulk", asksBulkSubmit);
+  router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -539,6 +555,7 @@ export function buildRouter(): Router<Handler> {
     "/settings/subscriptions/:id/headroom",
     subscriptionHeadroom,
   );
+  router.add("POST", "/settings/subscriptions/:id/budget", subscriptionBudget);
   router.add("GET", "/settings/secrets", secretsPage);
   router.add("POST", "/settings/secrets", secretSet);
   router.add("POST", "/settings/secrets/delete", secretDelete);

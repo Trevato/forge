@@ -12,18 +12,23 @@
 
 import type { App } from "../app.ts";
 import {
+  addComment,
   assignIssue,
   setIssueLabels,
   setIssueState,
 } from "../actions/issues.ts";
 import { linkIssue, unlinkIssue, dependencyWords } from "../actions/dependencies.ts";
-import { addComment } from "../actions/issues.ts";
 import { updateRepoSettings } from "../actions/repos.ts";
 import { cancelRepoRun, requeueRepoRun } from "../actions/runs.ts";
 import { isCrew } from "../core/agents.ts";
+import { mergePull } from "../actions/pulls.ts";
+import { bringUpToDate } from "../crew/autonomy.ts";
+import { recordInteraction, removeDismissals } from "../core/interactions.ts";
+import { getPull } from "../core/pulls.ts";
+import { askItemsOf } from "../web/studio/asks.ts";
 import type { FleetValue } from "../core/fleet_ops.ts";
-import { getIssue, type Issue } from "../core/issues.ts";
 import { findPillar, isStructural, type Pillars } from "../core/pillars.ts";
+import { getIssue, type Issue } from "../core/issues.ts";
 import {
   canRead,
   isAutonomy,
@@ -49,6 +54,16 @@ export interface Target {
   readonly blockers?: readonly number[];
   /** For an issue: every label its repository has, by name. */
   readonly repoLabels?: readonly string[];
+  /** Who the operation is for: a personal verb (`dismiss`) acts on their own state. */
+  readonly viewerId?: string;
+  /** For an issue: whether the viewer's dismissal of its ask still holds. */
+  readonly askDismissed?: boolean;
+  /** For a pull: merged, its latest check green, and whether it merges as it stands. */
+  readonly merged?: boolean;
+  readonly green?: boolean;
+  readonly stale?: boolean;
+  /** The repository's planner, by username, when its crew has one. */
+  readonly planner?: string | null;
   /** For an issue: its repository's pillars, gate and Later umbrella. */
   readonly pillars?: Pillars;
   /** For an issue: the numbers of the umbrellas that wait for it directly, ascending. */
@@ -60,9 +75,12 @@ export interface Verb {
   readonly reversible: boolean;
   /** Check the action's value at the boundary; the normalised value, or why not. */
   parse(app: App, value: unknown): Result<FleetValue, string>;
+  /** True when the verb changes the actor's own state, not the repository's: only they undo it. */
+  readonly personal?: boolean;
   read(target: Target): FleetValue;
-  /** What the row will hold; `target` for a verb whose answer depends on the row's repository. */
-  next(before: FleetValue, value: FleetValue, target: Target): FleetValue;
+  next(before: FleetValue, value: FleetValue): FleetValue;
+  /** When the value depends on the row (the repository's own planner): this, not `next`. */
+  nextFor?(target: Target, before: FleetValue, value: FleetValue): FleetValue;
   /** Why this row cannot hold `after`, beyond who is asking; undefined when it can. */
   refuse(app: App, target: Target, after: FleetValue): string | undefined;
   /**
@@ -204,6 +222,36 @@ function servesActiveWork(app: App, t: Target, gateId: string): boolean {
   return (row?.n ?? 0) > 0;
 }
 
+/** Assign: the row holds its assignee's username, or nothing. */
+const ASSIGN: Verb = {
+  kind: "issue",
+  reversible: true,
+  parse(app, value) {
+    if (value === null || value === "" || value === "none") return ok(null);
+    if (typeof value !== "string") return err("assign takes a username, or none");
+    const user = getUserByName(app.db, value.replace(/^@/, ""));
+    return user ? ok(user.username) : err(`no account named ${value}`);
+  },
+  read: (t) => t.issue?.assigneeName ?? null,
+  next: replace,
+  refuse(app, t, after) {
+    if (after === null) return undefined;
+    const user = getUserByName(app.db, String(after));
+    if (!user) return "that account is gone";
+    if (user.kind === "org" || !canRead(app.db, t.repo, user))
+      return words("assignee_cannot_read");
+    if (user.kind === "agent" && !isCrew(app.db, t.repo.id, user.id))
+      return words("agent_not_on_crew");
+    return undefined;
+  },
+  async write(app, actor, t, after) {
+    if (!t.issue) return words("not_found");
+    const user = after === null ? null : getUserByName(app.db, String(after));
+    if (user === undefined) return "that account is gone";
+    return done(assignIssue(app, actor, t.repo, t.issue, user));
+  },
+};
+
 export const VERBS: Record<string, Verb> = {
   autonomy: setting("autonomy", (v) =>
     isAutonomy(v) ? ok(v) : err("autonomy is off, assisted or autonomous"),
@@ -268,34 +316,81 @@ export const VERBS: Record<string, Verb> = {
     },
   },
 
-  assign: {
+  assign: ASSIGN,
+
+  // Ship: the same merge the asks' Ship button does, and the same handover
+  // of a conflict to the pull's agent. A merge is not undone silently.
+  ship: {
     kind: "issue",
-    reversible: true,
-    parse(app, value) {
-      if (value === null || value === "" || value === "none") return ok(null);
-      if (typeof value !== "string") return err("assign takes a username, or none");
-      const user = getUserByName(app.db, value.replace(/^@/, ""));
-      return user ? ok(user.username) : err(`no account named ${value}`);
-    },
-    read: (t) => t.issue?.assigneeName ?? null,
-    next: replace,
-    refuse(app, t, after) {
-      if (after === null) return undefined;
-      const user = getUserByName(app.db, String(after));
-      if (!user) return "that account is gone";
-      if (user.kind === "org" || !canRead(app.db, t.repo, user))
-        return words("assignee_cannot_read");
-      if (user.kind === "agent" && !isCrew(app.db, t.repo.id, user.id))
-        return words("agent_not_on_crew");
+    reversible: false,
+    parse: noValue,
+    read: (t) =>
+      t.issue?.kind !== "pull" ? null : t.merged ? "shipped" : t.issue.state,
+    next: () => "shipped",
+    refuse(app, t) {
+      if (t.issue?.kind !== "pull") return "not a change";
+      if (t.issue.state !== "open") return "already closed";
+      if (isMirror(app, t.repo)) return words("mirrored");
+      if (t.stale) return "it no longer merges as it stands";
+      if (t.green !== true) return "its check is not green";
       return undefined;
     },
-    async write(app, actor, t, after) {
-      if (!t.issue) return words("not_found");
-      const user = after === null ? null : getUserByName(app.db, String(after));
-      if (user === undefined) return "that account is gone";
-      return done(assignIssue(app, actor, t.repo, t.issue, user));
+    async write(app, actor, t) {
+      const pull = t.issue ? getPull(app.db, t.repo.id, t.issue.number) : undefined;
+      if (!pull) return words("not_found");
+      const merged = await mergePull(app, actor, t.repo, pull, "squash");
+      if (merged.ok) return undefined;
+      if (typeof merged.error !== "string" && merged.error.kind === "conflict") {
+        bringUpToDate(app, t.repo, pull, merged.error.files);
+        return `it conflicts with main (${merged.error.files.join(", ")}); its agent brings it up to date`;
+      }
+      return typeof merged.error === "string" ? words(merged.error) : merged.error.kind;
     },
   },
+
+  // Dismiss: the actor's own "not now", held until something new happens
+  // to the ask (`web/studio/asks.ts`). Undo takes the dismissal back.
+  dismiss: {
+    kind: "issue",
+    reversible: true,
+    personal: true,
+    parse: noValue,
+    read: (t) => (t.askDismissed ? "dismissed" : "asking"),
+    next: () => "dismissed",
+    refuse: () => undefined,
+    async write(app, actor, t, after) {
+      if (!t.issue) return words("not_found");
+      const items = askItemsOf(t.issue);
+      if (after === "asking") removeDismissals(app.db, actor.id, items);
+      else
+        for (const item of items)
+          recordInteraction(app.db, {
+            viewerId: actor.id,
+            itemId: item,
+            kind: "dismissed",
+            repoId: t.repo.id,
+            actorId: null,
+          });
+      return undefined;
+    },
+  },
+
+  // Hand back to the planner: the issue is assigned to the repository's
+  // planner, which re-plans it. Never on a public repository, where a crew
+  // assignment would let any reader's comment steer the run (#619).
+  replan: {
+    ...ASSIGN,
+    parse: noValue,
+    nextFor: (t) => t.planner ?? null,
+    refuse(app, t, after) {
+      if (t.issue?.kind === "pull") return "a change is told what is off, not re-planned";
+      if (t.repo.visibility === "public")
+        return "public: a crew assignment here lets any reader steer it";
+      if (after === null) return "no planner on this crew";
+      return ASSIGN.refuse(app, t, after);
+    },
+  },
+
 
   label: {
     kind: "issue",
@@ -388,7 +483,8 @@ export const VERBS: Record<string, Verb> = {
         ? ok(value.trim())
         : err("file takes later, none, or a pillar's name"),
     read: (t) => placement(t),
-    next(_before, value, t) {
+    next: replace,
+    nextFor(t, _before, value) {
       const wanted = String(value).toLowerCase();
       if (wanted === "none") return [];
       const set = t.pillars;
