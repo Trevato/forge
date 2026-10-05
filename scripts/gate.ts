@@ -23,6 +23,7 @@ export type Exclusion = {
 
 export const GATE: readonly string[] = [
   "test/accounts.test.ts",
+  "test/client-address.test.ts",
   "test/crew.test.ts",
   "test/commit-identity.test.ts",
   "test/review-route.test.ts",
@@ -49,9 +50,11 @@ export const GATE: readonly string[] = [
   "test/forks.test.ts",
   "test/front.test.ts",
   "test/fork-flow.test.ts",
+  "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
+  "test/app-members.test.ts",
   "test/apps.test.ts",
   "test/apps-adversarial.test.ts",
   "test/apps-busy.test.ts",
@@ -138,6 +141,7 @@ export const GATE: readonly string[] = [
   "test/origins.test.ts",
   "test/outsiders-switch.test.ts",
   "test/check-list.test.ts",
+  "test/holds.test.ts",
   "test/hollow.test.ts",
   "test/oauth-discovery.test.ts",
   "test/data-home.test.ts",

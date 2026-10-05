@@ -8,18 +8,21 @@
  * page that sent them, or JSON when the asks panel asked in place.
  */
 
+import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
 import { tellCrew } from "../../actions/crew.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
 import { getPull } from "../../core/pulls.ts";
+import type { Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { flashOrJson, flashTo, redirect } from "../layout.ts";
 import { isMode, modeCookie } from "../mode.ts";
+import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
 function mergeWords(error: unknown): string {
@@ -195,6 +198,70 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
     ...(said.ok
       ? { message: `Told ${pull.authorName}. It picks the change back up.` }
       : { tone: "danger" as const, message: "That could not be said." }),
+  });
+}
+
+/** The change a hold form is about, and where its answer shows. */
+function heldPull(ctx: Ctx, repo: Repo) {
+  const number = Number(ctx.params.number);
+  const pull = Number.isInteger(number)
+    ? getPull(ctx.app.db, repo.id, number)
+    : undefined;
+  return pull === undefined
+    ? undefined
+    : { pull, back: `${changeHref(repoBase(repo), pull.number)}#hold` };
+}
+
+/** POST /:owner/:name/pulls/:number/hold  { why } — not this one yet. */
+export async function holdSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const found = heldPull(ctx, repo);
+  if (!found) return notFoundPage(ctx);
+  const held = holdPull(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    found.pull,
+    field(form, "why"),
+  );
+  if (!held.ok && (held.error === "not_found" || held.error === "forbidden"))
+    return notFoundPage(ctx);
+  return flashTo(ctx, found.back, {
+    ...(held.ok
+      ? {
+          message: "Held. No rule reviews or lands it until it is released.",
+        }
+      : {
+          tone: "danger" as const,
+          message:
+            held.error === "not_open"
+              ? "Only an open change can be held."
+              : held.error === "why_too_long"
+                ? "Say why in one line, a shorter one."
+                : "Say why, in one line.",
+        }),
+  });
+}
+
+/** POST /:owner/:name/pulls/:number/release — let a held change go. */
+export async function releaseSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const found = heldPull(ctx, repo);
+  if (!found) return notFoundPage(ctx);
+  const released = releasePull(ctx.app, ctx.auth.user, repo, found.pull);
+  if (!released.ok) return notFoundPage(ctx);
+  return flashTo(ctx, found.back, {
+    message: released.value
+      ? "Released. The rules take it from here."
+      : "Nothing was holding it.",
   });
 }
 

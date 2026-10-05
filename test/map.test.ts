@@ -522,6 +522,7 @@ describe("the map, per app and across the forge", () => {
       done: 1,
       parked: 1,
       waiting: 1,
+      held: 0,
     });
     expect(lane.workers).toEqual(["scout"]);
     expect(lane.idle).toBe(false);

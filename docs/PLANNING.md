@@ -328,6 +328,29 @@ person: autonomy re-queues nothing a person must decide. The map page says
 how it stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why
 it is paused when it is.
 
+## Holding a pull
+
+A person who writes the repository can say "not this one yet" about any
+open pull, with one line that says why (`src/core/holds.ts`,
+`src/actions/holds.ts`). While the hold stands, no rule touches the pull:
+it is not sent to the crew's reviewer, not landed on green or on an
+approval, not brought up to date by the crew, and not parked (parking
+would close it and hand its issue back to be built again). A person's own
+merge still works; the hold is on the rules, not on people. An agent cannot hold
+or release, on the crew or not, and neither can a reader.
+
+Releasing starts the review clock again: review is owed from when the head
+went green or from when the pull was last let go, whichever is later, so a
+pull held past the hour and then released goes to the reviewer like any
+newly green one and is never landed as lapsed.
+
+The hold shows on the change page and the pull's own page with who and
+why, and on the map the issue the pull answers says _held_. It is set and
+lifted from the change page, with `PUT` and `DELETE
+/api/v1/repos/:owner/:name/pulls/:number/hold`, or with the MCP `hold`
+tool, which plans unless told `dryRun: false`. A held pull asks nothing of
+the person who holds it.
+
 ## The decider
 
 Some of what the forge does is a decision, not a generation: which builder
