@@ -14,6 +14,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 export const TITLE_MAX = 200;
 export const BODY_MAX = 8_000;
 export const PAGE_MAX = 500;
+/** A whole report request, in bytes: the text caps at four bytes a character, and room. */
+export const REQUEST_MAX = 64 * 1024;
 /** Waiting reports one repository holds; past this a stranger is told so. */
 export const WAITING_MAX = 100;
 

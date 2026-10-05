@@ -120,6 +120,12 @@ describe("reports from outside", () => {
       expect(res.status).toBe(422);
       expect(((await res.json()) as any).error).toBe(code);
     }
+    const huge = await fetch(`${base}/api/v1/repos/alice/game/reports`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": freshSource() },
+      body: JSON.stringify({ title: "t", body: "x".repeat(70_000) }),
+    });
+    expect(huge.status).toBe(413);
     expect(count("report")).toBe(0);
   });
 
@@ -181,6 +187,14 @@ describe("reports from outside", () => {
     // The agent's own issue list and search do not carry it either.
     const issues = await as(botToken, "/api/v1/repos/alice/game/issues");
     expect(await issues.text()).not.toContain("SECRET-PHRASE");
+  });
+
+  test("the owner's read-only token, the kind an app process holds, cannot read reports", async () => {
+    const ro = createToken(app.db, alice.id, "app:game/production", "ro").token;
+    expect((await as(ro, "/api/v1/repos/alice/game/reports")).status).toBe(403);
+    const page = await as(ro, "/alice/game/reports");
+    expect(page.status).toBe(404);
+    expect(await page.text()).not.toContain("SECRET-PHRASE");
   });
 
   test("a signed-in reader who cannot write cannot read reports", async () => {

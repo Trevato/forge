@@ -11,8 +11,14 @@ import {
   fileReport,
   waitingReports,
 } from "../../actions/reports.ts";
-import { BODY_MAX, TITLE_MAX, type Report } from "../../core/reports.ts";
+import {
+  BODY_MAX,
+  REQUEST_MAX,
+  TITLE_MAX,
+  type Report,
+} from "../../core/reports.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
+import { scopeAllows } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
 import { clientAddress } from "../../http/peer.ts";
 import {
@@ -143,6 +149,8 @@ const REFUSED: Record<string, string> = {
 export async function reportSubmit(ctx: Ctx): Promise<Response> {
   const repo = publicRepo(ctx);
   if (!repo) return notFoundPage(ctx);
+  if (Number(ctx.request.headers.get("content-length") ?? 0) > REQUEST_MAX)
+    return new Response("too large", { status: 413 });
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const values = {
@@ -207,6 +215,9 @@ export function reportsPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   if (!ctx.auth.user) return signInFirst(ctx);
+  // A read-only token (an app process holds its owner's) never reads them.
+  if (ctx.auth.scope === undefined || !scopeAllows(ctx.auth.scope, "rw"))
+    return notFoundPage(ctx);
   const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
   if (!waiting.ok) return notFoundPage(ctx);
   const base = repoBase(repo);

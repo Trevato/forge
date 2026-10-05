@@ -274,7 +274,7 @@ import {
   fileReport,
   waitingReports,
 } from "../actions/reports.ts";
-import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
+import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
 /** What a refused report is told: the shape that would have been taken. */
 const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
@@ -1765,6 +1765,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/repos/:owner/:name/reports", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
+    const declared = Number(ctx.request.headers.get("content-length") ?? 0);
+    if (declared > REQUEST_MAX)
+      return apiError("too_large", 413, REPORT_HINT);
     const input = await body(ctx.request);
     const filed = fileReport(
       ctx.app,
@@ -1800,8 +1803,11 @@ export function apiRoutes(router: Router<Handler>): void {
     );
   });
 
+  // Reading the words is a writer's act, so a read-only token — the one an
+  // app process holds for its owner — cannot fetch them.
   router.add("GET", "/api/v1/repos/:owner/:name/reports", (ctx) => {
-    if (!ctx.auth.user) return unauthorized();
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const waiting = waitingReports(ctx.app, ctx.auth.user, repo);
