@@ -11,6 +11,7 @@
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
+import { pillarsOf } from "./pillars.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
 
@@ -191,6 +192,57 @@ export interface Graph {
    * confirmed or relinked: closing frees only what was done.
    */
   readonly held: Held[];
+  /**
+   * Open issues that are deferred (`deferredIn`): behind the Later gate, or
+   * needed only by what is. None of them is ready.
+   */
+  readonly deferred: ReadonlySet<string>;
+}
+
+/**
+ * What is deferred in a graph: an open issue that waits for the Later gate,
+ * the Later umbrella, and any open issue that only deferred work waits
+ * for — so deferring a limb takes with it everything beneath it that serves
+ * nothing else, and nothing that something active still needs. With no
+ * open gate nothing is deferred: closing the gate opens it all.
+ *
+ * `also` names issues to count as deferred, to ask what deferring them
+ * would take along before anything is written.
+ */
+export function deferredIn(
+  graph: Pick<Graph, "issues" | "edges">,
+  gate: string | undefined,
+  later: string | undefined,
+  also: Iterable<string> = [],
+): Set<string> {
+  const out = new Set<string>();
+  const open = new Set(
+    graph.issues.filter((i) => i.state === "open").map((i) => i.id),
+  );
+  if (gate === undefined || !open.has(gate)) return out;
+  const waiters = new Map<string, string[]>();
+  for (const edge of graph.edges) {
+    if (!open.has(edge.issueId)) continue;
+    if (edge.blockedById === gate) out.add(edge.issueId);
+    waiters.set(edge.blockedById, [
+      ...(waiters.get(edge.blockedById) ?? []),
+      edge.issueId,
+    ]);
+  }
+  if (later !== undefined && open.has(later)) out.add(later);
+  for (const id of also) if (open.has(id) && id !== gate) out.add(id);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const id of open) {
+      if (out.has(id) || id === gate) continue;
+      const needs = waiters.get(id) ?? [];
+      if (needs.length > 0 && needs.every((w) => out.has(w))) {
+        out.add(id);
+        grew = true;
+      }
+    }
+  }
+  return out;
 }
 
 const GRAPH_MAX = 400;
@@ -233,16 +285,24 @@ export function repoGraph(db: Database, repoId: string): Graph {
     (a, b) => a.number - b.number,
   );
   const present = new Set(issues.map((i) => i.id));
+  const kept = edges.filter(
+    (e) => present.has(e.issueId) && present.has(e.blockedById),
+  );
+  // Only where there are edges can anything be behind a gate.
+  const set = kept.length === 0 ? undefined : pillarsOf(db, repoId);
   return {
     issues,
-    edges: edges.filter(
-      (e) => present.has(e.issueId) && present.has(e.blockedById),
-    ),
+    edges: kept,
     held: heldRows.map((r) => ({
       issueId: r.issue_id,
       blockedById: r.blocked_by_id,
       reason: r.reason,
     })),
+    deferred: deferredIn(
+      { issues, edges: kept },
+      set?.gate?.id,
+      set?.later?.id,
+    ),
   };
 }
 
@@ -322,8 +382,9 @@ function waitsForMap(
 }
 
 /**
- * Open issues nothing open stands in front of, first the ones whose finishing
- * frees the most, then the oldest. What a free crew slot takes next.
+ * Open issues nothing open stands in front of and that are not deferred,
+ * first the ones whose finishing frees the most, then the oldest. What a
+ * free crew slot takes next.
  */
 export function readyNow(graph: Graph): Ranked[] {
   const open = openIds(graph);
@@ -333,7 +394,10 @@ export function readyNow(graph: Graph): Ranked[] {
   return graph.issues
     .filter(
       (i) =>
-        open.has(i.id) && !held.has(i.id) && (waits.get(i.id)?.size ?? 0) === 0,
+        open.has(i.id) &&
+        !held.has(i.id) &&
+        !graph.deferred.has(i.id) &&
+        (waits.get(i.id)?.size ?? 0) === 0,
     )
     .map((issue) => ({
       issue,

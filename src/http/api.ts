@@ -218,6 +218,7 @@ import {
   milestoneData,
   milestonesJson,
 } from "../web/pages/milestones.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -2032,6 +2033,38 @@ export function apiRoutes(router: Router<Handler>): void {
       const data =
         number === undefined ? undefined : milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
+    },
+  );
+  // One action on a whole limb (#733): defer, resume, or close as not
+  // doing. A fleet operation in every respect — a dry run by default with a
+  // read credential, an admin token to apply, the receipt in
+  // /api/v1/fleet/ops/:id and its undo at …/undo.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/milestones/:number/limb",
+    async (ctx) => {
+      const input = await body(ctx.request);
+      const dryRun = input.dryRun !== false;
+      const denied = requireScope(ctx, dryRun ? "ro" : "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      const number = positiveInt(ctx.params.number);
+      if (!repo || number === undefined) return notFound();
+      if (!isLimbAction(input.action))
+        return apiError("bad_action", 422, "action is defer, resume or close");
+      const request = {
+        action: input.action,
+        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+        ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+      };
+      if (dryRun) {
+        const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
+        if (!plan.ok) return respondFleet(plan.error);
+        return json({ dryRun: true, ...plan.value });
+      }
+      const op = await applyLimb(ctx.app, ctx.auth.user, repo, number, request);
+      if (!op.ok) return respondFleet(op.error);
+      return json({ dryRun: false, ...op.value }, 201);
     },
   );
   // The map as data: ready now, blocked on, the critical path, every edge,

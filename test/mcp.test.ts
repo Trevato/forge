@@ -169,6 +169,7 @@ describe("the forge over MCP", () => {
       "asked",
       "map",
       "milestones",
+      "limb",
       "usage",
       "link",
       "unlink",

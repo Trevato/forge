@@ -14,7 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { repoGraph, type Graph } from "./dependencies.ts";
+import { deferredIn, repoGraph, type Graph } from "./dependencies.ts";
 import type { Issue } from "./issues.ts";
 import {
   isStructural,
@@ -54,7 +54,7 @@ export interface Limb {
   /** A pillar's name for its umbrella; the issue's title otherwise. */
   readonly name: string;
   readonly weight: Weight;
-  /** Deferred on purpose: Later. It is never a candidate to trim. */
+  /** Deferred on purpose: Later, or a limb behind the gate. Never a candidate to trim. */
   readonly deferred: boolean;
   /** Why it is a candidate to trim, when it is one. */
   readonly trim?: string;
@@ -66,6 +66,7 @@ export type LeafState =
   | "gone"
   | "building"
   | "proposed"
+  | "deferred"
   | "blocked"
   | "ready";
 
@@ -106,6 +107,26 @@ export interface Plan {
    * milestone with nothing beneath it, which says so.
    */
   milestone(number: number): Milestone | undefined;
+  /**
+   * A limb as rows, top down — what an action on the whole limb selects.
+   * `own` is the issue of that number and everything beneath it that only
+   * the limb needs; `shared` is what is beneath it that something open
+   * outside the limb also waits for, and so is not the limb's to take.
+   * Nothing for a number that is no issue here.
+   */
+  limb(number: number): { own: Issue[]; shared: Issue[] } | undefined;
+  /**
+   * What deferring this issue would take with it: the open issues that
+   * would stop being ready, itself included, and, beneath it, the ones that
+   * would stay because something active still waits for them.
+   */
+  deferral(number: number): { taken: Issue[]; kept: Issue[] } | undefined;
+  /**
+   * What resuming this issue would give back: the open issues, itself
+   * included, that are deferred now and would not be once it is out from
+   * behind the gate.
+   */
+  resumption(number: number): Issue[] | undefined;
 }
 
 interface MergedPull {
@@ -243,6 +264,7 @@ export function readPlan(
     if (issue.state === "closed") return counted(issue) ? "done" : "gone";
     if (building.has(issue.id)) return "building";
     if (proposed.has(issue.number)) return "proposed";
+    if (graph.deferred.has(issue.id)) return "deferred";
     const open = (waitsFor.get(issue.id) ?? []).some(
       (id) => byId.get(id)?.state === "open",
     );
@@ -281,7 +303,7 @@ export function readPlan(
           }
         : {}),
     };
-    const deferred = set.later?.id === issue.id;
+    const deferred = graph.deferred.has(issue.id);
     const closedThisWeek = under.some(
       (i) => i.state === "closed" && (i.closedAt ?? "") >= since,
     );
@@ -326,6 +348,80 @@ export function readPlan(
 
   return {
     limbs: top.map(limbOf),
+    limb(number: number): { own: Issue[]; shared: Issue[] } | undefined {
+      const issue = byNumber.get(number);
+      if (issue === undefined) return undefined;
+      const order = [issue.id];
+      const inside = new Set(order);
+      for (let n = 0; n < order.length; n++)
+        for (const child of waitsFor.get(order[n]!) ?? [])
+          if (!inside.has(child)) {
+            inside.add(child);
+            order.push(child);
+          }
+      // Shared: something open outside the limb waits for it, directly or
+      // through something beneath the limb that is itself shared.
+      const shared = new Set<string>();
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const id of order) {
+          if (id === issue.id || shared.has(id)) continue;
+          const needed = (waitedBy.get(id) ?? []).some(
+            (w) =>
+              byId.get(w)?.state === "open" &&
+              (!inside.has(w) || shared.has(w)),
+          );
+          if (needed) {
+            shared.add(id);
+            grew = true;
+          }
+        }
+      }
+      const issues = order
+        .map((id) => byId.get(id))
+        .filter((i): i is Issue => i !== undefined);
+      return {
+        own: issues.filter((i) => !shared.has(i.id)),
+        shared: issues.filter((i) => shared.has(i.id)),
+      };
+    },
+    deferral(number: number): { taken: Issue[]; kept: Issue[] } | undefined {
+      const issue = byNumber.get(number);
+      if (issue === undefined || set.gate === undefined) return undefined;
+      const after = deferredIn(graph, set.gate.id, set.later?.id, [issue.id]);
+      const under = [issue, ...beneath(issue.id)]
+        .map((i) => (typeof i === "string" ? byId.get(i) : i))
+        .filter((i): i is Issue => i !== undefined && i.state === "open");
+      const byNumberAsc = (a: Issue, b: Issue) => a.number - b.number;
+      return {
+        taken: under
+          .filter((i) => after.has(i.id) && !graph.deferred.has(i.id))
+          .sort(byNumberAsc),
+        kept: under.filter((i) => !after.has(i.id)).sort(byNumberAsc),
+      };
+    },
+    resumption(number: number): Issue[] | undefined {
+      const issue = byNumber.get(number);
+      if (issue === undefined || set.gate === undefined) return undefined;
+      const without = {
+        issues: graph.issues,
+        edges: graph.edges.filter(
+          (e) =>
+            !(e.issueId === issue.id && e.blockedById === set.gate!.id) &&
+            !(e.issueId === set.later?.id && e.blockedById === issue.id),
+        ),
+      };
+      const after = deferredIn(without, set.gate.id, set.later?.id);
+      return [issue, ...[...beneath(issue.id)].map((id) => byId.get(id))]
+        .filter(
+          (i): i is Issue =>
+            i !== undefined &&
+            i.state === "open" &&
+            graph.deferred.has(i.id) &&
+            !after.has(i.id),
+        )
+        .sort((a, b) => a.number - b.number);
+    },
     milestone(number: number): Milestone | undefined {
       const issue = byNumber.get(number);
       if (issue === undefined || !waits.has(issue.id)) return undefined;
@@ -365,8 +461,9 @@ export function readPlan(
         proposed: 1,
         ready: 2,
         blocked: 3,
-        done: 4,
-        gone: 5,
+        deferred: 4,
+        done: 5,
+        gone: 6,
       };
       return {
         ...limb,

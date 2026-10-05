@@ -32,6 +32,7 @@ import {
   labelsForIssues,
   listLabels,
 } from "../core/issues.ts";
+import { pillarsOf, type Pillars } from "../core/pillars.ts";
 import { canAdmin, getReposByIds, type Repo } from "../core/repos.ts";
 import { getRunsByIds } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
@@ -143,11 +144,15 @@ function loadTargets(
   const labels = labelsForIssues(app.db, ids);
   const blockers = blockerNumbersFor(app.db, ids);
   const repoLabels = new Map<string, string[]>();
-  for (const repoId of repos.keys())
+  const pillars = new Map<string, Pillars>();
+  for (const repoId of repos.keys()) {
     repoLabels.set(
       repoId,
       listLabels(app.db, repoId).map((l) => l.name),
     );
+    pillars.set(repoId, pillarsOf(app.db, repoId));
+  }
+  const under = umbrellasOver(app, ids, [...pillars.values()]);
   return ids.flatMap((id) => {
     const issue = issues.get(id);
     const repo = issue && repos.get(issue.repoId);
@@ -163,12 +168,53 @@ function loadTargets(
           .sort((a, b) => a.localeCompare(b)),
         blockers: blockers.get(id) ?? [],
         repoLabels: repoLabels.get(repo.id) ?? [],
+        pillars: pillars.get(repo.id)!,
+        under: under.get(id) ?? [],
       },
     ];
   });
 }
 
 const repoName = (repo: Repo): string => `${repo.ownerName}/${repo.name}`;
+
+/**
+ * For each of these issues, the numbers of the umbrellas — a pillar's, or
+ * Later's — that wait for it directly, ascending. One grouped read.
+ */
+function umbrellasOver(
+  app: App,
+  issueIds: readonly string[],
+  sets: readonly Pillars[],
+): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  const number = new Map<string, number>();
+  for (const set of sets) {
+    for (const p of set.pillars) number.set(p.umbrella.id, p.umbrella.number);
+    if (set.later !== undefined) number.set(set.later.id, set.later.number);
+  }
+  if (number.size === 0 || issueIds.length === 0) return out;
+  const umbrellas = [...number.keys()];
+  const CHUNK = 400;
+  for (let i = 0; i < issueIds.length; i += CHUNK) {
+    const chunk = issueIds.slice(i, i + CHUNK);
+    const rows = app.db
+      .query<{ umbrella: string; id: string }, string[]>(
+        `SELECT d.issue_id AS umbrella, d.blocked_by_id AS id
+           FROM issue_dependency d
+          WHERE d.blocked_by_id IN (${chunk.map((_, n) => `?${n + 1}`).join(",")})
+            AND d.issue_id IN (${umbrellas.map((_, n) => `?${chunk.length + n + 1}`).join(",")})`,
+      )
+      .all(...chunk, ...umbrellas);
+    for (const row of rows)
+      out.set(
+        row.id,
+        [...(out.get(row.id) ?? []), number.get(row.umbrella)!].sort(
+          (a, b) => a - b,
+        ),
+      );
+  }
+  return out;
+}
 
 /** Whether `actor` administers a row's repository, asked once per repository. */
 function adminOf(app: App, actor: User): (repo: Repo) => boolean {
@@ -243,7 +289,7 @@ function makePlan(
   const admin = adminOf(app, actor);
   const { verb, value } = act.value;
   const rows = targets.map((t) =>
-    planRow(app, admin, verb, t, (before) => verb.next(before, value)),
+    planRow(app, admin, verb, t, (before) => verb.next(before, value, t)),
   );
   return ok({
     query: query.trim(),
@@ -276,6 +322,7 @@ async function carryOut(
   app: App,
   actor: User,
   verb: Verb,
+  value: FleetValue,
   rows: readonly PlannedRow[],
   targets: Map<string, Target>,
 ): Promise<OperationRow[]> {
@@ -286,7 +333,7 @@ async function carryOut(
       out.push({ ...row, outcome: row.outcome === "change" ? "failed" : row.outcome });
       continue;
     }
-    const why = await verb.write(app, actor, target, row.after);
+    const why = await verb.write(app, actor, target, row.after, value);
     out.push(
       why === undefined
         ? { ...row, outcome: "ok", reason: "" }
@@ -333,7 +380,14 @@ export async function applyFleetOp(
   const plan = makePlan(app, person.value, query, action);
   if (!plan.ok) return plan;
   const { verbOf, targets, rows } = plan.value;
-  const done = await carryOut(app, person.value, verbOf, rows, targets);
+  const done = await carryOut(
+    app,
+    person.value,
+    verbOf,
+    plan.value.value,
+    rows,
+    targets,
+  );
   const op = recordOperation(app.db, {
     actorId: person.value.id,
     query: plan.value.query,
@@ -384,7 +438,19 @@ export async function undoFleetOp(
         return { ...r, before: r.after, after: r.before, outcome: "refused", reason: "it is gone" };
       return planRow(app, admin, verb, target, () => r.before, r.after);
     });
-    const done = await carryOut(app, person.value, verb, rows, byId);
+    // Written backwards — what was done last is undone first, so rows that
+    // lean on each other come apart in order — and kept in the order the
+    // operation listed them.
+    const done = (
+      await carryOut(
+        app,
+        person.value,
+        verb,
+        op.value,
+        [...rows].reverse(),
+        byId,
+      )
+    ).reverse();
     undone = recordOperation(app.db, {
       actorId: person.value.id,
       query: op.query,

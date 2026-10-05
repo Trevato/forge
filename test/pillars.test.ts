@@ -354,7 +354,8 @@ describe("pillars", () => {
       { pillar: "P0 Trust", umbrella: trust.number, open: 3, ready: 2, blocked: 1 },
       { pillar: "P1 Feed", umbrella: feed.number, open: 2, ready: 2, blocked: 0 },
       // One under the Later umbrella; two behind the gate, which is open.
-      { pillar: "Later", umbrella: later.number, open: 3, ready: 1, blocked: 2 },
+      // None is ready: what only Later waits for is deferred too (#733).
+      { pillar: "Later", umbrella: later.number, open: 3, ready: 0, blocked: 3 },
       // The loose issue, the footer (which waits for the composer), and the
       // stranger's three (one of which waits for the loose issue).
       { pillar: null, open: 5, ready: 3, blocked: 2 },

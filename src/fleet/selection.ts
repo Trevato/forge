@@ -10,9 +10,16 @@
  *
  * Only rows the viewer may read are ever selected — a repository you cannot
  * see is not refused, it is absent, the same ambiguity `not_found` keeps.
+ *
+ * `limb:<number>` on issues selects a limb (`core/milestones.ts`): the
+ * issue of that number and everything beneath it that only it needs, top
+ * down — never what something outside the limb also waits for. It needs
+ * the repository named, since a number means nothing without one.
  */
 
 import type { Database } from "bun:sqlite";
+import { readPlan } from "../core/milestones.ts";
+import { canRead, getRepo } from "../core/repos.ts";
 import { REPO_VISIBLE } from "../core/visibility.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -89,8 +96,34 @@ const FIELDS: Record<FleetKind, Record<string, Predicate>> = {
     label: (p) =>
       `EXISTS (SELECT 1 FROM issue_label JOIN label ON label.id = issue_label.label_id
          WHERE issue_label.issue_id = issue.id AND label.name = ${p} COLLATE NOCASE)`,
+    // A limb is read from the tree, not by one predicate: see `limbIds`.
+    limb: () => "0",
   },
 };
+
+/**
+ * The ids `limb:<number>` names, top down, for the repository the query
+ * names — or why not. A repository the viewer cannot read has no limb.
+ */
+function limbIds(
+  db: Database,
+  viewer: User,
+  query: FleetQuery,
+  term: Term,
+): Result<string[], QueryError> {
+  const named = query.terms.filter(
+    (t) => t.field === "repo" && !t.negate && t.value.includes("/"),
+  );
+  if (named.length !== 1)
+    return bad("limb:<number> needs the repository: repo:owner/name");
+  const number = Number(term.value);
+  if (!Number.isInteger(number) || number < 1)
+    return bad("limb takes the number of an issue");
+  const [owner, name] = named[0]!.value.split("/");
+  const repo = getRepo(db, owner ?? "", name ?? "");
+  if (repo === undefined || !canRead(db, repo, viewer)) return ok([]);
+  return ok((readPlan(db, repo).limb(number)?.own ?? []).map((i) => i.id));
+}
 
 const FROM: Record<FleetKind, { table: string; from: string; order: string }> =
   {
@@ -159,9 +192,25 @@ export function selectRows(
   };
   const where = [REPO_VISIBLE];
   if (query.kind === "issue") where.push("issue.kind = 'issue'");
+  /** For a limb: its rows' places, top down, so the limb comes before its leaves. */
+  let limbOrder: Map<string, number> | undefined;
   for (const term of query.terms) {
     let sql: string;
-    if (term.field === "repo") {
+    if (query.kind === "issue" && term.field === "limb") {
+      const ids = limbIds(db, viewer, query, term);
+      if (!ids.ok) return ids;
+      if (ids.value.length > MAX_ROWS)
+        return err({
+          code: "too_many",
+          message: `more than ${MAX_ROWS} rows match; narrow the query`,
+        });
+      if (!term.negate)
+        limbOrder = new Map(ids.value.map((id, n) => [id, n]));
+      sql =
+        ids.value.length === 0
+          ? "0"
+          : `issue.id IN (${ids.value.map((id) => bind(id)).join(",")})`;
+    } else if (term.field === "repo") {
       // `owner/name`, or a bare name in any owner.
       const slash = term.value.indexOf("/");
       sql =
@@ -190,5 +239,9 @@ export function selectRows(
       code: "too_many",
       message: `more than ${MAX_ROWS} rows match; narrow the query`,
     });
+  if (limbOrder !== undefined) {
+    const place = limbOrder;
+    ids.sort((a, b) => (place.get(a) ?? 0) - (place.get(b) ?? 0));
+  }
   return ok(ids);
 }

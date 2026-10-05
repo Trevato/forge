@@ -115,6 +115,7 @@ const STATE_WORDS: Record<LeafState, string> = {
   proposed: "proposed",
   ready: "ready",
   blocked: "blocked",
+  deferred: "deferred",
   done: "done",
   gone: "not doing",
 };
