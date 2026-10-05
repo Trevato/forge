@@ -13,6 +13,7 @@ import {
 } from "../src/core/users.ts";
 import { isSafeName } from "../src/git/guard.ts";
 import { buildRouter, serve, type Servers } from "../src/http/server.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 // A fresh outsider tries every way in with a name that is not theirs to take:
 // an agent's, the owner's, a system name, or a page of the forge itself.
@@ -35,7 +36,7 @@ describe("reserved names", () => {
     });
     if (!owner.ok) throw new Error(owner.error);
     for (const name of ["scout", "torque"]) {
-      const made = await createUser(app.db, {
+      const made = await createUser(app.db, { trusted: true,
         username: name,
         email: `${name}@agents.invalid`,
         agent: true,
@@ -159,6 +160,8 @@ describe("reserved names", () => {
   });
 
   test("an organization cannot take a reserved name", () => {
+    // ada signed up over HTTP; founding an org needs a proven email first.
+    proveAll(app);
     const ada = getUserByName(app.db, "ada")!;
     for (const [name, error] of [
       ["scout", "name_taken"],

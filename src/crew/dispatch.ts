@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -45,7 +46,7 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
-import { sandboxAvailable } from "./sandbox.ts";
+import { sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
   AUTONOMY_TICK_MS,
@@ -121,6 +122,14 @@ export async function startCrew(
   // The shell sandbox is policy, not decoration: where the host cannot
   // hold a run to it, the runs say so instead of warning on every command.
   const sandbox = await sandboxAvailable();
+  // Temp directories of runs a stopped forge never finished: old enough
+  // that no forge beside this one (a rollout) can still be using them.
+  try {
+    const swept = sweepRunTmp(app.config.dataDir, options.runTimeoutMs + 60 * 60_000);
+    if (swept > 0) log.info("swept leftover run temp directories", { count: swept });
+  } catch (error) {
+    log.warn("could not sweep run temp directories", { error: String(error) });
+  }
   if (!sandbox.ok)
     log.warn("agent sandbox not available here; runs are unrestricted", {
       reason: sandbox.reason,
@@ -339,6 +348,8 @@ function route(app: App, event: ForgeEvent): void {
       const actor =
         event.actorId === null ? undefined : getUserById(app.db, event.actorId);
       if (!actor) return;
+      // A run costs: an account whose email is unproven starts none by speaking.
+      if (!emailVerified(app.db, actor.id)) return;
       // Agents talking is not feedback — except the crew's reviewer passing
       // a verdict on a pull, which is exactly what a person's review is.
       // Its line comments ride along with the verdict; the verdict alone

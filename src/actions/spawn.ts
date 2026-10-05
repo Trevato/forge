@@ -217,6 +217,8 @@ async function copyInto(
         const made = await createUser(child.db, {
           username: owner.username,
           email: `${owner.username}@spawn.forge.invalid`,
+          // Seeded by the parent's owner, who is proven there.
+          trusted: true,
         });
         return made.ok ? made.value : undefined;
       })());

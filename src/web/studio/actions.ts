@@ -53,7 +53,9 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
       message:
         told.error === "forbidden"
           ? DIRECTION_NOTE
-          : "That could not be told.",
+          : told.error === "unverified"
+            ? "Verify your email first."
+            : "That could not be told.",
     });
   const { routed } = told.value;
   if (routed === undefined)

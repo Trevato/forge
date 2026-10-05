@@ -34,7 +34,7 @@ describe("the feed on the home page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
-      const r = await createUser(app.db, {
+      const r = await createUser(app.db, { trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

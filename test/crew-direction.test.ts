@@ -14,6 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { tell } from "../src/actions/tell.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { createRepo as createRepoRow } from "../src/core/repos.ts";
 import { share } from "../src/feed/share.ts";
 import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { openPull, submitReview } from "../src/actions/pulls.ts";
@@ -99,7 +100,7 @@ fi
     runTimeoutMs: 60_000,
   });
 
-  const a = await createUser(app.db, {
+  const a = await createUser(app.db, { trusted: true,
     username: "alice",
     email: "alice@forge.local",
     password: "a-good-passphrase",
@@ -107,7 +108,7 @@ fi
   });
   if (!a.ok) throw new Error(a.error);
   alice = a.value;
-  const m = await createUser(app.db, {
+  const m = await createUser(app.db, { trusted: true,
     username: "mallory",
     email: "mallory@forge.local",
     password: "a-good-passphrase",
@@ -321,36 +322,46 @@ describe("comments and reviews on a public repository", () => {
 });
 
 describe("every other door that queues a run", () => {
-  test("a reader's tell is refused and opens nothing, through every door", async () => {
+  /**
+   * `who` says a tell on `target` through every door, and each refuses with
+   * `error` and opens nothing: the action, the studio's box, the feed's
+   * tells, the MCP tool and a share to an agent.
+   */
+  async function refusedEverywhere(
+    who: User,
+    target: Repo,
+    error: "forbidden" | "unverified",
+  ): Promise<void> {
+    const path = `${target.ownerName}/${target.name}`;
     const opened = () =>
-      listEvents(app.db, { repoId: repo.id }).filter(
+      listEvents(app.db, { repoId: target.id }).filter(
         (e) => e.kind === "issue.opened",
       ).length;
     const before = opened();
-    const token = createToken(app.db, mallory.id, "tells", "rw").token;
+    const token = createToken(app.db, who.id, "tells", "rw").token;
     const auth = { authorization: `Bearer ${token}` };
 
     // The action every door calls.
-    const told = await tell(app, mallory, fresh(), "Make it purple");
+    const told = await tell(app, who, target, "Make it purple");
     expect(told.ok).toBe(false);
-    if (!told.ok) expect(told.error).toBe("forbidden");
-    // The studio's box.
-    const box = await fetch(`${servers.url}/alice/square/tell`, {
+    if (!told.ok) expect(told.error).toBe(error);
+    // The studio's box: reached the handler (a flash back to the app).
+    const box = await fetch(`${servers.url}/${path}/tell`, {
       method: "POST",
       headers: auth,
       body: new URLSearchParams({ text: "Make it purple" }),
       redirect: "manual",
     });
-    // Reached the handler (a flash back to the app), and opened nothing.
     expect(box.status).toBe(303);
     expect(opened()).toBe(before);
     // The feed's tells.
     const feed = await fetch(`${servers.url}/api/v1/feed/tells`, {
       method: "POST",
       headers: { ...auth, "content-type": "application/json" },
-      body: JSON.stringify({ app: "alice/square", text: "Make it purple" }),
+      body: JSON.stringify({ app: path, text: "Make it purple" }),
     });
     expect(feed.status).toBe(403);
+    expect(((await feed.json()) as { error: string }).error).toBe(error);
     expect(opened()).toBe(before);
     // The MCP tool.
     const mcp = (await (
@@ -367,26 +378,51 @@ describe("every other door that queues a run", () => {
           method: "tools/call",
           params: {
             name: "tell",
-            arguments: { repo: "alice/square", text: "Make it purple" },
+            arguments: { repo: path, text: "Make it purple" },
           },
         }),
       })
     ).json()) as { result: { isError?: boolean; content: { text: string }[] } };
     expect(mcp.result.isError).toBe(true);
-    expect(mcp.result.content[0]!.text).toContain("forbidden");
+    expect(mcp.result.content[0]!.text).toContain(error);
     expect(opened()).toBe(before);
     // A share to an agent, which tells the crew when the item is no change.
     const item = `event:${app.bus.append({
       kind: "run.finished",
-      repoId: repo.id,
+      repoId: target.id,
       actorId: alice.id,
-      payload: { kind: "deploy", state: "ok", summary: "deployed", runId: "r-share" },
+      payload: { kind: "deploy", state: "ok", summary: "deployed", runId: `r-${who.username}` },
     }).id}`;
-    const shared = await share(app, mallory, item, ["bot"]);
-    if (!shared.ok) throw new Error(shared.error);
-    expect(shared.value.sent).toEqual([{ to: "bot", outcome: "unreachable" }]);
-
+    const shared = await share(app, who, item, ["bot"]);
+    if (shared.ok)
+      expect(shared.value.sent).toEqual([{ to: "bot", outcome: "unreachable" }]);
     expect(opened()).toBe(before);
+  }
+
+  test("a reader's tell is refused and opens nothing, through every door", async () => {
+    await refusedEverywhere(mallory, fresh(), "forbidden");
+  });
+
+  test("an unverified writer's tell is refused and opens nothing, through every door", async () => {
+    const u = await createUser(app.db, {
+      username: "uma",
+      email: "uma@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!u.ok) throw new Error(u.error);
+    const uma = u.value;
+    // Her own repository, with the bot on its crew: a writer in every way
+    // but a verified address.
+    const own = await createRepoRow(app.db, app.reposRoot, {
+      ownerId: uma.id,
+      name: "garden",
+      visibility: "public",
+    });
+    if (!own.ok) throw new Error(String(own.error));
+    app.db
+      .query("INSERT INTO repo_crew (repo_id, user_id) VALUES (?1, ?2)")
+      .run(own.value.id, bot.user.id);
+    await refusedEverywhere(uma, own.value, "unverified");
   });
 
   test("a reader cannot converge a fork, in the action, over HTTP or over MCP", async () => {

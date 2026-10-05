@@ -6,6 +6,7 @@
  * handled where users are.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addCrew as insertCrew,
@@ -188,9 +189,11 @@ export function addToCrew(
   actor: User | undefined,
   repo: Repo,
   username: string,
-): Result<Agent, "not_found" | "no_such_agent"> {
+): Result<Agent, "not_found" | "no_such_agent" | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  const proven = requireVerified(app, admin.value);
+  if (!proven.ok) return proven;
   const agent = getAgentByName(app.db, username);
   if (!agent) return err("no_such_agent");
   if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {

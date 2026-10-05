@@ -40,7 +40,7 @@ describe("reports from outside", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -48,7 +48,7 @@ describe("reports from outside", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",

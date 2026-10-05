@@ -232,7 +232,9 @@ async function runSource(
         said:
           told.error === "unauthorized"
             ? "The person who connected the account is gone; connect it again."
-            : `The crew could not be told (${told.error}).`,
+            : told.error === "unverified"
+              ? "The person who connected the account has not verified their email yet."
+              : `The crew could not be told (${told.error}).`,
       });
 
     const number = told.value.issue.number;

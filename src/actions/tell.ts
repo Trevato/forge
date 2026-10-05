@@ -17,6 +17,7 @@ import { routeIssue, type Routed } from "../crew/route.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireParticipant } from "./access.ts";
 import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
+import { requireVerified } from "./verify.ts";
 
 export interface Told {
   readonly issue: Issue;
@@ -32,6 +33,8 @@ export type TellError =
   | "unauthorized"
   /** Someone who may not direct the crew here (`crew/direct.ts`). */
   | "forbidden"
+  /** Someone whose email is not verified yet (`verify.ts`). */
+  | "unverified"
   | TitleError
   | "body_too_long"
   | MirrorError;
@@ -47,6 +50,9 @@ export async function tell(
   const participant = requireParticipant(app, actor, repo);
   if (!participant.ok) return participant;
   if (!mayDirectCrew(app.db, repo, participant.value)) return err("forbidden");
+  // A tell sends the crew to work in this person's name: an address not yet
+  // shown to be theirs tells nothing (`verify.ts`).
+  if (!requireVerified(app, participant.value).ok) return err("unverified");
   const text = said.trim();
   if (text === "") return err("empty");
   const firstLine = text.split(/\n/)[0]!.trim();
@@ -74,6 +80,9 @@ export async function tell(
   );
   return ok({ issue: opened.value, routed, assigned: assigned.ok });
 }
+
+/** What every door says when a tell is refused for an unverified address. */
+export const UNVERIFIED_WORDS = "verify your email first";
 
 /** What happened, in the sentence both doors say. */
 export function toldWords(told: Told): string {

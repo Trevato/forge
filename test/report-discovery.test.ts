@@ -29,7 +29,7 @@ describe("an outside agent finds the report path unaided", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

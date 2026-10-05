@@ -16,6 +16,7 @@ import { providerFor } from "../src/origins/providers/index.ts";
 import { staticCredential } from "../src/origins/types.ts";
 import { anchorFromHunk } from "../src/origins/providers/http.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 /**
  * Origins, end to end: a real forge, a fake API that behaves like Forgejo,
@@ -170,6 +171,7 @@ describe("origins: connecting, mirroring, writing through", () => {
         }),
       });
     }
+    proveAll(app);
     resetConnectLimit();
   });
 
