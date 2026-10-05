@@ -72,6 +72,7 @@ import {
 } from "./asks.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { holdCard } from "./hold.ts";
+import { pullMayRun } from "../../core/pull_trust.ts";
 import { changeHref } from "./nouns.ts";
 import { pullWord, servingHistory, wordBadge, type WordCtx } from "./words.ts";
 
@@ -297,9 +298,15 @@ async function changeConversation(
       : await wallOf(wordCtx.dir, status.baseOid, status.headOid);
   const conflicted =
     status !== undefined && !status.mergeable && status.conflicts.length > 0;
+  // A reader's head runs nothing until a writer approves it (#777): say
+  // that, rather than leave a word waiting on something that will not come.
+  const waitingOnApproval =
+    status !== undefined && !pullMayRun(db, repo, pull, status.headOid);
   const note = conflicted
     ? conflictWords(pull.baseBranch, status.conflicts)
-    : checkNote;
+    : waitingOnApproval
+      ? "checks and the preview wait for a writer to approve this head"
+      : checkNote;
   // Before a merge the deploy worth linking is the preview's own check;
   // after, it is production's — the preview's run may already be torn
   // down, and the word above is judged by production regardless.
