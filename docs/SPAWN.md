@@ -28,6 +28,7 @@ and user accounts. The child mints its own. A test in #420 and #422 proves it.
 
 External bodies (Cloudflare, Fly, metal) are decided by spike #339 and arrive
 as a second implementation of the placement seam (#427), in their own issue.
+A self-hosted front door on celld is weighed in `docs/research/celld.md`.
 
 ## Choices
 

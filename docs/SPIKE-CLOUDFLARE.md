@@ -45,6 +45,9 @@ forge" therefore needs two tools for that body, one for Fly (`fly deploy`).
 Both bodies sit behind the same Worker front door, so choosing later costs a
 variable, not a rewrite.
 
+celld could run that front door on our own machines; see
+`docs/research/celld.md`.
+
 ## To finish the spike
 
 1. Declare the Cloudflare token and bucket key as run secrets; install `tofu`.
