@@ -821,6 +821,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
         username: "Usernames are letters, digits, dots, dashes.",
       },
       username_taken: { username: "That username is taken." },
+      username_reserved: { username: "That name is reserved." },
       email_taken: { email: "That email already has an account." },
       weak_password: { password: "Passwords need at least 10 characters." },
     }[created.error] ?? { username: "Something went wrong." };

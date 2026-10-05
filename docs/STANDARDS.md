@@ -12,6 +12,7 @@ its own mark. Nothing here is configured, and nothing here is optional.
 | `/robots.txt`                  | crawlers stay out of accounts, search and the API; the sitemap    | —                                                                            |
 | `/sitemap.xml`                 | the front page and every public repository, never a private one   | `listReposVisibleTo(db, nobody)`                                             |
 | `/manifest.webmanifest`        | the forge as an installable app                                   | —                                                                            |
+| `/llms.txt`                    | the forge for an agent (llmstxt.org): how to report, how to offer a change, the API and MCP, the public repositories | `listReposVisibleTo(db, nobody)`, the report limits                          |
 | `/icons/forge-<size>.png`      | the mark at 192, 512, 512-maskable and 180 (iOS), painted at boot | `design/mark.ts`, the favicon's two colours                                  |
 | `/:owner/:name/activity.atom`  | a repository's activity as Atom: pushes, issues, pulls, forks     | a fixed list of kinds, as sentences; never a raw payload                     |
 
@@ -39,6 +40,17 @@ wrong: the form at `/:owner/:name/report`, or
 a missing one does. A report is plain text, capped (a 200-character title, an
 8,000-character body), limited per source, per repository and for the whole
 forge, and a repository holds at most 100 waiting.
+
+An agent finds the path without being told. Every page carries
+`rel="service-doc"` to `/llms.txt`, and a public repository's pages
+`rel="help"` to its report form, both as `<link>` tags and as a `Link`
+header; security.txt points at `/llms.txt` for anything that is not a
+vulnerability. Each refusal a stranger meets says what is open to them: the
+API's 401 on opening an issue carries a `report` object and a `Link`, a
+stranger's `/issues/new` shows "Report a problem" beside "Sign in", and the
+MCP's 401 keeps its OAuth challenge while naming `report`, the one tool that
+answers without a token. A private repository offers none of this.
+`test/report-discovery.test.ts` replays that walk.
 
 A report is not an issue. It waits at `/:owner/:name/reports` (and
 `GET …/reports`) for a person who writes the repository; an agent is refused
