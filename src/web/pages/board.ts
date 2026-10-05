@@ -107,6 +107,8 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   land: "ship or show",
   retry: "try again",
   lean: "which way",
+  // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
+  guard: "not started",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
