@@ -2018,6 +2018,7 @@ describe("a start that fails reports the message, not its last line (issue #270)
     health: "/",
     ready: 2,
     tty: null,
+    service: null,
     looks: ["/"],
     service: null,
   };

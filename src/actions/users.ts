@@ -10,6 +10,7 @@ import {
   parseAuthorizedKey,
   type UserKey,
 } from "../core/keys.ts";
+import { reservedName } from "../core/reserved.ts";
 import { setUserSetting } from "../core/settings.ts";
 import {
   createToken as mintToken,
@@ -18,7 +19,9 @@ import {
 } from "../core/tokens.ts";
 import {
   changePassword as rehash,
+  cleanDisplayName,
   createUser,
+  getUserByName,
   updateProfile as writeProfile,
   verifyPassword,
   type CreateUserError,
@@ -35,14 +38,36 @@ export interface SignUpInput {
   password: string;
 }
 
-/** The first account on a fresh forge is the admin — no setup wizard. */
+export type SignUpError = CreateUserError | "username_reserved";
+
+/**
+ * The first account on a fresh forge is the admin — no setup wizard. A name
+ * the crew, the owner or the forge itself answers to is not free
+ * (`core/reserved.ts`).
+ */
 export async function signUp(
   app: App,
   input: SignUpInput,
-): Promise<Result<User, CreateUserError>> {
+  /** Where the request came from, for the owner's audit of who joined. */
+  from: { address?: string | undefined } = {},
+): Promise<Result<User, SignUpError>> {
+  // A name someone already holds is taken (createUser says so); only a new
+  // name can be a reserved one.
+  if (
+    getUserByName(app.db, input.username) === undefined &&
+    reservedName(app.db, input.username) !== undefined
+  )
+    return err("username_reserved");
   const created = await createUser(app.db, { ...input, adminIfFirst: true });
   if (!created.ok) return created;
-  app.bus.append({ kind: "user.created", actorId: created.value.id });
+  app.bus.append({
+    kind: "user.created",
+    actorId: created.value.id,
+    payload: {
+      via: "signup",
+      ...(from.address === undefined ? {} : { address: from.address }),
+    },
+  });
   return created;
 }
 
@@ -89,12 +114,25 @@ export function updateProfile(
   app: App,
   actor: User | undefined,
   patch: ProfilePatch,
-): Result<User, "unauthorized" | UpdateProfileError> {
+): Result<User, "unauthorized" | "display_name_reserved" | UpdateProfileError> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  // A display name is read beside every comment: nobody else may wear the
+  // crew's, the owner's or the forge's.
+  // Judged as it will be stored (\`cleanDisplayName\`), not as it was typed.
+  const displayName =
+    patch.displayName === undefined
+      ? undefined
+      : cleanDisplayName(patch.displayName);
+  if (
+    displayName !== undefined &&
+    displayName !== user.value.displayName &&
+    reservedName(app.db, displayName, user.value.id) !== undefined
+  )
+    return err("display_name_reserved");
   const updated = writeProfile(app.db, user.value.id, patch);
   if (!updated.ok) return updated;
-  const fields = (["displayName", "email"] as const).filter(
+  const fields = (["displayName", "email", "commitEmail"] as const).filter(
     (k) => patch[k] !== undefined,
   );
   app.bus.append({

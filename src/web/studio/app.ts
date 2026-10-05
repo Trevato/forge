@@ -45,6 +45,7 @@ import { changesHref, tellsHref } from "./nouns.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
+import { crewKeyNote } from "./crew.ts";
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -425,13 +426,13 @@ export async function studioApp(
   // An app that follows another says so before anything else: whether it
   // is in step is the first thing its owner wants to know.
   const following = await followingOf(ctx, repo);
-  const body = html`${repoHeader(ctx, repo, "code", {
+  const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
       ownTitle: true,
     })}
     ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
-    ${await policyLine(ctx, repo, record)}
+    ${await policyLine(ctx, repo, record)} ${ownerFacts ? crewKeyNote(ctx) : null}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}

@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
@@ -576,7 +577,9 @@ export class AppsRuntime {
     for (const record of listApps(this.app.db)) {
       known.add(record.id);
       const repo = getRepoById(this.app.db, record.repoId);
-      if (repo) present.push({ record, repo });
+      // A forge coming back does not restart a suspended owner's apps.
+      if (repo && accountActive(this.app.db, repo.ownerId))
+        present.push({ record, repo });
     }
     for (const { record, repo } of present)
       await this.reconcileApp(record, repo, "boot", "production");
@@ -823,7 +826,9 @@ export class AppsRuntime {
     reason: string,
     actorId?: string,
   ): Run | undefined {
-    if (this.stopped) return undefined;
+    // A suspended or removed owner's app does not deploy.
+    if (this.stopped || !accountActive(this.app.db, repo.ownerId))
+      return undefined;
     const state = this.envFor(record, env);
     state.dormant = undefined;
     if (
@@ -1336,7 +1341,8 @@ export class AppsRuntime {
     const asleep = state.asleep;
     if (asleep === undefined || this.stopped) return undefined;
     const repo = getRepoById(this.app.db, record.repoId);
-    if (!repo) return undefined;
+    // Waking runs code without a run row: the owner's standing is asked here.
+    if (!repo || !accountActive(this.app.db, repo.ownerId)) return undefined;
     state.waking = (async () => {
       const write = (line: string): void => {
         if (asleep.runId !== "")
@@ -1730,6 +1736,14 @@ export class AppsRuntime {
     for (const state of states) await this.teardown(state.app, state.env);
     for (const state of states)
       removeApp(this.app.config.dataDir, state.app.id);
+  }
+
+  /** Stop every environment of a repository's app; the data stays. */
+  async stopRepo(repoId: string): Promise<void> {
+    const states = [...this.envs.values()].filter(
+      (s) => s.app.repoId === repoId,
+    );
+    for (const state of states) await this.stopEnv(state.app, state.env);
   }
 
   /** Stop an environment's process without removing its data. */

@@ -1189,4 +1189,36 @@ export const migrations: readonly string[] = [
     created_at    TEXT NOT NULL
   );
   `,
+  // 46 — which address the forge's commits for a person carry (#623). The
+  // default is the no-reply one; the account email is an explicit opt-in.
+  `
+  ALTER TABLE user ADD COLUMN commit_email TEXT NOT NULL DEFAULT 'noreply'
+    CHECK (commit_email IN ('noreply','account'));
+  `,
+  // 47 — a report from outside (`core/reports.ts`): words a stranger left on
+  // a public repository, held apart from issues so nothing that reads issues
+  // (the crew, the feed, search, the MCP) reads them until a person who
+  // writes accepts one, which opens an ordinary issue in that person's name.
+  `
+  CREATE TABLE IF NOT EXISTS report (
+    id           TEXT PRIMARY KEY,
+    repo_id      TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    page         TEXT,
+    state        TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (state IN ('pending','accepted','dismissed')),
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    decided_by   TEXT REFERENCES user(id) ON DELETE SET NULL,
+    decided_at   TEXT,
+    issue_number INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
+  `,
+  // 48 — an account the owner suspended or removed (#660). Columns are added,
+  // never a table rebuilt: a rebuild would drop any trigger on \`user\`.
+  `
+  ALTER TABLE user ADD COLUMN suspended_at TEXT;
+  ALTER TABLE user ADD COLUMN removed_at TEXT;
+  `,
 ];

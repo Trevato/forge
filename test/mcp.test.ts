@@ -166,11 +166,13 @@ describe("the forge over MCP", () => {
       "spawn",
       "take_updates",
       "converge",
+      "asked",
       "map",
       "usage",
       "link",
       "unlink",
       "plan",
+      "report",
     ]);
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),

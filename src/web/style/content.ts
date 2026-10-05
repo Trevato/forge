@@ -158,6 +158,23 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .connect-more[open] > summary::before { transform: rotate(90deg); }
 .connect-more > summary:hover { color: var(--accent); }
 .connect-more > p { margin: 6px 0 4px; }
+/* A page's quiet Details: what a person sometimes changes, closed until
+   asked for, the same disclosure as the one above. */
+.quiet-details > summary {
+  cursor: pointer; font-weight: 560; list-style: none; color: var(--muted-fg);
+  display: flex; align-items: center; gap: 6px; padding: 6px 0;
+}
+.quiet-details > summary::-webkit-details-marker { display: none; }
+.quiet-details > summary::before {
+  content: "›"; display: inline-block; color: var(--faint);
+  transition: transform 120ms var(--ease);
+}
+.quiet-details[open] > summary::before { transform: rotate(90deg); }
+.quiet-details > summary:hover { color: var(--accent); }
+/* Why an issue closes, beside the button that closes it. */
+.form-actions .close-reason { width: auto; min-height: 32px; padding-block: 0; }
+.form-actions .close-into { display: none; width: 7em; min-height: 32px; }
+.form-actions:has(.close-reason option[value="split"]:checked) .close-into { display: inline-block; }
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .connect-path h3 .ico { color: var(--muted-fg); }
@@ -229,6 +246,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .filters .search { min-width: 180px; flex: 1; max-width: 320px; }
+/* A list's six words fit a phone without pushing the page sideways: a
+   little less padding there, and a scroll inside the bar as the last resort. */
+.filters .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 420px) { .filters .seg > a { padding: 0 8px; } }
 
 .merge-box { margin-top: 14px; }
 .merge-box .card-body { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }

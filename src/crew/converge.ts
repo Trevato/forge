@@ -27,6 +27,7 @@ import { listIssues, setAssignee, type Issue } from "../core/issues.ts";
 import { closesFromBody, listPulls, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { activeRunFor, listRuns } from "../core/runs.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { parkedCount } from "./autonomy.ts";
@@ -221,8 +222,7 @@ async function diverged(app: App, fork: Repo, parent: Repo): Promise<void> {
     if (by === undefined) return;
     const took = await takeUpdates(app, fork, parent, {
       id: by.id,
-      name: by.displayName || by.username,
-      email: by.email,
+      ...commitIdentity(app.config, by),
     });
     log.info(took.ok ? "took the parent's updates" : "could not take updates", {
       fork: `${fork.ownerName}/${fork.name}`,

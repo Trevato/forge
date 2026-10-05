@@ -82,12 +82,16 @@ export const repoNotFound = notFoundPage;
 
 /** Send an anonymous visitor to sign in, and back where they were going. */
 export function signInFirst(ctx: Ctx): Response {
+  return redirect(signInHref(ctx));
+}
+
+/** Where signing in starts, coming back to this page after. */
+export function signInHref(ctx: Ctx): string {
   const next = ctx.url.pathname + ctx.url.search;
   // Behind a platform edge the edge is how people sign in; an account it
   // made has no password here, so the password form would only refuse them.
-  if (ctx.app.config.edgeToken !== undefined)
-    return redirect(edgeLoginUrl(next));
-  return redirect(`/signin?next=${encodeURIComponent(next)}`);
+  if (ctx.app.config.edgeToken !== undefined) return edgeLoginUrl(next);
+  return `/signin?next=${encodeURIComponent(next)}`;
 }
 
 // ---- repo header ----
@@ -163,14 +167,35 @@ export function scopeHeader(
   // The studio's tabs for an app: the app itself first, then the map, what
   // was told and every change. Code, commits and branches are dev mode's.
   const studio = ctx.mode === "studio" && isApp;
+  // An app's home is the app, for every viewer, and its code is the Files
+  // step one tab over (`repoFiles`); any other repository's home is its code.
   const items: TabItem[] = [
-    {
-      label: studio ? "Studio" : "Code",
-      href: base,
-      icon: studio ? "rocket" : "repo",
-      current: active === "code",
-      shortcut: "g c",
-    },
+    ...(isApp
+      ? [
+          {
+            label: studio ? "Studio" : "App",
+            href: base,
+            icon: "rocket" as const,
+            current: active === "app",
+            shortcut: "g h",
+          },
+          {
+            label: "Files",
+            href: `${base}/files`,
+            icon: "repo" as const,
+            current: active === "code",
+            shortcut: "g c",
+          },
+        ]
+      : [
+          {
+            label: "Code",
+            href: base,
+            icon: "repo" as const,
+            current: active === "code",
+            shortcut: "g c",
+          },
+        ]),
     {
       // Studio names its own lists — told, not issues; dev's tabs are
       // unchanged in dev mode and on a repository that is not an app.
@@ -236,17 +261,6 @@ export function scopeHeader(
         shortcut: "g f",
       });
   }
-  // A repository that runs gets an App tab; one that does not has no such
-  // page, and a tab that 404s is a lie about what is there. The app's page
-  // is the studio's, so in dev the tab is the link that switches over.
-  if (repo !== undefined && isApp && !studio)
-    items.push({
-      label: "App",
-      href: `${base}?mode=studio`,
-      icon: "rocket",
-      current: active === "app",
-      shortcut: "g a",
-    });
   if (admin)
     items.push({
       label: "Settings",
@@ -323,11 +337,12 @@ export { hostOf };
 export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
   const base = repoBase(repo);
   const name = `${repo.ownerName}/${repo.name}`;
-  const studio =
-    ctx.mode === "studio" && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const studio = ctx.mode === "studio" && isApp;
   if (studio) {
     return [
       { t: `${name} — Studio`, h: base, c: "This repo" },
+      { t: `${name} — Files`, h: `${base}/files`, c: "This repo" },
       { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
       { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
       { t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" },
@@ -336,7 +351,8 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
     ];
   }
   return [
-    { t: `${name} — Code`, h: base, c: "This repo" },
+    ...(isApp ? [{ t: `${name} — App`, h: base, c: "This repo" }] : []),
+    { t: `${name} — Code`, h: isApp ? `${base}/files` : base, c: "This repo" },
     { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },
     { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },

@@ -58,6 +58,12 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
 
+The commits the forge writes for you — merges, squashes, reverts, web edits —
+carry `you@users.noreply.<forge host>`, never your account email. Choosing your
+real address is an opt-in under **Commit email** in `/settings` (or
+`PATCH /api/v1/user` with `{"commitEmail":"account"}`); commits you push
+yourself carry whatever your own git says.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,
@@ -421,6 +427,16 @@ red on a file in neither, in both, or named without existing, so a new test
 file never sits outside the gate silently. A file joins the gate by moving
 from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
 proof it passes.
+
+The gate also refuses hollow work. `test/hollow.test.ts` runs
+`scripts/hollow.ts`, which names an exported function in `src/actions/` that
+nothing that runs reaches — no route's handler, MCP tool, crew worker, CLI
+command or terminal screen, followed from where the program starts — and a
+screen — a GET path with no parameter that draws a page — that no reachable
+page links to. `scripts/hollow-allow.ts` lists what main
+carries today, each entry under the issue that owns it; an entry that is no
+longer hollow turns the check red, so the list only shrinks.
+`bun scripts/hollow.ts` prints the same lines on their own.
 
 ## Shape
 

@@ -51,6 +51,7 @@ import {
   type Side,
   type ThreadState,
 } from "../core/reviews.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
 import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
@@ -339,31 +340,20 @@ export async function mergePull(
   // A fork may have pushed since the pull opened; merge what is being
   // proposed now, not the snapshot taken when it was.
   await refreshPullHead(app, repo, pull);
-  const lander = {
-    name: writer.value.displayName || writer.value.username,
-    email: writer.value.email,
-  };
+  const lander = commitIdentity(app.config, writer.value);
   // The agent that wrote the change is the commit's author; the person who
   // asked is named in `Requested-by`, the person who landed it in
   // `Co-authored-by`.
   const writtenBy = getUserById(app.db, pull.authorId);
   const agentAuthor =
     writtenBy?.kind === "agent"
-      ? {
-          name: writtenBy.displayName || writtenBy.username,
-          email: writtenBy.email,
-        }
+      ? commitIdentity(app.config, writtenBy)
       : undefined;
   const asked = toldBy(app.db, pull);
   const requester =
     asked === null ? undefined : getUserByName(app.db, asked);
   const trailers = landingTrailers(
-    requester
-      ? {
-          name: requester.displayName || requester.username,
-          email: requester.email,
-        }
-      : null,
+    requester ? commitIdentity(app.config, requester) : null,
     lander,
   );
   const merged = await landPull(

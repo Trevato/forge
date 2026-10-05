@@ -50,7 +50,7 @@ export function feedCard(item: FeedItem): Html {
       <span class="fcard-app muted small">${item.app}</span>
       <span class="spacer"></span>
       <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-      <button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>
+      ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
     </div>
     <p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.reason}</a></p>
     <details class="fcard-say">

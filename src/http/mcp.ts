@@ -46,8 +46,10 @@ import {
   canWrite,
   getRepo,
   getRepoById,
+  ownerFactRepoIds,
   type Repo,
 } from "../core/repos.ts";
+import { plannerDeclines } from "../crew/autonomy.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
@@ -57,9 +59,19 @@ import { convergeFork, convergeState } from "../crew/converge.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { appsOf } from "../web/studio/asks.ts";
 import type { Ctx, Handler } from "./context.ts";
+import {
+  askedIn,
+  askedJson,
+  askedRepos,
+  isAskedOrder,
+  isAskedShow,
+} from "../core/asked.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
-import { body, json } from "./respond.ts";
+import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { clientAddress } from "./peer.ts";
+import { fileReport } from "../actions/reports.ts";
+import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
 const SERVER = { name: "forge", version: "1" };
@@ -250,7 +262,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "now",
     description:
-      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far.",
+      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -261,8 +273,27 @@ const TOOLS: readonly Tool[] = [
         ctx.app.db,
         runs.map((r) => r.actorId).filter((id): id is string => id !== null),
       );
-      return good(
-        runs.map((r) => {
+      // A planner that declined the direction is the crew waiting on you:
+      // it rides the same list, as a row with no run.
+      // Owner facts only: a stranger's public app never shows its planner here.
+      const owned = ownerFactRepoIds(ctx.app.db, repos, user);
+      const waiting = plannerDeclines(
+        ctx.app.db,
+        repos.filter((r) => owned.has(r.id)),
+      ).map((d) => ({
+        run: null,
+        app: `${d.repo.ownerName}/${d.repo.name}`,
+        who: "the planner",
+        on: `#${d.issue.number} ${d.issue.title}`,
+        why: "declined",
+        state: "waiting for you",
+        says: d.words,
+        since: d.at,
+        costUsd: 0,
+      }));
+      return good([
+        ...waiting,
+        ...runs.map((r) => {
           const repo = byId.get(r.repoId)!;
           const issue =
             r.issueId === null
@@ -279,7 +310,7 @@ const TOOLS: readonly Tool[] = [
             costUsd: r.costUsd,
           };
         }),
-      );
+      ]);
     },
   },
   {
@@ -420,7 +451,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make.",
+      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make. A made child comes back with `claimUrl`, shown once: the link that hands the child to its person.",
     inputSchema: {
       type: "object",
       properties: {
@@ -437,6 +468,16 @@ const TOOLS: readonly Tool[] = [
           type: "array",
           items: { type: "string" },
           description: "The crew members whose briefs go along, by name.",
+        },
+        direction: {
+          type: "string",
+          description:
+            "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
+        },
+        keepAccess: {
+          type: "boolean",
+          description:
+            "Stay an owner of the child after its person claims it (default false: you leave, and they can invite you back). The claim page says which.",
         },
         dryRun: {
           type: "boolean",
@@ -527,6 +568,33 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "asked",
+    description:
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, and whether it is flagged (nothing built after three days). `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        show: { type: "string", enum: ["unshipped", "flagged", "all"] },
+        order: { type: "string", enum: ["oldest", "newest"] },
+      },
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const show = args["show"] ?? "unshipped";
+      if (!isAskedShow(show))
+        return bad("invalid_show", "show is unshipped, flagged or all");
+      const order = args["order"] ?? "oldest";
+      if (!isAskedOrder(order))
+        return bad("invalid_order", "order is oldest or newest");
+      const spec = args["repo"] === undefined ? null : str(args["repo"]);
+      const repos = askedRepos(ctx.app.db, user, spec);
+      if (spec !== null && repos.length === 0)
+        return bad("not_found", "no such app or repository you can write (owner/name)");
+      return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
     },
   },
   {
@@ -653,7 +721,7 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, and what is ready now.`,
+    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. Where the app has pillars (umbrella issues titled like "P0 Trust: …"), each item also says what it is for: pillar, the one it serves, or later: true with why, one sentence, which puts it behind the Later gate instead of on the ready list; an item that says neither is refused. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, what is ready now, and what waits for later.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -676,6 +744,21 @@ const TOOLS: readonly Tool[] = [
                 items: { type: ["string", "integer"] },
                 description: "Keys in this plan, or numbers of open issues.",
               },
+              pillar: {
+                type: "string",
+                description:
+                  'The pillar this serves, by short form or name: "P0" or "P0 Trust". Its umbrella issue then waits for it.',
+              },
+              later: {
+                type: "boolean",
+                description:
+                  "True when this serves no pillar now: it opens behind the Later gate, off the ready list. Needs why.",
+              },
+              why: {
+                type: "string",
+                description:
+                  "With later: one sentence saying why it waits. It opens the issue's body.",
+              },
             },
             required: ["key", "title"],
           },
@@ -691,11 +774,16 @@ const TOOLS: readonly Tool[] = [
       if (!items.ok) return bad(items.error.error, items.error.message);
       const planned = openPlan(ctx.app, user, repo, items.value);
       if (!planned.ok) return bad(planned.error.error, planned.error.message);
-      const { opened, ready } = planned.value;
+      const { opened, ready, later, gate } = planned.value;
+      const waits =
+        gate === undefined
+          ? ""
+          : ` ${later.map((n) => `#${n}`).join(", ")} wait${later.length === 1 ? "s" : ""} behind the Later gate #${gate}.`;
       return good({
-        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.`,
+        says: `Opened ${opened.length} issue${opened.length === 1 ? "" : "s"}: ${opened.map((o) => `${o.key} is #${o.number}`).join(", ")}.${waits}`,
         opened,
         ready,
+        later,
       });
     },
   },
@@ -742,12 +830,15 @@ function rpcOne(
       return reply({});
     case "tools/list":
       return reply({
-        tools: TOOLS.map((t) => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema,
-          annotations: { readOnlyHint: !t.writes },
-        })),
+        tools: [
+          ...TOOLS.map((t) => ({
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema,
+            annotations: { readOnlyHint: !t.writes },
+          })),
+          REPORT_TOOL,
+        ],
       });
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
@@ -785,6 +876,95 @@ function rpcOne(
   }
 }
 
+/**
+ * `report`, the one tool open without a token: a stranger's report on a
+ * public repository (`actions/reports.ts`), with the same limits as the
+ * page and the API. Everything else here needs a token.
+ */
+const REPORT_TOOL = {
+  name: "report",
+  description:
+    "Report a problem in a public repository, without an account. Plain text. A person who keeps the repository reads it before anything acts on it.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      repo: REPO_ARG,
+      title: { type: "string", maxLength: TITLE_MAX },
+      body: { type: "string", maxLength: BODY_MAX },
+      page: {
+        type: "string",
+        description: "The http(s) address where the problem was seen.",
+      },
+    },
+    required: ["repo", "title"],
+  },
+  annotations: { readOnlyHint: false },
+} as const;
+
+/** The JSON-RPC answer to a `report` call, or undefined for any other message. */
+function reportCall(ctx: Ctx, message: unknown): unknown | undefined {
+  const m =
+    typeof message === "object" && message !== null
+      ? (message as Record<string, unknown>)
+      : {};
+  const params =
+    typeof m["params"] === "object" && m["params"] !== null
+      ? (m["params"] as Record<string, unknown>)
+      : {};
+  if (
+    m["jsonrpc"] !== "2.0" ||
+    m["method"] !== "tools/call" ||
+    params["name"] !== "report" ||
+    m["id"] === undefined
+  )
+    return undefined;
+  const args =
+    typeof params["arguments"] === "object" && params["arguments"] !== null
+      ? (params["arguments"] as Args)
+      : {};
+  const text = (t: string, isError = false) => ({
+    jsonrpc: "2.0",
+    id: m["id"],
+    result: { content: [{ type: "text", text: t }], ...(isError ? { isError } : {}) },
+  });
+  const [owner, name, ...rest] = str(args["repo"]).split("/");
+  const repo =
+    owner && name && rest.length === 0
+      ? getRepo(ctx.app.db, owner, name)
+      : undefined;
+  if (repo === undefined)
+    return text("not_found: no such public repository (owner/name)", true);
+  const filed = fileReport(
+    ctx.app,
+    repo,
+    {
+      title: typeof args["title"] === "string" ? args["title"] : "",
+      body: typeof args["body"] === "string" ? args["body"] : "",
+      page: typeof args["page"] === "string" ? args["page"] : "",
+    },
+    clientAddress(ctx.request),
+  );
+  if (!filed.ok) {
+    const e = filed.error;
+    return text(
+      e.error === "not_found"
+        ? "not_found: no such public repository (owner/name)"
+        : e.error === "rate_limited"
+          ? `rate_limited: try again in ${e.retryAfter} seconds`
+          : `${e.error}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}`,
+      true,
+    );
+  }
+  return text(
+    JSON.stringify({
+      id: filed.value.id,
+      state: filed.value.state,
+      message:
+        "Received. A person who maintains this repository will read it; nothing acts on it before they do.",
+    }),
+  );
+}
+
 const NOT_HERE = (allow: string): Response =>
   new Response(null, { status: 405, headers: { allow } });
 
@@ -793,26 +973,48 @@ export function mcpRoutes(router: Router<Handler>): void {
     const user = ctx.auth.user;
     // A token or the account's own password; never a cookie.
     if (
-      user === undefined ||
-      (ctx.auth.via !== "token" && ctx.auth.via !== "password")
-    )
-      return new Response(
-        JSON.stringify({
-          error: "unauthorized",
-          message: "send a forge token: Authorization: Bearer <token>",
-        }),
-        {
-          status: 401,
-          headers: {
-            "content-type": "application/json",
-            "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
-          },
-        },
+      user !== undefined &&
+      (ctx.auth.via === "token" || ctx.auth.via === "password")
+    ) {
+      const message: unknown = await body(ctx.request);
+      const reported = reportCall(ctx, message);
+      if (reported !== undefined) return json(reported);
+      const answer = await rpcOne(ctx, user, message);
+      if (answer === undefined) return new Response(null, { status: 202 });
+      return json(answer);
+    }
+    // A stranger may call `report` and nothing else, so their body is read
+    // to a hard byte limit and no further.
+    const message = await boundedBody(ctx.request, REQUEST_MAX);
+    if (message === "too_large")
+      return json(
+        { error: "too_large", message: `at most ${REQUEST_MAX} bytes without a token` },
+        413,
       );
-    const message: unknown = await body(ctx.request);
-    const answer = await rpcOne(ctx, user, message);
-    if (answer === undefined) return new Response(null, { status: 202 });
-    return json(answer);
+    const reported = reportCall(ctx, message);
+    if (reported !== undefined) return json(reported);
+    // The refusal keeps the OAuth challenge a client starts from, and names
+    // the one thing a stranger can do without signing in.
+    return new Response(
+      JSON.stringify({
+        error: "unauthorized",
+        message:
+          "send a forge token: Authorization: Bearer <token>. Without one, the tool `report` (tools/call, name \"report\", arguments {repo, title, body?, page?}) files a problem report on a public repository; see /llms.txt",
+        report: {
+          method: "tools/call",
+          name: "report",
+          arguments: ["repo", "title", "body", "page"],
+        },
+      }),
+      {
+        status: 401,
+        headers: {
+          "content-type": "application/json",
+          "www-authenticate": `Bearer realm="forge", resource_metadata="${resourceMetadataUrl(ctx.url.origin)}"`,
+          link: `<${ctx.url.origin}/llms.txt>; rel="service-doc"; type="text/markdown"`,
+        },
+      },
+    );
   });
   // No server-to-client stream is offered: nothing to hold open, nothing
   // for a proxy to cut.

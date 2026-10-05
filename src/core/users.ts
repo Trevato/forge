@@ -5,6 +5,8 @@
 
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
+import { noreplyAddress } from "./commit_identity.ts";
+import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -20,8 +22,20 @@ export interface User {
    * tokens the forge mints for a run (docs/APPS.md).
    */
   readonly kind: "user" | "org" | "agent";
+  /**
+   * Which address the commits the forge writes for this person carry: the
+   * no-reply one on the forge's host, or — by explicit opt-in — `email`
+   * (`core/commit_identity.ts`).
+   */
+  readonly commitEmail: CommitEmail;
   readonly createdAt: string;
+  /** When the owner suspended the account; null while it is in good standing. */
+  readonly suspendedAt: string | null;
+  /** When the owner removed it. The row stays so the name stays taken. */
+  readonly removedAt: string | null;
 }
+
+export type CommitEmail = "noreply" | "account";
 
 interface UserRow {
   id: string;
@@ -32,7 +46,10 @@ interface UserRow {
   password_hash: string;
   kind: "user" | "org";
   is_agent: number;
+  commit_email: CommitEmail;
   created_at: string;
+  suspended_at: string | null;
+  removed_at: string | null;
 }
 
 function toUser(row: UserRow): User {
@@ -45,9 +62,19 @@ function toUser(row: UserRow): User {
     // The flag, not the column, decides: see migration 14 for why an agent
     // is stored as kind 'user' with is_agent set.
     kind: row.is_agent === 1 ? "agent" : row.kind,
+    commitEmail: row.commit_email === "account" ? "account" : "noreply",
     createdAt: row.created_at,
+    suspendedAt: row.suspended_at,
+    removedAt: row.removed_at,
   };
 }
+
+/**
+ * Whether an account may act at all. Every credential — session, token,
+ * password, edge sign-in, SSH key — asks this before it names a person.
+ */
+export const isActive = (user: User): boolean =>
+  user.suspendedAt === null && user.removedAt === null;
 
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
@@ -159,11 +186,21 @@ function isUniqueViolation(error: unknown): boolean {
 export interface ProfilePatch {
   displayName?: string;
   email?: string;
+  commitEmail?: CommitEmail;
+}
+
+/**
+ * A display name as it is stored: trimmed, cut to its limit, and trimmed
+ * again — so a name padded past the cut is judged by what is kept.
+ */
+export function cleanDisplayName(raw: string): string {
+  return raw.trim().slice(0, MAX_DISPLAY_NAME).trim();
 }
 
 export type UpdateProfileError =
   | "email_taken"
   | "invalid_email"
+  | "invalid_commit_email"
   | "no_such_user";
 
 /** Change the mutable profile fields. Absent keys are left untouched. */
@@ -183,14 +220,13 @@ export function updateProfile(
       .get(email, userId);
     if (taken) return err("email_taken");
   }
-  const displayName = (patch.displayName ?? current.displayName)
-    .trim()
-    .slice(0, MAX_DISPLAY_NAME);
-  db.query("UPDATE user SET email = ?1, display_name = ?2 WHERE id = ?3").run(
-    email,
-    displayName,
-    userId,
-  );
+  const displayName = cleanDisplayName(patch.displayName ?? current.displayName);
+  const commitEmail = patch.commitEmail ?? current.commitEmail;
+  if (commitEmail !== "noreply" && commitEmail !== "account")
+    return err("invalid_commit_email");
+  db.query(
+    "UPDATE user SET email = ?1, display_name = ?2, commit_email = ?3 WHERE id = ?4",
+  ).run(email, displayName, commitEmail, userId);
   return ok(getUserById(db, userId)!);
 }
 
@@ -241,10 +277,14 @@ export async function ensureEdgeUser(
   host: string,
 ): Promise<User | undefined> {
   const existing = getUserByName(db, login);
-  if (existing) return existing.kind === "user" ? existing : undefined;
+  if (existing)
+    return existing.kind === "user" && isActive(existing) ? existing : undefined;
+  // The edge vouches for a login, not for its right to a name: a platform
+  // account called after the crew or the owner is not let in under it.
+  if (reservedName(db, login) !== undefined) return undefined;
   const made = await createUser(db, {
     username: login,
-    email: `${login}@users.noreply.${host}`,
+    email: noreplyAddress(login, host),
     adminIfFirst: true,
   });
   return made.ok ? made.value : undefined;
@@ -271,7 +311,8 @@ export async function verifyPassword(
   // neither does an agent, whose hash is empty besides.
   if (!valid || !row || row.kind === "org" || row.is_agent === 1)
     return err("bad_credentials");
-  return ok(toUser(row));
+  const user = toUser(row);
+  return isActive(user) ? ok(user) : err("bad_credentials");
 }
 
 /**

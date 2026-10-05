@@ -40,6 +40,7 @@ import { holdLease } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
+import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
 import {
   cellsAvailable,
@@ -165,7 +166,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     issueId?: string,
     actorId?: string,
   ): Promise<Run | undefined> {
-    if (stopped) return undefined;
+    // A suspended or removed owner's code is not run, not even to check it.
+    if (stopped || !accountActive(app.db, repo.ownerId)) return undefined;
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, commitOid, "forge.json"),

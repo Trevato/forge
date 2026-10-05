@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { clientAddress } from "../../http/peer.ts";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
@@ -810,17 +811,18 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const email = field(form, "email");
-  const created = await signUp(ctx.app, {
-    username,
-    email,
-    password: field(form, "password"),
-  });
+  const created = await signUp(
+    ctx.app,
+    { username, email, password: field(form, "password") },
+    { address: clientAddress(ctx.request) },
+  );
   if (!created.ok) {
     const errors: AuthErrors = {
       invalid_username: {
         username: "Usernames are letters, digits, dots, dashes.",
       },
       username_taken: { username: "That username is taken." },
+      username_reserved: { username: "That name is reserved." },
       email_taken: { email: "That email already has an account." },
       weak_password: { password: "Passwords need at least 10 characters." },
     }[created.error] ?? { username: "Something went wrong." };

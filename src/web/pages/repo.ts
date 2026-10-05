@@ -49,7 +49,7 @@ import { studioApp } from "../studio/app.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, fragment, page } from "../layout.ts";
+import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
@@ -876,17 +876,36 @@ export function rawResponse(blob: Blob): Response {
   });
 }
 
-// GET /:owner/:name — the repo home: the tree at a ref, README, About rail.
+// GET /:owner/:name — the repo home. An app's home is the app, for every
+// viewer: what it serves, who is on it, what it asks; its code is one tab
+// deeper, at /files. Any other repository's home is its code. An older
+// `?ref=` link to the code of an app is handed on to its Files step.
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  // In the studio an app's home is the app: what it serves, who is on it,
-  // what it asks. Dev mode is the code, as ever. A repository with no app
-  // record has nothing of that to show — read once, used either way below.
-  const studioMode = ctx.mode === "studio";
-  const record = studioMode ? getAppByRepo(ctx.app.db, repo.id) : undefined;
-  if (record !== undefined) return await studioApp(ctx, repo, record);
-  const noApp = studioMode ? noAppCard(ctx, repo) : null;
+  const record = getAppByRepo(ctx.app.db, repo.id);
+  if (record === undefined) return await codeHome(ctx, repo);
+  if (ctx.url.searchParams.has("ref"))
+    return redirect(`${repoBase(repo)}/files${ctx.url.search}`);
+  return await studioApp(ctx, repo, record);
+}
+
+// GET /:owner/:name/files — an app's Files step: its code, exactly the page
+// any other repository's home is. A repository that is not an app has no
+// step under a home that is already its code, so it is sent there.
+export async function repoFiles(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (getAppByRepo(ctx.app.db, repo.id) === undefined)
+    return redirect(`${repoBase(repo)}${ctx.url.search}`);
+  return await codeHome(ctx, repo);
+}
+
+/** The code at a ref: the tree, the README and the About rail — with, in
+ * the studio, the offer to make a repository that is not an app one. */
+async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const noApp = ctx.mode === "studio" && !isApp ? noAppCard(ctx, repo) : null;
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);

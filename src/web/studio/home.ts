@@ -24,11 +24,12 @@ import { fragment, page } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
 import { btn, empty, envStateBadge, icon, listCard } from "../ui.ts";
 import { onYouCard } from "../pages/site.ts";
-import { lookUrl, pictured } from "../pages/looks.ts";
+import { lookUrl, mayFetchLook, pictured } from "../pages/looks.ts";
 import { writableAppsOf } from "./asks.ts";
 import { productionFactsForRepos, shelfRows } from "./shelf.ts";
 import { servingHistory } from "./words.ts";
 import { feedJs, feedNote, feedRegion } from "./feed.ts";
+import { crewKeyNote } from "./crew.ts";
 
 /** The events that can change a row on the shelf. */
 const APPS_LIVE =
@@ -153,6 +154,11 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ${costLine}
     <div class="dash">
       <div class="dash-main stack">
+        <div class="bar feed-head">
+          <span class="spacer"></span>
+          <a class="small muted" href="/asked">What you asked for</a>
+        </div>
+        ${crewKeyNote(ctx)}
         ${feedNote()}
         ${feedRegion(user, ctx)}
         ${appsRegion(apps)}
@@ -225,13 +231,19 @@ export function studioDoor(ctx: Ctx): Response {
         l.env === "production" &&
         l.page === DEFAULT_PAGE,
     );
-    const look = pictured(ofApp, "thumb") ?? pictured(ofApp, "desktop");
+    // The thumb alone: it is the one picture taken as a stranger sees the
+    // app. The desktop picture is the owner's view, never a stranger's.
+    const thumb = pictured(ofApp, "thumb");
+    const look =
+      thumb !== undefined && mayFetchLook(ctx, repo, record, thumb)
+        ? thumb
+        : undefined;
     const base = repoBase(repo);
     return html`<a class="app-tile" href="${base}">
       ${look
         ? html`<img
             class="app-tile-look"
-            src="${lookUrl(base, "production", look.commitOid, DEFAULT_PAGE, look.kind)}"
+            src="${lookUrl(base, look)}"
             width="${LOOK_SIZES[look.kind].width}"
             height="${LOOK_SIZES[look.kind].height}"
             alt=""

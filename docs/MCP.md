@@ -20,7 +20,7 @@ for a tunnel and a forge that sleeps.
   cross-site page could ride, and this door has no page. An `ro` token reads;
   an `rw` token acts; the tools say which they are (`readOnlyHint`).
 - **What you may not do on a page you may not do here.** A private app is
-  "no such app" to someone who cannot read it; stopping a run, and knocking
+  "no such app" to someone who cannot write its repository; stopping a run, and knocking
   on an app with `probe`, are a writer's.
 
 ## Tools
@@ -30,7 +30,7 @@ for a tunnel and a forge that sleeps.
 | `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working            |        |
 | `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
-| `now`          | what the crew is doing right now: who, on what, since when, at what cost                          |        |
+| `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
 | `stop`         | stop one run by its id from `now`                                                                 | yes    |
 | `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door             |        |
 | `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
@@ -38,6 +38,7 @@ for a tunnel and a forge that sleeps.
 | `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
+| `asked`        | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, flagged when nothing was built in three days; repositories you can write |        |
 | `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
@@ -74,6 +75,34 @@ over-long title or body, or more than 12 items refuses the whole plan, naming
 the item, and nothing is opened. Issues belong to the token's owner and emit
 the same events as opening and linking one by one. It needs an `rw` token.
 
+Where the app has pillars (docs/PLANNING.md), every item also says what it
+is for, or the whole plan is refused (`no_pillar`), naming the item and the
+pillars there are:
+
+- `pillar`, the one it serves, by short form or name (`"P0"` or
+  `"P0 Trust"`): the pillar's umbrella issue then waits for it.
+- `later: true` with `why`, one sentence: it serves no pillar now. It opens
+  blocked by the Later gate, so it is not on the ready list, its body opens
+  with `**Later:**` and the sentence, and the answer lists it in `later`.
+
+```json
+{ "app": "trevato/forge", "issues": [
+  { "key": "review", "title": "Every agent pull is reviewed", "pillar": "P0" },
+  { "key": "slider", "title": "The profit slider", "later": true,
+    "why": "Money lines serve no pillar now." } ] }
+```
+
+answers
+
+```json
+{ "says": "Opened 2 issues: review is #7, slider is #8. #8 waits behind the Later gate #5.",
+  "opened": [{ "key": "review", "number": 7 }, { "key": "slider", "number": 8 }],
+  "ready": [7], "later": [8] }
+```
+
+An app with no pillars takes no `pillar` (`unknown_pillar`), and `later`
+needs the gate to exist (`no_later_gate`).
+
 ```json
 { "app": "alice/game", "issues": [
   { "key": "board", "title": "Draw the board", "body": "8x8 grid" },
@@ -86,5 +115,5 @@ answers
 ```json
 { "says": "Opened 3 issues: board is #7, moves is #8, play is #9.",
   "opened": [{ "key": "board", "number": 7 }, { "key": "moves", "number": 8 }, { "key": "play", "number": 9 }],
-  "ready": [7, 8] }
+  "ready": [7, 8], "later": [] }
 ```

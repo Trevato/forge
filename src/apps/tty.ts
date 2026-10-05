@@ -4,7 +4,8 @@
  * pty, in the deployed checkout, with the environment's own variables;
  * `notes--12@forge` opens the preview of pull 12's. The login name picks
  * the app; the key still decides who you are, and a private app answers
- * only to someone who can read its repository, exactly as the proxy does.
+ * only to someone who can write its repository or is on its crew, exactly
+ * as the proxy does.
  *
  * The same bridge serves the forge's own terminal UI: press `t` on an app
  * and the UI suspends itself, the app's terminal runs on the same pty, and
@@ -22,7 +23,7 @@ import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { identityKey } from "./proxy.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
-import { canRead, canWrite, getRepoById } from "../core/repos.ts";
+import { canEnterApp, canRead, canWrite, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SshSession } from "../ssh/server.ts";
@@ -121,6 +122,9 @@ export async function runAppTty(
     return err({ refusal: "not_found", detail: "" });
   if (target.app.access === "private" && user === undefined)
     return err({ refusal: "private", detail: "" });
+  // A private app's terminal is its writers' and crew's, as the app is.
+  if (!canEnterApp(forge.db, repo, target.app.access, user))
+    return err({ refusal: "not_found", detail: "" });
   if (host.term === undefined) return err({ refusal: "no_pty", detail: "" });
   const runtime = appsRuntime(forge);
   // A terminal opened on a sleeping environment wakes it first.

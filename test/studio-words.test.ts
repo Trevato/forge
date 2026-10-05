@@ -516,9 +516,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         title: "vocab",
         shows: [`href="#i-pull"/></svg>Changes`],
         hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
-        // #281: `?mode=dev` on the same address is unaffected — the where
-        // strip renders exactly as today, dev's own dots and words.
-        dev: ["workbench", "this machine"],
+        // #630: the app page is the home in every mode; its code, with dev's
+        // where strip, is the Files step one tab over.
       },
       {
         word: "tell",
@@ -526,8 +525,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // #171: the composer's close button used to say "Close issue" here,
         // dev's own noun on the studio's own page.
         shows: ["Close tell"],
-        dev: ["<h2>Labels</h2>", "Close issue"],
-        devTitle: `${tellTitle} · vocab`,
+        // One issue page (#626): dev's controls are its closed Details.
+        title: `${tellTitle} · vocab`,
       },
       // The studio's own nouns for the same two pages (#158): one handler
       // each, so what is walked here is the very page above under the
@@ -544,7 +543,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "working",
         path: `${repoPath}/runs/${runId}`,
         title: `scout on #${tellNumber} ${tellTitle} · vocab`,
-        devTitle: `scout on #${tellNumber} ${tellTitle} · vocab`,
       },
       {
         word: "look",
@@ -600,22 +598,20 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "tells",
         path: `${repoPath}/issues`,
         shows: [untouchedTitle, tellTitle],
-        dev: [`>#${tellNumber} opened`],
-        devTitle: "Issues · vocab",
+        // One list (#627): `?mode=dev` has no other page to show here.
+        title: "Everything told · vocab",
       },
       {
         word: "tells (told)",
         path: `${repoPath}/issues?word=told`,
         shows: [untouchedTitle],
         hides: [tellTitle],
-        dev: [`>#${tellNumber} opened`],
       },
       {
         word: "tells (next page)",
         path: `${repoPath}/issues?cursor=${tellNumber}`,
         shows: [untouchedTitle],
         hides: [tellTitle],
-        dev: [`>#${untouchedNumber} opened`],
       },
       {
         word: "tells (the studio's noun)",
@@ -650,22 +646,19 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "changes",
         path: `${repoPath}/pulls`,
         shows: [openPullTitle, secondChangeTitle],
-        dev: [openBranch],
-        devTitle: "Pull requests · vocab",
+        title: "Every change · vocab",
       },
       {
         word: "changes (look)",
         path: `${repoPath}/pulls?word=look`,
         shows: [openPullTitle],
         hides: [secondChangeTitle],
-        dev: [openBranch],
       },
       {
         word: "changes (next page)",
         path: `${repoPath}/pulls?cursor=${secondChangeNumber}`,
         shows: [openPullTitle],
         hides: [secondChangeTitle],
-        dev: [openBranch],
       },
       {
         word: "runs",
@@ -677,9 +670,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // The stopped run is not open and moving, so the bare list leaves it
         // out — the filter below is where it shows up.
         hides: [`href="${repoPath}/runs/${stoppedRunId}"`],
-        dev: ["Done"],
         title: "Every run · vocab",
-        devTitle: "Runs · vocab",
       },
       {
         word: "runs (stopped)",
@@ -689,7 +680,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
           `href="${repoPath}/runs/${runId}"`,
           `href="${repoPath}/runs/${workingRunId}"`,
         ],
-        dev: ["Done"],
       },
       {
         word: "runs (next page)",
@@ -698,7 +688,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/runs?cursor=${workingRunId}`,
         shows: [`href="${repoPath}/runs/${runId}"`],
         hides: [`href="${repoPath}/runs/${workingRunId}"`],
-        dev: ["Done"],
       },
       {
         // The studio's own settings: the crew, and how far it may go.
@@ -876,7 +865,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
     );
   });
 
-  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262)", async () => {
+  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262); its lists are the one list (#627)", async () => {
     const alice = getUserByName(app.db, "alice")!;
     const plain = await createRepo(app, alice, {
       name: "plain",
@@ -885,10 +874,10 @@ describe("dev's vocabulary never reaches a studio page", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
     const titles = new Map([
-      ["/alice/plain/issues", "Issues · plain"],
+      ["/alice/plain/issues", "Everything told · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
-      ["/alice/plain/pulls", "Pull requests · plain"],
-      ["/alice/plain/runs", "Runs · plain"],
+      ["/alice/plain/pulls", "Every change · plain"],
+      ["/alice/plain/runs", "Every run · plain"],
     ]);
     for (const [path, title] of titles) {
       const res = await fetch(`${base}${path}`, {

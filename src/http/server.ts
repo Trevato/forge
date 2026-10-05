@@ -5,12 +5,14 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { accountAct, accountsPage } from "../web/pages/accounts.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
 import { sessionUser } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
-import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
+import { forgeHost } from "../core/commit_identity.ts";
+import { ensureEdgeUser, getUserByName, verifyPassword } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
@@ -76,6 +78,7 @@ import {
 import {
   changePassword,
   iconPng,
+  llmsTxt,
   robotsTxt,
   securityTxt,
   sitemapXml,
@@ -88,6 +91,7 @@ import {
   pathsJson,
   pinSubmit,
   rawBlob,
+  repoFiles,
   repoHome,
   repoSyncSubmit,
   treePage,
@@ -109,14 +113,12 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
-  issuePage,
-  issuesList,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
   newTellPage,
-  tellPage,
 } from "../web/pages/issues.ts";
+import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
   modeSubmit,
@@ -125,6 +127,8 @@ import {
   takeBackSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
+import { claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { askedPage } from "../web/studio/asked_page.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
@@ -175,7 +179,7 @@ import {
   agentUpdate,
   crewPage,
 } from "../web/pages/crew.ts";
-import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
+import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
   changePage,
   pullCommentSubmit,
@@ -282,7 +286,15 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
-import { notePeer, oauthRoutes } from "./oauth.ts";
+import { oauthRoutes } from "./oauth.ts";
+import { clientAddress, notePeer } from "./peer.ts";
+import {
+  reportAcceptSubmit,
+  reportDismissSubmit,
+  reportPage,
+  reportSubmit,
+  reportsPage,
+} from "../web/pages/reports.ts";
 import {
   cookieValue,
   publicUrl,
@@ -324,12 +336,19 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
-    const host =
-      app.config.url !== undefined
-        ? new URL(app.config.url).hostname
-        : (app.config.host ?? "localhost");
-    const user = await ensureEdgeUser(app.db, login, host);
-    if (user) return { user, scope: "admin", via: "edge" };
+    const existed = getUserByName(app.db, login) !== undefined;
+    const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
+    if (user) {
+      // An account the edge made is audited like one made at /signup.
+      if (!existed) {
+        app.bus.append({
+          kind: "user.created",
+          actorId: user.id,
+          payload: { via: "edge", address: clientAddress(request) },
+        });
+      }
+      return { user, scope: "admin", via: "edge" };
+    }
   }
 
   const session = cookieValue(request, "forge_session");
@@ -411,6 +430,7 @@ export function buildRouter(): Router<Handler> {
   });
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
+  router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
   router.add("GET", "/sitemap.xml", sitemapXml);
@@ -428,6 +448,9 @@ export function buildRouter(): Router<Handler> {
   // cached by the browser's HTTP cache or an update would wait a day.
   router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
+  // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
+  router.add("GET", "/claim/:token", claimPage);
+  router.add("POST", "/claim/:token", claimSubmit);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
@@ -439,6 +462,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/board", boardPage);
   // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
   router.add("GET", "/asks", asksPage);
+  // What people asked of the crew, and what became of it (core/asked.ts).
+  router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
   router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
@@ -521,6 +546,18 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
+  router.add("GET", "/settings/accounts", accountsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/suspend",
+    accountAct("suspend"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/unsuspend",
+    accountAct("unsuspend"),
+  );
+  router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);
@@ -673,20 +710,23 @@ export function buildRouter(): Router<Handler> {
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
-  router.add("GET", "/:owner/:name/issues", issuesList);
-  // The studio's own nouns for the same list and the same page — everything
-  // told, and one tell. Each is a second door onto the one handler, never a
-  // second copy of the page; `/issues` and `/issues/:number` stay dev's own
-  // canonical addresses and answer exactly as they always have, in both
-  // modes (`tellsList`/`tellPage` redirect there when the studio does not
-  // apply). The literal /tells is registered before /tells/:number for the
-  // same reason /issues/new is.
+  // One list of issues: `/issues` and `/tells` are two addresses for the
+  // same page, for every repository and every viewer.
+  router.add("GET", "/:owner/:name/issues", tellsList);
+  // One issue page, at `/issues/:number` and `/tells/:number` alike, for
+  // every repository and every viewer. The literal /tells is registered
+  // before /tells/:number for the same reason /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
+  router.add("GET", "/:owner/:name/report", reportPage);
+  router.add("POST", "/:owner/:name/report", reportSubmit);
+  router.add("GET", "/:owner/:name/reports", reportsPage);
+  router.add("POST", "/:owner/:name/reports/:id/accept", reportAcceptSubmit);
+  router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
-  router.add("GET", "/:owner/:name/issues/:number", issuePage);
+  router.add("GET", "/:owner/:name/issues/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/:number/thread", issueThreadFragment);
   router.add(
     "POST",
@@ -718,10 +758,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
 
   // Pull requests. Same /new-before-/:number ordering discipline.
-  router.add("GET", "/:owner/:name/pulls", pullsList);
-  // The studio's own nouns for the same list and the same page — every
-  // change, and one change. See the tells above for the rule; the forms
-  // that ship, close and comment keep posting under /pulls/:number.
+  // One list of pulls, at `/pulls` and `/changes` alike; one change under
+  // the studio's own noun. See the tells above for the rule; the forms that
+  // ship, close and comment keep posting under /pulls/:number.
+  router.add("GET", "/:owner/:name/pulls", changesList);
   router.add("GET", "/:owner/:name/changes", changesList);
   router.add("GET", "/:owner/:name/changes/:number", changePage);
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
@@ -802,6 +842,9 @@ export function buildRouter(): Router<Handler> {
 
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);
+  // An app's code, one tab under the app (its home); any other repository's
+  // home is already its code, and /files sends it there.
+  router.add("GET", "/:owner/:name/files", repoFiles);
   router.add("GET", "/:owner/:name/tree/:ref", treePage);
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
@@ -1090,7 +1133,10 @@ async function withIdempotency(
   // A retry that arrives while the first attempt is still running joins it
   // rather than starting a second — the duplicate this whole path prevents.
   const racing = joinInFlight(credential, key);
-  if (racing !== undefined) return fromStored(await racing, true);
+  if (racing !== undefined) {
+    const joined = await racing;
+    return fromStored({ ...joined, body: withoutShownOnce(joined.body) }, true);
+  }
 
   const work = (async (): Promise<StoredResponse> => {
     const response = await invoke(replay());
@@ -1100,6 +1146,9 @@ async function withIdempotency(
       body,
       contentType: response.headers.get("content-type") ?? "application/json",
     };
+    // What the table keeps — and backups with it — never holds a secret
+    // shown once; a replay says it was shown instead.
+    const kept: StoredResponse = { ...outcome, body: withoutShownOnce(body) };
     // A 5xx is not an outcome, it is the absence of one. Remembering it
     // would pin the caller to a failure it was right to retry.
     if (response.status < 500) {
@@ -1107,7 +1156,7 @@ async function withIdempotency(
         tokenId: credential,
         key,
         fingerprint,
-        response: outcome,
+        response: kept,
       });
     }
     return outcome;
@@ -1117,6 +1166,27 @@ async function withIdempotency(
   // replay, and telling it otherwise would make the header useless for
   // exactly the reconciliation it exists for.
   return fromStored(await work, false);
+}
+
+/**
+ * Fields of an API answer that are a secret shown once (a spawned child's
+ * claim link): an idempotent replay must not return them, and the
+ * idempotency table must not keep them.
+ */
+const SHOWN_ONCE = ["claimUrl"] as const;
+export const SHOWN_ONCE_NOTE = "shown once, in the first answer";
+
+export function withoutShownOnce(body: string): string {
+  if (!SHOWN_ONCE.some((k) => body.includes(`"${k}"`))) return body;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return body;
+    const copy: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+    for (const k of SHOWN_ONCE) if (k in copy) copy[k] = SHOWN_ONCE_NOTE;
+    return JSON.stringify(copy);
+  } catch {
+    return body;
+  }
 }
 
 const keyReused = (): Response =>
@@ -1248,6 +1318,17 @@ export interface Servers {
   stop(): void;
 }
 
+/**
+ * A refusal a database trigger raised (`RAISE(ABORT, '…')`): an operator's
+ * guard saying no, in its own words. It is the answer, not a fault, so the
+ * person sees the reason and a 403 rather than "internal".
+ */
+function refusedByDatabase(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
+}
+
 /** The hook sockets a data directory may hold: this forge's, and others'. */
 const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
 
@@ -1327,6 +1408,11 @@ export async function serve(app: App): Promise<Servers> {
       );
     },
     error(error) {
+      const refused = refusedByDatabase(error);
+      if (refused !== undefined) {
+        app.log.warn("refused by the database", { reason: refused });
+        return securityFloor(json({ error: "refused", message: refused }, 403));
+      }
       app.log.error("unhandled request error", { error: String(error) });
       return securityFloor(json({ error: "internal" }, 500));
     },

@@ -19,6 +19,8 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
+import { canEnterApp, canRead, getRepoById } from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
@@ -309,6 +311,22 @@ const HOP_BY_HOP = [
   "upgrade",
 ];
 
+/** Whether the person a grant names may enter this app now. */
+function stillEntitled(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  grant: Grant,
+): boolean {
+  if (grant.who === undefined) return false;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  const user = getUserById(runtime.app.db, grant.who.id);
+  return (
+    repo !== undefined &&
+    user !== undefined &&
+    canEnterApp(runtime.app.db, repo, target.app.access, user)
+  );
+}
+
 /**
  * What a request addressed to an app must pass before anything is served:
  * a private app's grant, then a live port. One gate for both the request
@@ -321,14 +339,24 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
   const cookie = cookieValue(request, grantCookieName(target));
-  const grant =
+  const signed =
     cookie === undefined
       ? undefined
       : readGrant(runtime.app.config.dataDir, cookie, target);
+  // A private app's grant is asked again on every request whether the
+  // person it names may still enter: a grant outlives a change of heart —
+  // a writer removed, the app made private — by up to twelve hours, and
+  // reading the repository was never enough (#620).
+  const grant =
+    signed !== undefined &&
+    target.app.access === "private" &&
+    !stillEntitled(runtime, target, signed)
+      ? undefined
+      : signed;
   if (target.app.access === "private") {
     if (grant === undefined) {
       // A person arriving by link is sent to the forge to sign in; it vouches
-      // for them if they can see the repository and sends them back with the
+      // for them if they may enter the app and sends them back with the
       // grant, and otherwise gives the answer a private repository gives.
       // Anything that is not a person navigating — a script, an API call —
       // gets that answer here.
@@ -366,6 +394,29 @@ function admit(
       : { status, port: status.port, grant },
   );
 }
+
+/**
+ * Where a stranger reports a problem with this app: its repository's report
+ * form (`actions/reports.ts`), when both the app and the repository are
+ * public. A private one offers nothing, and a nested host is its guest's.
+ */
+function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+  if (target.nested || target.app.access !== "public") return undefined;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  if (repo === undefined || !canRead(runtime.app.db, repo, undefined))
+    return undefined;
+  return new URL(
+    `/${repo.ownerName}/${repo.name}/report`,
+    runtime.options.forgeUrl,
+  );
+}
+
+/** The link relation a public app's pages carry to `/__forge/report`. */
+const REPORT_LINK =
+  '</__forge/report>; rel="help"; title="Report a problem (no account needed)"';
+
+const isHtml = (headers: Headers): boolean =>
+  (headers.get("content-type") ?? "").toLowerCase().startsWith("text/html");
 
 /**
  * Serve a request addressed to an app. `undefined` means the request became
@@ -414,6 +465,23 @@ export async function proxyApp(
         "cache-control": "no-store",
       },
     });
+  }
+  // The third door: a problem report, answered without waking or even
+  // reaching the app — the app being down is the usual reason to ask. The
+  // forge's form is told which page it came from.
+  if (url.pathname === "/__forge/report") {
+    const report = reportUrl(runtime, target);
+    if (report !== undefined) {
+      report.searchParams.set(
+        "from",
+        originFor(runtime, target, request.headers.get("host") ?? undefined) +
+          safePath(url.searchParams.get("from")),
+      );
+      return new Response(null, {
+        status: 303,
+        headers: { location: report.toString(), "cache-control": "no-store" },
+      });
+    }
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
@@ -469,6 +537,10 @@ export async function proxyApp(
   }
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
+  // An agent reading a public app's page learns where to report a problem
+  // without the app having to say so.
+  if (isHtml(out) && reportUrl(runtime, target) !== undefined)
+    out.append("link", REPORT_LINK);
   const eventStream =
     response.body !== null &&
     (response.headers.get("content-type") ?? "")
@@ -819,6 +891,7 @@ function unavailable(
         : gone
           ? "This preview is gone: its pull was closed, and its data with it."
           : "Nothing is running here yet.");
+  const report = reportUrl(runtime, target) !== undefined;
   const runLink =
     status?.runId === undefined
       ? ""
@@ -839,6 +912,7 @@ ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
 <p>This is ${escape(where)}. ${escape(message)}</p>
 ${deploying ? "<p>This page refreshes on its own.</p>" : ""}
 ${runLink}
+${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who keep it; no account needed.</p>' : ""}
 `;
   return new Response(html, {
     status: deploying ? 503 : gone ? 404 : 502,
@@ -846,6 +920,7 @@ ${runLink}
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       ...(deploying ? { "retry-after": "3" } : {}),
+      ...(report ? { link: REPORT_LINK } : {}),
     },
   });
 }
