@@ -37,6 +37,7 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
 
@@ -157,6 +158,7 @@ describe("migrate", () => {
     base = servers.url;
     aliceCookie = await signUp("alice");
     bobCookie = await signUp("bob");
+    proveAll(app);
     alice = getUserByName(app.db, "alice")!;
     bob = getUserByName(app.db, "bob")!;
 

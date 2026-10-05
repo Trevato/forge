@@ -144,6 +144,10 @@ export function securityFloor(response: Response): Response {
  */
 export function respondAccess(error: string, status: number): Response {
   if (error === "not_found") return notFound();
+  // An account whose email is unproven may read, not create or cost: the
+  // same words on every surface (\`actions/verify.ts\`).
+  if (error === "unverified")
+    return json({ error, message: "verify your email first" }, 403);
   if (error === "unauthorized") return unauthorized();
   if (error === "forbidden") return forbidden();
   return json({ error }, status);

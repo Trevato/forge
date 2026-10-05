@@ -1,0 +1,128 @@
+/**
+ * Whether an account's email is proven, and the one-time links that prove
+ * it. Pure data: the actions send the mail and decide what an unproven
+ * account may not do (`actions/verify.ts`).
+ *
+ * An account is held back only once a public way in has asked it to prove
+ * its address: signing up, an edge sign-in that made it, or changing the
+ * address writes an unproven row. No row means a trusted path made it — an
+ * account that predates verification, the forge's first, a spawned child's
+ * seeded admin. An agent is never held back (no mail reaches it), nor an
+ * organization, which cannot sign in. A link's secret is stored only as its
+ * hash, works once, and expires.
+ */
+
+import type { Database } from "bun:sqlite";
+import { sha256 } from "../kernel/hash.ts";
+
+/** How long a link works. */
+export const LINK_TTL_MS = 24 * 3_600_000;
+/** How soon another link may be sent to the same account. */
+export const RESEND_AFTER_MS = 5 * 60_000;
+
+const secret = (): string =>
+  Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
+
+export function emailVerified(db: Database, userId: string): boolean {
+  const row = db
+    .query<
+      {
+        kind: string;
+        is_agent: number;
+        checked: string | null;
+        verified_at: string | null;
+      },
+      [string]
+    >(
+      `SELECT u.kind, u.is_agent, c.user_id AS checked, c.verified_at
+       FROM user u LEFT JOIN email_check c ON c.user_id = u.id WHERE u.id = ?1`,
+    )
+    .get(userId);
+  if (row === null) return false;
+  if (row.is_agent === 1 || row.kind === "org") return true;
+  // No row: a trusted path made the account. A row: proven once it says so.
+  return row.checked === null || row.verified_at !== null;
+}
+
+/** Mark proven without a link: the forge's first account, an owner's word. */
+export function markVerified(db: Database, userId: string, at: string): void {
+  db.query(
+    `INSERT INTO email_check (user_id, verified_at) VALUES (?1, ?2)
+     ON CONFLICT(user_id) DO UPDATE SET verified_at = excluded.verified_at,
+       token_hash = NULL, expires_at = NULL`,
+  ).run(userId, at);
+}
+
+/** A new address is unproven again; any link to the old one stops working. */
+export function resetVerification(db: Database, userId: string): void {
+  db.query(
+    `INSERT INTO email_check (user_id) VALUES (?1)
+     ON CONFLICT(user_id) DO UPDATE SET verified_at = NULL,
+       token_hash = NULL, expires_at = NULL`,
+  ).run(userId);
+}
+
+/** The most links one account may be sent in a UTC day, whatever the address. */
+export const SENDS_PER_DAY = 10;
+
+/**
+ * Mint a link to `to` for the account: the secret is returned once, its hash
+ * kept. Undefined inside the resend window for the same address, or past the
+ * day's cap — so changing the address cannot turn the forge into a way to
+ * mail strangers.
+ */
+export function issueLink(
+  db: Database,
+  userId: string,
+  to: string,
+  now: number,
+): string | undefined {
+  const row = db
+    .query<
+      { last_sent_at: string | null; sent_to: string | null; sends_day: string | null; sends: number },
+      [string]
+    >("SELECT last_sent_at, sent_to, sends_day, sends FROM email_check WHERE user_id = ?1")
+    .get(userId);
+  const day = new Date(now).toISOString().slice(0, 10);
+  const sends = row?.sends_day === day ? row.sends : 0;
+  if (sends >= SENDS_PER_DAY) return undefined;
+  const last = row?.last_sent_at ? Date.parse(row.last_sent_at) : 0;
+  if (row?.sent_to?.toLowerCase() === to.toLowerCase() && now - last < RESEND_AFTER_MS)
+    return undefined;
+  const token = secret();
+  db.query(
+    `INSERT INTO email_check (user_id, token_hash, expires_at, last_sent_at, sent_to, sends_day, sends)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(user_id) DO UPDATE SET token_hash = excluded.token_hash,
+       expires_at = excluded.expires_at, last_sent_at = excluded.last_sent_at,
+       sent_to = excluded.sent_to, sends_day = excluded.sends_day, sends = excluded.sends`,
+  ).run(
+    userId,
+    sha256(token),
+    new Date(now + LINK_TTL_MS).toISOString(),
+    new Date(now).toISOString(),
+    to,
+    day,
+    sends + 1,
+  );
+  return token;
+}
+
+/** Follow a link: the account it proves, once, while it is fresh. */
+export function consumeLink(
+  db: Database,
+  token: string,
+  now: number,
+): string | undefined {
+  if (token === "") return undefined;
+  const row = db
+    .query<
+      { user_id: string; expires_at: string | null },
+      [string]
+    >("SELECT user_id, expires_at FROM email_check WHERE token_hash = ?1")
+    .get(sha256(token));
+  if (row === null || row.expires_at === null) return undefined;
+  if (Date.parse(row.expires_at) <= now) return undefined;
+  markVerified(db, row.user_id, new Date(now).toISOString());
+  return row.user_id;
+}

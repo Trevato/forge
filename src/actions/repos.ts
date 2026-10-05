@@ -4,6 +4,7 @@
  * write path — committing files to a branch without a git client.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   createLabel as insertLabel,
@@ -82,9 +83,11 @@ export async function createRepo(
   app: App,
   actor: User | undefined,
   input: CreateRepoInput,
-): Promise<Result<Repo, CreateRepoActionError>> {
+): Promise<Result<Repo, CreateRepoActionError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   // An agent owns nothing it was not given (docs/APPS.md): it works on the
   // repositories whose crew it is on, and cannot make itself a new one.
   if (user.value.kind === "agent") return err("forbidden_owner");
@@ -110,9 +113,11 @@ export async function forkRepo(
   actor: User | undefined,
   parent: Repo,
   name?: string,
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized">> {
+): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const forked = await cloneRepo(
     app.db,
     app.reposRoot,

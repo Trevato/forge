@@ -81,6 +81,7 @@ export const GATE: readonly string[] = [
   "test/cloud.test.ts",
   "test/run-secrets.test.ts",
   "test/reserved-names.test.ts",
+  "test/verify-email.test.ts",
   "test/forge-cloudflare.test.ts",
   "test/forge-cloudflare-celld.test.ts",
   "test/branch_tell.test.ts",

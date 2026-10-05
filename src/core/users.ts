@@ -3,6 +3,7 @@
  * narrower; there is no second identity system.
  */
 
+import { resetVerification } from "./verify.ts";
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { noreplyAddress } from "./commit_identity.ts";
@@ -287,7 +288,11 @@ export async function ensureEdgeUser(
     email: noreplyAddress(login, host),
     adminIfFirst: true,
   });
-  return made.ok ? made.value : undefined;
+  if (!made.ok) return undefined;
+  // A newcomer through the edge proves an address like one through /signup:
+  // its placeholder is no address at all (the forge's first account aside).
+  if (!made.value.isAdmin) resetVerification(db, made.value.id);
+  return made.value;
 }
 
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */
