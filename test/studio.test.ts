@@ -39,6 +39,7 @@ import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
 import {
+  getRepo,
   getRepoById,
   setDirectionIssue,
   type Repo,
@@ -4802,7 +4803,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
 });
 
 /**
- * Issue #183: `tellCrew` cannot route a tell to anyone with nobody on the
+ * Issue #183: `tell` cannot route a tell to anyone with nobody on the
  * crew — the issue it opens stays unassigned forever, not merely
  * unpicked-up like an agent-held tell. Both surfaces that used to call this
  * "quiet" or "nothing yet" must say the honest reason instead, and both
@@ -4869,7 +4870,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     const enabled = await enableApp(app, alice, repo, { slug: "pad" });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    // No crew at all — the exact state `tellCrew` cannot route out of.
+    // No crew at all — the exact state `tell` cannot route out of.
   });
 
   afterAll(async () => {
@@ -5717,7 +5718,13 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(owner).toMatch(/\$42\.50\s+of\s+\$25/);
     expect(owner).toContain("Remove");
     expect(owner).toContain("Save");
-    expect(owner).toContain("The rest of the settings");
+    // The rest is beneath, on the same page and in the same frame.
+    expect(owner).toContain("<h2>Branch and gates</h2>");
+    expect(owner.indexOf(">On its own<")).toBeLessThan(
+      owner.indexOf("<h2>Branch and gates</h2>"),
+    );
+    expect(owner).toContain('href="/alice/beacon/settings/labels"');
+    expect(owner).not.toContain("?mode=dev");
   });
 
   test("a reader without write sees no crew and no controls on the settings page; one who cannot read gets not-found", async () => {
@@ -5747,6 +5754,56 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(refused.status).toBe(404);
   });
 
+  test("each settings card saves only its own fields: About never turns a gate or the outsiders switch off, and Branch and gates never touches the words", async () => {
+    const before = getRepo(app.db, "alice", "beacon")!;
+    const on = await post(
+      "/alice/beacon/settings",
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        protect: "on",
+        requireReview: "on",
+        // The settings page sends this marker beside the switch; without it a
+        // save leaves the switch as it is (#822).
+        crewOutsidersShown: "1",
+        crewOutsiders: "on",
+      },
+      ownerCookie,
+    );
+    expect(on.status).toBe(303);
+    let now = getRepo(app.db, "alice", "beacon")!;
+    expect(now.crewOutsiders).toBe(true);
+    expect(now.description).toBe(before.description);
+
+    const about = await post(
+      "/alice/beacon/settings",
+      { card: "about", description: "a lamp", visibility: now.visibility },
+      ownerCookie,
+    );
+    expect(about.status).toBe(303);
+    now = getRepo(app.db, "alice", "beacon")!;
+    expect(now.description).toBe("a lamp");
+    expect(now.crewOutsiders).toBe(true);
+    expect(now.protectDefault).toBe(true);
+    expect(now.requireReview).toBe(true);
+
+    // Put it back for the tests that follow.
+    await post(
+      "/alice/beacon/settings",
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        crewOutsidersShown: "1",
+      },
+      ownerCookie,
+    );
+    await post(
+      "/alice/beacon/settings",
+      { card: "about", description: before.description, visibility: before.visibility },
+      ownerCookie,
+    );
+  });
+
   test("a role change made from the studio settings page lands exactly as dev's page does", async () => {
     const roleChange = await post(
       "/alice/beacon/settings/crew/keeper/role",
@@ -5755,7 +5812,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     );
     expect(roleChange.status).toBe(303);
     expect(roleChange.headers.get("location")).toBe(
-      "/alice/beacon/settings/crew",
+      "/alice/beacon/settings#crew",
     );
     const after = await (
       await get("/alice/beacon/settings", ownerCookie)
@@ -5763,13 +5820,27 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(after).toContain("reviews");
   });
 
-  test("?mode=dev on the settings route still renders dev's settings pages", async () => {
+  test("?mode=dev on the settings route is the same one page; dev's Crew and Autonomy addresses land on its cards", async () => {
     const dev = await (
       await get("/alice/beacon/settings?mode=dev", ownerCookie)
     ).text();
     expect(dev).toContain(">General<");
+    expect(dev).toContain(">Crew<");
     expect(dev).toContain("Description");
-    expect(dev).not.toContain("Add to crew");
+    expect(dev).toContain("<h2>Branch and gates</h2>");
+    expect(dev).toContain('id="f-direction"');
+
+    for (const [old, to] of [
+      ["/alice/beacon/settings/crew", "/alice/beacon/settings#crew"],
+      ["/alice/beacon/settings/autonomy", "/alice/beacon/settings#autonomy"],
+    ]) {
+      const res = await get(old!, ownerCookie);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(to!);
+    }
+    // A reader who cannot see the repository gets not-found, not a hint.
+    const hidden = await get("/alice/no-such-app/settings/crew", ownerCookie);
+    expect(hidden.status).toBe(404);
   });
 });
 
@@ -8623,28 +8694,20 @@ describe("the studio can change what an app says it is (#230)", () => {
   });
 
   test("a writer changes the description and visibility from the studio, and the app's page and the shelf row show it", async () => {
-    // The rendered form carries the branch-protection fields it never shows
-    // as hidden inputs, so a real submit of it — exactly what's posted here
-    // — cannot silently turn them off.
+    // The About card names itself (`card=about`), so a real submit of it —
+    // exactly what's posted here — changes its own fields and cannot touch
+    // the branch protection it never shows.
     const before = await (
       await get("/alice/lamp/settings", ownerCookie)
     ).text();
-    expect(before).toContain('<input type="hidden" name="protect" value="on"');
-    expect(before).toContain(
-      '<input type="hidden" name="requireReview" value="on"',
-    );
-    expect(before).toContain(
-      '<input type="hidden" name="requireChecks" value="on"',
-    );
+    expect(before).toContain('<input type="hidden" name="card" value="about"');
 
     const saved = await post(
       "/alice/lamp/settings",
       {
+        card: "about",
         description: "a lamp that stays lit all night",
         visibility: "private",
-        protect: "on",
-        requireReview: "on",
-        requireChecks: "on",
       },
       ownerCookie,
     );

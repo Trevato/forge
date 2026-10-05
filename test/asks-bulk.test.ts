@@ -437,6 +437,9 @@ describe("acting on many asks at once", () => {
     try {
       const bobAdmin = createToken(app.db, bob.id, "rw", "rw").token;
       expect((await api(bobAdmin, `/api/v1/asks/bulk/${done.body.id}/undo`, {})).status).toBe(404);
+      // Nor through the admin fleet route: rows picked one by one were alice's own choice.
+      const fleetAdmin = createToken(app.db, bob.id, "admin", "admin").token;
+      expect((await api(fleetAdmin, `/api/v1/fleet/ops/${done.body.id}/undo`, {})).status).toBe(404);
     } finally {
       app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(bob.id);
     }

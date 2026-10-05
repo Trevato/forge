@@ -544,7 +544,7 @@ describe.skipIf(noCells)(
       });
 
       const a = await createUser(app.db, {
-      trusted: true,
+        trusted: true,
         username: "alice",
         email: "alice@forge.local",
         password: "a-good-passphrase",
@@ -553,7 +553,7 @@ describe.skipIf(noCells)(
       if (!a.ok) throw new Error(a.error);
       alice = a.value;
       const m = await createUser(app.db, {
-      trusted: true,
+        trusted: true,
         username: "mallory",
         email: "mallory@forge.local",
         password: "a-good-passphrase",

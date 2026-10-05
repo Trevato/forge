@@ -48,7 +48,6 @@ import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { sshCommand } from "../ssh/command.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   requireReader,
@@ -443,7 +442,8 @@ export function terminalFor(
   if (status?.tty === null) return { reason: "no_tty" };
   const command = sshCommandFor(app, record, env);
   if (command !== undefined) return { command };
-  return sshCommand(app) === undefined ? { reason: "no_listener" } : {};
+  const port = app.config.sshPort;
+  return port === undefined || port <= 0 ? { reason: "no_listener" } : {};
 }
 
 /** What is running, for anyone who can see the repository. */
@@ -476,15 +476,25 @@ export function openEnvUrl(
   /** The hostname the visitor asked for, when it is one of this app's. */
   host?: string,
 ): Result<string, EnvError | "unauthorized"> {
-  const reader = requireReader(app, actor, repo);
-  if (!reader.ok) return reader;
   const record = getAppByRepo(app.db, repo.id);
+  // A person a private app names may enter it without reading the
+  // repository (#752); everyone else needs to read it first.
+  const named =
+    record !== undefined &&
+    record.access === "private" &&
+    actor !== undefined &&
+    canEnterApp(app.db, repo, record, actor);
+  if (!named) {
+    const reader = requireReader(app, actor, repo);
+    if (!reader.ok) return reader;
+  }
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");
-  // A private app is for its writers and crew; anyone else who can read the
-  // repository gets the answer a stranger gets, and nobody is told why.
+  // A private app is for its writers, its crew and the people it names;
+  // anyone else who can read the repository gets the answer a stranger
+  // gets, and nobody is told why.
   if (record.access === "private" && actor !== undefined)
-    if (!canEnterApp(app.db, repo, record.access, actor))
+    if (!canEnterApp(app.db, repo, record, actor))
       return err("not_found");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
