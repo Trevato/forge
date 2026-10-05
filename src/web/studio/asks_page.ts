@@ -15,14 +15,41 @@ import {
   askAnchor,
   askRows,
   askSentence,
+  ASK_WORDS,
   decisionActions,
   decisionForm,
   decisionsFor,
   forgeNeedsFor,
   type AskRow,
+  type Consequence,
   type Decision,
 } from "./asks.ts";
 import { changeHref } from "./nouns.ts";
+
+/** The rows shown before "N more": the few that matter most. */
+export const ASKS_SHOWN = 5;
+
+/**
+ * Why it ranks high, when that is more than its kind: security, money,
+ * held-up work — and, on a collapsed row, which of its asks that is.
+ */
+const weight = (c: Consequence, which?: string): Html | null =>
+  c.score >= 60
+    ? html`<b>${c.why}</b>${which === undefined ? null : html`: \u201c${which}\u201d`} · `
+    : null;
+
+/** One clause, and what happens if nobody acts — never the same sentence twice. */
+const clause = (
+  d: Decision | undefined,
+  kind: Decision["kind"],
+  c: Consequence,
+  which?: string,
+): Html =>
+  html`<p>
+    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
+      >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
+    >
+  </p>`;
 
 function decisionCard(ctx: Ctx, d: Decision): Html {
   const base = repoBase(d.repo);
@@ -32,7 +59,7 @@ function decisionCard(ctx: Ctx, d: Decision): Html {
       ? html`<a href="${base}/issues/${d.issue.number}">${d.issue.title}</a>`
       : html`<a href="${base}/settings/autonomy">Paused</a>`;
   return card(
-    html`<p>${d.says}</p>
+    html`${clause(d, d.kind, d.consequence)}
       <div class="bar mt">${decisionActions(ctx, d)}</div>`,
     {
       id: askAnchor(d.id),
@@ -72,6 +99,13 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>): Html {
       head: html`${icon(r.kind === "look" ? "eye" : "pull")}
         <h2>${rowHead(r.kind, r.items.length)}</h2>
         <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>`,
+      // The row ranks by its weightiest ask (first, `askRows`): name it.
+      foot: clause(
+        undefined,
+        r.kind,
+        r.consequence,
+        r.items[0]?.pull?.title ?? r.items[0]?.issue?.title,
+      ),
     },
   );
 }
@@ -95,12 +129,21 @@ export function asksPage(ctx: Ctx): Response {
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
   const count = rows.length + needs.length;
+  // The forge's own health first, then the few asks that matter most;
+  // the rest are one tap away, in the same order.
+  const first = rows.slice(0, ASKS_SHOWN);
+  const rest = rows.slice(ASKS_SHOWN);
   const body = html`<h1 id="asks-sentence">${askSentence(count)}</h1>
     <p class="muted small"><a href="/asked">What you asked for</a>, and what became of it.</p>
     <div class="stack">
-      ${rows.map((r) => rowCard(ctx, r))}
-      ${needs.map(forgeCard)}
+      ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r))}
     </div>
+    ${rest.length === 0
+      ? null
+      : html`<details class="mt" id="asks-more">
+          <summary>${rest.length} more</summary>
+          <div class="stack mt">${rest.map((r) => rowCard(ctx, r))}</div>
+        </details>`}
     ${decisions.map((d) => decisionForm(d))}`;
   return page({ ctx, title: askSentence(count), body });
 }

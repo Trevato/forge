@@ -4,6 +4,7 @@
  */
 
 import { tellCrew } from "../actions/crew.ts";
+import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { getEvent } from "../core/events.ts";
 import {
@@ -18,6 +19,7 @@ import {
   parseCursor,
   readFeed,
 } from "../feed/feed.ts";
+import { asksAnswer } from "../web/studio/asks.ts";
 import type { Handler } from "./context.ts";
 import type { Router } from "./router.ts";
 import {
@@ -54,6 +56,15 @@ export function feedRoutes(router: Router<Handler>): void {
       200,
       { "cache-control": "private, no-store" },
     );
+  });
+
+  // What asks the viewer, ranked, with the week's measure (`asksAnswer`).
+  router.add("GET", "/api/v1/asks", (ctx) => {
+    const viewer = ctx.auth.user;
+    if (!viewer) return unauthorized();
+    return json(asksAnswer(ctx, viewer), 200, {
+      "cache-control": "private, no-store",
+    });
   });
 
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {
@@ -117,7 +128,9 @@ export function feedRoutes(router: Router<Handler>): void {
     if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
     const told = await tellCrew(ctx.app, viewer, repo, text);
     if (!told.ok)
-      return apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
+      return told.error === "forbidden"
+        ? apiError("forbidden", 403, DIRECTION_NOTE)
+        : apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
     return json({ issue: told.value.issue.number }, 201);
   });
 

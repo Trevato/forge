@@ -52,7 +52,13 @@ export function linkIssue(
   if (!who.ok) return who;
   if (issue.repoId !== repo.id || blocker.repoId !== repo.id)
     return err("not_found");
-  const linked = addDependency(app.db, issue, blocker, who.value.id);
+  const linked = addDependency(
+    app.db,
+    issue,
+    blocker,
+    who.value.id,
+    canWrite(app.db, repo, who.value),
+  );
   if (!linked.ok) return linked;
   app.bus.append({
     kind: "issue.blocked",
