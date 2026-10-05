@@ -132,7 +132,12 @@ import { askedPage } from "../web/studio/asked_page.ts";
 import { asksPage } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
-import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
+import {
+  frontUpdate,
+  liveAppsFragment,
+  liveOnYouFragment,
+  studioDoor,
+} from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
@@ -451,6 +456,10 @@ export function buildRouter(): Router<Handler> {
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim/:token", claimPage);
   router.add("POST", "/claim/:token", claimSubmit);
+  // The front page as a stranger sees it, for anyone; a site admin there
+  // also gets the controls that decide it (#686).
+  router.add("GET", "/front", studioDoor);
+  router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
