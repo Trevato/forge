@@ -792,10 +792,12 @@ describe("verdicts, threads, and the gate they open", () => {
     await web("bob", `${at()}/review-state`, {
       form: { state: "changes_requested" },
     });
-    expect(words(await bodyOf("ada", at()))).toContain("changes requested by bob");
+    expect(words(await bodyOf("ada", files()))).toContain(
+      "changes requested by bob",
+    );
     // Put it back so the thread tests below have a sane pull.
     await web("bob", `${at()}/review-state`, { form: { state: "approved" } });
-    expect(words(await bodyOf("ada", at()))).toContain("1 approval");
+    expect(words(await bodyOf("ada", files()))).toContain("1 approval");
   });
 
   // ---- threads ----
