@@ -2086,6 +2086,55 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     expect(studio).not.toContain("<h2>Other repositories</h2>");
   });
 
+  test("a private app on a public repository shows its state only to its writers: a visitor gets a plain row", async () => {
+    const hal = await createUser(app.db, { trusted: true,
+      username: "hal",
+      email: "hal@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!hal.ok) throw new Error(hal.error);
+    const ownerCookie = await signIn("hal", "a-good-passphrase");
+    const made = await createRepo(app, hal.value, {
+      name: "ledger",
+      visibility: "public",
+      description: "the books",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, hal.value, made.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, hal.value, made.value, {
+      slug: "hal-ledger",
+      access: "private",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const ivy = await createUser(app.db, { trusted: true,
+      username: "ivy",
+      email: "ivy@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!ivy.ok) throw new Error(ivy.error);
+    const strangerCookie = await signIn("ivy", "a-good-passphrase");
+
+    const visit = (cookie?: string) =>
+      fetch(`${base}/hal`, {
+        headers: cookie === undefined ? {} : { cookie },
+        redirect: "manual",
+      }).then((r) => r.text());
+    for (const page of [await visit(), await visit(strangerCookie)]) {
+      // The repository is public, so it is listed — once, plainly.
+      expect(occurrences(page, 'href="/hal/ledger"')).toBe(1);
+      expect(page).toContain("the books");
+      expect(page).not.toContain("not running");
+      expect(page).not.toContain("quiet");
+      expect(page).not.toContain('class="studio-word"');
+    }
+    const own = await visit(ownerCookie);
+    expect(own).toContain("not running");
+  });
+
   test("an org's page draws the same way: its app once, its plain repository once, and Members/Teams unmoved", async () => {
     const fay = await createUser(app.db, { trusted: true,
       username: "fay",

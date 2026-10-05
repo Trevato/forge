@@ -40,7 +40,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { escapeHtml, html, raw, type Html } from "../html.ts";
-import { dot, envPhrase, envTone, pill, row, time } from "../ui.ts";
+import { dot, envPhrase, envTone, icon, pill, row, time } from "../ui.ts";
 import {
   productionFact,
   pullWord,
@@ -157,6 +157,15 @@ export async function shelfRows(
   return await Promise.all(
     repos.map(async (repo) => {
       const record = records.get(repo.id);
+      // A private app's state — whether it serves, what last happened in
+      // it — is its writers' to see, even on a repository anyone may read:
+      // anyone else gets the row a plain repository would get.
+      if (
+        record !== undefined &&
+        record.access !== "public" &&
+        !ownerFacts.has(repo.id)
+      )
+        return plainRow(repo, user);
       const envs =
         runtime === undefined || record === undefined
           ? []
@@ -277,4 +286,22 @@ export async function shelfRows(
       });
     }),
   );
+}
+
+/** A repository as a row with nothing about the app it runs: its name and
+ * its own words, for a viewer who may not see that app's state. */
+function plainRow(repo: Repo, user: Ctx["auth"]["user"]): Html {
+  const mine = user !== undefined && repo.ownerId === user.id;
+  return row({
+    href: repoBase(repo),
+    nav: true,
+    lead: icon("repo"),
+    title: mine
+      ? repo.name
+      : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`,
+    titleAttr: repo.description || repo.name,
+    ...(repo.description === ""
+      ? {}
+      : { meta: html`<span class="shelf-desc">${repo.description}</span>` }),
+  });
 }
