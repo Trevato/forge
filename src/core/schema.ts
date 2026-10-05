@@ -1215,4 +1215,10 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
   `,
+  // 48 — an account the owner suspended or removed (#660). Columns are added,
+  // never a table rebuilt: a rebuild would drop any trigger on \`user\`.
+  `
+  ALTER TABLE user ADD COLUMN suspended_at TEXT;
+  ALTER TABLE user ADD COLUMN removed_at TEXT;
+  `,
 ];

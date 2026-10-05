@@ -13,8 +13,10 @@ import {
 } from "../../actions/reports.ts";
 import {
   BODY_MAX,
+  OUTSIDE_TITLE,
   REQUEST_MAX,
   TITLE_MAX,
+  outsideWords,
   type Report,
 } from "../../core/reports.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
@@ -190,19 +192,37 @@ export async function reportSubmit(ctx: Ctx): Promise<Response> {
 function reportCard(base: string, report: Report): Html {
   const action = (verb: "accept" | "dismiss") =>
     `${base}/reports/${report.id}/${verb}`;
+  const accept = `accept-${report.id}`;
   return card(
     html`<p><strong>${report.title}</strong></p>
       ${when(
         report.body !== "",
         () => html`<pre class="commit-body">${report.body}</pre>`,
       )}
-      ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}`,
+      ${when(report.page, (p) => html`<p class="hint">Sent from ${p}</p>`)}
+      <form
+        class="mt"
+        id="${accept}"
+        method="post"
+        action="${action("accept")}"
+      >
+        ${formField({
+          label: "Title of the issue",
+          name: "title",
+          id: `title-${report.id}`,
+          value: outsideWords(report.title),
+          required: true,
+          hint: `It opens as “${OUTSIDE_TITLE.trim()}” and then these words. Change the words if you like; the mark stays.`,
+        })}
+      </form>`,
     {
       tone: "attn",
       head: html`From outside, not checked · ${time(report.createdAt)}`,
-      foot: html`<form method="post" action="${action("accept")}">
-          ${btn("Accept as an issue", { variant: "primary", icon: "issue" })}
-        </form>
+      foot: html`${btn("Accept as an issue", {
+          variant: "primary",
+          icon: "issue",
+          form: accept,
+        })}
         <form method="post" action="${action("dismiss")}">
           ${btn("Dismiss", { variant: "ghost" })}
         </form>`,
@@ -259,6 +279,7 @@ export async function reportAcceptSubmit(ctx: Ctx): Promise<Response> {
     ctx.auth.user,
     repo,
     ctx.params.id ?? "",
+    form.has("title") ? field(form, "title") : undefined,
   );
   const base = repoBase(repo);
   if (!accepted.ok)
@@ -269,7 +290,11 @@ export async function reportAcceptSubmit(ctx: Ctx): Promise<Response> {
           message:
             accepted.error === "decided"
               ? "Someone already decided that report."
-              : "That report could not become an issue.",
+              : accepted.error === "empty_title"
+                ? "The issue needs a title. The report is still waiting."
+                : accepted.error === "title_too_long"
+                  ? `That title is too long (${TITLE_MAX} characters at most). The report is still waiting.`
+                  : "That report could not become an issue.",
         });
   return flashTo(ctx, `${base}/issues/${accepted.value.number}`, {
     message: `Accepted as issue #${accepted.value.number}.`,

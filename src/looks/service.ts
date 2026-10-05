@@ -187,6 +187,8 @@ interface Pending {
   readonly env: EnvName;
   readonly commitOid: string;
   readonly at: number;
+  /** Queued by the sweep: a picture that failed at this head is not retaken. */
+  readonly swept?: true;
 }
 
 export function startLooks(app: App, options: LooksOptions): LooksHandle {
@@ -331,7 +333,13 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     const status = runtime.envStatus(record, item.env);
     if (status?.state !== "running" || status.commitOid !== item.commitOid)
       return;
-    const wanted = missing(item.appId, item.env, item.commitOid, status.looks);
+    const wanted = missing(
+      item.appId,
+      item.env,
+      item.commitOid,
+      status.looks,
+      item.swept === true,
+    );
     if (wanted.length === 0) return;
     // The phone and desktop pictures are what the owner sees: the app
     // renders for a signed-in admin, exactly as when they open it from the
@@ -460,7 +468,13 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         // deploy tries again, not every sweep.
         const { commitOid, looks: pages } = status;
         if (missing(record.id, "production", commitOid, pages, true).length > 0)
-          enqueue({ appId: record.id, env: "production", commitOid, at: Date.now() });
+          enqueue({
+            appId: record.id,
+            env: "production",
+            commitOid,
+            at: Date.now(),
+            swept: true,
+          });
       }
     } catch (error) {
       log.error("looks sweep failed", { error: String(error) });

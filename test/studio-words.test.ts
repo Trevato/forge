@@ -525,8 +525,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // #171: the composer's close button used to say "Close issue" here,
         // dev's own noun on the studio's own page.
         shows: ["Close tell"],
-        dev: ["<h2>Labels</h2>", "Close issue"],
-        devTitle: `${tellTitle} · vocab`,
+        // One issue page (#626): dev's controls are its closed Details.
+        title: `${tellTitle} · vocab`,
       },
       // The studio's own nouns for the same two pages (#158): one handler
       // each, so what is walked here is the very page above under the

@@ -622,7 +622,7 @@ const TOOLS: readonly Tool[] = [
             graph,
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
-          pillarView(ctx.app.db, repo.id),
+          pillarView(ctx.app.db, repo),
         ),
       );
     },
