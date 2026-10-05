@@ -37,6 +37,7 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
 
@@ -157,6 +158,7 @@ describe("migrate", () => {
     base = servers.url;
     aliceCookie = await signUp("alice");
     bobCookie = await signUp("bob");
+    proveAll(app);
     alice = getUserByName(app.db, "alice")!;
     bob = getUserByName(app.db, "bob")!;
 
@@ -592,13 +594,13 @@ describe("migrate", () => {
     const strictDir = await mkdtemp(join(tmpdir(), "forge-migrate-strict-"));
     const strict = createApp({ dataDir: strictDir, port: 0 });
     try {
-      const a = await createUser(strict.db, {
+      const a = await createUser(strict.db, { trusted: true,
         username: "ann",
         email: "ann@forge.local",
         password: "a-good-passphrase",
         adminIfFirst: true,
       });
-      const b = await createUser(strict.db, {
+      const b = await createUser(strict.db, { trusted: true,
         username: "ben",
         email: "ben@forge.local",
         password: "a-good-passphrase",

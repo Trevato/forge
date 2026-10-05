@@ -40,7 +40,7 @@ describe("the snapshot destination", () => {
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "forge-dest-"));
     app = createApp({ dataDir: root, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -48,7 +48,7 @@ describe("the snapshot destination", () => {
     });
     if (!a.ok) throw new Error(a.error);
     admin = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "another-good-passphrase",

@@ -37,7 +37,7 @@ describe("the audit reads every app's policy from git", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-audit-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

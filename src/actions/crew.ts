@@ -6,6 +6,7 @@
  * handled where users are.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addCrew as insertCrew,
@@ -199,9 +200,11 @@ export function addToCrew(
   actor: User | undefined,
   repo: Repo,
   username: string,
-): Result<Agent, "not_found" | "no_such_agent"> {
+): Result<Agent, "not_found" | "no_such_agent" | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  const proven = requireVerified(app, admin.value);
+  if (!proven.ok) return proven;
   const agent = getAgentByName(app.db, username);
   if (!agent) return err("no_such_agent");
   if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {
@@ -256,7 +259,13 @@ export async function tellCrew(
 ): Promise<
   Result<
     TellCrewResult,
-    "not_found" | "unauthorized" | "forbidden" | TitleError | "body_too_long" | MirrorError
+    | "not_found"
+    | "unauthorized"
+    | "forbidden"
+    | "unverified"
+    | TitleError
+    | "body_too_long"
+    | MirrorError
   >
 > {
   // A tell is a run: only someone who may direct the crew here may say
@@ -264,6 +273,8 @@ export async function tellCrew(
   const participant = requireParticipant(app, actor, repo);
   if (!participant.ok) return participant;
   if (!mayDirectCrew(app.db, repo, participant.value)) return err("forbidden");
+  // A run costs: only a proven account may start one.
+  if (!requireVerified(app, participant.value).ok) return err("unverified");
   const trimmed = text.trim();
   const firstLine = trimmed.split(/\n/)[0]!.trim();
   const title =

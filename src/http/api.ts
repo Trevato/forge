@@ -21,6 +21,8 @@ import {
   suspendAccount,
   unsuspendAccount,
 } from "../actions/accounts.ts";
+import { resendVerification } from "../actions/verify.ts";
+import { emailVerified } from "../core/verify.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { spawnDoor } from "../spawn/door.ts";
@@ -992,8 +994,27 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("GET", "/api/v1/user", (ctx) =>
-    ctx.auth.user ? json(publicUser(ctx.auth.user)) : unauthorized(),
+    ctx.auth.user
+      ? json({
+          ...publicUser(ctx.auth.user),
+          emailVerified: emailVerified(ctx.app.db, ctx.auth.user.id),
+        })
+      : unauthorized(),
   );
+
+  // Another verification link for the signed-in account; rate limited.
+  router.add("POST", "/api/v1/user/email/verify", async (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    const sent = await resendVerification(ctx.app, ctx.auth.user);
+    if (sent.ok)
+      return json({ outcome: sent.value }, sent.value === "sent" ? 202 : 200);
+    if (sent.error === "unauthorized") return unauthorized();
+    if (sent.error === "too_soon")
+      return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
+    if (sent.error === "no_mail")
+      return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+    return apiError("failed", 502, "the link could not be sent; try again");
+  });
 
   router.add("PATCH", "/api/v1/user", async (ctx) => {
     const denied = requireAccount(ctx, { adminToken: true });

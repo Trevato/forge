@@ -54,7 +54,7 @@ describe("a grant", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-run-secrets-"));
     app = createApp({ dataDir, port: 0 });
-    const u = await createUser(app.db, {
+    const u = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.test",
       password: "a-good-passphrase",
