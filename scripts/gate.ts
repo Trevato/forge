@@ -127,6 +127,7 @@ export const GATE: readonly string[] = [
   "test/diff-edge-cases.test.ts",
   "test/diff.test.ts",
   "test/edge-auth.test.ts",
+  "test/edit-words.test.ts",
   "test/edits-security.test.ts",
   "test/edits.test.ts",
   "test/event-audience.test.ts",

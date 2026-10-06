@@ -246,8 +246,7 @@ function editForm(issue: Issue, action: string): Html {
         data-grow
         maxlength="${MAX_BODY}"
       >
-${issue.body}</textarea
-      >
+${issue.body}</textarea>
       <div class="form-actions">
         <span class="muted small">Markdown, as in a comment.</span>
         <span class="spacer"></span>

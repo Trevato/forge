@@ -350,9 +350,10 @@ const TOOLS: readonly Tool[] = [
     run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const issue = getIssue(ctx.app.db, repo.id, Number(args["number"]));
-      if (issue === undefined)
-        return bad("not_found", "no issue or pull by that number");
+      // The same door the plan tools use for an issue by number, so what
+      // it comes to refuse (a sealed one, say) is refused here too.
+      const issue = issueArg(ctx, repo, args, "number");
+      if ("ok" in issue) return issue;
       const edited = editIssue(ctx.app, user, repo, issue, {
         title: typeof args["title"] === "string" ? args["title"] : undefined,
         body: typeof args["body"] === "string" ? args["body"] : undefined,

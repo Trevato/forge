@@ -2451,17 +2451,28 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = input.state === undefined ? undefined : str(input.state);
       if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      if (wanted === undefined && text.title === undefined && text.body === undefined)
+      if (
+        wanted === undefined &&
+        text.title === undefined &&
+        text.body === undefined
+      )
         return NOTHING_TO_CHANGE();
       let issue = found.issue;
       if (text.title !== undefined || text.body !== undefined) {
-        const edited = editIssue(ctx.app, ctx.auth.user, found.repo, issue, text);
+        const edited = editIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          text,
+        );
         if (!edited.ok) return originAware(edited.error, 422);
         issue = edited.value;
       }
       if (wanted !== undefined) {
         const closing = closingFrom(input);
-        if (closing === undefined) return json({ error: "invalid_reason" }, 422);
+        if (closing === undefined)
+          return json({ error: "invalid_reason" }, 422);
         const changed = await setIssueStateThrough(
           ctx.app,
           ctx.auth.user,
@@ -2579,7 +2590,11 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = input.state === undefined ? undefined : str(input.state);
       if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      if (wanted === undefined && text.title === undefined && text.body === undefined)
+      if (
+        wanted === undefined &&
+        text.title === undefined &&
+        text.body === undefined
+      )
         return NOTHING_TO_CHANGE();
       if (text.title !== undefined || text.body !== undefined) {
         const edited = editIssue(
