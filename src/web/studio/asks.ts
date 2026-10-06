@@ -670,7 +670,7 @@ export function askLinesFor(
       return {
         ...about,
         line: `${row.repo.name}: ${rowLine(row.kind, row.items.length)}`,
-        link: `/asks#${askAnchor(row.id)}`,
+        link: `/#${askAnchor(row.id)}`,
       };
     const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
     if (only.kind === "paused")

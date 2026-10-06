@@ -27,6 +27,7 @@ import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
+import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -245,7 +246,7 @@ export function terminalCard(ctx: Ctx): Html {
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return studioDoor(ctx);
-  return await studioHome(ctx, user);
+  return await studioHome(ctx, user, homeTop(ctx));
 }
 
 // ---- authentication ----
