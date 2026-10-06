@@ -11,6 +11,7 @@
 
 import type { App } from "../app.ts";
 import { listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
+import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
 
@@ -62,7 +63,7 @@ export async function forgeState(
   const parent =
     spawned.statusHash !== undefined &&
     shown !== undefined &&
-    sha256(shown) === spawned.statusHash;
+    timingSafeEqual(Buffer.from(sha256(shown)), Buffer.from(spawned.statusHash));
   if (!parent) return { claimed, lastActivityAt: null };
   // Anything that happened: an event, a tell or a change touched, a run,
   // an account made (the claim is one).
@@ -103,10 +104,51 @@ async function probe(app: App, child: Child): Promise<ForgeState | undefined> {
   }
 }
 
-/** Every child this forge sent, newest first, each asked how it is, all at once. */
+interface Heard {
+  readonly state: ForgeState | undefined;
+  readonly at: number;
+}
+
+/** What each child last said, so the list answers at once. */
+const heard = new WeakMap<App, Map<string, Heard>>();
+/** Asked again at most this often, however often the list is opened. */
+const FRESH_MS = 1500;
+const asking = new WeakMap<App, Map<string, Promise<ForgeState | undefined>>>();
+
+function ask(app: App, child: Child): Promise<ForgeState | undefined> {
+  let pending = asking.get(app);
+  if (!pending) asking.set(app, (pending = new Map()));
+  const already = pending.get(child.name);
+  if (already) return already;
+  const asked = probe(app, child).then((state) => {
+    let known = heard.get(app);
+    if (!known) heard.set(app, (known = new Map()));
+    known.set(child.name, { state, at: Date.now() });
+    pending.delete(child.name);
+    return state;
+  });
+  pending.set(child.name, asked);
+  return asked;
+}
+
+/**
+ * Every child this forge sent, newest first. A child never heard from is
+ * asked now (all at once, each for at most two seconds); one heard from
+ * before answers from what it said, and is asked again in the background
+ * when that is no longer fresh, so the list never waits on a known child.
+ */
 export async function clientRows(app: App): Promise<ClientRow[]> {
   const children = await listChildren(app);
-  const states = await Promise.all(children.map((c) => probe(app, c)));
+  const known = heard.get(app);
+  const now = Date.now();
+  const states = await Promise.all(
+    children.map((c) => {
+      const last = known?.get(c.name);
+      if (last === undefined) return ask(app, c);
+      if (now - last.at > FRESH_MS) void ask(app, c);
+      return last.state;
+    }),
+  );
   return children
     .map((c, i) => ({
       name: c.name,

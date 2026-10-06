@@ -182,7 +182,7 @@ function formView(
           </label>
         </fieldset>
         ${formField({
-          label: "Model key (optional)",
+          label: values.hadKey ? "Model key" : "Model key (optional)",
           name: "modelKey",
           type: "password",
           autocomplete: "off",
@@ -254,6 +254,23 @@ function planView(ctx: Ctx, values: Values, body: Record<string, unknown>): Html
 }
 
 /** The answer to a spawn: the link, once. */
+/** The claim link, shown once: what to do with it, and a way to copy it. */
+export function claimLinkBody(link: string, note?: string): Html {
+  return html`<p class="mb">
+      Send this link to the person it is for. It works once, for a day, and
+      is shown only now.
+    </p>
+    <p class="muted small mb">
+      Send it as you would a password: to them alone, not to a group.
+    </p>
+    <p class="claim-link-box"><code class="mono" id="claim-link">${link}</code></p>
+    <p class="mt">
+      ${btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" })}
+      ${btn("Forges you sent", { href: "/forges", size: "sm" })}
+    </p>
+    ${note === undefined ? null : html`<p class="small mt">${note}</p>`}`;
+}
+
 function madeView(body: Record<string, unknown>): Html {
   const link = body["claimUrl"];
   const note = body["keyNote"];
@@ -264,21 +281,7 @@ function madeView(body: Record<string, unknown>): Html {
     )}
     ${card(
       typeof link === "string"
-        ? html`<p class="mb">
-              Send this link to the person it is for. It works once, for a day,
-              and is shown only now.
-            </p>
-            <p class="muted small mb">
-              Send it as you would a password: to them alone, not to a group.
-            </p>
-            <p class="claim-link-box"><code class="mono" id="claim-link">${link}</code></p>
-            <p class="mt">
-              ${btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" })}
-              ${btn("Forges you sent", { href: "/forges", size: "sm" })}
-            </p>
-            ${typeof note === "string"
-              ? html`<p class="small mt">${note}</p>`
-              : null}`
+        ? claimLinkBody(link, typeof note === "string" ? note : undefined)
         : html`<p>
             It was made before, so its link is not shown again. Ask for a new
             one if it was lost.

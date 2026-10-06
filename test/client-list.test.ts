@@ -201,6 +201,29 @@ describe("the client list", () => {
     expect(html).not.toContain(claimUrl.split("#")[1]!);
   });
 
+  test("an unclaimed row offers a fresh link: it replaces the old one, shown once; only an admin may ask", async () => {
+    const html = (await (await list(admin)).text()).replace(/\s+/g, " ");
+    const maria = html.slice(html.indexOf('data-forge="maria"'), html.indexOf("</li>", html.indexOf('data-forge="maria"')));
+    expect(maria).toContain('action="/forges/maria/claim-link"');
+    const lou = html.slice(html.indexOf('data-forge="lou"'), html.indexOf("</li>", html.indexOf('data-forge="lou"')));
+    // Whether lou was claimed is unknown, so it offers nothing to send.
+    expect(lou).not.toContain("claim-link");
+    const fresh = (cookie: string) =>
+      fetch(`${parentServers.url}/forges/maria/claim-link`, {
+        method: "POST",
+        headers: { cookie, origin: "https://forge.test" },
+        redirect: "manual",
+      });
+    expect((await fresh(reader)).status).toBe(404);
+    const res = await fresh(admin);
+    expect(res.status).toBe(201);
+    expect(res.headers.get("cache-control")).toContain("no-store");
+    const link = /https:\/\/maria\.forge\.test\/claim#[A-Za-z0-9_-]{43}/.exec(await res.text())?.[0];
+    expect(link).toBeDefined();
+    expect(link).not.toBe(claimUrl);
+    claimUrl = link!;
+  });
+
   test("once claimed, the row says so, and the MCP tool answers the same rows", async () => {
     const claimed = await fetch(`${childServers.url}/claim`, {
       method: "POST",
@@ -214,10 +237,16 @@ describe("the client list", () => {
       redirect: "manual",
     });
     expect(claimed.status).toBe(303);
-    const html = (await (await list(admin)).text()).replace(/\s+/g, " ");
-    expect(html.slice(html.indexOf('data-forge="maria"'))).toMatch(
-      /data-claimed="yes"/,
-    );
+    // The list answers at once from what it last heard and asks again in
+    // the background: the claim shows within a moment, not necessarily now.
+    let row = "";
+    for (let i = 0; i < 40 && !row.includes('data-claimed="yes"'); i++) {
+      const html = (await (await list(admin)).text()).replace(/\s+/g, " ");
+      row = html.slice(html.indexOf('data-forge="maria"'), html.indexOf("</li>", html.indexOf('data-forge="maria"')));
+      if (!row.includes('data-claimed="yes"')) await Bun.sleep(100);
+    }
+    expect(row).toMatch(/data-claimed="yes"/);
+    expect(row).not.toContain("claim-link");
     const tool = (await (await mcp(adminRw)).json()) as any;
     const value = JSON.parse(tool.result.content[0].text);
     const rows = Object.fromEntries(value.forges.map((f: any) => [f.name, f]));

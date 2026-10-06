@@ -11,7 +11,10 @@ import { clientRows, type ClientRow } from "../../spawn/clients.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
+import { reissueDoor } from "../../spawn/door.ts";
+import { readForm } from "../form.ts";
 import { btn, card, empty, time } from "../ui.ts";
+import { claimLinkBody } from "./new-forge.ts";
 
 const STATE: Record<"yes" | "no" | "unknown" | "making", string> = {
   yes: "Claimed",
@@ -36,9 +39,9 @@ function forgeRow(r: ClientRow): Html {
       : html`last activity ${time(r.lastActivityAt)}`,
   ].filter((m): m is Html => m !== null);
   return html`<li data-forge="${r.name}" data-claimed="${state}">
-    <a class="row" href="${r.url}">
+    <div class="row">
       <span class="row-main">
-        <span class="row-title">${r.name}</span>
+        <a class="row-title" href="${r.url}">${r.name}</a>
         <span class="row-meta"
           >${meta.map((m, i) => html`${i > 0 ? " · " : ""}${m}`)}</span
         >
@@ -49,9 +52,13 @@ function forgeRow(r: ClientRow): Html {
           ${state === "unknown" ? html`title="It did not answer just now"` : null}
           ${state === "yes" ? html`data-tone="accent"` : null}
           >${STATE[state]}</span
-        ></span
+        >${state === "no"
+          ? html`<form method="post" action="/forges/${r.name}/claim-link">
+              ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}
+            </form>`
+          : null}</span
       >
-    </a>
+    </div>
   </li>`;
 }
 
@@ -88,4 +95,34 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
           )}
     </div>`,
   });
+}
+
+// POST /forges/:name/claim-link — a fresh link for an unclaimed child; the
+// old one stops working. Shown once, in this answer only.
+export async function forgeLinkSubmit(ctx: Ctx): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user?.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const name = ctx.params["name"] ?? "";
+  const door = await reissueDoor(ctx, user, name);
+  const link = door.body["claimUrl"];
+  const response = page(
+    {
+      ctx,
+      title: "A fresh link",
+      body: html`<div class="narrow-wide">
+        ${pageHead(typeof link === "string" ? `A fresh link for ${name}` : `No fresh link for ${name}`)}
+        ${card(
+          typeof link === "string"
+            ? claimLinkBody(link)
+            : html`<p>${String(door.body["message"] ?? "")}</p>
+                <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>`,
+        )}
+      </div>`,
+    },
+    door.status,
+  );
+  response.headers.set("cache-control", "no-store");
+  return response;
 }
