@@ -267,6 +267,37 @@ describe("new words for an issue or a pull", () => {
       error: "not_found",
     });
     expect(words(hidden).title).toBe("The combination");
+    // A sealed report on the public garden is, to a reader, not there.
+    const sealed = openIssue(app, alice, repo, {
+      title: "A hole in the fence",
+      sealed: true,
+    });
+    if (!sealed.ok) throw new Error(String(sealed.error));
+    expect(
+      (
+        await patch(
+          tokens["bob"]!,
+          `/alice/garden/issues/${sealed.value.number}`,
+          {
+            title: "x",
+          },
+        )
+      ).status,
+    ).toBe(404);
+    expect(editIssue(app, bob, repo, sealed.value, { title: "x" })).toEqual({
+      ok: false,
+      error: "not_found",
+    });
+    expect(
+      (
+        await mcp(tokens["bob"]!, {
+          repo: "alice/garden",
+          number: sealed.value.number,
+          title: "x",
+        })
+      ).error,
+    ).toBeDefined();
+    expect(words(sealed.value).title).toBe("A hole in the fence");
   });
 
   test("an agent edits only what it wrote: its own pull, never a person's issue", async () => {

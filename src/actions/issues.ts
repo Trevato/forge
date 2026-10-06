@@ -18,7 +18,7 @@
  * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
-import { canSeeSealed, setSealed } from "../core/sealed.ts";
+import { canSeeSealed, mayView, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
@@ -144,6 +144,7 @@ export function mayEditIssue(
 ): Result<true, "forbidden" | "taken_up"> {
   if (user === undefined || !canRead(app.db, repo, user))
     return err("forbidden");
+  if (!mayView(app.db, repo, issue, user)) return err("forbidden");
   if (user.id !== issue.authorId)
     return user.kind !== "agent" && canWrite(app.db, repo, user)
       ? ok(true)
@@ -191,6 +192,8 @@ export function editIssue(
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
+  // A sealed issue is, to anyone it is sealed from, not there.
+  if (!mayView(app.db, repo, issue, user.value)) return err("not_found");
   const may = mayEditIssue(app, repo, issue, user.value);
   if (!may.ok) return may;
   if (isMirror(app, repo)) return err("mirrored");
