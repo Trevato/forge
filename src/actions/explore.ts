@@ -17,7 +17,12 @@
 
 import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
-import { frontScore, frontSignals, type FrontSignals } from "../core/front.ts";
+import {
+  frontScore,
+  frontSignals,
+  frontWeights,
+  type FrontSignals,
+} from "../core/front.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { listChildren } from "./spawn.ts";
@@ -142,6 +147,7 @@ export async function explore(
       );
     },
   );
+  const weights = frontWeights(db);
   const signals = frontSignals(
     db,
     appRepos.map((r) => r.id),
@@ -174,7 +180,7 @@ export async function explore(
         apps: 1,
       },
       shippedAt: s.shippedAt,
-      score: frontScore(s, now),
+      score: frontScore(s, now, weights),
       repo: { owner: repo.ownerName, name: repo.name },
     };
   });

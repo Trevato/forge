@@ -169,17 +169,19 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   // On a spawned forge the apps are the client's org's: the everyday
   // account writes to it, or it could not open or tell the crew anything.
   const spawned = await spawnedOrg(ctx.app);
-  const joined =
-    !spawned || joinAsWriter(ctx.app.db, spawned.org, made.value);
+  if (spawned && !joinAsWriter(ctx.app.db, spawned.org, made.value))
+    // Signed in as it, the account would see nothing: the admin stays, at
+    // the org's teams, where the one fix is.
+    return flashTo(ctx, `/${spawned.org.username}#teams`, {
+      tone: "danger",
+      message: `${made.value.username} was made but could not join ${spawned.org.username}: add it to a team that writes there, then sign in as it.`,
+    });
   const session = createSession(ctx.app.db, made.value.id);
   return redirect("/", {
     cookie: sessionCookie(session.token, session.expiresAt, ctx.url),
     url: ctx.url,
     flash: {
-      message: joined
-        ? `You are signed in as ${made.value.username}, your everyday account. Sign in as ${admin.username} when you mean to change the forge.`
-        : `You are signed in as ${made.value.username}, your everyday account, but it could not join ${spawned?.org.username ?? "your organisation"}: add it to a team that writes there, as ${admin.username}.`,
-      ...(joined ? {} : { tone: "danger" as const }),
+      message: `You are signed in as ${made.value.username}, your everyday account. Sign in as ${admin.username} when you mean to change the forge.`,
     },
   });
 }
