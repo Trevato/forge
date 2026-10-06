@@ -33,6 +33,7 @@ import {
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
+  forkParentFor,
   getForkOf,
   getRepoById,
   type Repo,
@@ -774,9 +775,10 @@ async function work(
               .filter((f) => f !== "")
           : undefined,
       following:
-        reason === "converge" && repo.forkParentId !== null
+        reason === "converge"
           ? (() => {
-              const parent = getRepoById(app.db, repo.forkParentId);
+              // Only a parent the agent may read is put in its brief.
+              const parent = forkParentFor(app.db, repo, agent.user);
               return parent === undefined
                 ? undefined
                 : {

@@ -33,6 +33,7 @@ import {
 } from "./flash.ts";
 import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
+import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
 import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
@@ -184,12 +185,20 @@ function asksLink(ctx: Ctx): Html {
   >`;
 }
 
-function newMenu(): Html {
+/** A whole forge for someone (`/forges/new`): an admin's verb only. */
+const NEW_FORGE: MenuItem = { label: "New forge", href: "/forges/new", icon: "fork" };
+
+/** The door shows only to an admin, and only while a child still fits here. */
+const sendsForges = (ctx: Ctx): boolean =>
+  ctx.auth.user?.isAdmin === true && noRoom(ctx.app) === undefined;
+
+function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
+    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
   ];
   return menu({
     trigger: icon("plus"),
@@ -200,7 +209,7 @@ function newMenu(): Html {
   });
 }
 
-function userMenu(user: User, signOut: MenuItem): Html {
+function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
   const items: MenuItem[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
@@ -213,6 +222,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
+    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
@@ -336,6 +346,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
       c: studio ? "Apps" : "Repositories",
     })),
     ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
+    ...(sendsForges(ctx) ? [{ t: "New forge", h: "/forges/new", c: "Create" }] : []),
   ];
   // `studio` rides along so the palette's *remote* rows — what the search
   // API found, folded in the browser — build the same addresses the server
@@ -459,7 +470,8 @@ function topbar(
           ctx,
         )}${themeMenu(theme)}
         ${user
-          ? html`<span class="hide-sm">${newMenu()}</span>${userMenu(
+          ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
+                ctx,
                 user,
                 ctx.auth.via === "edge"
                   ? {

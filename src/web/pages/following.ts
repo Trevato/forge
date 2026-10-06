@@ -18,11 +18,11 @@ import {
 } from "../../actions/forks.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import {
-  canWrite,
-  getRepoById,
-  visibleForks,
-  type Repo,
   canRead,
+  canWrite,
+  forkParentFor,
+  type Repo,
+  visibleForks,
 } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -313,10 +313,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const base = repoBase(repo);
-  const parent =
-    repo.forkParentId === null
-      ? undefined
-      : getRepoById(ctx.app.db, repo.forkParentId);
+  const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
   if (parent === undefined)
     return flashOrJson(ctx, base, {
       tone: "danger",

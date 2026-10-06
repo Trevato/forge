@@ -29,7 +29,7 @@
 const DEFAULT_LIMIT = 600;
 /** Admin tokens run the fleet; they get their own, larger allowance. */
 const DEFAULT_ADMIN_LIMIT = 6_000;
-/** The window every limit is expressed over. */
+/** The window a limit is counted over unless its `RateLimits` say otherwise. */
 export const WINDOW_MS = 60_000;
 
 const positive = (raw: string | undefined, fallback: number): number => {
@@ -38,10 +38,13 @@ const positive = (raw: string | undefined, fallback: number): number => {
 };
 
 export interface RateLimits {
+  /** Requests allowed per window: per minute, unless `windowMs` says otherwise. */
   readonly perMinute: number;
   readonly adminPerMinute: number;
   /** `false` turns the limiter off entirely (FORGE_RATE_LIMIT=0). */
   readonly enabled: boolean;
+  /** The window's length, for a limit counted over more than a minute. */
+  readonly windowMs?: number;
 }
 
 /**
@@ -90,11 +93,14 @@ export class RateLimiter {
   /** Key → the timestamps still inside the window, oldest first. */
   private readonly hits = new Map<string, number[]>();
   private lastSweep = 0;
+  private readonly windowMs: number;
 
   constructor(
     private readonly limits: RateLimits = limitsFromEnv(),
     private readonly now: () => number = Date.now,
-  ) {}
+  ) {
+    this.windowMs = limits.windowMs ?? WINDOW_MS;
+  }
 
   get enabled(): boolean {
     return this.limits.enabled;
@@ -110,7 +116,7 @@ export class RateLimiter {
     const limit =
       scope === "admin" ? this.limits.adminPerMinute : this.limits.perMinute;
     const at = this.now();
-    const floor = at - WINDOW_MS;
+    const floor = at - this.windowMs;
 
     const times = this.hits.get(key) ?? [];
     // The window slid; drop what fell out of it. Times are appended in order,
@@ -123,13 +129,13 @@ export class RateLimiter {
 
     if (live.length >= limit) {
       const oldest = live[0] ?? at;
-      const waitMs = Math.max(0, oldest + WINDOW_MS - at);
+      const waitMs = Math.max(0, oldest + this.windowMs - at);
       this.hits.set(key, live);
       return {
         allowed: false,
         limit,
         remaining: 0,
-        reset: Math.ceil((oldest + WINDOW_MS) / 1000),
+        reset: Math.ceil((oldest + this.windowMs) / 1000),
         retryAfter: Math.max(1, Math.ceil(waitMs / 1000)),
       };
     }
@@ -140,7 +146,7 @@ export class RateLimiter {
       allowed: true,
       limit,
       remaining: limit - live.length,
-      reset: Math.ceil((at + WINDOW_MS) / 1000),
+      reset: Math.ceil((at + this.windowMs) / 1000),
       retryAfter: 0,
     };
   }
@@ -151,9 +157,9 @@ export class RateLimiter {
    * is unbounded, and a fleet mints tokens.
    */
   private sweep(at: number): void {
-    if (at - this.lastSweep < WINDOW_MS) return;
+    if (at - this.lastSweep < this.windowMs) return;
     this.lastSweep = at;
-    const floor = at - WINDOW_MS;
+    const floor = at - this.windowMs;
     for (const [key, times] of this.hits) {
       if ((times[times.length - 1] ?? 0) <= floor) this.hits.delete(key);
     }
