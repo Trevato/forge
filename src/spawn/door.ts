@@ -42,6 +42,11 @@ function placementFor(app: App): Placement {
   return p;
 }
 
+/** Why this forge can hold no child right now, or undefined when it can. */
+export function noRoom(app: App): string | undefined {
+  return placementFor(app).room?.()?.message;
+}
+
 /** One status and one sentence per kind of failure. */
 export function spawnWords(e: SpawnError): Door {
   const say = (status: number, error: string, message: string): Door => ({

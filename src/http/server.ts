@@ -151,6 +151,7 @@ import {
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
@@ -498,6 +499,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
   router.add("GET", "/claim/:token", claimPage);
+  // "+ New forge": the spawn door as a page, an admin's only (spawn/door.ts).
+  router.add("GET", "/forges/new", newForgePage);
+  router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/claim/:token", claimSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).

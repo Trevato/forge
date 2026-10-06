@@ -16,6 +16,8 @@ import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { usePlacement } from "../src/spawn/door.ts";
+import { hostedPlacement } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -43,7 +45,8 @@ describe("+ New forge", () => {
   const post = (
     cookie: string,
     form: [string, string][],
-    origin = servers.url,
+    // The forge's own origin is its configured address.
+    origin = "https://forge.test",
   ) =>
     fetch(url("/forges/new"), {
       method: "POST",
@@ -157,7 +160,7 @@ describe("+ New forge", () => {
     ]);
     expect(bad.status).toBe(422);
     const html = await bad.text();
-    expect(html).toMatch(/id="err-name"[^>]*>[^<]*name must be/);
+    expect(html).toMatch(/id="f-name-err"[^>]*>[^<]*name must be/);
     const key = await post(admin, [
       ["name", "kai"],
       ["apps", "alice/bakery"],
@@ -167,7 +170,7 @@ describe("+ New forge", () => {
     ]);
     expect(key.status).toBe(422);
     expect(await key.text()).toMatch(
-      /id="err-modelKey"[^>]*>[^<]*a subscription token is a person/,
+      /id="f-modelKey-err"[^>]*>[^<]*a subscription token is a person/,
     );
   });
 
@@ -192,5 +195,13 @@ describe("+ New forge", () => {
       ["do", "spawn"],
     ]);
     expect(await again.text()).not.toMatch(/claim#[A-Za-z0-9_-]{43}/);
+  });
+
+  test("a forge at its depth limit shows no door, and its page says why", async () => {
+    usePlacement(app, hostedPlacement({ host: "forge.test", depth: 2 }));
+    expect(await (await get(admin, "/")).text()).not.toContain('href="/forges/new"');
+    const html = await (await get(admin, "/forges/new")).text();
+    expect(html).toContain("cannot hold another child");
+    expect(html).not.toContain('action="/forges/new"');
   });
 });
