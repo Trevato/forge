@@ -140,6 +140,20 @@ describe("the everyday account", () => {
     expect(everydayOf(app.db, getUserByName(app.db, "ada")!)).toBeUndefined();
   });
 
+  test("a reserved name makes nothing (#720): a page's, or another admin's; the admin's own stays theirs", async () => {
+    const root = await signIn("ada");
+    for (const username of ["settings", "bea-me"]) {
+      const res = await post(root, "/settings/everyday", {
+        username,
+        email: `${username}@x.test`,
+        password: PASSWORD,
+      });
+      expect(res.status).toBe(303);
+      expect(getUserByName(app.db, username)).toBeUndefined();
+    }
+    expect(everydayOf(app.db, getUserByName(app.db, "ada")!)).toBeUndefined();
+  });
+
   test("Make it: an ordinary account, linked both ways, and the person is signed in as it", async () => {
     const root = await signIn("ada");
     const res = await post(root, "/settings/everyday", {

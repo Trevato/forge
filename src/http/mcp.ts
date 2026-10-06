@@ -174,6 +174,20 @@ const APP_ARG = {
   description: "The app, as owner/name.",
 } as const;
 
+// A child's claim link is a live secret: whoever holds it takes the child.
+// It stays out of an agent's conversation unless asked for there on purpose
+// (#839); a person admin of this forge gets a fresh one on /forges, in their
+// own browser, and hands it over.
+const REVEAL_ARG = {
+  type: "boolean",
+  description:
+    "Put the live claim link in this answer, and so in this conversation (default false). Only when the person it is for is reading this conversation.",
+} as const;
+const LINK_KEPT =
+  "The claim link is a secret, so it is not in this conversation: a person admin of this forge gets a fresh one on /forges (Send a fresh link) and hands it to the child's person. Send reveal: true only to have it here on purpose.";
+const LINK_REVEALED =
+  "claimUrl is a live secret, now in this conversation: whoever holds it takes the child. Hand it only to the child's person; the secret is in its #fragment, so send it whole.";
+
 /** The app a plan tool names, under `app`, read like any repository. */
 const planRepo = (ctx: Ctx, user: User, args: Args): Repo | Answer =>
   repoArg(ctx, user, { repo: args["app"] });
@@ -734,7 +748,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make. A made child comes back with `claimUrl`, shown once: the link that hands the child to its person.",
+      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make. A made child's claim link, the secret that hands it to its person, stays out of this conversation: its person gets a fresh one on /forges. Send `reveal: true` only to have the link here on purpose.",
     inputSchema: {
       type: "object",
       properties: {
@@ -766,6 +780,7 @@ const TOOLS: readonly Tool[] = [
           type: "boolean",
           description: "Plan only (the default). Send false to make the child.",
         },
+        reveal: REVEAL_ARG,
       },
       required: ["name"],
     },
@@ -782,11 +797,14 @@ const TOOLS: readonly Tool[] = [
       if (door.status >= 400)
         return bad(String(door.body["error"]), String(door.body["message"]));
       const made = door.body["dryRun"] === false;
+      const { claimUrl, ...rest } = door.body;
+      const reveal = args["reveal"] === true && typeof claimUrl === "string";
       return good({
-        says: made
-          ? `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}.`
-          : "This is the plan; nothing was made. Send dryRun: false to spawn.",
-        ...door.body,
+        says: !made
+          ? "This is the plan; nothing was made. Send dryRun: false to spawn."
+          : `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}. ${reveal ? LINK_REVEALED : LINK_KEPT}`,
+        ...rest,
+        ...(reveal ? { claimUrl } : {}),
       });
     },
   },
@@ -812,20 +830,23 @@ const TOOLS: readonly Tool[] = [
   {
     name: "claim_link",
     description:
-      "A new claim link for a child forge you spawned that nobody has claimed yet; the old link stops working at once. Only an admin of this forge, and never for a claimed child. The secret is in the link's #fragment: send the link whole.",
+      "A new claim link for a child forge nobody has claimed yet; the old link stops working at once. Any admin of this forge may re-issue, never for a claimed child. The link is a secret, so this changes nothing unless you send `reveal: true`: without it, the answer says where the child's person gets a fresh link without it passing through this conversation.",
     inputSchema: {
       type: "object",
       properties: {
         name: { type: "string", description: "The child's name, as spawned." },
+        reveal: REVEAL_ARG,
       },
       required: ["name"],
     },
     writes: true,
     async run(ctx, user, args) {
+      if (args["reveal"] !== true)
+        return good({ says: `Nothing changed. ${LINK_KEPT}`, reissued: false });
       const door = await reissueDoor(ctx, user, str(args["name"]));
       if (door.status >= 400)
         return bad(String(door.body["error"]), String(door.body["message"]));
-      return good(door.body);
+      return good({ says: LINK_REVEALED, ...door.body });
     },
   },
   {

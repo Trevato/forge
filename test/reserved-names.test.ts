@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createOrg } from "../src/actions/orgs.ts";
+import { createOrg as foundOrg } from "../src/core/orgs.ts";
 import { signUp, updateProfile } from "../src/actions/users.ts";
 import { reservedName, SYSTEM_NAMES, skeleton } from "../src/core/reserved.ts";
 import {
@@ -316,6 +317,34 @@ describe("reserved names", () => {
       allowReserved: true,
     });
     expect(seeded.ok).toBe(true);
+  });
+
+  test("an organization is held where it is made (#720): the API refuses, and a seed opts out by name", async () => {
+    const ada = getUserByName(app.db, "ada")!;
+    // The core that makes orgs holds the rule itself, so a caller that
+    // forgets to ask (a spawned forge, an import) cannot found one.
+    const bare = foundOrg(app.db, "sc0ut-crew", ada.id);
+    expect(bare.ok).toBe(false);
+    if (!bare.ok) expect(bare.error).toBe("name_reserved");
+    expect(foundOrg(app.db, "security", ada.id, { allowReserved: true }).ok).toBe(true);
+    // The API door, as a signed-in person.
+    const signin = await fetch(`${base}/signin`, {
+      method: "POST",
+      headers: { origin: base },
+      body: new URLSearchParams({ username: "ada", password: "outsider-passphrase" }),
+      redirect: "manual",
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(cookie).toContain("=");
+    for (const name of ["trevat0", "scout-bot", "settings"]) {
+      const res = await fetch(`${base}/api/v1/orgs`, {
+        method: "POST",
+        headers: { cookie, origin: base, "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      expect(`${name} ${res.status}`).toBe(`${name} 422`);
+      expect(getUserByName(app.db, name)).toBeUndefined();
+    }
   });
 
   test("a display name is judged as it is stored, after the cut", () => {

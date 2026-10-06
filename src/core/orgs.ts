@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { reservedName } from "./reserved.ts";
 import { getUserById, getUserByName, type User } from "./users.ts";
 
 export type Permission = "read" | "write" | "admin";
@@ -38,17 +39,26 @@ interface TeamRow {
 
 export const OWNERS_TEAM = "Owners";
 
-export type CreateOrgError = "invalid_name" | "name_taken";
+export type CreateOrgError = "invalid_name" | "name_taken" | "name_reserved";
 
-/** Create an org and its Owners team, with `founderId` as the first owner. */
+/**
+ * Create an org and its Owners team, with `founderId` as the first owner.
+ * An org shares the account namespace, so it is held to the reserved-name
+ * rule here, where orgs are made (#720); `allowReserved` is a seed's named
+ * opt-out (a spawned forge's own org), never a default.
+ */
 export function createOrg(
   db: Database,
   name: string,
   founderId: string,
+  options: { allowReserved?: boolean } = {},
 ): Result<User, CreateOrgError> {
   if (!isSafeName(name)) return err("invalid_name");
   // Users and orgs share one namespace, so any collision is a conflict.
   if (getUserByName(db, name)) return err("name_taken");
+  // Taken is said first; only a name nobody holds can be a reserved one.
+  if (options.allowReserved !== true && reservedName(db, name) !== undefined)
+    return err("name_reserved");
 
   const orgId = id();
   const create = db.transaction(() => {
