@@ -604,6 +604,10 @@ export interface ListReposOptions {
 // same one and two copies of an access rule is how a forge grows a leak.
 const VISIBLE = REPO_VISIBLE;
 
+/** A listing's order: newest first, or apps first and then newest (`appsFirst`). */
+const newestFirst = (options: ListReposOptions): string =>
+  `${options.appsFirst === true ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, " : ""}repo.id DESC`;
+
 export function listReposVisibleTo(
   db: Database,
   viewer: User | undefined,
@@ -624,11 +628,7 @@ export function listReposVisibleTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY ${
-        options.appsFirst === true
-          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
-          : ""
-      }repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -662,11 +662,7 @@ export function listReposWritableTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY ${
-        options.appsFirst === true
-          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
-          : ""
-      }repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -697,11 +693,7 @@ export function listReposByOwner(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY ${
-        options.appsFirst === true
-          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
-          : ""
-      }repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
