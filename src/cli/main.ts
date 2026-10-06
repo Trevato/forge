@@ -36,7 +36,10 @@ import {
 import { G } from "../tui/term/screen.ts";
 import { trackText } from "../tui/local/common.ts";
 
-/** Kept in step with package.json by hand; the CLI ships compiled. */
+/**
+ * The CLI's own number, kept by hand: it ships compiled, to machines no
+ * release stamps. The server's comes from its build (`kernel/version.ts`).
+ */
 const VERSION = "0.0.1";
 
 export const EXIT = {

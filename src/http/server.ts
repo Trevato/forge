@@ -5,7 +5,11 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
-import { closeStreamsOf, noteCaller } from "./caller.ts";
+import {
+  closeStreamsOf,
+  closeStreamsOfSession,
+  noteCaller,
+} from "./caller.ts";
 import {
   accountAct,
   accountsPage,
@@ -26,7 +30,7 @@ import {
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
-import { sessionUser } from "../core/sessions.ts";
+import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
 import {
@@ -406,8 +410,14 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
-    const user = sessionUser(app.db, session);
-    if (user.ok) return { user: user.value, scope: "admin", via: "session" };
+    const found = sessionOf(app.db, session);
+    if (found.ok)
+      return {
+        user: found.value.user,
+        scope: "admin",
+        via: "session",
+        sessionId: found.value.id,
+      };
   }
 
   const header = request.headers.get("authorization");
@@ -1508,8 +1518,14 @@ export async function serve(app: App): Promise<Servers> {
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
   // An account suspended or removed ends what it has open on this
-  // listener: its event streams and the app sockets it was let into.
+  // listener: its event streams and the app sockets it was let into. A
+  // browser signed out ends the streams it opened.
   const endOpen = app.bus.subscribe((event) => {
+    if (event.kind === "session.ended") {
+      const id = event.payload["sessionId"];
+      if (typeof id === "string") closeStreamsOfSession(id);
+      return;
+    }
     if (event.kind !== "account.suspended" && event.kind !== "account.removed")
       return;
     const name = event.payload["username"];
@@ -1678,7 +1694,7 @@ async function answerGet(
   // a stream this request opens is the account's, to end with it.
   if (auth.user !== undefined) {
     noteSignedIn(request);
-    noteCaller(request, auth.user.id);
+    noteCaller(request, auth.user.id, auth.sessionId);
   }
 
   // The two things standing between one runaway agent and everybody

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents, type ForgeEvent } from "../src/core/events.ts";
 import { getCursor, getOriginById } from "../src/core/origins.ts";
 import { dueOrigins, syncOrigin } from "../src/origins/sync.ts";
@@ -139,7 +138,6 @@ describe("origin sync: incremental, event-shaped, and polite", () => {
         password: PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     // GitHub is discovered by name, so connect by kind and let the fake API
     // stand in for api.github.com.
@@ -402,7 +400,6 @@ describe("a mirror follows the origin's visibility", () => {
         password: PASSWORD,
       }),
     });
-    resetConnectLimit();
     const auth = { authorization: basic("alice", PASSWORD) };
     const connected = await read<{ id: string }>(
       await fetch(`${servers2.url}/api/v1/user/origins`, {

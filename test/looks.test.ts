@@ -22,13 +22,13 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { envDataDir, previewEnv } from "../src/apps/data.ts";
 import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import type { AppRecord } from "../src/core/apps.ts";
+import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
 import { encodePng } from "../src/design/image/png.ts";
 import { setAppMembers } from "../src/core/app_members.ts";
-import type { Pull } from "../src/core/pulls.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { listPulls, type Pull } from "../src/core/pulls.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -866,6 +866,33 @@ describe("the look", () => {
     ).text();
     expect(after).not.toContain("<h2>Look</h2>");
   }, 120_000);
+
+  test("a public app made private after its pictures were taken: a reader gets them no more, and no Look card; its writer still does (#845)", async () => {
+    const gallery = getRepo(app.db, "alice", "gallery")!;
+    const galleryApp = getAppByRepo(app.db, gallery.id)!;
+    const look = looksForEnv(app.db, galleryApp.id, "production").find(
+      (l) => l.kind === "phone" && l.error === null,
+    )!;
+    // Taken as nobody while the app was public.
+    app.db.query(`UPDATE look SET taken_as = 'nobody' WHERE app_id = ?1`).run(galleryApp.id);
+    const at = `/alice/gallery/looks/production/${look.commitOid}/phone.png`;
+    expect((await web(at, bobCookie)).status).toBe(200);
+    const pull = listPulls(app.db, gallery.id, { state: "open" })[0]!;
+    const card = async (cookie: string) =>
+      (await (await web(`/alice/gallery/pulls/${pull.number}`, cookie)).text()).includes("<h2>Look</h2>");
+    expect(await card(bobCookie)).toBe(true);
+    // Made private: the same files, asked again on every fetch.
+    app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(galleryApp.id);
+    try {
+      expect((await web(at, bobCookie)).status).toBe(404);
+      expect((await web(at, "")).status).toBe(404);
+      expect(await card(bobCookie)).toBe(false);
+      expect((await web(at, aliceCookie)).status).toBe(200);
+      expect(await card(aliceCookie)).toBe(true);
+    } finally {
+      app.db.query(`UPDATE app SET access = 'public' WHERE id = ?1`).run(galleryApp.id);
+    }
+  });
 
   test("memory pressure is what the container truly holds, never its page cache", async () => {
     const { cgroupMemoryPressure, memoryPressure } =

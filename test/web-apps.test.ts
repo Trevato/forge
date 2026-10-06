@@ -229,10 +229,10 @@ describe("apps, runs and the crew on the web", () => {
   });
 
   test("the dashboard and /apps list the app with its state and URL", async () => {
+    // The home's rail names your apps and offers New app (#625).
     const dash = await bodyOf(alice, "/");
-    expect(dash).toContain("<h2>Apps</h2>");
+    expect(dash).toContain("<h2>Your apps</h2>");
     expect(dash).toContain("alice/hello");
-    expect(dash).toContain('href="/alice/hello/app/production/open"');
     expect(dash).toContain('href="/apps/new"');
 
     // /apps is the shelf (#630): a row opens the app's page, where its URL

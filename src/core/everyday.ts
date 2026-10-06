@@ -5,12 +5,14 @@
  * can name the other; an admin who chose to keep working as admin has that
  * choice recorded, and is not asked again.
  *
- * Nothing here grants or removes a right: the everyday account is an
- * ordinary user, and the admin stays an admin. It only remembers the pair
- * and the choice, so the forge can say it plainly.
+ * The everyday account is an ordinary user, and the admin stays an admin.
+ * One right is granted, on a spawned forge only: the everyday account
+ * writes to the client's own org (`joinAsWriter`), or "day to day, use this
+ * account" would hand its owner a forge whose apps it cannot see.
  */
 
 import type { Database } from "bun:sqlite";
+import { addTeamMember, createTeam, listTeams } from "./orgs.ts";
 import { getUserSetting, setUserSetting } from "./settings.ts";
 import { getUserById, type User } from "./users.ts";
 
@@ -34,6 +36,22 @@ export function adminOf(db: Database, user: User): User | undefined {
 export function linkEveryday(db: Database, admin: User, everyday: User): void {
   setUserSetting(db, admin.id, EVERYDAY, everyday.id);
   setUserSetting(db, everyday.id, ADMIN, admin.id);
+}
+
+/** The org's writers, made the first time someone joins it this way. */
+export const WRITERS_TEAM = "Writers";
+
+/** Add the everyday account to an org as a writer: never an owner of it. */
+export function joinAsWriter(db: Database, org: User, everyday: User): void {
+  let team = listTeams(db, org.id).find(
+    (t) => t.name === WRITERS_TEAM && t.permission === "write",
+  );
+  if (!team) {
+    const made = createTeam(db, org.id, WRITERS_TEAM, "write");
+    if (!made.ok) return;
+    team = made.value;
+  }
+  addTeamMember(db, team, everyday.id);
 }
 
 /** The admin chose to keep working as admin: recorded, and not asked again. */
