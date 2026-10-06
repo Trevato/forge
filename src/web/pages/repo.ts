@@ -9,7 +9,7 @@
  */
 
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
-import { forkRepo } from "../../actions/repos.ts";
+import { FORKS_PER_DAY, forkRepo } from "../../actions/repos.ts";
 import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import { followingCard, followingOf, lineageCard } from "./following.ts";
@@ -189,7 +189,9 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     const reason =
       forked.error === "name_taken"
         ? "You already have a repository by that name."
-        : "That fork could not be created.";
+        : forked.error === "limit"
+          ? `That is today's forks made (${FORKS_PER_DAY} a day). Try again tomorrow.`
+          : "That fork could not be created.";
     return flashTo(ctx, repoBase(repo), { tone: "danger", message: reason });
   }
   return flashTo(ctx, repoBase(forked.value), {
