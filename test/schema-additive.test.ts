@@ -24,6 +24,21 @@ describe("migrations are additive across a roll", () => {
     expect(
       notAdditive("ALTER TABLE run ADD COLUMN why TEXT NOT NULL;"),
     ).toEqual(["adds a NOT NULL column without a default"]);
+    // The spellings SQLite also accepts: COLUMN left out, a comment
+    // between the words, a quoted name.
+    expect(notAdditive("DROP /* c */ TABLE x;")).toEqual(["drops a table"]);
+    expect(notAdditive("ALTER TABLE t RENAME a TO b;")).toEqual([
+      "renames a table or a column",
+    ]);
+    expect(notAdditive("ALTER TABLE t ADD c INTEGER NOT NULL;")).toEqual([
+      "adds a NOT NULL column without a default",
+    ]);
+    expect(notAdditive("ALTER TABLE t DROP c;")).toEqual(["drops a column"]);
+    expect(notAdditive('ALTER TABLE "my table" DROP COLUMN c;')).toEqual([
+      "drops a column",
+    ]);
+    // A quote inside a comment opens no string that could hide what follows.
+    expect(notAdditive("-- don't\nDROP TABLE x;")).toEqual(["drops a table"]);
     // A table rebuild is a drop and a rename.
     expect(
       notAdditive(

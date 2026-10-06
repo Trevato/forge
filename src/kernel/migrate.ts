@@ -279,9 +279,14 @@ function messageOf(error: unknown): string {
  * data and are not read.
  */
 export function notAdditive(sql: string): string[] {
-  const code = sql
-    .replace(/--[^\n]*/g, " ")
-    .replace(/'(?:[^']|'')*'/g, "''");
+  // One pass, left to right, as SQLite reads it: a string is data, a quoted
+  // name is one word, and either kind of comment is whitespace — whichever
+  // starts first wins, so a quote inside a comment opens nothing.
+  const code = sql.replace(
+    /'(?:[^']|'')*'|"(?:[^"]|"")*"|\/\*[\s\S]*?(?:\*\/|$)|--[^\n]*/g,
+    (token) =>
+      token.startsWith("'") ? "''" : token.startsWith('"') ? "name" : " ",
+  );
   const found: string[] = [];
   const say = (what: string, pattern: RegExp): void => {
     if (pattern.test(code)) found.push(what);
@@ -289,9 +294,11 @@ export function notAdditive(sql: string): string[] {
   say("drops a table", /\bDROP\s+TABLE\b/i);
   say("drops a view", /\bDROP\s+VIEW\b/i);
   say("drops a trigger", /\bDROP\s+TRIGGER\b/i);
-  say("drops a column", /\bDROP\s+COLUMN\b/i);
-  say("renames a table or a column", /\bRENAME\s+(?:TO|COLUMN)\b/i);
-  for (const clause of code.match(/\bADD\s+COLUMN\b[^;]*/gi) ?? [])
+  // `COLUMN` is optional after ALTER TABLE … DROP / RENAME / ADD.
+  const alter = /\bALTER\s+TABLE\s+\S+\s+/i.source;
+  say("drops a column", new RegExp(`${alter}DROP\\b`, "i"));
+  say("renames a table or a column", new RegExp(`${alter}RENAME\\b`, "i"));
+  for (const clause of code.match(new RegExp(`${alter}ADD\\b[^;]*`, "gi")) ?? [])
     if (/\bNOT\s+NULL\b/i.test(clause) && !/\bDEFAULT\b/i.test(clause))
       found.push("adds a NOT NULL column without a default");
   return found;
