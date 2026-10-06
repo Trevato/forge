@@ -17,7 +17,7 @@ import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, seg, timeAgo } from "../ui.ts";
+import { btn, empty, listCard, nameMark, seg, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const line = exploreLine(query);
@@ -41,7 +41,8 @@ function rowHtml(row: ExploreRow): Html {
   const said = numbers(row);
   return html`<li class="row explore-row">
     <span class="explore-main">
-      <a class="explore-name" href="${row.url}">${row.name}</a>
+      <a class="explore-name" href="${row.url}">${row.name}</a
+      >${nameMark(row.mark)}
       ${when(
         row.description,
         (d) => html`<span class="muted small truncate">${d}</span>`,

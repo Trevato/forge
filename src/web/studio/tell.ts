@@ -8,6 +8,7 @@
  */
 
 import { mayEditIssue } from "../../actions/issues.ts";
+import { marksByName } from "../../core/marks.ts";
 import { threadNote } from "../../crew/direct.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -287,6 +288,7 @@ async function studioTell(
     closingPull ? tellClosingPull(ctx, wordCtx, repo, closingPull) : undefined,
   ]);
 
+  const marks = marksByName(db, [issue.authorName, issue.assigneeName ?? ""]);
   const head = html`<div class="issue-head">
     <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
     <div class="issue-meta">
@@ -303,7 +305,7 @@ async function studioTell(
       <span
         >${issue.originAuthor
           ? originTag(issue.originAuthor, originGlyph(repo))
-          : userLink(issue.authorName)}
+          : userLink(issue.authorName, { mark: marks.get(issue.authorName) })}
         opened this ${time(issue.createdAt)}</span
       >
       ${when(
@@ -322,7 +324,10 @@ async function studioTell(
       ${issue.assigneeName !== null
         ? html`<span
             >${when(issue.assigneeIsAgent, () => icon("bot"))}
-            ${userLink(issue.assigneeName)} has it</span
+            ${userLink(issue.assigneeName, {
+              mark: marks.get(issue.assigneeName),
+            })}
+            has it</span
           >`
         : !direction && wordInfo?.word === "told"
           ? html`<span class="muted">nobody has it yet</span>`

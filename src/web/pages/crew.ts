@@ -41,6 +41,7 @@ import {
   userLink,
 } from "../ui.ts";
 import { accountSections } from "./origins.ts";
+import { markOf } from "../../core/marks.ts";
 
 /** The admin, or the response that turns everyone else away. */
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -322,6 +323,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
                       ${icon("bot")}
                       ${userLink(agent.user.username, {
                         avatar: false,
+                        mark: markOf(agent.user),
                       })}
                       ${when(
                         agent.user.displayName !== agent.user.username,

@@ -23,6 +23,7 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { listEvents } from "../../core/events.ts";
+import { markOf, marksByName, type Mark } from "../../core/marks.ts";
 import {
   CLOSE_REASONS,
   type CloseReason,
@@ -182,7 +183,7 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
         icon: look.icon,
         tone: look.tone,
         body: html`${actor
-            ? userLink(actor.username)
+            ? userLink(actor.username, { mark: markOf(actor) })
             : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
@@ -278,11 +279,17 @@ export function conversation(
   // diff, and showing it in both places says the same thing twice.
   const comments = listComments(ctx.app.db, issue.id, { kind: "comment" });
   const glyph = originGlyph(repo);
+  // Who each name is, asked once for the whole thread (`core/marks.ts`).
+  const marks = marksByName(ctx.app.db, [
+    issue.authorName,
+    ...comments.map((c) => c.authorName),
+  ]);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
     node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
+      mark: marks.get(c.authorName),
     }),
   }));
   entries.push(...stateEvents(ctx, repo, issue));
@@ -294,6 +301,7 @@ export function conversation(
     commentCard({
       id: "",
       author: issue.authorName,
+      mark: marks.get(issue.authorName),
       at: issue.createdAt,
       body: issue.body,
       verb: options.openVerb,
@@ -320,12 +328,17 @@ export function threadComment(
   author: string,
   at: string,
   body: string,
-  origin: { originAuthor?: string | null; originKind?: Glyph } = {},
+  origin: {
+    originAuthor?: string | null;
+    originKind?: Glyph;
+    mark?: Mark | undefined;
+  } = {},
 ): Html {
   return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
       id,
       author,
+      mark: origin.mark,
       at,
       body,
       verb: "commented",
@@ -363,10 +376,15 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
     kind: "comment",
   }).filter((c) => c.id > after);
   const glyph = originGlyph(repo);
+  const marks = marksByName(
+    ctx.app.db,
+    fresh.map((c) => c.authorName),
+  );
   const fragment = html`${fresh.map((c) =>
     threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
+      mark: marks.get(c.authorName),
     }),
   )}`;
   return new Response(inlineIcons(fragment.text), {
@@ -603,7 +621,11 @@ export function assigneeCard(
       ? html`<p class="muted small">Nobody yet.</p>`
       : html`<p class="bar">
           ${when(issue.assigneeIsAgent, () => icon("bot"))}
-          ${userLink(issue.assigneeName)}
+          ${userLink(issue.assigneeName, {
+            mark: marksByName(ctx.app.db, [issue.assigneeName]).get(
+              issue.assigneeName,
+            ),
+          })}
         </p>`;
   if (!mayEdit)
     return card(current, {
