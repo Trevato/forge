@@ -735,10 +735,14 @@ slot used to load, so nothing goes blank. Pictures are served at
 `/:owner/:name/looks/<env>/<commit>/<page>-<kind>.png` for another, with the
 repository's own read access, cached by commit.
 
-The picture is what the repository's owner would see: headless Chromium is
-pointed at the forge's own listener with the app's hostname resolved to
-loopback, through the grant door, so the app renders for a signed-in admin
-exactly as when the owner opens it. It is taken as the page loads — what an
+The phone and desktop pictures are what the repository's owner would see:
+headless Chromium is pointed at the forge's own listener with the app's
+hostname resolved to loopback, through the grant door, so the app renders for
+a signed-in admin exactly as when the owner opens it — and they are its
+writers' alone. The thumb is taken as nobody, for the tiles strangers see. A
+public app on a public repository is the world's to see, so all three of its
+pictures are taken as nobody, and a reader of its pulls sees the Look card
+too; each row records who it was `taken_as` (#727, #738). It is taken as the page loads — what an
 app draws after that is not in it — and one at a time, forge-wide, bounded
 in time and memory. A look is best-effort: it never blocks a check or fails
 a run; one that could not be taken is recorded with its reason, and the

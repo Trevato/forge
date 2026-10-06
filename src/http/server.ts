@@ -6,7 +6,12 @@
  */
 
 import { closeStreamsOf, noteCaller } from "./caller.ts";
-import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import {
+  accountAct,
+  accountsPage,
+  personSignInsPage,
+  signInAct,
+} from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
 import {
   armClose,
@@ -284,6 +289,7 @@ import {
   resendVerifyLink,
   passwordUpdate,
   tokenCreate,
+  sessionDelete,
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
@@ -589,6 +595,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
@@ -615,6 +622,17 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
   router.add("GET", "/settings/accounts", accountsPage);
+  router.add("GET", "/settings/accounts/:username", personSignInsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/tokens/:id/delete",
+    signInAct("token"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/sessions/:id/delete",
+    signInAct("session"),
+  );
   router.add(
     "POST",
     "/settings/accounts/:username/suspend",

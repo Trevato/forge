@@ -12,6 +12,11 @@ import {
   unsuspendAccount,
   verifyAccount,
 } from "../../actions/accounts.ts";
+import {
+  accountSignIns,
+  endAccountSession,
+  revokeAccountToken,
+} from "../../actions/signins.ts";
 import { mailConfigured } from "../../actions/verify.ts";
 import type { AccountRow } from "../../core/accounts.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -28,6 +33,7 @@ import {
   time,
   userLink,
 } from "../ui.ts";
+import { sessionsCard } from "./account.ts";
 import { accountSections } from "./origins.ts";
 
 function shell(ctx: Ctx, body: Html, status = 200): Response {
@@ -81,6 +87,7 @@ function row(a: AccountRow): Html {
     </div>
     ${actionable
       ? html`<div class="row-actions">
+          ${btn("Sign-ins", { href: at, size: "sm", variant: "ghost" })}
           ${a.verified
             ? null
             : html`<form method="post" action="${at}/verify">
@@ -141,6 +148,76 @@ export function accountsPage(ctx: Ctx): Response {
       },
     )}`,
   );
+}
+
+// GET /settings/accounts/:username — where one person is signed in
+export function personSignInsPage(ctx: Ctx): Response {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const seen = accountSignIns(ctx.app, ctx.auth.user, ctx.params.username ?? "");
+  // Yourself is your own settings; another admin, an agent, nobody: no page.
+  if (!seen.ok || seen.value.user.id === ctx.auth.user.id)
+    return notFoundPage(ctx);
+  const { user, tokens, sessions } = seen.value;
+  const at = `/settings/accounts/${encodeURIComponent(user.username)}`;
+  return shell(
+    ctx,
+    html`${card(
+      tokens.length === 0
+        ? html`<p class="muted">No access tokens.</p>`
+        : html`<ul class="rows">
+            ${tokens.map(
+              (t) =>
+                html`<li class="row">
+                  <div class="row-main">
+                    <strong>${t.name}</strong> ${badge(t.scope)}
+                    <div class="row-meta">
+                      made ${time(t.createdAt)} · last used
+                      ${t.lastUsedAt ? time(t.lastUsedAt) : "never"}
+                    </div>
+                  </div>
+                  <div class="row-actions">
+                    ${confirmAction({
+                      action: `${at}/tokens/${t.id}/delete`,
+                      verb: "Revoke",
+                      size: "sm",
+                    })}
+                  </div>
+                </li>`,
+            )}
+          </ul>`,
+      {
+        head: html`<h2>${userLink(user.username)}: where they are signed in</h2>
+          <p class="muted">
+            Revoking a token or signing out a browser ends it at once; the
+            person can sign in again. To stop them signing in, suspend the
+            account.
+          </p>
+          <h3>Access tokens</h3>`,
+      },
+    )}
+    ${sessionsCard(sessions, at)}`,
+  );
+}
+
+// POST /settings/accounts/:username/(tokens|sessions)/:id/delete
+export function signInAct(what: "token" | "session") {
+  return async (ctx: Ctx): Promise<Response> => {
+    if (!ctx.auth.user) return signInFirst(ctx);
+    if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+    const form = await readForm(ctx, "admin");
+    if (form instanceof Response) return form;
+    const username = ctx.params.username ?? "";
+    const id = ctx.params.id ?? "";
+    const done =
+      what === "token"
+        ? revokeAccountToken(ctx.app, ctx.auth.user, username, id)
+        : endAccountSession(ctx.app, ctx.auth.user, username, id);
+    if (!done.ok) return notFoundPage(ctx);
+    return flashTo(ctx, `/settings/accounts/${encodeURIComponent(username)}`, {
+      message: what === "token" ? "Token revoked." : "Browser signed out.",
+    });
+  };
 }
 
 type Act = "suspend" | "unsuspend" | "remove" | "verify";
