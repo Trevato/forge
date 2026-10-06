@@ -48,7 +48,11 @@ import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
-import { mayDirectCrew, unadoptedAmong } from "../crew/direct.ts";
+import {
+  directorsAmong,
+  mayDirectCrew,
+  unadoptedAmong,
+} from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
 import { handedOverAt } from "../crew/parks.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -124,12 +128,14 @@ export const TAKEN_UP = "a writer has taken this up: comment instead";
  * A person who writes the repository may change anyone's. The author may
  * change their own — while they are still only theirs. Someone who may
  * not direct the crew (a reader on a public repository, an outside
- * contributor) keeps that right only until a person who writes has acted
- * on the words: adopted the issue (assigned it, or linked it into the map),
- * or reviewed the pull. After that the words are what was adopted or
- * reviewed, and a rewrite would put new work in the crew's hands, or a new
- * `Closes #N` under an approval, with nobody who directs the crew having
- * seen it (#619). They comment instead. An agent edits only what it wrote,
+ * contributor) keeps that right only until a person who directs the crew
+ * has acted on the words: adopted the issue (assigned it, or linked it into
+ * the map), or reviewed the pull. After that the words are what was
+ * adopted or reviewed, and a rewrite would put new work in the crew's
+ * hands, or a new `Closes #N` under an approval, with nobody who directs
+ * the crew having seen it (#619). They comment instead. Acted is acted:
+ * an assignment taken back later does not hand the words back, since the
+ * next assignment would hand the crew whatever they say by then. An agent edits only what it wrote,
  * and its own pull only until a person approved it: what the merge closes
  * is what the approval saw.
  *
@@ -164,9 +170,41 @@ export function mayEditIssue(
   if (mayDirectCrew(app.db, repo, user)) return ok(true);
   const untouched =
     now.kind === "pull"
-      ? listReviews(app.db, now.id).length === 0
-      : unadoptedAmong(app.db, repo, [now]).has(now.id);
+      ? !reviewedByDirector(app, repo, now)
+      : !everAdopted(app, repo, now) &&
+        unadoptedAmong(app.db, repo, [now]).has(now.id);
   return untouched ? ok(true) : err("taken_up");
+}
+
+/**
+ * Whether a person who directs the crew has ever assigned this issue or
+ * linked it into the map — read from the outbox, which keeps what the row
+ * forgets when an assignment is taken back. A link the crew's planner made
+ * is not adoption, as `unadoptedAmong` says.
+ */
+function everAdopted(app: App, repo: Repo, issue: Issue): boolean {
+  const actors = app.db
+    .query<{ actor: string }, [string, number]>(
+      `SELECT DISTINCT actor_id AS actor FROM event
+        WHERE repo_id = ?1 AND actor_id IS NOT NULL
+          AND kind IN ('issue.assigned', 'issue.blocked')
+          AND (json_extract(payload, '$.number') = ?2
+            OR json_extract(payload, '$.blockedBy') = ?2)`,
+    )
+    .all(repo.id, issue.number)
+    .map((r) => r.actor);
+  return directorsAmong(app.db, repo, actors).length > 0;
+}
+
+/** Whether a person who directs the crew has reviewed this pull, in any state. */
+function reviewedByDirector(app: App, repo: Repo, pull: Issue): boolean {
+  return (
+    directorsAmong(
+      app.db,
+      repo,
+      listReviews(app.db, pull.id).map((r) => r.authorId),
+    ).length > 0
+  );
 }
 
 /**
