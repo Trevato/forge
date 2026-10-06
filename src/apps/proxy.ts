@@ -16,6 +16,7 @@
 
 import { getIssue, type Issue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
+import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
@@ -652,16 +653,12 @@ export interface AppSocket {
   readonly userId: string | undefined;
 }
 
-/** Every proxied socket that names a person, by account. */
-const socketsByUser = new Map<string, Set<Bun.ServerWebSocket<AppSocket>>>();
-
-/** End every app socket this account has open (\`actions/accounts.ts\`). */
-export function closeSocketsOf(userId: string): void {
-  const open = socketsByUser.get(userId);
-  if (open === undefined) return;
-  socketsByUser.delete(userId);
-  for (const ws of [...open]) closeBoth(ws, 1008, "this account was suspended");
-}
+/**
+ * A proxied socket that names a person is held open under their account
+ * (\`http/caller.ts\`): their suspension, seen by this process or swept
+ * from the database, closes it.
+ */
+const heldSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
 
 /**
  * The most one frame may carry, in either direction. The browser's side is
@@ -814,11 +811,14 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
 
   open(ws) {
     const { upstream, userId } = ws.data;
-    if (userId !== undefined) {
-      let held = socketsByUser.get(userId);
-      if (held === undefined) socketsByUser.set(userId, (held = new Set()));
-      held.add(ws);
-    }
+    if (userId !== undefined)
+      heldSockets.set(
+        ws,
+        holdOpen(userId, undefined, () => {
+          if (ws.readyState === WebSocket.OPEN)
+            closeBoth(ws, 1008, "this account was suspended");
+        }),
+      );
     // No frame from the app can get here first. Its `open` event resolved
     // `connectUpstream`, and the microtask checkpoint after that callback
     // runs `proxyWebSocket` to completion — `server.upgrade` calls this
@@ -867,12 +867,9 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   },
 
   close(ws, code, reason) {
-    const { upstream, userId } = ws.data;
-    if (userId !== undefined) {
-      const held = socketsByUser.get(userId);
-      held?.delete(ws);
-      if (held?.size === 0) socketsByUser.delete(userId);
-    }
+    const { upstream } = ws.data;
+    heldSockets.get(ws)?.();
+    heldSockets.delete(ws);
     if (upstream.readyState === WebSocket.CLOSED) return;
     // 1006 here is the browser gone without a close frame.
     if (code === 1006) upstream.close(1001, "the browser went away");

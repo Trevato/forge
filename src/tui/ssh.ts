@@ -10,6 +10,7 @@
  * to.
  */
 
+import { holdOpen } from "../http/caller.ts";
 import { join } from "node:path";
 import type { App as Forge } from "../app.ts";
 import { findKeyByFingerprint, touchKey } from "../core/keys.ts";
@@ -170,12 +171,21 @@ export function endOnSuspension(
       event.payload["username"] === user.username
     ) {
       stop();
-      if (session.ended) return;
-      session.writeStderr(`${CRLF}forge: this account was suspended${CRLF}`);
-      session.exit(1);
+      end();
     }
   });
-  session.onClose(stop);
+  // And held open under the account, so a suspension another process
+  // wrote ends it on this one's sweep (\`http/caller.ts\`).
+  const end = (): void => {
+    if (session.ended) return;
+    session.writeStderr(`${CRLF}forge: this account was suspended${CRLF}`);
+    session.exit(1);
+  };
+  const unhold = holdOpen(user.id, undefined, end);
+  session.onClose(() => {
+    stop();
+    unhold();
+  });
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   closeStreamsOf,
   closeStreamsOfSession,
   noteCaller,
+  sweepStanding,
 } from "./caller.ts";
 import {
   accountAct,
@@ -388,7 +389,6 @@ import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   appWebSocket,
-  closeSocketsOf,
   proxyApp,
   resolveAppHost,
 } from "../apps/proxy.ts";
@@ -1563,8 +1563,13 @@ export async function serve(app: App): Promise<Servers> {
       typeof name === "string" ? getUserByName(app.db, name) : undefined;
     if (user === undefined) return;
     closeStreamsOf(user.id);
-    closeSocketsOf(user.id);
   });
+  // And every process holds what it has open against the database, so a
+  // suspension or sign-out another process wrote reaches it too (#846).
+  const sweep = setInterval(
+    () => sweepStanding(app.db),
+    app.config.standingSweepMs ?? 5_000,
+  );
   // Who may say who the client is (\`http/peer.ts\`), settled once.
   const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
   if (!proxies.ok)
@@ -1643,6 +1648,7 @@ export async function serve(app: App): Promise<Servers> {
     port,
     stop() {
       endOpen();
+      clearInterval(sweep);
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.
