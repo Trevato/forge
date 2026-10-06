@@ -1293,7 +1293,13 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
       ? {
           message: `${added.value.user.username} is on the crew. Assign it an issue and it starts.`,
         }
-      : { tone: "danger", message: "No such agent on this forge." },
+      : {
+          tone: "danger",
+          message:
+            added.error === "not_an_agent"
+              ? "Only an agent can be on a crew; a person is given access through an organization's team."
+              : "No such agent on this forge.",
+        },
   );
 }
 

@@ -55,8 +55,8 @@ import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
   canWrite,
+  forkParentFor,
   getRepo,
-  getRepoById,
   ownerFactRepoIds,
   type Repo,
 } from "../core/repos.ts";
@@ -74,6 +74,10 @@ import {
 } from "../crew/direct.ts";
 import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
+import {
+  milestoneData,
+  milestonesJson,
+} from "../web/pages/milestones.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -96,7 +100,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
 import { running } from "../kernel/version.ts";
-import { makeItYours } from "../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -754,10 +758,7 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const parent =
-        repo.forkParentId === null
-          ? undefined
-          : getRepoById(ctx.app.db, repo.forkParentId);
+      const parent = forkParentFor(ctx.app.db, repo, user);
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
@@ -894,12 +895,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "make_it_yours",
     description:
-      "Make an app you can see yours: a fork of its code and history into your account, registered as your own app (its first deploy starts at once), following the original. Its data, variables, secrets, crew and domains are not copied. Plans unless dryRun is false; the answer names the copy, its address, and what is and is not copied. Someone who already has a copy is landed on it.",
+      "Make an app you can see yours: a fork of its code and history into your account, registered as your own app (its first deploy starts at once), following the original. Its data, variables, secrets, crew and domains are not copied. Plans unless dryRun is false; the answer names the copy, its address, and what is and is not copied. Someone who already has a copy is landed on it. The copy is private unless `visibility` is public (only for a public original); at most 5 copies an account a day.",
     inputSchema: {
       type: "object",
       properties: {
         repo: REPO_ARG,
         name: { type: "string", description: "A name for your copy; the original's by default." },
+        visibility: { type: "string", enum: ["private", "public"], description: "Who sees the copy: private by default; public only when the original is." },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -910,12 +912,18 @@ const TOOLS: readonly Tool[] = [
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const name = str(args["name"]);
+      const visibility = str(args["visibility"]);
+      if (visibility !== "" && visibility !== "public" && visibility !== "private")
+        return bad("invalid", "visibility is public or private");
       const made = await makeItYours(ctx.app, user, repo, {
         dryRun: args["dryRun"] !== false,
         ...(name === "" ? {} : { name }),
+        ...(visibility === "" ? {} : { visibility }),
       });
       if (!made.ok)
-        return made.error.kind === "invalid"
+        return made.error.kind === "limit"
+          ? bad("limit", `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`)
+          : made.error.kind === "invalid"
           ? bad("invalid", made.error.message)
           : made.error.kind === "own"
             ? bad("own", "this app is already yours")
@@ -963,7 +971,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "map",
     description:
-      "An app's plan: its open issues as ready now, or waiting on others (with what each waits for), the critical path, every edge, and where the crew is. The same data as the map page and /api/v1/map.",
+      "An app's plan: its open issues as ready now, or waiting on others (with what each waits for), the critical path, every edge, where the crew is, and under `parkedTwice` each issue the crew parked twice and handed to the planner, with every reason. The same data as the map page and /api/v1/map.",
     inputSchema: {
       type: "object",
       properties: { app: APP_ARG },
@@ -987,6 +995,41 @@ const TOOLS: readonly Tool[] = [
           pillarView(ctx.app.db, repo),
         ),
       );
+    },
+  },
+  {
+    name: "milestones",
+    description:
+      "How far each thing asked for is, read from the dependency tree. With `app` alone: the plan's top-level limbs (the pillars and Later, or the plan's roots), each with done and total, open issues beneath it, how many are building, pulls merged in the last 7 days, its last movement, spend when you may see it, and `trim` when it is a candidate to trim. With `issue`: that milestone opened — who is building what, what is blocked and on what, what merged, an estimate from this week's pace, its own limbs and its leaves. The same numbers as the milestones pages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "The number of an issue that waits for others; the limbs when absent.",
+        },
+      },
+      required: ["app"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      if (args["issue"] === undefined) return good(milestonesJson(ctx, repo));
+      const number = args["issue"];
+      const data =
+        typeof number === "number" && Number.isInteger(number) && number > 0
+          ? milestoneData(ctx, repo, number)
+          : undefined;
+      return data === undefined
+        ? bad(
+            "not_a_milestone",
+            "no issue by that number waits for others here",
+          )
+        : good(data);
     },
   },
   {

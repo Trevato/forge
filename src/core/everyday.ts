@@ -40,18 +40,29 @@ export function linkEveryday(db: Database, admin: User, everyday: User): void {
 
 /** The org's writers, made the first time someone joins it this way. */
 export const WRITERS_TEAM = "Writers";
+/** The name used when the org already has a "Writers" team that grants something else. */
+const EVERYDAY_WRITERS = "Everyday writers";
 
-/** Add the everyday account to an org as a writer: never an owner of it. */
-export function joinAsWriter(db: Database, org: User, everyday: User): void {
-  let team = listTeams(db, org.id).find(
-    (t) => t.name === WRITERS_TEAM && t.permission === "write",
-  );
-  if (!team) {
-    const made = createTeam(db, org.id, WRITERS_TEAM, "write");
-    if (!made.ok) return;
-    team = made.value;
+/**
+ * Add the everyday account to an org as a writer: never an owner of it.
+ * A team of that name that grants something else is left as it is (never
+ * widened); the account joins a team of its own instead. False only when
+ * no write team could be found or made, so the caller can say so.
+ */
+export function joinAsWriter(db: Database, org: User, everyday: User): boolean {
+  const teams = listTeams(db, org.id);
+  for (const name of [WRITERS_TEAM, EVERYDAY_WRITERS]) {
+    let team = teams.find((t) => t.name.toLowerCase() === name.toLowerCase());
+    if (team && team.permission !== "write") continue;
+    if (!team) {
+      const made = createTeam(db, org.id, name, "write");
+      if (!made.ok) continue;
+      team = made.value;
+    }
+    addTeamMember(db, team, everyday.id);
+    return true;
   }
-  addTeamMember(db, team, everyday.id);
+  return false;
 }
 
 /** The admin chose to keep working as admin: recorded, and not asked again. */

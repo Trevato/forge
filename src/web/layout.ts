@@ -179,7 +179,7 @@ function asksLink(ctx: Ctx): Html {
   return html`<a
     class="btn"
     data-size="sm"
-    href="/asks"
+    href="/#needs-you"
     title="${count === 0 ? "All fine" : `${count} need you`}"
     >Asks${count === 0 ? null : pill(count, "accent")}</a
   >`;
@@ -312,7 +312,7 @@ const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/asks", c: "Go to" },
+  { t: "Asks you", h: "/#needs-you", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },

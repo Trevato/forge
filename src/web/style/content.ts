@@ -1147,4 +1147,7 @@ textarea.editor:focus { outline: none; }
 }
 
 }
+/* What needs you, pinned on the home: the bulk step's select as wide as
+   its words, not the column. */
+.needs-you #asks-bulk select { width: auto; }
 `;

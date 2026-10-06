@@ -15,7 +15,11 @@ import {
   type ForkSync,
   type TakeError,
 } from "../core/following.ts";
-import { canRead, getRepoById, type Repo } from "../core/repos.ts";
+import {
+  canRead,
+  forkParentFor,
+  type Repo,
+} from "../core/repos.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import type { User } from "../core/users.ts";
 import { divergence } from "../git/branches.ts";
@@ -28,11 +32,9 @@ export type { ForkRelation, ForkSync, TakeError } from "../core/following.ts";
 
 export type SyncForkError = AccessError | "not_a_fork" | "diverged";
 
-function parentOf(app: App, fork: Repo): Repo | undefined {
-  return fork.forkParentId === null
-    ? undefined
-    : getRepoById(app.db, fork.forkParentId);
-}
+/** The parent, while `actor` may read it (`forkParentFor`). */
+const parentOf = (app: App, fork: Repo, actor: User | undefined) =>
+  forkParentFor(app.db, fork, actor);
 
 /** Bring a fork's default branch up to its parent's, if nothing was committed on it. */
 export async function syncFork(
@@ -42,7 +44,7 @@ export async function syncFork(
 ): Promise<Result<ForkSync, SyncForkError>> {
   const writer = requireWriter(app, actor, fork);
   if (!writer.ok) return writer;
-  const parent = parentOf(app, fork);
+  const parent = parentOf(app, fork, actor);
   if (parent === undefined) return err("not_a_fork");
   return fastForwardFork(app, fork, parent, writer.value.id);
 }
@@ -58,7 +60,7 @@ export async function relationOf(
   fork: Repo,
 ): Promise<ForkRelation | undefined> {
   if (!canRead(app.db, fork, actor)) return undefined;
-  const parent = parentOf(app, fork);
+  const parent = parentOf(app, fork, actor);
   if (parent === undefined) return undefined;
   return forkRelation(app, fork, parent);
 }
@@ -77,7 +79,7 @@ export async function takeUpdates(
 ): Promise<Result<ForkSync & { merged: boolean }, TakeUpdatesError>> {
   const writer = requireWriter(app, actor, fork);
   if (!writer.ok) return writer;
-  const parent = parentOf(app, fork);
+  const parent = parentOf(app, fork, actor);
   if (parent === undefined) return err("not_a_fork");
   const who = writer.value;
   return take(app, fork, parent, {

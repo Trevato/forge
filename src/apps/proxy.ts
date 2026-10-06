@@ -19,7 +19,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
-import { canEnterApp, canRead, getRepoById } from "../core/repos.ts";
+import {
+  canEnterApp,
+  canRead,
+  getRepoById,
+  ownerInStanding,
+} from "../core/repos.ts";
 import { getUserById, isActive } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
@@ -104,9 +109,18 @@ export function resolveAppHostname(
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return ownDomain(app, host);
   const record = getAppBySlug(app.db, parsed.slug);
-  return record
+  return record && shown(app, record)
     ? { app: record, env: parsed.env, nested: parsed.nested }
     : "unknown";
+}
+
+/**
+ * An app whose repository's owner is suspended or removed has no host: it
+ * answers as a name nobody holds, not as an app that is stopped (#831).
+ */
+function shown(app: App, record: AppRecord): boolean {
+  const repo = getRepoById(app.db, record.repoId);
+  return repo !== undefined && ownerInStanding(app.db, repo);
 }
 
 /**
@@ -120,7 +134,7 @@ function ownDomain(app: App, host: string): AppTarget | undefined {
   const domain = getVerifiedDomain(app.db, host.replace(/:\d+$/, ""));
   if (domain === undefined) return undefined;
   const record = getAppById(app.db, domain.appId);
-  return record === undefined
+  return record === undefined || !shown(app, record)
     ? undefined
     : { app: record, env: domain.env, nested: false };
 }

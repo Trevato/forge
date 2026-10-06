@@ -39,6 +39,7 @@ import {
   unpin as dropPin,
   type Pin,
 } from "../core/pins.ts";
+import { RateLimiter, type RateLimits } from "../core/ratelimit.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { discover } from "../origins/discover.ts";
@@ -87,29 +88,28 @@ import { requireUser, requireWriter } from "./access.ts";
 // ---- abuse control ----
 
 /**
- * Connect attempts per user per window. Connecting makes the forge fetch a
- * host the caller named, so an unbounded connect endpoint is an outbound
- * request amplifier; this is the cap that stops it being one. In-memory on
- * purpose — a restart clearing it costs nothing, and a table would be state
- * that cannot be rebuilt from anything. The window belongs to the forge it
- * limits: a fresh `createApp` starts with a fresh one.
+ * Connect attempts per person: five in a sliding quarter of an hour.
+ * Connecting makes the forge fetch a host the caller named, so an unbounded
+ * connect endpoint is an outbound request amplifier; this is the cap that
+ * stops it being one. The same limiter as the API's (`core/ratelimit.ts`),
+ * with its own window: in memory on purpose, a refused attempt not counted,
+ * and belonging to the forge it limits, so a fresh `createApp` starts fresh.
  */
-const CONNECT_LIMIT = 5;
-const CONNECT_WINDOW_MS = 15 * 60_000;
-const attempts = new WeakMap<App, Map<string, number[]>>();
+export const CONNECT_LIMITS: RateLimits = {
+  perMinute: 5,
+  adminPerMinute: 5,
+  enabled: true,
+  windowMs: 15 * 60_000,
+};
+const connects = new WeakMap<App, RateLimiter>();
 
-function tooManyAttempts(app: App, userId: string, now = Date.now()): boolean {
-  let byUser = attempts.get(app);
-  if (byUser === undefined) {
-    byUser = new Map();
-    attempts.set(app, byUser);
+function tooManyAttempts(app: App, userId: string): boolean {
+  let limiter = connects.get(app);
+  if (limiter === undefined) {
+    limiter = new RateLimiter(CONNECT_LIMITS);
+    connects.set(app, limiter);
   }
-  const recent = (byUser.get(userId) ?? []).filter(
-    (at) => now - at < CONNECT_WINDOW_MS,
-  );
-  recent.push(now);
-  byUser.set(userId, recent);
-  return recent.length > CONNECT_LIMIT;
+  return !limiter.take(userId, "rw").allowed;
 }
 
 // ---- connecting ----
