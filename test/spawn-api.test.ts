@@ -168,5 +168,15 @@ describe("spawn over the API and MCP", () => {
     expect(made.error).toBe(false);
     expect(JSON.parse(made.text)).toMatchObject({ dryRun: false, name: "kid2", url: "https://kid2.fake.test" });
     expect(placed).toBe(2);
+    // The claim link, a live secret, stays out of the conversation (#839)...
+    expect(made.text).not.toContain("claimUrl");
+    expect(made.text).not.toContain("/claim#");
+    expect(JSON.parse(made.text).says).toContain("/forges");
+    // ...unless asked for on purpose, and then said to be one.
+    const shown = await mcp(rw, { name: "kid3", apps: ["alice/notes"], dryRun: false, reveal: true });
+    expect(shown.error).toBe(false);
+    const body = JSON.parse(shown.text) as { claimUrl: string; says: string };
+    expect(body.claimUrl).toContain("/claim#");
+    expect(body.says).toContain("live secret");
   });
 });
