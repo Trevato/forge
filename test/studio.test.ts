@@ -193,152 +193,46 @@ describe("the studio", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("home is the feed with no cookie at all, and in every mode (#625); ?mode= still switches this browser until #603", async () => {
+  test("there is one forge (#603): no mode toggle, no POST /mode, and a ?mode= address is the same page without it, the old cookie let go", async () => {
     const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
     const plain = await plainResponse.text();
     expect(plain).toContain("Your apps");
-    expect(plain).toContain("notes");
-    expect(plain).not.toContain("<h1>Your repositories</h1>");
+    expect(plain).not.toContain("mode-toggle");
+    expect(plain).not.toContain('action="/mode"');
     expect(plainResponse.headers.get("set-cookie")).toBeNull();
-
-    // `?mode=studio` is a no-op switch here, but it still sets the cookie —
-    // the same link works from a dev-cookied browser too.
-    const toStudio = await fetch(`${base}/?mode=studio`, {
-      headers: { cookie },
-    });
-    expect(toStudio.headers.get("set-cookie")).toContain("forge_mode=studio");
-
-    const devResponse = await fetch(`${base}/?mode=dev`, {
-      headers: { cookie },
-    });
-    const dev = await devResponse.text();
-    // One home: dev's dashboard is gone, and the dev browser gets the feed.
-    expect(dev).not.toContain("<h1>Your repositories</h1>");
-    expect(dev).toContain("Your apps");
-    expect(devResponse.headers.get("set-cookie")).toContain("forge_mode=dev");
-
-    // `?mode=dev` still wins for this browser even once studio's cookie is set.
-    const stillDev = await (
-      await fetch(`${base}/?mode=dev`, {
-        headers: { cookie: `${cookie}; forge_mode=studio` },
-      })
-    ).text();
-    expect(stillDev).toContain("Your apps");
-
-    // And the link's switch stuck: this browser stays in dev with no query.
-    const devCookie = (devResponse.headers.get("set-cookie") ?? "").split(
-      ";",
-    )[0]!;
-    const asDev = await (
-      await fetch(`${base}/`, {
-        headers: { cookie: `${cookie}; ${devCookie}` },
-      })
-    ).text();
-    expect(asDev).toContain("Your apps");
     // Your repositories are one step away, on your own page.
-    expect(asDev).toContain('href="/alice"');
+    expect(plain).toContain('href="/alice"');
 
-    // The toggle's own POST still flips it back, cookie and all.
-    const flipped = await post("/mode", { mode: "studio", back: "/" });
-    expect(flipped.status).toBe(303);
-    expect(flipped.headers.get("set-cookie")).toContain("forge_mode=studio");
-    const bad = await post("/mode", { mode: "neither", back: "/" });
-    expect(bad.headers.get("set-cookie")).toContain("forge_mode=;");
-  });
-
-  /**
-   * The shelf row, byte for byte: whoever draws it (`studio/shelf.ts`) and
-   * from wherever, an app on a shelf is a dot, its name, its one line, what
-   * the crew last did there, the badge for whether it is live, and a link
-   * into it. This pins the rendering so a move of the code cannot quietly
-   * move the page.
-   */
-  test("an app is one row on the shelf: a dot, its name and line, what the crew last did, the way in", async () => {
-    const home = await (await get("/apps")).text();
-    const at = home.indexOf('href="/alice/notes"');
-    expect(at).toBeGreaterThan(-1);
-    const start = home.lastIndexOf("<li>", at);
-    const shelfRow = home.slice(start, home.indexOf("</li>", at) + 5);
-    // The bytes the home rendered before the row moved into its own
-    // module, escaped so no formatter can reflow them.
-    expect(shelfRow).toBe(
-      '<li>\n    <a href="/alice/notes" class="row"\n  \n  data-nav tabindex="-1"><span class="row-lead"><span\n    class="dot"\n    \n  ></span></span>\n    <span class="row-main">\n      <span\n        class="row-title"\n        title="a place for notes"\n        >notes</span\n      >\n      <span class="row-meta"><span class="shelf-meta"\n          ><span class="shelf-desc">a place for notes</span><span class="shelf-facts"\n            >· <span class="muted">quiet — tell the crew something</span></span\n          ></span\n        ></span>\n    </span>\n    <span class="row-trail">\n        <span class="badge" data-tone="default">not running</span></span></a>\n  </li>',
-    );
-  });
-
-  test("a 400-character description is one clamped line on the row, whole in its title, and the facts keep their own span (#69)", async () => {
-    const long = "paragraph ".repeat(40).trim();
-    expect(long.length).toBeGreaterThanOrEqual(399);
-    app.db.run("UPDATE repo SET description = ?1 WHERE id = ?2", [long, repo.id]);
-    try {
-      const home = await (await get("/apps")).text();
-      const at = home.indexOf('href="/alice/notes"');
-      const shelfRow = home.slice(home.lastIndexOf("<li>", at), home.indexOf("</li>", at));
-      expect(shelfRow).toContain(`title="${long}"`);
-      expect(shelfRow).toContain(`<span class="shelf-desc">${long}</span>`);
-      expect(shelfRow).toContain('class="shelf-facts"');
-      // The facts sit outside the description, so it cannot push them out.
-      expect(shelfRow.indexOf('class="shelf-facts"')).toBeGreaterThan(
-        shelfRow.indexOf("</span>", shelfRow.indexOf('class="shelf-desc"')),
+    for (const path of ["/?mode=dev", "/alice/notes/issues?mode=studio&word=told"]) {
+      const res = await fetch(`${base}${path}`, {
+        headers: { cookie: `${cookie}; forge_mode=dev` },
+        redirect: "manual",
+      });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(
+        path === "/?mode=dev" ? "/" : "/alice/notes/issues?word=told",
       );
-    } finally {
-      app.db.run("UPDATE repo SET description = ?1 WHERE id = ?2", ["a place for notes", repo.id]);
+      expect(res.headers.get("set-cookie")).toContain("forge_mode=; Max-Age=0");
     }
+    // An old dev cookie changes nothing.
+    const withDev = await (
+      await fetch(`${base}/alice/notes`, {
+        headers: { cookie: `${cookie}; forge_mode=dev` },
+      })
+    ).text();
+    expect(withDev).toContain("Tell the crew");
+    // The depth row on every repository's header: Files (or Code), Changes
+    // (or Pulls) and Runs; Terminal only where SSH is on, which it is not here.
+    expect(withDev).toContain('href="/alice/notes/files"');
+    expect(withDev).toContain('href="/alice/notes/changes"');
+    expect(withDev).toContain('href="/alice/notes/runs"');
+    expect(withDev).not.toContain('href="/settings/keys#terminal"');
+    // The toggle's POST is gone with it.
+    const flipped = await post("/mode", { mode: "dev", back: "/" });
+    expect(flipped.status).toBe(404);
   });
 
-  test("an app's home is the app for every viewer, and its code is the Files step one tab over", async () => {
-    const studio = await (await get("/alice/notes")).text();
-    expect(studio).toContain("Tell the crew");
-    expect(studio).toContain("<h2>Crew</h2>");
-    expect(studio).toContain(">Studio<");
-    expect(studio).toContain('href="/alice/notes/files"');
-    expect(studio).not.toContain(">Commits<");
-    // No second home behind the mode: the cookie and the query both get
-    // the app.
-    for (const dev of [
-      await get("/alice/notes", { cookie: `${cookie}; forge_mode=dev` }),
-      await get("/alice/notes?mode=dev"),
-    ]) {
-      const text = await dev.text();
-      expect(text).toContain("Tell the crew");
-      expect(text).toContain('href="/alice/notes/files"');
-      expect(text).not.toContain("?mode=studio");
-    }
-
-    // The Files step is the code page: the tree, the README, the rail.
-    const files = await (await get("/alice/notes/files")).text();
-    expect(files).toContain("package.json");
-    expect(files).toContain("server.ts");
-    expect(files).not.toContain("Tell the crew");
-    // An older `?ref=` link to the app's code is handed on to it.
-    const old = await get("/alice/notes?ref=main");
-    expect(old.status).toBe(303);
-    expect(old.headers.get("location")).toBe("/alice/notes/files?ref=main");
-  });
-
-  test("/files on a repository that is not an app is its home, which already is its code", async () => {
-    const plain = await createRepo(app, alice, {
-      name: "plainfiles",
-      visibility: "private",
-      description: "",
-    });
-    if (!plain.ok) throw new Error(String(plain.error));
-    const res = await get("/alice/plainfiles/files?ref=main");
-    expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/alice/plainfiles?ref=main");
-    // And a reader who cannot see it gets the forge's not-found, never a
-    // redirect that says it exists.
-    const anon = await fetch(`${base}/alice/plainfiles/files`, {
-      redirect: "manual",
-    });
-    expect(anon.status).toBe(404);
-    const anonApp = await fetch(`${base}/alice/notes/files`, {
-      redirect: "manual",
-    });
-    expect(anonApp.status).toBe(404);
-  });
-
-  test("a repository with no app record keeps the studio's framing: one card, one door to make it one; ?mode=dev is unchanged, and an app itself never shows the card", async () => {
+  test("a repository with no app record keeps the studio's framing for every viewer: one card, one door to make it one; an app itself never shows the card", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainhome",
       visibility: "public",
@@ -356,15 +250,14 @@ describe("the studio", () => {
     expect(studio).toContain(`href="/alice/plainhome/settings/app"`);
     expect(studio).toContain("Run as an app");
 
-    // `?mode=dev` on the very same URL renders exactly what it always has:
-    // the code, no card above it at all.
+    // An old dev cookie changes nothing (#603): the same code page, the
+    // same card, git's own tabs because it is not an app.
     const dev = await (
       await get("/alice/plainhome", { cookie: `${cookie}; forge_mode=dev` })
     ).text();
     expect(dev).toContain("README.md");
     expect(dev).toContain(">Commits<");
-    expect(dev).not.toContain("This repository has no app yet.");
-    expect(dev).not.toContain("Run as an app");
+    expect(dev).toContain("This repository has no app yet.");
 
     // A signed-out reader of the same public repository sees the same
     // sentence but no door it could not walk through.
@@ -582,7 +475,7 @@ describe("the studio", () => {
       await get(`/alice/notes/pulls/${pull.number}`, {
         cookie: `${cookie}; forge_mode=dev`,
       }),
-      await get(`/alice/notes/pulls/${pull.number}?mode=dev`),
+      await get(`/alice/notes/pulls/${pull.number}`),
     ]) {
       const text = await dev.text();
       expect(text).toContain('data-word="look"');
@@ -1160,7 +1053,7 @@ describe("the studio", () => {
       await get(`/alice/notes/issues/${issue.number}`, {
         cookie: `${cookie}; forge_mode=dev`,
       }),
-      await get(`/alice/notes/issues/${issue.number}?mode=dev`),
+      await get(`/alice/notes/issues/${issue.number}`),
     ]) {
       const text = await dev.text();
       expect(text).toContain('data-word="working"');
@@ -1251,7 +1144,7 @@ describe("the studio", () => {
     // hatch both answer the same rows in the same words.
     for (const dev of [
       await get("/alice/notes/issues", { cookie: `${cookie}; forge_mode=dev` }),
-      await get("/alice/notes/issues?mode=dev"),
+      await get("/alice/notes/issues"),
     ]) {
       expect(dev.status).toBe(200);
       const text = await dev.text();
@@ -1302,7 +1195,7 @@ describe("the studio", () => {
 
     for (const dev of [
       await get("/alice/notes/pulls", { cookie: `${cookie}; forge_mode=dev` }),
-      await get("/alice/notes/pulls?mode=dev"),
+      await get("/alice/notes/pulls"),
     ]) {
       expect(dev.status).toBe(200);
       const text = await dev.text();
@@ -1341,7 +1234,7 @@ describe("the studio", () => {
       await get("/alice/notes/runs?word=stopped", {
         cookie: `${cookie}; forge_mode=dev`,
       }),
-      await get("/alice/notes/runs?word=stopped&mode=dev"),
+      await get("/alice/notes/runs?word=stopped"),
     ]) {
       const text = await dev.text();
       expect(text).toContain('data-word="stopped"');
@@ -1479,7 +1372,7 @@ describe("the studio", () => {
     for (const [path, viewer] of [
       ["/alice/notes/tells", `${cookie}; forge_mode=dev`],
       ["/alice/notes/changes", `${cookie}; forge_mode=dev`],
-      ["/alice/notes/tells?mode=dev", `${cookie}; forge_mode=studio`],
+      ["/alice/notes/tells", `${cookie}; forge_mode=studio`],
       ["/alice/doorlists/tells", cookie],
       ["/alice/doorlists/changes", cookie],
     ] as const) {
@@ -1759,7 +1652,7 @@ describe("the studio", () => {
       await get(`/alice/notes/tells/${n}`, {
         cookie: `${cookie}; forge_mode=dev`,
       }),
-      await get(`/alice/notes/tells/${n}?mode=dev`),
+      await get(`/alice/notes/tells/${n}`),
     ]) {
       expect(res.status).toBe(200);
       expect(await res.text()).toContain("Door test: dev");
@@ -1882,7 +1775,7 @@ describe("the studio", () => {
     // both answer the shelf.
     for (const dev of [
       await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` }),
-      await bobGet("/apps?mode=dev"),
+      await bobGet("/apps"),
     ]) {
       const text = await dev.text();
       expect(text).toContain('href="/apps?live=1"');
@@ -2201,8 +2094,8 @@ describe("the studio", () => {
         ["/", ""],
         ["/", "forge_mode=studio"],
         ["/", "forge_mode=dev"],
-        ["/?mode=dev", ""],
-        ["/?mode=studio", "forge_mode=dev"],
+        ["/", ""],
+        ["/", "forge_mode=dev"],
       ] as const) {
         const response = await fetch(`${servers2.url}${path}`, {
           headers: { cookie },
@@ -6316,7 +6209,7 @@ describe("a stranger sees the app, not the owner's books", () => {
 
   test("?mode=dev on the settings route is the same one page; dev's Crew and Autonomy addresses land on its cards", async () => {
     const dev = await (
-      await get("/alice/beacon/settings?mode=dev", ownerCookie)
+      await get("/alice/beacon/settings", ownerCookie)
     ).text();
     expect(dev).toContain(">General<");
     expect(dev).toContain(">Crew<");
@@ -8112,7 +8005,7 @@ describe("finding things in the studio: /search", () => {
 
   test("?mode=dev on the same route answers the same one page", async () => {
     for (const html of [
-      await (await asAlice("/search?q=chess&mode=dev")).text(),
+      await (await asAlice("/search?q=chess")).text(),
       await (
         await fetch(`${base}/search?q=chess`, {
           headers: { cookie: `${aliceCookie}; forge_mode=dev` },
@@ -9276,7 +9169,7 @@ describe("the studio can change what an app says it is (#230)", () => {
     expect(saved.headers.get("location")).toBe("/alice/lamp/settings");
 
     const ownPage = await (
-      await get("/alice/lamp?mode=dev", ownerCookie)
+      await get("/alice/lamp", ownerCookie)
     ).text();
     expect(ownPage).toContain("a lamp that stays lit all night");
     expect(ownPage).toContain("Private");

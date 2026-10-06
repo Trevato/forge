@@ -1,11 +1,15 @@
 # The studio
 
-Two ways of seeing one forge. **Studio** is the default: apps are the unit,
-and a person does three things to one — tell the crew, look at what it
-made, decide when it asks. **Dev** shows the git underneath — code,
-commits, branches, runs — unchanged. The switch is in the top bar and is a
-cookie on that browser; the URLs are the same in both, so a link works
-whichever way its reader sees.
+One forge, for every viewer (#603). Apps are the unit, and a person does
+three things to one — tell the crew, look at what it made, decide when it
+asks. An app speaks the studio's words (told, changes, shipped); a
+repository that is not an app speaks git's (issues, pulls, commits,
+branches). Every repository's header carries the same depth row — its
+files, its changes, its runs and, where SSH is on, the terminal — so code is
+one tap from any post. The dev/studio mode is gone: no toggle, no cookie, no
+`POST /mode`, and an old `?mode=` address redirects to the same page without
+it. Where the sections below still speak of "dev mode" or `?mode=dev`, they
+describe the split that #625–#636 contracted, one screen at a time.
 
 Finding something never leaves the page you're on. `/` focuses the search
 box in the top bar, unless a field already has focus; `Cmd/Ctrl-K` opens the
