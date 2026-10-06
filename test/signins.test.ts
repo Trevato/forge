@@ -9,6 +9,8 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
+const EDGE = "edge-secret-for-signins";
+
 // Where an account is signed in: its person sees and ends their own, the
 // forge's owner any person's. Everyone else finds nothing there.
 describe("sign-ins: tokens and browsers, seen and ended", () => {
@@ -59,7 +61,7 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-signins-"));
-    app = createApp({ dataDir, port: 0 });
+    app = createApp({ dataDir, port: 0, edgeToken: EDGE });
     servers = await serve(app);
     base = servers.url;
     owner = await person("olive", true);
@@ -153,6 +155,33 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     expect(still).not.toBe("ended");
     expect(await signedIn({ cookie: elsewhere })).toBe(true);
     await other.cancel();
+  });
+
+  test("signing out while the platform edge also signs the request in still ends the browser's streams", async () => {
+    const cookie = cookieFor(ada);
+    const res = await fetch(`${base}/events`, { headers: { cookie } });
+    const tab = res.body!.getReader();
+    await tab.read();
+    // The edge goes first, so this request is the edge's, not the cookie's.
+    const out = await fetch(`${base}/logout`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: base,
+        "x-plat-user": "ada",
+        "x-plat-edge-token": EDGE,
+      },
+      body: new URLSearchParams({}),
+      redirect: "manual",
+    });
+    expect(out.status).toBe(303);
+    const ended = (async () => {
+      for (;;) if ((await tab.read()).done) return true;
+    })();
+    expect(
+      await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+    ).toBe(true);
+    expect(await signedIn({ cookie })).toBe(false);
   });
 
   test("a browser's last-seen time moves when it is used", async () => {

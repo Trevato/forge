@@ -219,6 +219,44 @@ this; three surfaces show what it reads.
   each app that has pillars: every pillar and its count, zero or not, each
   a link to its issues.
 
+## Milestones
+
+How far each thing asked for is, read from the dependency tree
+(`core/milestones.ts`); nothing is stored. A _milestone_ is an issue that
+waits for others, and what is beneath it is everything it waits for,
+directly or through others. The plan's furniture is beneath nothing: one
+pillar's umbrella waiting for another is an order between pillars.
+
+`/:owner/:name/milestones` is the plan as a handful of _limbs_ — the
+pillars and Later, or, in a repository with no pillars, the issues that
+wait for others and that nothing waits for. Each is one line with its
+weight: done of total, open beneath it, how many are building, pulls merged
+in the last 7 days, its last movement and, for whoever may see owner facts,
+what it cost. The work counted is what is open and what closed as done;
+dropped and split issues are neither.
+
+`/:owner/:name/milestones/:number` is one milestone opened: who is building
+what, what is blocked and on what, what merged this week, and a plain
+estimate — the open issues at the pace of the last 7 days, or a sentence
+saying there is no pace to estimate from. What it waits for directly shows
+as limbs where a child brings a tree of its own, and as leaves where it
+brings none (one that only waits for its siblings is a leaf in an order).
+Leaves show only on the limb they are under.
+
+A limb is flagged _a candidate to trim_ when it has open work, nothing
+landed in 7 days and it has been here that long, or when it has eight or
+more open issues and nobody building. Later is deferred on purpose and is
+never flagged.
+
+It is one tap away: each pillar in the map's _By pillar_ and in the board's
+7-day line opens its milestone, the map names the page, and the issue page
+of anything that waits for others says _see how far it is_. The same
+numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
+`…/milestones/:number`, and in the MCP's `milestones`. An agent's name and
+the spend are the owner's to see: a reader gets "the crew" and no cost.
+Read-only: watching a milestone (#732) and acting on a whole limb (#733)
+come after.
+
 ## A repository on its own
 
 A repository has one setting for how much the crew does without being

@@ -239,6 +239,10 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
+import {
+  milestoneData,
+  milestonesJson,
+} from "../web/pages/milestones.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -311,7 +315,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
-import { makeItYours } from "../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1044,12 +1048,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    signOutHere(
-      ctx.app,
-      ctx.auth.user,
-      ctx.auth.sessionId,
-      cookieValue(ctx.request, "forge_session"),
-    );
+    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
       "set-cookie": sessionCookie("", new Date(0), ctx.url),
     });
@@ -2266,6 +2265,25 @@ export function apiRoutes(router: Router<Handler>): void {
       return new Response(null, { status: 204 });
     },
   );
+  // Milestones as data: the plan's limbs with their weights, and one
+  // milestone opened. The same numbers as the pages.
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(milestonesJson(ctx, repo));
+  });
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/milestones/:number",
+    (ctx) => {
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const number = positiveInt(ctx.params.number);
+      const data =
+        number === undefined ? undefined : milestoneData(ctx, repo, number);
+      return data === undefined ? notFound() : json(data);
+    },
+  );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
@@ -3393,12 +3411,25 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const name = str(input.name);
+    const visibility = str(input.visibility);
+    if (visibility !== "" && visibility !== "public" && visibility !== "private")
+      return apiError("invalid", 422, "visibility is public or private");
     const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
       dryRun,
       ...(name === "" ? {} : { name }),
+      ...(visibility === "" ? {} : { visibility }),
     });
     if (!made.ok)
-      return made.error.kind === "invalid"
+      return made.error.kind === "limit"
+        ? json(
+            {
+              error: "limit",
+              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+              resetsAt: made.error.resetsAt,
+            },
+            429,
+          )
+        : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
           ? apiError("own", 409, "this app is already yours")
