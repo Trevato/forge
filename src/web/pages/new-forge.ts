@@ -16,6 +16,7 @@ import type { Ctx } from "../../http/context.ts";
 import { noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
+  MAX_FOR_CHARS,
   MAX_BUDGET_USD,
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
@@ -27,6 +28,7 @@ import { btn, card, field as formField } from "../ui.ts";
 
 interface Values {
   readonly name: string;
+  readonly forWhom: string;
   readonly direction: string;
   readonly apps: readonly string[];
   readonly crew: readonly string[];
@@ -36,6 +38,7 @@ interface Values {
 
 const EMPTY: Values = {
   name: "",
+  forWhom: "",
   direction: "",
   apps: [],
   crew: [],
@@ -99,6 +102,7 @@ function formView(
   return html`<div class="narrow-wide">
     ${pageHead("New forge", {
       sub: "A whole forge for someone: the apps you choose, a crew, and one link to send.",
+      actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
     ${errors["form"]
       ? html`<p class="error mb" role="alert">${errors["form"]}</p>`
@@ -114,6 +118,13 @@ function formView(
           autofocus: true,
           hint: `Its address: <name>.${ctx.url.host}. Lowercase letters, digits and dashes.`,
           ...(errors["name"] ? { error: errors["name"] } : {}),
+        })}
+        ${formField({
+          label: "For whom",
+          name: "for",
+          value: values.forWhom,
+          hint: `A person, a client or an organisation, for your list of forges sent (at most ${MAX_FOR_CHARS} characters). Never copied into the child.`,
+          ...(errors["for"] ? { error: errors["for"] } : {}),
         })}
         ${formField({
           label: "What it is for",
@@ -231,6 +242,7 @@ function madeView(body: Record<string, unknown>): Html {
               and is shown only now.
             </p>
             <p><code class="mono" id="claim-link">${link}</code></p>
+            <p class="mt">${btn("Forges you sent", { href: "/forges", size: "sm" })}</p>
             ${typeof note === "string"
               ? html`<p class="small mt">${note}</p>`
               : null}`
@@ -264,6 +276,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const values: Values = {
     name: field(form, "name").trim(),
+    forWhom: field(form, "for").trim(),
     direction: field(form, "direction"),
     apps: all(form, "apps"),
     crew: all(form, "crew"),
@@ -277,6 +290,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     apps: values.apps,
     crew: values.crew,
     keepAccess: values.keepAccess,
+    ...(values.forWhom === "" ? {} : { for: values.forWhom }),
     ...(values.direction.trim() === "" ? {} : { direction: values.direction }),
     ...(key === "" ? {} : { modelKey: key }),
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),

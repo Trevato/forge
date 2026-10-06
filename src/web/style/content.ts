@@ -1126,6 +1126,9 @@ textarea.editor:focus { outline: none; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 .no-hits .ico { color: var(--faint); flex: none; }
+/* The client list (#776): whom a forge is for is the point of the row, so
+   its line wraps rather than being cut off on a phone. */
+.forges-sent .row-meta { white-space: normal; }
 
 }
 `;

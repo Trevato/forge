@@ -96,6 +96,10 @@ interface Ledger {
   readonly url: string;
   readonly planHash: string;
   done: boolean;
+  /** For the client list (#776); absent on a ledger written before it. */
+  readonly forWhom?: string;
+  readonly apps?: readonly string[];
+  readonly createdAt?: string;
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -200,7 +204,16 @@ async function make(
       await deps.placement.retire(placed.value.bodyId);
       return fail("placement returned an unusable body id");
     }
-    ledger = { name: plan.name, bodyId: placed.value.bodyId, url: placed.value.url, planHash, done: false };
+    ledger = {
+      name: plan.name,
+      bodyId: placed.value.bodyId,
+      url: placed.value.url,
+      planHash,
+      done: false,
+      ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
+      apps: plan.apps.map((a) => a.ref),
+      createdAt: new Date().toISOString(),
+    };
     await writeLedger(app, ledger);
   }
 
@@ -425,16 +438,36 @@ export async function reissueClaim(
   }
 }
 
+/** One child, as the ledger keeps it. */
+export interface Child {
+  readonly name: string;
+  readonly url: string;
+  readonly bodyId: string;
+  readonly done: boolean;
+  /** Whom it is for; null when unsaid. */
+  readonly for: string | null;
+  readonly apps: readonly string[];
+  /** When it was begun; null on a ledger older than the client list. */
+  readonly createdAt: string | null;
+}
+
 /** The children this forge has made or begun, from its ledger, by name. */
-export async function listChildren(
-  app: App,
-): Promise<{ name: string; url: string; bodyId: string; done: boolean }[]> {
+export async function listChildren(app: App): Promise<Child[]> {
   const dir = join(app.config.dataDir, "spawn");
   const files = await readdir(dir).catch(() => [] as string[]);
-  const out = [];
+  const out: Child[] = [];
   for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
     const ledger = await readLedger(app, f.slice(0, -".json".length));
-    if (ledger) out.push({ name: ledger.name, url: ledger.url, bodyId: ledger.bodyId, done: ledger.done });
+    if (ledger)
+      out.push({
+        name: ledger.name,
+        url: ledger.url,
+        bodyId: ledger.bodyId,
+        done: ledger.done,
+        for: ledger.forWhom ?? null,
+        apps: ledger.apps ?? [],
+        createdAt: ledger.createdAt ?? null,
+      });
   }
   return out;
 }

@@ -140,6 +140,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     direction: raw["direction"],
     keepAccess: raw["keepAccess"],
     budgetUsd: raw["budgetUsd"],
+    for: raw["for"],
   };
 
   if (dry) {

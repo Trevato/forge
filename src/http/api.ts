@@ -29,6 +29,7 @@ import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
 import { forgeHealth } from "../kernel/guard.ts";
 import { listChildren } from "../actions/spawn.ts";
+import { forgeState } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
@@ -3408,6 +3409,14 @@ export function apiRoutes(router: Router<Handler>): void {
         ? apiError("forbidden", 403, "the front page is a site admin's to set")
         : apiError("invalid", 422, set.error.message);
     return json(set.value);
+  });
+
+  // A spawned forge's word about itself, to anyone (#776): claimed or not,
+  // and when anything last happened. Nothing else; 404 when not spawned.
+  router.add("GET", "/api/v1/forge", async (ctx) => {
+    const state = await forgeState(ctx.app);
+    if (!state) return apiError("not_found", 404, "this forge was not spawned");
+    return json(state);
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.

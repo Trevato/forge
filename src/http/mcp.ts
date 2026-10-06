@@ -27,6 +27,7 @@ import {
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
+import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
@@ -645,6 +646,25 @@ const TOOLS: readonly Tool[] = [
           ? `Spawned ${String(door.body["name"])} at ${String(door.body["url"])}.`
           : "This is the plan; nothing was made. Send dryRun: false to spawn.",
         ...door.body,
+      });
+    },
+  },
+  {
+    name: "forges",
+    description:
+      "The forges you sent from here (an admin's list): each child's name, address, whom it is for, the apps it was given, when it was sent, whether its person has claimed it, and when anything last happened there. `claimed` is null when the child did not answer.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    async run(ctx, user) {
+      if (!user.isAdmin)
+        return bad("forbidden", "only an admin of this forge sees the forges it sent");
+      const forges = await clientRows(ctx.app);
+      return good({
+        says:
+          forges.length === 0
+            ? "This forge has sent no forges yet."
+            : `${forges.length} forge${forges.length === 1 ? "" : "s"} sent from here.`,
+        forges,
       });
     },
   },

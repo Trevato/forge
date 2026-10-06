@@ -194,7 +194,7 @@ describe("the client list", () => {
       headers: { origin: childServers.url },
       body: new URLSearchParams({
         token: claimUrl.split("#")[1]!,
-        username: "maria",
+        username: "mara",
         email: "m@bakery.test",
         password: PASSWORD,
       }),
