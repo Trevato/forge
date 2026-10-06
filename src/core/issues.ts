@@ -489,6 +489,17 @@ export interface Comment {
   readonly createdAt: string;
   /** The login on the origin, for an imported comment; null for a local one. */
   readonly originAuthor: string | null;
+  /**
+   * The run this was said into while it worked (`steerRun`): its agent
+   * heard it then, so no later run of that agent is told it again
+   * (`crew/news.ts`). Null for words no run has heard yet.
+   */
+  readonly heardIn: string | null;
+}
+
+/** Record that run `runId` heard comment `commentId` as it worked. */
+export function markHeard(db: Database, commentId: string, runId: string): void {
+  db.query("UPDATE comment SET heard_in = ?2 WHERE id = ?1").run(commentId, runId);
 }
 
 export function addComment(
@@ -523,6 +534,7 @@ function getComment(db: Database, commentId: string): Comment | undefined {
         body: string;
         created_at: string;
         origin_author: string | null;
+        heard_in: string | null;
       },
       [string]
     >(
@@ -539,6 +551,7 @@ function getComment(db: Database, commentId: string): Comment | undefined {
     body: row.body,
     createdAt: row.created_at,
     originAuthor: row.origin_author,
+    heardIn: row.heard_in,
   };
 }
 
@@ -572,6 +585,7 @@ export function listComments(
         body: string;
         created_at: string;
         origin_author: string | null;
+        heard_in: string | null;
       },
       [string]
     >(
@@ -588,6 +602,7 @@ export function listComments(
     body: row.body,
     createdAt: row.created_at,
     originAuthor: row.origin_author,
+    heardIn: row.heard_in,
   }));
 }
 

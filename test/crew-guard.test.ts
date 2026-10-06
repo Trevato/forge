@@ -18,7 +18,12 @@ import { createRepo } from "../src/actions/repos.ts";
 import { readUsage } from "../src/actions/usage.ts";
 import { getAgent, type Agent } from "../src/core/agents.ts";
 import { listDecisions } from "../src/core/decisions.ts";
-import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
+import {
+  getIssueById,
+  listComments,
+  markHeard,
+  type Issue,
+} from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import {
   claimRun,
@@ -184,6 +189,35 @@ describe("a follow-up with nothing new is not started", () => {
       agentName: "bot",
     });
     expect(news.comments.map((c) => c.body)).toEqual(["Blue, not green."]);
+  });
+
+  test("a word steered into the run that worked is told once: not again to the next", async () => {
+    const issue = held("Paint the roof");
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.user.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    await Bun.sleep(5);
+    // Said while it worked: one heard by steering, one not.
+    const steered = ok(addComment(app, alice, repo, issue, "Red."));
+    markHeard(app.db, steered.id, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "answered", costUsd: 0.5 });
+    const current = getIssueById(app.db, issue.id)!;
+    // Only the steered word since: nothing new, nothing queued.
+    expect(queueAgentRun(app, fresh(), current, bot, "feedback", alice.id)).toBeUndefined();
+    const unheard = ok(addComment(app, alice, repo, issue, "And the door."));
+    const news = newsSince({
+      comments: listComments(app.db, issue.id, { kind: "comment" }),
+      reviews: [],
+      reviewComments: [],
+      since: feedbackSince(app.db, fresh(), current, bot),
+      agentName: "bot",
+    });
+    expect(news.comments.map((c) => c.id)).toEqual([unheard.id]);
   });
 
   test("a follow-up queued behind a run that answered everything ends as it starts, at no cost", async () => {

@@ -1491,4 +1491,9 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS milestone_watch_issue ON milestone_watch(issue_id);
   `,
+  // 68 — the run a comment was said into as it worked (#827): its agent heard
+  // it then, so the next run's brief does not tell it again.
+  `
+  ALTER TABLE comment ADD COLUMN heard_in TEXT;
+  `,
 ];

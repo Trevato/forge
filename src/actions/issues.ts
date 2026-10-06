@@ -200,7 +200,7 @@ export function addComment(
     kind: `${issue.kind}.commented`,
     repoId: repo.id,
     actorId: user.value.id,
-    payload: { number: issue.number, body },
+    payload: { number: issue.number, body, commentId: added.value.id },
   });
   return added;
 }
