@@ -134,23 +134,70 @@ export function frontSignals(
   return out;
 }
 
+/** How much each signal counts toward an app's place (#767). */
+export interface FrontWeights {
+  readonly forks: number;
+  readonly ships: number;
+  readonly use: number;
+  readonly fresh: number;
+}
+
+/** The forge's own judgement until a site admin says otherwise. */
+export const DEFAULT_WEIGHTS: FrontWeights = { forks: 3, ships: 2, use: 1, fresh: 2 };
+/** Each weight is a number from 0 to this. */
+export const WEIGHT_MAX = 10;
+export const WEIGHT_NAMES = ["forks", "ships", "use", "fresh"] as const;
+
+/** A weight as given, when it is one: a finite number from 0 to `WEIGHT_MAX`. */
+export const isWeight = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= WEIGHT_MAX;
+
+/** The weights a site admin set, or the defaults; a stored value is checked again. */
+export function frontWeights(db: Database): FrontWeights {
+  const row = db
+    .query<{ value: string }, []>(`SELECT value FROM front_setting WHERE key = 'weights'`)
+    .get();
+  if (row === null) return DEFAULT_WEIGHTS;
+  try {
+    const v = JSON.parse(row.value) as Record<string, unknown>;
+    return WEIGHT_NAMES.every((k) => isWeight(v[k]))
+      ? { forks: v["forks"] as number, ships: v["ships"] as number, use: v["use"] as number, fresh: v["fresh"] as number }
+      : DEFAULT_WEIGHTS;
+  } catch {
+    return DEFAULT_WEIGHTS;
+  }
+}
+
+export function setFrontWeights(db: Database, weights: FrontWeights, by: string): void {
+  db.query(
+    `INSERT INTO front_setting (key, value, set_by) VALUES ('weights', ?1, ?2)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, set_by = excluded.set_by,
+       set_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
+  ).run(JSON.stringify(weights), by);
+}
+
 /**
- * One number per app, from its signals: forks count most (someone made it
- * theirs), then ships (it is alive), then use, then how lately it shipped.
- * Logarithms, so one app's thousand awake hours do not drown everything
- * else; freshness fades to nothing over the signal window.
+ * One number per app, from its signals, weighed (`FrontWeights`): by
+ * default forks count most (someone made it theirs), then ships (it is
+ * alive), then use, then how lately it shipped. Logarithms, so one app's
+ * thousand awake hours do not drown everything else; freshness fades to
+ * nothing over the signal window.
  */
-export function frontScore(s: FrontSignals, now = Date.now()): number {
+export function frontScore(
+  s: FrontSignals,
+  now = Date.now(),
+  w: FrontWeights = DEFAULT_WEIGHTS,
+): number {
   const days =
     s.shippedAt === null
       ? Infinity
       : Math.max(0, (now - Date.parse(s.shippedAt)) / 86_400_000);
   const fresh = Math.max(0, 1 - days / SIGNAL_DAYS);
   return (
-    3 * Math.log1p(s.forks) +
-    2 * Math.log1p(s.ships) +
-    Math.log1p(s.awakeHours) +
-    2 * fresh
+    w.forks * Math.log1p(s.forks) +
+    w.ships * Math.log1p(s.ships) +
+    w.use * Math.log1p(s.awakeHours) +
+    w.fresh * fresh
   );
 }
 
