@@ -59,7 +59,7 @@ async function boot(kind: "github" | "forgejo"): Promise<Fixture> {
   const fake = serveFakeForge(state);
   const app = createApp({ dataDir, port: 0 });
   const servers = await serve(app);
-  for (const username of ["alice", "bob"]) {
+  for (const username of ["alice", "bob", "carol"]) {
     await fetch(`${servers.url}/api/v1/users`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -230,26 +230,35 @@ describe("GitHub's device grant: connecting with no browser on the server", () =
     expect(response.status).toBe(403);
   });
 
-  test("connect attempts are capped per user", async () => {
-    let last = 0;
-    for (let i = 0; i < 7; i++) {
-      const response = await api("/api/v1/user/origins/oauth", {
-        method: "POST",
-        body: JSON.stringify({ host: f.fake.url, kind: "github" }),
-      });
-      last = response.status;
-      if (last === 429) break;
-    }
-    expect(last).toBe(429);
+  test("connect attempts are capped per user: five pass, the sixth is refused", async () => {
+    // An account that has not connected yet, so the count is exact. The
+    // window is the forge's own: a fresh forge starts with a fresh one.
+    f.oauth.approved = false;
+    const attempt = async () =>
+      (
+        await api("/api/v1/user/origins/oauth", {
+          method: "POST",
+          as: "carol",
+          body: JSON.stringify({ host: f.fake.url, kind: "github" }),
+        })
+      ).status;
+    for (let i = 0; i < 5; i++) expect(await attempt()).toBe(201);
+    expect(await attempt()).toBe(429);
+    // Someone else's attempts are their own.
+    expect(
+      (
+        await api("/api/v1/user/origins/oauth", {
+          method: "POST",
+          as: "bob",
+          body: JSON.stringify({ host: f.fake.url, kind: "github" }),
+        })
+      ).status,
+    ).toBe(201);
   });
 
   test("disconnecting revokes the grant with the app's own credentials", async () => {
-    // One account connects once; this test needs to connect it again.
-    for (const row of f.app.db
-      .query<{ id: string }, []>("SELECT id FROM origin")
-      .all()) {
-      await api(`/api/v1/user/origins/${row.id}`, { method: "DELETE" });
-    }
+    // Bob connects: alice's one connection stands, and the account that
+    // disconnects is not the point here.
     // Revocation authenticates as the *application*, so it is only reachable
     // when the operator configured a secret.
     process.env.FORGE_GITHUB_CLIENT_SECRET = "operator-client-secret";
@@ -258,15 +267,19 @@ describe("GitHub's device grant: connecting with no browser on the server", () =
     const started = await read<{ flowId: string }>(
       await api("/api/v1/user/origins/oauth", {
         method: "POST",
+        as: "bob",
         body: JSON.stringify({ host: f.fake.url, kind: "github" }),
       }),
     );
     const done = await read<{ originId: string }>(
-      await api(`/api/v1/user/origins/oauth/${started.flowId}`),
+      await api(`/api/v1/user/origins/oauth/${started.flowId}`, { as: "bob" }),
     );
 
     const gone = await read<{ revokedUpstream: boolean }>(
-      await api(`/api/v1/user/origins/${done.originId}`, { method: "DELETE" }),
+      await api(`/api/v1/user/origins/${done.originId}`, {
+        method: "DELETE",
+        as: "bob",
+      }),
     );
     expect(gone.revokedUpstream).toBe(true);
     const revoked = f.oauth.revoked.at(-1)!;
