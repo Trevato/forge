@@ -267,7 +267,7 @@ describe("reserved names", () => {
       expect(await res.json()).toEqual({ error: "username_reserved" });
     }
     const ada = getUserByName(app.db, "ada")!;
-    for (const displayName of ["Trevato2", "ScoutBot"]) {
+    for (const displayName of ["Trevato2", "ScoutBot", "trevatoo"]) {
       const patched = updateProfile(app, ada, { displayName });
       expect(patched.ok).toBe(false);
     }
@@ -295,7 +295,7 @@ describe("reserved names", () => {
       const ada = getUserByName(app.db, "ada")!;
       for (const displayName of ["Maria Garcia", "Anna Maria", "Mariah Carey"])
         expect(updateProfile(app, ada, { displayName }).ok).toBe(true);
-      for (const displayName of ["MARIA", "the real maria", "Maria official", "realmaria", "Maria (admin)"]) {
+      for (const displayName of ["MARIA", "the real maria", "Maria official", "realmaria", "Maria (admin)", "Mariaa", "Mariaaa", "Maria Verified", "Maria (verified)", "Maria HQ"]) {
         const patched = updateProfile(app, ada, { displayName });
         expect([displayName, patched.ok]).toEqual([displayName, false]);
       }

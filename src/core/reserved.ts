@@ -272,12 +272,7 @@ export function reservedName(
     if (handle.length < 3) continue;
     if (holder.is_agent === 1) {
       if (runsWithRole(run, handle)) return "agent";
-    } else if (
-      as === "username"
-        ? ownersRunOn(run, handle)
-        : bareIs(run, handle, HONORIFIC_WORDS)
-    )
-      return "owner";
+    } else if (ownersRunOn(run, handle)) return "owner";
   }
   return undefined;
 }
@@ -287,7 +282,12 @@ export function reservedName(
  * to be them: the role words, and the ways people say "the real one".
  */
 const HONORIFIC_WORDS = new Set(
-  [...ROLE_WORDS, ...["real", "the", "its", "iam", "im", "true", "original"].map(skeleton)],
+  [
+    ...ROLE_WORDS,
+    ...["real", "the", "its", "iam", "im", "true", "original", "verified", "hq"].map(
+      skeleton,
+    ),
+  ],
 );
 
 /** Whether `run` is `handle` with only `words` run on, either side, any number. */
