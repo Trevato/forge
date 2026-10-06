@@ -141,9 +141,10 @@ describe("the asks page", () => {
     expect(sentence(page)).toBe("1 thing needs you");
     expect(page).toContain("Bot did a thing");
     expect(headerCount(page)).toBe(1);
-    // The dashboard no longer lists it: it links here.
-    const dash = await get(`${alice.split(";")[0]!}; forge_mode=dev`, "/");
-    expect(dash).toContain('<a href="/asks">1 thing needs you</a>');
+    // The home counts it in the header's Asks link; the dev dashboard's
+    // own "needs you" line went with the dashboard (#625).
+    const home = await get(alice, "/");
+    expect(headerCount(home)).toBe(1);
     // Bob can read the public repository but cannot write it: not his ask.
     expect(sentence(await get(bob, "/asks"))).toBe("All fine");
   });

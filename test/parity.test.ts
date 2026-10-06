@@ -7,6 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -323,14 +324,16 @@ describe("parity: full control through actions and the API", () => {
     });
     expect(bad.status).toBe(422);
     expect(bad.json.error).toBe("unknown_branch");
+    const canary = join(work, "written-by-git");
     expect(
       (
         await call("PATCH", "/api/v1/repos/alice/pub", {
           token: aliceAdmin,
-          body: { defaultBranch: "--output=/tmp/x" },
+          body: { defaultBranch: `--output=${canary}` },
         })
       ).status,
     ).toBe(422);
+    expect(existsSync(canary)).toBe(false);
 
     const moved = await call("PATCH", "/api/v1/repos/alice/pub", {
       token: aliceAdmin,

@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
-import { forgetFrontScores } from "../src/actions/front.ts";
+import { forgetFrontScores, frontPage } from "../src/actions/front.ts";
+import * as lookService from "../src/looks/service.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import {
@@ -644,5 +645,45 @@ describe("the front page", () => {
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(JSON.stringify(json)).not.toContain("suspended-maker/sus-app\"");
     expect(json.featured?.repo).not.toBe("suspended-maker/sus-app");
+  });
+
+  test("the page's memory of which thumbs were taken as a stranger keeps only the pictures it shows, however often they are retaken (#768)", async () => {
+    const { repo, record } = await make(admin, "retaken");
+    const reads = spyOn(lookService, "keepLook");
+    try {
+      frontPage(app);
+      // A picture already checked is not read again.
+      reads.mockClear();
+      frontPage(app);
+      expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(0);
+      const retake = (n: number) => {
+        const path = `looks/${record.id}/thumb-${n}.png`;
+        mkdirSync(join(dataDir, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir, path), PNG);
+        recordLook(app.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: HEAD,
+          kind: "thumb",
+          path,
+        });
+      };
+      for (let n = 0; n < 25; n++) {
+        retake(n);
+        reads.mockClear();
+        const shown = frontPage(app);
+        // The new picture is read once…
+        expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(1);
+        expect(JSON.stringify(shown)).toContain(`/${repo.ownerName}/${repo.name}/looks/`);
+      }
+      // …and the ones it replaced were forgotten: shown again, the first is
+      // read afresh, not answered from a memory that kept every path.
+      retake(0);
+      reads.mockClear();
+      frontPage(app);
+      expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 });

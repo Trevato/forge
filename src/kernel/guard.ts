@@ -10,8 +10,8 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import pkg from "../../package.json" with { type: "json" };
 import { health } from "../http/health.ts";
+import { running } from "./version.ts";
 
 export const GUARD_STALE_MS = 10 * 60_000;
 const MAX_INCIDENTS = 50;
@@ -34,7 +34,9 @@ export interface Rollout {
 
 export interface ForgeHealth {
   readonly ok: boolean;
+  /** What is running, as the build stamped it (`kernel/version.ts`). */
   readonly version: string;
+  readonly commit: string | null;
   readonly draining: boolean;
   readonly rollout: Rollout;
   readonly incidents: Incident[];
@@ -98,6 +100,7 @@ export function forgeHealth(
   const stale =
     guard.checkedAt !== null && now - Date.parse(guard.checkedAt) > GUARD_STALE_MS;
   const find = (key: string) => guard.incidents.find((i) => i.key === key);
+  const { version, commit } = running();
   const stuck = find("stuck");
   const held = find("held");
   const rollout: Rollout = stuck
@@ -114,7 +117,8 @@ export function forgeHealth(
   return {
     ok:
       !health.draining && !stale && guard.incidents.length === 0,
-    version: pkg.version,
+    version,
+    commit,
     draining: health.draining,
     rollout,
     incidents: guard.incidents,
