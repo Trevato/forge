@@ -448,9 +448,19 @@ form.inline { display: inline; margin-left: auto; }
 .explore-name { font-weight: 600; }
 .explore-line .input { flex: 1; min-width: 0; }
 /* On a phone the first rows belong on the first screen: one row of chips
-   that scrolls sideways, and a row's verb under its numbers. */
+   that scrolls sideways, and a row's verb under its numbers. The chips fade
+   at the right edge, so a cut one says there is more; where the browser
+   ties an animation to scrolling, the fade lifts at the end. */
+@property --chip-fade { syntax: "<length>"; inherits: false; initial-value: 32px; }
+@keyframes chip-fade { 90% { --chip-fade: 32px; } to { --chip-fade: 0px; } }
 @media (max-width: 600px) {
-  .explore-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .explore-filters {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--chip-fade)), transparent);
+  }
+  @supports (animation-timeline: scroll()) {
+    .explore-filters { animation: chip-fade linear both; animation-timeline: scroll(self inline); }
+  }
   .explore-filters .seg { flex: none; }
   .explore-row { flex-wrap: wrap; row-gap: 6px; }
   .explore-row > .explore-main { flex-basis: 100%; }
