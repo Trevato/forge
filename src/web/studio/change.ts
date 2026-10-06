@@ -232,8 +232,7 @@ function conflictWords(baseBranch: string, files: readonly string[]): string {
 
 /**
  * GET /:owner/:name/pulls/:number and /changes/:number: one page, two
- * addresses, for every repository and every viewer — `?mode=dev` and the
- * mode cookie change nothing. An older `?rc=` link (an inline comment form
+ * addresses, for every repository and every viewer. An older `?rc=` link (an inline comment form
  * on the diff) is handed on to the Files step, where the diff now lives.
  */
 export async function pullPage(ctx: Ctx): Promise<Response> {
