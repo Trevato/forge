@@ -379,6 +379,10 @@ describe("surfaces adversarial: web", () => {
     };
 
     seedApps(5);
+    // A session's first request stamps when it was last seen (once per
+    // interval, `sessionUser`): one write per sign-in, not per row, so it
+    // is spent before counting.
+    await web(cookie, "/apps");
     const small = await statements(app.db, async () => {
       const response = await web(cookie, "/apps");
       expect(response.status).toBe(200);
@@ -446,6 +450,10 @@ describe("surfaces adversarial: web", () => {
     };
 
     seed(5, 0);
+    // A session's first request stamps when it was last seen (once per
+    // interval, `sessionUser`): one write per sign-in, not per row, so it
+    // is spent before counting.
+    await web(cookie, "/");
     const small = await statements(app.db, async () => {
       const response = await web(cookie, "/");
       expect(response.status).toBe(200);
@@ -506,6 +514,10 @@ describe("surfaces adversarial: web", () => {
     };
 
     seed(5, 0);
+    // A session's first request stamps when it was last seen (once per
+    // interval, `sessionUser`): one write per sign-in, not per row, so it
+    // is spent before counting.
+    await web(cookie, "/");
     const small = await statements(app.db, async () => {
       await web(cookie, "/");
     });

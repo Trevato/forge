@@ -30,6 +30,7 @@ import { startCrew } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
+import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
@@ -332,6 +333,14 @@ const staleTimer = setInterval(() => void tickAsks(), 120_000);
 void tickAsks();
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
+// Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
+// put on one before that is reported here for the owner to take off — the
+// forge never removes it on its own.
+for (const p of peopleOnCrews(app.db))
+  app.log.warn("a person is on a crew; only agents belong there", {
+    repo: p.repoId,
+    user: p.username,
+  });
 if (apps)
   app.log.info("apps are up", {
     domain: apps.options.domain,

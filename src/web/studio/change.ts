@@ -19,6 +19,7 @@ import {
   revertOf,
   toldBy,
   type Pull,
+  pullDir,
 } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
@@ -272,7 +273,8 @@ async function changeConversation(
   const thread = `${base}/pulls/${pull.number}`;
   const wordCtx: WordCtx = {
     db,
-    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+    // The change is read where its objects are (`pullDir`).
+    dir: await pullDir(db, ctx.app.reposRoot, repo, pull),
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),

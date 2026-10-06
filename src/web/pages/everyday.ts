@@ -13,17 +13,21 @@ import {
   everydayOf,
   EVERYDAY_WHY,
   keepAdmin,
+  joinAsWriter,
   linkEveryday,
 } from "../../core/everyday.ts";
+import { spawnedOrg } from "../../spawn/claim.ts";
 import { reservedName } from "../../core/reserved.ts";
+import { requireVerified } from "../../actions/verify.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, getUserByName, type User } from "../../core/users.ts";
-import type { Ctx } from "../../http/context.ts";
+import { cookieValue, type Ctx } from "../../http/context.ts";
 import { signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, redirect } from "../layout.ts";
 import { btn, card, field as formField } from "../ui.ts";
+import { signOutHere } from "../../actions/signins.ts";
 import { sessionCookie } from "./site.ts";
 
 const MIN_PASSWORD = 10;
@@ -50,10 +54,15 @@ export function everydayLine(ctx: Ctx, user: User): Html | null {
   const db = ctx.app.db;
   const daily = everydayOf(db, user);
   if (daily)
-    return html`<p class="muted mb" id="everyday-pair">
-      Your everyday account is <a href="/${daily.username}">${daily.username}</a>.
-      Use it day to day; this one is for changing the forge.
-    </p>`;
+    return html`<div class="mb" id="everyday-pair">
+      <p class="muted">
+        Your everyday account is <a href="/${daily.username}">${daily.username}</a>.
+        Use it day to day; this one is for changing the forge.
+      </p>
+      <form method="post" action="/settings/everyday/switch" class="mt">
+        ${btn(`Sign in as ${daily.username}`, { size: "sm" })}
+      </form>
+    </div>`;
   const admin = adminOf(db, user);
   if (admin)
     return html`<p class="muted mb" id="everyday-pair">
@@ -66,8 +75,17 @@ export function everydayLine(ctx: Ctx, user: User): Html | null {
 
 function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
   return card(
-    html`<p class="mb">${EVERYDAY_WHY}</p>
-      <form method="post" action="/settings/everyday" class="stack">
+    html`<p class="mb">${EVERYDAY_WHY}</p>${everydayFields(ctx, user, offerKeep)}`,
+    { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
+  );
+}
+
+/** The form alone, for a card that says why itself (the first-login steps, #600). */
+export const everydayAsk = (ctx: Ctx, user: User): Html =>
+  everydayFields(ctx, user, true);
+
+function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
+  return html`<form method="post" action="/settings/everyday" class="stack">
         ${formField({
           label: "Username",
           name: "username",
@@ -107,9 +125,7 @@ function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
         method="post"
         action="/settings/everyday/keep"
         hidden
-      ></form>`,
-    { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
-  );
+      ></form>`;
 }
 
 // POST /settings/everyday — make the everyday account, link it, sign in as it.
@@ -119,9 +135,10 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   if (!admin.isAdmin) return new Response("forbidden", { status: 403 });
-  if (everydayOf(ctx.app.db, admin) !== undefined)
+  const existing = everydayOf(ctx.app.db, admin);
+  if (existing !== undefined)
     return flashTo(ctx, "/settings", {
-      message: "You already have an everyday account.",
+      message: `You already have an everyday account, ${existing.username}: sign in as it below.`,
     });
   const username = field(form, "username");
   const email = field(form, "email");
@@ -138,11 +155,14 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
     return say("Passwords need at least 10 characters.");
   // The reserved-name rule was applied above with the admin as \`self\`:
   // their own handle may appear in their everyday name ("ada-me").
+  // A proven admin vouches for their own second account, as a claim
+  // vouches for the first: held back, it could not tell the crew.
   const made = await createUser(ctx.app.db, {
     username,
     email,
     password,
     allowReserved: true,
+    trusted: requireVerified(ctx.app, admin).ok,
   });
   if (!made.ok)
     return say(
@@ -153,6 +173,16 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
           : "That account could not be made.",
     );
   linkEveryday(ctx.app.db, admin, made.value);
+  // On a spawned forge the apps are the client's org's: the everyday
+  // account writes to it, or it could not open or tell the crew anything.
+  const spawned = await spawnedOrg(ctx.app);
+  if (spawned && !joinAsWriter(ctx.app.db, spawned.org, made.value))
+    // Signed in as it, the account would see nothing: the admin stays, at
+    // the org's teams, where the one fix is.
+    return flashTo(ctx, `/${spawned.org.username}#teams`, {
+      tone: "danger",
+      message: `${made.value.username} was made but could not join ${spawned.org.username}: add it to a team that writes there, then sign in as it.`,
+    });
   const session = createSession(ctx.app.db, made.value.id);
   return redirect("/", {
     cookie: sessionCookie(session.token, session.expiresAt, ctx.url),
@@ -174,5 +204,22 @@ export async function everydayKeep(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, "/", {
     message:
       "You keep working as admin. Your account page has the way to an everyday account whenever you want one.",
+  });
+}
+
+// POST /settings/everyday/switch — leave the admin account for the everyday
+// one: this session ends, and sign-in says as whom to come back.
+export async function everydaySwitch(ctx: Ctx): Promise<Response> {
+  const admin = ctx.auth.user;
+  if (!admin) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const daily = admin.isAdmin ? everydayOf(ctx.app.db, admin) : undefined;
+  if (!daily) return new Response("not found", { status: 404 });
+  signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
+  return redirect("/signin", {
+    cookie: sessionCookie("", new Date(0), ctx.url),
+    url: ctx.url,
+    flash: { message: `Sign in as ${daily.username}, your everyday account.` },
   });
 }

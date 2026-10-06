@@ -16,7 +16,6 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { LIVE_BUDGET_MS, search } from "../src/actions/search.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo, listReposVisibleTo } from "../src/core/repos.ts";
@@ -218,7 +217,6 @@ describe("search: one query, four sources", () => {
       },
     ]);
     fake = serveFakeForge(state);
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await account("/api/v1/user/origins", {
@@ -534,7 +532,6 @@ describe("search: one query, four sources", () => {
     ]);
     slow.searchDelayMs = LIVE_BUDGET_MS + 2_000;
     const slowFake = serveFakeForge(slow);
-    resetConnectLimit();
     try {
       const connected = await account("/api/v1/user/origins", {
         method: "POST",

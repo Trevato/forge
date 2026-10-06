@@ -20,9 +20,14 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { isAppMember } from "./app_members.ts";
+import { appsNaming, isAppMember } from "./app_members.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
-import { REPO_VISIBLE, REPO_WRITABLE } from "./visibility.ts";
+import {
+  OWNER_STANDING,
+  PUBLIC_VISIBLE,
+  REPO_VISIBLE,
+  REPO_WRITABLE,
+} from "./visibility.ts";
 import {
   accessAllows,
   orgAccess,
@@ -103,6 +108,12 @@ export interface Repo {
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
+  /**
+   * The repository whose sealed reports this one holds the work for
+   * (`core/sealed.ts`): a private repository its owner's crew pushes to,
+   * read only by the base's writers and crew. Null for every other one.
+   */
+  readonly sealedFor: string | null;
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
   /**
@@ -132,6 +143,7 @@ interface RepoRow {
   crew_outsiders: number;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
+  sealed_for: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
   origin_full_name: string | null;
@@ -167,6 +179,7 @@ function toRepo(row: RepoRow): Repo {
     crewOutsiders: row.crew_outsiders === 1,
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
+    sealedFor: row.sealed_for,
     origin:
       row.origin_id !== null && row.origin_kind !== null
         ? {
@@ -315,8 +328,14 @@ export async function forkRepo(
   parent: Repo,
   ownerId: string,
   name?: string,
+  /**
+   * The private repository the owner works the parent's sealed reports in
+   * (`sealed.ts`): private whatever the parent is, no fork in the graph,
+   * read by the parent's writers and crew. One per owner and parent.
+   */
+  sealed = false,
 ): Promise<Result<Repo, ForkRepoError>> {
-  const forkName = name ?? parent.name;
+  const forkName = name ?? (sealed ? `${parent.name}-sealed` : parent.name);
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
     .query<
@@ -330,7 +349,11 @@ export async function forkRepo(
   // comes first so a re-fork reports "already_forked", not "name_taken".
   if (
     db
-      .query("SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2")
+      .query(
+        sealed
+          ? "SELECT 1 FROM repo WHERE owner_id = ?1 AND sealed_for = ?2"
+          : "SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2",
+      )
       .get(ownerId, parent.id)
   ) {
     return err("already_forked");
@@ -355,17 +378,18 @@ export async function forkRepo(
   rowOrUndo(forkDir, () =>
     db
       .query(
-        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id, sealed_for)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
       )
       .run(
         repoId,
         ownerId,
         forkName,
-        parent.visibility,
+        sealed ? "private" : parent.visibility,
         parent.description,
         parent.defaultBranch,
-        parent.id,
+        sealed ? null : parent.id,
+        sealed ? parent.id : null,
       ),
   );
   return ok(getRepoById(db, repoId)!);
@@ -383,6 +407,20 @@ function rowOrUndo(dir: string, insert: () => unknown): void {
     rmSync(dir, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** The private repository `ownerId` works `baseId`'s sealed reports in, if any. */
+export function getSealedFork(
+  db: Database,
+  ownerId: string,
+  baseId: string,
+): Repo | undefined {
+  const row = db
+    .query<RepoRow, [string, string]>(
+      `${SELECT} WHERE repo.owner_id = ?1 AND repo.sealed_for = ?2`,
+    )
+    .get(ownerId, baseId);
+  return row ? toRepo(row) : undefined;
 }
 
 /** Repos forked directly from this one. */
@@ -514,7 +552,7 @@ export function listReposVisibleTo(
   options: ListReposOptions = {},
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? ""];
-  let where = viewer ? VISIBLE : "repo.visibility = 'public'";
+  let where = viewer ? VISIBLE : PUBLIC_VISIBLE;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
     const p = params.length;
@@ -578,7 +616,7 @@ export function listReposByOwner(
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? "", ownerName];
   let where = `user.username = ?2 COLLATE NOCASE AND ${
-    viewer ? VISIBLE : "repo.visibility = 'public'"
+    viewer ? VISIBLE : PUBLIC_VISIBLE
   }`;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
@@ -672,14 +710,39 @@ function orgAccessFor(
   return orgAccess(db, repo.ownerId, user);
 }
 
+/**
+ * Whether the repo's owner is in good standing. A suspended or removed
+ * account's repositories read as absent to everyone but a site admin
+ * (`OWNER_STANDING`, its SQL twin).
+ */
+export function ownerInStanding(db: Database, repo: Repo): boolean {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT 1 AS n FROM repo WHERE repo.id = ?1 AND ${OWNER_STANDING}`,
+      )
+      .get(repo.id) !== null
+  );
+}
+
 export function canRead(
   db: Database,
   repo: Repo,
   user: User | undefined,
 ): boolean {
+  if (!ownerInStanding(db, repo)) return user?.isAdmin === true;
   if (repo.visibility === "public") return true;
   if (personalOrDirect(repo, user)) return true;
   if (onCrew(db, repo, user)) return true;
+  // The work on a sealed report is read by whoever may see the report on
+  // its base: the base's writers and crew, and nobody else (`sealed.ts`).
+  if (repo.sealedFor !== null) {
+    const base = getRepoById(db, repo.sealedFor);
+    return (
+      base !== undefined &&
+      (canWrite(db, base, user) || onCrew(db, base, user))
+    );
+  }
   return accessAllows(orgAccessFor(db, repo, user), "read");
 }
 
@@ -716,6 +779,47 @@ export function canEnterApp(
     isActive(user) &&
     isAppMember(db, app.id, user.id)
   );
+}
+
+/**
+ * `canEnterApp` for a whole page of apps, in a fixed number of reads: the
+ * ids of the apps `user` may enter. The same rule, clause for clause — a
+ * public app is open; a private one answers to whoever may write the
+ * repository or is on its crew (`writableRepoIds`, the SQL twin of
+ * `canWrite` with the crew in it), and, when `named`, to an active person
+ * the app names — asked once for every private app rather than per row.
+ */
+export function enterableApps(
+  db: Database,
+  rows: readonly {
+    readonly repo: Repo;
+    readonly app: { readonly id: string; readonly access: "public" | "private" };
+  }[],
+  user: User | undefined,
+  { named = true }: { named?: boolean } = {},
+): Set<string> {
+  const out = new Set<string>();
+  const closed = rows.filter((r) => {
+    if (r.app.access === "public") out.add(r.app.id);
+    return r.app.access !== "public";
+  });
+  if (closed.length === 0 || user === undefined) return out;
+  const writable = writableRepoIds(
+    db,
+    user,
+    closed.map((r) => r.repo.id),
+  );
+  const naming =
+    named && user.kind === "user" && isActive(user)
+      ? appsNaming(
+          db,
+          user.id,
+          closed.map((r) => r.app.id),
+        )
+      : new Set<string>();
+  for (const r of closed)
+    if (writable.has(r.repo.id) || naming.has(r.app.id)) out.add(r.app.id);
+  return out;
 }
 
 /**

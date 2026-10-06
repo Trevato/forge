@@ -55,6 +55,8 @@ export interface Spawned {
   readonly keepAccess: boolean;
   /** The child's own address, `<name>.<parent's host>`, when recorded. */
   readonly url: string | undefined;
+  /** The hash of what the parent answers to (`spawn/clients.ts`), when recorded. */
+  readonly statusHash: string | undefined;
 }
 
 /** The organisation this forge was spawned as, or undefined if it was not spawned. */
@@ -66,6 +68,7 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
       org?: unknown;
       keepAccess?: unknown;
       url?: unknown;
+      statusHash?: unknown;
     };
     const org =
       typeof parsed.org === "string" ? getOrg(app.db, parsed.org) : undefined;
@@ -77,6 +80,10 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
           url:
             typeof parsed.url === "string" && /^https?:\/\//.test(parsed.url)
               ? parsed.url
+              : undefined,
+          statusHash:
+            typeof parsed.statusHash === "string" && /^[0-9a-f]{64}$/.test(parsed.statusHash)
+              ? parsed.statusHash
               : undefined,
         };
   } catch {

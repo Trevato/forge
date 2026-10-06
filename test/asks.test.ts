@@ -58,7 +58,7 @@ describe("the asks page", () => {
     Number(/>Asks<span class="pill"[^>]*>(\d+)</.exec(page)?.[1] ?? 0);
 
   const sentence = (page: string): string =>
-    /<h1 id="asks-sentence">([^<]*)<\/h1>/.exec(page)?.[1] ?? "";
+    /<h2 id="asks-sentence"[^>]*>([^<]*)<\/h2>/.exec(page)?.[1] ?? "";
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-"));
@@ -87,16 +87,19 @@ describe("the asks page", () => {
   });
 
   test("when nothing asks, it says All fine, and so does the header", async () => {
-    const page = await get(alice, "/asks");
+    const page = await get(alice, "/");
     expect(sentence(page)).toBe("All fine");
     expect(headerCount(page)).toBe(0);
     expect(await get(alice, "/")).not.toContain("<h2>Needs you</h2>");
   });
 
-  test("a signed-out reader is sent to sign in", async () => {
+  test("/asks lands on the home's pinned needs-you, and a signed-out reader there gets the door, no asks", async () => {
     const response = await fetch(`${servers.url}/asks`, { redirect: "manual" });
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toContain("/signin");
+    expect(response.headers.get("location")).toBe("/#needs-you");
+    const door = await (await fetch(`${servers.url}/`)).text();
+    expect(door).not.toContain('id="needs-you"');
+    expect(door).not.toContain('id="asks-sentence"');
   });
 
   test("a stopped pull is a card, and the header and the page agree", async () => {
@@ -126,7 +129,7 @@ describe("the asks page", () => {
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "failed", summary: "red" });
     // Failed but the crew is still trying: that is working, not an ask.
-    expect(sentence(await get(alice, "/asks"))).toBe("All fine");
+    expect(sentence(await get(alice, "/"))).toBe("All fine");
     recordDecision(app.db, {
       kind: "retry",
       repoId: repo.id,
@@ -137,15 +140,16 @@ describe("the asks page", () => {
       by: "rule",
       ms: 1,
     });
-    const page = await get(alice, "/asks");
+    const page = await get(alice, "/");
     expect(sentence(page)).toBe("1 thing needs you");
     expect(page).toContain("Bot did a thing");
     expect(headerCount(page)).toBe(1);
-    // The dashboard no longer lists it: it links here.
-    const dash = await get(`${alice.split(";")[0]!}; forge_mode=dev`, "/");
-    expect(dash).toContain('<a href="/asks">1 thing needs you</a>');
+    // The home counts it in the header's Asks link; the dev dashboard's
+    // own "needs you" line went with the dashboard (#625).
+    const home = await get(alice, "/");
+    expect(headerCount(home)).toBe(1);
     // Bob can read the public repository but cannot write it: not his ask.
-    expect(sentence(await get(bob, "/asks"))).toBe("All fine");
+    expect(sentence(await get(bob, "/"))).toBe("All fine");
   });
 
   test("a forge health problem is a card for an admin and for no one else", async () => {
@@ -153,11 +157,11 @@ describe("the asks page", () => {
     app.db
       .query("UPDATE run SET created_at = ?1 WHERE state = 'queued'")
       .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
-    const admin = await get(alice, "/asks");
+    const admin = await get(alice, "/");
     expect(admin).toContain("queue has waited over");
     expect(sentence(admin)).toBe("2 things need you");
     expect(headerCount(admin)).toBe(2);
-    const other = await get(bob, "/asks");
+    const other = await get(bob, "/");
     expect(other).not.toContain("queue has waited");
     expect(sentence(other)).toBe("All fine");
   });
@@ -203,16 +207,16 @@ describe("the asks page", () => {
       ms: 1,
     });
     const card = `id="ask-stopped:${pull.id}"`;
-    expect(await get(alice, "/asks")).toContain(card);
+    expect(await get(alice, "/")).toContain(card);
     // The re-run passes: the stop is answered, and the pull is green.
     check("ok");
     resolveOpen(app.db, pull.id, "retry", "green");
-    const green = await get(alice, "/asks");
+    const green = await get(alice, "/");
     expect(green).not.toContain(card);
     expect(green).toContain(`id="ask-look:${pull.id}"`);
     // Red again, before anything new is decided: the old stop is spent, and
     // the crew's tries are what the card is counted from.
     check("failed");
-    expect(await get(alice, "/asks")).not.toContain(card);
+    expect(await get(alice, "/")).not.toContain(card);
   });
 });

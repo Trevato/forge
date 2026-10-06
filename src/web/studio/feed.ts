@@ -101,7 +101,7 @@ export function composer(ctx: Ctx, user: User): Html {
       title: "No apps yet",
       note: "Make one, tell the crew what it is, and watch it come up here.",
       action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
-        ${btn("Repositories", { href: "/?mode=dev" })}`,
+        ${btn("Repositories", { href: `/${user.username}` })}`,
     });
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const first = slug(repos[0]!);
@@ -137,7 +137,11 @@ export function feedNote(): Html {
 
 /** The region: cards, or one line saying there is nothing to do. */
 export function feedRegion(user: User, ctx: Ctx): Html {
-  const { items } = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE });
+  // What needs you is pinned above the timeline (`needsYouSection`), so an
+  // ask is never a second time a post below it; the feed API keeps them.
+  const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE }).items.filter(
+    (item) => item.kind !== "ask",
+  );
   return html`<section
     id="live-feed"
     class="feed"

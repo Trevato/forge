@@ -9,6 +9,8 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
+const EDGE = "edge-secret-for-signins";
+
 // Where an account is signed in: its person sees and ends their own, the
 // forge's owner any person's. Everyone else finds nothing there.
 describe("sign-ins: tokens and browsers, seen and ended", () => {
@@ -59,7 +61,7 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-signins-"));
-    app = createApp({ dataDir, port: 0 });
+    app = createApp({ dataDir, port: 0, edgeToken: EDGE });
     servers = await serve(app);
     base = servers.url;
     owner = await person("olive", true);
@@ -92,6 +94,94 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     // The browser signed out is signed out on its very next request.
     expect(await signedIn({ cookie: there })).toBe(false);
     expect(await signedIn({ cookie: here })).toBe(true);
+  });
+
+  test("signing a browser out ends the live streams it opened, and only those", async () => {
+    const here = cookieFor(ada);
+    const there = cookieFor(ada);
+    const open = async (cookie: string) => {
+      const res = await fetch(`${base}/events`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      await reader.read();
+      return reader;
+    };
+    const away = await open(there);
+    const kept = await open(here);
+    const id = listSessions(app.db, ada.id, there.split("=")[1]).find(
+      (s) => s.current,
+    )!.id;
+    expect((await post(`/settings/sessions/${id}/delete`, here)).status).toBe(303);
+    const ended = (async () => {
+      for (;;) if ((await away.read()).done) return true;
+    })();
+    expect(
+      await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+    ).toBe(true);
+    const still = await Promise.race([
+      kept.read().then((r) => (r.done ? "ended" : "data")),
+      Bun.sleep(500).then(() => "open"),
+    ]);
+    expect(still).not.toBe("ended");
+    await kept.cancel();
+  });
+
+  test("signing out from the page ends every stream that browser holds, in every tab", async () => {
+    const cookie = cookieFor(ada);
+    const elsewhere = cookieFor(ada);
+    const open = async (c: string) => {
+      const res = await fetch(`${base}/events`, { headers: { cookie: c } });
+      const reader = res.body!.getReader();
+      await reader.read();
+      return reader;
+    };
+    const tabs = [await open(cookie), await open(cookie)];
+    const other = await open(elsewhere);
+    expect((await post("/logout", cookie)).status).toBe(303);
+    for (const tab of tabs) {
+      const ended = (async () => {
+        for (;;) if ((await tab.read()).done) return true;
+      })();
+      expect(
+        await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+      ).toBe(true);
+    }
+    expect(await signedIn({ cookie })).toBe(false);
+    // The account's other browser was not the one that signed out.
+    const still = await Promise.race([
+      other.read().then((r) => (r.done ? "ended" : "data")),
+      Bun.sleep(500).then(() => "open"),
+    ]);
+    expect(still).not.toBe("ended");
+    expect(await signedIn({ cookie: elsewhere })).toBe(true);
+    await other.cancel();
+  });
+
+  test("signing out while the platform edge also signs the request in still ends the browser's streams", async () => {
+    const cookie = cookieFor(ada);
+    const res = await fetch(`${base}/events`, { headers: { cookie } });
+    const tab = res.body!.getReader();
+    await tab.read();
+    // The edge goes first, so this request is the edge's, not the cookie's.
+    const out = await fetch(`${base}/logout`, {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: base,
+        "x-plat-user": "ada",
+        "x-plat-edge-token": EDGE,
+      },
+      body: new URLSearchParams({}),
+      redirect: "manual",
+    });
+    expect(out.status).toBe(303);
+    const ended = (async () => {
+      for (;;) if ((await tab.read()).done) return true;
+    })();
+    expect(
+      await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+    ).toBe(true);
+    expect(await signedIn({ cookie })).toBe(false);
   });
 
   test("a browser's last-seen time moves when it is used", async () => {

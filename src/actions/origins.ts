@@ -39,6 +39,7 @@ import {
   unpin as dropPin,
   type Pin,
 } from "../core/pins.ts";
+import { RateLimiter, type RateLimits } from "../core/ratelimit.ts";
 import type { Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { discover } from "../origins/discover.ts";
@@ -87,28 +88,28 @@ import { requireUser, requireWriter } from "./access.ts";
 // ---- abuse control ----
 
 /**
- * Connect attempts per user per window. Connecting makes the forge fetch a
- * host the caller named, so an unbounded connect endpoint is an outbound
- * request amplifier; this is the cap that stops it being one. In-memory on
- * purpose — a restart clearing it costs nothing, and a table would be state
- * that cannot be rebuilt from anything.
+ * Connect attempts per person: five in a sliding quarter of an hour.
+ * Connecting makes the forge fetch a host the caller named, so an unbounded
+ * connect endpoint is an outbound request amplifier; this is the cap that
+ * stops it being one. The same limiter as the API's (`core/ratelimit.ts`),
+ * with its own window: in memory on purpose, a refused attempt not counted,
+ * and belonging to the forge it limits, so a fresh `createApp` starts fresh.
  */
-const CONNECT_LIMIT = 5;
-const CONNECT_WINDOW_MS = 15 * 60_000;
-const attempts = new Map<string, number[]>();
+export const CONNECT_LIMITS: RateLimits = {
+  perMinute: 5,
+  adminPerMinute: 5,
+  enabled: true,
+  windowMs: 15 * 60_000,
+};
+const connects = new WeakMap<App, RateLimiter>();
 
-function tooManyAttempts(userId: string, now = Date.now()): boolean {
-  const recent = (attempts.get(userId) ?? []).filter(
-    (at) => now - at < CONNECT_WINDOW_MS,
-  );
-  recent.push(now);
-  attempts.set(userId, recent);
-  return recent.length > CONNECT_LIMIT;
-}
-
-/** Test seam: forget the connect-attempt window. */
-export function resetConnectLimit(): void {
-  attempts.clear();
+function tooManyAttempts(app: App, userId: string): boolean {
+  let limiter = connects.get(app);
+  if (limiter === undefined) {
+    limiter = new RateLimiter(CONNECT_LIMITS);
+    connects.set(app, limiter);
+  }
+  return !limiter.take(userId, "rw").allowed;
 }
 
 // ---- connecting ----
@@ -142,7 +143,7 @@ export async function connectOrigin(
 ): Promise<Result<Origin, ConnectError>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  if (tooManyAttempts(user.value.id)) return err("rate_limited");
+  if (tooManyAttempts(app, user.value.id)) return err("rate_limited");
   if (input.token.trim() === "") return err("bad_token");
 
   const found = await discover(
@@ -303,7 +304,7 @@ export async function startOAuthConnect(
 ): Promise<Result<OAuthStart, { error: OAuthStartError; message: string }>> {
   const user = requireUser(actor);
   if (!user.ok) return err({ error: "unauthorized", message: "sign in first" });
-  if (tooManyAttempts(user.value.id))
+  if (tooManyAttempts(app, user.value.id))
     return err({ error: "rate_limited", message: "too many connect attempts" });
 
   const found = await discover(

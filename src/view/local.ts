@@ -23,7 +23,7 @@ import {
   pageLimit,
   type Label,
 } from "../core/issues.ts";
-import { getPull, pullDiff } from "../core/pulls.ts";
+import { getPull, pullDiff, pullDir } from "../core/pulls.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import type { User } from "../core/users.ts";
@@ -290,7 +290,10 @@ export function localSource(
       if (issue.kind === "pull") {
         const row = getPull(app.db, repo.id, number);
         if (row !== undefined) {
-          const { status, diff } = await pullDiff(dir, row);
+          const { status, diff } = await pullDiff(
+            await pullDir(app.db, app.reposRoot, repo, row),
+            row,
+          );
           pull = {
             baseBranch: row.baseBranch,
             headBranch: row.headBranch,

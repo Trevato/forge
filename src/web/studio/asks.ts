@@ -47,6 +47,7 @@ import {
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
+import { waitsForPerson, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
@@ -92,7 +93,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "paused" | "parked" | "declined";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -133,6 +134,11 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     options: ["Ship", "Say what is off"],
     ifNothing: "it waits; nothing ships",
   },
+  review: {
+    decision: "Review this change: ship it, or say what is off?",
+    options: ["Ship", "Say what is off"],
+    ifNothing: "it waits; an agent's change never ships unreviewed",
+  },
   stopped: {
     decision: "The check fails and the crew stopped: what should it try?",
     options: ["Tell them what to try", "Close it"],
@@ -171,6 +177,7 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   paused: { score: 80, why: "money: the crew is stopped at its ceiling" },
   declined: { score: 70, why: "the planner has stopped for this app" },
   stopped: { score: 50, why: "red, and the crew stopped" },
+  review: { score: 45, why: "an agent's change waits for a review" },
   parked: { score: 40, why: "parked by the crew" },
   look: { score: 30, why: "green, waiting" },
 };
@@ -206,6 +213,8 @@ interface AskCandidate {
    * differently for a person's own change than for the crew's (below).
    * Absent for "paused", which names no author at all. */
   readonly authorIsAgent?: boolean;
+  /** For "review": why the agent's change waits for a person, and since when. */
+  readonly reviewWait?: ReviewWait;
   /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
   readonly tries?: number;
   readonly stoppedByDecider?: boolean;
@@ -307,6 +316,26 @@ function askCandidatesFor(
         who,
         authorIsAgent: issue.authorIsAgent,
       });
+    } else if (
+      check?.state === "ok" &&
+      repo.autonomy === "autonomous" &&
+      !isStalePull(db, pull.id, pull.headOid)
+    ) {
+      // An autonomous repository lands its own green pulls once reviewed;
+      // an agent's change with no reviewer, or whose review lapsed, waits
+      // for a person — and so asks one (#597).
+      const wait = waitsForPerson(db, repo.id, pull);
+      if (wait !== undefined)
+        out.push({
+          kind: "review",
+          id: `review:${pull.id}`,
+          since: wait.since,
+          repo,
+          pull,
+          who,
+          authorIsAgent: true,
+          reviewWait: wait,
+        });
     }
   }
   const crew = crewForRepos(
@@ -530,7 +559,7 @@ function endOf(
   raisedAt: string,
 ): Exclude<AskEnd, "dismissed"> {
   const [kind, what] = askId.split(":") as [DecisionKind, string];
-  if (kind === "look" || kind === "stopped") {
+  if (kind === "look" || kind === "review" || kind === "stopped") {
     const pull = getIssueById(db, what);
     // Shipped or closed: someone decided. Held by the one it asked: they
     // answered "not yet". Still open otherwise: the cause went away.
@@ -609,14 +638,23 @@ function lineOf(c: AskCandidate): string {
   if (c.kind === "declined")
     return "the planner declined the direction and waits for you";
   const title = c.pull?.title ?? "";
+  if (c.kind === "review")
+    return `"${title}" waits for your review: ${reviewWhy(c.reviewWait)}`;
   return c.kind === "stopped"
     ? `the crew stopped on "${title}"`
     : `"${title}" is green, waiting for your look`;
 }
 
+/** Why an agent's change waits for a person's review, in a clause. */
+const reviewWhy = (wait: ReviewWait | undefined): string =>
+  wait?.why === "lapsed"
+    ? `the reviewer did not answer, since ${wait.since.slice(0, 10)}`
+    : `no reviewer on the crew, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
+
 /** A collapsed row in a line: how many, and of what. */
 export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> = {
   look: (n) => `${n} green changes wait for your look`,
+  review: (n) => `${n} agent changes wait for your review`,
   stopped: (n) => `the crew stopped on ${n} changes`,
   parked: (n) => `the crew parked ${n} issues after three failed runs`,
   declined: (n) => `the planner declined ${n} times and waits for you`,
@@ -626,7 +664,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
 /** Every kind has its own: a row never says "green changes" of something that is not one. */
 const rowLine = (kind: DecisionKind, n: number): string => ROW_PLURAL[kind](n);
 
-/** The anchor a row's card carries on `/asks`, so a link can land on it. */
+/** The anchor a row's card carries on the home (what needs you, `needsYouSection`), so a link can land on it. */
 export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
 
 /**
@@ -644,7 +682,7 @@ export function askLinesFor(
   line: string;
   kind: DecisionKind;
   repoId: string;
-  /** Where a person decides it: the pull or issue, or the row on `/asks`. */
+  /** Where a person decides it: the pull or issue, or the row on the home. */
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
@@ -670,7 +708,7 @@ export function askLinesFor(
       return {
         ...about,
         line: `${row.repo.name}: ${rowLine(row.kind, row.items.length)}`,
-        link: `/asks#${askAnchor(row.id)}`,
+        link: `/#${askAnchor(row.id)}`,
       };
     const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
     if (only.kind === "paused")
@@ -764,6 +802,16 @@ export function decisionsFor(
           : `${c.who} tried ${tries + 1} times; the check still fails`,
       };
     }
+    if (c.kind === "review" && c.pull)
+      return {
+        kind: "review",
+        id: `review:${c.pull.id}`,
+        repo: c.repo,
+        pull: c.pull,
+        who: c.who,
+        says: `${c.who}'s "${c.pull.title}" is green and waits for a review: ${reviewWhy(c.reviewWait)}. An agent's change never ships unreviewed; ship it, or say what is off.`,
+        short: `green; waits for a review — ${reviewWhy(c.reviewWait)}`,
+      };
     if (c.kind === "look" && c.pull) {
       const picture = pictureOf(c.repo, c.pull);
       // The crew's own words say who finished it; a person's own change
@@ -812,7 +860,7 @@ export function decisionForm(d: Decision): Html | null {
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
       <input type="hidden" name="state" value="closed" />
     </form>`;
-  if (d.kind === "look")
+  if (d.kind === "look" || d.kind === "review")
     return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
       <input type="hidden" name="pull" value="${pull.number}" />
     </form>`;
@@ -848,7 +896,7 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
       href: changeHref(base, pull.number),
       size: "sm",
     })}`;
-  if (d.kind === "look" && pull)
+  if ((d.kind === "look" || d.kind === "review") && pull)
     return html`${btn("Ship", {
       size: "sm",
       form: askFormId(d),
@@ -946,7 +994,7 @@ export function asksAnswer(ctx: Ctx, user: User) {
  */
 export function askItemsOf(issue: Issue): string[] {
   return issue.kind === "pull"
-    ? [`ask:look:${issue.id}`, `ask:stopped:${issue.id}`]
+    ? [`ask:look:${issue.id}`, `ask:review:${issue.id}`, `ask:stopped:${issue.id}`]
     : [`ask:parked:${issue.id}`];
 }
 

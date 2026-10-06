@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { listEvents } from "../../core/events.ts";
+import { repoGraph } from "../../core/dependencies.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
 import { canEnterApp, canWrite, type Repo } from "../../core/repos.ts";
@@ -109,6 +110,11 @@ export async function tellWord(
   if (!runsOpenTo(wordCtx, repo)) return { word: "told", note: "told" };
   if (activeRunFor(db, "agent", issue.id) !== undefined)
     return { word: "working", note: "working now" };
+  // Deferred work is not waiting to be picked up: the crew will not take
+  // it, and the page says why, as the map does.
+  const deferred = deferredWhy(wordCtx, repo, issue);
+  if (deferred !== undefined)
+    return { word: "told", note: `deferred: ${deferred}` };
   const last = listRuns(db, repo.id, {
     kind: "agent",
     issueId: issue.id,
@@ -126,6 +132,26 @@ export async function tellWord(
     note:
       wordCtx.record === undefined ? "waiting for someone" : "not picked up yet",
   };
+}
+
+/** One graph read for each repository on a page, however many tells it words. */
+const deferrals = new WeakMap<
+  WordCtx,
+  Map<string, ReadonlyMap<string, string>>
+>();
+
+/** Why this issue is deferred (`core/dependencies.ts`), when it is. */
+function deferredWhy(
+  wordCtx: WordCtx,
+  repo: Repo,
+  issue: Issue,
+): string | undefined {
+  let byRepo = deferrals.get(wordCtx);
+  if (byRepo === undefined) deferrals.set(wordCtx, (byRepo = new Map()));
+  let known = byRepo.get(repo.id);
+  if (known === undefined)
+    byRepo.set(repo.id, (known = repoGraph(wordCtx.db, repo.id).deferred));
+  return known.get(issue.id);
 }
 
 /** Whether the reader may see this repository's runs (`mayReadRuns`). */
@@ -370,7 +396,7 @@ function sealCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | nu
     <input type="hidden" name="sealed" value="${issue.sealed ? "0" : "1"}" />
     ${btn(
       issue.sealed
-        ? "Unseal: show this report to every reader"
+        ? "Unseal: publish this report, its fix and their whole history to every reader"
         : "Seal as a security report",
       { variant: issue.sealed ? "danger" : "ghost", icon: "lock" },
     )}

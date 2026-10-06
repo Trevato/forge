@@ -359,8 +359,10 @@ describe("pillars", () => {
     expect(data.pillars).toEqual([
       { pillar: "P0 Trust", umbrella: trust.number, open: 3, ready: 2, blocked: 1 },
       { pillar: "P1 Feed", umbrella: feed.number, open: 2, ready: 2, blocked: 0 },
-      // One under the Later umbrella; two behind the gate, which is open.
-      { pillar: "Later", umbrella: later.number, open: 3, ready: 1, blocked: 2 },
+      // One under the Later umbrella; two behind the gate. All three are
+      // deferred: not ready, and not blocked either — nothing they wait for
+      // is the reason.
+      { pillar: "Later", umbrella: later.number, open: 3, ready: 0, blocked: 0 },
       // The loose issue, the footer (which waits for the composer), and the
       // stranger's three: one waits for the loose issue, and the other two
       // are a reader's suggestions, open and never ready (`crew/direct.ts`).
@@ -388,13 +390,16 @@ describe("pillars", () => {
 
     const page = await get("/alice/engine/map");
     expect(page).toContain('id="map-pillars"');
-    expect(page).toContain(
-      '<a href="/alice/engine/issues?label=P0%20Trust">P0 Trust</a>',
+    // Each pillar opens its milestone (#731).
+    expect(page).toMatch(
+      new RegExp(
+        `href="/alice/engine/milestones/${trust.number}"\\s*>P0 Trust</a`,
+      ),
     );
     expect(page).toContain("3 open · 2 ready · 1 blocked");
     expect(page).toContain("<b>no pillar</b>");
     expect(page).toContain(`href="/alice/engine/issues/${loose.number}"`);
-    // The pillar's link is the list narrowed to its label.
+    // The pillar's label narrows the one list.
     const list = await get("/alice/engine/issues?label=P0%20Trust");
     expect(list).toContain("Sandbox every run");
     expect(list).not.toContain("Tidy the README");
@@ -427,8 +432,12 @@ describe("pillars", () => {
     expect(board).toContain("P1 Feed <b>1</b>");
     expect(board).toContain("Later <b>0</b>");
     expect(board).toContain("no pillar <b>2</b>");
-    expect(board).toContain('href="/alice/engine/issues?label=P1%20Feed"');
-    expect(board).toMatch(/data-zero="yes"\s+href="\/alice\/engine\/issues\?label=Later"/);
+    expect(board).toContain(`href="/alice/engine/milestones/${feed.number}"`);
+    expect(board).toMatch(
+      new RegExp(
+        `data-zero="yes"\\s+href="/alice/engine/milestones/${later.number}"`,
+      ),
+    );
   });
 
   test("a repository with no pillars shows none of it", async () => {

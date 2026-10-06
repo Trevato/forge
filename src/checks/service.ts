@@ -11,6 +11,7 @@
  * is that command's business.
  */
 
+import { pullDir, runDir } from "../core/pulls.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,6 +45,12 @@ import { parseCheck } from "../apps/manifest.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
 import { noteReached } from "../apps/egress_report.ts";
+import {
+  capacityCount,
+  noteBooted,
+  capacityEnv,
+  egressSetting,
+} from "../core/capacity.ts";
 import {
   cellsAvailable,
   resolveLimits,
@@ -149,8 +156,12 @@ export const checksFor = (app: App): ChecksHandle | undefined =>
   handles.get(app);
 
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
-  const capacity = options.concurrency ?? 1;
-  const gate = new Gate(capacity);
+  // Read on every pick (`core/capacity.ts`): an admin's change is honoured
+  // by the next check, not the next boot. `concurrency` is the boot default.
+  noteBooted(app.db, "checks.concurrency", String(options.concurrency ?? 1));
+  const capacity = (): number =>
+    capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
+  const gate = new Gate(capacity());
   const inFlight = new Map<
     string,
     { promise: Promise<void>; abort: AbortController }
@@ -180,7 +191,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       return undefined;
     }
-    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    // A sealed pull's commit is where its work is, never in the base (`pullDir`).
+    const bare = await runDir(app.db, app.reposRoot, repo, issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, commitOid, "forge.json"),
       readFileAt(bare, commitOid, "package.json"),
@@ -238,7 +250,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
    */
   function schedule(): void {
     if (stopped) return;
-    while (inFlight.size < capacity) {
+    const limit = capacity();
+    gate.resize(limit);
+    while (inFlight.size < limit) {
       const queued = listActive(app.db, "check").filter(
         (run) => run.state === "queued" && !inFlight.has(run.id),
       );
@@ -350,7 +364,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     | { ok: true }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
-    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
@@ -393,10 +407,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           limits: resolveLimits("step", manifest.limits),
           onUndeclared: (host, port) =>
             noteReached(app.config.dataDir, repo.id, host, port),
+          egressMode: egressSetting(app.db),
         }
       : undefined;
     try {
       const env = childEnv({
+        // The shard count an admin set (`core/capacity.ts`), never the pod's.
+        ...capacityEnv(app.db),
         CI: "1",
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
@@ -573,7 +590,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   }
 
   async function headOf(repo: Repo, pull: Pull): Promise<string | undefined> {
-    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const dir = await pullDir(app.db, app.reposRoot, repo, pull);
     const ref = pull.crossRepo
       ? `refs/pull/${pull.number}/head`
       : `refs/heads/${pull.headBranch}`;

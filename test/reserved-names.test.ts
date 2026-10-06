@@ -258,6 +258,52 @@ describe("reserved names", () => {
     expect((await signup("scout-finch")).status).toBe(201);
   });
 
+  test("a name run together with a protected one is refused too", async () => {
+    // The owner's handle with digits, a doubled last letter, or a role word
+    // run on; a crew name run together with a role word.
+    for (const name of ["trevato2", "trevato007", "trevatoo", "trevatoofficial", "realtrevato", "scoutbot", "botscout", "torquecrew2"]) {
+      const res = await signup(name);
+      expect([name, res.status]).toEqual([name, 422]);
+      expect(await res.json()).toEqual({ error: "username_reserved" });
+    }
+    const ada = getUserByName(app.db, "ada")!;
+    for (const displayName of ["Trevato2", "ScoutBot", "trevatoo"]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(false);
+    }
+    // A longer name that only contains a protected one is someone's own.
+    for (const name of ["scouting", "torquemada", "scouts"])
+      expect((await signup(name)).status).toBe(201);
+  });
+
+  test("an admin with a common first name leaves the longer names that contain it free", async () => {
+    const maria = await createUser(app.db, {
+      trusted: true,
+      username: "maria",
+      email: "maria@f.dev",
+      password: "a-good-passphrase",
+    });
+    if (!maria.ok) throw new Error(maria.error);
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(maria.value.id);
+    try {
+      for (const name of ["mariana", "annamaria", "rosemaria"])
+        expect((await signup(name)).status).toBe(201);
+      for (const name of ["realmaria", "maria2", "mariaa", "themaria", "mariaofficial"])
+        expect((await signup(name)).status).toBe(422);
+      // A display name is where real names live: only the handle itself, or
+      // the handle with honorific words around it, is hers.
+      const ada = getUserByName(app.db, "ada")!;
+      for (const displayName of ["Maria Garcia", "Anna Maria", "Mariah Carey"])
+        expect(updateProfile(app, ada, { displayName }).ok).toBe(true);
+      for (const displayName of ["MARIA", "the real maria", "Maria official", "realmaria", "Maria (admin)", "Mariaa", "Mariaaa", "Maria Verified", "Maria (verified)", "Maria HQ"]) {
+        const patched = updateProfile(app, ada, { displayName });
+        expect([displayName, patched.ok]).toEqual([displayName, false]);
+      }
+    } finally {
+      app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(maria.value.id);
+    }
+  });
+
   test("every way an account is made holds to the rule; a seed opts out by name", async () => {
     // A way in added later (a linked sign-in) makes accounts through
     // createUser, and inherits the rule without calling anything.

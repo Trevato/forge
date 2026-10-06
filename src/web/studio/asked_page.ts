@@ -33,6 +33,7 @@ import {
   timeAgo,
   type Tone,
 } from "../ui.ts";
+import { homeTabs } from "./home_tabs.ts";
 
 const WORD: Record<AskedState, { text: string; tone: Tone }> = {
   waiting: { text: "Waiting", tone: "default" },
@@ -115,7 +116,8 @@ export function askedPage(ctx: Ctx): Response {
       ? "Nothing asked yet"
       : `${asked} asked · ${shipped} shipped${flagged > 0 ? ` · ${flagged} with nothing built` : ""}`;
 
-  const body = html`<h1 id="asked-sentence">What you asked for</h1>
+  const body = html`${homeTabs("asked")}
+    <h1 id="asked-sentence">What you asked for</h1>
     <p class="muted">${sentence}</p>
     <div class="filters bar mb mt">
       ${seg([

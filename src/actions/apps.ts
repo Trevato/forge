@@ -6,6 +6,9 @@
  * the repository may look at it and open its environments.
  */
 
+import { pullDir } from "../core/pulls.ts";
+import { getIssue } from "../core/issues.ts";
+import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
@@ -496,6 +499,15 @@ export function openEnvUrl(
   if (record.access === "private" && actor !== undefined)
     if (!canEnterApp(app.db, repo, record, actor))
       return err("not_found");
+  // A sealed pull's preview is its report's: for those who may see it, and
+  // through a grant only (`core/sealed.ts`).
+  const sealedNumber = /^pull-(\d+)$/.exec(env)?.[1];
+  const sealed =
+    sealedNumber === undefined
+      ? undefined
+      : getIssue(app.db, repo.id, Number(sealedNumber));
+  if (sealed?.sealed === true && !mayView(app.db, repo, sealed, actor))
+    return err("not_found");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
   // A grant names a person, so the app hears who they are: a signed-in
@@ -585,7 +597,8 @@ async function commitFor(
   const ref = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
+  const at = await pullDir(app.db, app.reposRoot, repo, pull);
+  return (await resolveOid(at, ref)) ?? (pull.headOid || undefined);
 }
 
 export { previewEnv };

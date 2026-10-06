@@ -16,6 +16,7 @@ import {
 } from "../../actions/front.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
@@ -23,7 +24,7 @@ import type { Ctx } from "../../http/context.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
-import { field, readForm } from "../form.ts";
+import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
@@ -37,11 +38,19 @@ import {
   listCard,
   timeAgo,
 } from "../ui.ts";
-import { onYouCard } from "../pages/site.ts";
+import {
+  downloadsCard,
+  onYouCard,
+  orgsCard,
+  terminalCard,
+} from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
+import { needsYouSection, type AsksTop } from "./asks_page.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
+import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
+import { nextStepsCard } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 
 /** The events that can change what is on you. */
@@ -85,6 +94,11 @@ function yourApps(ctx: Ctx, user: User): Html {
       <div class="bar home-apps-verbs">
         ${btn(`All apps${repos.length > RAIL_APPS ? ` (${repos.length})` : ""}`, { href: "/apps", size: "sm" })}
         ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}
+        ${btn("Repositories", {
+          href: `/${user.username}`,
+          size: "sm",
+          icon: "repo",
+        })}
         ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
         ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
         ${when(user.isAdmin, () =>
@@ -134,13 +148,21 @@ export function liveOnYouFragment(ctx: Ctx): Response {
 }
 
 /**
- * Home, signed in, is the feed (#599): like opening X — the composer on
- * top, then one timeline of posts (tells, replies, runs, changes, looks),
- * each one tap from its thing. Your apps and what is on you sit in a narrow
- * column on a desk; on a phone they are a tab away. The app rows and the
- * cost line that were this page live on `/apps`.
+ * Home, signed in, is the feed (#599), for every viewer whatever the mode
+ * (#625): like opening X — the composer on top, then one timeline of posts
+ * (tells, replies, runs, changes, looks), each one tap from its thing. Your
+ * apps and what is on you sit in a narrow column on a desk, with what the
+ * dashboard that was dev's home kept beside them when there is any: the
+ * terminal's command, what is pinned to your machine, your organizations;
+ * your repositories are one step away on your own page. On a phone they are
+ * a tab away. The app rows and the cost line live on `/apps`.
  */
-export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
+export async function studioHome(
+  ctx: Ctx,
+  user: User,
+  top?: AsksTop,
+): Promise<Response> {
+  const needsYou = needsYouSection(ctx, user, top);
   const { repos: appRepos } = writableAppsOf(ctx, user);
   // A spawned forge says where it lives: the address its person shares.
   const spawned = await spawnedOrg(ctx.app);
@@ -151,16 +173,15 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
         Your forge: <a href="${url}">${new URL(url).host}</a>
       </p>`,
   );
+  // On a spawned forge its owner's first steps come first, and carry the
+  // everyday account themselves (#600); anywhere else, #803's card asks.
+  const firstSteps = await nextStepsCard(ctx, user);
   const body = html`<h1 class="sr-only">Home</h1>
-    ${everydayCard(ctx, user)} ${address}
-    <nav class="home-tabs seg" aria-label="Home">
-      <a href="/" aria-current="page">Feed</a>
-      <a href="/apps">Your apps</a>
-      <a href="/asked">Asked</a>
-    </nav>
+    ${firstSteps ?? everydayCard(ctx, user)} ${address}
+    ${homeTabs("feed")}
     <div class="dash">
       <div class="dash-main stack">
-        ${composer(ctx, user)}
+        ${needsYou.body} ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
@@ -177,13 +198,15 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
         }
         ${appsRegion(ctx, user)}
         ${onYouRegion(ctx, user)}
+        ${terminalCard(ctx)} ${downloadsCard(ctx, user)}
+        ${orgsCard(ctx, user)}
       </aside>
     </div>`;
   return page({
     ctx,
     title: "Home",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${needsYou.scriptJs}`,
   });
 }
 
@@ -267,6 +290,14 @@ function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
   </section>`;
 }
 
+/** A weight's name as the controls say it. */
+const WEIGHT_LABEL: Record<(typeof WEIGHT_NAMES)[number], string> = {
+  forks: "Forks",
+  ships: "Shipped",
+  use: "Use",
+  fresh: "Fresh",
+};
+
 /**
  * What a site admin may change about the front page, on the page itself
  * (`/front`): every pin in order with move and unpin, every shown app with
@@ -323,6 +354,25 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
           required
         />
         ${btn("Pin", { size: "sm" })}
+      </form>
+      <form method="post" action="/front" class="front-weights">
+        <input type="hidden" name="action" value="weights" />
+        <span class="small muted">What counts, 0 to ${WEIGHT_MAX}:</span>
+        ${WEIGHT_NAMES.map(
+          (k) =>
+            html`<label class="small"
+              >${WEIGHT_LABEL[k]}
+              <input
+                class="input"
+                type="number"
+                min="0"
+                max="${WEIGHT_MAX}"
+                step="0.5"
+                name="${k}"
+                value="${String(picks.weights[k])}"
+            /></label>`,
+        )}
+        ${btn("Rank", { size: "sm" })}
       </form>
       <p class="small muted">
         The first pin a stranger can read is featured; the rest lead the
@@ -407,28 +457,43 @@ export function studioDoor(ctx: Ctx): Response {
   return page({ ctx, title: "forge", body });
 }
 
-/** The pick one `/front` button asks for, applied to the current picks. */
+/** What one `/front` form asks for, applied to what is set now. */
+type FrontChange = {
+  pinned: readonly string[];
+  hidden: readonly string[];
+  weights: Record<string, unknown>;
+};
+
 function nextPicks(
   current: FrontPicksJson,
   action: string,
-  repo: string,
-): FrontPicksJson | undefined {
+  form: Form,
+): FrontChange | undefined {
+  const repo = field(form, "repo").trim();
+  const weights: Record<string, unknown> = { ...current.weights };
   const pinned = current.pinned.filter((r) => r !== repo);
   const hidden = current.hidden.filter((r) => r !== repo);
   const at = current.pinned.indexOf(repo);
   switch (action) {
+    case "weights":
+      // Each box a number; one left empty keeps what is set.
+      for (const k of WEIGHT_NAMES) {
+        const v = field(form, k).trim();
+        if (v !== "") weights[k] = Number(v);
+      }
+      return { pinned: current.pinned, hidden: current.hidden, weights };
     case "pin":
-      return { pinned: [...pinned, repo], hidden };
+      return { pinned: [...pinned, repo], hidden, weights };
     case "unpin":
     case "show":
-      return { pinned, hidden };
+      return { pinned, hidden, weights };
     case "hide":
-      return { pinned, hidden: [...hidden, repo] };
+      return { pinned, hidden: [...hidden, repo], weights };
     case "up":
     case "down": {
       if (at === -1) return undefined;
       const to = Math.max(0, Math.min(pinned.length, at + (action === "up" ? -1 : 1)));
-      return { pinned: [...pinned.slice(0, to), repo, ...pinned.slice(to)], hidden };
+      return { pinned: [...pinned.slice(0, to), repo, ...pinned.slice(to)], hidden, weights };
     }
     default:
       return undefined;
@@ -441,8 +506,7 @@ export async function frontUpdate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
-  const repo = field(form, "repo").trim();
-  const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), repo);
+  const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), form);
   if (next === undefined) return new Response("bad request", { status: 400 });
   const set = setFront(ctx.app, ctx.auth.user, next);
   return redirect("/front", {

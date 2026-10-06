@@ -11,12 +11,13 @@
  * what the forge has.
  */
 
+import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
 import { openPull } from "../actions/pulls.ts";
-import { forkRepo } from "../actions/repos.ts";
+import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -32,6 +33,7 @@ import {
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
+  forkParentFor,
   getForkOf,
   getRepoById,
   type Repo,
@@ -80,6 +82,8 @@ import {
   whenText,
 } from "./limits.ts";
 import { interruptedSummary } from "./interrupted.ts";
+import { laterGate } from "./later.ts";
+import { parkedTwice } from "./parks.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
@@ -571,7 +575,15 @@ async function work(
   // and writes only its own copy of it: the branch lives there, and the
   // pull proposes it back. A pull whose branch lives anywhere else is not
   // the agent's to move.
-  const fork = await forkFor(app, agent, repo, write);
+  // A sealed report's work lives where only the base's writers and crew
+  // can read it, never in the agent's public fork (`core/sealed.ts`).
+  const fork = await forkFor(
+    app,
+    agent,
+    repo,
+    write,
+    issue.sealed || pull?.sealed === true,
+  );
   if (!fork.ok) return { state: "failed", summary: fork.error };
   // A reviewer reads a pull it did not write: the diff comes to it in the
   // brief, its clone is its own fork at a scratch branch, and it pushes
@@ -771,9 +783,10 @@ async function work(
               .filter((f) => f !== "")
           : undefined,
       following:
-        reason === "converge" && repo.forkParentId !== null
+        reason === "converge"
           ? (() => {
-              const parent = getRepoById(app.db, repo.forkParentId);
+              // Only a parent the agent may read is put in its brief.
+              const parent = forkParentFor(app.db, repo, agent.user);
               return parent === undefined
                 ? undefined
                 : {
@@ -784,6 +797,13 @@ async function work(
           : undefined,
       ...(reason === "review" && pull
         ? await reviewInputs(app, repo, pull, record, bare)
+        : {}),
+      // A planning run is given what the crew handed over (`parks.ts`).
+      ...(brief.role === "planner" && issue.id === repo.directionIssueId
+        ? {
+            parkedTwice: parkedTwice(app.db, [repo]),
+            laterGate: laterGate(app.db, repo.id),
+          }
         : {}),
       checkKind:
         failedCheck?.run?.kind === "check" ||
@@ -849,6 +869,9 @@ async function work(
     }
     const started = Date.now();
     const env: Record<string, string> = {
+      // The shard count an admin set (`core/capacity.ts`), for the checks an
+      // agent runs in its clone; never the pod's environment.
+      ...capacityEnv(app.db),
       ...gitAuth,
       ...identity,
       FORGE_URL: options.forgeUrl,
@@ -1160,12 +1183,22 @@ async function work(
  * One fork per agent per repository; a name already taken by something
  * else of the agent's gets the owner's name in front.
  */
-async function forkFor(
+export async function forkFor(
   app: App,
   agent: Agent,
   repo: Repo,
   write: (line: string) => void,
+  /** The task is a sealed report: its work goes in a private repository (`core/sealed.ts`). */
+  sealed = false,
 ): Promise<Result<Repo, string>> {
+  if (sealed) {
+    const made = await sealedForkFor(app, agent.user, repo);
+    if (!made.ok)
+      return err(
+        `could not make a private place for ${repo.ownerName}/${repo.name}'s sealed work: ${made.error}`,
+      );
+    return ok(made.value);
+  }
   const existing = getForkOf(app.db, agent.user.id, repo.id);
   if (existing !== undefined) return ok(existing);
   let made = await forkRepo(app, agent.user, repo);

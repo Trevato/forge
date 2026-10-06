@@ -32,7 +32,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listOrigins, repoForkOf } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
@@ -252,7 +251,6 @@ describe("fork at the origin, and propose a change through it", () => {
     base = servers.url;
     delete process.env.FORGE_GITHUB_CLIENT_ID;
     alice = await signUp("alice");
-    resetConnectLimit();
     forgetProviders(dataDir);
     const connected = await web(alice, "/settings/origins/token", {
       form: { host: fake.url, token: originToken },

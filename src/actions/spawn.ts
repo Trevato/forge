@@ -36,6 +36,7 @@ import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { crossOrigin } from "../http/context.ts";
 import {
@@ -96,6 +97,15 @@ interface Ledger {
   readonly url: string;
   readonly planHash: string;
   done: boolean;
+  /** For the client list (#776); absent on a ledger written before it. */
+  readonly forWhom?: string;
+  readonly apps?: readonly string[];
+  readonly createdAt?: string;
+  /**
+   * What the parent shows the child to learn its private facts (when anything
+   * last happened); the child keeps only its hash. Never in an answer.
+   */
+  statusToken?: string;
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -193,6 +203,10 @@ async function make(
     }
     if (ledger.done)
       return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
+    if (ledger.statusToken === undefined) {
+      ledger.statusToken = secret();
+      await writeLedger(app, ledger);
+    }
   } else {
     const placed = await deps.placement.place(plan);
     if (!placed.ok) return err({ kind: "refused", ...placed.error });
@@ -200,7 +214,17 @@ async function make(
       await deps.placement.retire(placed.value.bodyId);
       return fail("placement returned an unusable body id");
     }
-    ledger = { name: plan.name, bodyId: placed.value.bodyId, url: placed.value.url, planHash, done: false };
+    ledger = {
+      name: plan.name,
+      bodyId: placed.value.bodyId,
+      url: placed.value.url,
+      planHash,
+      done: false,
+      ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
+      apps: plan.apps.map((a) => a.ref),
+      createdAt: new Date().toISOString(),
+      statusToken: secret(),
+    };
     await writeLedger(app, ledger);
   }
 
@@ -362,6 +386,8 @@ async function copyInto(
         // The child's own address, from the placement: <name>.<parent's host>.
         url: ledger.url,
         keepAccess: plan.keepAccess,
+        // Only the hash: the parent alone holds what it answers to.
+        ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
       }),
     );
     return ok(mintClaim(child.db, org.id));
@@ -425,16 +451,41 @@ export async function reissueClaim(
   }
 }
 
+/** What this forge shows a child it made to learn its private facts; undefined for an older child. */
+export async function statusTokenOf(app: App, name: string): Promise<string | undefined> {
+  return (await readLedger(app, name))?.statusToken;
+}
+
+/** One child, as the ledger keeps it. */
+export interface Child {
+  readonly name: string;
+  readonly url: string;
+  readonly bodyId: string;
+  readonly done: boolean;
+  /** Whom it is for; null when unsaid. */
+  readonly for: string | null;
+  readonly apps: readonly string[];
+  /** When it was begun; null on a ledger older than the client list. */
+  readonly createdAt: string | null;
+}
+
 /** The children this forge has made or begun, from its ledger, by name. */
-export async function listChildren(
-  app: App,
-): Promise<{ name: string; url: string; bodyId: string; done: boolean }[]> {
+export async function listChildren(app: App): Promise<Child[]> {
   const dir = join(app.config.dataDir, "spawn");
   const files = await readdir(dir).catch(() => [] as string[]);
-  const out = [];
+  const out: Child[] = [];
   for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
     const ledger = await readLedger(app, f.slice(0, -".json".length));
-    if (ledger) out.push({ name: ledger.name, url: ledger.url, bodyId: ledger.bodyId, done: ledger.done });
+    if (ledger)
+      out.push({
+        name: ledger.name,
+        url: ledger.url,
+        bodyId: ledger.bodyId,
+        done: ledger.done,
+        for: ledger.forWhom ?? null,
+        apps: ledger.apps ?? [],
+        createdAt: ledger.createdAt ?? null,
+      });
   }
   return out;
 }

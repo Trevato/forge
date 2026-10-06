@@ -78,6 +78,8 @@ export interface CellBase {
   readonly home: string;
   /** Told of an undeclared host reached while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** The egress mode, as the forge's setting says at this start. */
+  readonly egressMode?: "enforce" | "report" | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -315,6 +317,7 @@ function stepCell(input: StartInput): CellSpec | undefined {
     reach: [input.forgeUrl],
     limits: resolveLimits("step", undefined),
     onUndeclared: base.onUndeclared,
+    egressMode: base.egressMode,
   };
 }
 
@@ -386,6 +389,7 @@ export async function startProcess(
             limits: resolveLimits("app", manifest.limits),
             listen: port,
             onUndeclared: input.cell.onUndeclared,
+            egressMode: input.cell.egressMode,
           },
           log,
         );
