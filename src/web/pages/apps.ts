@@ -50,6 +50,7 @@ import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { writableAppsOf } from "../studio/asks.ts";
 import { costLine } from "../studio/cost_line.ts";
+import { homeTabs } from "../studio/home_tabs.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
@@ -232,7 +233,8 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     ctx,
     shown.map((e) => e.repo),
   );
-  const body = html`${pageHead("Apps", { actions: create })}
+  const body = html`${when(ctx.auth.user, () => homeTabs("apps"))}
+    ${pageHead("Apps", { actions: create })}
     ${costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos)}
     ${filters}
     ${shown.length === 0
