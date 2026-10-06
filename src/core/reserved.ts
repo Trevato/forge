@@ -255,7 +255,8 @@ export function reservedName(
   }
   // The same, run together: "trevato2", "trevatoo", "realtrevato",
   // "scoutbot". Trailing digits never make a name someone else's.
-  const run = words.join("").replace(/[0-9]+$/, "");
+  // The digits come off before the fold, which reads 0 as o and 7 as t.
+  const run = wordsOf(name.replace(/[0-9]+$/u, "")).join("");
   for (const holder of holders) {
     const handle = skeleton(holder.username);
     if (handle.length < 3) continue;
@@ -266,21 +267,38 @@ export function reservedName(
   return undefined;
 }
 
+/**
+ * Words that, run on before or after the owner's handle, make a name claim
+ * to be them: the role words, and the ways people say "the real one".
+ */
+const HONORIFIC_WORDS = new Set(
+  [...ROLE_WORDS, ...["real", "the", "its", "iam", "im", "true", "original"].map(skeleton)],
+);
+
+/** Whether `run` is `handle` with only `words` run on, either side, any number. */
+function bareIs(run: string, handle: string, words: ReadonlySet<string>): boolean {
+  if (run === handle) return true;
+  for (const w of words) {
+    if (run.length <= w.length) continue;
+    if (run.startsWith(w) && bareIs(run.slice(w.length), handle, words)) return true;
+    if (run.endsWith(w) && bareIs(run.slice(0, -w.length), handle, words)) return true;
+  }
+  return false;
+}
+
 /** A crew name run together with a role word, either way round. */
 const runsWithRole = (run: string, handle: string): boolean =>
-  run === handle ||
-  [...ROLE_WORDS].some((w) => run === handle + w || run === w + handle);
+  bareIs(run, handle, ROLE_WORDS);
 
 /**
- * The owner's handle run on: a long handle anywhere inside, a short one
- * doubled at the end ("trevatoo") or with a role word either side. The
- * owners are few, and a stranger in their name is the costliest mistake.
+ * The owner's handle run on: its last letter doubled ("trevatoo"), or a
+ * role or honorific word either side ("realtrevato", "trevatoofficial").
+ * Never a longer name that only contains it: an admin called maria leaves
+ * mariana and annamaria free.
  */
 function ownersRunOn(run: string, handle: string): boolean {
-  if (run === handle) return true;
-  if (handle.length >= 5 && run.includes(handle)) return true;
   const last = handle.at(-1)!;
   const tail = run.slice(handle.length);
   if (run.startsWith(handle) && [...tail].every((c) => c === last)) return true;
-  return runsWithRole(run, handle);
+  return bareIs(run, handle, HONORIFIC_WORDS);
 }

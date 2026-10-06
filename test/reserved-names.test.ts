@@ -263,7 +263,7 @@ describe("reserved names", () => {
     // run on; a crew name run together with a role word.
     for (const name of ["trevato2", "trevato007", "trevatoo", "trevatoofficial", "realtrevato", "scoutbot", "botscout", "torquecrew2"]) {
       const res = await signup(name);
-      expect(res.status).toBe(422);
+      expect([name, res.status]).toEqual([name, 422]);
       expect(await res.json()).toEqual({ error: "username_reserved" });
     }
     const ada = getUserByName(app.db, "ada")!;
@@ -271,9 +271,28 @@ describe("reserved names", () => {
       const patched = updateProfile(app, ada, { displayName });
       expect(patched.ok).toBe(false);
     }
-    // A longer word that only starts with a crew name is someone's own.
+    // A longer name that only contains a protected one is someone's own.
     for (const name of ["scouting", "torquemada", "scouts"])
       expect((await signup(name)).status).toBe(201);
+  });
+
+  test("an admin with a common first name leaves the longer names that contain it free", async () => {
+    const maria = await createUser(app.db, {
+      trusted: true,
+      username: "maria",
+      email: "maria@f.dev",
+      password: "a-good-passphrase",
+    });
+    if (!maria.ok) throw new Error(maria.error);
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(maria.value.id);
+    try {
+      for (const name of ["mariana", "annamaria", "rosemaria"])
+        expect((await signup(name)).status).toBe(201);
+      for (const name of ["realmaria", "maria2", "mariaa", "themaria", "mariaofficial"])
+        expect((await signup(name)).status).toBe(422);
+    } finally {
+      app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(maria.value.id);
+    }
   });
 
   test("every way an account is made holds to the rule; a seed opts out by name", async () => {
