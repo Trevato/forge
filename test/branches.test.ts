@@ -14,7 +14,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createApp, type App } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -362,7 +361,6 @@ describe("branches on a mirror go through the origin", () => {
         password: ALICE_PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

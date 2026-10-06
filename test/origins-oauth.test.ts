@@ -6,7 +6,6 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
   completeOAuthCallback,
-  resetConnectLimit,
   startOAuthConnect,
 } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -71,7 +70,6 @@ async function boot(kind: "github" | "forgejo"): Promise<Fixture> {
       }),
     });
   }
-  resetConnectLimit();
   forgetProviders(dataDir);
   return { dataDir, app, servers, fake, oauth, base: servers.url };
 }
@@ -233,7 +231,6 @@ describe("GitHub's device grant: connecting with no browser on the server", () =
   });
 
   test("connect attempts are capped per user", async () => {
-    resetConnectLimit();
     let last = 0;
     for (let i = 0; i < 7; i++) {
       const response = await api("/api/v1/user/origins/oauth", {
@@ -244,11 +241,9 @@ describe("GitHub's device grant: connecting with no browser on the server", () =
       if (last === 429) break;
     }
     expect(last).toBe(429);
-    resetConnectLimit();
   });
 
   test("disconnecting revokes the grant with the app's own credentials", async () => {
-    resetConnectLimit();
     // One account connects once; this test needs to connect it again.
     for (const row of f.app.db
       .query<{ id: string }, []>("SELECT id FROM origin")

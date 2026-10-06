@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { migrateRepo, migrateUrl } from "../src/actions/migrate.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createAgent, listCrew } from "../src/actions/crew.ts";
 import {
   commitToBranch,
@@ -238,7 +237,6 @@ describe("migrate", () => {
       private: true,
     });
     forgejo = serveFakeForge(state);
-    resetConnectLimit();
     forgetProviders(dataDir);
   });
 

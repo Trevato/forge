@@ -91,24 +91,25 @@ import { requireUser, requireWriter } from "./access.ts";
  * host the caller named, so an unbounded connect endpoint is an outbound
  * request amplifier; this is the cap that stops it being one. In-memory on
  * purpose — a restart clearing it costs nothing, and a table would be state
- * that cannot be rebuilt from anything.
+ * that cannot be rebuilt from anything. The window belongs to the forge it
+ * limits: a fresh `createApp` starts with a fresh one.
  */
 const CONNECT_LIMIT = 5;
 const CONNECT_WINDOW_MS = 15 * 60_000;
-const attempts = new Map<string, number[]>();
+const attempts = new WeakMap<App, Map<string, number[]>>();
 
-function tooManyAttempts(userId: string, now = Date.now()): boolean {
-  const recent = (attempts.get(userId) ?? []).filter(
+function tooManyAttempts(app: App, userId: string, now = Date.now()): boolean {
+  let byUser = attempts.get(app);
+  if (byUser === undefined) {
+    byUser = new Map();
+    attempts.set(app, byUser);
+  }
+  const recent = (byUser.get(userId) ?? []).filter(
     (at) => now - at < CONNECT_WINDOW_MS,
   );
   recent.push(now);
-  attempts.set(userId, recent);
+  byUser.set(userId, recent);
   return recent.length > CONNECT_LIMIT;
-}
-
-/** Test seam: forget the connect-attempt window. */
-export function resetConnectLimit(): void {
-  attempts.clear();
 }
 
 // ---- connecting ----
@@ -142,7 +143,7 @@ export async function connectOrigin(
 ): Promise<Result<Origin, ConnectError>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  if (tooManyAttempts(user.value.id)) return err("rate_limited");
+  if (tooManyAttempts(app, user.value.id)) return err("rate_limited");
   if (input.token.trim() === "") return err("bad_token");
 
   const found = await discover(
@@ -303,7 +304,7 @@ export async function startOAuthConnect(
 ): Promise<Result<OAuthStart, { error: OAuthStartError; message: string }>> {
   const user = requireUser(actor);
   if (!user.ok) return err({ error: "unauthorized", message: "sign in first" });
-  if (tooManyAttempts(user.value.id))
+  if (tooManyAttempts(app, user.value.id))
     return err({ error: "rate_limited", message: "too many connect attempts" });
 
   const found = await discover(

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { oauthCallbackUri } from "../src/http/api.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getOriginById, sealedSecrets } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
@@ -152,7 +151,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     api = callerFor(base);
     await createUsers(base, ["alice", "bob"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
     await api("/api/v1/user/origin-apps", {
       method: "POST",
@@ -168,7 +166,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
   });
 
   test("a state belongs to the user who started it: nobody else can spend it, and it stays valid for its owner", async () => {
-    resetConnectLimit();
     app.db.query("DELETE FROM origin").run();
     const flow = await start("alice");
     const exchanges = refreshCount();
@@ -327,7 +324,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
       "state=https://evil.com/%3F&code=x",
     ];
     for (const extra of attempts) {
-      resetConnectLimit();
       const flow = await start();
       const response = await callback(
         `state=${encodeURIComponent(flow.state)}&code=${oauth.authCode}&${extra}`,
@@ -346,7 +342,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
   });
 
   test("the registered redirect_uri comes from FORGE_URL, never the Host header", async () => {
-    resetConnectLimit();
     app.db.query("DELETE FROM origin").run();
     process.env.FORGE_URL = "https://forge.example.test/";
     const response = await api("/api/v1/user/origins/oauth", {
@@ -453,7 +448,6 @@ describe("OAuth device flow: a flow is private to the user who started it", () =
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice", "bob"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
   });
@@ -566,7 +560,6 @@ describe("refresh serialisation and needs_reauth", () => {
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
     await api("/api/v1/user/origin-apps", {
       method: "POST",
@@ -780,7 +773,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     // mirror can have.
     await createUsers(base, ["bob", "alice", "carol"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
 
     const registered = await seen(
@@ -836,7 +828,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
   });
 
   test("every origin and app route refuses ro and rw tokens; an admin token passes the gate", async () => {
-    resetConnectLimit();
     const ro = await mintToken(base, "alice", "ro");
     const rw = await mintToken(base, "alice", "rw");
     const admin = await mintToken(base, "alice", "admin");
@@ -929,7 +920,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
       ).status,
     ).toBe(204);
     expect((await api("/api/v1/user/pins", { none: true })).status).toBe(401);
-    resetConnectLimit();
   });
 
   test("another user's origin, flow and app are not_found on every route — even for a site admin", async () => {
@@ -981,7 +971,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     expect(
       app.db.query("SELECT 1 FROM origin_app WHERE id = ?1").get(appId),
     ).not.toBeNull();
-    resetConnectLimit();
   });
 
   test("a non-owner writer of a mirror cannot write through it", async () => {

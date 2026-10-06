@@ -17,7 +17,6 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createToken } from "../src/actions/users.ts";
 import { listOrigins } from "../src/core/origins.ts";
 import { listPins } from "../src/core/pins.ts";
@@ -170,7 +169,6 @@ describe("origins on the web", () => {
     base = servers.url;
     alice = await signUp("alice");
     bob = await signUp("bob");
-    resetConnectLimit();
     forgetProviders(dataDir);
   });
 
@@ -437,7 +435,6 @@ describe("origins on the web", () => {
 
   test("the device flow shows the code and the poll route completes it", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
-    resetConnectLimit();
     const started = await asUser(alice, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
@@ -480,7 +477,6 @@ describe("origins on the web", () => {
    */
   test("the flow page carries a QR, a short link, copy buttons and a safe open link", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
-    resetConnectLimit();
     const started = await asUser(alice, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
@@ -514,7 +510,6 @@ describe("origins on the web", () => {
    */
   test("/go/:code redirects a signed-out phone, and dead codes are one 404", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
-    resetConnectLimit();
     const started = await asUser(alice, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
@@ -614,7 +609,6 @@ describe("origins on the web", () => {
   // ---- the Forgejo code flow ----
 
   test("an unregistered instance shows the exact redirect URI to paste", async () => {
-    resetConnectLimit();
     const started = await asUser(bob, "/settings/origins/oauth", {
       form: { host: forgejo.url },
     });
