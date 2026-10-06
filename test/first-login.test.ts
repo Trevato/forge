@@ -8,6 +8,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { orgAccessByOrg } from "../src/core/orgs.ts";
+import { getUserSetting } from "../src/core/settings.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -165,7 +167,7 @@ describe("the first login to a spawned forge", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("a forge that was not spawned shows no next-steps card, even to its admin", async () => {
+  test("a forge that was not spawned shows no next-steps card, even to its admin, and keeps no step", async () => {
     const res = await fetch(`${parentServers.url}/signin`, {
       method: "POST",
       body: new URLSearchParams({ username: "alice", password: PASSWORD }),
@@ -176,6 +178,10 @@ describe("the first login to a spawned forge", () => {
       await fetch(`${parentServers.url}/`, { headers: { cookie } })
     ).text();
     expect(home).not.toContain(CARD);
+    // Opening an app there writes nothing: the steps are a spawned forge's.
+    await fetch(`${parentServers.url}/alice/bakery`, { headers: { cookie } });
+    const alice = getUserByName(parent.db, "alice")!;
+    expect(getUserSetting(parent.db, alice.id, "first_step_opened_app")).toBeUndefined();
   });
 
   test("a plain reader of the child sees no next-steps card", async () => {
@@ -190,7 +196,7 @@ describe("the first login to a spawned forge", () => {
     expect(await page(`forge_session=${session.token}`)).not.toContain(CARD);
   });
 
-  test("after the claim, the home shows the crew at work and one card with three steps, none done", async () => {
+  test("after the claim, the home shows the crew and its direction, and one card with three steps, none done", async () => {
     const home = await page(owner);
     expect(home).toContain(CARD);
     expect(home).toContain("Make your everyday account");
@@ -199,27 +205,17 @@ describe("the first login to a spawned forge", () => {
     expect(steps(home)).toEqual({ everyday: "no", apps: "no", tell: "no" });
     // One card for the everyday account, not two: the steps card carries it.
     expect(home.split("Make your everyday account").length - 1).toBe(1);
-    // The crew at work: the planner on the direction it was given.
+    // The planner and the direction it was given, under the studio's noun.
+    // No run has started (no model key), so it does not claim work under way.
+    expect(home).toContain("Your crew has its direction:");
+    expect(home).not.toContain("already at work");
     expect(home).toContain("atlas");
-    expect(home).toContain("Run Maria");
+    expect(home).toMatch(/href="\/marias\/bakery\/tells\/\d+"[^>]*>[^<]*Run Maria/);
     // Each app with its way in.
     expect(home).toContain('href="/marias/bakery"');
   });
 
-  test("telling the crew something ticks the third step", async () => {
-    const told = await post(owner, "/marias/bakery/tell", {
-      text: "Add a weekly menu page.",
-    });
-    expect(told.status).toBeLessThan(400);
-    expect(steps(await page(owner)).tell).toBe("yes");
-  });
-
-  test("opening an app ticks the second step", async () => {
-    await page(owner, "/marias/bakery");
-    expect(steps(await page(owner)).apps).toBe("yes");
-  });
-
-  test("making the everyday account ticks the first, and its home keeps the card until all are done", async () => {
+  test("the everyday account, made first, joins the client's org and sees the card part-way, every step one it can do", async () => {
     const res = await post(owner, "/settings/everyday", {
       username: "maria-me",
       email: "me@bakery.test",
@@ -228,9 +224,35 @@ describe("the first login to a spawned forge", () => {
     expect(res.status).toBe(303);
     daily = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(getUserByName(child.db, "maria-me")).toBeDefined();
-    // All three done: the card is gone for both accounts.
+    const home = await page(daily);
+    expect(steps(home)).toEqual({ everyday: "yes", apps: "no", tell: "no" });
+    // It can read the client's own apps, and the crew line reads for it too.
+    expect(home).toContain('href="/marias/bakery"');
+    expect(home).not.toContain("Your apps arrive here");
+    expect(home).toContain("Your crew has its direction:");
+    // The admin's card moves along with it.
+    expect(steps(await page(owner)).everyday).toBe("yes");
+  });
+
+  test("the everyday account tells the crew something: the third step", async () => {
+    const told = await post(daily, "/marias/bakery/tell", {
+      text: "Add a weekly menu page.",
+    });
+    expect(told.status).toBeLessThan(400);
+    expect(steps(await page(daily))).toEqual({ everyday: "yes", apps: "no", tell: "yes" });
+  });
+
+  test("the everyday account opens an app: the second step, and the card is gone for both accounts", async () => {
+    expect((await fetch(url("/marias/bakery"), { headers: { cookie: daily } })).status).toBe(200);
     expect(await page(daily)).not.toContain(CARD);
     expect(await page(owner)).not.toContain(CARD);
+  });
+
+  test("the everyday account is a writer of the client's org, never its admin", async () => {
+    const me = getUserByName(child.db, "maria-me")!;
+    const org = getUserByName(child.db, "marias")!;
+    expect(orgAccessByOrg(child.db, me).get(org.id)).toBe("write");
+    expect(me.isAdmin).toBe(false);
   });
 
   test("the MCP `next_steps` tool answers the same three steps and their state", async () => {

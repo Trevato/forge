@@ -70,12 +70,13 @@ export async function nextStepsFor(
   ];
 }
 
-/** The owner (or their everyday account) opened an app: the second step is done. */
-export function noteAppOpened(app: App, user: User | undefined): void {
+/** The owner (or their everyday account) opened an app on a spawned forge: the second step is done. */
+export async function noteAppOpened(app: App, user: User | undefined): Promise<void> {
   if (!user) return;
   const owner = ownerFor(app, user);
-  if (owner && getUserSetting(app.db, owner.id, OPENED_APP) === undefined)
-    setUserSetting(app.db, owner.id, OPENED_APP, new Date().toISOString());
+  if (!owner || getUserSetting(app.db, owner.id, OPENED_APP) !== undefined) return;
+  if ((await spawnedOrg(app)) === undefined) return;
+  setUserSetting(app.db, owner.id, OPENED_APP, new Date().toISOString());
 }
 
 /** The spawned organisation's apps, for the second step's links. */

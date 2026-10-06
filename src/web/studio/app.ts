@@ -198,8 +198,9 @@ export async function studioApp(
   // owner's facts, not the app's — a viewer who cannot write here reads this
   // page as a stranger, whatever else they can see of the repository.
   const ownerFacts = canSeeOwnerFacts(db, repo, ctx.auth.user);
-  // The owner of a spawned forge opening an app: their second first step.
-  if (ownerFacts) noteAppOpened(ctx.app, ctx.auth.user);
+  // The owner of a spawned forge (or their everyday account) opening an
+  // app: their second first step.
+  await noteAppOpened(ctx.app, ctx.auth.user);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),

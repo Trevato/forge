@@ -1,7 +1,8 @@
 /**
  * The first-login card of a spawned forge (#600, `core/next-steps.ts`). The
  * path: the person a forge was made for claims it and lands home; this card
- * says, first, that their crew is already at work and on what, then three
+ * says, first, who in their crew has its direction and whether they are at
+ * work on it yet, then three
  * steps that tick themselves done — the first not yet done is the one
  * primary action. Make your everyday account carries the form itself (it
  * replaces #803's separate card here); open your apps lists them; tell the
@@ -20,6 +21,7 @@ import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { btn, card } from "../ui.ts";
+import { tellHref } from "../studio/nouns.ts";
 import { everydayAsk } from "./everyday.ts";
 import { EVERYDAY_WHY } from "../../core/everyday.ts";
 
@@ -27,8 +29,9 @@ import { EVERYDAY_WHY } from "../../core/everyday.ts";
 function crewAtWork(
   ctx: Ctx,
   repos: Awaited<ReturnType<typeof spawnedRepos>>,
-): Html[] {
+): { lines: Html[]; busy: boolean } {
   const lines: Html[] = [];
+  let busy = false;
   for (const repo of repos) {
     if (repo.directionIssueId === null) continue;
     const issue = getIssueById(ctx.app.db, repo.directionIssueId);
@@ -41,6 +44,7 @@ function crewAtWork(
         [string]
       >("SELECT state FROM run WHERE issue_id = ?1 AND kind = 'agent' ORDER BY created_at DESC LIMIT 1")
       .get(issue.id);
+    if (run?.state === "running" || run?.state === "queued") busy = true;
     const doing =
       run?.state === "running"
         ? "is working on"
@@ -50,13 +54,13 @@ function crewAtWork(
     lines.push(
       html`<li>
         <b>${agent.username}</b> ${doing}
-        <a href="/${repo.ownerName}/${repo.name}/issues/${issue.number}"
+        <a href="${tellHref(`/${repo.ownerName}/${repo.name}`, issue.number)}"
           >${issue.title}</a
         >
       </li>`,
     );
   }
-  return lines;
+  return { lines, busy };
 }
 
 function stepRow(step: NextStep, primary: boolean, body: Html | null): Html {
@@ -84,7 +88,7 @@ export async function nextStepsCard(
   const steps = await nextStepsFor(ctx.app, user);
   if (!steps || steps.every((s) => s.done)) return null;
   const repos = await spawnedRepos(ctx.app, user);
-  const working = crewAtWork(ctx, repos);
+  const crew = crewAtWork(ctx, repos);
   const primary = steps.find((s) => !s.done)?.key;
   const bodies: Record<NextStep["key"], Html | null> = {
     everyday: html`<p class="muted small">${EVERYDAY_WHY}</p>
@@ -114,10 +118,14 @@ export async function nextStepsCard(
     </p>`,
   };
   return card(
-    html`${working.length > 0
-        ? html`<p class="mb">Your crew is already at work:</p>
+    html`${crew.lines.length > 0
+        ? html`<p class="mb">
+              ${crew.busy
+                ? "Your crew is already at work:"
+                : "Your crew has its direction:"}
+            </p>
             <ul class="next-crew mb">
-              ${working}
+              ${crew.lines}
             </ul>`
         : null}
       <ol class="next-steps">
