@@ -44,7 +44,9 @@ import {
   terminalCard,
 } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
+import { needsYouSection, type AsksTop } from "./asks_page.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
+import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard } from "../pages/next-steps.ts";
@@ -154,7 +156,12 @@ export function liveOnYouFragment(ctx: Ctx): Response {
  * your repositories are one step away on your own page. On a phone they are
  * a tab away. The app rows and the cost line live on `/apps`.
  */
-export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
+export async function studioHome(
+  ctx: Ctx,
+  user: User,
+  top?: AsksTop,
+): Promise<Response> {
+  const needsYou = needsYouSection(ctx, user, top);
   const { repos: appRepos } = writableAppsOf(ctx, user);
   // A spawned forge says where it lives: the address its person shares.
   const spawned = await spawnedOrg(ctx.app);
@@ -170,14 +177,10 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const firstSteps = await nextStepsCard(ctx, user);
   const body = html`<h1 class="sr-only">Home</h1>
     ${firstSteps ?? everydayCard(ctx, user)} ${address}
-    <nav class="home-tabs seg" aria-label="Home">
-      <a href="/" aria-current="page">Feed</a>
-      <a href="/apps">Your apps</a>
-      <a href="/asked">Asked</a>
-    </nav>
+    ${homeTabs("feed")}
     <div class="dash">
       <div class="dash-main stack">
-        ${composer(ctx, user)}
+        ${needsYou.body} ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
@@ -202,7 +205,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     ctx,
     title: "Home",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${needsYou.scriptJs}`,
   });
 }
 

@@ -96,7 +96,7 @@ export interface Verb {
     actor: User,
     target: Target,
     after: FleetValue,
-    value: FleetValue,
+    value?: FleetValue,
   ): Promise<string | undefined>;
 }
 
@@ -666,7 +666,7 @@ export const VERBS: Record<string, Verb> = {
         actor,
         t.repo,
         t.issue,
-        `Not doing: ${String(value)}`,
+        `Not doing: ${value === undefined ? "" : String(value)}`,
       );
       if (!said.ok) return words(String(said.error));
       return done(

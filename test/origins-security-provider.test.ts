@@ -4,7 +4,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { getOriginById } from "../src/core/origins.ts";
 import { runGitCapture } from "../src/git/env.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -524,7 +523,6 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
         password: PASSWORD,
       }),
     });
-    resetConnectLimit();
     const connected = await read<{ id: string; kind: string }>(
       await api("/api/v1/user/origins", {
         method: "POST",

@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { pushToOrigin } from "../src/origins/git-mirror.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import {
   mirrorAndWait,
   newFakeState,
@@ -134,7 +133,6 @@ describe("push-through: the origin gets the last word", () => {
         password: ALICE_PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

@@ -534,7 +534,10 @@ rollout: { state: ok|blocked|held, reason }, incidents, stale, checkedAt }`.
 The MCP `health` tool gives the same answer (`actions/health.ts`).
 
 `version` and `commit` are what is running, as the build stamped it
-(`kernel/version.ts`): the release workflow passes the tag it is building
+(`kernel/version.ts`), and both are on the public route: a monitor with no
+account reads them, as it reads the rollout. The commit of a public
+project is public already; a private forge that must not say which commit
+it runs keeps the route behind its edge, as it does the rest. The stamp: the release workflow passes the tag it is building
 to the image as `VERSION`, the `Dockerfile` turns `VERSION` and `COMMIT`
 into `FORGE_VERSION` and `FORGE_COMMIT`, and the process reads them back.
 No file in the repository carries the number; `package.json` says `0.0.0`,
