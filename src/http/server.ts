@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import {
   closeStreamsOf,
@@ -1473,6 +1474,19 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     actorId: input.actorId || undefined,
     payload: { updates: input.updates },
   });
+  // A tag that releases a sealed report's fix opens the report
+  // (`actions/sealed.ts`). Off the hook's answer: git need not wait for it.
+  void unsealReleased(
+    app,
+    repo,
+    input.updates,
+    input.actorId ? getUserById(app.db, input.actorId) : undefined,
+  ).catch((error) =>
+    app.log.warn("could not unseal released reports", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
   return new Response("");
 }
 
