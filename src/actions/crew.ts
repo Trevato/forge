@@ -14,17 +14,20 @@ import {
   deleteAgent as removeAgent,
   getAgent,
   getAgentByName,
+  isCrew,
   listAgents,
   listCrew as queryCrew,
+  listCrewRoles,
   removeCrew as deleteCrew,
   updateAgent as patchAgent,
   type Agent,
   type AgentPatch,
+  type CrewRole,
   BRIEF_MAX,
   BUDGET_MAX_USD,
   MODEL_MAX,
 } from "../core/agents.ts";
-import type { Repo } from "../core/repos.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
 import {
   createUser,
   getUserByName,
@@ -186,6 +189,49 @@ export function listCrew(
   const reader = requireReader(app, actor, repo);
   if (!reader.ok) return reader;
   return ok(queryCrew(app.db, repo.id));
+}
+
+/** One crew member as a viewer may see it: always who and what they do. */
+export interface CrewMember {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: CrewRole;
+  /**
+   * The owner's configuration of the agent (#946): its brief, model and
+   * budget. Only the repository's writers and its own crew see it; a reader
+   * or a stranger sees the crew's names and roles.
+   */
+  readonly config?: { model: string; brief: string; budgetUsd: number };
+}
+
+/** The crew of a repository, shown as `actor` may see it. */
+export function crewAsSeen(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Result<CrewMember[], "not_found"> {
+  const reader = requireReader(app, actor, repo);
+  if (!reader.ok) return reader;
+  const configured =
+    actor !== undefined &&
+    (canWrite(app.db, repo, actor) ||
+      (actor.kind === "agent" && isCrew(app.db, repo.id, actor.id)));
+  return ok(
+    listCrewRoles(app.db, repo.id).map(({ agent, role }) => ({
+      username: agent.user.username,
+      displayName: agent.user.displayName,
+      role,
+      ...(configured
+        ? {
+            config: {
+              model: agent.model,
+              brief: agent.brief,
+              budgetUsd: agent.budgetUsd,
+            },
+          }
+        : {}),
+    })),
+  );
 }
 
 /** Put an agent on the crew: it may now read and write this repository. */

@@ -235,10 +235,10 @@ import {
 import {
   addToCrew,
   createAgent,
+  crewAsSeen,
   deleteAgent,
   getAgentView,
   listAllAgents,
-  listCrew,
   removeFromCrew,
   updateAgent,
 } from "../actions/crew.ts";
@@ -926,6 +926,21 @@ function agentJson(agent: Agent) {
     model: agent.model,
     brief: agent.brief,
     budgetUsd: agent.budgetUsd,
+    createdAt: agent.createdAt,
+  };
+}
+
+/**
+ * An agent as `viewer` may see it: its brief, model and budget are the
+ * owner's configuration (#946), for the forge's owner and the agent itself;
+ * anyone else signed in sees who it is.
+ */
+function agentFor(agent: Agent, viewer: User | undefined) {
+  if (viewer?.isAdmin === true || viewer?.id === agent.user.id)
+    return agentJson(agent);
+  return {
+    username: agent.user.username,
+    displayName: agent.user.displayName,
     createdAt: agent.createdAt,
   };
 }
@@ -4544,7 +4559,10 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/agents", (ctx) => {
     const agents = listAllAgents(ctx.app, ctx.auth.user);
     if (!agents.ok) return respondAccess(agents.error, 401);
-    return json({ items: agents.value.map(agentJson), next_cursor: null });
+    return json({
+      items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
+      next_cursor: null,
+    });
   });
 
   router.add("POST", "/api/v1/agents", async (ctx) => {
@@ -4573,7 +4591,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.params.username ?? "",
     );
     if (!agent.ok) return respondAccess(agent.error, 404);
-    return json(agentJson(agent.value));
+    return json(agentFor(agent.value, ctx.auth.user));
   });
 
   router.add("PATCH", "/api/v1/agents/:username", async (ctx) => {
@@ -4611,9 +4629,11 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const crew = listCrew(ctx.app, ctx.auth.user, repo);
+    // Names and roles for every reader; the brief, model and budget for
+    // writers and the crew (`crewAsSeen`, #946).
+    const crew = crewAsSeen(ctx.app, ctx.auth.user, repo);
     if (!crew.ok) return notFound();
-    return json({ items: crew.value.map(agentJson), next_cursor: null });
+    return json({ items: crew.value, next_cursor: null });
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/crew/:username", (ctx) => {
