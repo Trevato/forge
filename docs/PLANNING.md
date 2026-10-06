@@ -236,20 +236,25 @@ not on each leaf (#733). Each action is one fleet operation
 issue it takes along, nothing written until it is confirmed, a receipt, and
 one undo.
 
-- **Defer** files the limb for later: out from under its pillar, under
-  Later, behind the Later gate. One row is written. What is beneath it
-  follows by the graph's own rule — an open issue that only deferred work
-  waits for is deferred too, and is never ready — so the crew picks none of
-  it, and what something active still waits for stays pickable and is
-  listed as staying. An issue nothing waits for at all is not touched by
-  the rule. Each deferred issue reads _deferred_ wherever it is shown, with
-  why: on the map, in its data and the MCP's `map`, on its own page, and on
-  the milestone.
-- **Resume** is the reverse: out from behind the gate, under the pillar
-  named, or under none.
-- **Close as not doing** closes every open issue that only the limb needs,
-  the limb included, as `dropped`, with the reason said on each. What
-  something outside the limb also waits for is not the limb's to close.
+- **Defer** files every open issue that is the limb's own for later, the
+  limb first: out from under its pillar, under Later, behind the Later
+  gate — one row for each, so nothing is put off that the preview did not
+  show. (On a plan where every issue is linked under its pillar, moving the
+  limb alone would leave its leaves ready.) What other work outside the
+  limb still waits for stays pickable and is listed as staying; an
+  umbrella's wait is membership, not need. Anything linked beneath a
+  deferred issue afterwards follows by the graph's own rule — an open issue
+  that only deferred work waits for is deferred too, and is never ready.
+  An issue nothing waits for at all is not touched by the rule. Each
+  deferred issue reads _deferred_ wherever it is shown, with why: on the
+  map, in its data and the MCP's `map`, on its own page, and on the
+  milestone.
+- **Resume** is the reverse, leaves first: what was filed for later comes
+  back under the pillar named, or under none; an issue of the limb that was
+  not filed for later is left as it is.
+- **Close as not doing** closes every open issue that is the limb's own,
+  the limb included, as `dropped`, with the reason said on each. What other
+  work outside the limb also waits for is not the limb's to close.
 
 An umbrella or the gate is the plan's own and is not filed. A leaf beneath
 a limb that is not deferred cannot be deferred alone: defer the limb. A

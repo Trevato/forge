@@ -15,9 +15,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { linkIssue } from "../src/actions/dependencies.ts";
+import { linkIssue, unlinkIssue } from "../src/actions/dependencies.ts";
 import { undoFleetOp } from "../src/actions/fleet.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { applyLimb, previewLimb } from "../src/actions/limbs.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
@@ -221,6 +221,10 @@ describe("limb actions", () => {
     for (const part of [home, lists, search, shared]) link(engine, iface, part);
     link(engine, search, lists);
     link(engine, feed, iface);
+    // As the planner files them (#612): the leaves are under the pillar's
+    // umbrella directly too — all but `search`, so both shapes are here.
+    link(engine, feed, home);
+    link(engine, feed, lists);
     link(engine, ship, shared);
     link(engine, trust, ship);
     hidden = issue(secret, "A hidden limb");
@@ -292,11 +296,10 @@ describe("limb actions", () => {
     ).toContain("forbidden");
     const theirs = await post(tokenOf(bob, "admin"), path, apply);
     expect(theirs.status).toBe(201);
-    expect(
-      ((await theirs.json()) as { rows: { outcome: string }[] }).rows.map(
-        (r) => r.outcome,
-      ),
-    ).toEqual(["refused"]);
+    const theirRows = ((await theirs.json()) as { rows: { outcome: string }[] })
+      .rows;
+    expect(theirRows.length).toBe(4);
+    expect(theirRows.every((r) => r.outcome === "refused")).toBe(true);
     expect(
       (
         await post(
@@ -342,18 +345,20 @@ describe("limb actions", () => {
     );
   });
 
-  test("defer: one row moves the limb, and what only it needs goes with it; undo brings it back", async () => {
+  test("defer: one previewed row for each issue of the limb, the limb first; what other work needs stays; undo brings it back", async () => {
     const plan = previewLimb(app, alice, fresh(engine), iface.number, {
       action: "defer",
     });
     if (!plan.ok) throw new Error(plan.error.message);
+    const filed = [`behind #${gate.number}`, `under #${later.number}`];
+    // The limb, then its leaves — the ones under the pillar's umbrella too,
+    // which is why moving the limb alone would not have stopped the crew.
     expect(plan.value.rows).toMatchObject([
-      {
-        label: `alice/engine#${iface.number}`,
-        before: [`under #${feed.number}`],
-        after: [`behind #${gate.number}`, `under #${later.number}`],
-        outcome: "change",
-      },
+      { label: `alice/engine#${iface.number}`, before: [`under #${feed.number}`], after: filed, outcome: "change" },
+      { label: `alice/engine#${home.number}`, before: [`under #${feed.number}`], after: filed, outcome: "change" },
+      // `One search` waits for `One list`: before it, top down.
+      { label: `alice/engine#${search.number}`, before: [], after: filed, outcome: "change" },
+      { label: `alice/engine#${lists.number}`, before: [`under #${feed.number}`], after: filed, outcome: "change" },
     ]);
     // Everything it takes along, and what stays because P0's ship needs it.
     expect(plan.value.taken.map((i) => i.number)).toEqual(
@@ -367,14 +372,16 @@ describe("limb actions", () => {
       action: "defer",
     });
     if (!op.ok) throw new Error(op.error.message);
-    expect(op.value.rows.map((r) => r.outcome)).toEqual(["ok"]);
-    expect(op.value.rows[0]).toMatchObject({
-      before: plan.value.rows[0]!.before,
-      after: plan.value.rows[0]!.after,
-    });
-    expect(waitsFor(iface)).toContain(gate.number);
+    expect(op.value.rows.map((r) => r.outcome)).toEqual(["ok", "ok", "ok", "ok"]);
+    expect(op.value.rows.map((r) => [r.before, r.after])).toEqual(
+      plan.value.rows.map((r) => [r.before, r.after]),
+    );
+    for (const moved of [iface, home, lists, search]) {
+      expect(waitsFor(moved)).toContain(gate.number);
+      expect(waitedBy(moved)).not.toContain(feed.number);
+      expect(labelsFor(app.db, moved.id).map((l) => l.name)).toEqual(["Later"]);
+    }
     expect(waitedBy(iface)).toEqual([later.number]);
-    expect(labelsFor(app.db, iface.id).map((l) => l.name)).toEqual(["Later"]);
     expect(deferred()).toEqual(
       [later, iface, home, lists, search]
         .map((i) => i.number)
@@ -383,9 +390,12 @@ describe("limb actions", () => {
     // The crew can pick none of it; what P0 also needs is still ready.
     expect(ready()).toEqual([shared.number, loose.number]);
 
-    // Every surface says so, and why, in the same words. The limb itself
-    // waits behind the gate; what only it needs is deferred through it.
-    const through = `only deferred work needs it: #${iface.number} One interface`;
+    // Every surface says so, and why, in the same words. Each issue of the
+    // limb waits behind the gate itself; something linked beneath one of
+    // them afterwards is deferred through it, and says through which.
+    const extra = issue(engine, "One home: the footer");
+    link(engine, home, extra);
+    const through = `only deferred work needs it: #${home.number} One home`;
     const ro = tokenOf(alice, "ro");
     const map = (await (
       await fetch(`${base}/api/v1/repos/alice/engine/map`, {
@@ -398,21 +408,21 @@ describe("limb actions", () => {
     };
     const drawn = (issue: Issue) =>
       map.issues.find((i) => i.number === issue.number)!;
-    expect(drawn(iface)).toMatchObject({
-      word: "deferred",
-      deferredBecause: "behind the Later gate",
-    });
-    for (const leaf of [home, lists, search])
-      expect(drawn(leaf)).toMatchObject({
+    for (const moved of [iface, home, lists, search])
+      expect(drawn(moved)).toMatchObject({
         word: "deferred",
-        deferredBecause: through,
+        deferredBecause: "behind the Later gate",
       });
+    expect(drawn(extra)).toMatchObject({
+      word: "deferred",
+      deferredBecause: through,
+    });
     // What something active also waits for, and what nothing waits for at
     // all, read as they did.
     expect(drawn(shared)).toMatchObject({ word: "ready" });
     expect(drawn(loose)).toMatchObject({ word: "ready" });
     expect("deferredBecause" in drawn(shared)).toBe(false);
-    expect(map.counts["deferred"]).toBe(4);
+    expect(map.counts["deferred"]).toBe(5);
     expect(map.ready.map((r) => r.number).sort((a, b) => a - b)).toEqual([
       shared.number,
       loose.number,
@@ -433,17 +443,17 @@ describe("limb actions", () => {
     const told = JSON.parse(
       ((await asTool.json()) as any).result.content[0].text,
     ) as typeof map;
-    expect(told.issues.find((i) => i.number === home.number)).toMatchObject({
+    expect(told.issues.find((i) => i.number === extra.number)).toMatchObject({
       word: "deferred",
       deferredBecause: through,
     });
     const mapPage = await (await get("alice", "/alice/engine/map")).text();
     expect(mapPage).toContain(
-      `<title>#${home.number} One home — deferred: ${through}</title>`,
+      `<title>#${extra.number} One home: the footer — deferred: ${through}</title>`,
     );
-    expect(mapPage).toMatch(/data-state="deferred"><\/i>deferred <b>4<\/b>/);
+    expect(mapPage).toMatch(/data-state="deferred"><\/i>deferred <b>5<\/b>/);
     const issuePage = await (
-      await get("alice", `/alice/engine/issues/${home.number}`)
+      await get("alice", `/alice/engine/issues/${extra.number}`)
     ).text();
     expect(issuePage).toContain(`deferred: ${through}`);
     expect(issuePage).not.toContain("not picked up yet");
@@ -461,22 +471,37 @@ describe("limb actions", () => {
     ).json()) as {
       deferred: boolean;
       deferredBecause: string;
+      limbs: { number: number; deferred: boolean; deferredBecause?: string }[];
       leaves: { number: number; state: string; deferredBecause?: string }[];
     };
     expect(limbData).toMatchObject({
       deferred: true,
       deferredBecause: "behind the Later gate",
     });
-    expect(limbData.leaves.find((l) => l.number === home.number)).toMatchObject(
-      { state: "deferred", deferredBecause: through },
+    // `One home` brings a tree of its own now (the footer): a limb, deferred.
+    expect(limbData.limbs.find((l) => l.number === home.number)).toMatchObject(
+      { deferred: true, deferredBecause: "behind the Later gate" },
     );
+    expect(limbData.leaves.find((l) => l.number === lists.number)).toMatchObject(
+      { state: "deferred", deferredBecause: "behind the Later gate" },
+    );
+    // What was linked beneath afterwards is not the limb's deferral to undo:
+    // it goes before the undo, so the fixture is as it was.
+    expect(unlinkIssue(app, alice, fresh(engine), current(home), current(extra)).ok).toBe(true);
+    expect(setIssueState(app, alice, fresh(engine), current(extra), "closed").ok).toBe(true);
 
     const undone = await undoFleetOp(app, alice, op.value.id);
     if (!undone.ok) throw new Error(undone.error.message);
-    expect(undone.value.rows.map((r) => r.outcome)).toEqual(["ok"]);
-    expect(waitsFor(iface)).not.toContain(gate.number);
+    expect(undone.value.rows.map((r) => r.outcome)).toEqual(["ok", "ok", "ok", "ok"]);
+    for (const back of [iface, home, lists, search]) {
+      expect(waitsFor(back)).not.toContain(gate.number);
+      expect(waitedBy(back)).not.toContain(later.number);
+    }
     expect(waitedBy(iface)).toEqual([feed.number]);
+    expect(waitedBy(home).sort()).toEqual([feed.number, iface.number].sort());
+    expect(waitedBy(search)).toEqual([iface.number]);
     expect(labelsFor(app.db, iface.id).map((l) => l.name)).toEqual(["P1 Feed"]);
+    expect(labelsFor(app.db, search.id)).toEqual([]);
     expect(deferred()).toEqual([later.number]);
     expect(ready()).toEqual(
       [home, lists, shared, loose].map((i) => i.number).sort((a, b) => a - b),
@@ -498,16 +523,18 @@ describe("limb actions", () => {
     expect(await refusal(engine, home)).toBe(
       "refused: something that is not deferred waits for it: defer that instead, or unlink it first",
     );
-    expect(await refusal(engine, feed)).toBe(
-      "refused: an umbrella or the gate is the plan's own, and is not filed",
-    );
+    // An umbrella is deferred limb by limb, never as one.
+    expect(await refusal(engine, feed)).toBe("bad_action");
     expect(await refusal(plain, root)).toBe(
-      'refused: this repository has no open issue titled "Later gate: …"',
+      [
+        'refused: this repository has no open issue titled "Later gate: …"',
+        'refused: this repository has no open issue titled "Later gate: …"',
+      ].join("; "),
     );
     expect(snapshot()).toBe(before);
   });
 
-  test("resume: back under a pillar and out from behind the gate, and undo defers it again", async () => {
+  test("resume: leaves first, back under a pillar and out from behind the gate; undo defers it again", async () => {
     const off = await applyLimb(app, alice, fresh(engine), iface.number, {
       action: "defer",
     });
@@ -525,11 +552,16 @@ describe("limb actions", () => {
       pillar: "p0",
     });
     if (!plan.ok) throw new Error(plan.error.message);
-    expect(plan.value.rows[0]).toMatchObject({
-      before: [`behind #${gate.number}`, `under #${later.number}`],
-      after: [`under #${trust.number}`],
-      outcome: "change",
-    });
+    // Leaves first: a limb comes back from behind the gate from the bottom.
+    expect(plan.value.rows.map((r) => r.label)).toEqual(
+      [lists, search, home, iface].map((i) => `alice/engine#${i.number}`),
+    );
+    for (const row of plan.value.rows)
+      expect(row).toMatchObject({
+        before: [`behind #${gate.number}`, `under #${later.number}`],
+        after: [`under #${trust.number}`],
+        outcome: "change",
+      });
     expect(plan.value.taken.map((i) => i.number)).toEqual(
       [iface, home, lists, search].map((i) => i.number),
     );
@@ -538,22 +570,32 @@ describe("limb actions", () => {
       pillar: "p0",
     });
     if (!op.ok) throw new Error(op.error.message);
+    expect(op.value.rows.map((r) => r.outcome)).toEqual(["ok", "ok", "ok", "ok"]);
     expect(waitedBy(iface)).toEqual([trust.number]);
-    expect(waitsFor(iface)).not.toContain(gate.number);
+    for (const back of [iface, home, lists, search]) {
+      expect(waitsFor(back)).not.toContain(gate.number);
+      expect(waitedBy(back)).toContain(trust.number);
+      expect(labelsFor(app.db, back.id).map((l) => l.name)).toEqual(["P0 Trust"]);
+    }
     expect(deferred()).toEqual([later.number]);
-    expect(labelsFor(app.db, iface.id).map((l) => l.name)).toEqual(["P0 Trust"]);
     // Undo: deferred again, exactly as it was.
-    expect((await undoFleetOp(app, alice, op.value.id)).ok).toBe(true);
+    const undone = await undoFleetOp(app, alice, op.value.id);
+    expect(undone.ok && undone.value.rows.map((r) => r.outcome)).toEqual(["ok", "ok", "ok", "ok"]);
     expect(waitedBy(iface)).toEqual([later.number]);
-    expect(waitsFor(iface)).toContain(gate.number);
+    expect(waitsFor(home)).toContain(gate.number);
     // Resumed under no pillar: out from behind the gate, filed nowhere.
     const out = await applyLimb(app, alice, fresh(engine), iface.number, {
       action: "resume",
     });
-    expect(out.ok && out.value.rows[0]).toMatchObject({ after: [], outcome: "ok" });
+    if (!out.ok) throw new Error(out.error.message);
+    expect(out.value.rows.map((r) => [r.after, r.outcome])).toEqual(
+      [lists, search, home, iface].map(() => [[], "ok"]),
+    );
     expect(waitedBy(iface)).toEqual([]);
     expect(labelsFor(app.db, iface.id)).toEqual([]);
-    link(engine, feed, iface);
+    // What resume does not touch: an issue that was not filed for later.
+    // The fixture, as it was, for what follows.
+    for (const under of [iface, home, lists]) link(engine, feed, under);
   });
 
   test("close as not doing: every open issue only the limb needs, with the reason on each; what else is needed stays; undo opens them", async () => {
@@ -565,7 +607,7 @@ describe("limb actions", () => {
     if (!plan.ok) throw new Error(plan.error.message);
     // Top down, the limb first; the shared toolbar is not the limb's to drop.
     expect(plan.value.rows.map((r) => [r.label, r.before, r.after, r.outcome])).toEqual(
-      [iface, home, lists, search].map((i) => [
+      [iface, home, search, lists].map((i) => [
         `alice/engine#${i.number}`,
         "open",
         "closed (dropped)",
@@ -698,7 +740,7 @@ describe("limb actions", () => {
     expect(readers.status).toBe(303);
     expect(
       await (await get("bob", readers.headers.get("location")!)).text(),
-    ).toContain("0 written, 1 left as they were.");
+    ).toContain("0 written, 4 left as they were.");
     const foreign = await fetch(`${base}${at}/limb`, {
       method: "POST",
       headers: { cookie: cookies["alice"]!, origin: "https://evil.test" },
@@ -718,7 +760,7 @@ describe("limb actions", () => {
     expect(deferred()).toContain(home.number);
     const receipt = await (await get("alice", receiptAt)).text();
     expect(receipt).toContain("<h1>Deferred</h1>");
-    expect(receipt).toContain("1 written.");
+    expect(receipt).toContain("4 written.");
     expect(receipt).toContain(`action="${receiptAt}/undo"`);
     // The receipt is its actor's: a reader gets the one 404.
     expect((await get("bob", receiptAt)).status).toBe(404);

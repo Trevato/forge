@@ -29,8 +29,10 @@ works on every kind.
 | issue | `repo` `owner` `name` `id` `number` `state` `assignee` (`none`) `label` `limb` |
 
 `limb:<number>` selects a limb: the issue of that number and everything
-beneath it that only it needs, top down, and never what something outside
-the limb also waits for. It needs `repo:owner/name`.
+beneath it that is its own, top down (every issue before what it waits
+for), and never what other work outside the limb also waits for — an
+umbrella's wait is membership, not need. `limb:<number>^` is the same rows
+leaves first. It needs `repo:owner/name`.
 
 Only rows you can read are selected. More than 500 rows is refused
 (`too_many`), never cut. This grammar is `src/fleet/selection.ts`; the fleet
@@ -53,6 +55,7 @@ table (#446) grows it.
 | issue | `label`     | a label's name (added)    | yes  |
 | issue | `link`      | the number they wait for  | yes  |
 | issue | `file`      | `later`, a pillar, or `none` | yes |
+| issue | `resume`    | a pillar, or `none`       | yes  |
 | issue | `drop`      | the reason, one sentence  | yes  |
 
 ## Who may
@@ -80,6 +83,11 @@ rows backwards, so what was done last is undone first.
 `file` says where an issue stands in the plan: `later` puts it behind the
 Later gate and under the Later umbrella, out from under any pillar; a
 pillar's name or short form puts it under that pillar and out from behind
-the gate; `none` takes it out of both. `drop` closes an issue as dropped
-and says the reason on it; its undo opens it again. The actions on a whole
-limb (`docs/PLANNING.md`) are these two verbs over a limb.
+the gate; `none` takes it out of both. Over several rows at once, a row
+that only waits for other rows of the same operation is not refused as a
+loop: they are on their way behind the gate too. `resume` brings back what
+was filed for later — under the pillar named, or nowhere — and leaves an
+issue that was not filed for later as it is. `drop` closes an issue as
+dropped and says the reason on it; its undo opens it again. The actions on
+a whole limb (`docs/PLANNING.md`) are these verbs over `limb:<n>`: `file
+later` top down, `resume` leaves first, `drop`.

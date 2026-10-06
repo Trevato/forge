@@ -376,14 +376,39 @@ export function readPlan(
     limb(number: number): { own: Issue[]; shared: Issue[] } | undefined {
       const issue = byNumber.get(number);
       if (issue === undefined) return undefined;
-      const order = [issue.id];
-      const inside = new Set(order);
-      for (let n = 0; n < order.length; n++)
-        for (const child of waitsFor.get(order[n]!) ?? [])
+      const found = [issue.id];
+      const inside = new Set(found);
+      for (let n = 0; n < found.length; n++)
+        for (const child of waitsFor.get(found[n]!) ?? [])
           if (!inside.has(child)) {
             inside.add(child);
-            order.push(child);
+            found.push(child);
           }
+      // Top down means every issue before what it waits for — siblings
+      // included, so an order among them holds — and leaves first is the
+      // same list read backwards. Kahn's walk, ties by number.
+      const waitedIn = new Map<string, number>();
+      for (const id of inside)
+        for (const child of waitsFor.get(id) ?? [])
+          if (inside.has(child))
+            waitedIn.set(child, (waitedIn.get(child) ?? 0) + 1);
+      const byNumberAsc = (a: string, b: string) =>
+        (byId.get(a)?.number ?? 0) - (byId.get(b)?.number ?? 0);
+      const order: string[] = [];
+      let free = found.filter((id) => (waitedIn.get(id) ?? 0) === 0).sort(byNumberAsc);
+      const placed = new Set<string>();
+      while (free.length > 0) {
+        const next = free.shift()!;
+        order.push(next);
+        placed.add(next);
+        for (const child of waitsFor.get(next) ?? []) {
+          if (!inside.has(child)) continue;
+          const left = (waitedIn.get(child) ?? 0) - 1;
+          waitedIn.set(child, left);
+          if (left === 0) free = [...free, child].sort(byNumberAsc);
+        }
+      }
+      for (const id of found) if (!placed.has(id)) order.push(id);
       // Shared: other open work outside the limb waits for it, directly or
       // through something beneath the limb that is itself shared. An
       // umbrella's wait is membership, not need: on a plan where every
