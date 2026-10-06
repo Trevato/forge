@@ -399,7 +399,7 @@ describe("origins on the web", () => {
 
   // ---- pins ----
 
-  test("the pin toggle round-trips and the dashboard lists what is pinned", async () => {
+  test("the pin toggle round-trips and the home lists what is pinned", async () => {
     const aliceId = getUserByName(app.db, "alice")!.id;
     const pinned = await asUser(alice, "/alice/widgets/pin", {
       form: { pinned: "1" },
@@ -410,7 +410,7 @@ describe("origins on the web", () => {
     const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
-    expect(dash).toContain("Pinned");
+    expect(dash).toContain('href="/alice/widgets"');
     // The pin card says where each repo lives, and offers the way back out.
     expect(dash).toContain("Unpin");
 
