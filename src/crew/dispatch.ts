@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { markHeard } from "../core/issues.ts";
 import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
@@ -442,8 +443,14 @@ function route(app: App, event: ForgeEvent): void {
           active.id,
           `${actor.username} on #${issue.number}: ${said.trim()}`,
         )
-      )
+      ) {
+        // Heard now, by the run that works it: the next run's brief does
+        // not tell it again (`news.ts`).
+        const commentId = event.payload["commentId"];
+        if (typeof commentId === "string")
+          markHeard(app.db, commentId, active.id);
         return;
+      }
       queueAgentRun(app, repo, issue, agent, "feedback", actor.id);
       return;
     }

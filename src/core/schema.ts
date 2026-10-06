@@ -1501,7 +1501,31 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS fork_made_owner ON fork_made(owner_id, made_at);
   `,
-  // 68 — a sealed repository is never public, said by the database (#865's
+  // 68 — the run a comment was said into as it worked (#827): its agent heard
+  // it then, so the next run's brief does not tell it again.
+  `
+  ALTER TABLE comment ADD COLUMN heard_in TEXT;
+  `,
+  // 69 — an event's place in the outbox, as a number of its own (#932):
+  // replays resume by it, never by the id, which two processes in a roll
+  // can make out of order. It began as the rowid, which VACUUM may renumber
+  // on a table without an INTEGER PRIMARY KEY; this column it never
+  // touches. Every insert takes the next one, whoever writes it (the app or
+  // a migration's SQL), from the trigger: one writer at a time, so strictly
+  // increasing across every connection.
+  `
+  ALTER TABLE event ADD COLUMN seq INTEGER;
+  UPDATE event SET seq = rowid;
+  CREATE UNIQUE INDEX IF NOT EXISTS event_seq ON event(seq);
+  CREATE INDEX IF NOT EXISTS event_repo_seq ON event(repo_id, seq);
+  CREATE TRIGGER IF NOT EXISTS event_seq_next AFTER INSERT ON event
+  WHEN NEW.seq IS NULL
+  BEGIN
+    UPDATE event SET seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM event)
+     WHERE rowid = NEW.rowid;
+  END;
+  `,
+  // 70 — a sealed repository is never public, said by the database (#865's
   // review): the rule lived in `updateRepoSettings`; these triggers hold
   // it for every writer of `repo.visibility`, now and later.
   `

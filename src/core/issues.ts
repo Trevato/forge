@@ -489,6 +489,19 @@ export interface Comment {
   readonly createdAt: string;
   /** The login on the origin, for an imported comment; null for a local one. */
   readonly originAuthor: string | null;
+  /**
+   * The run this was said into while it worked (`steerRun`), once that run
+   * ended well: its agent heard it and acted, so no later run is told it
+   * again (`crew/news.ts`). Null while the run works, and for good when it
+   * failed or was cut short — handed to a session that never answered is
+   * not heard, and the word is news to the next run.
+   */
+  readonly heardIn: string | null;
+}
+
+/** Record that run `runId` heard comment `commentId` as it worked. */
+export function markHeard(db: Database, commentId: string, runId: string): void {
+  db.query("UPDATE comment SET heard_in = ?2 WHERE id = ?1").run(commentId, runId);
 }
 
 /**
@@ -546,11 +559,14 @@ function getComment(db: Database, commentId: string): Comment | undefined {
         body: string;
         created_at: string;
         origin_author: string | null;
+        heard_ok: string | null;
       },
       [string]
     >(
-      `SELECT comment.*, user.username AS author_name
-       FROM comment JOIN user ON user.id = comment.author_id WHERE comment.id = ?1`,
+      `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
+       FROM comment JOIN user ON user.id = comment.author_id
+       LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
+       WHERE comment.id = ?1`,
     )
     .get(commentId);
   if (!row) return undefined;
@@ -562,6 +578,7 @@ function getComment(db: Database, commentId: string): Comment | undefined {
     body: row.body,
     createdAt: row.created_at,
     originAuthor: row.origin_author,
+    heardIn: row.heard_ok,
   };
 }
 
@@ -595,11 +612,13 @@ export function listComments(
         body: string;
         created_at: string;
         origin_author: string | null;
+        heard_ok: string | null;
       },
       [string]
     >(
-      `SELECT comment.*, user.username AS author_name
+      `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
        FROM comment JOIN user ON user.id = comment.author_id
+       LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
        WHERE ${where} ORDER BY comment.id`,
     )
     .all(issueId);
@@ -611,6 +630,7 @@ export function listComments(
     body: row.body,
     createdAt: row.created_at,
     originAuthor: row.origin_author,
+    heardIn: row.heard_ok,
   }));
 }
 
