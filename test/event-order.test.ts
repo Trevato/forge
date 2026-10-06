@@ -128,4 +128,40 @@ describe("events keep their order across processes", () => {
     ).toEqual([first, second].sort());
     expect(listEvents(app.db, { repoId, kind: "issue.opened", afterId: future })).toEqual([]);
   });
+
+  const seqOf = (id: string): number =>
+    (app.db.query("SELECT seq FROM event WHERE id = ?1").get(id) as { seq: number }).seq;
+
+  test("every insert takes the next place, raw SQL from another connection included", () => {
+    expect(seqOf(second)).toBe(seqOf(first) + 1);
+  });
+
+  test("the order is the event's own number, not where SQLite keeps the row", () => {
+    // A later event that lands in a reused, smaller rowid (as a copy that
+    // renumbers rows can leave it) still comes after the ones before it.
+    const third = `${first.slice(0, 10)}${"0".repeat(15)}1`;
+    const freed = (
+      app.db.query("SELECT MIN(rowid) AS r FROM event").get() as { r: number }
+    ).r;
+    app.db.query("DELETE FROM event WHERE rowid = ?1").run(freed);
+    other
+      .query(
+        "INSERT INTO event (rowid, id, kind, repo_id, actor_id, payload) VALUES (?1, ?2, 'issue.opened', ?3, ?4, '{\"number\":3}')",
+      )
+      .run(freed, third, repoId, alice.id);
+    expect(
+      listEvents(app.db, { repoId, kind: "issue.opened", limit: 3 }).map((e) => e.id),
+    ).toEqual([third, second, first]);
+    expect(
+      listEvents(app.db, { repoId, kind: "issue.opened", afterId: second }).map((e) => e.id),
+    ).toEqual([third]);
+  });
+
+  test("VACUUM leaves every event's place as it was", () => {
+    const before = app.db
+      .query("SELECT id, seq FROM event ORDER BY seq")
+      .all() as { id: string; seq: number }[];
+    app.db.run("VACUUM");
+    expect(app.db.query("SELECT id, seq FROM event ORDER BY seq").all()).toEqual(before);
+  });
 });
