@@ -228,7 +228,7 @@ describe("a plan says what each issue is for", () => {
     );
   });
 
-  test("the map page draws the deferred issue blocked and the pillar issue ready", async () => {
+  test("the map page draws the deferred issue deferred, with why, and the pillar issue ready", async () => {
     const cookie = (
       (
         await fetch(`${base}/signin`, {
@@ -250,8 +250,12 @@ describe("a plan says what each issue is for", () => {
           `<a[^>]*class="map-node"[^>]*>(?:(?!</a>)[\\s\\S])*${title}`,
         ),
       )?.[0] ?? "";
-    expect(card("The profit slider")).toContain('data-state="blocked"');
-    expect(card("Repo transfer")).toContain('data-state="blocked"');
+    // Deferred is its own word (#733): not ready, and not blocked by work.
+    expect(card("The profit slider")).toContain('data-state="deferred"');
+    expect(card("The profit slider")).toContain(
+      "— deferred: behind the Later gate</title>",
+    );
+    expect(card("Repo transfer")).toContain('data-state="deferred"');
     expect(card("Contain the agent")).toContain('data-state="ready"');
     expect(card("Later gate")).toContain('data-state="blocked"');
   });

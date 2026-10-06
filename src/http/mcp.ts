@@ -17,6 +17,7 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { addCommentThrough } from "../actions/issues.ts";
 import {
@@ -74,6 +75,8 @@ import {
 } from "../crew/direct.ts";
 import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
+import { undoFleetOp } from "../actions/fleet.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -945,17 +948,31 @@ const TOOLS: readonly Tool[] = [
       properties: {
         pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
         hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        weights: {
+          type: "object",
+          description: "What counts toward an app's place, each 0 to 10: forks, ships, use, fresh. One left out keeps what is set.",
+          properties: {
+            forks: { type: "number", minimum: 0, maximum: 10 },
+            ships: { type: "number", minimum: 0, maximum: 10 },
+            use: { type: "number", minimum: 0, maximum: 10 },
+            fresh: { type: "number", minimum: 0, maximum: 10 },
+          },
+        },
         dryRun: { type: "boolean" },
       },
     },
     writes: true,
     dryByDefault: true,
     run(ctx, user, args) {
-      if (args["pinned"] === undefined && args["hidden"] === undefined)
+      if (
+        args["pinned"] === undefined &&
+        args["hidden"] === undefined &&
+        args["weights"] === undefined
+      )
         return good(frontJson(ctx.app, user));
       const picks = frontInput(ctx.app, args);
       if (picks === undefined)
-        return bad("invalid", "pinned and hidden are lists of owner/name");
+        return bad("invalid", "pinned and hidden are lists of owner/name; weights an object of forks, ships, use, fresh");
       const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
       if (!set.ok)
         return set.error.kind === "forbidden"
@@ -1030,6 +1047,77 @@ const TOOLS: readonly Tool[] = [
             "no issue by that number waits for others here",
           )
         : good(data);
+    },
+  },
+  {
+    name: "limb",
+    description:
+      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description: "The limb: the number of its issue.",
+        },
+        action: { type: "string", enum: ["defer", "resume", "close", "undo"] },
+        reason: {
+          type: "string",
+          description: "For close: why it is not being done, in one sentence.",
+        },
+        pillar: {
+          type: "string",
+          description:
+            "For resume: the pillar to put it back under, by name or short form; under none when absent.",
+        },
+        operation: {
+          type: "string",
+          description: "For undo: the id of the operation to reverse.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "false to apply; anything else plans and changes nothing.",
+        },
+      },
+      required: ["app", "action"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const dry = args["dryRun"] !== false;
+      // The fleet's rule: a read credential plans, an admin one applies.
+      if (!dry && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "applying a limb action takes an admin token");
+      const refused = (e: { code: string; message: string }) =>
+        bad(e.code, e.message);
+      if (args["action"] === "undo") {
+        if (dry) return bad("invalid", "undo is not a dry run: pass dryRun false");
+        const undone = await undoFleetOp(ctx.app, user, str(args["operation"]));
+        return undone.ok ? good(undone.value) : refused(undone.error);
+      }
+      const number = args["issue"];
+      if (
+        !isLimbAction(args["action"]) ||
+        typeof number !== "number" ||
+        !Number.isInteger(number) ||
+        number < 1
+      )
+        return bad("invalid", "give the limb's issue number and an action: defer, resume, close or undo");
+      const request = {
+        action: args["action"],
+        ...(typeof args["reason"] === "string" ? { reason: args["reason"] } : {}),
+        ...(typeof args["pillar"] === "string" ? { pillar: args["pillar"] } : {}),
+      };
+      if (dry) {
+        const plan = previewLimb(ctx.app, user, repo, number, request);
+        return plan.ok ? good({ dryRun: true, ...plan.value }) : refused(plan.error);
+      }
+      const op = await applyLimb(ctx.app, user, repo, number, request);
+      return op.ok ? good({ dryRun: false, ...op.value }) : refused(op.error);
     },
   },
   {
@@ -1321,6 +1409,45 @@ const TOOLS: readonly Tool[] = [
         opened,
         ready,
         later,
+      });
+    },
+  },
+  {
+    name: "capacity",
+    description:
+      "The forge's capacity, live: crew runs at once (crew.concurrency), checks at once (checks.concurrency), test shards per check (checks.shards) and whether a cell's undeclared egress is refused or reported (cells.egress). Without `key`, each setting, its value and where it comes from, and the recent changes. With `key` and `value` (\"\" goes back to the boot default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. A change is honoured by the next run, check or cell, never by a restart. The same as Settings → Capacity and /api/v1/admin/capacity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: {
+          type: "string",
+          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress"],
+        },
+        value: { type: "string", maxLength: 16 },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const listed = listCapacity(ctx.app, user);
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      const key = typeof args["key"] === "string" ? args["key"] : undefined;
+      if (key === undefined) return good(listed.value);
+      const value = typeof args["value"] === "string" ? args["value"] : "";
+      const now = listed.value.settings.find((s) => s.key === key);
+      if (now === undefined) return bad("no_such_setting", `no capacity setting ${key}`);
+      if (args["dryRun"] !== false)
+        return good({
+          says: `Would set ${key} from ${now.value || "auto"} to ${value || "its default"}. Send dryRun: false to change it.`,
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing the forge's capacity needs an admin-scope token");
+      const changed = changeCapacity(ctx.app, user, key, value);
+      if (!changed.ok) return bad(changed.error, "that value is outside what this setting takes");
+      return good({
+        says: `${key}: ${changed.value.from || "auto"} → ${changed.value.to || "auto"}, from the next pick on.`,
+        ...changed.value,
       });
     },
   },

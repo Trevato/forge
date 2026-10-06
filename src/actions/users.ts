@@ -128,7 +128,7 @@ export function updateProfile(
       : cleanDisplayName(patch.displayName);
   const reserved =
     displayName !== undefined && displayName !== user.value.displayName
-      ? reservedName(app.db, displayName, user.value.id)
+      ? reservedName(app.db, displayName, user.value.id, "display")
       : undefined;
   // A mix of alphabets is refused for what it is, not as someone's name.
   if (reserved === "mixed") return err("display_name_mixed_script");

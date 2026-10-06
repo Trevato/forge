@@ -52,13 +52,19 @@ someone is, and one word:
   accent ring. Nothing on the map animates on its own: an animation inside
   a large inline SVG repaints the whole drawing every frame.
 - _blocked_ — open, waiting for something open.
+- _deferred_ — put off on purpose, and never ready: it waits behind the
+  Later gate, it is filed under Later, or only deferred work needs it. The
+  card, the data (`deferredBecause`) and the issue's own page say which, in
+  the same words: "behind the Later gate", "filed under Later", or "only
+  deferred work needs it: #12 One interface", naming the deferred limbs
+  above it. A dashed, quiet card.
 - _waiting_ — an open pull would close it: proposed, not landed.
 - _parked_ — the crew parked it twice since someone who directs the crew
   last spoke on it; a quiet warning tint. It is the planner's now (below).
 - _done_ — closed, still on an edge; it recedes.
 
-Working outranks waiting, waiting outranks parked, and the rest is what
-the graph says. Under the drawing, one line counts them.
+Working outranks waiting, waiting outranks parked, parked outranks deferred,
+and the rest is what the graph says. Under the drawing, one line counts them.
 
 **Fit, pan, zoom.** The drawing fits its container's width on load and
 never overflows the page sideways. Drag pans it; ⌘ or Ctrl and scroll (a
@@ -241,7 +247,11 @@ estimate — the open issues at the pace of the last 7 days, or a sentence
 saying there is no pace to estimate from. What it waits for directly shows
 as limbs where a child brings a tree of its own, and as leaves where it
 brings none (one that only waits for its siblings is a leaf in an order).
-Leaves show only on the limb they are under.
+Leaves show only on the limb they are under, and each issue shows once:
+what is under _Building now_ or _Blocked_ is not listed again under
+_Issues_. Later's milestone counts what the map's Later row counts: what
+the Later umbrella waits for, and what waits behind the gate whether or
+not the umbrella waits for it.
 
 A limb is flagged _a candidate to trim_ when it has open work, nothing
 landed in 7 days and it has been here that long, or when it has eight or
@@ -252,10 +262,50 @@ It is one tap away: each pillar in the map's _By pillar_ and in the board's
 7-day line opens its milestone, the map names the page, and the issue page
 of anything that waits for others says _see how far it is_. The same
 numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
-`…/milestones/:number`, and in the MCP's `milestones`. An agent's name and
-the spend are the owner's to see: a reader gets "the crew" and no cost.
-Read-only: watching a milestone (#732) and acting on a whole limb (#733)
-come after.
+`…/milestones/:number`, and in the MCP's `milestones`: `building` is the
+count on a limb and on a milestone alike, and `buildingNow` lists who is on
+what. An agent's name and the spend are the owner's to see: a reader gets
+"the crew" and no cost.
+Watching a milestone (#732) comes after.
+
+### Trimming at a limb
+
+Whoever administers the repository acts on a whole limb from its milestone,
+not on each leaf (#733). Each action is one fleet operation
+(`docs/FLEET.md`): a preview that lists every row it writes and every
+issue it takes along, nothing written until it is confirmed, a receipt, and
+one undo.
+
+- **Defer** files every open issue that is the limb's own for later, the
+  limb first: out from under its pillar, under Later, behind the Later
+  gate — one row for each, so nothing is put off that the preview did not
+  show. (On a plan where every issue is linked under its pillar, moving the
+  limb alone would leave its leaves ready.) What other work outside the
+  limb still waits for stays pickable and is listed as staying; an
+  umbrella's wait is membership, not need. Anything linked beneath a
+  deferred issue afterwards follows by the graph's own rule — an open issue
+  that only deferred work waits for is deferred too, and is never ready.
+  An issue nothing waits for at all is not touched by the rule. Each
+  deferred issue reads _deferred_ wherever it is shown, with why: on the
+  map, in its data and the MCP's `map`, on its own page, and on the
+  milestone.
+- **Resume** is the reverse, leaves first: what was filed for later comes
+  back under the pillar named, or under none; an issue of the limb that was
+  not filed for later is left as it is.
+- **Close as not doing** closes every open issue that is the limb's own,
+  the limb included, as `dropped`, with the reason said on each. What other
+  work outside the limb also waits for is not the limb's to close.
+
+An umbrella or the gate is the plan's own and is not filed. A leaf beneath
+a limb that is not deferred cannot be deferred alone: defer the limb. A
+candidate to trim offers Defer first. Raising and lowering a limb against
+its siblings is #760; handing one to the planner is #761.
+
+The same is `POST /api/v1/repos/:owner/:name/milestones/:number/limb`
+`{ "action": "defer" | "resume" | "close", "reason"?, "pillar"?, "dryRun"? }`
+and the MCP's `limb`, both a dry run unless `dryRun` is false. Applying and
+undoing take an admin token of a person who administers the repository; an
+agent may look and never apply.
 
 ## A repository on its own
 

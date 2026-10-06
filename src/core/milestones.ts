@@ -14,7 +14,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { repoGraph, type Graph } from "./dependencies.ts";
+import { deferredIn, repoGraph, type Graph } from "./dependencies.ts";
 import type { Issue } from "./issues.ts";
 import {
   isStructural,
@@ -54,8 +54,10 @@ export interface Limb {
   /** A pillar's name for its umbrella; the issue's title otherwise. */
   readonly name: string;
   readonly weight: Weight;
-  /** Deferred on purpose: Later. It is never a candidate to trim. */
+  /** Deferred on purpose: Later, or a limb behind the gate. Never a candidate to trim. */
   readonly deferred: boolean;
+  /** Why, in plain words: "behind the Later gate", or which deferred limb needs it. */
+  readonly deferredBecause?: string;
   /** Why it is a candidate to trim, when it is one. */
   readonly trim?: string;
 }
@@ -66,6 +68,7 @@ export type LeafState =
   | "gone"
   | "building"
   | "proposed"
+  | "deferred"
   | "blocked"
   | "ready";
 
@@ -94,7 +97,12 @@ export interface Milestone extends Limb {
   /** What it waits for directly that has a tree of its own. */
   readonly limbs: readonly Limb[];
   /** What it waits for directly that brings none: at most an order among these. */
-  readonly leaves: readonly { readonly issue: Issue; readonly state: LeafState }[];
+  readonly leaves: readonly {
+    readonly issue: Issue;
+    readonly state: LeafState;
+    /** For a deferred leaf: why. */
+    readonly why?: string;
+  }[];
 }
 
 export interface Plan {
@@ -106,6 +114,26 @@ export interface Plan {
    * milestone with nothing beneath it, which says so.
    */
   milestone(number: number): Milestone | undefined;
+  /**
+   * A limb as rows, top down — what an action on the whole limb selects.
+   * `own` is the issue of that number and everything beneath it that only
+   * the limb needs; `shared` is what is beneath it that something open
+   * outside the limb also waits for, and so is not the limb's to take.
+   * Nothing for a number that is no issue here.
+   */
+  limb(number: number): { own: Issue[]; shared: Issue[] } | undefined;
+  /**
+   * What deferring this issue would take with it: the open issues that
+   * would stop being ready, itself included, and, beneath it, the ones that
+   * would stay because something active still waits for them.
+   */
+  deferral(number: number): { taken: Issue[]; kept: Issue[] } | undefined;
+  /**
+   * What resuming this issue would give back: the open issues, itself
+   * included, that are deferred now and would not be once it is out from
+   * behind the gate.
+   */
+  resumption(number: number): Issue[] | undefined;
 }
 
 interface MergedPull {
@@ -153,6 +181,23 @@ export function readPlan(
       edge.issueId,
     ]);
   }
+  // Work behind the gate is Later's whether or not the Later umbrella waits
+  // for it: its milestone counts what the map's Later row counts.
+  const behindGate =
+    set.gate === undefined
+      ? []
+      : graph.edges
+          .filter(
+            (e) =>
+              e.blockedById === set.gate!.id && !isStructural(set, e.issueId),
+          )
+          .map((e) => e.issueId);
+  if (set.later !== undefined && behindGate.length > 0) waits.add(set.later.id);
+  /** What an issue waits for directly, as its milestone shows it. */
+  const childrenOf = (id: string): string[] =>
+    id === set.later?.id
+      ? [...new Set([...(waitsFor.get(id) ?? []), ...behindGate])]
+      : (waitsFor.get(id) ?? []);
   const memo = new Map<string, Set<string>>();
   const walking = new Set<string>();
   const beneath = (id: string): Set<string> => {
@@ -161,7 +206,7 @@ export function readPlan(
     if (walking.has(id)) return new Set();
     walking.add(id);
     const out = new Set<string>();
-    for (const child of waitsFor.get(id) ?? []) {
+    for (const child of childrenOf(id)) {
       out.add(child);
       for (const deeper of beneath(child)) out.add(deeper);
     }
@@ -243,6 +288,7 @@ export function readPlan(
     if (issue.state === "closed") return counted(issue) ? "done" : "gone";
     if (building.has(issue.id)) return "building";
     if (proposed.has(issue.number)) return "proposed";
+    if (graph.deferred.has(issue.id)) return "deferred";
     const open = (waitsFor.get(issue.id) ?? []).some(
       (id) => byId.get(id)?.state === "open",
     );
@@ -281,7 +327,7 @@ export function readPlan(
           }
         : {}),
     };
-    const deferred = set.later?.id === issue.id;
+    const deferred = graph.deferred.has(issue.id);
     const closedThisWeek = under.some(
       (i) => i.state === "closed" && (i.closedAt ?? "") >= since,
     );
@@ -297,17 +343,18 @@ export function readPlan(
         : weight.open >= TRIM_OPEN && weight.building === 0
           ? `${weight.open} open and nobody building`
           : undefined;
+    const why = graph.deferred.get(issue.id);
     return {
       issue,
       name: nameOf(issue),
       weight,
       deferred,
+      ...(why === undefined ? {} : { deferredBecause: why }),
       ...(trim === undefined ? {} : { trim }),
     };
   };
 
-  const isMilestone = (id: string): boolean =>
-    (waitsFor.get(id) ?? []).length > 0;
+  const isMilestone = (id: string): boolean => childrenOf(id).length > 0;
 
   const top: Issue[] =
     set.pillars.length > 0
@@ -326,6 +373,105 @@ export function readPlan(
 
   return {
     limbs: top.map(limbOf),
+    limb(number: number): { own: Issue[]; shared: Issue[] } | undefined {
+      const issue = byNumber.get(number);
+      if (issue === undefined) return undefined;
+      const found = [issue.id];
+      const inside = new Set(found);
+      for (let n = 0; n < found.length; n++)
+        for (const child of waitsFor.get(found[n]!) ?? [])
+          if (!inside.has(child)) {
+            inside.add(child);
+            found.push(child);
+          }
+      // Top down means every issue before what it waits for — siblings
+      // included, so an order among them holds — and leaves first is the
+      // same list read backwards. Kahn's walk, ties by number.
+      const waitedIn = new Map<string, number>();
+      for (const id of inside)
+        for (const child of waitsFor.get(id) ?? [])
+          if (inside.has(child))
+            waitedIn.set(child, (waitedIn.get(child) ?? 0) + 1);
+      const byNumberAsc = (a: string, b: string) =>
+        (byId.get(a)?.number ?? 0) - (byId.get(b)?.number ?? 0);
+      const order: string[] = [];
+      let free = found.filter((id) => (waitedIn.get(id) ?? 0) === 0).sort(byNumberAsc);
+      const placed = new Set<string>();
+      while (free.length > 0) {
+        const next = free.shift()!;
+        order.push(next);
+        placed.add(next);
+        for (const child of waitsFor.get(next) ?? []) {
+          if (!inside.has(child)) continue;
+          const left = (waitedIn.get(child) ?? 0) - 1;
+          waitedIn.set(child, left);
+          if (left === 0) free = [...free, child].sort(byNumberAsc);
+        }
+      }
+      for (const id of found) if (!placed.has(id)) order.push(id);
+      // Shared: other open work outside the limb waits for it, directly or
+      // through something beneath the limb that is itself shared. An
+      // umbrella's wait is membership, not need: on a plan where every
+      // issue is linked under its pillar, a leaf is still the limb's own.
+      const shared = new Set<string>();
+      for (let grew = true; grew; ) {
+        grew = false;
+        for (const id of order) {
+          if (id === issue.id || shared.has(id)) continue;
+          const needed = (waitedBy.get(id) ?? []).some(
+            (w) =>
+              byId.get(w)?.state === "open" &&
+              !isStructural(set, w) &&
+              (!inside.has(w) || shared.has(w)),
+          );
+          if (needed) {
+            shared.add(id);
+            grew = true;
+          }
+        }
+      }
+      const issues = order
+        .map((id) => byId.get(id))
+        .filter((i): i is Issue => i !== undefined);
+      return {
+        own: issues.filter((i) => !shared.has(i.id)),
+        shared: issues.filter((i) => shared.has(i.id)),
+      };
+    },
+    deferral(number: number): { taken: Issue[]; kept: Issue[] } | undefined {
+      const limb = this.limb(number);
+      if (limb === undefined || set.gate === undefined) return undefined;
+      // Every open issue of the limb's own is filed for later, and anything
+      // else that then only deferred work needs follows by the rule.
+      const own = limb.own.filter((i) => i.state === "open");
+      const after = deferredIn(
+        graph,
+        set.gate.id,
+        set.later?.id,
+        own.map((i) => i.id),
+      );
+      const byNumberAsc = (a: Issue, b: Issue) => a.number - b.number;
+      return {
+        taken: graph.issues
+          .filter(
+            (i) =>
+              i.state === "open" &&
+              after.has(i.id) &&
+              !graph.deferred.has(i.id) &&
+              !isStructural(set, i.id),
+          )
+          .sort(byNumberAsc),
+        kept: limb.shared.filter((i) => i.state === "open").sort(byNumberAsc),
+      };
+    },
+    resumption(number: number): Issue[] | undefined {
+      const limb = this.limb(number);
+      if (limb === undefined || set.gate === undefined) return undefined;
+      // What is the limb's own and deferred now: it can be picked again.
+      return limb.own
+        .filter((i) => i.state === "open" && graph.deferred.has(i.id))
+        .sort((a, b) => a.number - b.number);
+    },
     milestone(number: number): Milestone | undefined {
       const issue = byNumber.get(number);
       if (issue === undefined || !waits.has(issue.id)) return undefined;
@@ -334,7 +480,7 @@ export function readPlan(
         .map((id) => byId.get(id))
         .filter((i): i is Issue => i !== undefined);
       const numbers = new Set(under.map((i) => i.number));
-      const children = (waitsFor.get(issue.id) ?? [])
+      const children = childrenOf(issue.id)
         .map((id) => byId.get(id))
         .filter((i): i is Issue => i !== undefined)
         .sort((a, b) => a.number - b.number);
@@ -357,7 +503,9 @@ export function readPlan(
           ? "Nothing beneath it counts as work yet."
           : open === 0
             ? "Everything beneath it is done."
-            : closedThisWeek === 0
+            : limb.deferred
+              ? `Deferred${limb.deferredBecause === undefined ? "" : ` (${limb.deferredBecause})`}: the crew picks nothing beneath it until it is resumed, so there is no pace to estimate from.`
+              : closedThisWeek === 0
               ? `Nothing closed here in ${PILLAR_DAYS} days, so there is no pace to estimate from.`
               : `About ${days} day${days === 1 ? "" : "s"} at this week's pace: ${closedThisWeek} closed in ${PILLAR_DAYS} days, ${open} open.`;
       const order: Record<LeafState, number> = {
@@ -365,8 +513,9 @@ export function readPlan(
         proposed: 1,
         ready: 2,
         blocked: 3,
-        done: 4,
-        gone: 5,
+        deferred: 4,
+        done: 5,
+        gone: 6,
       };
       return {
         ...limb,
@@ -388,7 +537,12 @@ export function readPlan(
         limbs: children.filter(isLimb).map(limbOf),
         leaves: children
           .filter((c) => !isLimb(c))
-          .map((c) => ({ issue: c, state: stateOf(c) }))
+          .map((c) => {
+            const state = stateOf(c);
+            const why =
+              state === "deferred" ? graph.deferred.get(c.id) : undefined;
+            return { issue: c, state, ...(why === undefined ? {} : { why }) };
+          })
           .sort(
             (a, b) =>
               order[a.state] - order[b.state] ||
@@ -420,6 +574,9 @@ export function limbJson(limb: Limb): Record<string, unknown> {
     state: limb.issue.state,
     ...weightJson(limb.weight),
     deferred: limb.deferred,
+    ...(limb.deferredBecause === undefined
+      ? {}
+      : { deferredBecause: limb.deferredBecause }),
     ...(limb.trim === undefined ? {} : { trim: limb.trim }),
   };
 }
@@ -437,7 +594,8 @@ export function milestoneJson(
     ...limbJson(milestone),
     title: milestone.issue.title,
     estimate: milestone.estimate,
-    building: milestone.building.map((b) => ({
+    // `building` is the count, as on a limb; this is who is on what.
+    buildingNow: milestone.building.map((b) => ({
       ...brief(b.issue),
       who: names ? (b.who ?? "the crew") : "the crew",
       since: b.since,
@@ -451,6 +609,7 @@ export function milestoneJson(
     leaves: milestone.leaves.map((leaf) => ({
       ...brief(leaf.issue),
       state: leaf.state,
+      ...(leaf.why === undefined ? {} : { deferredBecause: leaf.why }),
     })),
   };
 }

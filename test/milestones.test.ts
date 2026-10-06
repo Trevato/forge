@@ -373,6 +373,17 @@ describe("milestones", () => {
     expect(one).toContain(`href="/alice/engine/issues/${network.number}"`);
     expect(one).toContain(`href="/alice/engine/pulls/${landed}"`);
     expect(one).toContain("$1.50");
+    // Each issue once: the network is under Building now and the disk under
+    // Blocked, so Issues lists neither again, only what closed.
+    const issues = one.slice(
+      one.indexOf('id="ms-leaves"'),
+      one.indexOf("</section>", one.indexOf('id="ms-leaves"')),
+    );
+    expect(issues).toContain("1 closed");
+    expect(issues).toContain("Sandbox the shell");
+    expect(issues).not.toContain("Sandbox the network");
+    expect(issues).not.toContain("Sandbox the disk");
+    expect(issues).not.toContain("None open.");
 
     const theirs = await (
       await get("bob", `/alice/engine/milestones/${ship.number}`)
@@ -442,7 +453,9 @@ describe("milestones", () => {
       total: 3,
       estimate:
         "About 14 days at this week's pace: 1 closed in 7 days, 2 open.",
-      building: [{ number: network.number, who: "mason" }],
+      // The count, as on a limb, and under its own name who is on what.
+      building: 1,
+      buildingNow: [{ number: network.number, who: "mason" }],
       blocked: [{ number: disk.number, on: [{ number: network.number }] }],
       merged: [{ number: landed }],
       limbs: [],
@@ -471,7 +484,35 @@ describe("milestones", () => {
       })
     ).json()) as Record<string, any>;
     expect("spentUsd" in theirs).toBe(false);
-    expect(theirs["building"][0].who).toBe("the crew");
+    expect(theirs["buildingNow"][0].who).toBe("the crew");
     expect(theirs["done"]).toBe(1);
+  });
+
+  test("Later counts what waits behind the gate, whether or not the Later umbrella waits for it: the milestone agrees with the map", async () => {
+    // One filed behind the gate alone, one behind it and under Later.
+    const slider = issue(engine, "A profit slider");
+    link(engine, slider, gate);
+    const adapters = issue(engine, "Adapters");
+    link(engine, adapters, gate);
+    link(engine, later, adapters);
+    const plan = readPlan(app.db, fresh(engine), { spend: false });
+    const limb = plan.limbs.find((l) => l.name === "Later")!;
+    expect(limb.weight).toMatchObject({ total: 2, done: 0, open: 2 });
+    const opened = plan.milestone(later.number)!;
+    expect(opened.leaves.map((l) => [l.issue.number, l.state])).toEqual([
+      [slider.number, "deferred"],
+      [adapters.number, "deferred"],
+    ]);
+    const map = (await (
+      await api("/api/v1/repos/alice/engine/map")
+    ).json()) as { pillars: { pillar: string | null; open: number }[] };
+    expect(map.pillars.find((row) => row.pillar === "Later")!.open).toBe(
+      limb.weight.open,
+    );
+    const page = await (
+      await get("alice", `/alice/engine/milestones/${later.number}`)
+    ).text();
+    expect(page).toMatch(/<b>0<\/b> of 2 done/);
+    expect(page).toContain("A profit slider");
   });
 });

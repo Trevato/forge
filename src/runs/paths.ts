@@ -12,8 +12,10 @@
  * same directory seen through a symlink), and not where it is the start of
  * a sibling's name (`/data/1/2` in `/data/1/23`, or `/data/1/2.bak`).
  * Taking a piece out of a path leaves a path that never existed. A full
- * stop that ends a sentence is not part of the path: `wrote to <dir>.`
- * reads `wrote to .`, the sentence's own stop standing for "here".
+ * stop that punctuates is not part of the path — `wrote to <dir>.`,
+ * `(see <dir>.)`, `<dir>...` — and reads `wrote to .`, `(see .)`, `...`,
+ * the sentence's own stop standing for "here". A dot that a name goes on
+ * after (`<dir>.bak`) is a sibling's.
  *
  * An empty `dir` is dropped: there is nothing to strip.
  */
@@ -36,7 +38,9 @@ function strip(line: string, dir: string): string {
     const end = at + dir.length;
     const next = line[end];
     const after = line[end + 1];
-    const stop = next === "." && (after === undefined || /\s/.test(after));
+    const stop =
+      next === "." &&
+      (after === undefined || after === "." || !SEGMENT.test(after));
     const whole =
       (at === 0 || !SEGMENT.test(line[at - 1]!)) &&
       (next === undefined || next === "/" || stop || !SEGMENT.test(next));

@@ -68,6 +68,7 @@ function paperGraph(n: number, edges: [number, number][]): Graph {
       blockedById: `i${blockedBy}`,
     })),
     held: [],
+    deferred: new Map(),
     unadopted: new Set(),
     structural: new Set(),
   };
@@ -519,6 +520,7 @@ describe("the map, per app and across the forge", () => {
       ready: 2,
       working: 1,
       blocked: 1,
+      deferred: 0,
       done: 1,
       parked: 1,
       waiting: 1,
