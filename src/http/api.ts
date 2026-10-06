@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -1135,6 +1136,32 @@ export function apiRoutes(router: Router<Handler>): void {
         : apiError(error, 500, "the account could not be removed");
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+
+  // The forge's capacity (`core/capacity.ts`): read and changed live by an
+  // admin, never by an agent; anyone else is told the door is not there.
+  router.add("GET", "/api/v1/admin/capacity", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listCapacity(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value = input.value === null ? null : str(input.value);
+    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error === "not_found") return notFound();
+    return apiError(
+      changed.error,
+      422,
+      changed.error === "no_such_setting"
+        ? "no such capacity setting"
+        : "that value is outside what this setting takes",
+    );
+  });
 
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
     const denied = accountAdmin(ctx, "ro");

@@ -17,6 +17,7 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { addCommentThrough } from "../actions/issues.ts";
 import {
@@ -1301,6 +1302,45 @@ const TOOLS: readonly Tool[] = [
         opened,
         ready,
         later,
+      });
+    },
+  },
+  {
+    name: "capacity",
+    description:
+      "The forge's capacity, live: crew runs at once (crew.concurrency), checks at once (checks.concurrency), test shards per check (checks.shards) and whether a cell's undeclared egress is refused or reported (cells.egress). Without `key`, each setting, its value and where it comes from, and the recent changes. With `key` and `value` (\"\" goes back to the boot default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. A change is honoured by the next run, check or cell, never by a restart. The same as Settings → Capacity and /api/v1/admin/capacity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: {
+          type: "string",
+          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress"],
+        },
+        value: { type: "string", maxLength: 16 },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const listed = listCapacity(ctx.app, user);
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      const key = typeof args["key"] === "string" ? args["key"] : undefined;
+      if (key === undefined) return good(listed.value);
+      const value = typeof args["value"] === "string" ? args["value"] : "";
+      const now = listed.value.settings.find((s) => s.key === key);
+      if (now === undefined) return bad("no_such_setting", `no capacity setting ${key}`);
+      if (args["dryRun"] !== false)
+        return good({
+          says: `Would set ${key} from ${now.value || "auto"} to ${value || "its default"}. Send dryRun: false to change it.`,
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing the forge's capacity needs an admin-scope token");
+      const changed = changeCapacity(ctx.app, user, key, value);
+      if (!changed.ok) return bad(changed.error, "that value is outside what this setting takes");
+      return good({
+        says: `${key}: ${changed.value.from || "auto"} → ${changed.value.to || "auto"}, from the next pick on.`,
+        ...changed.value,
       });
     },
   },
