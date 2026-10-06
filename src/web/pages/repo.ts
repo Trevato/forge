@@ -612,6 +612,17 @@ function aboutCard(
           )}
         </dl>
         ${whereItLives}
+        ${when(
+          repo.visibility === "public" && repo.origin === null,
+          () =>
+            html`<p class="mt small muted">
+              ${icon("lock")} Found a security problem?
+              <a href="${repoBase(repo)}/issues/new?sealed=1"
+                >Report it sealed</a
+              >: only the people who keep this repository and its crew see it
+              until the fix is released.
+            </p>`,
+        )}
         <p class="mt small muted">Clone over HTTPS</p>
         <span class="clone"
           ><span class="clone-text" id="clone-https">${cloneUrl}</span>

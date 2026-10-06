@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
@@ -443,6 +444,7 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
     const repo = repos.get(issue.repoId);
     if (!repo) continue;
     if (!visible.has(repo.id) && !canRead(db, repo, user)) continue;
+    if (!mayView(db, repo, issue, user)) continue;
     rows.push(
       row({
         href: threadPath(repo, issue),

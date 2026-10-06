@@ -4257,6 +4257,7 @@ export function apiRoutes(router: Router<Handler>): void {
     for (const issue of issues) {
       const repo = repos.get(issue.repoId);
       if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+      if (!mayView(ctx.app.db, repo, issue, user)) continue;
       items.push({
         ...issue,
         repo: { owner: repo.ownerName, name: repo.name },
