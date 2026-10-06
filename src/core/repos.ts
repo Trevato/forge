@@ -593,6 +593,8 @@ export interface ListReposOptions {
   limit?: number;
   /** Resume after this repo id (exclusive) — lists run newest first. */
   cursor?: string;
+  /** Repositories that run an app first, each half newest first (not with `cursor`). */
+  appsFirst?: boolean;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -622,7 +624,11 @@ export function listReposVisibleTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${
+        options.appsFirst === true
+          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
+          : ""
+      }repo.id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -656,7 +662,11 @@ export function listReposWritableTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${
+        options.appsFirst === true
+          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
+          : ""
+      }repo.id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -687,7 +697,11 @@ export function listReposByOwner(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${
+        options.appsFirst === true
+          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
+          : ""
+      }repo.id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);

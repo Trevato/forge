@@ -8,6 +8,7 @@
  */
 
 import { askCountFor } from "./studio/asks.ts";
+import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
@@ -287,13 +288,18 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // One forge (#603): a conversation's remote row is built with the
   // studio's nouns, which answer for every repository.
   const studio = true;
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
+  // Apps first, then the other repositories, thirty in all.
+  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
+    limit: 30,
+    appsFirst: true,
+  });
+  const apps = appsForRepos(ctx.app.db, repos.map((r) => r.id));
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r) => ({
       t: `${r.ownerName}/${r.name}`,
       h: `/${r.ownerName}/${r.name}`,
-      c: "Repositories",
+      c: apps.has(r.id) ? "Apps" : "Repositories",
     })),
     ...STATIC_PALETTE,
     ...(sendsForges(ctx) ? [{ t: "New forge", h: "/forges/new", c: "Create" }] : []),
