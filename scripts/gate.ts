@@ -155,6 +155,7 @@ export const GATE: readonly string[] = [
   "test/pillars.test.ts",
   "test/milestones.test.ts",
   "test/mcp.test.ts",
+  "test/new-forge.test.ts",
   "test/notify.test.ts",
   "test/onboarding.test.ts",
   "test/org-owners.test.ts",

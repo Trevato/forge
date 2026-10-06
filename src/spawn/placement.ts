@@ -22,6 +22,8 @@ export interface Placement {
   place(plan: SpawnPlan): Promise<Result<Placed, PlacementRefusal>>;
   /** Idempotent: retiring a body that is gone is a success. */
   retire(bodyId: string): Promise<Result<void, PlacementRefusal>>;
+  /** Why no child fits here now (the depth or the count), before anyone fills in a form. */
+  room?(): PlacementRefusal | undefined;
 }
 
 /** What the hosted placement remembers about each child it holds. */
@@ -75,16 +77,21 @@ export function hostedPlacement(opts: HostedOptions): Placement {
   const maxDepth = opts.maxDepth ?? MAX_DEPTH;
   const newId = opts.newId ?? (() => `hosted-${crypto.randomUUID()}`);
 
+  const full = (): PlacementRefusal | undefined => {
+    // A child lives one level below this forge; it may not exceed the limit.
+    if (depth + 1 > maxDepth)
+      return { reason: "depth", message: `forges nest at most ${maxDepth} deep; this one is already at ${depth}` };
+    if (store.list().length >= maxChildren)
+      return { reason: "children", message: `a forge holds at most ${maxChildren} hosted children` };
+    return undefined;
+  };
+
   return {
+    room: full,
     async place(plan) {
-      // A child lives one level below this forge; it may not exceed the limit.
-      if (depth + 1 > maxDepth) {
-        return refuse("depth", `forges nest at most ${maxDepth} deep; this one is already at ${depth}`);
-      }
+      const no = full();
+      if (no) return err(no);
       const held = store.list();
-      if (held.length >= maxChildren) {
-        return refuse("children", `a forge holds at most ${maxChildren} hosted children`);
-      }
       if (held.some((b) => b.name === plan.name)) {
         return refuse("exists", `a child named ${plan.name} already exists`);
       }
