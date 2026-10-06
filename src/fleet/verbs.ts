@@ -23,6 +23,7 @@ import { cancelRepoRun, requeueRepoRun } from "../actions/runs.ts";
 import { isCrew } from "../core/agents.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { bringUpToDate } from "../crew/autonomy.ts";
+import { getHold } from "../core/holds.ts";
 import { recordInteraction, removeDismissals } from "../core/interactions.ts";
 import { getPull } from "../core/pulls.ts";
 import { askItemsOf } from "../web/studio/asks.ts";
@@ -233,6 +234,20 @@ function servesActiveWork(app: App, t: Target, gateId: string): boolean {
   return (row?.n ?? 0) > 0;
 }
 
+/**
+ * Why a held pull is not shipped in a batch. One person's own Ship or
+ * merge on a held pull still works: they are looking at it, and the hold
+ * is on the page in front of them. A batch lands many changes on one
+ * word, and whoever sends it may never have seen that someone said "not
+ * this one yet" (`core/holds.ts`).
+ */
+function heldWords(app: App, pullId: string): string | undefined {
+  const hold = getHold(app.db, pullId);
+  return hold === undefined
+    ? undefined
+    : `held by ${hold.heldByName} (${hold.why}): release it first`;
+}
+
 /** Assign: the row holds its assignee's username, or nothing. */
 const ASSIGN: Verb = {
   kind: "issue",
@@ -344,11 +359,15 @@ export const VERBS: Record<string, Verb> = {
       if (isMirror(app, t.repo)) return words("mirrored");
       if (t.stale) return "it no longer merges as it stands";
       if (t.green !== true) return "its check is not green";
-      return undefined;
+      return heldWords(app, t.issue.id);
     },
     async write(app, actor, t) {
       const pull = t.issue ? getPull(app.db, t.repo.id, t.issue.number) : undefined;
       if (!pull) return words("not_found");
+      // Asked again here: earlier rows of the same batch take time to land,
+      // and a hold set meanwhile is still a hold.
+      const held = heldWords(app, pull.id);
+      if (held !== undefined) return held;
       const merged = await mergePull(app, actor, t.repo, pull, "squash");
       if (merged.ok) return undefined;
       if (typeof merged.error !== "string" && merged.error.kind === "conflict") {

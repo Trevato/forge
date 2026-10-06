@@ -8,6 +8,7 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { mayDirectCrew } from "../crew/direct.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
 import {
@@ -177,7 +178,6 @@ export function scopeHeader(
             href: base,
             icon: "rocket" as const,
             current: active === "app",
-            shortcut: "g h",
           },
           {
             label: "Files",
@@ -346,7 +346,12 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
       { t: `${name} — Files`, h: `${base}/files`, c: "This repo" },
       { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
       { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
-      { t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" },
+      // Telling the crew is for who may direct it (`mayDirectCrew`: a
+      // writer, or anyone signed in where the owner let outsiders in), so
+      // nobody else is offered a door that leads nowhere.
+      ...(mayDirectCrew(ctx.app.db, repo, ctx.auth.user)
+        ? [{ t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" }]
+        : []),
       { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
       { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
     ];

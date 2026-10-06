@@ -529,8 +529,21 @@ spike #339) implements the same interface and must provide:
 
 ## The forge's standing
 
-`GET /api/v1/health` answers anyone with `{ ok, version, draining, rollout:
-{ state: ok|blocked|held, reason }, incidents, stale, checkedAt }` — the
+`GET /api/v1/health` answers anyone with `{ ok, version, commit, draining,
+rollout: { state: ok|blocked|held, reason }, incidents, stale, checkedAt }`.
+The MCP `health` tool gives the same answer (`actions/health.ts`).
+
+`version` and `commit` are what is running, as the build stamped it
+(`kernel/version.ts`): the release workflow passes the tag it is building
+to the image as `VERSION`, the `Dockerfile` turns `VERSION` and `COMMIT`
+into `FORGE_VERSION` and `FORGE_COMMIT`, and the process reads them back.
+No file in the repository carries the number; `package.json` says `0.0.0`,
+like the chart's `appVersion`. A forge run from source says `dev`, and one
+that another forge runs as an app reports the commit it was started from.
+A site admin reads the same line at the foot of every page, and an MCP
+client in the server's `serverInfo`.
+
+The rest is the
 platform's word, read from the read-only `forge-guard` ConfigMap mounted at
 `FORGE_GUARD_DIR` (default `/etc/forge-guard`, `kernel/guard.ts`): a `stuck`
 incident blocks, `held` holds, a view older than ten minutes is stale. A

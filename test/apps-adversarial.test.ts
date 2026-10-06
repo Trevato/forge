@@ -1830,7 +1830,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
 
     const tokenResp = await api("/api/v1/tokens", {
       method: "POST",
-      body: JSON.stringify({ name: "x", scope: "admin" }),
+      body: JSON.stringify({ adminConfirm: true, name: "x", scope: "admin" }),
     });
     // Neither via-session nor via-password: falls through to bad credentials.
     expect(tokenResp.status).toBe(401);

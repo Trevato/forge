@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -287,9 +288,11 @@ describe("commits, branches and the log", () => {
 
   test("a ref that could be a flag is refused before git sees it", async () => {
     const dir = await newRepo(root, "unsafe-ref");
-    const result = await git.checkout(dir, "--upload-pack=touch /tmp/pwn");
+    const canary = join(root, "touched-by-git");
+    const result = await git.checkout(dir, `--upload-pack=touch ${canary}`);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.stderr).toContain("unsafe argument");
+    expect(existsSync(canary)).toBe(false);
   });
 
   test("the log parses, and the graph gets a lane per line of history", async () => {

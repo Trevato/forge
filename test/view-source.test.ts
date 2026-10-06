@@ -935,7 +935,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
     const token = await read<{ token: string }>(
       await api("/api/v1/tokens", {
         method: "POST",
-        body: JSON.stringify({
+        body: JSON.stringify({ adminConfirm: true,
           username: "alice",
           password: ALICE_PASSWORD,
           name: "rw",

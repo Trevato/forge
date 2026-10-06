@@ -1,10 +1,9 @@
 /**
  * Finding things, and confirming the things you cannot take back.
  *
- * `/search` is the one search, in either face, and it needs no script: one
- * query box over every repository and conversation the viewer may see. The
- * studio face says it in the studio's nouns — apps, tells, changes — and
- * leaves the code to dev's face, one link away. `/-/confirm` is the
+ * `/search` is the one search, for every viewer, and it needs no script: one
+ * query box over every app and repository, tell and change, and line of
+ * code the viewer may see, each a section of the same page. `/-/confirm` is the
  * second, deliberate step every destructive POST passes through — and the
  * only page in the product that knows which routes are dangerous, so a
  * crafted link can neither invent reassuring words nor aim at an endpoint
@@ -15,7 +14,7 @@ import { search } from "../../actions/search.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canEnterApp, canWrite, getRepo, getRepoById } from "../../core/repos.ts";
+import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
 import {
   cleanQuery,
   searchKind,
@@ -51,15 +50,11 @@ import {
 
 // ---- search ----
 
-/** What was asked, and in which face — everything a link back needs. */
+/** What was asked — everything a link back needs. */
 interface Asked {
   readonly query: string;
   readonly kind: SearchKind;
   readonly live: boolean;
-  /** The studio's face: its nouns, and no code. */
-  readonly studio: boolean;
-  /** `?mode=dev` from a studio browser, kept on every link and the form. */
-  readonly escape: boolean;
 }
 
 /** The apps among what the viewer can see, by id and by `owner/name`. One
@@ -67,9 +62,9 @@ interface Asked {
 interface Apps {
   readonly byId: ReadonlyMap<string, AppRecord>;
   readonly names: ReadonlySet<string>;
+  /** The app ids the viewer may enter (`enterableApps`), read once for the page. */
+  readonly enterable: ReadonlySet<string>;
 }
-
-const NO_APPS: Apps = { byId: new Map(), names: new Set() };
 
 const privateBadge = (yes: boolean): Html =>
   when(yes, () => badge("Private", { icon: "lock", variant: "secondary" }));
@@ -80,16 +75,10 @@ const privateBadge = (yes: boolean): Html =>
  * be a guess dressed as a fact. */
 function appState(
   ctx: Ctx,
+  apps: Apps,
   record: AppRecord,
 ): { tone: Tone; word: string } | undefined {
-  if (record.access === "private") {
-    const repo = getRepoById(ctx.app.db, record.repoId);
-    if (
-      repo === undefined ||
-      !canEnterApp(ctx.app.db, repo, record, ctx.auth.user, { named: false })
-    )
-      return undefined;
-  }
+  if (!apps.enterable.has(record.id)) return undefined;
   const envs = envsFor(ctx.app, ctx.auth.user, record);
   const state = envs.find((e) => e.env === "production")?.state ?? "stopped";
   const tone: Tone =
@@ -100,12 +89,11 @@ function appState(
 }
 
 /**
- * One repository hit, ours or an origin's. In dev the where-dot is the same
- * glyph the repository pages use, so "this is somewhere else" reads the same
- * in a result list as it does on the page you land on; in the studio an app
- * says whether it is live instead.
+ * One repository hit, ours or an origin's. An app says whether it is live;
+ * any other repository of ours, its open counts; an origin's, whether it is
+ * mirrored here — the same glyph the repository pages use for it.
  */
-function repoHitRow(ctx: Ctx, a: Asked, apps: Apps, hit: RepoHit): Html {
+function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
   const counts = repoCounts({
     openIssues: hit.openIssues,
     openPulls: hit.openPulls,
@@ -118,24 +106,24 @@ function repoHitRow(ctx: Ctx, a: Asked, apps: Apps, hit: RepoHit): Html {
   if (hit.source === "local") {
     const name = `${hit.owner}/${hit.name}`;
     const record = apps.byId.get(hit.id);
-    const live = record === undefined ? undefined : appState(ctx, record);
+    // A private app's state is its writers' and crew's (`appState`): anyone
+    // else gets the counts a plain repository shows.
+    const live = record === undefined ? undefined : appState(ctx, apps, record);
     return row({
       href: `/${name}`,
       nav: true,
       lead: live === undefined ? icon("repo") : dot(live.tone),
       title: name,
       titleAttr: hit.description || name,
-      meta: a.studio
-        ? hit.description === ""
+      meta:
+        hit.description === ""
           ? html`<span class="muted">No description</span>`
-          : html`${hit.description}`
-        : html`<span class="where-place" data-state="reading"
-              ><span class="where-dot" aria-hidden="true">●</span
-              >workbench</span
-            >${description}`,
-      trail: html`${a.studio
-        ? when(live, (l) => badge(l.word, { tone: l.tone }))
-        : counts}${privateBadge(hit.visibility === "private")}`,
+          : html`${hit.description}`,
+      trail: html`${live === undefined
+        ? counts
+        : badge(live.word, { tone: live.tone })}${privateBadge(
+        hit.visibility === "private",
+      )}`,
     });
   }
   const mirror = hit.mirroredAs;
@@ -167,14 +155,14 @@ function repoHitRow(ctx: Ctx, a: Asked, apps: Apps, hit: RepoHit): Html {
 }
 
 /** Where a conversation here lives: the studio's noun on an app, so a
- * person is never handed two addresses for one thing; dev's otherwise. */
+ * person is never handed two addresses for one thing; the plain one
+ * otherwise. */
 function localIssueHref(
-  a: Asked,
   apps: Apps,
   hit: IssueHit & { source: "local" },
 ): string {
   const base = `/${hit.repo.owner}/${hit.repo.name}`;
-  if (a.studio && apps.names.has(`${hit.repo.owner}/${hit.repo.name}`))
+  if (apps.names.has(`${hit.repo.owner}/${hit.repo.name}`))
     return hit.kind === "issue"
       ? tellHref(base, hit.number)
       : changeHref(base, hit.number);
@@ -182,14 +170,14 @@ function localIssueHref(
 }
 
 /** One conversation hit. An origin's own goes out to the origin. */
-function issueHitRow(a: Asked, apps: Apps, hit: IssueHit): Html {
+function issueHitRow(apps: Apps, hit: IssueHit): Html {
   const where =
     hit.source === "local"
       ? `${hit.repo.owner}/${hit.repo.name}`
       : hit.fullName;
   return row({
     href:
-      hit.source === "local" ? localIssueHref(a, apps, hit) : hit.htmlUrl,
+      hit.source === "local" ? localIssueHref(apps, hit) : hit.htmlUrl,
     nav: true,
     lead: icon(hit.kind === "issue" ? "issue" : "pull"),
     title: hit.title,
@@ -247,42 +235,33 @@ function codeHitRow(hit: CodeHit, query: string): Html {
   </li>`;
 }
 
-/** Each kind in each face's words: [kind, chip, heading, nothing found].
- * The studio has no code row — that search is dev's. */
+/** Each kind's words: [kind, chip, heading, nothing found]. */
 type Words = readonly [SearchKind, string, string, string];
-const WORDS: { studio: readonly Words[]; dev: readonly Words[] } = {
-  studio: [
-    ["all", "Everything", "", ""],
-    ["repos", "Apps", "Apps", "No app matches"],
-    [
-      "issues",
-      "Tells & changes",
-      "Tells and changes",
-      "No tell or change matches",
-    ],
+const WORDS: readonly Words[] = [
+  ["all", "All", "", ""],
+  [
+    "repos",
+    "Apps & repos",
+    "Apps and repositories",
+    "No app or repository matches",
   ],
-  dev: [
-    ["all", "Everything", "", ""],
-    ["repos", "Repositories", "Repositories", "No repository matches"],
-    [
-      "issues",
-      "Issues & pulls",
-      "Issues and pull requests",
-      "No issue or pull request matches",
-    ],
-    ["code", "Code", "Code", "No line of code matches"],
+  [
+    "issues",
+    "Tells & changes",
+    "Tells and changes",
+    "No tell or change matches",
   ],
-};
+  ["code", "Code", "Code", "No line of code matches"],
+];
 
 function searchHref(
   a: Asked,
-  over: { kind?: SearchKind; live?: boolean; escape?: boolean } = {},
+  over: { kind?: SearchKind; live?: boolean } = {},
 ): string {
   const kind = over.kind ?? a.kind;
   const params = new URLSearchParams({ q: a.query });
   if (kind !== "all") params.set("kind", kind);
   if (over.live ?? a.live) params.set("live", "1");
-  if (over.escape ?? a.escape) params.set("mode", "dev");
   return `/search?${params.toString()}`;
 }
 
@@ -319,46 +298,29 @@ function section(
 }
 
 /** The same `search()` the API and the palette call, so the sources can
- * never disagree between surfaces. The studio leaves the code to dev, so
- * its "everything" is the two cheap asks, never a grep. */
+ * never disagree between surfaces. */
 async function find(ctx: Ctx, a: Asked): Promise<SearchResults> {
-  const ask = (kind: SearchKind) =>
-    search(ctx.app, ctx.auth.user, { q: a.query, kind, live: a.live });
-  if (!a.studio || a.kind !== "all") return ask(a.kind);
-  const [repos, issues] = await Promise.all([ask("repos"), ask("issues")]);
-  return {
-    repos: repos.repos,
-    issues: issues.issues,
-    code: [],
-    truncated: { ...issues.truncated, repos: repos.truncated.repos },
-  };
+  return search(ctx.app, ctx.auth.user, { q: a.query, kind: a.kind, live: a.live });
 }
 
 /**
  * GET /search — everything the viewer can see, in one box, with no script.
  *
- * The face follows the mode, like every other page: the studio's nouns in
- * the studio, dev's (and dev's code search) in dev, and `?mode=dev` is the
- * one-off way to dev's face without switching the browser. Either way it
- * is the same visibility, so a signed-out reader sees exactly the public
- * repositories a signed-out reader would anywhere else.
+ * One page for every viewer — `?mode=dev` and the mode cookie change
+ * nothing: apps and repositories, tells and changes, then code, each a
+ * section. The same visibility as everywhere, so a signed-out reader sees
+ * exactly the public repositories a signed-out reader would anywhere else.
  *
  * `live=1` is opt-in and stays opt-in: it spends a round trip on every
  * connected origin, which is not a thing to do on every keystroke.
  */
 export async function searchPage(ctx: Ctx): Promise<Response> {
   const params = ctx.url.searchParams;
-  const escape = params.get("mode") === "dev";
-  const studio = ctx.mode === "studio" && !escape;
-  const asked = searchKind(params.get("kind"));
   const a: Asked = {
     query: cleanQuery(params.get("q") ?? ""),
-    kind: studio && asked === "code" ? "all" : asked,
+    kind: searchKind(params.get("kind")),
     live: params.get("live") === "1",
-    studio,
-    escape,
   };
-  const words = studio ? WORDS.studio : WORDS.dev;
 
   const form = html`<form
     class="filters"
@@ -371,9 +333,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       type="search"
       name="q"
       value="${a.query}"
-      placeholder="${studio
-        ? "Search your apps, changes and tells"
-        : "Search repositories, issues and code"}"
+      placeholder="Search apps, repositories, tells, changes and code"
       aria-label="Search"
       autofocus
       data-search-input
@@ -383,10 +343,6 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       () => html`<input type="hidden" name="kind" value="${a.kind}" />`,
     )}
     ${when(a.live, () => html`<input type="hidden" name="live" value="1" />`)}
-    ${when(
-      escape,
-      () => html`<input type="hidden" name="mode" value="dev" />`,
-    )}
     <button class="btn" data-variant="primary" data-size="sm" type="submit">
       Search
     </button>
@@ -399,26 +355,30 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       body: html`${pageHead("Search")} ${form}
       ${empty({
         icon: "search",
-        title: studio ? "Search your studio" : "Search this forge",
-        note: studio
-          ? "An app's name or description, or a word from what was told or changed."
-          : "Repository names, issue and pull-request titles, and the code itself — across everything you can see, here and on every origin you have connected.",
+        title: "Search this forge",
+        note: "An app or repository by name or description, a word from what was told or changed, or a line of the code itself — across everything you can see, here and on every origin you have connected.",
       })}`,
     });
   }
 
   const found = await find(ctx, a);
-  let apps = NO_APPS;
-  if (studio) {
-    const seen = appsOf(ctx, ctx.auth.user);
-    apps = {
-      byId: seen.records,
-      names: new Set(seen.repos.map((r) => `${r.ownerName}/${r.name}`)),
-    };
-  }
+  const seen = appsOf(ctx, ctx.auth.user);
+  const apps: Apps = {
+    byId: seen.records,
+    names: new Set(seen.repos.map((r) => `${r.ownerName}/${r.name}`)),
+    enterable: enterableApps(
+      ctx.app.db,
+      seen.repos.flatMap((repo) => {
+        const app = seen.records.get(repo.id);
+        return app === undefined ? [] : [{ repo, app }];
+      }),
+      ctx.auth.user,
+      { named: false },
+    ),
+  };
 
   const chips = seg(
-    words.map(([kind, label]) => ({
+    WORDS.map(([kind, label]) => ({
       label,
       href: searchHref(a, { kind }),
       current: kind === a.kind,
@@ -450,11 +410,11 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   const rows: Record<SearchKind, () => [Html[], boolean]> = {
     all: () => [[], false],
     repos: () => [
-      found.repos.map((hit) => repoHitRow(ctx, a, apps, hit)),
+      found.repos.map((hit) => repoHitRow(ctx, apps, hit)),
       found.truncated.repos,
     ],
     issues: () => [
-      found.issues.map((hit) => issueHitRow(a, apps, hit)),
+      found.issues.map((hit) => issueHitRow(apps, hit)),
       found.truncated.issues,
     ],
     code: () => [
@@ -464,22 +424,13 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   };
 
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
-  ${chips} ${liveToggle}
-  ${words
+  <div class="filters">${chips}</div>
+  ${liveToggle}
+  ${WORDS
     .filter(
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),
     )
-    .map((w) => section(a, w, ...rows[w[0]]()))}
-  ${when(
-    studio,
-    () =>
-      html`<p class="muted small mt">
-        ${icon("code")} Looking for a line of code?
-        <a href="${searchHref(a, { kind: "code", escape: true })}"
-          >Search the code</a
-        >.
-      </p>`,
-  )}`;
+    .map((w) => section(a, w, ...rows[w[0]]()))}`;
   return page({ ctx, title: `Search · ${a.query}`, body });
 }
 
