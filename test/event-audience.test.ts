@@ -159,7 +159,7 @@ describe("who an event is for", () => {
     expect(page).not.toContain("STRIPE_SECRET_KEY");
   });
 
-  test("the dev home's activity rail says nothing of it to a signed-in stranger either", async () => {
+  test("the home, in dev mode too, says nothing of it to a signed-in stranger either", async () => {
     const as = (user: User) =>
       fetch(`${base}/?mode=dev`, {
         headers: {
@@ -167,12 +167,12 @@ describe("who an event is for", () => {
           cookie: `forge_session=${createSession(app.db, user.id).token}`,
         },
       }).then((r) => r.text());
+    // One home (#625): the feed, whatever the mode; the dev dashboard's
+    // activity rail is gone, and the feed holds the same line back.
     const strangers = await as(bob);
-    expect(strangers).toContain("Recent activity");
+    expect(strangers).toContain("Your apps");
     expect(strangers).not.toContain("hooks.example.test");
     expect(strangers).not.toContain("STRIPE_SECRET_KEY");
-    // The repository's admin still sees her own configuration there.
-    expect(await as(alice)).toContain("STRIPE_SECRET_KEY");
   });
 
   test("the streams hold configuration back from a reader as it happens", async () => {

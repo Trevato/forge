@@ -37,7 +37,12 @@ import {
   listCard,
   timeAgo,
 } from "../ui.ts";
-import { onYouCard } from "../pages/site.ts";
+import {
+  downloadsCard,
+  onYouCard,
+  orgsCard,
+  terminalCard,
+} from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -86,6 +91,11 @@ function yourApps(ctx: Ctx, user: User): Html {
       <div class="bar home-apps-verbs">
         ${btn(`All apps${repos.length > RAIL_APPS ? ` (${repos.length})` : ""}`, { href: "/apps", size: "sm" })}
         ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}
+        ${btn("Repositories", {
+          href: `/${user.username}`,
+          size: "sm",
+          icon: "repo",
+        })}
         ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
         ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
         ${when(user.isAdmin, () =>
@@ -135,11 +145,14 @@ export function liveOnYouFragment(ctx: Ctx): Response {
 }
 
 /**
- * Home, signed in, is the feed (#599): like opening X — the composer on
- * top, then one timeline of posts (tells, replies, runs, changes, looks),
- * each one tap from its thing. Your apps and what is on you sit in a narrow
- * column on a desk; on a phone they are a tab away. The app rows and the
- * cost line that were this page live on `/apps`.
+ * Home, signed in, is the feed (#599), for every viewer whatever the mode
+ * (#625): like opening X — the composer on top, then one timeline of posts
+ * (tells, replies, runs, changes, looks), each one tap from its thing. Your
+ * apps and what is on you sit in a narrow column on a desk, with what the
+ * dashboard that was dev's home kept beside them when there is any: the
+ * terminal's command, what is pinned to your machine, your organizations;
+ * your repositories are one step away on your own page. On a phone they are
+ * a tab away. The app rows and the cost line live on `/apps`.
  */
 export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const { repos: appRepos } = writableAppsOf(ctx, user);
@@ -181,6 +194,8 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
         }
         ${appsRegion(ctx, user)}
         ${onYouRegion(ctx, user)}
+        ${terminalCard(ctx)} ${downloadsCard(ctx, user)}
+        ${orgsCard(ctx, user)}
       </aside>
     </div>`;
   return page({

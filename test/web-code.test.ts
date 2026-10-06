@@ -418,7 +418,8 @@ describe("the code browser on the web", () => {
   // ---- counts on rows ----
 
   test("repository rows carry issue and pull counts, and hide the zeroes", async () => {
-    const dash = await text("/", alice);
+    // Your repositories are your own page now (#625: one home).
+    const dash = await text("/alice", alice);
     expect(dash).toContain('class="counts"');
     expect(dash).toContain("open issue");
     expect(dash).toContain("open pull request");
