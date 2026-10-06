@@ -25,8 +25,9 @@ export const feedCss = /* css */ `
 .home-apps-verbs { flex-wrap: wrap; padding: 10px 14px; }
 @media (max-width: 899px) {
   .home-tabs { display: inline-flex; }
-  /* "What you asked for" is a tab on a phone: the first post comes next. */
-  .feed-head { display: none; }
+  /* "What you asked for" is a tab on a phone: the first post comes next.
+     !important, as [hidden] is: .bar sits in a later cascade layer. */
+  .feed-head { display: none !important; }
   .home-rail .home-apps { display: none; }
 }
 .fcard-form { display: grid; gap: 8px; margin-top: 6px; }
