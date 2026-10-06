@@ -208,7 +208,7 @@ describe("explore", () => {
         headers: { authorization: `Bearer ${bobToken}` },
       })
     ).text();
-    expect(signedIn).toContain('action="/alice/loved/fork"');
+    expect(signedIn).toContain('href="/alice/loved/make-it-yours"');
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: {

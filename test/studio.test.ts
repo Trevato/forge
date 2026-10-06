@@ -1,4 +1,5 @@
 import { stylesheetAsset } from "../src/web/asset.ts";
+import { logBox } from "../src/web/studio/log.ts";
 /**
  * The studio: apps as the unit, three verbs, and a switch to dev. The same
  * URLs answer in both modes; the cookie decides which face they show.
@@ -880,6 +881,118 @@ describe("the studio", () => {
     expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
   });
 
+  test("in a review-gated app the crew's change whose check failed still offers its decision, and the reason it gives is the check, not the review", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/crew-failed-gated",
+      base: "main",
+      message: "Crew failed",
+      files: [{ path: "CREW_FAILED.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Crew failed change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/crew-failed-gated",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "failed", summary: "tests failed" });
+    // The crew has tried as often as it may: a person decides now.
+    for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
+      const tryRun = createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: pull.id,
+        actorId: scout.id,
+        reason: "check_failed",
+      });
+      claimRun(app.db, tryRun.id);
+      finishRun(app.db, tryRun.id, { state: "failed", summary: "still red" });
+    }
+    const gate = await updateRepoSettings(app, alice, repo, {
+      requireReview: true,
+    });
+    if (!gate.ok) throw new Error(String(gate.error));
+    try {
+      const page = await (await get(`/alice/notes/pulls/${pull.number}`)).text();
+      expect(page).toContain("Tell them");
+      expect(page).not.toContain("it waits on an approving review");
+      expect(page).not.toContain(`action="/alice/notes/pulls/${pull.number}/ship"`);
+    } finally {
+      const off = await updateRepoSettings(app, alice, repo, {
+        requireReview: false,
+      });
+      if (!off.ok) throw new Error(String(off.error));
+    }
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+  });
+
+  test("only a change's author or a writer is shown Close: a signed-in stranger on a public change may comment, never close", async () => {
+    const open = await createRepo(app, alice, {
+      name: "publicchange",
+      visibility: "public",
+      description: "",
+    });
+    if (!open.ok) throw new Error(String(open.error));
+    const seeded = await commitToBranch(app, alice, open.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, open.value, {
+      branch: "a-change",
+      base: "main",
+      message: "A change",
+      files: [{ path: "CHANGE.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, open.value, {
+      title: "A public change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "a-change",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const at = `/alice/publicchange/pulls/${opened.value.number}`;
+    expect(await (await get(at)).text()).toContain(`action="${at}/state"`);
+
+    const stranger = await createUser(app.db, { trusted: true,
+      username: "changestranger",
+      email: "changestranger@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!stranger.ok) throw new Error(stranger.error);
+    const strangerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "changestranger",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const seen = await (
+      await fetch(`${base}${at}`, { headers: { cookie: strangerCookie } })
+    ).text();
+    expect(seen).toContain('id="comment-body"');
+    expect(seen).not.toContain(`action="${at}/state"`);
+    expect(seen).not.toContain("Close change");
+  });
+
   test("a mirrored change offers no Ship: it merges on the origin, from its Files step", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const branch = await commitToBranch(app, alice, repo, {
@@ -1260,8 +1373,12 @@ describe("the studio", () => {
         await get("/alice/plainlists/issues", { cookie: viewer })
       ).text();
       expect(issues).toContain("Plain list: an issue");
-      expect(issues).toContain('data-word="told"');
-      expect(issues).toContain(`href="/alice/plainlists/issues?word=told"`);
+      // A plain repository speaks of issues: an untouched one reads "open",
+      // and neither Told nor Look is a filter there (#683 follow-up).
+      expect(issues).toMatch(/data-word="told"\s*>open</);
+      expect(issues).toContain(`href="/alice/plainlists/issues?word=working"`);
+      expect(issues).not.toContain(`href="/alice/plainlists/issues?word=told"`);
+      expect(issues).not.toContain(`href="/alice/plainlists/issues?word=look"`);
       expect(issues).toContain(
         `href="/alice/plainlists/tells/${told.value.number}"`,
       );
@@ -1270,7 +1387,8 @@ describe("the studio", () => {
       const pulls = await (
         await get("/alice/plainlists/pulls", { cookie: viewer })
       ).text();
-      expect(pulls).toContain(`href="/alice/plainlists/pulls?word=look"`);
+      expect(pulls).toContain(`href="/alice/plainlists/pulls?word=working"`);
+      expect(pulls).not.toContain(`href="/alice/plainlists/pulls?word=look"`);
       expect(pulls).not.toContain("See dev's list");
     }
 
@@ -1401,7 +1519,7 @@ describe("the studio", () => {
     expect(labelled).toMatch(
       /href="\/alice\/facetlists\/issues"\s+aria-current="true"/,
     );
-    expect(labelled).toContain(`href="/alice/facetlists/issues?word=told&amp;label=bug"`);
+    expect(labelled).toContain(`href="/alice/facetlists/issues?word=working&amp;label=bug"`);
 
     const mine = await (await get("/alice/facetlists/issues?assignee=alice")).text();
     expect(mine).toContain("Facet: a wish");
@@ -1421,6 +1539,12 @@ describe("the studio", () => {
     const closed = await (await get("/alice/facetlists/issues?state=closed")).text();
     expect(closed).toContain("Facet: long done");
     expect(closed).not.toContain("Facet: a wish");
+    // The older address's narrowing is shown, and clears itself.
+    expect(closed).toContain("closed ✕");
+    expect(closed).toMatch(/href="\/alice\/facetlists\/issues"\s+aria-current="true"/);
+    expect(
+      await (await get("/alice/facetlists/issues?state=all")).text(),
+    ).toContain("open and closed ✕");
     // Closed with nothing merged is not dropped from the list: it reads
     // done, under shipped, where whoever closed it would look.
     const shipped = await (await get("/alice/facetlists/issues?word=shipped")).text();
@@ -1429,6 +1553,78 @@ describe("the studio", () => {
     const all = await (await get("/alice/facetlists/issues?state=all")).text();
     expect(all).toContain("Facet: long done");
     expect(all).toContain("Facet: a wish");
+  });
+
+  test("a plain repository's pages promise no deploy and say issue: an open change waits on a person, an issue closes as an issue, and only its author or a writer may close it", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainwords",
+      visibility: "public",
+      description: "",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const seeded = await commitToBranch(app, alice, plain.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, plain.value, {
+      branch: "plain-change",
+      base: "main",
+      message: "Plain change",
+      files: [{ path: "PLAIN.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, plain.value, {
+      title: "A plain change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "plain-change",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const changes = await (await get("/alice/plainwords/pulls")).text();
+    expect(changes).toContain("open — waiting on a person");
+    expect(changes).not.toContain("no deploy of this head yet");
+
+    const told = openIssue(app, alice, plain.value, { title: "A plain issue" });
+    if (!told.ok) throw new Error(String(told.error));
+    const at = `/alice/plainwords/issues/${told.value.number}`;
+    const own = await (await get(at)).text();
+    expect(own).toContain("Close issue");
+    expect(own).not.toContain("Close tell");
+    expect(own).toContain(`action="${at}/state"`);
+
+    // A signed-in stranger may comment on a public issue, never close it.
+    const stranger = await createUser(app.db, { trusted: true,
+      username: "plainstranger",
+      email: "plainstranger@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!stranger.ok) throw new Error(stranger.error);
+    const strangerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "plainstranger",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const seen = await (
+      await fetch(`${base}${at}`, { headers: { cookie: strangerCookie } })
+    ).text();
+    expect(seen).toContain('id="comment-body"');
+    expect(seen).not.toContain(`action="${at}/state"`);
+    expect(seen).not.toContain("Close issue");
+
+    // Signed out on a public repository: the way in is offered.
+    const anon = await (
+      await fetch(`${base}/alice/plainwords/issues`, { redirect: "manual" })
+    ).text();
+    expect(anon).toContain("Sign in to open an issue");
+    expect(anon).toContain("Report a problem</a");
   });
 
   test("the list's one verb besides opening a row is compose, for a signed-in person only, in the repository's own words", async () => {
@@ -9117,5 +9313,16 @@ describe("the studio can change what an app says it is (#230)", () => {
     expect(refused.status).toBe(404);
     const dbRepo = getRepoById(app.db, repo.id);
     expect(dbRepo?.description).not.toBe("carol was here");
+  });
+});
+
+describe("a run's transcript window", () => {
+  test("a log already cut to its tail offers the last N, never all of the run", () => {
+    const lines = ["one", "two", "three"];
+    const cut = logBox({ id: "log", who: "scout", cap: 2, lines, allHref: "/x?all=1", truncated: true }).text;
+    expect(cut).toContain("read the last");
+    expect(cut).not.toContain("read all");
+    const whole = logBox({ id: "log", who: "scout", cap: 2, lines, allHref: "/x?all=1" }).text;
+    expect(whole).toContain("read all");
   });
 });

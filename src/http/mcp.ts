@@ -94,6 +94,9 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { readHealth } from "../actions/health.ts";
+import { running } from "../kernel/version.ts";
+import { makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -105,7 +108,8 @@ import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
-const SERVER = { name: "forge", version: "1" };
+/** Who answers: the forge, at the version its build stamped. */
+const server = () => ({ name: "forge", version: running().version });
 
 type Args = Record<string, unknown>;
 type Answer =
@@ -483,6 +487,14 @@ const TOOLS: readonly Tool[] = [
               : "no such run here, or not yours to stop",
           );
     },
+  },
+  {
+    name: "health",
+    description:
+      "How this forge is: the version and commit it is running (stamped by the release that built it, `dev` when run from source), whether it is draining, and the platform's word on its rollout, with any incidents. A site admin also gets the forge's own vitals.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run: (ctx, user) => good(readHealth(ctx.app, user)),
   },
   {
     name: "audit",
@@ -896,6 +908,43 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "make_it_yours",
+    description:
+      "Make an app you can see yours: a fork of its code and history into your account, registered as your own app (its first deploy starts at once), following the original. Its data, variables, secrets, crew and domains are not copied. Plans unless dryRun is false; the answer names the copy, its address, and what is and is not copied. Someone who already has a copy is landed on it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        name: { type: "string", description: "A name for your copy; the original's by default." },
+        dryRun: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const name = str(args["name"]);
+      const made = await makeItYours(ctx.app, user, repo, {
+        dryRun: args["dryRun"] !== false,
+        ...(name === "" ? {} : { name }),
+      });
+      if (!made.ok)
+        return made.error.kind === "invalid"
+          ? bad("invalid", made.error.message)
+          : made.error.kind === "own"
+            ? bad("own", "this app is already yours")
+            : made.error.kind === "unverified"
+              ? bad("unverified", "prove your email first")
+              : bad("not_found", "no such app or repository (owner/name)");
+      const { made: done, ...plan } = made.value;
+      return good(
+        done === undefined ? plan : { ...plan, url: `/${done.repo.ownerName}/${done.repo.name}` },
+      );
+    },
+  },
+  {
     name: "front_page",
     description:
       "The forge's front page as a stranger is shown it: the featured repository with the crew at work on it, then the public apps ranked by forks, ships, use and freshness, each with its numbers. A site admin also gets the picks; with `pinned` (in order; the first public one is featured) and/or `hidden`, each a list of owner/name, and dryRun false, sets them. The same data as /front and /api/v1/front.",
@@ -1298,7 +1347,7 @@ function rpcOne(
           ? asked
           : PROTOCOLS[0],
         capabilities: { tools: {} },
-        serverInfo: SERVER,
+        serverInfo: server(),
         instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
       });
     }

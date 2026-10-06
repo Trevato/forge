@@ -566,8 +566,12 @@ describe("origins on the web", () => {
     });
     expect(stale.status).toBe(404);
     // Identical but for the per-response CSP nonce, which every page gets.
+    // The code the guesser typed echoes in the page's manifest link (#824):
+    // scrub it with the nonce, since both are the visitor's own bytes.
     const sameBut = (text: string): string =>
-      text.replaceAll(/nonce="[^"]*"/g, 'nonce="N"');
+      text
+        .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
     expect(sameBut(await stale.text())).toBe(sameBut(await unknown.text()));
 
     // A finished flow's link dies with it, and the code is not reissued.

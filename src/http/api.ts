@@ -9,6 +9,7 @@
  */
 
 import { canSeeSealed, mayView, sealedById } from "../core/sealed.ts";
+import { accountSignIns, endAccountSession } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -25,8 +26,9 @@ import {
   verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
+import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
-import { forgeHealth } from "../kernel/guard.ts";
+import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
@@ -248,7 +250,6 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
-import { vitals } from "../kernel/vitals.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
@@ -302,6 +303,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1062,6 +1064,8 @@ export function apiRoutes(router: Router<Handler>): void {
       return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
     if (sent.error === "no_mail")
       return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+    if (sent.error === "capped")
+      return apiError("capped", 429, CAPPED_WORDS);
     return apiError("failed", 502, "the link could not be sent; try again");
   });
 
@@ -1258,6 +1262,33 @@ export function apiRoutes(router: Router<Handler>): void {
     const removed = deleteToken(ctx.app, ctx.auth.user, ctx.params.id!);
     if (!removed.ok) return respondAccess(removed.error, 422);
     return new Response(null, { status: 204 });
+  });
+
+  // Where an account is signed in: its person, or the forge's owner for any
+  // person (`actions/signins.ts`). Anyone else finds no such account.
+  router.add("GET", "/api/v1/users/:username/signins", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const seen = accountSignIns(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username!,
+      cookieValue(ctx.request, "forge_session"),
+    );
+    if (!seen.ok) return notFound();
+    return json({ tokens: seen.value.tokens, sessions: seen.value.sessions });
+  });
+
+  router.add("DELETE", "/api/v1/users/:username/sessions/:id", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const done = endAccountSession(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username!,
+      ctx.params.id!,
+    );
+    return done.ok ? new Response(null, { status: 204 }) : notFound();
   });
 
   // ── organizations & teams ────────────────────────────────────────────
@@ -3346,16 +3377,9 @@ export function apiRoutes(router: Router<Handler>): void {
   // How the forge is, and the platform's word on its rollout: anyone may
   // read it (a monitor has no account). A site admin also gets the forge's
   // own vitals alongside, `ok` being both.
-  router.add("GET", "/api/v1/health", (ctx) => {
-    const forge = forgeHealth();
-    if (!ctx.auth.user?.isAdmin) return json(forge);
-    const runtime = appsRuntime(ctx.app);
-    const envs = runtime
-      ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
-      : [];
-    const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
-    return json({ ...v, ...forge, ok: forge.ok && v.ok });
-  });
+  router.add("GET", "/api/v1/health", (ctx) =>
+    json(readHealth(ctx.app, ctx.auth.user)),
+  );
 
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
@@ -3364,6 +3388,37 @@ export function apiRoutes(router: Router<Handler>): void {
       query: exploreLine(query),
       items: await explore(ctx.app, ctx.auth.user, query),
     });
+  });
+
+  // Make it yours (#606): a fork with its app, planned unless dryRun is
+  // false; the answer names the copy and what was and was not copied.
+  router.add("POST", "/api/v1/repos/:owner/:name/make-it-yours", async (ctx) => {
+    const input = await body(ctx.request);
+    const dryRun = input.dryRun !== false;
+    const denied = requireScope(ctx, dryRun ? "ro" : "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const name = str(input.name);
+    const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
+      dryRun,
+      ...(name === "" ? {} : { name }),
+    });
+    if (!made.ok)
+      return made.error.kind === "invalid"
+        ? apiError("invalid", 422, made.error.message)
+        : made.error.kind === "own"
+          ? apiError("own", 409, "this app is already yours")
+          : made.error.kind === "unverified"
+            ? apiError("unverified", 403, "prove your email first")
+            : made.error.kind === "unauthorized"
+              ? unauthorized()
+              : notFound();
+    const { made: done, ...plan } = made.value;
+    return json(
+      done === undefined ? plan : { ...plan, url: `/${done.repo.ownerName}/${done.repo.name}` },
+      dryRun ? 200 : 201,
+    );
   });
 
   // The front page (#686): what a stranger is shown, for anyone; a site
