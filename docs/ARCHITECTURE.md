@@ -366,6 +366,44 @@ Paid-for lessons from open-platform-ts, designed in structurally:
    same. A cancelled read is never used: it leaves the rest of the body on
    the connection to be taken for the next request.
 
+## Two processes at once
+
+A roll runs the new forge beside the old one on the same data directory for
+a while (#875). That is safe because of a contract both sides keep.
+
+**The old process drains.** On SIGTERM (`main.ts`, `shutdown`) it says it is
+not ready, so the platform sends new connections to the new process; it
+ends every open event stream with a resume hint (`retry: 1000`, then
+`event: drain`, `http/sse.ts`), so each browser reconnects — to the new
+process — from the last id it saw; the crew stops taking runs and lets the
+ones it holds finish and land (`crew.stop({ drain: true })`, bounded); a
+check in flight is cut and handed back to the queue for the new process;
+its app processes stop (the new process already runs its own); SSH sessions
+are kept until they leave. Then it exits.
+
+**Anything either process may start, it starts once.** Every place two
+processes could both act is a compare-and-set or a lease, never a read
+followed by a write:
+
+| what | how |
+|---|---|
+| a queued run becomes running (crew, checks) | `claimRun`: `UPDATE … WHERE state = 'queued'` |
+| the crew is queued on an issue | `queueAgentRun`: the look and the insert in one write transaction |
+| a check is queued for a commit | the checks service's `request`: the same |
+| a run a dead process held | leases (`runs/lease.ts`): only a lapsed lease is a death |
+| a webhook delivery is sent | `deliverDue` claims each row (a lease on `next_try_at`) before sending |
+| the day's prompt is fetched | `claimPromptRun`: `last_ran_at` moves only if it has not run today |
+| the index is repaired from git | `core/reconcile.ts` derives; running it twice is running it once |
+
+App environments are each process's own: each runs, sleeps and wakes its
+own app processes over the shared app data (SQLite in WAL, like the forge's
+own, with a busy timeout on every connection). `test/overlap.test.ts` runs
+two real processes on one data directory and holds each shared write path
+to it; the rehearsal on a copy (#873) is the minute-long proof.
+
+**A migration only adds** (see "Data & state model"), so the old process can
+keep serving on the database the new one migrated.
+
 ## The diff viewer
 
 The centerpiece of code review, built from the distilled state of the art:

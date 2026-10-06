@@ -174,6 +174,9 @@ interface DueRow {
 }
 
 /** Deliver all due pending deliveries. Returns how many were attempted. */
+/** How long a claimed delivery is its sender's before another may try it. */
+const CLAIM_MS = 60_000;
+
 export async function deliverDue(
   db: Database,
   log: Log,
@@ -194,6 +197,18 @@ export async function deliverDue(
     .all(nowIso);
 
   for (const row of due) {
+    // Claimed before it is sent: two forge processes over one database (a
+    // roll) both see it pending, and only the one whose claim lands sends
+    // it. A claim is a short lease on `next_try_at`; a sender that dies
+    // mid-send leaves it to be tried again when that runs out.
+    const claimed = db
+      .query(
+        `UPDATE webhook_delivery SET next_try_at = ?2
+          WHERE id = ?1 AND state = 'pending'
+            AND (next_try_at IS NULL OR next_try_at <= ?3)`,
+      )
+      .run(row.id, new Date(now.getTime() + CLAIM_MS).toISOString(), nowIso);
+    if (claimed.changes !== 1) continue;
     try {
       await deliverOne(db, log, row, now);
     } catch (error) {

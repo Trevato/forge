@@ -53,6 +53,25 @@ export const resetSseDroppedCount = (): void => {
   slowClientsDropped = 0;
 };
 
+/**
+ * Every stream open in this process, by the way to end it for a drain. A
+ * process that is going away (a roll) ends each with a resume hint — reconnect
+ * in a second, from the last id you saw — rather than letting the socket
+ * drop: the browser's EventSource reconnects, and lands on the process that
+ * replaced this one (docs/ARCHITECTURE.md, "Two processes at once").
+ */
+const openStreams = new Set<() => void>();
+
+/** How soon a drained stream's client reconnects, in milliseconds. */
+export const DRAIN_RETRY_MS = 1000;
+
+/** End every open stream with a resume hint; how many there were. */
+export function drainStreams(): number {
+  const ending = [...openStreams];
+  for (const end of ending) end();
+  return ending.length;
+}
+
 /** Send one frame. `id` lets a reconnecting client resume where it left off. */
 export type Emit = (event: string, data: unknown, id?: string) => void;
 
@@ -116,6 +135,16 @@ export function eventStream(
           }
         };
 
+        const drain = () => {
+          write(`retry: ${DRAIN_RETRY_MS}\nevent: drain\ndata: {}\n\n`);
+          cleanup();
+        };
+        openStreams.add(drain);
+        const closeOnce = cleanup;
+        cleanup = () => {
+          openStreams.delete(drain);
+          closeOnce();
+        };
         request.signal.addEventListener("abort", cleanup);
         release = holdForCaller(request, () => cleanup());
         write(`: connected\n\n`);

@@ -36,6 +36,7 @@ import {
 import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
@@ -188,22 +189,28 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const declared = parseCheck(forgeJson, packageJson);
     if (declared.ok && declared.value === undefined) return undefined;
     // One check per environment at a time: a newer commit supersedes what
-    // is still waiting, and the same commit is not checked twice.
-    for (const run of listActive(app.db, "check")) {
-      if (run.repoId !== repo.id || run.env !== env) continue;
-      if (run.commitOid === commitOid) return run;
-      if (run.state === "queued")
-        cancelRun(app.db, run.id, `superseded by ${commitOid.slice(0, 7)}`);
-    }
-    const run = createRun(app.db, {
-      repoId: repo.id,
-      kind: "check",
-      env,
-      commitOid,
-      reason,
-      ...(issueId === undefined ? {} : { issueId }),
-      ...(actorId === undefined ? {} : { actorId }),
+    // is still waiting, and the same commit is not checked twice. Looked for
+    // and written in one write transaction, so a second forge process over
+    // this database (a roll) cannot queue the same check beside it.
+    const { run, fresh } = transact(app.db, () => {
+      for (const active of listActive(app.db, "check")) {
+        if (active.repoId !== repo.id || active.env !== env) continue;
+        if (active.commitOid === commitOid) return { run: active, fresh: false };
+        if (active.state === "queued")
+          cancelRun(app.db, active.id, `superseded by ${commitOid.slice(0, 7)}`);
+      }
+      const created = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        env,
+        commitOid,
+        reason,
+        ...(issueId === undefined ? {} : { issueId }),
+        ...(actorId === undefined ? {} : { actorId }),
+      });
+      return { run: created, fresh: true };
     });
+    if (!fresh) return run;
     announceRun(app, run, actorId);
     schedule();
     return run;
