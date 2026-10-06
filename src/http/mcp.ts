@@ -925,17 +925,31 @@ const TOOLS: readonly Tool[] = [
       properties: {
         pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
         hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        weights: {
+          type: "object",
+          description: "What counts toward an app's place, each 0 to 10: forks, ships, use, fresh. One left out keeps what is set.",
+          properties: {
+            forks: { type: "number", minimum: 0, maximum: 10 },
+            ships: { type: "number", minimum: 0, maximum: 10 },
+            use: { type: "number", minimum: 0, maximum: 10 },
+            fresh: { type: "number", minimum: 0, maximum: 10 },
+          },
+        },
         dryRun: { type: "boolean" },
       },
     },
     writes: true,
     dryByDefault: true,
     run(ctx, user, args) {
-      if (args["pinned"] === undefined && args["hidden"] === undefined)
+      if (
+        args["pinned"] === undefined &&
+        args["hidden"] === undefined &&
+        args["weights"] === undefined
+      )
         return good(frontJson(ctx.app, user));
       const picks = frontInput(ctx.app, args);
       if (picks === undefined)
-        return bad("invalid", "pinned and hidden are lists of owner/name");
+        return bad("invalid", "pinned and hidden are lists of owner/name; weights an object of forks, ships, use, fresh");
       const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
       if (!set.ok)
         return set.error.kind === "forbidden"

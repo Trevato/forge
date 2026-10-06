@@ -3457,7 +3457,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const picks = frontInput(ctx.app, input);
     if (picks === undefined)
-      return apiError("invalid", 422, "send {pinned, hidden}: arrays of owner/name");
+      return apiError("invalid", 422, "send {pinned, hidden, weights}: arrays of owner/name; weights an object of forks, ships, use, fresh");
     const set = setFront(ctx.app, ctx.auth.user, picks);
     if (!set.ok)
       return set.error.kind === "forbidden"
