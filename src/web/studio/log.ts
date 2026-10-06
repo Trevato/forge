@@ -64,6 +64,9 @@ export function logBox(opts: {
   extra?: Html;
   /** Where the whole log is read, when lines were left out. */
   allHref?: string;
+  /** The lines are already the tail of a longer log (`readRunLog` cut it):
+   * the link then reads all of what was read, not all of the run. */
+  truncated?: boolean;
 }): Html {
   const { shown, hidden } = logWindow(opts.lines, opts.cap);
   return html`<div
@@ -81,7 +84,8 @@ export function logBox(opts: {
           ${opts.allHref === undefined
             ? html`the run's own log keeps the rest.`
             : html`<a href="${opts.allHref}"
-                >read all ${opts.lines.length}</a
+                >${opts.truncated === true ? "read the last" : "read all"}
+                ${opts.lines.length}</a
               >.`}
         </p>`,
     )}
