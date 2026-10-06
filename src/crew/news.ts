@@ -17,6 +17,8 @@ import { issueOfBranch } from "./brief.ts";
 interface Said {
   readonly authorName: string;
   readonly createdAt: string;
+  /** The run that already heard it as it worked (`Comment.heardIn`). */
+  readonly heardIn?: string | null;
 }
 
 export interface News<C extends Said, R extends Said, L extends Said> {
@@ -37,9 +39,14 @@ export function newsSince<
   readonly since: string;
   readonly agentName: string;
 }): News<C, R, L> {
+  // A word said into a running run was heard then: it is not news to the
+  // next one, so it is told once (#827).
   const fresh = <T extends Said>(said: readonly T[]): T[] =>
     said.filter(
-      (s) => s.createdAt > input.since && s.authorName !== input.agentName,
+      (s) =>
+        s.createdAt > input.since &&
+        s.authorName !== input.agentName &&
+        (s.heardIn === undefined || s.heardIn === null),
     );
   return {
     comments: fresh(input.comments),

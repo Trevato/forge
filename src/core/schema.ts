@@ -1501,4 +1501,9 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX IF NOT EXISTS fork_made_owner ON fork_made(owner_id, made_at);
   `,
+  // 68 — the run a comment was said into as it worked (#827): its agent heard
+  // it then, so the next run's brief does not tell it again.
+  `
+  ALTER TABLE comment ADD COLUMN heard_in TEXT;
+  `,
 ];
