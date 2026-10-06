@@ -173,6 +173,33 @@ describe("an organization always keeps a person who owns it", () => {
     expect(page).toContain("acme");
   });
 
+  test("a suspended owner does not count: the last active person cannot be removed, nor their account", async () => {
+    // Ann owns acme with Bob; then Bob is suspended.
+    const ann = await createUser(app.db, {
+      trusted: true,
+      username: "ann",
+      email: "ann@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!ann.ok) throw new Error(ann.error);
+    expect(addTeamMember(app, bob, acme, owners, "ann").ok).toBe(true);
+    app.db.run("UPDATE user SET suspended_at = ?2 WHERE id = ?1", [
+      bob.id,
+      new Date().toISOString(),
+    ]);
+    const removed = removeTeamMember(app, alice, acme, owners, "ann");
+    expect(removed.ok).toBe(false);
+    if (!removed.ok) expect(removed.error).toBe("last_owner");
+    const account = await removeAccount(app, alice, "ann");
+    expect(account.ok).toBe(false);
+    if (!account.ok) expect(account.error).toBe("last_owner");
+    // The suspended owner can be taken off: an active one stays.
+    expect(removeTeamMember(app, alice, acme, owners, "bob").ok).toBe(true);
+    app.db.run("UPDATE user SET suspended_at = NULL WHERE id = ?1", [bob.id]);
+    expect(addTeamMember(app, alice, acme, owners, "bob").ok).toBe(true);
+    expect(removeTeamMember(app, alice, acme, owners, "ann").ok).toBe(true);
+  });
+
   test("with a second person owning it, the first is removed and the organization keeps an owner", async () => {
     const added = addTeamMember(app, bob, acme, owners, "alice");
     expect(added.ok).toBe(true);

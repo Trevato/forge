@@ -11,8 +11,8 @@ import {
   createOrg as foundOrg,
   createTeam as insertTeam,
   deleteTeam as removeTeam,
+  isLastOwner,
   OWNERS_TEAM,
-  personOwners,
   removeTeamMember as dropMember,
   type CreateOrgError,
   type CreateTeamError,
@@ -145,11 +145,8 @@ export function removeTeamMember(
   if (team.orgId !== org.id) return err("not_found");
   const user = getUserByName(app.db, username);
   if (!user) return err("no_such_user");
-  if (team.name === OWNERS_TEAM) {
-    const people = personOwners(app.db, org.id);
-    if (people.includes(user.id) && people.length === 1)
-      return err("last_owner");
-  }
+  if (team.name === OWNERS_TEAM && isLastOwner(app.db, org.id, user))
+    return err("last_owner");
   const removed = dropMember(app.db, team, user.id);
   if (removed)
     app.bus.append({
