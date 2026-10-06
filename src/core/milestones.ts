@@ -384,8 +384,10 @@ export function readPlan(
             inside.add(child);
             order.push(child);
           }
-      // Shared: something open outside the limb waits for it, directly or
-      // through something beneath the limb that is itself shared.
+      // Shared: other open work outside the limb waits for it, directly or
+      // through something beneath the limb that is itself shared. An
+      // umbrella's wait is membership, not need: on a plan where every
+      // issue is linked under its pillar, a leaf is still the limb's own.
       const shared = new Set<string>();
       for (let grew = true; grew; ) {
         grew = false;
@@ -394,6 +396,7 @@ export function readPlan(
           const needed = (waitedBy.get(id) ?? []).some(
             (w) =>
               byId.get(w)?.state === "open" &&
+              !isStructural(set, w) &&
               (!inside.has(w) || shared.has(w)),
           );
           if (needed) {
@@ -411,40 +414,37 @@ export function readPlan(
       };
     },
     deferral(number: number): { taken: Issue[]; kept: Issue[] } | undefined {
-      const issue = byNumber.get(number);
-      if (issue === undefined || set.gate === undefined) return undefined;
-      const after = deferredIn(graph, set.gate.id, set.later?.id, [issue.id]);
-      const under = [issue, ...beneath(issue.id)]
-        .map((i) => (typeof i === "string" ? byId.get(i) : i))
-        .filter((i): i is Issue => i !== undefined && i.state === "open");
+      const limb = this.limb(number);
+      if (limb === undefined || set.gate === undefined) return undefined;
+      // Every open issue of the limb's own is filed for later, and anything
+      // else that then only deferred work needs follows by the rule.
+      const own = limb.own.filter((i) => i.state === "open");
+      const after = deferredIn(
+        graph,
+        set.gate.id,
+        set.later?.id,
+        own.map((i) => i.id),
+      );
       const byNumberAsc = (a: Issue, b: Issue) => a.number - b.number;
       return {
-        taken: under
-          .filter((i) => after.has(i.id) && !graph.deferred.has(i.id))
+        taken: graph.issues
+          .filter(
+            (i) =>
+              i.state === "open" &&
+              after.has(i.id) &&
+              !graph.deferred.has(i.id) &&
+              !isStructural(set, i.id),
+          )
           .sort(byNumberAsc),
-        kept: under.filter((i) => !after.has(i.id)).sort(byNumberAsc),
+        kept: limb.shared.filter((i) => i.state === "open").sort(byNumberAsc),
       };
     },
     resumption(number: number): Issue[] | undefined {
-      const issue = byNumber.get(number);
-      if (issue === undefined || set.gate === undefined) return undefined;
-      const without = {
-        issues: graph.issues,
-        edges: graph.edges.filter(
-          (e) =>
-            !(e.issueId === issue.id && e.blockedById === set.gate!.id) &&
-            !(e.issueId === set.later?.id && e.blockedById === issue.id),
-        ),
-      };
-      const after = deferredIn(without, set.gate.id, set.later?.id);
-      return [issue, ...[...beneath(issue.id)].map((id) => byId.get(id))]
-        .filter(
-          (i): i is Issue =>
-            i !== undefined &&
-            i.state === "open" &&
-            graph.deferred.has(i.id) &&
-            !after.has(i.id),
-        )
+      const limb = this.limb(number);
+      if (limb === undefined || set.gate === undefined) return undefined;
+      // What is the limb's own and deferred now: it can be picked again.
+      return limb.own
+        .filter((i) => i.state === "open" && graph.deferred.has(i.id))
         .sort((a, b) => a.number - b.number);
     },
     milestone(number: number): Milestone | undefined {

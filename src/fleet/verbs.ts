@@ -68,6 +68,8 @@ export interface Target {
   readonly pillars?: Pillars;
   /** For an issue: the numbers of the umbrellas that wait for it directly, ascending. */
   readonly under?: readonly number[];
+  /** For an issue: the ids of every row this operation is over, itself included. */
+  readonly peers?: ReadonlySet<string>;
 }
 
 export interface Verb {
@@ -201,24 +203,33 @@ function placed(
 }
 
 /**
- * Whether `gate` would come to wait for the issue, through anything but the
- * umbrellas it is being taken out from under: putting it behind the gate
- * would then be a loop. One bounded walk up the edges.
+ * Whether `gate` would come to wait for the issue: putting it behind the
+ * gate would then be a loop. The umbrellas it is being taken out from under
+ * do not count, and neither does a path through another row of the same
+ * operation, which is on its way behind the gate too. One bounded walk up
+ * the edges.
  */
 function servesActiveWork(app: App, t: Target, gateId: string): boolean {
+  const peers = [...(t.peers ?? [])].filter((id) => id !== t.id);
   const leaving = (t.pillars?.pillars ?? []).map((p) => p.umbrella.id);
   const row = app.db
-    .query<{ n: number }, string[]>(
+    .query<{ n: number }, [string, string, string, string]>(
       `WITH RECURSIVE up(id) AS (
          SELECT d.issue_id FROM issue_dependency d
           WHERE d.blocked_by_id = ?1
-            AND d.issue_id NOT IN (${leaving.map((_, n) => `?${n + 3}`).join(",") || "''"})
+            AND d.issue_id NOT IN (SELECT value FROM json_each(?3))
          UNION
          SELECT d.issue_id FROM issue_dependency d JOIN up ON d.blocked_by_id = up.id
+          WHERE d.issue_id NOT IN (SELECT value FROM json_each(?4))
        )
        SELECT COUNT(*) AS n FROM up WHERE id = ?2`,
     )
-    .get(t.id, gateId, ...leaving);
+    .get(
+      t.id,
+      gateId,
+      JSON.stringify([...leaving, ...peers]),
+      JSON.stringify(peers),
+    );
   return (row?.n ?? 0) > 0;
 }
 
@@ -471,9 +482,9 @@ export const VERBS: Record<string, Verb> = {
    * File an issue: `later` puts it behind the Later gate and under the
    * Later umbrella, out from under any pillar; a pillar's name or short
    * form puts it under that pillar and out from behind the gate; `none`
-   * takes it out of both. What is beneath it follows by itself
-   * (`deferredIn`), so this one row is how a whole limb is deferred or
-   * resumed.
+   * takes it out of both. Over `limb:<n>`, top down, `later` is how a
+   * whole limb is deferred: every issue of the limb gets its own row, so
+   * nothing is put off that the preview did not show.
    */
   file: {
     kind: "issue",
@@ -561,6 +572,45 @@ export const VERBS: Record<string, Verb> = {
       }
       return undefined;
     },
+  },
+
+  /**
+   * Bring back what was filed for later: an issue behind the Later gate or
+   * under the Later umbrella goes under the pillar named, or nowhere with
+   * `none`. An issue that was not filed for later is left as it is. Over
+   * `limb:<n>^`, leaves first, it is how a whole limb is resumed.
+   */
+  resume: {
+    kind: "issue",
+    reversible: true,
+    parse: (_app, value) =>
+      value === null || value === ""
+        ? ok("none")
+        : typeof value === "string" && value.length <= 100
+          ? ok(value.trim())
+          : err("resume takes a pillar's name, or none"),
+    read: (t) => placement(t),
+    next: replace,
+    nextFor(t, before, value) {
+      const later = t.pillars?.later?.number;
+      const filed =
+        Array.isArray(before) &&
+        before.some(
+          (token) =>
+            BEHIND.test(String(token)) ||
+            (later !== undefined && token === `under #${later}`),
+        );
+      if (!filed) return before;
+      const wanted = String(value).toLowerCase();
+      if (wanted === "none") return [];
+      const pillar = findPillar(t.pillars?.pillars ?? [], wanted);
+      return pillar === undefined
+        ? [NO_PILLAR]
+        : [`under #${pillar.umbrella.number}`];
+    },
+    refuse: (app, t, after) => VERBS["file"]!.refuse(app, t, after),
+    write: (app, actor, t, after, value) =>
+      VERBS["file"]!.write(app, actor, t, after, value),
   },
 
   /**

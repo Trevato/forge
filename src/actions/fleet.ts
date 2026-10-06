@@ -178,6 +178,7 @@ function loadTargets(
   const pillars = new Map<string, Pillars>();
   for (const [repoId, repo] of repos) pillars.set(repoId, pillarsOf(app.db, repo));
   const under = umbrellasOver(app, ids, [...pillars.values()]);
+  const peers: ReadonlySet<string> = new Set(ids);
   const pull = (id: string) => {
     const p = pulls.get(id);
     return p === undefined
@@ -206,6 +207,7 @@ function loadTargets(
         planner: planners.get(repo.id) ?? null,
         pillars: pillars.get(repo.id)!,
         under: under.get(id) ?? [],
+        peers,
         ...(viewer === undefined
           ? {}
           : {

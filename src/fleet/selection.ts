@@ -13,8 +13,10 @@
  *
  * `limb:<number>` on issues selects a limb (`core/milestones.ts`): the
  * issue of that number and everything beneath it that only it needs, top
- * down — never what something outside the limb also waits for. It needs
+ * down — never what other work outside the limb also waits for. It needs
  * the repository named, since a number means nothing without one.
+ * `limb:<number>^` is the same rows, leaves first: the order in which a
+ * limb comes back from behind the Later gate.
  */
 
 import type { Database } from "bun:sqlite";
@@ -116,13 +118,15 @@ function limbIds(
   );
   if (named.length !== 1)
     return bad("limb:<number> needs the repository: repo:owner/name");
-  const number = Number(term.value);
+  const up = term.value.endsWith("^");
+  const number = Number(up ? term.value.slice(0, -1) : term.value);
   if (!Number.isInteger(number) || number < 1)
     return bad("limb takes the number of an issue");
   const [owner, name] = named[0]!.value.split("/");
   const repo = getRepo(db, owner ?? "", name ?? "");
   if (repo === undefined || !canRead(db, repo, viewer)) return ok([]);
-  return ok((readPlan(db, repo).limb(number)?.own ?? []).map((i) => i.id));
+  const ids = (readPlan(db, repo).limb(number)?.own ?? []).map((i) => i.id);
+  return ok(up ? ids.reverse() : ids);
 }
 
 const FROM: Record<FleetKind, { table: string; from: string; order: string }> =

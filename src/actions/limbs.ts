@@ -5,11 +5,13 @@
  * written, the same receipt, the same undo. This module only says which
  * rows and which verb an action is, and what else it takes along.
  *
- * - `defer` files the limb itself for later: out from under its pillar,
- *   behind the Later gate. What is beneath it and serves nothing else is
- *   deferred with it by the graph's own rule (`deferredIn`), so one row is
- *   the whole limb.
- * - `resume` is the reverse: under a pillar again, or under none.
+ * - `defer` files every open issue of the limb for later, the limb first:
+ *   out from under its pillar, behind the Later gate. One row for each, so
+ *   nothing is put off that the preview did not show. (On a plan where
+ *   every issue is linked under its pillar, moving the limb alone would
+ *   leave its leaves ready.)
+ * - `resume` is the reverse, leaves first: what was filed for later goes
+ *   under a pillar again, or under none.
  * - `close` drops every open issue of the limb, the limb included, with
  *   one reason said on each — and never what something outside the limb
  *   also waits for.
@@ -22,6 +24,7 @@ import type { App } from "../app.ts";
 import type { FleetValue, Operation } from "../core/fleet_ops.ts";
 import type { Issue } from "../core/issues.ts";
 import { readPlan } from "../core/milestones.ts";
+import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { canRead, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -104,10 +107,16 @@ function shape(
       },
     });
   }
+  // The plan's own are not filed: an umbrella is deferred limb by limb.
+  if (isStructural(pillarsOf(app.db, repo), rows.own[0].id))
+    return fail(
+      "bad_action",
+      "an umbrella or the gate is the plan's own: defer or resume the limbs under it",
+    );
   if (request.action === "defer") {
     const reach = plan.deferral(number);
     return ok({
-      query: `${where} number:${number}`,
+      query: `${where} limb:${number} state:open`,
       action: { verb: "file", value: "later" },
       reach: {
         limb,
@@ -116,9 +125,13 @@ function shape(
       },
     });
   }
+  // Leaves first: a limb comes back from behind the gate from the bottom.
   return ok({
-    query: `${where} number:${number}`,
-    action: { verb: "file", value: (request.pillar ?? "").trim() || "none" },
+    query: `${where} limb:${number}^ state:open`,
+    action: {
+      verb: "resume",
+      value: (request.pillar ?? "").trim() || "none",
+    },
     reach: {
       limb,
       taken: (plan.resumption(number) ?? []).map(brief),
