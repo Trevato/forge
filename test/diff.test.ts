@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -200,8 +201,12 @@ describe("diff against real git", () => {
   });
 
   test("unsafe revs are refused, not executed", async () => {
-    const bad = await diffRange(dir, "--output=/tmp/x", "main");
+    // The file git would write if the rev reached it as an option: a path
+    // of this test's own, so nothing else can make it exist.
+    const canary = join(root, "written-by-git");
+    const bad = await diffRange(dir, `--output=${canary}`, "main");
     expect(bad.ok).toBe(false);
+    expect(existsSync(canary)).toBe(false);
   });
 });
 

@@ -23,6 +23,7 @@ export type Exclusion = {
 
 export const GATE: readonly string[] = [
   "test/accounts.test.ts",
+  "test/agents.test.ts",
   "test/app-domains.test.ts",
   "test/app.test.ts",
   "test/body-limits.test.ts",
@@ -71,6 +72,7 @@ export const GATE: readonly string[] = [
   "test/apps-busy.test.ts",
   "test/apps-token.test.ts",
   "test/contain.test.ts",
+  "test/contract.test.ts",
   "test/subscription-budget.test.ts",
   "test/surfaces-adversarial.test.ts",
   "test/orgs.test.ts",
@@ -82,6 +84,7 @@ export const GATE: readonly string[] = [
   "test/migrate.test.ts",
   "test/schema-migrations.test.ts",
   "test/vitals.test.ts",
+  "test/version.test.ts",
   "test/guard.test.ts",
   "test/asked.test.ts",
   "test/asks.test.ts",
@@ -116,6 +119,7 @@ export const GATE: readonly string[] = [
   "test/meter.test.ts",
   "test/told-by.test.ts",
   "test/highlight.test.ts",
+  "test/diff-edge-cases.test.ts",
   "test/diff.test.ts",
   "test/edge-auth.test.ts",
   "test/edits-security.test.ts",
@@ -150,6 +154,7 @@ export const GATE: readonly string[] = [
   "test/origins-oauth.test.ts",
   "test/origins-operator.test.ts",
   "test/origins-security-auth.test.ts",
+  "test/origins-security-provider.test.ts",
   "test/origins-security-push.test.ts",
   "test/origins-sync.test.ts",
   "test/origins.test.ts",
@@ -169,11 +174,6 @@ export const GATE: readonly string[] = [
 
 export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/actions.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/agents.test.ts",
-    reason: "red: fifty concurrent pushes come back 'auth required'",
-    issue: 293,
-  },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/app-env.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
@@ -195,7 +195,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/branches.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/cli-sync.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/code.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/contract.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/counts.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/crew-interrupted.test.ts",
@@ -204,16 +203,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   },
   { file: "test/crew-loop.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/crew-totals.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/diff-edge-cases.test.ts",
-    reason: "red: wall-clock bounds (5 s, 200 ms) fail on a loaded machine",
-    issue: 584,
-  },
-  {
-    file: "test/origins-security-provider.test.ts",
-    reason: "red: the off-host redirect test cannot connect to its own localhost origin",
-    issue: 585,
-  },
   { file: "test/pacing.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/palette.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
