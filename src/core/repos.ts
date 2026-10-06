@@ -305,12 +305,35 @@ export type ForkRepoError =
   | "invalid_name"
   | "name_taken"
   | "already_forked"
-  | "fork_failed";
+  | "fork_failed"
+  /** The owner's forks in the last day reached `perDay` (#888). */
+  | "limit";
+
+const DAY_MS = 86_400_000;
+
+/** An owner's forks made since `since`, oldest first. */
+export function forksSince(db: Database, ownerId: string, since: string): string[] {
+  return db
+    .query<{ created_at: string }, [string, string]>(
+      `SELECT created_at FROM repo
+       WHERE owner_id = ?1 AND fork_parent_id IS NOT NULL AND created_at >= ?2
+       ORDER BY created_at`,
+    )
+    .all(ownerId, since)
+    .map((r) => r.created_at);
+}
+
+/** A marker the row's transaction throws when the day's forks are made. */
+class OverLimit extends Error {}
 
 /**
  * Fork a repo into another owner. The git objects are shared with the parent
  * via alternates (see forkBareRepo), so this is instant and storage-bounded.
- * The fork inherits the parent's visibility and default branch.
+ * The fork takes the parent's default branch, and its visibility unless a
+ * narrower one is asked for: it is born with it, never public first (#888);
+ * a private parent's fork is private whatever is asked. With `perDay`, the
+ * owner's forks in the last 24 hours are counted in the same transaction
+ * that writes the row, so two forks at once cannot both pass the limit.
  */
 export async function forkRepo(
   db: Database,
@@ -318,8 +341,20 @@ export async function forkRepo(
   parent: Repo,
   ownerId: string,
   name?: string,
+  options: {
+    visibility?: "public" | "private";
+    perDay?: number;
+    now?: number;
+  } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
   const forkName = name ?? parent.name;
+  const visibility =
+    parent.visibility === "private" ? "private" : (options.visibility ?? parent.visibility);
+  const now = options.now ?? Date.now();
+  const since = new Date(now - DAY_MS).toISOString();
+  const overLimit = (): boolean =>
+    options.perDay !== undefined && forksSince(db, ownerId, since).length >= options.perDay;
+  if (overLimit()) return err("limit");
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
     .query<
@@ -355,22 +390,30 @@ export async function forkRepo(
   await installHooks(forkDir);
 
   const repoId = id();
-  rowOrUndo(forkDir, () =>
-    db
-      .query(
-        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
-      )
-      .run(
-        repoId,
-        ownerId,
-        forkName,
-        parent.visibility,
-        parent.description,
-        parent.defaultBranch,
-        parent.id,
-      ),
-  );
+  try {
+    rowOrUndo(forkDir, () =>
+      db.transaction(() => {
+        // Counted again with the write: the git copy above took a moment,
+        // and another fork may have landed in it.
+        if (overLimit()) throw new OverLimit();
+        db.query(
+          `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+        ).run(
+          repoId,
+          ownerId,
+          forkName,
+          visibility,
+          parent.description,
+          parent.defaultBranch,
+          parent.id,
+        );
+      })(),
+    );
+  } catch (error) {
+    if (error instanceof OverLimit) return err("limit");
+    throw error;
+  }
   return ok(getRepoById(db, repoId)!);
 }
 

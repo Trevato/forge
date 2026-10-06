@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
 import { newApp } from "../src/actions/apps.ts";
+import { forkRepo } from "../src/actions/repos.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { COPIES_PER_DAY, makeItYours } from "../src/actions/make_it_yours.ts";
 import { envDataDir } from "../src/apps/data.ts";
@@ -392,4 +393,106 @@ describe("make it yours", () => {
     const again = await makeItYours(app, gina.value, getRepo(app.db, "alice", "bed-0")!, { dryRun: false });
     expect(again.ok && again.value.existing).toBe(true);
   }, 120_000);
+
+  describe("#888: born private, and one limit on every way to copy", () => {
+    const person = async (username: string) => {
+      const r = await createUser(app.db, {
+        trusted: true,
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+      });
+      if (!r.ok) throw new Error(r.error);
+      return r.value;
+    };
+    const source = async (name: string) => {
+      const made = await newApp(app, alice, { name, visibility: "public" });
+      if (!made.ok) throw new Error(String(made.error));
+      return made.value.repo;
+    };
+
+    test("a private copy of a public app is never, even for a moment, public", async () => {
+      // Every row the repo table is ever written with, as it was written.
+      app.db.run(`CREATE TEMP TABLE IF NOT EXISTS seen_repo (name TEXT, visibility TEXT, at TEXT)`);
+      app.db.run(`CREATE TEMP TRIGGER IF NOT EXISTS seen_insert AFTER INSERT ON repo BEGIN INSERT INTO seen_repo VALUES (NEW.name, NEW.visibility, 'insert'); END`);
+      app.db.run(`CREATE TEMP TRIGGER IF NOT EXISTS seen_update AFTER UPDATE OF visibility ON repo BEGIN INSERT INTO seen_repo VALUES (NEW.name, NEW.visibility, 'update'); END`);
+      const hana = await person("hana");
+      const src = await source("meadow");
+      const made = await makeItYours(app, hana, src, { dryRun: false });
+      expect(made.ok).toBe(true);
+      // Alice's original was written public; hana's copy was written
+      // private, and never changed after.
+      const written = app.db
+        .query<{ visibility: string; at: string }, []>(
+          `SELECT visibility, at FROM seen_repo WHERE name = 'meadow' ORDER BY rowid`,
+        )
+        .all();
+      expect(written).toEqual([
+        { visibility: "public", at: "insert" },
+        { visibility: "private", at: "insert" },
+      ]);
+      expect(getRepo(app.db, "hana", "meadow")!.visibility).toBe("private");
+    });
+
+    test("the plain fork is held to the same daily limit, by the action, the API and the page; an agent's working fork is not", async () => {
+      const ivan = await person("ivan");
+      const token = createToken(app.db, ivan.id, "rw", "rw").token;
+      for (let n = 0; n < COPIES_PER_DAY; n++) {
+        const forked = await forkRepo(app, ivan, await source(`lane-${n}`));
+        expect(forked.ok).toBe(true);
+      }
+      const next = await source("lane-extra");
+      const byAction = await forkRepo(app, ivan, next);
+      expect(byAction.ok).toBe(false);
+      if (!byAction.ok) expect(byAction.error).toBe("limit");
+      const byApi = await fetch(`${servers.url}/api/v1/repos/alice/lane-extra/forks`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: "{}",
+      });
+      expect(byApi.status).toBe(429);
+      const ivanCookie = `forge_session=${createSession(app.db, ivan.id).token}`;
+      const byPage = await fetch(`${servers.url}/alice/lane-extra/fork`, {
+        method: "POST",
+        headers: { cookie: ivanCookie, origin: servers.url },
+        redirect: "manual",
+      });
+      expect(byPage.status).toBe(303);
+      expect(decodeURIComponent(byPage.headers.get("set-cookie") ?? "")).toContain("forks made");
+      // Nor does make it yours go around it: the fork and then the app.
+      const viaCopy = await makeItYours(app, ivan, next, { dryRun: false });
+      expect(viaCopy.ok).toBe(false);
+      if (!viaCopy.ok) expect(viaCopy.error.kind).toBe("limit");
+      expect(getRepo(app.db, "ivan", "lane-extra")).toBeUndefined();
+      // The crew's agents fork per issue to work: not held to it.
+      const agent = await createAgent(app, alice, { username: "worker-bee" });
+      if (!agent.ok) throw new Error(String(agent.error));
+      const lanes = [...Array.from({ length: COPIES_PER_DAY }, (_, n) => `lane-${n}`), "lane-extra"];
+      for (const lane of lanes) {
+        const forked = await forkRepo(app, agent.value.user, getRepo(app.db, "alice", lane)!, `bee-${lane}`);
+        if (!forked.ok) throw new Error(`agent fork of ${lane}: ${forked.error}`);
+      }
+    }, 120_000);
+
+    test("two copies at once, one place left: exactly one is made", async () => {
+      const jo = await person("jo");
+      for (let n = 0; n < COPIES_PER_DAY - 1; n++) {
+        const made = await makeItYours(app, jo, await source(`plot-${n}`), { dryRun: false });
+        expect(made.ok).toBe(true);
+      }
+      const [a, b] = [await source("plot-a"), await source("plot-b")];
+      const both = await Promise.all([
+        makeItYours(app, jo, a, { dryRun: false }),
+        makeItYours(app, jo, b, { dryRun: false }),
+      ]);
+      expect(both.filter((r) => r.ok)).toHaveLength(1);
+      const refused = both.find((r) => !r.ok)!;
+      if (!refused.ok) expect(refused.error.kind).toBe("limit");
+      expect(
+        app.db
+          .query(`SELECT COUNT(*) AS n FROM repo WHERE owner_id = ?1 AND fork_parent_id IS NOT NULL`)
+          .get(jo.id),
+      ).toEqual({ n: COPIES_PER_DAY });
+    }, 120_000);
+  });
 });

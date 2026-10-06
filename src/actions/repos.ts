@@ -108,11 +108,20 @@ export async function createRepo(
   return created;
 }
 
+/**
+ * How many forks one person may make in any 24 hours (#853, #888): each may
+ * become an app that deploys at once. The crew's agents fork per issue to
+ * work, and the forge's own admin answers for its forge: neither is held to
+ * it.
+ */
+export const FORKS_PER_DAY = 5;
+
 export async function forkRepo(
   app: App,
   actor: User | undefined,
   parent: Repo,
   name?: string,
+  options: { visibility?: "public" | "private"; now?: number } = {},
 ): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
@@ -124,6 +133,12 @@ export async function forkRepo(
     parent,
     user.value.id,
     name,
+    {
+      ...options,
+      ...(user.value.kind === "agent" || user.value.isAdmin
+        ? {}
+        : { perDay: FORKS_PER_DAY }),
+    },
   );
   if (!forked.ok) return forked;
   app.bus.append({
