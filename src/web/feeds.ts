@@ -18,7 +18,7 @@ import { eventActor, eventVerb } from "../design/activity.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEvents, type ForgeEvent } from "../core/events.ts";
 import { getIssuesByRef } from "../core/issues.ts";
-import { canRead, getRepo } from "../core/repos.ts";
+import { canRead, forkParentFor, getRepo } from "../core/repos.ts";
 import { getUsersByIds } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
@@ -101,7 +101,9 @@ export function activityAtom(ctx: Ctx): Response {
         : event.kind === "push"
           ? pushedBranch(event)
           : event.kind === "repo.forked" &&
-              typeof event.payload["parent"] === "string"
+              typeof event.payload["parent"] === "string" &&
+              // A parent the reader may no longer read is not named.
+              forkParentFor(ctx.app.db, repo, ctx.auth.user) !== undefined
             ? event.payload["parent"]
             : "";
     const link =

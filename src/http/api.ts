@@ -117,7 +117,10 @@ import {
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
 import { audienceFilter } from "../core/event_audience.ts";
-import { getReposByIds } from "../core/repos.ts";
+import {
+  forkParentFor,
+  getReposByIds,
+} from "../core/repos.ts";
 import {
   commentCounts,
   getIssue,
@@ -1664,10 +1667,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (!repo) return notFound();
       if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("forbidden", 403);
-      const parent =
-        repo.forkParentId === null
-          ? undefined
-          : getRepoById(ctx.app.db, repo.forkParentId);
+      const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
       if (parent === undefined)
         return apiError("not_a_fork", 404, "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
