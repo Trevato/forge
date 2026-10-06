@@ -1189,7 +1189,22 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
-    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    const input = await body(ctx.request);
+    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
+      confirmed: input.confirm === true,
+    });
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only active person owning ${orgs.join(", ")}: suspending leaves no one to administer it. Make someone else an owner first, or send {"confirm": true} to suspend anyway`,
+      );
+    }
     return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
   });
 
