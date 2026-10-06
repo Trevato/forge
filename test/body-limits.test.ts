@@ -188,13 +188,25 @@ describe("request body limits", () => {
     // caller. 3 MiB is under the signed-in cap (16 MiB) and well past the
     // stranger's (64 KiB) plus the drain budget: the forge stops reading
     // and ends the connection instead of reading it all to say 401.
-    const body = "x".repeat(3 * 1024 * 1024);
-    const out = await raw((s) =>
+    // Streamed, not one write: a single 3 MiB write races the answer with
+    // EPIPE on the still-flushing send buffer and the client sees nothing.
+    const chunk = "x".repeat(64 * 1024);
+    let left = 3 * 1024 * 1024;
+    const out = await raw((s) => {
       s.write(
-        `POST /api/v1/fleet/ops HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n` +
-          `${body.length.toString(16)}\r\n${body}\r\n0\r\n\r\n`,
-      ),
-    10_000);
+        `POST /api/v1/fleet/ops HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n`,
+      );
+      const timer = setInterval(() => {
+        if (s.destroyed) return clearInterval(timer);
+        if (left <= 0) {
+          s.write(`0\r\n\r\n`);
+          return clearInterval(timer);
+        }
+        const n = Math.min(left, chunk.length);
+        left -= n;
+        s.write(`${n.toString(16)}\r\n${chunk.slice(0, n)}\r\n`);
+      }, 1);
+    }, 10_000);
     expect(out.text).toMatch(/^HTTP\/1\.1 (401|413)/);
     expect(out.text.toLowerCase()).toContain("connection: close");
     expect(out.closedByServer).toBe(true);

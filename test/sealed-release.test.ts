@@ -68,6 +68,8 @@ async function reportAndFix(
       body: `Closes #${report.number}`,
       baseBranch: "main",
       headBranch: `fix/${slug}`,
+      // A person opens the fix on the public repository on purpose (#865).
+      confirmPublic: true,
     }),
   );
   expect(pull.sealed).toBe(true);

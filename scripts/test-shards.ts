@@ -78,6 +78,10 @@ if (!count.ok) {
   console.error(`test-shards: ${count.error}`);
   process.exit(2);
 }
+// FORGE_CHECK_SHARDS is only for this runner's shard count. Drop it before
+// spawning `bun test` so capacityDefault / capacityEnv inside the suite do
+// not treat the gate's own setting as a forge boot default (#874).
+delete process.env["FORGE_CHECK_SHARDS"];
 // Measured seconds where the table has them, bytes scaled to seconds
 // where it does not. A missing or refused table is said out loud and the
 // gate still runs, on bytes alone.
@@ -135,10 +139,15 @@ async function runShard(slice: string[], index: number): Promise<Timed> {
   const paths = slice.map((file) =>
     file.startsWith("/") || file.startsWith("./") ? file : `./${file}`,
   );
+  const childEnv = { ...process.env };
+  delete childEnv["FORGE_CHECK_SHARDS"];
   const child = Bun.spawn(["bun", "test", ...flags, ...paths], {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    // Bun keeps shell-inherited vars after `delete process.env.X`; pass a
+    // cleaned env so capacityDefault does not see the gate's shard count.
+    env: childEnv,
   });
   children.add(child);
   // One buffer, in arrival order: `bun test` splits its report across

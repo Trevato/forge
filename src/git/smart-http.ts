@@ -8,7 +8,7 @@
 import { holdForCaller } from "../http/caller.ts";
 import { gunzipSync } from "node:zlib";
 import {
-  closeAfter,
+  closeNow,
   counted,
   FETCH_MAX,
   GZIP_MAX,
@@ -188,7 +188,7 @@ async function feedStdin(
     gone = true;
   });
   const stop = (): void => {
-    closeAfter(request);
+    closeNow(request);
     proc.kill("SIGKILL");
   };
   const write = async (chunk: Uint8Array): Promise<void> => {
