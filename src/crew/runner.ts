@@ -11,6 +11,7 @@
  * what the forge has.
  */
 
+import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -32,6 +33,7 @@ import {
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
+  forkParentFor,
   getForkOf,
   getRepoById,
   type Repo,
@@ -773,9 +775,10 @@ async function work(
               .filter((f) => f !== "")
           : undefined,
       following:
-        reason === "converge" && repo.forkParentId !== null
+        reason === "converge"
           ? (() => {
-              const parent = getRepoById(app.db, repo.forkParentId);
+              // Only a parent the agent may read is put in its brief.
+              const parent = forkParentFor(app.db, repo, agent.user);
               return parent === undefined
                 ? undefined
                 : {
@@ -858,6 +861,9 @@ async function work(
     }
     const started = Date.now();
     const env: Record<string, string> = {
+      // The shard count an admin set (`core/capacity.ts`), for the checks an
+      // agent runs in its clone; never the pod's environment.
+      ...capacityEnv(app.db),
       ...gitAuth,
       ...identity,
       FORGE_URL: options.forgeUrl,

@@ -76,6 +76,13 @@ bun run src/main.ts   # boots on :3000, data in ./data
   the reason is printed so a skip is never read as a pass.
 - **`bun run check` is the gate**, and it reads its command from
   `forge.json`, so what you see is exactly what the push will be judged by.
+  **The forge runs it on every push; a crew run does not.** Before pushing,
+  run `bun x tsc --noEmit` and ONE `bun test` call with the test files of
+  what you touched plus the five cross files that catch crossed merges —
+  `test/reserved-names.test.ts`, `test/studio.test.ts`, `test/shards.test.ts`
+  (the gate list), `test/check-list.test.ts`, `test/hollow.test.ts`. Never
+  `bun scripts/test-shards.ts --gate` inside a run: the check on your push is
+  that same gate, and running both doubles the load on a small machine.
   It runs the files in `GATE` (`scripts/gate.ts`), not the whole suite; every
   other test file is in `EXCLUDED` with its reason and owning issue. Add a new
   test file to `GATE`, or the check goes red.
