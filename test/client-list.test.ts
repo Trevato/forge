@@ -155,12 +155,25 @@ describe("the client list", () => {
     expect((await fetch(`${parentServers.url}/api/v1/forge`)).status).toBe(404);
   });
 
-  test("a spawned child answers whether it is claimed and when anything last happened, and nothing else", async () => {
+  test("a spawned child tells anyone whether it is claimed, and only its parent when anything last happened", async () => {
     const res = await fetch(`${childServers.url}/api/v1/forge`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(Object.keys(body).sort()).toEqual(["claimed", "lastActivityAt"]);
     expect(body["claimed"]).toBe(false);
+    // The child has activity (its first boot opened the direction), but a
+    // stranger, or a wrong secret, does not learn when.
+    expect(body["lastActivityAt"]).toBeNull();
+    const wrong = await fetch(`${childServers.url}/api/v1/forge`, {
+      headers: { "x-forge-parent": "not-the-parents-secret" },
+    });
+    expect(((await wrong.json()) as Record<string, unknown>)["lastActivityAt"]).toBeNull();
+    // The parent, asking with the secret it kept, does.
+    const rows = (await (await mcp(adminRw)).json()) as any;
+    const maria = JSON.parse(rows.result.content[0].text).forges.find((f: any) => f.name === "maria");
+    expect(typeof maria.lastActivityAt).toBe("string");
+    // The secret itself is never in an answer.
+    expect(JSON.stringify(rows)).not.toMatch(/status|secret/i);
   });
 
   test("`for` is at most 200 characters", async () => {
