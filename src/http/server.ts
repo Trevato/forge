@@ -41,8 +41,7 @@ import {
   verifyPassword,
 } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
-import { EGRESS_REPORTED, healthResponse } from "./health.ts";
-import { egressSetting } from "../core/capacity.ts";
+import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -1678,10 +1677,7 @@ async function answerGet(
   request: Request,
 ): Promise<Response> {
   const url = publicUrl(request, app.config.url);
-  if (url.pathname === "/healthz")
-    return healthResponse(
-      egressSetting(app.db) === "report" ? [EGRESS_REPORTED] : [],
-    );
+  if (url.pathname === "/healthz") return healthResponse();
   const routeMethod = request.method === "HEAD" ? "GET" : request.method;
   // The one place a path decides its own shape of miss: anything under
   // `/api` matches only against the API's own routes, so a studio route as

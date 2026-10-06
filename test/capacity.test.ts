@@ -34,6 +34,8 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
 import { Gate } from "../src/git/env.ts";
+import { readHealth } from "../src/actions/health.ts";
+import { EGRESS_REPORTED } from "../src/kernel/vitals.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 
@@ -293,11 +295,12 @@ describe("capacity: only a forge admin reads or changes it", () => {
   });
 });
 
-describe("report mode is loud: the health line and the Capacity page say what it opens", () => {
+describe("report mode is loud to admins, and to nobody else", () => {
   let dataDir: string;
   let app: App;
   let servers: Servers;
   let alice: User;
+  let bob: User;
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-loud-"));
@@ -312,6 +315,14 @@ describe("report mode is loud: the health line and the Capacity page say what it
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
+    const b = await createUser(app.db, {
+      trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    bob = b.value;
   });
 
   afterAll(async () => {
@@ -330,27 +341,32 @@ describe("report mode is loud: the health line and the Capacity page say what it
     const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
     return (await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })).text();
   };
+  const needs = (who: User | undefined): string[] =>
+    "needs" in readHealth(app, who) ? (readHealth(app, who) as { needs: string[] }).needs : [];
 
-  test("enforced: the health line is the status alone, and the page carries no warning", async () => {
-    const health = await fetch(`${servers.url}/healthz`);
-    expect(health.status).toBe(200);
-    expect(await health.text()).toBe("ok");
-    expect(await page()).not.toContain('id="egress-reported"');
-  });
-
-  test("reported: the health line says every new cell may reach any public host on 80 and 443, and so does the page", async () => {
+  test("reported: the admin's vitals and the Capacity page name what is open", async () => {
     expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);
-    const health = await fetch(`${servers.url}/healthz`);
-    expect(health.status).toBe(200);
-    const text = await health.text();
-    expect(text.split("\n")[0]).toBe("ok");
-    expect(text).toContain("egress: reported, not enforced");
-    expect(text).toContain("any public host on ports 80 and 443");
+    expect(needs(alice)).toContain(EGRESS_REPORTED);
+    expect(EGRESS_REPORTED).toContain("any public host on ports 80 and 443");
     const shown = await page();
     expect(shown).toContain('id="egress-reported"');
     expect(shown.replace(/\s+/g, " ")).toContain("may reach any public host on ports 80 and 443");
+  });
+
+  test("reported: the public health check, a member and a stranger hear nothing of it", async () => {
+    const health = await fetch(`${servers.url}/healthz`);
+    expect(health.status).toBe(200);
+    expect(await health.text()).toBe("ok");
+    expect(JSON.stringify(readHealth(app, bob))).not.toContain("gress");
+    expect(JSON.stringify(readHealth(app, undefined))).not.toContain("gress");
+    const api = await (await fetch(`${servers.url}/api/v1/health`)).text();
+    expect(api).not.toContain("gress");
+  });
+
+  test("enforced: no warning anywhere", async () => {
     expect(changeCapacity(app, alice, "cells.egress", "enforce").ok).toBe(true);
-    expect(await (await fetch(`${servers.url}/healthz`)).text()).toBe("ok");
+    expect(needs(alice)).not.toContain(EGRESS_REPORTED);
+    expect(await page()).not.toContain('id="egress-reported"');
   });
 });
 
