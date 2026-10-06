@@ -239,6 +239,10 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
+import {
+  milestoneData,
+  milestonesJson,
+} from "../web/pages/milestones.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -2259,6 +2263,25 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!confirmed.ok) return respondAccess(confirmed.error, 422);
       return new Response(null, { status: 204 });
+    },
+  );
+  // Milestones as data: the plan's limbs with their weights, and one
+  // milestone opened. The same numbers as the pages.
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(milestonesJson(ctx, repo));
+  });
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/milestones/:number",
+    (ctx) => {
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const number = positiveInt(ctx.params.number);
+      const data =
+        number === undefined ? undefined : milestoneData(ctx, repo, number);
+      return data === undefined ? notFound() : json(data);
     },
   );
   // The map as data: ready now, blocked on, the critical path, every edge,

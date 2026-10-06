@@ -73,6 +73,10 @@ import {
 } from "../crew/direct.ts";
 import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
+import {
+  milestoneData,
+  milestonesJson,
+} from "../web/pages/milestones.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -974,6 +978,41 @@ const TOOLS: readonly Tool[] = [
           pillarView(ctx.app.db, repo),
         ),
       );
+    },
+  },
+  {
+    name: "milestones",
+    description:
+      "How far each thing asked for is, read from the dependency tree. With `app` alone: the plan's top-level limbs (the pillars and Later, or the plan's roots), each with done and total, open issues beneath it, how many are building, pulls merged in the last 7 days, its last movement, spend when you may see it, and `trim` when it is a candidate to trim. With `issue`: that milestone opened — who is building what, what is blocked and on what, what merged, an estimate from this week's pace, its own limbs and its leaves. The same numbers as the milestones pages.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description:
+            "The number of an issue that waits for others; the limbs when absent.",
+        },
+      },
+      required: ["app"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      if (args["issue"] === undefined) return good(milestonesJson(ctx, repo));
+      const number = args["issue"];
+      const data =
+        typeof number === "number" && Number.isInteger(number) && number > 0
+          ? milestoneData(ctx, repo, number)
+          : undefined;
+      return data === undefined
+        ? bad(
+            "not_a_milestone",
+            "no issue by that number waits for others here",
+          )
+        : good(data);
     },
   },
   {
