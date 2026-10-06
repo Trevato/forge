@@ -2045,7 +2045,8 @@ describe("the studio", () => {
     const erinHome = await (await erinGet("/")).text();
     expect(erinHome).toContain("No apps yet");
     expect(erinHome).toContain('href="/apps/new"');
-    expect(erinHome).toContain('href="/?mode=dev"');
+    expect(erinHome).toContain('href="/erin"');
+    expect(erinHome).not.toContain("/?mode=dev");
     expect(erinHome).not.toContain('href="/alice/lighthouse"');
     expect(erinHome).not.toContain("tell the crew something");
 
