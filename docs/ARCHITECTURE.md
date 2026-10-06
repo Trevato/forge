@@ -162,6 +162,18 @@ still counts them. The schema is deliberately small — tables earn their place:
 - `origin` / `origin_repo` / `origin_cursor` / `origin_app` / `oauth_flow`
   (connected accounts on other forges, and the connects in flight)
 
+**A migration only adds.** During a roll the old process keeps serving on
+the database the new one has just migrated, with the queries it was built
+with. So a migration adds — a table, a column with a default, an index, a
+row — and removing or renaming waits for the release after the last one
+that read it (add now, remove next release; a rename is two releases).
+`notAdditive` (`kernel/migrate.ts`) names a drop, a rename, a rebuild or a
+NOT NULL column without a default, and `test/schema-additive.test.ts`
+refuses one in any migration newer than the two newest releases recorded in
+`src/core/releases.json`, which the release agent bumps when it cuts one.
+An old process that restarts mid-roll refuses a database ahead of it
+(`user_version`), as it always has.
+
 State transitions use compare-and-swap (`UPDATE … WHERE state = ?`), and every
 transition writes its event row in the same transaction. On boot, a
 reconciliation sweep repairs the index from git (a merged branch whose pull row
