@@ -265,7 +265,12 @@ export function deferredIn(
 
 const GRAPH_MAX = 400;
 
-export function repoGraph(db: Database, repoId: string): Graph {
+export function repoGraph(
+  db: Database,
+  repoId: string,
+  /** Include sealed issues (`sealed.ts`): for a viewer who may see them, and the crew. */
+  options: { readonly sealed?: boolean; readonly sealedBy?: string } = {},
+): Graph {
   const edges = db
     .query<{ issue_id: string; blocked_by_id: string }, [string]>(
       `SELECT d.issue_id, d.blocked_by_id FROM issue_dependency d
@@ -299,9 +304,14 @@ export function repoGraph(db: Database, repoId: string): Graph {
     ids.add(e.issueId);
     ids.add(e.blockedById);
   }
-  const issues = [...getIssuesByIds(db, [...ids]).values()].sort(
-    (a, b) => a.number - b.number,
-  );
+  const issues = [...getIssuesByIds(db, [...ids]).values()]
+    .filter(
+      (i) =>
+        options.sealed === true ||
+        !i.sealed ||
+        (options.sealedBy !== undefined && i.authorId === options.sealedBy),
+    )
+    .sort((a, b) => a.number - b.number);
   const present = new Set(issues.map((i) => i.id));
   const kept = edges.filter(
     (e) => present.has(e.issueId) && present.has(e.blockedById),
@@ -314,11 +324,13 @@ export function repoGraph(db: Database, repoId: string): Graph {
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
     structural: set === undefined ? new Set() : structuralIds(set),
     edges: kept,
-    held: heldRows.map((r) => ({
-      issueId: r.issue_id,
-      blockedById: r.blocked_by_id,
-      reason: r.reason,
-    })),
+    held: heldRows
+      .filter((r) => present.has(r.issue_id) && present.has(r.blocked_by_id))
+      .map((r) => ({
+        issueId: r.issue_id,
+        blockedById: r.blocked_by_id,
+        reason: r.reason,
+      })),
     deferred: deferredWhy(
       { issues, edges: kept },
       deferredIn({ issues, edges: kept }, set?.gate?.id, set?.later?.id),

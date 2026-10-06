@@ -55,6 +55,7 @@ import {
   listPulls,
   type MergePullError,
   type Pull,
+  pullDir,
 } from "../core/pulls.ts";
 import {
   getRepoById,
@@ -353,7 +354,7 @@ export async function driveRepo(
   for (const r of active)
     if (r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const graph = repoGraph(app.db, repo.id);
+  const graph = repoGraph(app.db, repo.id, { sealed: true });
   const proposed = proposedWork(app.db, repo);
   const ready = readyNow(graph).filter(
     (r) =>
@@ -839,7 +840,7 @@ export function parkPull(
 export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   let landed = 0;
-  for (const pull of listPulls(app.db, repo.id, { state: "open", limit: 50 }))
+  for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 }))
     if (await landIfGreen(app, repo, pull)) landed++;
   return landed;
 }
@@ -899,7 +900,7 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
-      const graph = repoGraph(app.db, current.id);
+      const graph = repoGraph(app.db, current.id, { sealed: true });
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
@@ -944,13 +945,21 @@ export function readyState(
     db,
     repo,
     few.map((r) => r.issue),
-  ).map((issue, n) => ({
-    number: issue.number,
-    title: issue.title,
-    body: issue.body.slice(0, 400),
-    holdsUp: few[n]!.holdsUp,
-    ...(issue.untrusted === undefined ? {} : { untrusted: issue.untrusted }),
-  }));
+  ).map((issue, n) =>
+    // A sealed report's words never leave the forge for a decider
+    // (`core/sealed.ts`): it is a number, and that it is sealed.
+    issue.sealed
+      ? { number: issue.number, sealed: true, holdsUp: few[n]!.holdsUp }
+      : {
+          number: issue.number,
+          title: issue.title,
+          body: issue.body.slice(0, 400),
+          holdsUp: few[n]!.holdsUp,
+          ...(issue.untrusted === undefined
+            ? {}
+            : { untrusted: issue.untrusted }),
+        },
+  );
 }
 
 async function nextOf(
@@ -966,7 +975,7 @@ async function nextOf(
   const describe: Record<string, string> = {};
   for (const r of few)
     describe[String(r.issue.number)] =
-      `#${r.issue.number} ${r.issue.title}` +
+      `#${r.issue.number} ${r.issue.sealed ? "(sealed)" : r.issue.title}` +
       (r.holdsUp > 0 ? ` (holds up ${r.holdsUp})` : "");
   const decided = await decideAndRecord(
     app,
@@ -1108,7 +1117,8 @@ export async function landIfGreen(
   // up to date, before anyone is asked whether it should land. A conflict
   // is remembered by the two tips it was between: until one of them moves
   // there is nothing new to try.
-  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  // Asked where the pull's objects are: a sealed one's own place (`pullDir`).
+  const dir = await pullDir(app.db, app.reposRoot, repo, pull);
   const baseTip =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
   const between = `${pull.headOid}:${baseTip}`;
