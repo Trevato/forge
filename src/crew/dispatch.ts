@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
@@ -129,6 +130,8 @@ export async function startCrew(
     });
   // The shell sandbox is policy, not decoration: where the host cannot
   // hold a run to it, the runs say so instead of warning on every command.
+  // The default the Capacity page shows and goes back to (`core/capacity.ts`).
+  noteBooted(app.db, "crew.concurrency", String(options.concurrency));
   const sandbox = await sandboxAvailable();
   // Temp directories of runs a stopped forge never finished: old enough
   // that no forge beside this one (a rollout) can still be using them.
@@ -945,7 +948,11 @@ function pump(
   const runningIssues = new Set(
     active.filter((r) => r.state === "running").map((r) => r.issueId),
   );
-  let slots = options.concurrency - runningIssues.size;
+  // Read on every pump (`core/capacity.ts`): an admin's change is the next
+  // pick's, not the next boot's. `options.concurrency` is the boot default.
+  let slots =
+    capacityCount(app.db, "crew.concurrency", options.concurrency) -
+    runningIssues.size;
   for (const queued of listQueued(app.db, "agent", 50)) {
     if (slots <= 0) break;
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;

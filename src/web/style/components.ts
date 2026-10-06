@@ -119,6 +119,14 @@ select.input {
 .field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; }
 .field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; }
 .field[data-invalid] > label { color: var(--danger); }
+/* A group of checks is one field: the legend reads as a label, no frame. */
+fieldset.field { border: 0; padding: 0; min-width: 0; }
+fieldset.field > legend {
+  padding: 0; font-size: 13px; font-weight: 550; margin: 0 0 8px; color: var(--fg);
+}
+fieldset.field[data-invalid] > legend { color: var(--danger); }
+fieldset.field > .check { display: flex; }
+fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

@@ -14,6 +14,13 @@
  * a kind nobody classified is for readers, as it always was.
  */
 
+import { isActive } from "./users.ts";
+import {
+  canSeeSealed,
+  eventRow,
+  eventSubject,
+  type SealedRow,
+} from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
@@ -80,7 +87,36 @@ export function audienceFilter(
     entrants.set(repoId, yes);
     return yes;
   };
+  // An event about a sealed issue or pull — by number or by id — is for
+  // those who may see it (`sealed.ts`), whatever its kind says.
+  const sealedSeers = new Map<string, boolean>();
+  const maySeeSealed = (repoId: string): boolean => {
+    const known = sealedSeers.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const yes = repo !== undefined && canSeeSealed(db, repo, viewer);
+    sealedSeers.set(repoId, yes);
+    return yes;
+  };
+  // Its reporter follows it too, for that one issue (`mayView`).
+  const subjects = new Map<string, SealedRow | null>();
+  const hidden = (event: ForgeEvent): boolean => {
+    const subject = eventSubject(event);
+    if (subject === undefined) return false;
+    const key =
+      "id" in subject ? subject.id : `${subject.repoId}#${subject.number}`;
+    let row = subjects.get(key);
+    if (row === undefined) {
+      row = eventRow(db, event) ?? null;
+      subjects.set(key, row);
+    }
+    if (row === null || !row.sealed) return false;
+    if (viewer !== undefined && viewer.id === row.authorId && isActive(viewer))
+      return false;
+    return !maySeeSealed(event.repoId!);
+  };
   return (event) => {
+    if (hidden(event)) return false;
     switch (eventAudience(event.kind)) {
       case "readers":
         return true;

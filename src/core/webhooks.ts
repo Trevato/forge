@@ -8,6 +8,7 @@
  * secure channels" surface.
  */
 
+import { eventSealed } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { defect } from "../kernel/error.ts";
 import { id, secret as randomSecret } from "../kernel/id.ts";
@@ -140,6 +141,9 @@ export function kindMatches(spec: string, kind: string): boolean {
  */
 export function enqueueForEvent(db: Database, event: ForgeEvent): number {
   if (event.repoId === null) return 0;
+  // A hook's URL is somewhere else: nothing about a sealed report goes
+  // there, not even that it moved (`sealed.ts`).
+  if (eventSealed(db, event)) return 0;
   const hooks = db
     .query<
       { id: string; kinds: string },

@@ -476,6 +476,8 @@ form.inline { display: inline; margin-left: auto; }
 .front-pick { gap: 8px; }
 .front-pick form.inline { margin-left: 0; }
 .front-pin-any { padding: 12px 16px; flex-wrap: nowrap; }
+.front-weights { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 16px 12px; }
+.front-weights .input { width: 4.5em; margin-left: 4px; }
 .front-pin-any .input { flex: 1; min-width: 0; }
 .front-controls .small { padding: 0 16px 14px; }
 @media (max-width: 520px) {
@@ -1136,9 +1138,37 @@ textarea.editor:focus { outline: none; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 .no-hits .ico { color: var(--faint); flex: none; }
+/* The client list (#776): whom a forge is for is the point of the row, so
+   its line wraps rather than being cut off on a phone. */
+.forges-sent .row-meta { white-space: normal; }
+.forges-sent .row-trail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.forges-sent .row-trail form { margin: 0; }
+.forges-sent a.row-title { color: var(--fg); }
+@media (max-width: 560px) {
+  .forges-sent .row { flex-wrap: wrap; }
+  .forges-sent .row-trail { flex-basis: 100%; justify-content: flex-start; }
+}
+/* "+ New forge" (#426): the claim link, shown once, impossible to miss. */
+.claim-link-box {
+  margin: 0; padding: 12px 14px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--muted); overflow-wrap: anywhere;
+}
 
 }
 /* What needs you, pinned on the home: the bulk step's select as wide as
    its words, not the column. */
 .needs-you #asks-bulk select { width: auto; }
+/* A phone shows the top asks and one "N more" that opens in place to all
+   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that. */
+@media (max-width: 480px) {
+  .needs-you #asks-more > summary { display: none; }
+  .needs-you #asks-more::details-content { content-visibility: visible; }
+  .needs-you #asks-more > .stack { margin-top: 0; }
+}
+@media (min-width: 481px) {
+  .needs-you #asks-phone-more > summary { display: none; }
+  .needs-you #asks-phone-more::details-content { content-visibility: visible; }
+  .needs-you #asks-phone-more > .stack { margin-top: 0; }
+}
 `;

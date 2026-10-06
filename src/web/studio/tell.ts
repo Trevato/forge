@@ -12,6 +12,7 @@ import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { listEvents } from "../../core/events.ts";
+import { repoGraph } from "../../core/dependencies.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
 import { canEnterApp, canWrite, type Repo } from "../../core/repos.ts";
@@ -25,6 +26,8 @@ import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
+  badge,
+  btn,
   card,
   icon,
   labelCss,
@@ -107,6 +110,11 @@ export async function tellWord(
   if (!runsOpenTo(wordCtx, repo)) return { word: "told", note: "told" };
   if (activeRunFor(db, "agent", issue.id) !== undefined)
     return { word: "working", note: "working now" };
+  // Deferred work is not waiting to be picked up: the crew will not take
+  // it, and the page says why, as the map does.
+  const deferred = deferredWhy(wordCtx, repo, issue);
+  if (deferred !== undefined)
+    return { word: "told", note: `deferred: ${deferred}` };
   const last = listRuns(db, repo.id, {
     kind: "agent",
     issueId: issue.id,
@@ -124,6 +132,26 @@ export async function tellWord(
     note:
       wordCtx.record === undefined ? "waiting for someone" : "not picked up yet",
   };
+}
+
+/** One graph read for each repository on a page, however many tells it words. */
+const deferrals = new WeakMap<
+  WordCtx,
+  Map<string, ReadonlyMap<string, string>>
+>();
+
+/** Why this issue is deferred (`core/dependencies.ts`), when it is. */
+function deferredWhy(
+  wordCtx: WordCtx,
+  repo: Repo,
+  issue: Issue,
+): string | undefined {
+  let byRepo = deferrals.get(wordCtx);
+  if (byRepo === undefined) deferrals.set(wordCtx, (byRepo = new Map()));
+  let known = byRepo.get(repo.id);
+  if (known === undefined)
+    byRepo.set(repo.id, (known = repoGraph(wordCtx.db, repo.id).deferred));
+  return known.get(issue.id);
 }
 
 /** Whether the reader may see this repository's runs (`mayReadRuns`). */
@@ -285,6 +313,11 @@ async function studioTell(
             >${icon("external")}view on origin</a
           >`,
       )}
+      ${when(
+        issue.sealed,
+        () =>
+          badge("Sealed security report", { tone: "danger", icon: "lock" }),
+      )}
       ${workSpent(ctx, repo, issue.id)}
       ${issue.assigneeName !== null
         ? html`<span
@@ -308,6 +341,7 @@ async function studioTell(
     <summary>Details</summary>
     ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
     ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
+    ${sealCard(ctx, repo, issue, `${thread}/seal`)}
   </details>`;
 
   const body = html`${repoHeader(ctx, repo, "issues", {
@@ -350,4 +384,21 @@ async function studioTell(
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * Seal or unseal, for someone who can write here (`core/sealed.ts`).
+ * Unsealing publishes the report and its fix, so it says so on the button.
+ */
+function sealCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | null {
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return null;
+  return html`<form method="post" action="${action}" class="mt">
+    <input type="hidden" name="sealed" value="${issue.sealed ? "0" : "1"}" />
+    ${btn(
+      issue.sealed
+        ? "Unseal: publish this report, its fix and their whole history to every reader"
+        : "Seal as a security report",
+      { variant: issue.sealed ? "danger" : "ghost", icon: "lock" },
+    )}
+  </form>`;
 }
