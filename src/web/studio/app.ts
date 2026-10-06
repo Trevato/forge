@@ -199,7 +199,10 @@ export async function studioApp(
   // page as a stranger, whatever else they can see of the repository.
   const ownerFacts = canSeeOwnerFacts(db, repo, ctx.auth.user);
   // The owner of a spawned forge (or their everyday account) opening an
-  // app: their second first step.
+  // app: their second first step. A write during a GET, on purpose: opening
+  // the app IS the step, and a beacon would miss a person without
+  // JavaScript. It is one user_setting row, written once, only on a spawned
+  // forge, only for its owner, and changes nothing anyone else sees.
   await noteAppOpened(ctx.app, ctx.auth.user);
   const wordCtx: WordCtx = {
     db,
