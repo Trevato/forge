@@ -36,6 +36,8 @@ describe("the feed on the home page", () => {
     const mk = async (username: string, first = false) => {
       const r = await createUser(app.db, { trusted: true,
         username,
+        // Fixtures may name an account after a reserved word on purpose.
+        allowReserved: true,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",
         adminIfFirst: first,
@@ -105,11 +107,13 @@ describe("the feed on the home page", () => {
       actor: null,
       at: new Date().toISOString(),
       link: "/a/b/runs/r",
+      what: "<i>y</i>",
       reason: "<b>x</b>",
       score: 1,
     }).text;
     expect(card).not.toContain("<img");
     expect(card).not.toContain("<b>x</b>");
+    expect(card).not.toContain("<i>y</i>");
   });
 
   test("a viewer sees only their own feed: no leak from a private app", async () => {

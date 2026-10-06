@@ -27,6 +27,14 @@ import { sha256 } from "../kernel/hash.ts";
 const KEY = "spawn_claim";
 export const CLAIM_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * The link a person is sent: the secret rides the fragment, which a
+ * browser never sends — not in the request line, not in a Referer — so no
+ * server, edge or proxy between them and the child ever logs it.
+ */
+export const claimLink = (childUrl: string, token: string): string =>
+  `${childUrl.replace(/\/+$/, "")}/claim#${token}`;
+
 interface Stored {
   /** sha256 of the token, hex. */
   readonly h: string;
@@ -45,6 +53,8 @@ export interface Spawned {
   readonly org: User;
   /** Whether the spawner keeps owner access after the claim. */
   readonly keepAccess: boolean;
+  /** The child's own address, `<name>.<parent's host>`, when recorded. */
+  readonly url: string | undefined;
 }
 
 /** The organisation this forge was spawned as, or undefined if it was not spawned. */
@@ -55,12 +65,20 @@ export async function spawnedOrg(app: App): Promise<Spawned | undefined> {
     const parsed = (await file.json()) as {
       org?: unknown;
       keepAccess?: unknown;
+      url?: unknown;
     };
     const org =
       typeof parsed.org === "string" ? getOrg(app.db, parsed.org) : undefined;
     return org === undefined
       ? undefined
-      : { org, keepAccess: parsed.keepAccess === true };
+      : {
+          org,
+          keepAccess: parsed.keepAccess === true,
+          url:
+            typeof parsed.url === "string" && /^https?:\/\//.test(parsed.url)
+              ? parsed.url
+              : undefined,
+        };
   } catch {
     return undefined;
   }
@@ -97,7 +115,7 @@ export function mintClaim(
 }
 
 /** Whether a person already administers this forge: then it is not claimable. */
-const hasAdmin = (db: Database): boolean =>
+export const hasAdmin = (db: Database): boolean =>
   db
     .query(
       "SELECT 1 FROM user WHERE is_admin = 1 AND is_agent = 0 AND kind = 'user' LIMIT 1",

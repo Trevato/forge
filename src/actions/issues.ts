@@ -41,6 +41,7 @@ import {
   type BodyError,
   type TitleError,
 } from "../core/issues.ts";
+import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -193,6 +194,15 @@ export function setIssueState(
   const mayModerate =
     user.value.id === issue.authorId || canWrite(app.db, repo, user.value);
   if (!mayModerate) return err("forbidden");
+  // The plan's own issues — a pillar's umbrella, the Later umbrella, the
+  // Later gate — are a person's to close, whatever access an agent holds:
+  // closing the gate opens everything deferred.
+  if (
+    state === "closed" &&
+    user.value.kind === "agent" &&
+    isStructural(pillarsOf(app.db, repo), issue.id)
+  )
+    return err("forbidden");
   if (
     issue.kind === "pull" &&
     state === "open" &&

@@ -229,10 +229,10 @@ describe("apps, runs and the crew on the web", () => {
   });
 
   test("the dashboard and /apps list the app with its state and URL", async () => {
+    // The home's rail names your apps and offers New app (#625).
     const dash = await bodyOf(alice, "/");
-    expect(dash).toContain("<h2>Apps</h2>");
+    expect(dash).toContain("<h2>Your apps</h2>");
     expect(dash).toContain("alice/hello");
-    expect(dash).toContain('href="/alice/hello/app/production/open"');
     expect(dash).toContain('href="/apps/new"');
 
     // /apps is the shelf (#630): a row opens the app's page, where its URL
@@ -305,6 +305,30 @@ describe("apps, runs and the crew on the web", () => {
       buf.includes("event: run.started") || buf.includes("event: app.serving"),
     ).toBe(true);
   }, 20_000);
+
+  test("the app's tabs and doors: no second home key, no App button under the App tab, and telling the crew is offered only to who may", async () => {
+    // The palette's studio rows, so a studio browser.
+    const studio = (cookie: string) =>
+      cookie.replace("forge_mode=dev", "forge_mode=studio");
+    const home = await (await web(studio(alice), "/alice/hello")).text();
+    // `g h` is the wordmark's go-home key, once; the App tab takes none.
+    expect(home.split('data-shortcut="g h"').length - 1).toBe(1);
+    expect(home).toContain("— Tell the crew");
+    const files = await (await web(alice, "/alice/hello/files")).text();
+    expect(files).toContain('class="app-strip"');
+    const strip = files.slice(
+      files.indexOf('class="app-strip"'),
+      files.indexOf("</div>", files.indexOf('class="app-strip"')),
+    );
+    expect(strip).not.toContain(">App<");
+    // bob reads the public app but cannot write it; a visitor neither.
+    expect(await (await web(studio(bob), "/alice/hello")).text()).not.toContain(
+      "— Tell the crew",
+    );
+    expect(await (await web("", "/alice/hello")).text()).not.toContain(
+      "— Tell the crew",
+    );
+  });
 
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
@@ -405,7 +429,14 @@ describe("apps, runs and the crew on the web", () => {
 
     // Only an admin of the repository sees the section at all.
     expect((await web(bob, "/alice/hello/settings/app")).status).toBe(404);
-    expect((await web(bob, "/alice/hello/settings/crew")).status).toBe(404);
+    // The crew is a card on the one settings page now: bob, who can read
+    // but not write, is shown neither the roster nor a form there.
+    const bobCrew = await web(bob, "/alice/hello/settings/crew");
+    expect(bobCrew.status).toBe(303);
+    expect(bobCrew.headers.get("location")).toBe("/alice/hello/settings#crew");
+    const bobSettings = await bodyOf(bob, "/alice/hello/settings");
+    expect(bobSettings).not.toContain("Add to crew");
+    expect(bobSettings).not.toContain('action="/alice/hello/settings');
   });
 
   test("Open goes straight to a public app and through a grant for a private one", async () => {
@@ -638,8 +669,8 @@ describe("apps, runs and the crew on the web", () => {
   });
 
   test("a repository's crew: add, assign, refuse the ones not on it, remove", async () => {
-    const before = await bodyOf(alice, "/alice/hello/settings/crew");
-    expect(before).toContain("No crew yet");
+    const before = await bodyOf(alice, "/alice/hello/settings");
+    expect(before).toContain("Nobody yet");
     expect(before).toContain('<option value="bot">');
     const added = await web(alice, "/alice/hello/settings/crew", {
       form: { agent: "bot" },
@@ -648,9 +679,10 @@ describe("apps, runs and the crew on the web", () => {
     expect(listCrew(app.db, hello.id).map((a) => a.user.username)).toEqual([
       "bot",
     ]);
-    const after = await bodyOf(alice, "/alice/hello/settings/crew");
+    const after = await bodyOf(alice, "/alice/hello/settings");
     expect(after).toContain('action="/alice/hello/settings/crew/bot/remove"');
-    expect(after).toContain("already on this crew");
+    // Every agent is on the crew: nothing is left to add.
+    expect(after).not.toContain("Add to crew");
 
     // New app now offers the agent.
     expect(await bodyOf(alice, "/apps/new")).toContain('name="agent"');
@@ -745,8 +777,12 @@ describe("apps, runs and the crew on the web", () => {
     if (!opened.ok) return;
     const number = opened.value.number;
 
-    const page = await bodyOf(alice, `/alice/hello/pulls/${number}`);
-    expect(page).toContain("<h2>Preview</h2>");
+    // The preview is on the change; the assignee, the checks line and the
+    // merge box are its Files step, one tab under it.
+    expect(await bodyOf(alice, `/alice/hello/pulls/${number}`)).toContain(
+      "<h2>Preview</h2>",
+    );
+    const page = await bodyOf(alice, `/alice/hello/pulls/${number}/files`);
     expect(page).toContain("<h2>Assignee</h2>");
     // Checks are required: the line says so, and the box waits for them
     // unless the preview already came up green.

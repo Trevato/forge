@@ -77,6 +77,14 @@ function toUser(row: UserRow): User {
 export const isActive = (user: User): boolean =>
   user.suspendedAt === null && user.removedAt === null;
 
+/**
+ * Whether `viewer` finds no account at `user`'s name: a suspended or removed
+ * person is kept, and hidden from everyone but a site admin (#831). Their
+ * name stays on what they wrote in others' threads.
+ */
+export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
+  user.kind === "user" && !isActive(user) && viewer?.isAdmin !== true;
+
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 80;
@@ -84,6 +92,7 @@ const MAX_DISPLAY_NAME = 80;
 export type CreateUserError =
   | "invalid_username"
   | "username_taken"
+  | "username_reserved"
   | "email_taken"
   | "weak_password";
 
@@ -120,6 +129,14 @@ export interface CreateUserInput {
    * @default false
    */
   trusted?: boolean;
+  /**
+   * Make the account under a reserved name on purpose (\`core/reserved.ts\`):
+   * a seed that names it deliberately. Every other way in — signup, an
+   * edge or linked sign-in, any added later — is held to the rule here,
+   * in the one place accounts are made. Agents are named by the admin.
+   * @default false
+   */
+  allowReserved?: boolean;
 }
 
 export async function createUser(
@@ -145,6 +162,13 @@ export async function createUser(
         : "email_taken",
     );
   }
+  // Taken is said first; only a name nobody holds can be a reserved one.
+  if (
+    !agent &&
+    input.allowReserved !== true &&
+    reservedName(db, input.username) !== undefined
+  )
+    return err("username_reserved");
 
   const userId = id();
   // An account without a password has an empty hash, which no verifier
@@ -294,9 +318,9 @@ export async function ensureEdgeUser(
   const existing = getUserByName(db, login);
   if (existing)
     return existing.kind === "user" && isActive(existing) ? existing : undefined;
-  // The edge vouches for a login, not for its right to a name: a platform
-  // account called after the crew or the owner is not let in under it.
-  if (reservedName(db, login) !== undefined) return undefined;
+  // The edge vouches for a login, not for its right to a name: createUser
+  // refuses a reserved one, so a platform account called after the crew or
+  // the owner is not let in under it.
   const made = await createUser(db, {
     username: login,
     email: noreplyAddress(login, host),

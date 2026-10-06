@@ -99,6 +99,8 @@ import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
+import { feedbackSince } from "./news.ts";
+import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
 
 const log = createLog("crew");
 
@@ -238,6 +240,18 @@ export async function executeAgentRun(
   run: Run,
   options: CrewOptions,
 ): Promise<Pause | undefined> {
+  // A follow-up queued behind a run that has since answered everything:
+  // nothing new to act on, so nothing starts (`guard.ts`).
+  if (
+    run.reason === "feedback" &&
+    run.attempt === 0 &&
+    run.startedAt === null &&
+    skipsQueued(app, run)
+  ) {
+    const skipped = cancelRun(app.db, run.id, SKIP_SUMMARY);
+    if (skipped) announceRun(app, skipped);
+    return undefined;
+  }
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
   const lease = holdLease(app.db, run.id);
@@ -303,6 +317,21 @@ export async function executeAgentRun(
   });
   if (done) announceRun(app, done);
   return undefined;
+}
+
+/** Whether a queued follow-up would find nothing new (`news.ts`): recorded as a skip. */
+function skipsQueued(app: App, run: Run): boolean {
+  const repo = getRepoById(app.db, run.repoId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  const agent =
+    run.actorId === null ? undefined : getAgent(app.db, run.actorId);
+  return (
+    repo !== undefined &&
+    issue !== undefined &&
+    agent !== undefined &&
+    skipsFeedback(app.db, repo, issue, agent)
+  );
 }
 
 /**
@@ -669,7 +698,7 @@ async function work(
       (taskIssue === undefined
         ? undefined
         : lastAgentRun(app.db, taskIssue.id, agent.user.id));
-    const since = previous?.finishedAt ?? issue.createdAt;
+    const since = feedbackSince(app.db, repo, issue, agent);
     const record = getAppByRepo(app.db, repo.id);
     const runtime = appsRuntime(app);
     const previewUrl =
@@ -970,6 +999,8 @@ async function work(
           until.toISOString(),
           said,
         );
+        // Only a look at who could take over: no reservation is made here.
+        // The run pauses, and on resume it picks again with its reserve.
         const next = pickSubscription(
           app.db,
           app.config.dataDir,

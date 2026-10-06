@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { openDb } from "../src/kernel/db.ts";
 import { ForgeError, defect } from "../src/kernel/error.ts";
 import { id, secret } from "../src/kernel/id.ts";
@@ -134,10 +137,15 @@ describe("db", () => {
   });
 
   test("future schema refuses to run", () => {
-    const path = `/tmp/forge-test-${id()}.db`;
-    const db = openDb(path, ["CREATE TABLE a (x INTEGER)"]);
-    db.close();
-    expect(() => openDb(path, [])).toThrow(ForgeError);
+    const dir = mkdtempSync(join(tmpdir(), "forge-kernel-"));
+    try {
+      const path = join(dir, "forge.db");
+      const db = openDb(path, ["CREATE TABLE a (x INTEGER)"]);
+      db.close();
+      expect(() => openDb(path, [])).toThrow(ForgeError);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("foreign keys are enforced", () => {

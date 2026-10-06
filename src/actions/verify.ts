@@ -15,9 +15,10 @@ import {
   markVerified,
   resetVerification,
 } from "../core/verify.ts";
-import { resolveSecrets } from "../core/secret_store.ts";
+import { listSecretNames, resolveSecrets } from "../core/secret_store.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { sendMail, type Mailer } from "../kernel/mail.ts";
+import { mayMail, sendCapped } from "./mail.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
 
@@ -41,6 +42,17 @@ export const MAIL_SECRETS = ["MAIL_SMTP_URL", "MAIL_FROM"] as const;
  * at boot. Both of a pair, or neither. Read per message, so a changed secret
  * takes effect on the next mail; each read is audited by the store.
  */
+/**
+ * Whether the forge can send mail at all — both secrets set, or the boot
+ * configuration. Asked by name only: nothing is opened to answer it.
+ */
+export function mailConfigured(app: App): boolean {
+  if (app.config.mailer !== undefined || app.config.mail !== undefined)
+    return true;
+  const set = new Set(listSecretNames(app.db, "forge").map((s) => s.name));
+  return MAIL_SECRETS.every((name) => set.has(name));
+}
+
 function mailerOf(app: App, forUser: User): Mailer | undefined {
   if (app.config.mailer !== undefined) return app.config.mailer;
   const stored = resolveSecrets(
@@ -65,13 +77,14 @@ function verifyUrl(app: App, token: string): string {
 
 /**
  * Send the account a fresh link, if one may go now. "sent" when it went,
- * "too_soon" inside the resend window, "no_mail" when the forge cannot send.
+ * "too_soon" inside the resend window, "no_mail" when the forge cannot send,
+ * "capped" when the forge's mail caps hold it (`actions/mail.ts`).
  */
 export async function sendVerification(
   app: App,
   user: User,
   now: number = Date.now(),
-): Promise<"sent" | "too_soon" | "no_mail" | "failed"> {
+): Promise<"sent" | "too_soon" | "no_mail" | "capped" | "failed"> {
   const mailer = mailerOf(app, user);
   if (mailer === undefined) {
     app.log.warn("mail is not configured; a verification link was not sent", {
@@ -79,10 +92,13 @@ export async function sendVerification(
     });
     return "no_mail";
   }
+  // Asked before a link is made, so a capped send spends none of the
+  // account's own links; asked again as it goes (`sendCapped`).
+  if (!mayMail(app, user.email, now)) return "capped";
   const token = issueLink(app.db, user.id, user.email, now);
   if (token === undefined) return "too_soon";
   const link = verifyUrl(app, token);
-  const delivered = await mailer({
+  const outcome = await sendCapped(app, mailer, {
     to: user.email,
     subject: "Verify your email for the forge",
     text: [
@@ -94,8 +110,9 @@ export async function sendVerification(
       "",
       "If you did not sign up, ignore this message.",
     ].join("\n"),
-  }).catch(() => false);
-  if (!delivered) {
+  }, now);
+  if (outcome === "capped") return "capped";
+  if (outcome === "failed") {
     app.log.warn("a verification link could not be sent", {
       user: user.username,
     });
@@ -137,7 +154,10 @@ export async function resendVerification(
   app: App,
   actor: User | undefined,
 ): Promise<
-  Result<"sent" | "already", "unauthorized" | "too_soon" | "no_mail" | "failed">
+  Result<
+    "sent" | "already",
+    "unauthorized" | "too_soon" | "no_mail" | "capped" | "failed"
+  >
 > {
   const user = requireUser(actor);
   if (!user.ok) return user;

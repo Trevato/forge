@@ -218,7 +218,7 @@ describe("orgs over HTTP", () => {
     return fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: "org-http-pass",
         name: "c",

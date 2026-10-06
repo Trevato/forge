@@ -34,10 +34,8 @@ import {
   tabs,
   timelineItem,
 } from "../src/tui/ui/widgets.ts";
-import { describeEvent } from "../src/tui/screens/activity.ts";
 import { ago, plural } from "../src/tui/screens/common.ts";
 import { galleryFrame } from "../src/tui/gallery.ts";
-import type { ForgeEvent } from "../src/core/events.ts";
 
 const c = theme("dark").c;
 
@@ -615,113 +613,5 @@ describe("counted nouns", () => {
       "4d ago",
     );
     expect(ago("not a date")).toBe("");
-  });
-});
-
-describe("the activity feed's sentences", () => {
-  const event = (
-    kind: string,
-    payload: Record<string, unknown> = {},
-  ): ForgeEvent => ({
-    id: "01",
-    kind,
-    repoId: "r1",
-    actorId: "u1",
-    payload,
-    createdAt: new Date().toISOString(),
-  });
-  const at = { actor: "alice", repo: "alice/lighthouse" };
-
-  test("issues and pulls name the verb, the thing and its title", () => {
-    expect(
-      describeEvent(event("pull.opened", { number: 4 }), {
-        ...at,
-        title: "Treat 34 knots as gale",
-      }),
-    ).toEqual({
-      headline: "alice opened pull #4",
-      detail: "alice/lighthouse · #4 Treat 34 knots as gale",
-      subject: "#4 Treat 34 knots as gale",
-    });
-    expect(
-      describeEvent(event("issue.commented", { number: 1 }), {
-        actor: "bob",
-        repo: "alice/lighthouse",
-        title: "The lamp flickers at dusk",
-      })?.headline,
-    ).toBe("bob commented on issue #1");
-    expect(
-      describeEvent(event("issue.closed", { number: 2 }), at)?.headline,
-    ).toBe("alice closed issue #2");
-    expect(
-      describeEvent(event("pull.merged", { number: 4 }), at)?.headline,
-    ).toBe("alice merged pull #4");
-    expect(
-      describeEvent(event("issue.labeled", { number: 2 }), at)?.headline,
-    ).toBe("alice labelled issue #2");
-  });
-
-  test("repo-level events say where, and need no second line", () => {
-    expect(
-      describeEvent(
-        event("push", { updates: [{ ref: "refs/heads/main" }] }),
-        at,
-      ),
-    ).toEqual({
-      headline: "alice pushed to lighthouse main",
-      detail: "",
-      subject: "",
-    });
-    expect(describeEvent(event("repo.created"), at)?.headline).toBe(
-      "alice created lighthouse",
-    );
-    expect(
-      describeEvent(event("label.created", { name: "bug" }), at)?.headline,
-    ).toBe('alice added label "bug" to lighthouse');
-    expect(
-      describeEvent(event("repo.forked", { parent: "bob/lighthouse" }), at)
-        ?.headline,
-    ).toBe("alice forked bob/lighthouse");
-  });
-
-  test("a push of several refs still reads as a sentence", () => {
-    expect(
-      describeEvent(
-        event("push", {
-          updates: [{ ref: "refs/heads/main" }, { ref: "refs/heads/next" }],
-        }),
-        at,
-      )?.headline,
-    ).toBe("alice pushed to lighthouse");
-  });
-
-  test("account plumbing is dropped, not rendered", () => {
-    for (const kind of [
-      "user.created",
-      "user.updated",
-      "user.key_added",
-      "user.key_removed",
-      "token.created",
-      "token.deleted",
-    ])
-      expect(describeEvent(event(kind), at)).toBeNull();
-  });
-
-  test("an unknown kind still gets a line rather than vanishing", () => {
-    const line = describeEvent(event("check.completed", { number: 9 }), at);
-    expect(line?.headline).toBe("alice check completed #9");
-  });
-
-  test("a missing repo or title never leaves a dangling separator", () => {
-    expect(
-      describeEvent(event("issue.opened", { number: 7 }), { actor: "bob" }),
-    ).toEqual({
-      headline: "bob opened issue #7",
-      detail: "#7",
-      subject: "#7",
-    });
-    expect(describeEvent(event("repo.created"), { actor: "bob" })?.headline).toBe(
-      "bob created a repository",
-    );
   });
 });

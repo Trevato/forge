@@ -6,15 +6,16 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
-import { listChildren, spawnForge, type SpawnError } from "../actions/spawn.ts";
+import { listChildren, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
+import { kindOfToken } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
 import { hostedPlacement, type Placement } from "./placement.ts";
-import { dryRun, planSpawn, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
+import { dryRun, planSpawn, KEY_BUDGET_NOTE, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -93,6 +94,16 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (!Array.isArray(apps)) return apps;
   const crew = names(raw["crew"], "crew", MAX_CREW);
   if (!Array.isArray(crew)) return crew;
+  // The child's model key: an API-billed key with a whole-life budget, or none. A
+  // subscription token is a person's own plan and never travels.
+  const modelKey = raw["modelKey"];
+  if (modelKey !== undefined) {
+    if (typeof modelKey !== "string" || kindOfToken(modelKey) !== "api_key")
+      return invalid("modelKey", "must be an API key (sk-ant-api…); a subscription token is a person's own plan and never goes to a child");
+    if (raw["budgetUsd"] === undefined) return invalid("budgetUsd", "a model key needs a budget in dollars, for its whole life");
+  } else if (raw["budgetUsd"] !== undefined) {
+    return invalid("budgetUsd", "a budget is for a model key; send modelKey with it");
+  }
 
   const db = ctx.app.db;
   // Only what the caller named and may read: an unreadable app is "not a known app".
@@ -123,18 +134,44 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     carrySubscriptions: false,
     direction: raw["direction"],
     keepAccess: raw["keepAccess"],
+    budgetUsd: raw["budgetUsd"],
   };
 
   if (dry) {
     const planned = planSpawn(input, source);
     if (!planned.ok) return spawnWords({ kind: "invalid", ...planned.error });
-    return { status: 200, body: { dryRun: true, plan: planned.value, ...dryRun(planned.value, source) } };
+    return {
+      status: 200,
+      body: {
+        dryRun: true,
+        plan: planned.value,
+        ...dryRun(planned.value, source),
+        ...(planned.value.budgetUsd === null ? {} : { keyNote: KEY_BUDGET_NOTE }),
+      },
+    };
   }
   const made = await spawnForge(ctx.app, user, input, source, {
     placement: placementFor(ctx.app),
     request: ctx.request,
     url: ctx.url,
+    ...(typeof modelKey === "string" ? { modelKey } : {}),
   });
-  return made.ok ? { status: made.value.existed ? 200 : 201, body: { dryRun: false, ...made.value } } : spawnWords(made.error);
+  if (!made.ok) return spawnWords(made.error);
+  return {
+    status: made.value.existed ? 200 : 201,
+    body: {
+      dryRun: false,
+      ...made.value,
+      ...(typeof modelKey === "string" ? { keyNote: KEY_BUDGET_NOTE } : {}),
+    },
+  };
 }
 
+/** A new claim link for an unclaimed child (#729): the old one dies. */
+export async function reissueDoor(ctx: Ctx, user: User, name: string): Promise<Door> {
+  const made = await reissueClaim(ctx.app, user, name, { request: ctx.request, url: ctx.url });
+  if (made.ok) return { status: 201, body: { ...made.value } };
+  if (made.error.kind === "not_found")
+    return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
+  return spawnWords(made.error);
+}

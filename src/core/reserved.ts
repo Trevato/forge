@@ -90,6 +90,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "signup",
   "sitemap.xml",
   "sw.js",
+  "tell",
   "theme",
   "verify",
   "www",
@@ -131,6 +132,10 @@ const LOOKALIKE: Readonly<Record<string, string>> = {
  * Cherokee small letters.
  */
 const CONFUSABLE: Readonly<Record<string, string>> = {
+  // Latin letters that do not decompose under NFKD, written as the letters
+  // they are read as (so Strauß is strauss, not a foreign script)
+  ß: "ss", ł: "l", ø: "o", æ: "ae", œ: "oe", đ: "d", ð: "d", þ: "th",
+  ı: "i", ŧ: "t", ħ: "h",
   // Cyrillic
   а: "a", б: "b", в: "b", г: "r", д: "d", е: "e", ё: "e", з: "3", и: "u",
   й: "u", к: "k", м: "m", н: "h", о: "o", п: "n", р: "p", с: "c", т: "t",
@@ -185,6 +190,27 @@ const SYSTEM = new Set(SYSTEM_NAMES.map(skeleton));
 export type Reservation = "system" | "agent" | "owner" | "mixed";
 
 /**
+ * Words that, beside one of the crew's names, make a name claim to be the
+ * crew: "Scout (crew)", "scout-bot". An agent's name alone is an ordinary
+ * word a person may well have (Mason, Juniper), so it is the pairing that is
+ * refused, not the word.
+ */
+const ROLE_WORDS = new Set(
+  [
+    "crew", "agent", "bot", "ai", "official", "staff", "team", "admin",
+    "owner", "forge", "moderator", "mod", "support", "steward",
+  ].map((w) => skeleton(w)),
+);
+
+/** The words of a name, each as its skeleton: "Scout (crew)" is scout, crew. */
+const wordsOf = (name: string): string[] =>
+  name
+    .normalize("NFKD")
+    .split(/[^\p{L}\p{N}]+/u)
+    .map(skeleton)
+    .filter((w) => w !== "");
+
+/**
  * Why `name` is not free for a new claim, or undefined when it is. `self`
  * is the account making the claim: its own name and display name never
  * count against it (an owner may write their own name as a display name).
@@ -214,5 +240,65 @@ export function reservedName(
     if (names.some((n) => skeleton(n) === shape))
       return holder.is_agent === 1 ? "agent" : "owner";
   }
+  // A name that carries a protected one inside it: the owner's handle as
+  // any word ("trevato (owner)", "trevato-official"), or one of the crew's
+  // names beside a word that claims the role ("Scout (crew)").
+  const words = wordsOf(name);
+  if (words.length > 1) {
+    const claimsRole = words.some((w) => ROLE_WORDS.has(w));
+    for (const holder of holders) {
+      const handle = skeleton(holder.username);
+      if (handle.length < 3 || !words.includes(handle)) continue;
+      if (holder.is_agent !== 1) return "owner";
+      if (claimsRole) return "agent";
+    }
+  }
+  // The same, run together: "trevato2", "trevatoo", "realtrevato",
+  // "scoutbot". Trailing digits never make a name someone else's.
+  // The digits come off before the fold, which reads 0 as o and 7 as t.
+  const run = wordsOf(name.replace(/[0-9]+$/u, "")).join("");
+  for (const holder of holders) {
+    const handle = skeleton(holder.username);
+    if (handle.length < 3) continue;
+    if (holder.is_agent === 1) {
+      if (runsWithRole(run, handle)) return "agent";
+    } else if (ownersRunOn(run, handle)) return "owner";
+  }
   return undefined;
+}
+
+/**
+ * Words that, run on before or after the owner's handle, make a name claim
+ * to be them: the role words, and the ways people say "the real one".
+ */
+const HONORIFIC_WORDS = new Set(
+  [...ROLE_WORDS, ...["real", "the", "its", "iam", "im", "true", "original"].map(skeleton)],
+);
+
+/** Whether `run` is `handle` with only `words` run on, either side, any number. */
+function bareIs(run: string, handle: string, words: ReadonlySet<string>): boolean {
+  if (run === handle) return true;
+  for (const w of words) {
+    if (run.length <= w.length) continue;
+    if (run.startsWith(w) && bareIs(run.slice(w.length), handle, words)) return true;
+    if (run.endsWith(w) && bareIs(run.slice(0, -w.length), handle, words)) return true;
+  }
+  return false;
+}
+
+/** A crew name run together with a role word, either way round. */
+const runsWithRole = (run: string, handle: string): boolean =>
+  bareIs(run, handle, ROLE_WORDS);
+
+/**
+ * The owner's handle run on: its last letter doubled ("trevatoo"), or a
+ * role or honorific word either side ("realtrevato", "trevatoofficial").
+ * Never a longer name that only contains it: an admin called maria leaves
+ * mariana and annamaria free.
+ */
+function ownersRunOn(run: string, handle: string): boolean {
+  const last = handle.at(-1)!;
+  const tail = run.slice(handle.length);
+  if (run.startsWith(handle) && [...tail].every((c) => c === last)) return true;
+  return bareIs(run, handle, HONORIFIC_WORDS);
 }

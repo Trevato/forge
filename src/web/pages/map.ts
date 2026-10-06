@@ -25,6 +25,7 @@ import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
+  idleFurniture,
   levelAndFlow,
   readyNow,
   repoGraph,
@@ -71,6 +72,7 @@ import {
   LATER,
   NO_PILLAR,
   PILLAR_DAYS,
+  PLAN_OWN,
   pillarView,
   type PillarView,
 } from "../../core/pillars.ts";
@@ -488,6 +490,12 @@ export function marksFor(
   for (const id of graph.unadopted) {
     parked.add(id);
     why.set(id, READER_SUGGESTION);
+  }
+  // An umbrella or the gate with nothing open in front of it is not ready:
+  // it is a person's to close.
+  for (const issue of idleFurniture(graph)) {
+    parked.add(issue.id);
+    why.set(issue.id, PLAN_OWN);
   }
   for (const h of graph.held) {
     parked.add(h.issueId);

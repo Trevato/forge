@@ -15,6 +15,7 @@ import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
+import { runningLine } from "../kernel/version.ts";
 import {
   metaThemeColor,
   THEME_NAMES,
@@ -204,6 +205,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     // The "+" menu is hidden on a phone to keep the topbar inside the
@@ -276,6 +278,7 @@ function helpButton(): Html {
 const STATIC_PALETTE_DEV: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -297,6 +300,7 @@ const STATIC_PALETTE_DEV: PaletteItem[] = [
 const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "Asks you", h: "/asks", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
@@ -475,10 +479,20 @@ function topbar(
     </header>`;
 }
 
-function footer(): Html {
+/**
+ * The foot of every page. A site admin reads what is running there, as the
+ * build stamped it (`kernel/version.ts`), in place of the line everyone
+ * else gets: the one person who is asked "which version is this?".
+ */
+function footer(ctx: Ctx): Html {
   return html`<footer class="foot">
     <span class="mark"></span>
-    <span>forge — your code, your machine</span>
+    <span
+      >forge
+      ${ctx.auth.user?.isAdmin === true
+        ? runningLine()
+        : "— your code, your machine"}</span
+    >
     <span class="spacer"></span>
     <button
       class="btn js-only"
@@ -529,7 +543,7 @@ export function page(options: PageOptions, status = 200): Response {
     >
       ${flash ? flashToast(flash) : null}${options.body}
     </main>
-    ${options.bare ? null : footer()} ${overlays()}
+    ${options.bare ? null : footer(ctx)} ${overlays()}
     ${paletteIndex(ctx, options.palette ?? [])}`;
 
   const doc = html`<!doctype html>

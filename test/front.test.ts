@@ -11,7 +11,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { forgetFrontScores } from "../src/actions/front.ts";
+import { suspendAccount } from "../src/actions/accounts.ts";
+import { forgetFrontScores, frontPage } from "../src/actions/front.ts";
+import * as lookService from "../src/looks/service.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import {
@@ -38,6 +40,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startLooks } from "../src/looks/service.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
 
@@ -223,6 +226,8 @@ describe("the front page", () => {
     const user = async (username: string) => {
       const made = await createUser(app.db, { trusted: true,
         username,
+        // Fixtures may name an account after a reserved word on purpose.
+        allowReserved: true,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",
         adminIfFirst: true,
@@ -619,5 +624,66 @@ describe("the front page", () => {
     const opened = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(opened.featured.state).toBe("running");
     expect(opened.featured.signals.awakeHours).toBeGreaterThan(3);
+  });
+
+  test("a suspended account's app is not on the front page, ranked or pinned", async () => {
+    const sus = await createUser(app.db, {
+      username: "suspended-maker",
+      email: "suspended-maker@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!sus.ok) throw new Error(sus.error);
+    proveAll(app);
+    await make(sus.value, "sus-app");
+    expect((await put(adminToken, { pinned: ["suspended-maker/sus-app"], hidden: [] })).status).toBe(200);
+    forgetFrontScores(app);
+    expect(await door()).toContain('href="/suspended-maker/sus-app"');
+    expect((await suspendAccount(app, admin, "suspended-maker")).ok).toBe(true);
+    forgetFrontScores(app);
+    const body = await door();
+    expect(body).not.toContain('href="/suspended-maker/sus-app"');
+    const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+    expect(JSON.stringify(json)).not.toContain("suspended-maker/sus-app\"");
+    expect(json.featured?.repo).not.toBe("suspended-maker/sus-app");
+  });
+
+  test("the page's memory of which thumbs were taken as a stranger keeps only the pictures it shows, however often they are retaken (#768)", async () => {
+    const { repo, record } = await make(admin, "retaken");
+    const reads = spyOn(lookService, "keepLook");
+    try {
+      frontPage(app);
+      // A picture already checked is not read again.
+      reads.mockClear();
+      frontPage(app);
+      expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(0);
+      const retake = (n: number) => {
+        const path = `looks/${record.id}/thumb-${n}.png`;
+        mkdirSync(join(dataDir, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir, path), PNG);
+        recordLook(app.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: HEAD,
+          kind: "thumb",
+          path,
+        });
+      };
+      for (let n = 0; n < 25; n++) {
+        retake(n);
+        reads.mockClear();
+        const shown = frontPage(app);
+        // The new picture is read once…
+        expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(1);
+        expect(JSON.stringify(shown)).toContain(`/${repo.ownerName}/${repo.name}/looks/`);
+      }
+      // …and the ones it replaced were forgotten: shown again, the first is
+      // read afresh, not answered from a memory that kept every path.
+      retake(0);
+      reads.mockClear();
+      frontPage(app);
+      expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 });

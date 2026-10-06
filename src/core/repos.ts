@@ -20,9 +20,14 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { isAppMember } from "./app_members.ts";
+import { appsNaming, isAppMember } from "./app_members.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
-import { REPO_VISIBLE, REPO_WRITABLE } from "./visibility.ts";
+import {
+  OWNER_STANDING,
+  PUBLIC_VISIBLE,
+  REPO_VISIBLE,
+  REPO_WRITABLE,
+} from "./visibility.ts";
 import {
   accessAllows,
   orgAccess,
@@ -512,7 +517,7 @@ export function listReposVisibleTo(
   options: ListReposOptions = {},
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? ""];
-  let where = viewer ? VISIBLE : "repo.visibility = 'public'";
+  let where = viewer ? VISIBLE : PUBLIC_VISIBLE;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
     const p = params.length;
@@ -576,7 +581,7 @@ export function listReposByOwner(
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? "", ownerName];
   let where = `user.username = ?2 COLLATE NOCASE AND ${
-    viewer ? VISIBLE : "repo.visibility = 'public'"
+    viewer ? VISIBLE : PUBLIC_VISIBLE
   }`;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
@@ -670,11 +675,27 @@ function orgAccessFor(
   return orgAccess(db, repo.ownerId, user);
 }
 
+/**
+ * Whether the repo's owner is in good standing. A suspended or removed
+ * account's repositories read as absent to everyone but a site admin
+ * (`OWNER_STANDING`, its SQL twin).
+ */
+export function ownerInStanding(db: Database, repo: Repo): boolean {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT 1 AS n FROM repo WHERE repo.id = ?1 AND ${OWNER_STANDING}`,
+      )
+      .get(repo.id) !== null
+  );
+}
+
 export function canRead(
   db: Database,
   repo: Repo,
   user: User | undefined,
 ): boolean {
+  if (!ownerInStanding(db, repo)) return user?.isAdmin === true;
   if (repo.visibility === "public") return true;
   if (personalOrDirect(repo, user)) return true;
   if (onCrew(db, repo, user)) return true;
@@ -714,6 +735,47 @@ export function canEnterApp(
     isActive(user) &&
     isAppMember(db, app.id, user.id)
   );
+}
+
+/**
+ * `canEnterApp` for a whole page of apps, in a fixed number of reads: the
+ * ids of the apps `user` may enter. The same rule, clause for clause — a
+ * public app is open; a private one answers to whoever may write the
+ * repository or is on its crew (`writableRepoIds`, the SQL twin of
+ * `canWrite` with the crew in it), and, when `named`, to an active person
+ * the app names — asked once for every private app rather than per row.
+ */
+export function enterableApps(
+  db: Database,
+  rows: readonly {
+    readonly repo: Repo;
+    readonly app: { readonly id: string; readonly access: "public" | "private" };
+  }[],
+  user: User | undefined,
+  { named = true }: { named?: boolean } = {},
+): Set<string> {
+  const out = new Set<string>();
+  const closed = rows.filter((r) => {
+    if (r.app.access === "public") out.add(r.app.id);
+    return r.app.access !== "public";
+  });
+  if (closed.length === 0 || user === undefined) return out;
+  const writable = writableRepoIds(
+    db,
+    user,
+    closed.map((r) => r.repo.id),
+  );
+  const naming =
+    named && user.kind === "user" && isActive(user)
+      ? appsNaming(
+          db,
+          user.id,
+          closed.map((r) => r.app.id),
+        )
+      : new Set<string>();
+  for (const r of closed)
+    if (writable.has(r.repo.id) || naming.has(r.app.id)) out.add(r.app.id);
+  return out;
 }
 
 /**

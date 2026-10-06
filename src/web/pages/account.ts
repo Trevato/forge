@@ -27,9 +27,11 @@ import {
 } from "../../crew/notify.ts";
 import { forgeHost, noreplyAddress } from "../../core/commit_identity.ts";
 import { listKeys } from "../../core/keys.ts";
+import { endAccountSession } from "../../actions/signins.ts";
+import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
-import type { Ctx } from "../../http/context.ts";
+import { cookieValue, type Ctx } from "../../http/context.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
   settingsLayout,
@@ -50,6 +52,7 @@ import {
   time,
   field as uiField,
 } from "../ui.ts";
+import { everydayLine } from "./everyday.ts";
 
 type Section = "profile" | "password" | "tokens" | "keys";
 
@@ -147,7 +150,9 @@ export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
       ? "A link was sent a moment ago. Check your inbox, or try again in a few minutes."
       : sent.error === "no_mail"
         ? "This forge sends no mail yet. Ask its owner to verify you."
-        : "The link could not be sent. Try again.";
+        : sent.error === "capped"
+          ? "The forge has sent all the mail it may for now. Try again tomorrow, or ask its owner to verify you."
+          : "The link could not be sent. Try again.";
   return flashTo(ctx, "/settings", { message });
 }
 
@@ -219,7 +224,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
+    html`${everydayLine(ctx, ctx.auth.user)}${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
   );
 }
 
@@ -273,7 +278,9 @@ export async function accountUpdate(ctx: Ctx): Promise<Response> {
           ? { email: "That doesn't look like an email address." }
           : updated.error === "display_name_reserved"
             ? { displayName: "That name belongs to the crew, the owner or the forge." }
-            : {};
+            : updated.error === "display_name_mixed_script"
+              ? { displayName: "Write it in one alphabet: letters from different scripts can pass for other names." }
+              : {};
     return accountShell(
       ctx,
       "profile",
@@ -387,8 +394,60 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
 
 // ---- tokens ----
 
+/**
+ * An account's signed-in browsers, each with Sign out. `base` is where its
+ * acts post: the person's own settings, or the owner's page for them.
+ */
+export function sessionsCard(
+  sessions: readonly SessionInfo[],
+  base: string,
+): Html {
+  return card(
+    sessions.length === 0
+      ? html`<p class="muted">Not signed in on any browser.</p>`
+      : html`<div class="table-scroll">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Signed in</th>
+                <th>Last seen</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${sessions.map(
+                (s) =>
+                  html`<tr>
+                    <td class="muted">
+                      ${time(s.createdAt)}
+                      ${s.current ? badge("This browser") : null}
+                    </td>
+                    <td class="muted">
+                      ${s.lastSeenAt ? time(s.lastSeenAt) : "not since"}
+                    </td>
+                    <td>
+                      ${confirmAction({
+                        action: `${base}/sessions/${s.id}/delete`,
+                        verb: "Sign out",
+                        size: "sm",
+                      })}
+                    </td>
+                  </tr>`,
+              )}
+            </tbody>
+          </table>
+        </div>`,
+    { pad: false, head: html`<h3>Signed-in browsers</h3>` },
+  );
+}
+
 function tokensView(ctx: Ctx): Html {
   const tokens = listTokens(ctx.app.db, ctx.auth.user!.id);
+  const sessions = listSessions(
+    ctx.app.db,
+    ctx.auth.user!.id,
+    cookieValue(ctx.request, "forge_session"),
+  );
   return html`<p class="muted small mb">
       Use a token as the password when pushing over HTTPS, or as a
       <span class="mono">Bearer</span> token for the API. Your account password
@@ -454,12 +513,24 @@ function tokensView(ctx: Ctx): Html {
           ],
           hint: "A token can never mint another token, whatever its scope.",
         })}
+        ${ctx.auth.user?.isAdmin
+          ? html`<div class="field" id="ai-admin">
+              <label class="check">
+                <input type="checkbox" name="aiAdmin" required />
+                <span
+                  >I mean to give this token admin: you are the forge's admin,
+                  so whatever holds it — an AI included — acts as admin.</span
+                >
+              </label>
+            </div>`
+          : null}
         <div class="form-actions">
           ${btn("Generate token", { variant: "primary" })}
         </div>
       </form>`,
       { head: html`<h3>New token</h3>` },
-    )}`;
+    )}
+    ${sessionsCard(sessions, "/settings")}`;
 }
 
 // GET /settings/tokens
@@ -478,6 +549,13 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
   }
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
+  // A site admin's token acts as admin, whatever its scope: minted only on
+  // purpose (#596), never by a form left at its defaults.
+  if (ctx.auth.user.isAdmin && field(form, "aiAdmin") !== "on")
+    return flashTo(ctx, "/settings/tokens", {
+      tone: "danger",
+      message: "You are the forge's admin: tick that you mean to give this token admin, or make it from your everyday account.",
+    });
   const scope = field(form, "scope");
   const chosen: TokenScope = scope === "ro" || scope === "admin" ? scope : "rw";
   const minted = createToken(
@@ -508,6 +586,25 @@ export async function tokenDelete(ctx: Ctx): Promise<Response> {
   });
 }
 
+// POST /settings/sessions/:id/delete
+export async function sessionDelete(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const user = ctx.auth.user;
+  const ended = endAccountSession(
+    ctx.app,
+    user,
+    user.username,
+    ctx.params.id ?? "",
+  );
+  return flashTo(ctx, "/settings/tokens", {
+    ...(ended.ok
+      ? { message: "Signed out of that browser." }
+      : { tone: "danger" as const, message: "No such browser." }),
+  });
+}
+
 // ---- ssh keys ----
 
 function keysView(
@@ -515,17 +612,16 @@ function keysView(
   values: { name: string; key: string; error?: string },
 ): Html {
   const keys = listKeys(ctx.app.db, ctx.auth.user!.id);
-  return html`${when(
-      sshCommand(ctx.app),
-      (ssh) =>
-        html`<p class="mb terminal-line">
+  const ssh = sshCommand(ctx.app);
+  return html`${ssh === undefined
+      ? html`<p class="mb muted" id="terminal-off">The terminal is off on this forge.</p>`
+      : html`<p class="mb terminal-line">
           <code class="mono">${ssh}</code>
           ${when(
             ctx.app.config.sshHostKey,
             (fp) => html`<span class="muted small">host key ${fp}</span>`,
           )}
-        </p>`,
-    )}
+        </p>`}
     <p class="muted small mb">
       Keys that sign you in over SSH. Paste a public key (<span class="mono"
         >~/.ssh/id_ed25519.pub</span

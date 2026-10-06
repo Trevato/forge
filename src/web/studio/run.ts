@@ -94,6 +94,7 @@ export async function runView(
     runtime: appsRuntime(ctx.app),
     record: getAppByRepo(db, repo.id),
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const { word } = await runWord(wordCtx, run);
   const unfinished = !isTerminal(run.state);
@@ -223,6 +224,7 @@ export async function runView(
         cap: all ? Math.max(lines.length, RUN_TRANSCRIPT_CAP) : RUN_TRANSCRIPT_CAP,
         lines,
         allHref: `${base}/runs/${run.id}?all=1`,
+        truncated,
         ...(unfinished ? { stream } : {}),
         pulse: run.state === "running",
         extra: html`<button type="button" class="run-jump" id="run-jump" hidden>

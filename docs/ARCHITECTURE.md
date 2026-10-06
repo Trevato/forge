@@ -352,6 +352,19 @@ Paid-for lessons from open-platform-ts, designed in structurally:
    reconciles anything a notification missed.
 5. Config reloads fail closed — a bad config degrades to the last good one,
    never a dead process.
+6. No request has the forge read an unbounded body (`src/http/limits.ts`).
+   The listener's ceiling (`maxRequestBodySize`) is 512 MiB, the largest
+   git push, and the runtime enforces it on a declared length only. Every
+   reader counts the stream itself, declared or chunked: 16 MiB for any JSON
+   or form body, 64 KiB for anything a stranger may send (signing up or in,
+   a report, a client registration), 16 MiB for a git fetch's negotiation
+   (1 MiB as sent when compressed, inflated with its own ceiling), 512 MiB
+   for a push's pack. Past a cap the reader stops keeping bytes and drains
+   at most 1 MiB more, so the connection stays framed and the next request
+   on it is read as itself; past that the connection is closed once
+   answered. A body no route read, of no declared length, is treated the
+   same. A cancelled read is never used: it leaves the rest of the body on
+   the connection to be taken for the next request.
 
 ## The diff viewer
 
@@ -516,8 +529,21 @@ spike #339) implements the same interface and must provide:
 
 ## The forge's standing
 
-`GET /api/v1/health` answers anyone with `{ ok, version, draining, rollout:
-{ state: ok|blocked|held, reason }, incidents, stale, checkedAt }` — the
+`GET /api/v1/health` answers anyone with `{ ok, version, commit, draining,
+rollout: { state: ok|blocked|held, reason }, incidents, stale, checkedAt }`.
+The MCP `health` tool gives the same answer (`actions/health.ts`).
+
+`version` and `commit` are what is running, as the build stamped it
+(`kernel/version.ts`): the release workflow passes the tag it is building
+to the image as `VERSION`, the `Dockerfile` turns `VERSION` and `COMMIT`
+into `FORGE_VERSION` and `FORGE_COMMIT`, and the process reads them back.
+No file in the repository carries the number; `package.json` says `0.0.0`,
+like the chart's `appVersion`. A forge run from source says `dev`, and one
+that another forge runs as an app reports the commit it was started from.
+A site admin reads the same line at the foot of every page, and an MCP
+client in the server's `serverInfo`.
+
+The rest is the
 platform's word, read from the read-only `forge-guard` ConfigMap mounted at
 `FORGE_GUARD_DIR` (default `/etc/forge-guard`, `kernel/guard.ts`): a `stuck`
 incident blocks, `held` holds, a view older than ten minutes is stale. A

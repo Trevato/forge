@@ -218,10 +218,95 @@ describe("reserved names", () => {
   test("a name mixing Latin with an unknown script is refused; one script is fine", () => {
     const ada = getUserByName(app.db, "ada")!;
     // Not in the fold table, so it cannot be judged: refused, not dropped.
-    expect(updateProfile(app, ada, { displayName: "scoutж" }).ok).toBe(false);
-    expect(updateProfile(app, ada, { displayName: "Sc中out" }).ok).toBe(false);
+    for (const displayName of ["scoutж", "Sc中out"]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(false);
+      // Refused for what it is, not as someone else's name.
+      if (!patched.ok) expect(patched.error).toBe("display_name_mixed_script");
+    }
     expect(updateProfile(app, ada, { displayName: "张伟" }).ok).toBe(true);
     expect(updateProfile(app, ada, { displayName: "José" }).ok).toBe(true);
+  });
+
+  test("Latin letters that do not decompose are letters, not a foreign script", () => {
+    const ada = getUserByName(app.db, "ada")!;
+    for (const displayName of ["Strauß", "Łukasz", "Søren", "Æsa", "Đorđe", "Þóra", "Bılal"]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(true);
+    }
+    // …and they fold, so they cannot hide a protected name either.
+    expect(updateProfile(app, ada, { displayName: "Scøut" }).ok).toBe(false);
+  });
+
+  test("a name that carries the owner's handle, or a crew name with a role, is refused", () => {
+    const ada = getUserByName(app.db, "ada")!;
+    for (const displayName of ["trevato (owner)", "Trevato official", "the real trevato", "Scout (crew)", "scout bot", "Torque · AI"]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(false);
+      if (!patched.ok) expect(patched.error).toBe("display_name_reserved");
+    }
+    // A crew name is also a word people have: alone beside other words it is fine.
+    expect(updateProfile(app, ada, { displayName: "Scout Finch" }).ok).toBe(true);
+  });
+
+  test("a username that carries a protected name is refused at signup", async () => {
+    for (const name of ["trevato-official", "scout-bot", "torque-crew"]) {
+      const res = await signup(name);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: "username_reserved" });
+    }
+    expect((await signup("scout-finch")).status).toBe(201);
+  });
+
+  test("a name run together with a protected one is refused too", async () => {
+    // The owner's handle with digits, a doubled last letter, or a role word
+    // run on; a crew name run together with a role word.
+    for (const name of ["trevato2", "trevato007", "trevatoo", "trevatoofficial", "realtrevato", "scoutbot", "botscout", "torquecrew2"]) {
+      const res = await signup(name);
+      expect([name, res.status]).toEqual([name, 422]);
+      expect(await res.json()).toEqual({ error: "username_reserved" });
+    }
+    const ada = getUserByName(app.db, "ada")!;
+    for (const displayName of ["Trevato2", "ScoutBot"]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(false);
+    }
+    // A longer name that only contains a protected one is someone's own.
+    for (const name of ["scouting", "torquemada", "scouts"])
+      expect((await signup(name)).status).toBe(201);
+  });
+
+  test("an admin with a common first name leaves the longer names that contain it free", async () => {
+    const maria = await createUser(app.db, {
+      trusted: true,
+      username: "maria",
+      email: "maria@f.dev",
+      password: "a-good-passphrase",
+    });
+    if (!maria.ok) throw new Error(maria.error);
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(maria.value.id);
+    try {
+      for (const name of ["mariana", "annamaria", "rosemaria"])
+        expect((await signup(name)).status).toBe(201);
+      for (const name of ["realmaria", "maria2", "mariaa", "themaria", "mariaofficial"])
+        expect((await signup(name)).status).toBe(422);
+    } finally {
+      app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(maria.value.id);
+    }
+  });
+
+  test("every way an account is made holds to the rule; a seed opts out by name", async () => {
+    // A way in added later (a linked sign-in) makes accounts through
+    // createUser, and inherits the rule without calling anything.
+    const linked = await createUser(app.db, { username: "sc0ut", email: "linked@outsider.test" });
+    expect(linked.ok).toBe(false);
+    if (!linked.ok) expect(linked.error).toBe("username_reserved");
+    const seeded = await createUser(app.db, {
+      username: "support",
+      email: "support@f.dev",
+      allowReserved: true,
+    });
+    expect(seeded.ok).toBe(true);
   });
 
   test("a display name is judged as it is stored, after the cut", () => {

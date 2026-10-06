@@ -71,11 +71,21 @@ export interface ForgeConfig {
    */
   crewCeilingUsd?: number;
   /**
+   * How many runs one issue may start in a day before the crew parks it
+   * and asks a person (`crew/guard.ts`). Undefined is `ISSUE_RUN_CAP`.
+   */
+  issueRunCap?: number;
+  /**
    * Where mail goes out: SMTP submission (`FORGE_SMTP_URL`, `FORGE_MAIL_FROM`).
    * Undefined is a forge that sends no mail; a newcomer's email then waits
    * for the owner's word.
    */
   mail?: MailConfig;
+  /**
+   * The most messages the forge sends in a day, to everyone together
+   * (`actions/mail.ts`). Undefined is `FORGE_DAILY`.
+   */
+  mailDailyCap?: number;
   /** Stand-in for `mail` in tests: receives each message instead of SMTP. */
   mailer?: Mailer;
   /**
@@ -93,6 +103,12 @@ export interface ForgeConfig {
    * Undefined means the forge is running without SSH.
    */
   sshPort?: number;
+  /**
+   * The exact command the host forge gave this one to reach its terminal
+   * (`FORGE_APP_SSH`), when it runs as an app of another forge (a spawned
+   * child). Printed verbatim wherever the forge says how to connect.
+   */
+  appSsh?: string;
 }
 
 export interface App {

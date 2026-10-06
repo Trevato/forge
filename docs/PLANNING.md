@@ -139,6 +139,15 @@ link each issue it opens under its pillar or behind the gate, and the MCP
 `plan` tool refuses an item that says neither. A repository with no
 umbrella issues has no pillars, and plans as it always did.
 
+The umbrellas, the Later umbrella and the gate are the plan's own, not
+work. None of them is ever _ready_, so the crew never picks one and the map
+never lists one under _Ready now_; one with nothing open in front of it
+reads _parked_, "the plan's own: a person closes it, the crew never picks
+it". An agent does not close one, whatever access it holds, and a merged
+pull does not either, whatever its body says it closes: a person who writes
+the repository closes an umbrella when its pillar is done, and closing the
+gate opens everything behind it.
+
 Membership is direct: an issue the umbrella itself waits for. Under two
 umbrellas an issue serves the first, and a pillar outranks _Later_, which
 is what waits behind the gate or stands under the Later umbrella.
@@ -154,7 +163,9 @@ this; three surfaces show what it reads.
   link or an unlink, a `plan`, a split, where each umbrella that waited for
   the whole now waits for its parts) and at boot for what was linked
   before. The label only says what the edges say: it is never read back,
-  and one set by hand does not survive the next boot. A mirrored
+  and one set by hand does not survive the next boot. That holds for a
+  label the repository already had under a pillar's name: at boot it is
+  taken off every issue that does not serve that pillar. A mirrored
   repository's labels are its origin's, so none is written there.
 - **The map by pillar.** Beside the drawing, _By pillar_ lists each pillar
   and _Later_ — a link to its issues, the list narrowed to its label — with
@@ -306,8 +317,12 @@ open pull, with one line that says why (`src/core/holds.ts`,
 it is not sent to the crew's reviewer, not landed on green or on an
 approval, not brought up to date by the crew, and not parked (parking
 would close it and hand its issue back to be built again). A person's own
-merge still works; the hold is on the rules, not on people. An agent cannot hold
-or release, on the crew or not, and neither can a reader.
+merge still works; the hold is on the rules, not on people. One word that
+ships many changes at once is the exception: a batch from the asks leaves
+a held pull where it is and says who holds it and why, since whoever sent
+the batch may never have seen the hold. They ship it from its own page, or
+release it first. An agent cannot hold or release, on the crew or not,
+and neither can a reader.
 
 Releasing starts the review clock again: review is owed from when the head
 went green or from when the pull was last let go, whichever is later, so a

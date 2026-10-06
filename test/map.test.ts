@@ -69,6 +69,7 @@ function paperGraph(n: number, edges: [number, number][]): Graph {
     })),
     held: [],
     unadopted: new Set(),
+    structural: new Set(),
   };
 }
 

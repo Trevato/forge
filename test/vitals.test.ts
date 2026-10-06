@@ -29,6 +29,7 @@ const mint = async (username: string, scope: string) =>
   (
     (await (
       await post("/api/v1/tokens", {
+        adminConfirm: true,
         username,
         password: "a-good-passphrase",
         name: scope,
@@ -79,8 +80,9 @@ test("a site admin with a read-only token gets the shape; others get the short o
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
     [
-      "apps", "at", "checkedAt", "disk", "draining", "errors", "incidents",
-      "memory", "needs", "ok", "queue", "rollout", "stale", "stuck", "version",
+      "apps", "at", "checkedAt", "commit", "disk", "draining", "errors",
+      "incidents", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
+      "version",
     ].sort(),
   );
   expect(v.disk.totalBytes).toBeGreaterThan(0);

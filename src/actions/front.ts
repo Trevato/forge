@@ -38,7 +38,7 @@ import {
 import { keepLook } from "../looks/service.ts";
 import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
-import type { User } from "../core/users.ts";
+import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /** How many public apps are read, and how many the shelf shows. */
@@ -85,17 +85,41 @@ export interface FrontPage {
 /**
  * Whether a thumb is one taken as a stranger: not one from before thumbs
  * were (`keepLook`), which was the owner's view. A picture's file never
- * changes under its path, so each is read once.
+ * changes under its path, so each is read once — and remembered only while
+ * it is still one of the pictures the page looks at: each page drops the
+ * paths it did not ask about, so the memory is never larger than the
+ * current pictures, however often they are retaken (#768).
  */
-const kept = new Map<string, boolean>();
-function strangersThumb(app: App, look: Look): boolean {
-  let keep = kept.get(look.path);
-  if (keep === undefined) {
-    keep = keepLook(app.config.dataDir, look);
-    if (look.error === null) kept.set(look.path, keep);
+const thumbChecks = new WeakMap<App, Map<string, boolean>>();
+
+function strangersThumbs(app: App): {
+  check: (look: Look) => boolean;
+  /** Forget every path this page did not ask about. */
+  done: () => void;
+} {
+  let known = thumbChecks.get(app);
+  if (known === undefined) {
+    known = new Map();
+    thumbChecks.set(app, known);
   }
-  return keep;
+  const memo = known;
+  const asked = new Set<string>();
+  return {
+    check: (look) => {
+      asked.add(look.path);
+      let keep = memo.get(look.path);
+      if (keep === undefined) {
+        keep = keepLook(app.config.dataDir, look);
+        if (look.error === null) memo.set(look.path, keep);
+      }
+      return keep;
+    },
+    done: () => {
+      for (const path of memo.keys()) if (!asked.has(path)) memo.delete(path);
+    },
+  };
 }
+
 
 type Scores = Map<string, { s: FrontSignals; score: number }>;
 
@@ -134,8 +158,14 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
     records.map((r) => r.repoId),
   );
   // A stranger's reading, asked of every repository, pinned or not.
+  // A suspended or removed account's repositories are offered to nobody.
+  const owners = getUsersByIds(db, [
+    ...new Set([...pinnedRepos.values(), ...repos.values()].map((r) => r.ownerId)),
+  ]);
   const readable = (repo: Repo | undefined): repo is Repo =>
-    repo !== undefined && canRead(db, repo, undefined);
+    repo !== undefined &&
+    canRead(db, repo, undefined) &&
+    (owners.get(repo.ownerId) === undefined || isActive(owners.get(repo.ownerId)!));
   const pinned = picks.pinned
     .map((id) => pinnedRepos.get(id))
     .filter(readable)
@@ -154,6 +184,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
     ]),
   ];
   const scores = scoresFor(app, ids, now);
+  const thumbs = strangersThumbs(app);
   const looks = looksForApps(
     db,
     [...appOf.values()].map((r) => r.id),
@@ -177,7 +208,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
               l.commitOid === production?.commitOid &&
               l.page === DEFAULT_PAGE &&
               l.kind === "thumb" &&
-              strangersThumb(app, l),
+              thumbs.check(l),
           );
     const scored = scores.get(repo.id) ?? {
       s: { awakeHours: 0, ships: 0, forks: 0, shippedAt: null },
@@ -216,6 +247,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
       .filter(tileable)
       .map((e) => ({ ...e, id: e.repo.id, owner: e.repo.ownerName })),
   );
+  thumbs.done();
   // Featured is a card, not a tile: the first pin may be a repository with
   // no app, or one whose app strangers cannot open (the forge itself) —
   // its crew at work is the picture. An app strangers can open that is

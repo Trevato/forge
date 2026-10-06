@@ -89,7 +89,7 @@ describe("a forge behind a TLS-terminating proxy", () => {
   test("clone URLs name the public address", async () => {
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "ada",
         password: "analytical-engine",
         name: "cli",

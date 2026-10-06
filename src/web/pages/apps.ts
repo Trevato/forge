@@ -24,7 +24,7 @@ import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
@@ -48,15 +48,15 @@ import {
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
+import { writableAppsOf } from "../studio/asks.ts";
+import { costLine } from "../studio/cost_line.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
   btn,
   card,
-  dot,
   empty,
   envFacts,
-  envPhrase,
   envStateBadge,
   icon,
   listCard,
@@ -99,7 +99,7 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
   for (const repo of repos) {
     const record = records.get(repo.id);
     if (record === undefined) continue;
-    const envs = runtime === undefined ? [] : runtime.status(record);
+    const envs = envsFor(ctx.app, ctx.auth.user, record);
     out.push({
       record,
       repo,
@@ -115,68 +115,6 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
 export function envLabel(env: EnvName): string {
   const number = envPull(env);
   return number === undefined ? "production" : `preview of #${number}`;
-}
-
-/**
- * One app in a list. The dot is production's state; the title goes to the
- * repository's home and the URL opens the app — two links, so the row is not itself
- * one (a link inside a link tears the row apart).
- */
-function appRow(entry: AppEntry): Html {
-  const base = repoBase(entry.repo);
-  const name = `${entry.repo.ownerName}/${entry.repo.name}`;
-  return row({
-    nav: true,
-    lead: dot(envPhrase(entry.production).tone),
-    title: html`<a href="${base}">${name}</a>`,
-    titleAttr: name,
-    meta: html`${entry.url === undefined
-      ? html`<span>not serving</span>`
-      : html`<a href="${base}/app/production/open" title="Open ${entry.url}"
-          >${entry.url}</a
-        >`}${when(
-      entry.previews > 0,
-      () =>
-        html` · ${entry.previews} preview${entry.previews === 1 ? "" : "s"}`,
-    )}`,
-    trail: html`${when(
-      entry.repo.visibility === "private",
-      () =>
-        html`<span class="badge" data-variant="secondary"
-          >${icon("lock")}Private</span
-        >`,
-    )}`,
-  });
-}
-
-/** The dashboard's Apps card: what runs, and the button that makes one. */
-export function appsCard(ctx: Ctx): Html {
-  const entries = appsForViewer(ctx);
-  const head = html`${icon("rocket")}
-    <h2>Apps</h2>
-    <span class="spacer"></span>
-    ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
-    ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`;
-  if (entries.length === 0) {
-    return card(
-      html`<p class="muted small">
-        An app is a repository that runs — here, with a URL in seconds and a
-        preview for every pull request.
-      </p>`,
-      { head },
-    );
-  }
-  const shown = entries.slice(0, 8);
-  return listCard(shown.map(appRow), {
-    head,
-    ...(entries.length > shown.length
-      ? {
-          foot: html`<a href="/apps"
-            >All ${entries.length} apps ${icon("chevronRight")}</a
-          >`,
-        }
-      : {}),
-  });
 }
 
 /**
@@ -231,6 +169,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     shown.map((e) => e.repo),
   );
   const body = html`${pageHead("Apps", { actions: create })}
+    ${costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos)}
     ${filters}
     ${shown.length === 0
       ? empty({
@@ -539,13 +478,6 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
           >${previews} preview${previews === 1 ? "" : "s"}</span
         >`,
     )}
-    <span class="spacer"></span>
-    ${btn("App", {
-      href: appHref(repo),
-      size: "sm",
-      variant: "ghost",
-      icon: "chevronRight",
-    })}
   </div>`;
 }
 
