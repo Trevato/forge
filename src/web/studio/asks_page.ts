@@ -41,7 +41,7 @@ import {
 import { changeHref } from "./nouns.ts";
 
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
-const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "stopped", "parked"]);
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "parked"]);
 
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>

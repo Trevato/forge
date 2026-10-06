@@ -1058,21 +1058,31 @@ export function bringUpToDate(
 }
 
 /**
- * Whether the review gate lets this green head land: `pass` with no
- * reviewer on the crew, or with an approval on this head and no change
- * requested; `hold` while the review is out or changes are asked for; and
- * `lapsed` when the reviewer was asked twice and never answered — the pull
- * lands without it, and says so (`crew/review.ts`).
+ * Whether the review gate lets this green head land: `pass` with an
+ * approval on this head and no change requested; `hold` while the review
+ * is out or changes are asked for. An agent's pull is held until approved
+ * — with no reviewer, or after one lapsed, a person's review is what it
+ * waits for (#597). A person's own pull passes with no reviewer on the
+ * crew, and is `lapsed` when the reviewer was asked twice and never
+ * answered: it lands without it, and says so (`crew/review.ts`).
  */
 async function reviewed(
   app: App,
   repo: Repo,
   pull: Pull,
 ): Promise<"pass" | "hold" | "lapsed"> {
-  if (reviewersOf(app.db, repo.id).length === 0) return "pass";
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.changesRequested > 0) return "hold";
   if (seen.approvals > 0) return "pass";
+  // An agent's pull ships only on an approving review — the crew's reviewer
+  // or a person's. With no reviewer, or a review that lapsed, it waits for
+  // a person (`waitsForPerson` puts it where a person looks); never by lapse.
+  if (pull.authorIsAgent) {
+    if (reviewersOf(app.db, repo.id).length > 0) await sendToReview(app, repo, pull);
+    return "hold";
+  }
+  // A person's own pull is not held for a review that never comes.
+  if (reviewersOf(app.db, repo.id).length === 0) return "pass";
   const stage = await sendToReview(app, repo, pull);
   return stage === "lapsed" ? "lapsed" : stage === "none" ? "pass" : "hold";
 }
@@ -1177,8 +1187,10 @@ export async function landIfGreen(
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
   // on that very head (a person's counts the same). A push is a new head,
-  // so it starts over. Without a reviewer the pull lands as it always has,
-  // and so does one whose review lapsed.
+  // so it starts over. An agent's pull waits for that approval however
+  // long it takes — with no reviewer, or after one lapsed, a person's
+  // (#597). Only a person's own pull lands without a reviewer, or after a
+  // review lapsed.
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return false;
   // Green and clear of the wall lands. An autonomous repository does not
