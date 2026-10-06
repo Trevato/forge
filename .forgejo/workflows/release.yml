@@ -58,6 +58,7 @@ jobs:
             --frontend dockerfile.v0 \
             --local context=src --local dockerfile=src \
             --opt build-arg:VERSION="$V" \
+            --opt build-arg:COMMIT="$(git -C src rev-parse HEAD)" \
             --output type=image,name=$REG_PUB/$OWNER/$APP:$V,push=true \
             --metadata-file /tmp/md.json
           DIGEST=$(grep -o '"containerimage.digest":[^,]*' /tmp/md.json | grep -o 'sha256:[a-f0-9]\{64\}' | head -1)
