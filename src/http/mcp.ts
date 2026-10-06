@@ -93,6 +93,8 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { readHealth } from "../actions/health.ts";
+import { running } from "../kernel/version.ts";
 import { makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
@@ -103,9 +105,11 @@ import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { everydayOf } from "../core/everyday.ts";
+import { nextStepsFor } from "../core/next-steps.ts";
 
 const PROTOCOLS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
-const SERVER = { name: "forge", version: "1" };
+/** Who answers: the forge, at the version its build stamped. */
+const server = () => ({ name: "forge", version: running().version });
 
 type Args = Record<string, unknown>;
 type Answer =
@@ -438,6 +442,14 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "health",
+    description:
+      "How this forge is: the version and commit it is running (stamped by the release that built it, `dev` when run from source), whether it is draining, and the platform's word on its rollout, with any incidents. A site admin also gets the forge's own vitals.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run: (ctx, user) => good(readHealth(ctx.app, user)),
+  },
+  {
     name: "audit",
     description:
       "Who can do what, across every app you can see, read from each app's contract.json in git: per app, its identities and every resource × verb answered yes, own or no; or that its contract is unsound, with the problems; or that it has none and its doors are hand-written. Give `repo` for one app's table.",
@@ -735,6 +747,17 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "next_steps",
+    description:
+      "On a forge made for you (spawned), your first three steps and whether each is done: make your everyday account, open your apps, tell the crew something — the same card the home shows. Empty anywhere else, or for anyone but the forge's owner.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    async run(ctx, user) {
+      const steps = await nextStepsFor(ctx.app, user);
+      return good({ steps: steps ?? [] });
     },
   },
   {
@@ -1286,7 +1309,7 @@ function rpcOne(
           ? asked
           : PROTOCOLS[0],
         capabilities: { tools: {} },
-        serverInfo: SERVER,
+        serverInfo: server(),
         instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
       });
     }

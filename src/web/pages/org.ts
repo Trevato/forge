@@ -29,7 +29,7 @@ import {
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
-import { getUserByName, type User } from "../../core/users.ts";
+import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -298,7 +298,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
 // their other repositories, then — for an org — its members and teams.
 export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
-  if (!owner) return notFoundPage(ctx);
+  if (!owner || hiddenFrom(owner, ctx.auth.user)) return notFoundPage(ctx);
 
   const isOrg = owner.kind === "org";
   const access = isOrg

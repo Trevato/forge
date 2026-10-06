@@ -27,7 +27,7 @@ import {
 import { resendVerification } from "../actions/verify.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
-import { forgeHealth } from "../kernel/guard.ts";
+import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
@@ -161,7 +161,12 @@ import {
 } from "../core/reviews.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
-import { getUserByName, verifyPassword, type User } from "../core/users.ts";
+import {
+  getUserByName,
+  hiddenFrom,
+  verifyPassword,
+  type User,
+} from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
 import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
@@ -249,7 +254,6 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
-import { vitals } from "../kernel/vitals.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
@@ -997,12 +1001,14 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("GET", "/api/v1/users/:username", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    return user ? json(publicProfile(user)) : notFound();
+    return user && !hiddenFrom(user, ctx.auth.user)
+      ? json(publicProfile(user))
+      : notFound();
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    if (!user) return notFound();
+    if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
     const items = listReposByOwner(
       ctx.app.db,
@@ -3356,16 +3362,9 @@ export function apiRoutes(router: Router<Handler>): void {
   // How the forge is, and the platform's word on its rollout: anyone may
   // read it (a monitor has no account). A site admin also gets the forge's
   // own vitals alongside, `ok` being both.
-  router.add("GET", "/api/v1/health", (ctx) => {
-    const forge = forgeHealth();
-    if (!ctx.auth.user?.isAdmin) return json(forge);
-    const runtime = appsRuntime(ctx.app);
-    const envs = runtime
-      ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
-      : [];
-    const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
-    return json({ ...v, ...forge, ok: forge.ok && v.ok });
-  });
+  router.add("GET", "/api/v1/health", (ctx) =>
+    json(readHealth(ctx.app, ctx.auth.user)),
+  );
 
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {

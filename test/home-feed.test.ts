@@ -143,6 +143,12 @@ describe("home is the feed", () => {
     expect(text).toContain('id="live-apps"');
     expect(text).toContain('href="/apps"');
     expect(text).toContain('class="home-tabs seg"');
+    // Nothing stands between the composer and the first post: the crew's
+    // missing key sits beside the timeline (after it on a phone), and
+    // "What you asked for" is a tab there.
+    const note = text.indexOf('id="crew-key-note"');
+    if (note !== -1) expect(note).toBeGreaterThan(feed);
+    expect(text).toMatch(/class="home-tabs seg"[\s\S]*?href="\/asked"/);
     // The old home's shelf rows and cost line are /apps's now.
     expect(text).not.toContain("spent today across");
     const apps = await (await get("/apps", aliceCookie)).text();
