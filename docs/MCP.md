@@ -47,7 +47,7 @@ for a tunnel and a forge that sleeps.
 | `feed`         | `{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed` |        |
 | `make_it_yours` | `{ repo, name?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; plans unless `dryRun` is false | yes    |
 | `front_page`   | `{ pinned?, hidden?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured) and hidden | yes    |
-| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
+| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`) |        |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
 | `unlink`       | `{ app, issue, blockedBy }`: the issue stops waiting for it                                       | yes    |
