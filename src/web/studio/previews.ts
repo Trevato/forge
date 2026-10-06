@@ -7,6 +7,7 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { canSeeSealed } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
 import {
@@ -338,6 +339,7 @@ export function appStateFragment(ctx: Ctx): Response {
   const openPulls = listPulls(ctx.app.db, repo.id, {
     state: "open",
     limit: 10,
+    sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
   });
   const { head, previews } = appPanels(ctx, repo, record, openPulls);
   return fragment(html`<div id="app-head">${head}</div>

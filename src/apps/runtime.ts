@@ -660,7 +660,7 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
-    for (const pull of listPulls(this.app.db, repo.id, {
+    for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
       state: "open",
       limit: 200,
     })) {
@@ -761,7 +761,7 @@ export class AppsRuntime {
             );
           }
           // Every open pull whose head is this branch previews the new tip.
-          for (const pull of listPulls(this.app.db, repo.id, {
+          for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
             state: "open",
             limit: 200,
           })) {

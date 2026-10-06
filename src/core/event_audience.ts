@@ -14,6 +14,7 @@
  * a kind nobody classified is for readers, as it always was.
  */
 
+import { canSeeSealed, eventSealed, eventSubject } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
@@ -78,7 +79,32 @@ export function audienceFilter(
     entrants.set(repoId, yes);
     return yes;
   };
+  // An event about a sealed issue or pull — by number or by id — is for
+  // those who may see it (`sealed.ts`), whatever its kind says.
+  const sealedSeers = new Map<string, boolean>();
+  const maySeeSealed = (repoId: string): boolean => {
+    const known = sealedSeers.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const yes = repo !== undefined && canSeeSealed(db, repo, viewer);
+    sealedSeers.set(repoId, yes);
+    return yes;
+  };
+  const sealedIssues = new Map<string, boolean>();
+  const aboutSealed = (event: ForgeEvent): boolean => {
+    const subject = eventSubject(event);
+    if (subject === undefined) return false;
+    const key =
+      "id" in subject ? subject.id : `${subject.repoId}#${subject.number}`;
+    let sealed = sealedIssues.get(key);
+    if (sealed === undefined) {
+      sealed = eventSealed(db, event);
+      sealedIssues.set(key, sealed);
+    }
+    return sealed;
+  };
   return (event) => {
+    if (aboutSealed(event) && !maySeeSealed(event.repoId!)) return false;
     switch (eventAudience(event.kind)) {
       case "readers":
         return true;

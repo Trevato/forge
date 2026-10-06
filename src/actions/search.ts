@@ -11,6 +11,7 @@
  * did not have it.
  */
 
+import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import { listOrigins } from "../core/origins.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
@@ -92,7 +93,17 @@ export async function search(
     : [];
 
   const issues: IssueHit[] = wants("issues")
-    ? searchLocalIssues(app.db, visible, q, limit)
+    ? searchLocalIssues(
+        app.db,
+        visible,
+        q,
+        limit,
+        new Set(
+          visible
+            .filter((r) => canSeeSealed(app.db, r, actor))
+            .map((r) => r.id),
+        ),
+      )
     : [];
   const localIssueCount = issues.length;
 

@@ -351,7 +351,7 @@ function forgetLandedClone(app: App, run: Run): void {
   const pull =
     issue.kind === "pull"
       ? getPull(app.db, repo.id, issue.number)
-      : listPulls(app.db, repo.id, { state: "closed" }).find(
+      : listPulls(app.db, repo.id, { sealed: true, state: "closed" }).find(
           (p) => p.headBranch === run.branch,
         );
   if (pull === undefined || (pull.state === "open" && pull.mergedAt === null))
@@ -1430,7 +1430,7 @@ async function landWork(
 
   const existing =
     pull ??
-    listPulls(app.db, repo.id, { state: "open", limit: 200 }).find(
+    listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 200 }).find(
       (p) => p.headRepoId === fork.id && p.headBranch === branch,
     );
   if (existing !== undefined) {

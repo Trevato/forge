@@ -9,6 +9,7 @@
  * for a viewer who can write here; a stranger sees the app.
  */
 
+import { canSeeSealed } from "../../core/sealed.ts";
 import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
@@ -207,7 +208,11 @@ export async function studioApp(
   };
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const openPulls = listPulls(db, repo.id, {
+    state: "open",
+    limit: 10,
+    sealed: canSeeSealed(db, repo, ctx.auth.user),
+  });
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   // What landed this week, counted by the database like the runs and the
   // spend below — a page of closed pulls would stop at a hundred and the

@@ -39,7 +39,7 @@ export function openProposal(
   fork: Repo,
   parent: Repo,
 ): Pull | undefined {
-  return listPulls(app.db, parent.id, { state: "open", limit: 200 }).find(
+  return listPulls(app.db, parent.id, { sealed: true, state: "open", limit: 200 }).find(
     (p) => p.headRepoId === fork.id && p.headBranch === fork.defaultBranch,
   );
 }
@@ -69,7 +69,7 @@ export async function proposeUpstream(
   // reached upstream some other way (a push, a release) does not propose it
   // twice; without this, a first proposal once listed forty changes for one
   // commit ahead.
-  const lastProposal = listPulls(app.db, parent.id, {
+  const lastProposal = listPulls(app.db, parent.id, { sealed: true,
     state: "closed",
     limit: 200,
   })

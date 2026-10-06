@@ -18,6 +18,7 @@
  * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
+import { setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
@@ -72,7 +73,7 @@ export function openIssue(
   app: App,
   actor: User | undefined,
   repo: Repo,
-  input: { title: string; body?: string },
+  input: { title: string; body?: string; sealed?: boolean },
 ): Result<
   Issue,
   "not_found" | "unauthorized" | TitleError | "body_too_long" | MirrorError
@@ -80,11 +81,15 @@ export function openIssue(
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (isMirror(app, repo)) return err("mirrored");
+  // Anyone who may open an issue may seal it: a reader reporting a hole
+  // seals it too, and from then on only writers and the crew see it
+  // (`core/sealed.ts`).
   const created = createIssue(app.db, {
     repoId: repo.id,
     authorId: user.value.id,
     title: input.title,
     body: input.body ?? "",
+    sealed: input.sealed === true,
   });
   if (!created.ok) return created;
   app.bus.append({
@@ -94,6 +99,32 @@ export function openIssue(
     payload: { number: created.value.number },
   });
   return created;
+}
+
+/**
+ * Seal or unseal an issue or a pull (`core/sealed.ts`). A writer's call,
+ * deliberate and recorded: unsealing publishes a security report and its
+ * fix to everyone who can read the repository.
+ */
+export function setIssueSealed(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  sealed: boolean,
+): Result<Issue, AccessError | MirrorError> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  if (issue.repoId !== repo.id) return err("not_found");
+  if (sealed && isMirror(app, repo)) return err("mirrored");
+  if (setSealed(app.db, issue.id, sealed))
+    app.bus.append({
+      kind: sealed ? "issue.sealed" : "issue.unsealed",
+      repoId: repo.id,
+      actorId: writer.value.id,
+      payload: { number: issue.number },
+    });
+  return ok(getIssueById(app.db, issue.id) ?? issue);
 }
 
 /**
@@ -301,7 +332,12 @@ export async function openIssueThrough(
   app: App,
   actor: User | undefined,
   repo: Repo,
-  input: { title: string; body?: string; labels?: readonly string[] },
+  input: {
+    title: string;
+    body?: string;
+    labels?: readonly string[];
+    sealed?: boolean;
+  },
 ): Promise<
   Result<
     Issue,
@@ -313,6 +349,9 @@ export async function openIssueThrough(
   const through = writeThroughFor(app, user.value, repo);
   if (!through.ok) return through;
   if (through.value === undefined) return openIssue(app, actor, repo, input);
+  // A mirror's issues are written on its origin, in the open: a sealed
+  // report has no place there.
+  if (input.sealed === true) return err("mirrored");
 
   const title = input.title.trim();
   if (title === "") return err("empty_title");

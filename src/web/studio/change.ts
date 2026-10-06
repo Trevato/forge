@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -83,7 +84,8 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
   const number = parseNumber(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   return { repo, pull };
 }
 

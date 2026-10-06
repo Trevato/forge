@@ -6,6 +6,7 @@
  * Forgejo left open (#30972).
  */
 
+import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
@@ -143,12 +144,17 @@ export async function createPull(
   if ((await aheadCount(dir, baseOid, headOid)) === 0)
     return err("nothing_to_merge");
 
+  // The fix for a sealed report is sealed with it: its diff says where
+  // the hole is (`sealed.ts`).
   const issue = createIssue(db, {
     repoId: input.repoId,
     authorId: input.authorId,
     title: input.title,
     body: input.body ?? "",
     kind: "pull",
+    sealed: closesFromBody(input.body ?? "").some((n) =>
+      sealedByNumber(db, input.repoId, n),
+    ),
   });
   if (!issue.ok) return err(issue.error);
 
@@ -677,7 +683,7 @@ export function openPullsClosing(
   repoId: string,
 ): Map<number, Pull> {
   const out = new Map<number, Pull>();
-  for (const pull of listPulls(db, repoId, { state: "open", limit: 200 }))
+  for (const pull of listPulls(db, repoId, { sealed: true, state: "open", limit: 200 }))
     for (const n of closesFromBody(pull.body))
       if (!out.has(n)) out.set(n, pull);
   return out;

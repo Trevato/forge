@@ -204,8 +204,10 @@ export function countsForRepos(
     const holes = chunk.map((_, n) => `?${n + 1}`).join(",");
     const rows = db
       .query<{ repo_id: string; kind: "issue" | "pull"; n: number }, string[]>(
+        // A sealed report is not counted where everyone reads the counts
+        // (`sealed.ts`): a count that moves is a hint.
         `SELECT repo_id, kind, COUNT(*) AS n FROM issue
-         WHERE state = 'open' AND repo_id IN (${holes})
+         WHERE state = 'open' AND sealed = 0 AND repo_id IN (${holes})
          GROUP BY repo_id, kind`,
       )
       .all(...chunk);

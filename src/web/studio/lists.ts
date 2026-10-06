@@ -9,6 +9,7 @@
  * and `/tells`, `/pulls` and `/changes` alike.
  */
 
+import { canSeeSealed } from "../../core/sealed.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import {
@@ -21,8 +22,8 @@ import {
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
-import { listRuns } from "../../core/runs.ts";
-import { mayReadRuns } from "../../actions/runs.ts";
+
+import { listRepoRuns } from "../../actions/runs.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -314,7 +315,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   const f = readFacets(ctx);
   const { options, record, wordCtx } = listRead(ctx, repo, f);
 
-  const fetched = listIssues(db, repo.id, { ...options, kind: "issue" }).filter(
+  const fetched = listIssues(db, repo.id, {
+    ...options,
+    kind: "issue",
+    sealed: canSeeSealed(db, repo, ctx.auth.user),
+  }).filter(
     (issue) => issue.id !== repo.directionIssueId,
   );
   const closingPulls = openPullsClosing(db, repo.id);
@@ -434,7 +439,10 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const f = readFacets(ctx);
   const { options, wordCtx } = listRead(ctx, repo, f);
 
-  const fetched = listPulls(db, repo.id, options);
+  const fetched = listPulls(db, repo.id, {
+    ...options,
+    sealed: canSeeSealed(db, repo, ctx.auth.user),
+  });
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),
   );
@@ -544,14 +552,14 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const kind = readRunsKind(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
 
-  // A private app's runs are for those who may enter it (`mayReadRuns`).
-  const fetched = mayReadRuns(ctx.app, ctx.auth.user, repo)
-    ? listRuns(db, repo.id, {
-        kind,
-        limit: LIST_PAGE,
-        ...(cursor ? { cursor } : {}),
-      })
-    : [];
+  // A private app's runs are for those who may enter it, and a sealed
+  // report's for those who may see it (`listRepoRuns`).
+  const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
+    kind,
+    limit: LIST_PAGE,
+    ...(cursor ? { cursor } : {}),
+  });
+  const fetched = listed.ok ? listed.value : [];
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),

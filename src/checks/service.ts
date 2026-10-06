@@ -497,7 +497,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
               undefined,
               actor,
             );
-          for (const pull of listPulls(app.db, repo.id, {
+          for (const pull of listPulls(app.db, repo.id, { sealed: true,
             state: "open",
             limit: 200,
           })) {

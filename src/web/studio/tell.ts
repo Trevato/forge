@@ -14,7 +14,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { listEvents } from "../../core/events.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
-import { canEnterApp, type Repo } from "../../core/repos.ts";
+import { canEnterApp, canWrite, type Repo } from "../../core/repos.ts";
 import { activeRunFor, listRuns } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -25,6 +25,8 @@ import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
+  badge,
+  btn,
   card,
   icon,
   labelCss,
@@ -273,6 +275,11 @@ async function studioTell(
             >${icon("external")}view on origin</a
           >`,
       )}
+      ${when(
+        issue.sealed,
+        () =>
+          badge("Sealed security report", { tone: "danger", icon: "lock" }),
+      )}
       ${workSpent(ctx, repo, issue.id)}
       ${issue.assigneeName !== null
         ? html`<span
@@ -296,6 +303,7 @@ async function studioTell(
     <summary>Details</summary>
     ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
     ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
+    ${sealCard(ctx, repo, issue, `${thread}/seal`)}
   </details>`;
 
   const body = html`${repoHeader(ctx, repo, "issues", {
@@ -338,4 +346,21 @@ async function studioTell(
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * Seal or unseal, for someone who can write here (`core/sealed.ts`).
+ * Unsealing publishes the report and its fix, so it says so on the button.
+ */
+function sealCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | null {
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return null;
+  return html`<form method="post" action="${action}" class="mt">
+    <input type="hidden" name="sealed" value="${issue.sealed ? "0" : "1"}" />
+    ${btn(
+      issue.sealed
+        ? "Unseal: show this report to every reader"
+        : "Seal as a security report",
+      { variant: issue.sealed ? "danger" : "ghost", icon: "lock" },
+    )}
+  </form>`;
 }

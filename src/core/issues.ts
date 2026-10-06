@@ -246,6 +246,8 @@ export interface CreateIssueInput {
   body?: string;
   /** @default "issue" */
   kind?: IssueKind;
+  /** A security report, seen only by writers and the crew (`sealed.ts`). @default false */
+  sealed?: boolean;
 }
 
 /** Caps on free text. Generous for humans, bounded for the index and the wire. */
@@ -273,8 +275,8 @@ export function createIssue(
     const number = nextNumber(db, input.repoId);
     const newId = id();
     db.query(
-      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, sealed)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
     ).run(
       newId,
       input.repoId,
@@ -283,6 +285,7 @@ export function createIssue(
       title,
       input.body ?? "",
       input.authorId,
+      input.sealed === true ? 1 : 0,
     );
     return newId;
   });
@@ -340,6 +343,12 @@ export interface ListIssuesOptions {
   limit?: number;
   /** Resume after this issue number (exclusive) — lists run newest first. */
   cursor?: number;
+  /**
+   * Include sealed issues (`sealed.ts`): only for a viewer who may see them,
+   * or the forge's own work. Left out unless asked for, so a list that
+   * forgets shows nothing sealed.
+   */
+  sealed?: boolean;
 }
 
 /**
@@ -355,6 +364,7 @@ export function listIssues(
   const kind = options.kind ?? "issue";
   const params: (string | number)[] = [repoId, kind];
   let where = "issue.repo_id = ?1 AND issue.kind = ?2";
+  if (options.sealed !== true) where += " AND issue.sealed = 0";
   if (state !== "all") {
     params.push(state);
     where += ` AND issue.state = ?${params.length}`;
@@ -776,7 +786,10 @@ export function issueCounts(
     .query<
       { state: IssueState; n: number },
       [string, IssueKind]
-    >("SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 GROUP BY state")
+    >(
+      // Sealed reports are not counted where everyone reads the counts (`sealed.ts`).
+      "SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 AND sealed = 0 GROUP BY state",
+    )
     .all(repoId, kind);
   let open = 0;
   let closed = 0;

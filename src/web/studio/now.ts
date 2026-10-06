@@ -7,6 +7,7 @@
  * a repaint (`layout.fragment`, `client.liveRegionsJs`).
  */
 
+import { canSeeSealed, sealedById } from "../../core/sealed.ts";
 import { envPull } from "../../apps/data.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
@@ -74,7 +75,11 @@ export async function nowCard(
   const db = ctx.app.db;
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
-  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 });
+  // A run on a sealed report, and the report, are for who may see it.
+  const seesSealed = canSeeSealed(db, repo, ctx.auth.user);
+  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 }).filter(
+    (r) => seesSealed || r.issueId === null || !sealedById(db, r.issueId),
+  );
   const actors = getUsersByIds(
     db,
     runs.map((r) => r.actorId).filter((id): id is string => id !== null),
@@ -91,6 +96,7 @@ export async function nowCard(
     kind: "issue",
     state: "open",
     limit: 30,
+    sealed: seesSealed,
   });
   const told = openTells.filter(
     (i) => i.assigneeIsAgent && !openByIssue.has(i.number),
@@ -332,7 +338,11 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
   const db = ctx.app.db;
   const record = getAppByRepo(db, repo.id);
   if (!record) return fragment(html``, { status: 404 });
-  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const openPulls = listPulls(db, repo.id, {
+    state: "open",
+    limit: 10,
+    sealed: canSeeSealed(db, repo, ctx.auth.user),
+  });
   const { card } = await nowCard(ctx, repo, record, {
     openPulls,
     builderCount: listCrewRoles(db, repo.id).filter((c) => c.role === "builder")

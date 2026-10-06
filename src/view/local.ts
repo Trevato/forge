@@ -8,6 +8,7 @@
  * `canRead`; what is left is shape.
  */
 
+import { canSeeSealed, mayView } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import {
   commentCounts,
@@ -253,6 +254,7 @@ export function localSource(
         kind: query.kind,
         state: query.state,
         limit,
+        sealed: canSeeSealed(app.db, repo, actor),
         ...(query.label === undefined ? {} : { label: query.label }),
         ...(query.author === undefined ? {} : { author: query.author }),
         ...(query.query === undefined ? {} : { query: query.query }),
@@ -271,7 +273,8 @@ export function localSource(
 
     async issue(number: number): Promise<Result<IssueDetail, SourceError>> {
       const issue = getIssue(app.db, repo.id, number);
-      if (issue === undefined) return err("not_found");
+      if (issue === undefined || !mayView(app.db, repo, issue, actor))
+        return err("not_found");
       const comments: CommentView[] = listComments(app.db, issue.id, {
         kind: "comment",
       }).map((c) => ({

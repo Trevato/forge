@@ -201,7 +201,7 @@ export async function sweepReviews(app: App): Promise<number> {
   for (const id of repoIds) {
     const repo = getRepoById(app.db, id);
     if (!repo) continue;
-    for (const pull of listPulls(app.db, repo.id, {
+    for (const pull of listPulls(app.db, repo.id, { sealed: true,
       state: "open",
       limit: 50,
     })) {

@@ -19,7 +19,9 @@ import type { Agent } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { audienceFilter } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
-import { getIssue, type Issue } from "../src/core/issues.ts";
+import { getIssue, issueCounts, type Issue } from "../src/core/issues.ts";
+import { branchFor } from "../src/crew/brief.ts";
+import { readyState } from "../src/crew/autonomy.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -91,7 +93,7 @@ const leaks = (text: string): string[] =>
 const LISTS = (n: number, p: number) => [
   "/api/v1/repos/alice/square/issues?state=all",
   "/api/v1/repos/alice/square/pulls?state=all",
-  "/api/v1/search?q=X9QTITLE",
+  "/api/v1/search?q=bypass",
   "/api/v1/repos/alice/square/events",
   "/api/v1/repos/alice/square/map",
   "/api/v1/repos/alice/square/decisions",
@@ -103,7 +105,7 @@ const LISTS = (n: number, p: number) => [
   "/alice/square/map",
   "/alice/square/runs",
   "/alice/square/activity.atom",
-  "/search?q=X9QTITLE",
+  "/search?q=bypass",
   "/alice/square",
   `/alice/square/issues/${n - 1}`,
   `/alice/square/pulls/${p - 1}`,
@@ -302,6 +304,90 @@ describe("a stranger and a reader see nothing of a sealed report", () => {
     );
     expect(res.status).toBe(404);
     expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(true);
+  });
+});
+
+describe("nothing about it leaves the forge", () => {
+  test("a webhook is never queued an event about it; it is for one about public work", () => {
+    app.db
+      .query("INSERT INTO webhook (id, repo_id, url) VALUES ('hook1', ?1, 'https://hooks.example/x')")
+      .run(repo.id);
+    // The bus queues deliveries as an event is appended (`enqueueForEvent`).
+    const queued = (number: number) => {
+      const event = app.bus.append({
+        kind: "issue.commented",
+        repoId: repo.id,
+        actorId: alice.id,
+        payload: { number, body: "words" },
+      });
+      return app.db
+        .query<{ n: number }, [string]>(
+          "SELECT COUNT(*) AS n FROM webhook_delivery WHERE event_id = ?1",
+        )
+        .get(event.id)!.n;
+    };
+    expect(queued(report.number)).toBe(0);
+    expect(queued(fix.number)).toBe(0);
+    expect(queued(1)).toBe(1);
+  });
+
+  test("its title is not in the crew's branch name, nor sent to a decider", () => {
+    expect(branchFor(bot, report)).toBe(`bot/${report.number}`);
+    const state = JSON.stringify(
+      readyState(app.db, repo, [{ issue: report, holdsUp: 0, waitsFor: 0 }]),
+    );
+    expect(leaks(state)).toEqual([]);
+  });
+
+  test("it is not counted in the open count everyone sees", () => {
+    expect(issueCounts(app.db, repo.id, "issue").open).toBe(1);
+  });
+});
+
+describe("sealing from the page and the MCP", () => {
+  test("a reader's seal is refused on both; a writer's lands, recorded", async () => {
+    const open = await fetch(`${servers.url}/api/v1/repos/alice/square/issues`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.alice}`, "content-type": "application/json" },
+      body: JSON.stringify({ title: "Found a hole late", body: "X9QLATE" }),
+    });
+    const late = ((await open.json()) as { number: number }).number;
+    const tried = await mcp("mallory", "seal", {
+      repo: "alice/square",
+      number: late,
+      sealed: true,
+    });
+    expect(tried).toContain("isError");
+    const page = await fetch(`${servers.url}/alice/square/issues/${late}/seal`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.mallory}` },
+      body: new URLSearchParams({ sealed: "1" }),
+      redirect: "manual",
+    });
+    expect(page.status).toBe(303);
+    expect(getIssue(app.db, repo.id, late)!.sealed).toBe(false);
+    const sealed = await mcp("alice", "seal", {
+      repo: "alice/square",
+      number: late,
+      sealed: true,
+    });
+    expect(sealed).toContain("is sealed");
+    expect(getIssue(app.db, repo.id, late)!.sealed).toBe(true);
+    expect((await get(`/alice/square/issues/${late}`, "mallory")).status).toBe(404);
+    // The page unseals it.
+    const unsealed = await fetch(`${servers.url}/alice/square/issues/${late}/seal`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.alice}` },
+      body: new URLSearchParams({ sealed: "0" }),
+      redirect: "manual",
+    });
+    expect(unsealed.status).toBe(303);
+    expect(getIssue(app.db, repo.id, late)!.sealed).toBe(false);
+    expect(
+      listEvents(app.db, { repoId: repo.id }).filter(
+        (e) => e.payload["number"] === late && e.kind.endsWith("sealed"),
+      ).map((e) => e.kind),
+    ).toEqual(["issue.unsealed", "issue.sealed"]);
   });
 });
 

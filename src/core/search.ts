@@ -263,11 +263,18 @@ export function searchLocalIssues(
   repos: readonly Repo[],
   query: string,
   limit: number,
+  /** The repositories among these whose sealed issues the viewer may see (`sealed.ts`). */
+  sealedOk: ReadonlySet<string> = new Set(),
 ): IssueHit[] {
   if (repos.length === 0) return [];
   const byId = new Map(repos.map((r) => [r.id, r]));
   const ids = [...byId.keys()];
   const holes = ids.map((_, i) => `?${i + 1}`).join(",");
+  const open = [...sealedOk].filter((id) => byId.has(id));
+  const sealedClause =
+    open.length === 0
+      ? "AND sealed = 0"
+      : `AND (sealed = 0 OR repo_id IN (${open.map((_, i) => `?${ids.length + 3 + i}`).join(",")}))`;
   const rows = db
     .query<
       {
@@ -284,10 +291,11 @@ export function searchLocalIssues(
        FROM issue
        WHERE repo_id IN (${holes})
          AND title LIKE ?${ids.length + 1} ESCAPE '\\' COLLATE NOCASE
+         ${sealedClause}
        ORDER BY updated_at DESC
        LIMIT ?${ids.length + 2}`,
     )
-    .all(...ids, `%${likeEscape(query.trim())}%`, limit);
+    .all(...ids, `%${likeEscape(query.trim())}%`, limit, ...open);
 
   const hits: IssueHit[] = [];
   for (const row of rows) {

@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { canSeeSealed, mayView, sealedById } from "../core/sealed.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -37,6 +38,7 @@ import {
   addCommentThrough,
   openIssueThrough,
   setIssueLabelsThrough,
+  setIssueSealed,
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
@@ -904,7 +906,9 @@ function loadConversation(ctx: Ctx): Found<{ issue: Issue }> {
   const number = positiveInt(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue) return { error: notFound() };
+  // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
+  if (!issue || !mayView(ctx.app.db, repo, issue, ctx.auth.user))
+    return { error: notFound() };
   return { repo, issue };
 }
 
@@ -927,7 +931,8 @@ function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
   const number = positiveInt(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return { error: notFound() };
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return { error: notFound() };
   return { repo, pull };
 }
 
@@ -1949,7 +1954,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const query = listQuery(ctx);
     const items = withLabelsMany(
       ctx,
-      listIssues(ctx.app.db, repo.id, { ...query, kind: "issue" }),
+      listIssues(ctx.app.db, repo.id, {
+        ...query,
+        kind: "issue",
+        sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
+      }),
     );
     return json(paged(items, query.limit, (i) => i.number));
   });
@@ -1970,6 +1979,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, {
       title: str(input.title),
       body: str(input.body),
+      ...(input.sealed === true ? { sealed: true } : {}),
     });
     if (!created.ok) return originAware(created.error);
     return json(withLabels(ctx, created.value), 201);
@@ -2099,6 +2109,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const deps = dependenciesOf(ctx.app.db, found.issue.id);
+      const seen = (i: Issue) =>
+        mayView(ctx.app.db, found.repo, i, ctx.auth.user);
       const brief = (i: Issue) => ({
         number: i.number,
         title: i.title,
@@ -2106,8 +2118,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
       });
       return json({
-        blockedBy: deps.blockedBy.map(brief),
-        blocks: deps.blocks.map(brief),
+        blockedBy: deps.blockedBy.filter(seen).map(brief),
+        blocks: deps.blocks.filter(seen).map(brief),
       });
     },
   );
@@ -2207,7 +2219,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const graph = repoGraph(ctx.app.db, repo.id);
+    const graph = repoGraph(ctx.app.db, repo.id, {
+      sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
+    });
     return json(
       mapJson(
         repo,
@@ -2253,6 +2267,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const kind = ctx.url.searchParams.get("kind");
     const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
+    const seesSealed = canSeeSealed(ctx.app.db, repo, ctx.auth.user);
     return json({
       decisions: listDecisions(ctx.app.db, repo.id, {
         kind:
@@ -2263,7 +2278,12 @@ export function apiRoutes(router: Router<Handler>): void {
             ? kind
             : undefined,
         limit: 100,
-      }),
+      })
+        // What the decider saw about a sealed report is the report's (`sealed.ts`).
+        .filter(
+          (d) =>
+            seesSealed || d.issueId === null || !sealedById(ctx.app.db, d.issueId),
+        ),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
   });
@@ -2277,6 +2297,20 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
+      // Sealing is its own act, a writer's (`setIssueSealed`).
+      let issue = found.issue;
+      if (typeof input.sealed === "boolean") {
+        const sealed = setIssueSealed(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          input.sealed,
+        );
+        if (!sealed.ok) return originAware(sealed.error, 409);
+        issue = sealed.value;
+        if (input.state === undefined) return json(withLabels(ctx, issue));
+      }
       const wanted = str(input.state);
       if (wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
@@ -2286,7 +2320,7 @@ export function apiRoutes(router: Router<Handler>): void {
         ctx.app,
         ctx.auth.user,
         found.repo,
-        found.issue,
+        issue,
         wanted,
         closing,
       );
@@ -2322,7 +2356,13 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(ctx, listPulls(ctx.app.db, repo.id, query));
+    const items = withLabelsMany(
+      ctx,
+      listPulls(ctx.app.db, repo.id, {
+        ...query,
+        sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
     return json(paged(items, query.limit, (p) => p.number));
   });
 

@@ -213,7 +213,12 @@ export interface Graph {
 
 const GRAPH_MAX = 400;
 
-export function repoGraph(db: Database, repoId: string): Graph {
+export function repoGraph(
+  db: Database,
+  repoId: string,
+  /** Include sealed issues (`sealed.ts`): for a viewer who may see them, and the crew. */
+  options: { readonly sealed?: boolean } = {},
+): Graph {
   const edges = db
     .query<{ issue_id: string; blocked_by_id: string }, [string]>(
       `SELECT d.issue_id, d.blocked_by_id FROM issue_dependency d
@@ -247,9 +252,9 @@ export function repoGraph(db: Database, repoId: string): Graph {
     ids.add(e.issueId);
     ids.add(e.blockedById);
   }
-  const issues = [...getIssuesByIds(db, [...ids]).values()].sort(
-    (a, b) => a.number - b.number,
-  );
+  const issues = [...getIssuesByIds(db, [...ids]).values()]
+    .filter((i) => options.sealed === true || !i.sealed)
+    .sort((a, b) => a.number - b.number);
   const present = new Set(issues.map((i) => i.id));
   const repo = getRepoById(db, repoId);
   return {
@@ -261,11 +266,13 @@ export function repoGraph(db: Database, repoId: string): Graph {
     edges: edges.filter(
       (e) => present.has(e.issueId) && present.has(e.blockedById),
     ),
-    held: heldRows.map((r) => ({
-      issueId: r.issue_id,
-      blockedById: r.blocked_by_id,
-      reason: r.reason,
-    })),
+    held: heldRows
+      .filter((r) => present.has(r.issue_id) && present.has(r.blocked_by_id))
+      .map((r) => ({
+        issueId: r.issue_id,
+        blockedById: r.blocked_by_id,
+        reason: r.reason,
+      })),
   };
 }
 

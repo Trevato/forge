@@ -258,7 +258,8 @@ function crewAtWork(app: App, repo: Repo): CrewAtWork {
   const on: { number: number; title: string }[] = [];
   for (const run of running) {
     const issue = run.issueId === null ? undefined : issues.get(run.issueId);
-    if (issue === undefined || seen.has(issue.id)) continue;
+    // The front page is the stranger's view: a sealed report is not on it.
+    if (issue === undefined || issue.sealed || seen.has(issue.id)) continue;
     seen.add(issue.id);
     on.push({ number: issue.number, title: issue.title });
   }
