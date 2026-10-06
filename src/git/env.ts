@@ -95,7 +95,28 @@ export class Gate {
   private readonly waiting: { wake: () => void; first: boolean }[] = [];
   private peak = 0;
 
-  constructor(readonly limit: number) {}
+  constructor(private max: number) {}
+
+  /** How many permits may be held at once. */
+  get limit(): number {
+    return this.max;
+  }
+
+  /**
+   * Change the limit while permits are held (`core/capacity.ts`: an admin
+   * lowers or raises a concurrency live). Raised, waiters go at once up to
+   * the new limit; lowered, nobody holding a permit is touched — releases
+   * stop handing permits on until the count is under it.
+   */
+  resize(limit: number): void {
+    this.max = Math.max(1, Math.floor(limit));
+    while (this.active < this.limit) {
+      const next = this.waiting.shift();
+      if (next === undefined) break;
+      this.active++;
+      next.wake();
+    }
+  }
 
   /**
    * Take a permit, waiting for one if none is free. `first` waits ahead of
@@ -126,7 +147,8 @@ export class Gate {
       // it never held, which is how a semaphore quietly stops being one.
       if (released) return;
       released = true;
-      const next = this.waiting.shift();
+      // Over the limit (it was lowered), the permit is returned, not handed on.
+      const next = this.active <= this.limit ? this.waiting.shift() : undefined;
       if (next !== undefined) next.wake();
       else this.active--;
     };

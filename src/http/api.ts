@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -246,6 +247,7 @@ import {
   milestoneData,
   milestonesJson,
 } from "../web/pages/milestones.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -1135,6 +1137,32 @@ export function apiRoutes(router: Router<Handler>): void {
         : apiError(error, 500, "the account could not be removed");
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+
+  // The forge's capacity (`core/capacity.ts`): read and changed live by an
+  // admin, never by an agent; anyone else is told the door is not there.
+  router.add("GET", "/api/v1/admin/capacity", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listCapacity(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value = input.value === null ? null : str(input.value);
+    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error === "not_found") return notFound();
+    return apiError(
+      changed.error,
+      422,
+      changed.error === "no_such_setting"
+        ? "no such capacity setting"
+        : "that value is outside what this setting takes",
+    );
+  });
 
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
@@ -2282,6 +2310,38 @@ export function apiRoutes(router: Router<Handler>): void {
       const data =
         number === undefined ? undefined : milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
+    },
+  );
+  // One action on a whole limb (#733): defer, resume, or close as not
+  // doing. A fleet operation in every respect — a dry run by default with a
+  // read credential, an admin token to apply, the receipt in
+  // /api/v1/fleet/ops/:id and its undo at …/undo.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/milestones/:number/limb",
+    async (ctx) => {
+      const input = await body(ctx.request);
+      const dryRun = input.dryRun !== false;
+      const denied = requireScope(ctx, dryRun ? "ro" : "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      const number = positiveInt(ctx.params.number);
+      if (!repo || number === undefined) return notFound();
+      if (!isLimbAction(input.action))
+        return apiError("bad_action", 422, "action is defer, resume or close");
+      const request = {
+        action: input.action,
+        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+        ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+      };
+      if (dryRun) {
+        const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
+        if (!plan.ok) return respondFleet(plan.error);
+        return json({ dryRun: true, ...plan.value });
+      }
+      const op = await applyLimb(ctx.app, ctx.auth.user, repo, number, request);
+      if (!op.ok) return respondFleet(op.error);
+      return json({ dryRun: false, ...op.value }, 201);
     },
   );
   // The map as data: ready now, blocked on, the critical path, every edge,

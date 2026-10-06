@@ -297,4 +297,36 @@ describe("the everyday account", () => {
     expect(joinAsWriter(app.db, org.value, daily)).toBe(true);
     expect(listTeams(app.db, org.value.id).length).toBe(teams);
   });
+
+  test("when no write team can be had, joinAsWriter says so", async () => {
+    const owner = await createUser(app.db, { trusted: true, username: "stall", email: "stall@x.test", password: PASSWORD });
+    if (!owner.ok) throw new Error("owner");
+    const org = createOrg(app.db, "stalls", owner.value.id);
+    if (!org.ok) throw new Error("org");
+    for (const name of [WRITERS_TEAM, "Everyday writers"])
+      if (!createTeam(app.db, org.value.id, name, "read").ok) throw new Error(name);
+    const daily = await createUser(app.db, { trusted: true, username: "stall-daily", email: "sd@x.test", password: PASSWORD });
+    if (!daily.ok) throw new Error("daily");
+    expect(joinAsWriter(app.db, org.value, daily.value)).toBe(false);
+    expect(orgAccessByOrg(app.db, daily.value).get(org.value.id)).toBeUndefined();
+  });
+
+  // Last: it makes this forge a spawned one (a parent.json naming "stalls").
+  test("on a spawned forge, an everyday account that cannot join keeps the admin signed in, sent to the org's teams", async () => {
+    const cyd = await createUser(app.db, { trusted: true, username: "cyd", email: "cyd@x.test", password: PASSWORD, isAdmin: true });
+    if (!cyd.ok) throw new Error("cyd");
+    await Bun.write(join(dataDir, "parent.json"), JSON.stringify({ org: "stalls" }));
+    const admin = await signIn("cyd");
+    const res = await post(admin, "/settings/everyday", { username: "cyd-me", email: "cyd-me@x.test", password: PASSWORD });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toContain("/stalls#teams");
+    // No session for the new account: the admin is still the one signed in.
+    expect(res.headers.get("set-cookie") ?? "").not.toContain("forge_session=");
+    expect(getUserByName(app.db, "cyd-me")).toBeDefined();
+    // The flash rides in its own cookie, next to the admin's session.
+    const flash = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const there = await page(`${admin}; ${flash}`, res.headers.get("location")!);
+    expect(there).toContain("cyd-me was made but could not join stalls");
+    expect(there).toContain('id="teams"');
+  });
 });
