@@ -250,7 +250,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           ),
         )}
 
-    <h2 class="mt">Teams</h2>
+    <h2 class="mt" id="teams">Teams</h2>
     ${listCard(
       teams.map((t) =>
         row({
