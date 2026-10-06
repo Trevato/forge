@@ -132,6 +132,12 @@ const app = createApp({
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
     : {}),
+  // FORGE_CREW_ISSUE_RUNS: runs one issue may start in a day before it is
+  // parked for a person (`crew/guard.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_CREW_ISSUE_RUNS)) &&
+  Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
+    ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
+    : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
     : { edgeName: (process.env.FORGE_EDGE_NAME ?? "").trim() }),
