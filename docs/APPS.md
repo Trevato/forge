@@ -1030,7 +1030,10 @@ one line and a link to the asks screen is posted there (`src/crew/notify.ts`).
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
 | `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
-| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once                                |
+| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
+| `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
+| `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
+| `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
@@ -1050,6 +1053,17 @@ Hosted by a forge (`FORGE_APP_URL` set), the address is `FORGE_APP_URL`,
 the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
+
+Four of these are the forge's capacity and change while it runs: crew runs
+at once, checks at once, shards per check, and the cells' egress mode. A
+forge admin sets them under **Settings → Capacity**, through
+`PUT /api/v1/admin/capacity/:key` (`{"value": "1"}`, `null` for the
+default) or the `capacity` MCP tool; the next crew run, check or cell
+honours the change, never a restart. The variable stays the boot default
+until a value is set, and every change is listed on that page with who
+made it, when, and from what to what (`core/capacity.ts`). The shard count
+reaches a check's commands and an agent's shell as `FORGE_CHECK_SHARDS`,
+from the setting, never from the forge's own environment.
 
 ## What is deliberately not here
 

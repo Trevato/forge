@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { closeStreamsOf, noteCaller } from "./caller.ts";
 import {
   accountAct,
@@ -612,6 +613,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/capacity", capacityPage);
+  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);

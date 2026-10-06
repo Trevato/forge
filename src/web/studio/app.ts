@@ -9,6 +9,7 @@
  * for a viewer who can write here; a stranger sees the app.
  */
 
+import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
@@ -447,6 +448,7 @@ export async function studioApp(
           ctx.app.config.dataDir,
           repo.id,
           appsRuntime(ctx.app)?.liveFor(record, "production")?.cell?.egress ?? [],
+          egressSetting(ctx.app.db),
         )
       : null}
     <div class="dash">

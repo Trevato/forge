@@ -14,6 +14,8 @@ export function egressNote(
   repoId: string,
   /** What production declares now: a host declared since is not repeated. */
   declared: readonly string[],
+  /** The forge's egress mode now (`core/capacity.ts`). */
+  mode: "enforce" | "report" = egressMode(),
 ): Html | null {
   const reached = reachedHosts(dataDir, repoId).filter(
     (r) => !hostAllowed(declared, r.host, r.port),
@@ -32,7 +34,7 @@ export function egressNote(
             <span class="muted">(${r.count}×)</span>`,
       )},
       which <code>forge.json</code> does not declare.
-      ${egressMode() === "report"
+      ${mode === "report"
         ? "They were let through while egress is only reported; once it is enforced they are refused."
         : "They were let through while egress was only reported; they are refused now."}
       Add them to <code>egress</code>:

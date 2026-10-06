@@ -187,6 +187,7 @@ describe("the forge over MCP", () => {
       "unlink",
       "hold",
       "plan",
+      "capacity",
       "report",
     ]);
     const byName = new Map<string, any>(
