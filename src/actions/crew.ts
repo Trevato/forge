@@ -25,7 +25,12 @@ import {
   MODEL_MAX,
 } from "../core/agents.ts";
 import type { Repo } from "../core/repos.ts";
-import { createUser, type CreateUserError, type User } from "../core/users.ts";
+import {
+  createUser,
+  getUserByName,
+  type CreateUserError,
+  type User,
+} from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireReader, requireRepoAdmin, requireUser } from "./access.ts";
 
@@ -189,13 +194,15 @@ export function addToCrew(
   actor: User | undefined,
   repo: Repo,
   username: string,
-): Result<Agent, "not_found" | "no_such_agent" | "unverified"> {
+): Result<Agent, "not_found" | "no_such_agent" | "not_an_agent" | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
   const proven = requireVerified(app, admin.value);
   if (!proven.ok) return proven;
   const agent = getAgentByName(app.db, username);
-  if (!agent) return err("no_such_agent");
+  // A person is never on a crew: said plainly, before the database would.
+  if (!agent)
+    return err(getUserByName(app.db, username) ? "not_an_agent" : "no_such_agent");
   if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {
     app.bus.append({
       kind: "crew.added",

@@ -1423,4 +1423,22 @@ export const migrations: readonly string[] = [
        JOIN team t ON t.id = m.team_id JOIN user u ON u.id = m.user_id
       WHERE t.permission = 'admin' AND u.is_agent = 1);
   `,
+  // 62 — only an agent is ever on a crew, said by the database itself: every
+  // route that puts someone on one (settings, the API, a migration, crew
+  // from forks, spawn's copy) meets the same refusal, and the SQL write
+  // check (`REPO_WRITABLE`'s crew clause) and `onCrew` can never drift.
+  // A person already there is reported at boot (`peopleOnCrews`), never
+  // removed by a migration.
+  `
+  CREATE TRIGGER repo_crew_agents_only BEFORE INSERT ON repo_crew
+  WHEN NOT EXISTS (SELECT 1 FROM user WHERE id = NEW.user_id AND is_agent = 1)
+  BEGIN
+    SELECT RAISE(ABORT, 'only an agent can be on a crew');
+  END;
+  CREATE TRIGGER repo_crew_agents_only_update BEFORE UPDATE OF user_id ON repo_crew
+  WHEN NOT EXISTS (SELECT 1 FROM user WHERE id = NEW.user_id AND is_agent = 1)
+  BEGIN
+    SELECT RAISE(ABORT, 'only an agent can be on a crew');
+  END;
+  `,
 ];
