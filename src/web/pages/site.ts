@@ -557,12 +557,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
-  signOutHere(
-    ctx.app,
-    ctx.auth.user,
-    ctx.auth.sessionId,
-    cookieValue(ctx.request, "forge_session"),
-  );
+  signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/", sessionCookie("", new Date(0), ctx.url));
 }
 

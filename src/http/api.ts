@@ -1043,12 +1043,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    signOutHere(
-      ctx.app,
-      ctx.auth.user,
-      ctx.auth.sessionId,
-      cookieValue(ctx.request, "forge_session"),
-    );
+    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
       "set-cookie": sessionCookie("", new Date(0), ctx.url),
     });
