@@ -11,6 +11,7 @@
  * what the forge has.
  */
 
+import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -860,6 +861,9 @@ async function work(
     }
     const started = Date.now();
     const env: Record<string, string> = {
+      // The shard count an admin set (`core/capacity.ts`), for the checks an
+      // agent runs in its clone; never the pod's environment.
+      ...capacityEnv(app.db),
       ...gitAuth,
       ...identity,
       FORGE_URL: options.forgeUrl,

@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { capacityCount } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
@@ -945,7 +946,11 @@ function pump(
   const runningIssues = new Set(
     active.filter((r) => r.state === "running").map((r) => r.issueId),
   );
-  let slots = options.concurrency - runningIssues.size;
+  // Read on every pump (`core/capacity.ts`): an admin's change is the next
+  // pick's, not the next boot's. `options.concurrency` is the boot default.
+  let slots =
+    capacityCount(app.db, "crew.concurrency", options.concurrency) -
+    runningIssues.size;
   for (const queued of listQueued(app.db, "agent", 50)) {
     if (slots <= 0) break;
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
