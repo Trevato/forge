@@ -11,7 +11,20 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { adminOf, everydayOf, keptAdmin } from "../src/core/everyday.ts";
+import {
+  adminOf,
+  everydayOf,
+  joinAsWriter,
+  keptAdmin,
+  WRITERS_TEAM,
+} from "../src/core/everyday.ts";
+import {
+  createOrg,
+  createTeam,
+  getTeam,
+  listTeams,
+  orgAccessByOrg,
+} from "../src/core/orgs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -262,5 +275,26 @@ describe("the everyday account", () => {
     const boss = await signIn("bea");
     await post(boss, "/settings/everyday", { username: "settings", email: "s@x.test", password: PASSWORD });
     expect(getUserByName(app.db, "settings")).toBeUndefined();
+  });
+
+  test("joining an org whose \"Writers\" team grants something else still makes a writer, never more", async () => {
+    const mk = async (username: string) => {
+      const made = await createUser(app.db, { trusted: true, username, email: `${username}@x.test`, password: PASSWORD });
+      if (!made.ok) throw new Error(username);
+      return made.value;
+    };
+    const org = createOrg(app.db, "shop", (await mk("shopkeeper")).id);
+    if (!org.ok) throw new Error("org");
+    const readers = createTeam(app.db, org.value.id, WRITERS_TEAM, "read");
+    if (!readers.ok) throw new Error("team");
+    const daily = await mk("shop-daily");
+    expect(joinAsWriter(app.db, org.value, daily)).toBe(true);
+    expect(orgAccessByOrg(app.db, daily).get(org.value.id)).toBe("write");
+    // The existing team was not widened.
+    expect(getTeam(app.db, readers.value.id)?.permission).toBe("read");
+    // Asked again, the same team: no second one.
+    const teams = listTeams(app.db, org.value.id).length;
+    expect(joinAsWriter(app.db, org.value, daily)).toBe(true);
+    expect(listTeams(app.db, org.value.id).length).toBe(teams);
   });
 });

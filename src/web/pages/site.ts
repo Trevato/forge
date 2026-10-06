@@ -28,6 +28,7 @@ import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
+import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -246,7 +247,7 @@ export function terminalCard(ctx: Ctx): Html {
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return studioDoor(ctx);
-  return await studioHome(ctx, user);
+  return await studioHome(ctx, user, homeTop(ctx));
 }
 
 // ---- authentication ----
@@ -557,12 +558,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
-  signOutHere(
-    ctx.app,
-    ctx.auth.user,
-    ctx.auth.sessionId,
-    cookieValue(ctx.request, "forge_session"),
-  );
+  signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/", sessionCookie("", new Date(0), ctx.url));
 }
 

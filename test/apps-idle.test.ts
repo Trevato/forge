@@ -131,8 +131,18 @@ describe("previews of idle pulls sleep", () => {
     await Bun.sleep(500);
     expect(envOf(fresh)?.state).toBe("running");
     expect(envOf(fresh)?.dormant).toBeUndefined();
-    // Production is never put to sleep by a pull's age.
-    expect(runtime.status(record).find((e) => e.env === "production")?.state).toBe("running");
+    // Production is never put to sleep by a pull's age. It is waited for:
+    // it deploys first and alone under the deploy gate, so on a slow
+    // machine it is the one still coming up when the previews are already
+    // running. When it is not running, its own words are the failure.
+    const production = () =>
+      runtime.status(record).find((e) => e.env === "production");
+    await until(() =>
+      production()?.state === "deploying" ? undefined : true,
+    );
+    expect(`${production()?.state}: ${production()?.error ?? ""}`).toBe(
+      "running: ",
+    );
 
     const signin = await fetch(`${servers.url}/signin`, {
       method: "POST",

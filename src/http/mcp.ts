@@ -99,7 +99,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
 import { running } from "../kernel/version.ts";
-import { makeItYours } from "../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -878,12 +878,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "make_it_yours",
     description:
-      "Make an app you can see yours: a fork of its code and history into your account, registered as your own app (its first deploy starts at once), following the original. Its data, variables, secrets, crew and domains are not copied. Plans unless dryRun is false; the answer names the copy, its address, and what is and is not copied. Someone who already has a copy is landed on it.",
+      "Make an app you can see yours: a fork of its code and history into your account, registered as your own app (its first deploy starts at once), following the original. Its data, variables, secrets, crew and domains are not copied. Plans unless dryRun is false; the answer names the copy, its address, and what is and is not copied. Someone who already has a copy is landed on it. The copy is private unless `visibility` is public (only for a public original); at most 5 copies an account a day.",
     inputSchema: {
       type: "object",
       properties: {
         repo: REPO_ARG,
         name: { type: "string", description: "A name for your copy; the original's by default." },
+        visibility: { type: "string", enum: ["private", "public"], description: "Who sees the copy: private by default; public only when the original is." },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -894,12 +895,18 @@ const TOOLS: readonly Tool[] = [
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const name = str(args["name"]);
+      const visibility = str(args["visibility"]);
+      if (visibility !== "" && visibility !== "public" && visibility !== "private")
+        return bad("invalid", "visibility is public or private");
       const made = await makeItYours(ctx.app, user, repo, {
         dryRun: args["dryRun"] !== false,
         ...(name === "" ? {} : { name }),
+        ...(visibility === "" ? {} : { visibility }),
       });
       if (!made.ok)
-        return made.error.kind === "invalid"
+        return made.error.kind === "limit"
+          ? bad("limit", `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`)
+          : made.error.kind === "invalid"
           ? bad("invalid", made.error.message)
           : made.error.kind === "own"
             ? bad("own", "this app is already yours")
@@ -947,7 +954,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "map",
     description:
-      "An app's plan: its open issues as ready now, or waiting on others (with what each waits for), the critical path, every edge, and where the crew is. The same data as the map page and /api/v1/map.",
+      "An app's plan: its open issues as ready now, or waiting on others (with what each waits for), the critical path, every edge, where the crew is, and under `parkedTwice` each issue the crew parked twice and handed to the planner, with every reason. The same data as the map page and /api/v1/map.",
     inputSchema: {
       type: "object",
       properties: { app: APP_ARG },

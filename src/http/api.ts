@@ -139,6 +139,7 @@ import {
   listTeamsVisibleTo,
   type Permission,
   type Team,
+  soleOwnedOrgs,
 } from "../core/orgs.ts";
 import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
 import {
@@ -314,7 +315,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
-import { makeItYours } from "../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1047,12 +1048,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    signOutHere(
-      ctx.app,
-      ctx.auth.user,
-      ctx.auth.sessionId,
-      cookieValue(ctx.request, "forge_session"),
-    );
+    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
       "set-cookie": sessionCookie("", new Date(0), ctx.url),
     });
@@ -1171,6 +1167,18 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only person owning ${orgs.join(", ")}: make someone else an owner first`,
+      );
+    }
     return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
@@ -1405,10 +1413,15 @@ export function apiRoutes(router: Router<Handler>): void {
         found.team,
         username,
       );
-      if (!removed.ok) return respondAccess(removed.error, 422);
+      if (!removed.ok)
+        return removed.error === "last_owner"
+          ? apiError(
+              "last_owner",
+              409,
+              "an organization keeps at least one person who owns it; make someone else an owner first",
+            )
+          : respondAccess(removed.error, 422);
       if (!isMember) return notFound();
-      // A member who could not be removed is the last owner.
-      if (!removed.value.removed) return json({ error: "protected" }, 409);
       return new Response(null, { status: 204 });
     },
   );
@@ -3398,12 +3411,25 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const name = str(input.name);
+    const visibility = str(input.visibility);
+    if (visibility !== "" && visibility !== "public" && visibility !== "private")
+      return apiError("invalid", 422, "visibility is public or private");
     const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
       dryRun,
       ...(name === "" ? {} : { name }),
+      ...(visibility === "" ? {} : { visibility }),
     });
     if (!made.ok)
-      return made.error.kind === "invalid"
+      return made.error.kind === "limit"
+        ? json(
+            {
+              error: "limit",
+              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+              resetsAt: made.error.resetsAt,
+            },
+            429,
+          )
+        : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
           ? apiError("own", 409, "this app is already yours")

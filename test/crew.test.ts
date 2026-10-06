@@ -94,6 +94,18 @@ describe("stripForgeDirs", () => {
     ).toBe("/data/1/23/a.ts a.ts");
   });
 
+  test("a directory that ends a sentence goes, and the sentence keeps its stop", () => {
+    const dir = "/var/folders/x/work";
+    expect(stripForgeDirs([dir], `wrote to ${dir}.`)).toBe("wrote to .");
+    expect(stripForgeDirs([dir], `${dir}. Then ${dir}/a.ts`)).toBe(
+      ". Then a.ts",
+    );
+    // A name that goes on after the dot is a sibling, left whole.
+    expect(stripForgeDirs([dir], `${dir}.bak is kept`)).toBe(
+      `${dir}.bak is kept`,
+    );
+  });
+
   test("a directory reached through a symlink reads relative under either spelling", async () => {
     const root = realpathSync(await mkdtemp(join(tmpdir(), "forge-paths-")));
     try {

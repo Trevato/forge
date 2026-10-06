@@ -204,7 +204,7 @@ describe("asks that earn their place", () => {
       expect(row.words).toEqual(ASK_WORDS.look);
       expect(row.words.options.length).toBeGreaterThan(0);
     }
-    const asks = await page("/asks");
+    const asks = await page("/");
     expect(asks).toContain("If nobody acts, it waits; nothing ships.");
     expect(asks).toContain("<b>security</b>");
     // The long sentence the card used to repeat is gone.
@@ -235,7 +235,9 @@ describe("asks that earn their place", () => {
   test("five rows by default, the rest one tap away", async () => {
     for (const name of ["r4", "r5", "r6"])
       await greenPull(name, `Work in ${name}`);
-    const asks = await page("/asks");
+    // What needs you is pinned on the home (#634): count its own cards.
+    const home = await page("/");
+    const asks = home.slice(home.indexOf('<section id="needs-you"'));
     const before = asks.split('id="asks-more"')[0]!;
     expect((before.match(/class="card[" ]/g) ?? []).length).toBe(5);
     expect(asks).toContain("<summary>1 more</summary>");
@@ -321,7 +323,7 @@ describe("asks that earn their place", () => {
     // The security pull went red above; a new green one joins it in a row of two.
     check(security, "ok");
     await greenPull("security", "Another change here");
-    const asks = await page("/asks");
+    const asks = await page("/");
     expect(asks).toContain("2 green changes wait for your look");
     expect(asks).toContain("<b>security</b>: \u201cWiden the board id\u201d");
   });
