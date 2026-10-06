@@ -104,6 +104,12 @@ export interface CellSpec {
   readonly terminal?: boolean | undefined;
   /** Told of every undeclared host let through while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /**
+   * Refuse undeclared egress, or only report it, for this cell — the
+   * forge's setting when the cell starts (`core/capacity.ts`); the
+   * environment's (`egressMode`) when the caller has none.
+   */
+  readonly egressMode?: "enforce" | "report" | undefined;
 }
 
 /**
@@ -257,7 +263,7 @@ export function openCell(
         hosts: spec.egress,
         origins,
         report:
-          egressMode() === "report"
+          (spec.egressMode ?? egressMode()) === "report"
             ? (host, port) => spec.onUndeclared?.(host, port)
             : undefined,
       },

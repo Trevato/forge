@@ -72,6 +72,7 @@ export type AccountSection =
   | "subscriptions"
   | "backups"
   | "secrets"
+  | "capacity"
   | "cloud";
 
 /**
@@ -116,6 +117,12 @@ export function accountSections(
             href: "/settings/cloud",
             icon: "key" as const,
             current: current === "cloud",
+          },
+          {
+            label: "Capacity",
+            href: "/settings/capacity",
+            icon: "activity" as const,
+            current: current === "capacity",
           },
           {
             label: "Backups",

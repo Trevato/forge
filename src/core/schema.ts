@@ -1441,4 +1441,43 @@ export const migrations: readonly string[] = [
     SELECT RAISE(ABORT, 'only an agent can be on a crew');
   END;
   `,
+  // 63 — the forge's capacity, set live by an admin (#874): crew and check
+  // concurrency, shards per check, egress mode. The environment stays the
+  // boot default; a row here overrides it, and every change is kept.
+  `
+  CREATE TABLE IF NOT EXISTS forge_setting (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS forge_setting_change (
+    key        TEXT NOT NULL,
+    from_value TEXT NOT NULL,
+    to_value   TEXT NOT NULL,
+    actor_id   TEXT NOT NULL,
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS forge_setting_change_at ON forge_setting_change(at);
+  `,
+  // 64 — the front page's settings beyond its picks (#767): how it ranks,
+  // as one value a site admin sets. Presentation, like the picks: no event.
+  `
+  CREATE TABLE IF NOT EXISTS front_setting (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL,
+    set_by TEXT REFERENCES user(id) ON DELETE SET NULL,
+    set_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
+  // 65 — a sealed issue (#621): a security report, and the pull that fixes
+  // it, seen only by people who can write the repository and its crew until
+  // a writer unseals it (`core/sealed.ts`).
+  `
+  ALTER TABLE issue ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;
+  -- The crew works a sealed report in a private repository of its own,
+  -- read by the base's writers and crew only, so the fix is never in the
+  -- base's git or a public fork's before it merges.
+  ALTER TABLE repo ADD COLUMN sealed_for TEXT REFERENCES repo(id) ON DELETE CASCADE;
+  `,
 ];

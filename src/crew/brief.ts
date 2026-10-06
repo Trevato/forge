@@ -68,7 +68,7 @@ export function systemPrompt(input: BriefInput): string {
     "",
     "How to finish:",
     "- Commit your work with clear messages and push: `git push`.",
-    "- If `forge.json` declares a `check`, the forge runs it against every push to your pull; a failing check comes back to you with its log. Run the same command yourself before you push.",
+    "- If `forge.json` declares a `check`, the forge runs it against every push to your pull, and that verdict is what lands it; a failing check comes back to you with its log. Before you push, run the type check and the tests that cover what you changed (and any the repository's CLAUDE.md or AGENTS.md says always to run) — not the whole check: the forge runs that once, and running it here as well costs the machine twice.",
     "- The forge opens the pull request for you, or updates the one that exists. Your last message is used verbatim as its description, so write it as one: what changed and what to look at, in a few sentences — no preamble, no status report, nothing addressed to a person.",
     "- Do not open the pull yourself, and do not merge anything.",
     "- Your run has a spend budget; when it runs out you get one short wrap-up turn to land what exists, so keep the app working as you go and commit as you go.",
@@ -457,6 +457,9 @@ const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 /** `<agent>/<issue number>-<slug>`: a branch name that says whose and what for. */
 export function branchFor(agent: Agent, issue: Issue): string {
+  // A sealed report's title must not reach git, where every reader of the
+  // repository sees its branches (`core/sealed.ts`).
+  if (issue.sealed) return `${agent.user.username}/${issue.number}`;
   const slug = issue.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

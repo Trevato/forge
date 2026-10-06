@@ -21,6 +21,7 @@ import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import {
   pullDiff,
+  pullDir,
   type MergePullError,
   type Pull,
   type PullReviewStatus,
@@ -640,7 +641,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   const { repo, pull } = found;
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  // Every read of the change is taken where its objects are (`pullDir`).
+  const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
   const base = repoBase(repo);
   const thread = `${base}/pulls/${pull.number}`;
 

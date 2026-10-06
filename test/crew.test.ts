@@ -94,12 +94,16 @@ describe("stripForgeDirs", () => {
     ).toBe("/data/1/23/a.ts a.ts");
   });
 
-  test("a directory that ends a sentence goes, and the sentence keeps its stop", () => {
+  test("a directory before a full stop that punctuates goes, and the stop stays", () => {
     const dir = "/var/folders/x/work";
     expect(stripForgeDirs([dir], `wrote to ${dir}.`)).toBe("wrote to .");
     expect(stripForgeDirs([dir], `${dir}. Then ${dir}/a.ts`)).toBe(
       ". Then a.ts",
     );
+    // Inside brackets or quotes, before a comma, and in an ellipsis.
+    expect(stripForgeDirs([dir], `(see ${dir}.)`)).toBe("(see .)");
+    expect(stripForgeDirs([dir], `"${dir}.", it said`)).toBe('".", it said');
+    expect(stripForgeDirs([dir], `${dir}...`)).toBe("...");
     // A name that goes on after the dot is a sibling, left whole.
     expect(stripForgeDirs([dir], `${dir}.bak is kept`)).toBe(
       `${dir}.bak is kept`,
