@@ -230,9 +230,25 @@ header's tabs (`Told`, `Changes`, in place of dev's `Issues`, `Pulls`) link
 to `/tells` and `/changes`; dev's `Commits`/`Branches` stay dev's alone.
 `/runs` has no second noun — the studio and dev share the one address
 there. What a page _posts_ to never moves with the noun: ship, close,
-comment and decide keep posting under `/issues/:number` and
+comment, edit and decide keep posting under `/issues/:number` and
 `/pulls/:number`, which is what `form-action 'self'` and the same-origin
 checks are written against.
+
+The words of an issue or a pull are not fixed at opening. Under the opening
+post, its author or a person who writes the repository finds _Edit_: the
+title and the body as they stand, one Save, posting to `…/edit`. An agent
+edits only what it wrote (`mayEditIssue`, `actions/issues.ts`); a mirror's
+words belong to its origin. An author who may not direct the crew — a
+reader on a public repository, an outside contributor — keeps the right
+only until a person who writes has acted on the words: adopted the issue,
+or reviewed the pull. After that the answer is "a writer has taken this
+up: comment instead", since a rewrite would put new work in the crew's
+hands, or a new `Closes #N` under an approval, unseen. Over the API, `PATCH …/issues/:number` and
+`PATCH …/pulls/:number` take `title` and `body` beside `state`; the MCP
+`edit` tool does the same by number. The edit is an event (`issue.edited`,
+`pull.edited`) that says what changed, never the words, and the timeline
+shows it. What a pull closes and whom it answers are read from the body
+on every read, so they follow.
 
 _Look_ is spoken for by the five-word table above (a pull green and ready
 for a person's own look) and by the picture card on one (`lookCard`,

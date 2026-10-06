@@ -29,8 +29,14 @@ import {
   type Issue,
   type Label,
 } from "../../core/issues.ts";
-import type { Closing } from "../../actions/issues.ts";
-import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
+import { editIssue, type Closing } from "../../actions/issues.ts";
+import {
+  getIssue,
+  labelsFor,
+  listComments,
+  MAX_BODY,
+  MAX_TITLE,
+} from "../../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { inlineIcons, type IconName as Glyph } from "../icons.ts";
 import {
@@ -141,6 +147,8 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       tone: "default",
       verb: "reviewed a line",
     },
+    "issue.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
   };
 
 /**
@@ -210,6 +218,49 @@ export interface ConversationOptions {
    * timeline that files it separately reads as two conversations.
    */
   extra?: readonly Entry[];
+  /**
+   * Where a new title or body posts, for a viewer who may give one (the
+   * author, or a person who writes here — the same rule `editIssue` keeps,
+   * decided by the page so nobody is shown a form the server would refuse).
+   */
+  editAction?: string | undefined;
+}
+
+/**
+ * The opening post's own words, open for editing under it: the title and
+ * the body as they stand, one form, one Save. Folded away until asked for,
+ * since most visits read and few rewrite.
+ */
+function editForm(issue: Issue, action: string): Html {
+  return html`<details class="tl-edit" id="edit">
+    <summary class="muted small">${icon("pencil")} Edit</summary>
+    <form class="card comment-form mt" method="post" action="${action}">
+      <label class="sr-only" for="edit-title">Title</label>
+      <input
+        class="input"
+        id="edit-title"
+        name="title"
+        value="${issue.title}"
+        required
+        maxlength="${MAX_TITLE}"
+      />
+      <label class="sr-only" for="edit-body">Description</label>
+      <textarea
+        class="input mt"
+        id="edit-body"
+        name="body"
+        rows="8"
+        data-grow
+        maxlength="${MAX_BODY}"
+      >
+${issue.body}</textarea>
+      <div class="form-actions">
+        <span class="muted small">Markdown, as in a comment.</span>
+        <span class="spacer"></span>
+        ${btn("Save", { size: "sm", icon: "check" })}
+      </div>
+    </form>
+  </details>`;
 }
 
 /**
@@ -254,7 +305,9 @@ export function conversation(
 
   return {
     node: html`<div class="timeline" id="conversation">
-      ${opening}${entries.map((e) => e.node)}
+      ${opening}${when(options.editAction, (action) =>
+        editForm(issue, action),
+      )}${entries.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -701,6 +754,41 @@ export async function stateSubmit(
   return flashOrJson(ctx, dest, {
     message: wanted === "closed" ? "Closed." : "Reopened.",
   });
+}
+
+/** POST …/:number/edit — a new title or body, for both kinds. */
+export async function wordsSubmit(
+  ctx: Ctx,
+  kind: "issue" | "pull",
+): Promise<Response> {
+  const found = threadContext(ctx, kind);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const edited = editIssue(ctx.app, ctx.auth.user, found.repo, found.issue, {
+    title: field(form, "title"),
+    body: field(form, "body"),
+  });
+  if (!edited.ok) {
+    if (edited.error === "not_found") return notFoundPage(ctx);
+    const message =
+      originError(edited.error) ??
+      (edited.error === "forbidden" || edited.error === "unauthorized"
+        ? "Only the author or someone with write access can edit this."
+        : edited.error === "taken_up"
+          ? "A writer has taken this up: comment instead."
+          : edited.error === "empty_title"
+          ? "A title is needed."
+          : edited.error === "title_too_long"
+            ? `A title is at most ${MAX_TITLE} characters.`
+            : edited.error === "body_too_long"
+              ? "That description is too long."
+              : "That could not be changed.");
+    return flashOrJson(ctx, dest, { tone: "danger", message });
+  }
+  return flashOrJson(ctx, dest, { message: "Saved." });
 }
 
 /** POST …/:number/labels — replace the label set. Writers only. */

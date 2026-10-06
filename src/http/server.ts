@@ -202,6 +202,7 @@ import {
   assigneeSubmit,
   labelsSubmit,
   stateSubmit,
+  wordsSubmit,
 } from "../web/pages/thread.ts";
 import {
   appOpen,
@@ -851,6 +852,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
     stateSubmit(ctx, "issue"),
   );
+  router.add("POST", "/:owner/:name/issues/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "issue"),
+  );
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
   );
@@ -925,6 +929,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),
+  );
+  router.add("POST", "/:owner/:name/pulls/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "pull"),
   );
   router.add("POST", "/:owner/:name/pulls/:number/labels", (ctx) =>
     labelsSubmit(ctx, "pull"),

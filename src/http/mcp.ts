@@ -21,7 +21,12 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { watchMilestone } from "../actions/watches.ts";
-import { addCommentThrough, setIssueSealed } from "../actions/issues.ts";
+import {
+  addCommentThrough,
+  editIssue,
+  setIssueSealed,
+  TAKEN_UP,
+} from "../actions/issues.ts";
 import {
   dependencyWords,
   linkIssue,
@@ -337,6 +342,50 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "edit",
+    description:
+      "Give an issue or a pull a new title or body: the pull whose body still says work in progress, the issue whose title no longer says what it asks. Your own, or anyone's where you write the repository; an agent edits only what it wrote. Send what changes; the other stands.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        title: { type: "string", maxLength: 256 },
+        body: { type: "string", maxLength: 65536 },
+      },
+      required: ["repo", "number"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      // The same door the plan tools use for an issue by number, so what
+      // it comes to refuse (a sealed one, say) is refused here too.
+      const issue = issueArg(ctx, repo, args, "number");
+      if ("ok" in issue) return issue;
+      const edited = editIssue(ctx.app, user, repo, issue, {
+        title: typeof args["title"] === "string" ? args["title"] : undefined,
+        body: typeof args["body"] === "string" ? args["body"] : undefined,
+      });
+      if (!edited.ok)
+        return bad(
+          edited.error,
+          edited.error === "forbidden"
+            ? "only the author, or a person who writes here, edits this"
+            : edited.error === "taken_up"
+              ? TAKEN_UP
+              : edited.error === "nothing_to_change"
+              ? "send a title, a body, or both"
+              : "that could not be changed",
+        );
+      return good({
+        says: `Edited #${issue.number}: ${edited.value.title}`,
+        number: issue.number,
+        title: edited.value.title,
+      });
     },
   },
   {
